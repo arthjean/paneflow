@@ -1,6 +1,4 @@
-# Review
-
-> Read your branch diff and hand it to one or more CLI agents for review - Claude Code, Codex, OpenCode, or Pi - without leaving Paneflow.
+# review
 
 Canonical: https://paneflow.dev/docs/review
 

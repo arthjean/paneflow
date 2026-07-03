@@ -1,6 +1,4 @@
-# Commands
-
-> Every Paneflow command and its default keyboard shortcut, grouped by what it controls, with the action name to use in paneflow.json overrides.
+# keybindings
 
 Canonical: https://paneflow.dev/docs/keybindings
 
@@ -14,20 +12,6 @@ it controls. The `Action` name is the string you use in
 overrides. The binding metadata uses a `secondary` modifier that GPUI
 maps to `Cmd` on macOS and `Ctrl` on Linux, so the same shortcut fires on
 both OSes.
-
-  **TL;DR.** `Cmd/Ctrl+Shift+D` and `Cmd/Ctrl+Shift+E` split, `Alt+Arrow`
-  moves focus, `Cmd/Ctrl+1-9` jumps workspaces, `Ctrl+Shift+C/V` copies and
-  pastes inside a terminal pane. Override any of it in
-  [paneflow.json](/docs/configuration/schema#how-do-i-set-shortcuts).
-
-The group a command sits under tells you when its binding fires: the
-**Panes**, **Pane focus**, **Layouts**, and **Workspaces** bindings are
-active everywhere in the window; **Terminal pane** bindings only when a
-terminal pane has focus; **Search overlay** bindings only while the
-find-in-buffer overlay is open; and **Markdown pane** bindings only when
-a markdown pane (or its find overlay) has focus.
-
-## Command reference [#command-reference]
 
 ## How do I override a binding? [#how-do-i-override-a-binding]
 

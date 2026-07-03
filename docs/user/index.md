@@ -1,6 +1,4 @@
-# Get started
-
-> Install Paneflow and run your first multi-pane agent workspace in under two minutes.
+# index
 
 Canonical: https://paneflow.dev/docs
 
@@ -14,101 +12,35 @@ speaks plain shell. Split panes, persistent sessions, dev-server port
 detection, and zero-config theming, all in a native GPU-accelerated
 app that boots in under 200 ms.
 
-Paneflow is free and open source. Signed builds ship for **macOS**
-(Apple Silicon) and **Linux** (x86\_64 and ARM64); Windows is in
-progress.
+Paneflow is free and open source. Native builds ship for **macOS**
+(Apple Silicon, signed and notarized), **Linux** (x86\_64 and ARM64),
+and **Windows** (x86\_64).
 
 ## Getting started [#getting-started]
 
-Paneflow runs on macOS and Linux. Most features are identical on both;
-the per-OS guides call out the platform-specific exceptions.
+Paneflow runs on macOS, Linux, and Windows. Most features are identical
+across them; the per-OS guides call out the platform-specific
+exceptions.
 
-  
-    Grab the signed build for your OS. The buttons pick the recommended
-    format; the per-OS guides cover every other install path.
 
-    
 
-    
-      Paneflow ships signed binaries for **macOS** (notarized `.dmg`, Apple
-      Silicon) and **Linux** (`.deb`, AppImage, tarball, x86\_64 and ARM64).
-    
 
-    Need a different path? Read the [macOS guide](/docs/installation/macos),
-    the [Linux guide](/docs/installation/linux), or
-    [compare every install format](/docs/installation).
-  
 
-  
-    Run the binary from a terminal, or open the app from Spotlight, the
-    Applications folder, or your launcher:
 
-    ```bash
-    paneflow
-    ```
 
-    The window opens in under 200 ms with a single workspace and a single
-    shell pane, named after the directory you launched from. There is no
-    sign-in step: no account, no login, no API key. Paneflow runs entirely
-    on your machine.
 
-    
-      **Window does not render?** Paneflow needs Vulkan on Linux and Metal
-      on macOS. See the [Linux Vulkan note](/docs/installation/linux) or the
-      [macOS Gatekeeper note](/docs/installation/macos) if the first launch
-      fails to open.
-    
-  
 
-  
-    Split the focused pane and move focus with the default chords - the
-    same string fires on both OSes (`Cmd` on macOS, `Ctrl` on Linux):
 
-    * `Cmd/Ctrl+Shift+D` - split horizontally (top and bottom).
-    * `Cmd/Ctrl+Shift+E` - split vertically (side by side).
-    * `Alt+Arrow` - move focus across the pane tree.
-    * `Cmd/Ctrl+Shift+N` - add a second workspace.
 
-    Each new pane spawns a fresh shell in the same working directory. The
-    full command reference is in [Commands](/docs/keybindings).
-  
 
-  
-    Paneflow launches any binary in a pane. In a fresh pane, start the
-    agent of your choice:
 
-    ```bash
-    claude     # Anthropic's Claude Code
-    codex      # OpenAI's Codex CLI
-    opencode   # OpenCode
-    ```
 
-    The agent runs as a first-class pane with a branch-aware workspace
-    badge. Run zero agents, run all of them, or run a custom CLI from your
-    own toolchain - the workspace behaves the same.
-  
-
-## Work with Paneflow [#work-with-paneflow]
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
-
-  
 
 ## What runs on the inside [#what-runs-on-the-inside]
 
 * **Pure Rust** + [GPUI](https://www.gpui.rs/) - the same framework Zed runs on.
 * **Native VT emulation** via `alacritty_terminal` (crates.io 0.26).
-* **Native PTY** via `portable-pty` - same code path on Linux and macOS.
+* **Native PTY** via `portable-pty` - same code path on Linux, macOS, and Windows.
 * **JSON-RPC IPC** at `$XDG_RUNTIME_DIR/paneflow/paneflow.sock` for headless scripting.
 * **Sub-200 ms cold start** and sub-4 ms keystroke-to-pixel on the latency probe.
 
@@ -118,6 +50,7 @@ the per-OS guides call out the platform-specific exceptions.
 | -------- | ------------------------------------------------ | ---------------------------------------------- |
 | Linux    | glibc 2.31+ (Ubuntu 20.04, Debian 11, Fedora 34) | Vulkan loader (`libvulkan1` / `vulkan-loader`) |
 | macOS    | 13 Ventura, Apple Silicon                        | Metal (built-in)                               |
+| Windows  | 10 (1809+) or 11, x86\_64                        | DirectX 11                                     |
 
 ## Install with your AI agent [#install-with-your-ai-agent]
 
@@ -132,9 +65,7 @@ Weighing Paneflow against another agent-first terminal? The
 side-by-side breakdown covers architecture, performance, decision
 guide, and an honest list of dealbreakers where the alternative wins.
 
-  
 
-  
 
 ## Common questions about Paneflow [#common-questions-about-paneflow]
 
@@ -177,14 +108,11 @@ Paneflow. Offline workspaces work normally.
 
 ### Does Paneflow run on Windows? [#does-paneflow-run-on-windows]
 
-Yes. Paneflow ships a signed native Windows `.msi` (since v0.5.0),
-code-signed by StriveX via Azure Trusted Signing. It is a best-effort
-rollout while the Windows CI leg is hardened, so on first launch
-Microsoft Defender SmartScreen may show a "Windows protected your PC"
-reputation prompt - expected for a new publisher, not a signing
-failure. See [Paneflow on Windows](installation/windows.md) for the
-installer, the SmartScreen "Run anyway" steps, and the WSL2 + WSLg
-alternative.
+Yes. Paneflow ships a native Windows build (`.msi` installer) for
+Windows 10 (1809+) and Windows 11 on x86\_64. Download it from the
+[download page](/download). You can also run the Linux build under
+WSL2 + WSLg if you prefer. See the
+[Windows guide](/docs/installation/windows) for the full walkthrough.
 
 ## Help and feedback [#help-and-feedback]
 

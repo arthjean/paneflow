@@ -1,6 +1,4 @@
-# Features
-
-> Everything Paneflow does - pane splitting and layouts, first-class agent panes, persistent sessions, dev-server port detection, headless scripting, projects, and agent chat.
+# features
 
 Canonical: https://paneflow.dev/docs/features
 
@@ -62,16 +60,14 @@ capability. New to Paneflow? Start with [Get started](/docs).
 
   ## Headless scripting (CLI, MCP and JSON-RPC) [#headless-scripting-cli-mcp-and-json-rpc]
 
-  Drive Paneflow from outside the GUI: since v0.4.0 the `paneflow`
-  binary is also a CLI with 12 verbs over a JSON-RPC IPC socket at
-  `$XDG_RUNTIME_DIR/paneflow/paneflow.sock` - list panes, read and
-  search scrollback, split, focus, inject text behind an explicit
-  scripting gate, block on output patterns, spawn declarative agent
-  workspaces (`paneflow up`) and run multi-agent pipelines
-  (`paneflow flow`). An MCP server exposes the read operations to
-  agents, so an assistant can inspect what another pane printed without
-  you copy-pasting. The full command and method reference lives on the
-  [scripting and automation page](/docs/scripting).
+  Drive Paneflow from outside the GUI: the `paneflow` binary is also a
+  CLI over a local JSON-RPC IPC socket. Scripts can list panes, read and
+  search scrollback, inspect agent state, stream lifecycle events,
+  split, focus, stage prompts behind an explicit write gate, spawn
+  declarative workspaces (`paneflow up`), and run multi-agent pipelines
+  (`paneflow flow`). A read-only MCP bridge exposes pane reads to
+  agents, so an assistant can inspect another pane without copy-paste.
+  The guide and command reference live on the [scripting and automation page](/docs/scripting).
 
   ## Custom action buttons [#custom-action-buttons]
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://context7.com/schema/context7.json",
   "projectTitle": "Paneflow",
-  "description": "Cross-platform GPU-native terminal multiplexer for agentic CLI workflows. Runs Claude Code, Codex, and OpenCode side by side in branch-aware workspaces on Linux and macOS.",
+  "description": "Cross-platform GPU-native terminal multiplexer for agentic CLI workflows. Runs Claude Code, Codex, and OpenCode side by side in branch-aware workspaces on Linux, macOS, and Windows.",
   "folders": [],
   "excludeFolders": [
     "docs/release",
@@ -34,7 +34,7 @@
     "Configuration lives in paneflow.json under ~/.config/paneflow/. Config keys (default_shell, theme, window_decorations, shortcuts, commands) are English and must never be translated or renamed.",
     "Keybinding strings use Ctrl/Alt/Shift modifier names verbatim (e.g. Ctrl+Shift+D).",
     "Paneflow is free and open source under GPL-3.0. There is no paid tier, no login, no telemetry, no backend.",
-    "Paneflow ships for Linux and macOS. Windows is waitlist-only and not shipped yet.",
+    "Paneflow ships native builds for Linux, macOS Apple Silicon, and Windows x64. Windows ARM64 and macOS Intel are not shipped today.",
     "The live documentation is at https://paneflow.dev/docs. Raw Markdown twins of every docs page are served at the page URL plus .md (e.g. https://paneflow.dev/docs/installation/linux.md)."
   ],
   "url": "https://context7.com/arthurdev44/paneflow",

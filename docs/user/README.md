@@ -5,23 +5,24 @@
 > site repo. Indexed by Context7 via the `context7.json` at the repo
 > root.
 
-- [Features](features.md): Everything Paneflow does - pane splitting and layouts, first-class agent panes, persistent sessions, dev-server port detection, headless scripting, projects, and agent chat.
-- [Get started](index.md): Install Paneflow and run your first multi-pane agent workspace in under two minutes.
-- [Commands](keybindings.md): Every Paneflow command and its default keyboard shortcut, grouped by what it controls, with the action name to use in paneflow.json overrides.
-- [Layouts](layouts.md): Apply Paneflow's four built-in layout presets - even horizontal, even vertical, main vertical, and tiled - to reshape a workspace in one keystroke.
-- [Review](review.md): Read your branch diff and hand it to one or more CLI agents for review - Claude Code, Codex, OpenCode, or Pi - without leaving Paneflow.
-- [Scripting and automation](scripting.md): Drive a running Paneflow from any shell or AI agent - 12 CLI verbs, the JSON-RPC IPC socket, declarative agent workspaces, multi-agent flow pipelines, the read-only MCP bridge, and lifecycle hooks.
-- [Settings](settings.md): Tune Paneflow from the settings panel - keyboard shortcuts, fonts and themes, which AI agents appear in the launch bar, and terminal behavior - all mirrored in paneflow.json.
-- [Themes](themes.md): Paneflow's theme system with hot-reload from paneflow.json, no restart needed. One Dark ships today; the light theme returns after a redesign.
-- [Troubleshooting](troubleshooting.md): Fixes for the most common Paneflow launch, configuration, and install problems - GPU errors, missing PATH, blocked installers, theme reload issues.
-- [Configuration](configuration.md): Customize Paneflow with a single paneflow.json file - default shell, theme, keybindings, window decorations, and more.
-- [paneflow.json Schema Reference](configuration/schema.md): Every paneflow.json key with type, default value, stability, and an example.
-- [Install Paneflow](installation.md): Install Paneflow on Linux or macOS in under two minutes.
-- [Install Paneflow on Linux](installation/linux.md): Install Paneflow on Ubuntu, Debian, Fedora, Arch, or any modern Linux via .deb, AppImage, or tarball.
-- [Install Paneflow on macOS](installation/macos.md): Install Paneflow on macOS 13 Ventura or later via the signed and notarized .dmg.
-- [Paneflow on Windows](installation/windows.md): Install the signed native .msi (since v0.5.0), or run the Linux build under WSL2 + WSLg. Covers the SmartScreen "Windows protected your PC" prompt and the "Run anyway" steps.
-- [Resume a Claude Code, Codex, or OpenCode session in one click](blog/agent-sessions.md): Paneflow finds every agent session tied to your current project and brings any of them back, history intact, without hunting for the right command.
-- [Have multiple agents review your branch diff](blog/diff-viewer.md): Open your branch diff, launch Claude Code, Codex, OpenCode, or Pi underneath it, and compare their feedback without leaving Paneflow.
-- [Browse your project files without leaving Paneflow](blog/files-sidebar.md): Navigate your project and open a README or PRD in a pane right next to the agent working from it, without switching tools or losing your layout.
+- [features](features.md)
+- [index](index.md)
+- [keybindings](keybindings.md)
+- [layouts](layouts.md)
+- [review](review.md)
+- [settings](settings.md)
+- [themes](themes.md)
+- [troubleshooting](troubleshooting.md)
+- [Conductor](conductor.md): Coordinate Paneflow panes from the public paneflow CLI: discover agents, read state, dispatch safely, wait for results, and keep peer output untrusted.
+- [Conductor reference](conductor/reference.md): CLI verbs, JSON-RPC methods, fields, events, config keys, and exit codes for the Paneflow Conductor control plane.
+- [installation](installation.md)
+- [installation/linux](installation/linux.md)
+- [installation/macos](installation/macos.md)
+- [installation/windows](installation/windows.md)
+- [configuration](configuration.md)
+- [configuration/schema](configuration/schema.md)
+- [Scripting and automation](scripting.md): Drive a running Paneflow from a shell or AI agent with the CLI, local JSON-RPC, event streams, declarative workspaces, flow files, the read-only MCP bridge, and lifecycle hooks.
+- [Scripting reference](scripting/reference.md): CLI verbs, selectors, JSON-RPC methods, event frames, config keys, workspace specs, flow specs, MCP tools, hooks, and exit codes for Paneflow automation.
 - [Paneflow: all your coding agents in one workspace](blog/introducing-paneflow.md): Run Claude Code, Codex, OpenCode, and 13 other CLI agents side by side. Keep each task's terminals, branches, diffs, servers, and sessions in one place.
-- [Why coding agents need their own workspace](blog/philosophy-of-paneflow.md): Launching several agents is easy. Keeping their tasks, decisions, and outputs legible is much harder. Here is Paneflow's approach.
+- [Let one coding agent drive the others with Paneflow Conductor](blog/paneflow-conductor.md): Paneflow 0.6.0 turns the app into a control plane for CLI coding agents: discover the fleet, read live state, dispatch prompts, and wait on events from one public CLI.
+- [Launching Paneflow on Show HN](blog/show-hn-launch.md): Launching one coding agent is easy. Paneflow keeps multiple CLI agents, branches, and diffs visible in one local workspace.

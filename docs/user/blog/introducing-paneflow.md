@@ -21,14 +21,14 @@ Each workspace holds its layout, its terminals, and its sessions. You switch bet
 ## Context stays visible [#context-stays-visible]
 
 * **Agents and terminals:** see everything running and move between panes with the keyboard.
-* **Branches and diffs:** keep each task tied to its branch and review its changes without leaving Paneflow.
-* **Agent sessions:** find and resume Claude Code, Codex, and OpenCode sessions for the current project.
-* **Cross-pane context:** the built-in MCP server lets one agent read a test's output or search for an error in another pane, without copy-pasting.
+* **Branches and diffs:** keep each task tied to its branch and [review its changes](/blog/diff-viewer) without leaving Paneflow.
+* **Agent sessions:** find and [resume Claude Code, Codex, and OpenCode sessions](/blog/agent-sessions) for the current project.
+* **Cross-pane context:** the built-in [MCP](https://modelcontextprotocol.io) server lets one agent read a test's output or search for an error in another pane, without copy-pasting.
 * **Local environment:** no account, no telemetry, and no mandatory remote service.
 
 ## A native app built to last [#a-native-app-built-to-last]
 
-Paneflow is written in Rust and uses GPUI, Zed's rendering engine. Panes and terminals are drawn directly by the application, with no embedded browser around processes that can run for hours.
+Paneflow is written in Rust and uses [GPUI](https://www.gpui.rs/), Zed's rendering engine. Panes and terminals are drawn directly by the application, with no embedded browser around processes that can run for hours. The whole app is a 14 to 19 MB download.
 
 The project is open source under the GPL-3.0-or-later license and runs on Linux, macOS, and Windows.
 

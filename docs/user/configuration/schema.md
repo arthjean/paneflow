@@ -1,6 +1,4 @@
-# paneflow.json Schema Reference
-
-> Every paneflow.json key with type, default value, stability, and an example.
+# configuration/schema
 
 Canonical: https://paneflow.dev/docs/configuration/schema
 
@@ -12,14 +10,6 @@ Every key Paneflow recognises today, grouped by what it controls. All
 keys are optional and resolve to a sensible default when omitted. The
 authoritative source is the [JSON Schema](https://github.com/ArthurDEV44/paneflow/raw/main/schemas/paneflow.schema.json)
 shipped with each release.
-
-  **TL;DR.** Every key is optional and hot-reloads on save - `window_decorations` is the only one that needs a restart. Pin the published [JSON Schema](https://github.com/ArthurDEV44/paneflow/raw/main/schemas/paneflow.schema.json) for editor autocomplete.
-
-## Core [#core]
-
-The five most-asked-about keys.
-
-### How do I set `default_shell`? [#how-do-i-set-default_shell]
 
 Type: `string` (optional). Default: `$SHELL`.
 
@@ -38,16 +28,17 @@ Type: `string` (optional). Default: `"One Dark"`.
 
 Built-in themes:
 
-* `"One Dark"` - dark theme, default. The only bundled theme since
-  v0.4.0; `"PaneFlow Light"` was pulled pending a light-theme redesign.
+* `"One Dark"` - dark theme, default.
+* `"PaneFlow Light"` - light theme with a white work surface and light app shell.
 
 ```json
 { "theme": "One Dark" }
 ```
 
-Unknown names (including the retired `"PaneFlow Light"`) fall back to
-`"One Dark"` and emit a log warning. Themes hot-reload on file save
-(500 ms mtime polling) - no restart needed.
+The schema lists the canonical names. Runtime lookup is case-insensitive,
+but unknown names still fall back to `"One Dark"` and emit a log warning.
+Themes hot-reload on file save through the config watcher, with a
+500 ms polling fallback when the OS watcher is unavailable.
 
 ### How do I set `window_decorations`? [#how-do-i-set-window_decorations]
 
@@ -84,30 +75,46 @@ semantics.
 ### How do I set `commands`? [#how-do-i-set-commands]
 
 Type: `array` of command definitions (optional). Default: empty array.
+Each entry is either a workspace template (`workspace`) or a simple
+shell command (`command`).
 
 ```json
 {
   "commands": [
     {
-      "name": "Open API",
-      "workspace": { "cwd": "~/projects/api" }
+      "name": "API + Claude",
+      "description": "Open the API project with Claude and tests",
+      "workspace": {
+        "name": "API",
+        "cwd": "~/projects/api",
+        "layout_preset": "even_h",
+        "layout": {
+          "type": "split",
+          "direction": "horizontal",
+          "children": [
+            {
+              "type": "pane",
+              "surfaces": [
+                {
+                  "name": "Claude",
+                  "agent": "claude_code",
+                  "prompt": "Review the API changes"
+                }
+              ]
+            },
+            {
+              "type": "pane",
+              "surfaces": [
+                { "name": "Tests", "command": "bun test" }
+              ]
+            }
+          ]
+        }
+      }
     }
   ]
 }
 ```
-
-  The schema accepts `commands` entries, but the runtime currently
-  ignores them and logs `"commands are not yet implemented - they will
-  be ignored"`. The structural shape is stable; the runtime activation
-  ships in a later release.
-
-## Typography [#typography]
-
-The three typography keys landed in an early 0.2.x release; the
-project did not pin per-key release tags, so the exact `since` value
-is approximate.
-
-### How do I set `font_family`? [#how-do-i-set-font_family]
 
 Type: `string` (optional). Default: `"IBM Plex Mono"` - embedded in
 the binary and registered with the GPUI text system at boot, so the
@@ -142,25 +149,25 @@ default), `IBM Plex Sans` (UI glyph fallback), and `Lilex`
 
 ### How do I set `font_size`? [#how-do-i-set-font_size]
 
-Type: `number` (optional, pixels, range `8.0`-`32.0`). Default: `14`.
+Type: `number` (optional, pixels, range `8.0`–`32.0`). Default: `14`.
 
 ```json
 { "font_size": 14 }
 ```
 
-Values outside the `8.0`-`32.0` range are rejected with a log warning
+Values outside the `8.0`–`32.0` range are rejected with a log warning
 and the default is used instead.
 
 ### How do I set `line_height`? [#how-do-i-set-line_height]
 
-Type: `number` (optional, multiplier in the range `1.0`-`2.5`).
+Type: `number` (optional, multiplier in the range `1.0`–`2.5`).
 Default: `1.3`.
 
 ```json
 { "line_height": 1.3 }
 ```
 
-Values outside the `1.0`-`2.5` range are rejected with a log warning
+Values outside the `1.0`–`2.5` range are rejected with a log warning
 and the default is used instead.
 
 ## Input [#input]
@@ -200,7 +207,7 @@ Type: `boolean` (optional). Default: `false`.
 ```
 
 When `true`, the Claude Code launcher invokes the CLI with
-`--dangerously-skip-permissions`. Off by default for safety.
+`--permission-mode bypassPermissions`. Off by default for safety.
 
 ### How do I set `codex_button_visible`? [#how-do-i-set-codex_button_visible]
 
@@ -250,7 +257,7 @@ contain the ligature glyphs for the feature to take effect.
 ### How do I set `terminal.scrollback_lines`? [#how-do-i-set-terminalscrollback_lines]
 
 Type: `integer` inside the `terminal` object (optional, range
-`100`-`100000`). Default: `10000`.
+`100`–`100000`). Default: `10000`.
 
 ```json
 { "terminal": { "scrollback_lines": 20000 } }

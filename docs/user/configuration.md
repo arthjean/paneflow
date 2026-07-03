@@ -1,6 +1,4 @@
-# Configuration
-
-> Customize Paneflow with a single paneflow.json file - default shell, theme, keybindings, window decorations, and more.
+# configuration
 
 Canonical: https://paneflow.dev/docs/configuration
 
@@ -12,44 +10,3 @@ Paneflow reads a single JSON file at startup: `paneflow.json`. Every
 key is optional and has a sensible default, so an empty `{}` is a
 valid config. The full reference, including types, defaults, and
 stability per key, lives on the [schema page](/docs/configuration/schema).
-
-  **TL;DR.** One file: `paneflow.json`. Every key is optional, `{}` is valid, unknown keys are ignored. Pin the `$schema` line below to get autocomplete in your editor.
-
-## Where is `paneflow.json`? [#where-is-paneflowjson]
-
-| OS    | Path                                                                              |
-| ----- | --------------------------------------------------------------------------------- |
-| Linux | `~/.config/paneflow/paneflow.json` (or `$XDG_CONFIG_HOME/paneflow/paneflow.json`) |
-| macOS | `~/Library/Application Support/paneflow/paneflow.json`                            |
-
-If the file does not exist on first launch, Paneflow boots with all
-defaults. Create the file at the path above to start customizing.
-
-## Editor autocomplete with JSON Schema [#editor-autocomplete-with-json-schema]
-
-Pin a `$schema` reference to get instant autocomplete and type
-checking in VS Code, JetBrains, Zed, Helix, or any editor with a
-JSON Schema language server:
-
-```json
-{
-  "$schema": "https://github.com/ArthurDEV44/paneflow/raw/main/schemas/paneflow.schema.json",
-  "theme": "One Dark"
-}
-```
-
-The schema is published with every release and tracks the exact set
-of keys the running build accepts.
-
-## How does Paneflow handle unknown keys? [#how-does-paneflow-handle-unknown-keys]
-
-Paneflow is **lenient at runtime**: unknown top-level keys are
-silently ignored, and missing keys resolve to their defaults. This
-keeps your config forward-compatible across releases - dropping in a
-key from a newer build never breaks an older Paneflow binary.
-
-The JSON Schema additionally rejects unknown keys at edit time
-(`additionalProperties: false`), so your editor flags typos before
-you save. The runtime stays permissive on purpose.
-
-## What's next? [#whats-next]

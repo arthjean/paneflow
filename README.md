@@ -143,9 +143,9 @@ The `paneflow` CLI talks to the same local socket as the app:
 ```bash
 paneflow ps
 paneflow read cargo-run --lines 100
-paneflow watch --json
+paneflow watch --type ai.stop
 paneflow send codex-review "Review this branch and report risks"
-paneflow wait --surface claude-impl --pattern "REPORT_DONE"
+paneflow wait --match claude-impl --pattern "REPORT_DONE"
 paneflow flow run examples/review-pipeline.flow.toml
 ```
 

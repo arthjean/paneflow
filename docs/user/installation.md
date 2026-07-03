@@ -1,6 +1,4 @@
-# Install Paneflow
-
-> Install Paneflow on Linux, macOS, or Windows in under two minutes.
+# installation
 
 Canonical: https://paneflow.dev/docs/installation
 
@@ -14,9 +12,9 @@ ends with a verify step so you know it worked.
 
 ## Pick your platform [#pick-your-platform]
 
-  
 
-  
+
+
 
 ## What you get [#what-you-get]
 
@@ -30,5 +28,4 @@ no background processes.
 
 For Linux PATH issues, jump to the [Linux troubleshooting section](/docs/installation/linux#what-if-paneflow-is-not-found-in-my-path).
 For Gatekeeper blocks on macOS, see the [macOS Gatekeeper section](/docs/installation/macos#what-if-macos-gatekeeper-blocks-the-app).
-For the Windows SmartScreen "Windows protected your PC" prompt, see the [Windows SmartScreen section](/docs/installation/windows#windows-protected-your-pc-on-first-launch).
 For any other issue, file a [GitHub issue](https://github.com/ArthurDEV44/paneflow/issues).
