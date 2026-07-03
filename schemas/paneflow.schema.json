@@ -504,6 +504,10 @@
           "type": ["string", "null"],
           "description": "Display name for the surface tab."
         },
+        "custom_name": {
+          "type": ["string", "null"],
+          "description": "User-assigned surface name. When set, it overrides the auto-derived surface name and survives restart."
+        },
         "command": {
           "type": ["string", "null"],
           "description": "Shell command to run on surface creation."
@@ -524,6 +528,20 @@
         "focus": {
           "type": ["boolean", "null"],
           "description": "When true, this surface receives initial focus."
+        },
+        "scrollback": {
+          "type": ["string", "null"],
+          "description": "Saved plain-text scrollback restored with the surface."
+        },
+        "agent": {
+          "type": ["string", "null"],
+          "description": "Stable tag of the agent CLI last detected in this surface, such as 'claude_code'."
+        },
+        "font_size": {
+          "type": ["number", "null"],
+          "description": "Per-surface font-size override in points. Null follows the global font_size.",
+          "minimum": 8.0,
+          "maximum": 32.0
         }
       }
     }

@@ -1422,6 +1422,10 @@ mod tests {
             .collect()
     }
 
+    fn key_set(keys: &[&str]) -> BTreeSet<String> {
+        keys.iter().map(|key| (*key).to_string()).collect()
+    }
+
     #[test]
     fn public_json_schema_covers_every_config_field() {
         let mut permissions = HashMap::new();
@@ -1546,6 +1550,60 @@ mod tests {
             object_keys(&serialized["tool_permissions"]["read"]),
             object_keys(&schema["definitions"]["toolPermissionsEntry"]["properties"]),
             "ToolPermissionsEntry and public JSON Schema drifted"
+        );
+
+        let command = CommandDefinition {
+            name: "Dev".to_string(),
+            description: Some("Open dev workspace".to_string()),
+            keywords: vec!["dev".to_string()],
+            workspace: Some(WorkspaceDefinition {
+                name: Some("Dev".to_string()),
+                cwd: Some("~/dev".to_string()),
+                layout_preset: Some("even_h".to_string()),
+                color: Some("007aff".to_string()),
+                layout: Some(LayoutNode::Pane {
+                    surfaces: vec![SurfaceDefinition {
+                        surface_type: Some("terminal".to_string()),
+                        name: Some("Claude".to_string()),
+                        custom_name: Some("Agent".to_string()),
+                        command: Some("claude".to_string()),
+                        prompt: Some("Review this".to_string()),
+                        cwd: Some("~/dev/app".to_string()),
+                        env: Some(HashMap::new()),
+                        focus: Some(true),
+                        scrollback: Some("previous output".to_string()),
+                        agent: Some("claude_code".to_string()),
+                        font_size: Some(13.0),
+                    }],
+                }),
+            }),
+            command: None,
+        };
+        let serialized_command = serde_json::to_value(command).unwrap();
+        assert_eq!(
+            object_keys(&serialized_command),
+            object_keys(&schema["definitions"]["commandDefinition"]["properties"]),
+            "CommandDefinition and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized_command["workspace"]),
+            object_keys(&schema["definitions"]["workspaceDefinition"]["properties"]),
+            "WorkspaceDefinition and public JSON Schema drifted"
+        );
+        assert_eq!(
+            key_set(&["type", "surfaces"]),
+            object_keys(&schema["definitions"]["layoutNode"]["oneOf"][0]["properties"]),
+            "Pane layout node and public JSON Schema drifted"
+        );
+        assert_eq!(
+            key_set(&["type", "direction", "ratio", "ratios", "children"]),
+            object_keys(&schema["definitions"]["layoutNode"]["oneOf"][1]["properties"]),
+            "Split layout node and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized_command["workspace"]["layout"]["surfaces"][0]),
+            object_keys(&schema["definitions"]["surface"]["properties"]),
+            "SurfaceDefinition and public JSON Schema drifted"
         );
     }
 
