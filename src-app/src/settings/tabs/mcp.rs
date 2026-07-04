@@ -154,6 +154,7 @@ impl PaneFlowApp {
                         StatusKind::NotDetected => ("not detected", false),
                         StatusKind::Installed { .. } => ("installed", false),
                         StatusKind::Stale { .. } => ("stale path - click Repair", false),
+                        StatusKind::NeedsRepair { .. } => ("needs repair - click Repair", false),
                         StatusKind::NotInstalled => ("not installed", false),
                         StatusKind::Error(e) => {
                             return (format!("{}: error - {e}", r.label).into(), true);

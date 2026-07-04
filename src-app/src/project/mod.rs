@@ -42,6 +42,14 @@ static NEXT_PROJECT_ID: AtomicU64 = AtomicU64::new(1);
 /// [`crate::workspace::next_workspace_id`] (US-007 AC).
 static NEXT_THREAD_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Restore caps for `session.json`. The file-size cap protects memory, but a
+/// compact session can still encode thousands of projects/chats that fan out
+/// into git probes, sidebar rows, and terminal-cache work after boot.
+pub const MAX_RESTORED_PROJECTS: usize = 128;
+pub const MAX_RESTORED_THREADS_PER_PROJECT: usize = 256;
+pub const MAX_RESTORED_CHATS: usize = 512;
+pub const MAX_RESTORED_TOTAL_THREADS: usize = 2048;
+
 pub fn next_project_id() -> u64 {
     NEXT_PROJECT_ID.fetch_add(1, Ordering::Relaxed)
 }
@@ -353,7 +361,7 @@ pub fn project_to_session(p: &Project) -> ProjectSession {
 
 /// Convert an in-memory [`Thread`] to its persisted shape. The
 /// runtime `status` is intentionally not persisted -- every thread
-/// restores as `Idle`; live state is rebuilt from the ACP stream.
+/// restores as `Idle`; live state is rebuilt from hook/IPC events.
 pub fn thread_to_session(t: &Thread) -> ThreadSession {
     ThreadSession {
         id: t.id,
@@ -391,14 +399,53 @@ pub fn thread_to_session(t: &Thread) -> ThreadSession {
 /// deliberately excluded for v1", so any future tag we don't yet
 /// recognise should surface as a missing thread, not a crash.
 pub fn project_from_session(s: &ProjectSession) -> Project {
+    let mut remaining_threads = usize::MAX;
+    project_from_session_with_budget(s, &mut remaining_threads)
+}
+
+/// Budgeted inverse of [`project_to_session`] used by bootstrap restore.
+pub fn project_from_session_with_budget(
+    s: &ProjectSession,
+    remaining_threads: &mut usize,
+) -> Project {
+    if s.threads.len() > MAX_RESTORED_THREADS_PER_PROJECT {
+        log::warn!(
+            "session restore: project `{}` has {} thread(s), capping at {MAX_RESTORED_THREADS_PER_PROJECT}",
+            s.title,
+            s.threads.len()
+        );
+    }
+    let mut threads = Vec::new();
+    for thread in s.threads.iter().take(MAX_RESTORED_THREADS_PER_PROJECT) {
+        if *remaining_threads == 0 {
+            break;
+        }
+        if let Some(thread) = thread_from_session(thread) {
+            threads.push(thread);
+            *remaining_threads = remaining_threads.saturating_sub(1);
+        }
+    }
+
     Project {
         id: s.id,
         title: s.title.clone(),
         cwd: s.cwd.clone(),
         is_expanded: s.is_expanded,
-        threads: s.threads.iter().filter_map(thread_from_session).collect(),
+        threads,
         git_stats: crate::workspace::GitDiffStats::default(),
     }
+}
+
+pub fn thread_from_session_with_budget(
+    s: &ThreadSession,
+    remaining_threads: &mut usize,
+) -> Option<Thread> {
+    if *remaining_threads == 0 {
+        return None;
+    }
+    let thread = thread_from_session(s)?;
+    *remaining_threads = remaining_threads.saturating_sub(1);
+    Some(thread)
 }
 
 /// Inverse of [`thread_to_session`]. Returns `None` on unknown agent
@@ -704,6 +751,40 @@ mod tests {
         let restored = project_from_session(&session);
         // The unknown thread is silently dropped (forward-compat).
         assert!(restored.threads.is_empty());
+    }
+
+    #[test]
+    fn project_restore_respects_thread_budget() {
+        let threads = (0..3)
+            .map(|id| ThreadSession {
+                id,
+                title: format!("Thread {id}"),
+                agent: "claude_code".to_string(),
+                cwd: "/tmp".to_string(),
+                created_at: 0,
+                model: None,
+                mode: None,
+                store_id: None,
+                kind: None,
+                terminal_agent: None,
+                pinned: false,
+                session_id: None,
+                title_user_set: false,
+            })
+            .collect();
+        let session = ProjectSession {
+            id: 1,
+            title: "P".to_string(),
+            cwd: "/tmp".to_string(),
+            is_expanded: true,
+            threads,
+        };
+        let mut remaining = 2;
+
+        let restored = project_from_session_with_budget(&session, &mut remaining);
+
+        assert_eq!(restored.threads.len(), 2);
+        assert_eq!(remaining, 0);
     }
 
     /// US-001: the `pinned` flag survives a thread -> session -> thread

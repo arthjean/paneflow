@@ -26,18 +26,149 @@ use anyhow::{Context, Result};
 /// Present but unparseable → `Err` (caller must abort, never clobber).
 pub fn read_json_or_default(path: &Path) -> Result<serde_json::Value> {
     match std::fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| {
+        Ok(bytes) => parse_json_or_jsonc(path, &bytes),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(serde_json::Value::Object(serde_json::Map::new()))
+        }
+        Err(e) => Err(e).with_context(|| format!("read {} failed", path.display())),
+    }
+}
+
+fn parse_json_or_jsonc(path: &Path, bytes: &[u8]) -> Result<serde_json::Value> {
+    match serde_json::from_slice(bytes) {
+        Ok(value) => Ok(value),
+        Err(_json_error) if path.extension().and_then(|e| e.to_str()) == Some("jsonc") => {
+            let text = std::str::from_utf8(bytes).with_context(|| {
+                format!(
+                    "{} is not valid UTF-8 JSONC - refusing to overwrite it; fix or remove it, then re-run",
+                    path.display()
+                )
+            })?;
+            let normalized = normalize_jsonc(text);
+            serde_json::from_str(&normalized).with_context(|| {
+                format!(
+                    "{} is not valid JSONC - refusing to overwrite it; fix or remove it, then re-run",
+                    path.display()
+                )
+            })
+        }
+        Err(json_error) => Err(json_error).with_context(|| {
             format!(
                 "{} is not valid JSON - refusing to overwrite it; \
                  fix or remove it, then re-run",
                 path.display()
             )
         }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(serde_json::Value::Object(serde_json::Map::new()))
-        }
-        Err(e) => Err(e).with_context(|| format!("read {} failed", path.display())),
     }
+}
+
+fn normalize_jsonc(input: &str) -> String {
+    remove_trailing_commas(&strip_jsonc_comments(input))
+}
+
+fn strip_jsonc_comments(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while let Some(ch) = chars.next() {
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+
+        if ch == '/' {
+            match chars.peek().copied() {
+                Some('/') => {
+                    chars.next();
+                    for comment_ch in chars.by_ref() {
+                        if comment_ch == '\n' {
+                            out.push('\n');
+                            break;
+                        }
+                    }
+                    continue;
+                }
+                Some('*') => {
+                    chars.next();
+                    let mut prev = '\0';
+                    for comment_ch in chars.by_ref() {
+                        if comment_ch == '\n' {
+                            out.push('\n');
+                        }
+                        if prev == '*' && comment_ch == '/' {
+                            break;
+                        }
+                        prev = comment_ch;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        out.push(ch);
+    }
+
+    out
+}
+
+fn remove_trailing_commas(input: &str) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            i += 1;
+            continue;
+        }
+
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+
+        if ch == ',' {
+            let next = chars[i + 1..].iter().copied().find(|c| !c.is_whitespace());
+            if matches!(next, Some('}') | Some(']')) {
+                i += 1;
+                continue;
+            }
+        }
+
+        out.push(ch);
+        i += 1;
+    }
+
+    out
 }
 
 /// Upsert `root[container_key][entry_name] = entry_value`, creating the
@@ -255,6 +386,31 @@ mod tests {
         std::fs::write(&p, b"{ not json").unwrap();
         let err = read_json_or_default(&p).unwrap_err();
         assert!(err.to_string().contains("not valid JSON"));
+    }
+
+    #[test]
+    fn read_jsonc_allows_comments_and_trailing_commas() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("opencode.jsonc");
+        std::fs::write(
+            &p,
+            br#"
+{
+  // user comment
+  "mcp": {
+    "paneflow": {
+      "command": ["/p"], // trailing comment
+    },
+  },
+  "url": "https://example.com/path//kept"
+}
+"#,
+        )
+        .unwrap();
+
+        let v = read_json_or_default(&p).unwrap();
+        assert_eq!(v["mcp"]["paneflow"]["command"], json!(["/p"]));
+        assert_eq!(v["url"], json!("https://example.com/path//kept"));
     }
 
     #[test]

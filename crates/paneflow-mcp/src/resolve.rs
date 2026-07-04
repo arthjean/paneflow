@@ -28,6 +28,10 @@ pub fn surface_ref_from_json(v: &Value) -> Option<SurfaceRef> {
 /// exact → case-insensitive exact → unique case-insensitive prefix.
 /// Ambiguity or no match yields a candidate-listing error.
 pub fn resolve_target(surfaces: &[SurfaceRef], query: &str) -> Result<u64, String> {
+    if query.trim().is_empty() {
+        return Err("surface name must not be empty".to_string());
+    }
+
     let exact: Vec<&SurfaceRef> = surfaces.iter().filter(|s| s.name == query).collect();
     match exact.as_slice() {
         [one] => return Ok(one.surface_id),
@@ -132,6 +136,15 @@ mod tests {
         assert!(err.contains("no surface matches"), "got: {err}");
         assert!(err.contains("cargo-run"));
         assert!(err.contains("vite"));
+    }
+
+    #[test]
+    fn empty_query_is_error() {
+        let set = [s(1, "cargo-run")];
+        let err = resolve_target(&set, "").expect_err("empty");
+        assert!(err.contains("must not be empty"), "got: {err}");
+        let err = resolve_target(&set, "   ").expect_err("blank");
+        assert!(err.contains("must not be empty"), "got: {err}");
     }
 
     #[test]

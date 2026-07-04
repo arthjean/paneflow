@@ -17,7 +17,7 @@ use serde_json::json;
 
 use crate::agents::{support, AgentConfigWriter, InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::detect::{self, Presence};
-use crate::merge;
+use crate::{io, merge};
 
 const CLI: &str = "claude";
 const CONTAINER: &str = "mcpServers";
@@ -49,6 +49,19 @@ impl ClaudeCode {
         // No `env` (D5). `type: "stdio"` matches what `claude mcp add` writes.
         json!({ "type": "stdio", "command": bridge, "args": [] })
     }
+
+    fn validate_entry(entry: &serde_json::Value, expected: Option<&Path>) -> StatusOutcome {
+        let found = support::string_command(entry);
+        let shape_ok = found
+            .as_deref()
+            .is_some_and(|path| *entry == Self::entry(path));
+        support::classify_entry(
+            found,
+            expected,
+            shape_ok,
+            "Claude Code MCP entry must be stdio, have empty args, and no env block",
+        )
+    }
 }
 
 impl Default for ClaudeCode {
@@ -75,16 +88,16 @@ impl AgentConfigWriter for ClaudeCode {
         let path = self.path()?;
         let bridge_s = bridge.to_string_lossy().into_owned();
 
-        // Idempotency + update detection via a direct read of the same file
-        // the CLI writes. Avoids a duplicate-entry error from `claude mcp
-        // add` on re-run and lets us report AlreadyCurrent without writing.
-        let current = support::current_json_command(path, CONTAINER, support::string_command);
-        if current.as_deref() == Some(bridge_s.as_str()) {
+        // Idempotency + update detection via the same file the CLI writes.
+        // This validates the whole managed entry, not just the command path.
+        let status = support::json_status(path, CONTAINER, Some(bridge), Self::validate_entry)?;
+        if matches!(status, StatusOutcome::Installed { .. }) {
             return Ok(InstallOutcome::AlreadyCurrent);
         }
-        let had_prior = current.is_some();
+        let had_prior = support::json_entry_present(path, CONTAINER)?;
 
         if self.allow_cli && support::cli_on_path(CLI) {
+            io::backup(path)?;
             // A stale entry would make `add` conflict; remove it first
             // (best-effort - a missing entry just no-ops).
             if had_prior {
@@ -132,10 +145,11 @@ impl AgentConfigWriter for ClaudeCode {
         if path.exists() {
             merge::read_json_or_default(path)?;
         }
-        if support::current_json_command(path, CONTAINER, support::string_command).is_none() {
+        if !support::json_entry_present(path, CONTAINER)? {
             return Ok(UninstallOutcome::NothingToRemove);
         }
         if self.allow_cli && support::cli_on_path(CLI) {
+            io::backup(path)?;
             if let Ok(()) = support::shell_out(CLI, &["mcp", "remove", "paneflow"]) {
                 return Ok(UninstallOutcome::Removed);
             }
@@ -143,8 +157,8 @@ impl AgentConfigWriter for ClaudeCode {
         support::json_uninstall(path, CONTAINER)
     }
 
-    fn status(&self, bridge: &Path) -> Result<StatusOutcome> {
-        support::json_status(self.path()?, CONTAINER, bridge, support::string_command)
+    fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
+        support::json_status(self.path()?, CONTAINER, bridge, Self::validate_entry)
     }
 }
 
@@ -189,6 +203,33 @@ mod tests {
             w.install(Path::new("/data/paneflow-mcp")).unwrap(),
             InstallOutcome::AlreadyCurrent
         );
+    }
+
+    #[test]
+    fn status_needs_repair_when_shape_differs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join(".claude.json");
+        std::fs::write(
+            &p,
+            serde_json::to_vec(&json!({
+                "mcpServers": {
+                    "paneflow": {
+                        "type": "stdio",
+                        "command": "/data/paneflow-mcp",
+                        "args": [],
+                        "env": { "SHOULD_NOT_BE_HERE": "1" }
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let w = test_writer(p);
+
+        assert!(matches!(
+            w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
+            StatusOutcome::NeedsRepair { .. }
+        ));
     }
 
     #[test]
@@ -249,14 +290,14 @@ mod tests {
         let w = test_writer(p);
         w.install(Path::new("/data/paneflow-mcp")).unwrap();
         assert_eq!(
-            w.status(Path::new("/data/paneflow-mcp")).unwrap(),
+            w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
             StatusOutcome::Installed {
                 path: "/data/paneflow-mcp".into()
             }
         );
         assert_eq!(w.uninstall().unwrap(), UninstallOutcome::Removed);
         assert_eq!(
-            w.status(Path::new("/data/paneflow-mcp")).unwrap(),
+            w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
             StatusOutcome::NotInstalled
         );
     }

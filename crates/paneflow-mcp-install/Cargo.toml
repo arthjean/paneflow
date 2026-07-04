@@ -2,6 +2,7 @@
 name = "paneflow-mcp-install"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 description = "GPU-free install engine for the Paneflow MCP bridge: per-agent detection, idempotent config merge/backup/atomic-write primitives, and the `paneflow mcp install|uninstall|status` orchestrator."
 
@@ -21,15 +22,15 @@ toml_edit = "0.22"
 # Match the versions already compiled in the src-app dep graph so this
 # crate adds no new transitive build (src-app pins which 8; dirs 6 matches
 # paneflow-acp). PRD: `which` is "déjà utilisé dans le workspace".
-which = "8"
-dirs = "6"
-anyhow = "1"
+which.workspace = true
+dirs.workspace = true
+anyhow.workspace = true
 # Surfaces shell-out failures (e.g. `claude mcp add` non-zero exit) to
 # stderr via the host's env_logger before the direct-merge fallback runs.
-log = "0.4"
+log.workspace = true
 # Used by `io::write_atomic` for same-dir temp file + atomic rename (not
 # test-only), so it lives in [dependencies], not [dev-dependencies].
-tempfile = "3"
+tempfile.workspace = true
 # EP-002 (prd-ultron-remediation, U-032): bound `claude mcp add` / `codex mcp
 # add` shell-outs with a wall-clock deadline. std-only, no transitive build.
 paneflow-process = { workspace = true }

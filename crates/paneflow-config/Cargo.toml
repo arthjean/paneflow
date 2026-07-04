@@ -2,18 +2,19 @@
 name = "paneflow-config"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tracing = "0.1"
-notify = "7"
-dirs = "6"
+tracing.workspace = true
+notify.workspace = true
+dirs.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true

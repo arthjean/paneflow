@@ -1,6 +1,6 @@
 // US-017: Config schema types
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Current on-disk schema version for [`SessionState`].
@@ -434,18 +434,71 @@ fn lenient_opt_bool<'de, D>(d: D) -> Result<Option<bool>, D::Error>
 where
     D: serde::Deserializer<'de>,
 {
+    lenient_opt_value(d, "boolean config toggle")
+}
+
+fn lenient_opt_string<'de, D>(d: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "string config value")
+}
+
+fn lenient_opt_usize<'de, D>(d: D) -> Result<Option<usize>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "positive integer config value")
+}
+
+fn lenient_opt_f32<'de, D>(d: D) -> Result<Option<f32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "number config value")
+}
+
+fn lenient_opt_cursor_shape<'de, D>(d: D) -> Result<Option<CursorShapeConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "terminal cursor shape")
+}
+
+fn lenient_opt_cursor_blink<'de, D>(d: D) -> Result<Option<CursorBlinkConfig>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "terminal cursor blink mode")
+}
+
+fn lenient_opt_string_map<'de, D>(d: D) -> Result<Option<HashMap<String, String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    lenient_opt_value(d, "string map config value")
+}
+
+fn lenient_opt_value<'de, D, T>(d: D, expected: &'static str) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: DeserializeOwned,
+{
     let v = Option::<serde_json::Value>::deserialize(d)?;
     Ok(match v {
         None | Some(serde_json::Value::Null) => None,
-        Some(serde_json::Value::Bool(b)) => Some(b),
-        Some(other) => {
-            tracing::warn!(
-                target: "paneflow_config",
-                value = %other,
-                "expected a boolean config toggle, ignoring value and using resolver default",
-            );
-            None
-        }
+        Some(value) => match serde_json::from_value::<T>(value.clone()) {
+            Ok(parsed) => Some(parsed),
+            Err(_) => {
+                tracing::warn!(
+                    target: "paneflow_config",
+                    value = %value,
+                    expected,
+                    "config value has an unexpected type, ignoring value and using resolver default",
+                );
+                None
+            }
+        },
     })
 }
 
@@ -601,16 +654,20 @@ pub struct TerminalConfig {
     /// Render programming-font ligatures (FiraCode `=>`, `!=`, …) when
     /// `Some(true)`. `None` and `Some(false)` both keep the historical
     /// behavior of disabling ligatures via GPUI's `FontFeatures`.
+    #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub ligatures: Option<bool>,
     /// Draw built-in block-element glyphs as filled quads instead of using the
     /// font glyph. `None` resolves to enabled, matching Paneflow's historical
     /// renderer behavior.
+    #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub integrated_glyphs: Option<bool>,
     /// Render emoji with the platform color-emoji path. `None` resolves to
     /// enabled, matching Windows Terminal and GPUI's default behavior.
+    #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub color_emoji: Option<bool>,
     /// Override the terminal cursor color with a `#RRGGBB` value. `None` keeps
     /// the active color scheme cursor color.
+    #[serde(default, deserialize_with = "lenient_opt_string")]
     pub cursor_color: Option<String>,
     /// Maximum scrollback history in lines (`max_scroll_history_lines`).
     /// `None` resolves to
@@ -620,21 +677,32 @@ pub struct TerminalConfig {
     /// conservative while advanced users can opt into a larger line budget.
     /// Read once at PTY spawn time; changing this value takes effect on
     /// the next new terminal.
+    #[serde(default, deserialize_with = "lenient_opt_usize")]
     pub scrollback_lines: Option<usize>,
     /// US-007: default cursor shape before any app-driven DECSCUSR escape.
     /// `None` resolves to `Block`. Read once at terminal construction.
+    #[serde(default, deserialize_with = "lenient_opt_cursor_shape")]
     pub cursor_shape: Option<CursorShapeConfig>,
     /// US-008: cursor blink override. `None` resolves to `TerminalControlled`
     /// (defer to DECSCUSR). Read once at terminal construction.
+    #[serde(default, deserialize_with = "lenient_opt_cursor_blink")]
     pub cursor_blink: Option<CursorBlinkConfig>,
     /// US-014: global default extra environment variables injected into every
     /// new terminal PTY. Per-surface `env` ([`SurfaceDefinition::env`]) is
-    /// merged on top of these (surface wins on key collision). The identity
-    /// keys `TERM` and `COLORTERM` are always protected and cannot be
-    /// overridden. On Windows, env names are case-insensitive, so user keys are
+    /// merged on top of these (surface wins on key collision). `TERM`,
+    /// `COLORTERM`, and Paneflow identity keys (`PANEFLOW_WORKSPACE_ID`,
+    /// `PANEFLOW_SURFACE_ID`, `PANEFLOW_SOCKET_PATH`, `PANEFLOW_BIN_DIR`) are
+    /// protected and cannot be overridden. `LD_*` and `DYLD_*` keys are dropped
+    /// before PTY spawn. A custom `PATH` is allowed, but Paneflow re-prepends
+    /// `PANEFLOW_BIN_DIR` afterward so agent commands still route through the
+    /// shim. On Windows, env names are case-insensitive, so user keys are
     /// normalised to uppercase before merging to avoid a `Path`/`PATH` clash.
     /// `None` (block absent) and `Some({})` both inject nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "lenient_opt_string_map"
+    )]
     pub env: Option<HashMap<String, String>>,
     /// US-022: scroll-wheel multiplier for the non-mouse-mode scrollback path.
     /// Multiplies the pixel delta before the line accumulator, so `> 1.0` speeds
@@ -643,6 +711,7 @@ pub struct TerminalConfig {
     /// corrupt the report) and in the alt-screen alternate-scroll path. `None`
     /// resolves to `1.0`. Clamped to `[0.1, 10.0]`. Read when a TerminalView is
     /// constructed, so existing terminals keep their current scroll feel.
+    #[serde(default, deserialize_with = "lenient_opt_f32")]
     pub scroll_multiplier: Option<f32>,
 }
 
@@ -1386,7 +1455,8 @@ pub struct SurfaceDefinition {
     pub prompt: Option<String>,
     /// Working directory override for this surface.
     pub cwd: Option<String>,
-    /// Extra environment variables.
+    /// Extra environment variables merged over `terminal.env`. The same
+    /// protected-key and loader-key filtering applies at PTY spawn.
     pub env: Option<HashMap<String, String>>,
     /// Whether this surface should receive initial focus.
     pub focus: Option<bool>,

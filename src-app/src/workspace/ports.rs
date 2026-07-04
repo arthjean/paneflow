@@ -341,6 +341,9 @@ pub fn scan_panes(
     let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::new();
     let mut subtrees: Vec<(u64, Vec<u32>)> = Vec::with_capacity(roots.len());
     for &(key, root_pid) in roots {
+        if root_pid == 0 {
+            continue;
+        }
         let pids = bfs_descendants_linux(root_pid, &mut visited);
         subtrees.push((key, pids));
     }
@@ -677,6 +680,9 @@ pub fn scan_panes(
     let children_of = macos_children_map();
     let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for &(key, root_pid) in roots {
+        if root_pid == 0 {
+            continue;
+        }
         let pids = bfs_descendants_macos(root_pid, &children_of, &mut visited);
 
         // `libproc::name` returns the kernel's `p_comm` - same semantics
@@ -917,6 +923,153 @@ fn windows_listen_ports_by_pid() -> std::collections::HashMap<u32, Vec<u16>> {
 }
 
 #[cfg(windows)]
+fn argv_of_windows(pid: u32) -> Vec<String> {
+    windows_command_line(pid)
+        .map(|line| windows_command_line_to_argv(&line))
+        .unwrap_or_default()
+}
+
+#[cfg(windows)]
+fn windows_command_line(pid: u32) -> Option<String> {
+    use std::mem;
+    use windows_sys::Wdk::System::Threading::{NtQueryInformationProcess, ProcessBasicInformation};
+    use windows_sys::Win32::Foundation::{CloseHandle, UNICODE_STRING};
+    use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PEB, PROCESS_BASIC_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+        PROCESS_VM_READ, RTL_USER_PROCESS_PARAMETERS,
+    };
+
+    const MAX_COMMAND_LINE_BYTES: usize = 64 * 1024;
+
+    if pid == 0 {
+        return None;
+    }
+
+    unsafe fn read_remote<T: Copy>(
+        handle: windows_sys::Win32::Foundation::HANDLE,
+        ptr: *const T,
+    ) -> Option<T> {
+        let mut value: T = unsafe { mem::zeroed() };
+        let mut read = 0usize;
+        let ok = unsafe {
+            ReadProcessMemory(
+                handle,
+                ptr.cast(),
+                (&mut value as *mut T).cast(),
+                mem::size_of::<T>(),
+                &mut read,
+            )
+        };
+        (ok != 0 && read == mem::size_of::<T>()).then_some(value)
+    }
+
+    unsafe fn read_unicode_string(
+        handle: windows_sys::Win32::Foundation::HANDLE,
+        value: UNICODE_STRING,
+    ) -> Option<String> {
+        let len = value.Length as usize;
+        if len == 0
+            || len > MAX_COMMAND_LINE_BYTES
+            || !len.is_multiple_of(2)
+            || value.Buffer.is_null()
+        {
+            return None;
+        }
+        let mut bytes = vec![0u16; len / 2];
+        let mut read = 0usize;
+        let ok = unsafe {
+            ReadProcessMemory(
+                handle,
+                value.Buffer.cast(),
+                bytes.as_mut_ptr().cast(),
+                len,
+                &mut read,
+            )
+        };
+        (ok != 0 && read == len).then(|| String::from_utf16_lossy(&bytes))
+    }
+
+    // SAFETY: the handle is closed before returning on every path.
+    let handle =
+        unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid) };
+    if handle.is_null() {
+        return None;
+    }
+
+    let result = (|| {
+        let mut info: PROCESS_BASIC_INFORMATION = unsafe { mem::zeroed() };
+        let status = unsafe {
+            NtQueryInformationProcess(
+                handle,
+                ProcessBasicInformation,
+                (&mut info as *mut PROCESS_BASIC_INFORMATION).cast(),
+                mem::size_of::<PROCESS_BASIC_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if status < 0 || info.PebBaseAddress.is_null() {
+            return None;
+        }
+        let peb: PEB = unsafe { read_remote(handle, info.PebBaseAddress.cast())? };
+        if peb.ProcessParameters.is_null() {
+            return None;
+        }
+        let params: RTL_USER_PROCESS_PARAMETERS =
+            unsafe { read_remote(handle, peb.ProcessParameters.cast())? };
+        unsafe { read_unicode_string(handle, params.CommandLine) }
+    })();
+
+    // SAFETY: `handle` is owned by this function.
+    unsafe { CloseHandle(handle) };
+    result
+}
+
+#[cfg(windows)]
+fn windows_command_line_to_argv(command_line: &str) -> Vec<String> {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
+
+    let mut wide: Vec<u16> = command_line
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut argc = 0i32;
+    // SAFETY: `wide` is NUL-terminated and lives until CommandLineToArgvW
+    // returns. The returned allocation is released with LocalFree.
+    let argv = unsafe { CommandLineToArgvW(wide.as_mut_ptr(), &mut argc) };
+    if argv.is_null() || argc <= 0 {
+        return command_line
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+    }
+
+    let mut args = Vec::with_capacity(argc as usize);
+    // SAFETY: CommandLineToArgvW returns `argc` pointers on success.
+    let slice = unsafe { std::slice::from_raw_parts(argv, argc as usize) };
+    for &ptr in slice {
+        if ptr.is_null() {
+            continue;
+        }
+        let mut len = 0usize;
+        // SAFETY: each pointer is a NUL-terminated UTF-16 string owned by the
+        // CommandLineToArgvW result allocation.
+        unsafe {
+            while *ptr.add(len) != 0 {
+                len += 1;
+            }
+            args.push(String::from_utf16_lossy(std::slice::from_raw_parts(
+                ptr, len,
+            )));
+        }
+    }
+    // SAFETY: `argv` was allocated by CommandLineToArgvW.
+    unsafe { LocalFree(argv.cast()) };
+    args
+}
+
+#[cfg(windows)]
 pub fn scan_panes(
     roots: &[(u64, u32)],
     agent_binaries: &[&str],
@@ -935,6 +1088,9 @@ pub fn scan_panes(
 
     let mut visited: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for &(key, root_pid) in roots {
+        if root_pid == 0 {
+            continue;
+        }
         let pids = bfs_descendants_windows(root_pid, &entries, &mut visited);
         let comms: Vec<String> = if agent_binaries.is_empty() {
             Vec::new()
@@ -951,8 +1107,11 @@ pub fn scan_panes(
             let Some(pid_ports) = listen_ports.get(&pid) else {
                 continue;
             };
-            let frontend = exe_by_pid.get(&pid).and_then(|exe| {
-                classify_frontend_argv([normalize_process_basename(exe)].into_iter())
+            let argv = argv_of_windows(pid);
+            let frontend = classify_frontend_argv(argv.iter().map(String::as_str)).or_else(|| {
+                exe_by_pid.get(&pid).and_then(|exe| {
+                    classify_frontend_argv([normalize_process_basename(exe)].into_iter())
+                })
             });
             ports.extend(
                 pid_ports
@@ -1074,6 +1233,18 @@ mod tests {
         assert_eq!(windows_port_from_network_order(0x901F), 8080);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_line_argv_classifies_node_frontend() {
+        let args = windows_command_line_to_argv(
+            r#""C:\Program Files\nodejs\node.exe" "C:\repo\node_modules\.bin\vite" --host"#,
+        );
+        assert_eq!(
+            classify_frontend_argv(args.iter().map(String::as_str)),
+            Some("Vite")
+        );
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos", windows))]
     #[test]
     fn scan_panes_detects_current_process_listener() {
@@ -1089,6 +1260,16 @@ mod tests {
         assert!(
             ports.contains(&port),
             "scan_panes must detect a live listener owned by the root pid; got {ports:?}"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", windows))]
+    #[test]
+    fn scan_panes_ignores_pid_zero_roots() {
+        let scan = scan_panes(&[(1, 0)], &[]);
+        assert!(
+            scan.is_empty(),
+            "pid 0 is a display-only sentinel and must not scan the system tree"
         );
     }
 

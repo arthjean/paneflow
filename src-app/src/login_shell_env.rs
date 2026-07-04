@@ -35,7 +35,8 @@
 //! mutates the process-global environment and MUST run on the main thread
 //! before any other thread is spawned (Rust 2024 marks `set_var` `unsafe`). The
 //! one helper thread it spawns to read stdout is always joined before the
-//! `set_var`.
+//! `set_var`. On timeout the capture process group is killed and the reader
+//! may be detached instead of wedging startup behind an inherited stdout FD.
 
 #[cfg(not(unix))]
 pub fn load_login_shell_env() {}
@@ -107,7 +108,7 @@ pub fn load_login_shell_env() {
     };
 
     let Some(mut stdout) = child.stdout.take() else {
-        let _ = child.kill();
+        terminate_login_shell_capture(&mut child);
         let _ = child.wait();
         return;
     };
@@ -133,9 +134,15 @@ pub fn load_login_shell_env() {
             log::warn!(
                 "login-shell env: {capture_shell:?} did not finish within 5s; keeping the inherited PATH"
             );
-            let _ = child.kill();
+            terminate_login_shell_capture(&mut child);
             let _ = child.wait();
-            let _ = reader.join();
+            if rx.recv_timeout(Duration::from_millis(250)).is_ok() {
+                let _ = reader.join();
+            } else {
+                log::warn!(
+                    "login-shell env: stdout reader stayed blocked after timeout; continuing startup"
+                );
+            }
             return;
         }
     };
@@ -172,6 +179,20 @@ fn is_posix_capture_shell(shell: &str) -> bool {
         base,
         "sh" | "bash" | "zsh" | "dash" | "ksh" | "ash" | "mksh" | "fish"
     )
+}
+
+#[cfg(unix)]
+fn terminate_login_shell_capture(child: &mut std::process::Child) {
+    let child_pid = child.id();
+    if child_pid <= i32::MAX as u32 {
+        let pgid = child_pid as libc::pid_t;
+        // SAFETY: the child was spawned after `setsid`, so its PID is also the
+        // process group id for normal rc-script descendants.
+        unsafe {
+            libc::kill(-pgid, libc::SIGKILL);
+        }
+    }
+    let _ = child.kill();
 }
 
 /// Extract the `PATH=` value from newline-delimited `env` output that follows

@@ -26,9 +26,9 @@
 //!   privileged third party bypasses the file-mode check
 //!   (e.g. CAP_DAC_OVERRIDE, mode-fixing automation), the kernel
 //!   credential check still rejects them.
-//! - **Windows** uses Named Pipes whose default DACL grants only the
-//!   owning user + LocalSystem + Administrators. SDDL hardening is
-//!   deferred (cf. `prd-stabilization-2026-q2.md` §10 out-of-scope).
+//! - **Windows** uses Named Pipes with an explicit SDDL security
+//!   descriptor for LocalSystem, Administrators, and the object owner.
+//!   We do not rely on the platform default DACL.
 //!
 //! No HMAC tokens, no TLS - both would add complexity without
 //! meaningful gain on a local-only socket. If the IPC ever grows a
@@ -46,7 +46,13 @@
 //!   side effects on the UI; no file/system mutation.
 //! - `workspace.create`: spawns a PTY at `cwd`. `cwd` is
 //!   canonicalised (US-014) and rejected if not a directory.
-//! - `surface.split`: layout mutation, bounded by `MAX_PANES`.
+//! - `surface.split`: layout mutation, bounded by `MAX_PANES`. Bare layout
+//!   splits are navigation-level; spawn fields are gated like `workspace.up`.
+//! - `workspace.up`: multi-pane creation. Navigation-only pane specs are
+//!   allowed for same-UID clients, but `command`, `prompt`, `context`, and
+//!   non-empty `env` are orchestration primitives gated behind
+//!   `PANEFLOW_IPC_ORCHESTRATION=1`. `PANEFLOW_IPC_SCRIPTING=1` also enables
+//!   them as a broader legacy opt-in.
 //! - **`surface.send_text` / `surface.send_keystroke`: same-UID RCE
 //!   primitive when enabled.** A connected client can inject
 //!   arbitrary bytes (including `\n`) into any visible PTY,
@@ -88,17 +94,16 @@
 //! Handlers may return a structured JSON-RPC error by emitting the
 //! `_jsonrpc_error` sentinel (see `app::ipc_handler::JsonRpcError`); the
 //! dispatcher promotes it to a proper `error` envelope. Legacy
-//! application errors returned as `{"error": "string"}` continue to flow
-//! through the `result` field for backward compatibility.
+//! application errors returned as `{"error": "string"}` are also promoted
+//! so clients never treat failures as successful `result` payloads.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
     mpsc,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use interprocess::TryClone;
 use interprocess::local_socket::{GenericFilePath, Listener, ListenerOptions, Stream, prelude::*};
@@ -106,6 +111,10 @@ use interprocess::local_socket::{GenericFilePath, Listener, ListenerOptions, Str
 // detection accept loop; gating the import keeps the Windows build warning-free.
 #[cfg(unix)]
 use interprocess::local_socket::ListenerNonblockingMode;
+#[cfg(windows)]
+use interprocess::os::windows::{
+    local_socket::ListenerOptionsExt, security_descriptor::SecurityDescriptor,
+};
 use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
@@ -124,6 +133,10 @@ pub struct IpcRequest {
     /// client gave up - otherwise a client retry would create duplicate
     /// workspaces/panes.
     pub cancelled: Arc<AtomicBool>,
+    /// Set by the GPUI consumer just before `handle_ipc` runs. The socket
+    /// thread cancels only queued work; once a handler starts, it waits for the
+    /// real result so retrying clients do not duplicate mutations.
+    pub started: Arc<AtomicBool>,
     /// EP-003 US-010 (agent-control-plane): the socket peer's PID, captured
     /// from `SO_PEERCRED` once per connection (None on macOS/Windows, where
     /// the local-socket peer PID is not exposed). Used only to trace writes
@@ -170,6 +183,11 @@ pub(crate) const IPC_DRAIN_MAX_DEQUEUES_PER_TICK: usize = IPC_DRAIN_MAX_PER_TICK
 /// enough never to cut a real request (clients send immediately on connect
 /// and use one connection per request).
 const IPC_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Deadline for server-side writes. A peer that connects and stops draining
+/// must not pin a handler thread while Paneflow tries to write a reply,
+/// overload rejection, heartbeat, or event frame.
+const IPC_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub(crate) struct IpcStatus {
@@ -225,9 +243,17 @@ pub fn start_server() -> (
     // posture in `paneflow-debug.log` so the operator notices when
     // PANEFLOW_IPC_SCRIPTING was inherited from a launcher script or
     // sourced .env file without their realising.
-    if std::env::var("PANEFLOW_IPC_SCRIPTING").as_deref() == Ok("1") {
+    let scripting_enabled = std::env::var("PANEFLOW_IPC_SCRIPTING").as_deref() == Ok("1");
+    let orchestration_enabled =
+        scripting_enabled || std::env::var("PANEFLOW_IPC_ORCHESTRATION").as_deref() == Ok("1");
+    if scripting_enabled {
         tracing::warn!(
             "ipc.scripting_enabled is ON; any same-UID process can inject keystrokes into agent panes"
+        );
+    }
+    if orchestration_enabled {
+        tracing::warn!(
+            "ipc.orchestration_enabled is ON; any same-UID process can create panes with commands, prompts, context, or env"
         );
     }
 
@@ -242,7 +268,7 @@ pub fn start_server() -> (
     let thread_event_bus = Arc::clone(&event_bus);
 
     // Singleton guard: probe the socket BEFORE the IPC thread spawns and
-    // before `bind_socket` blindly `remove_file`s any existing socket. If
+    // before `bind_socket` reclaims any stale socket. If
     // another live Paneflow instance is already listening, two parallel
     // processes will otherwise enter an endless mutual clobber loop -
     // each detects the other's rebind at the next 5 s health check, drops
@@ -255,19 +281,19 @@ pub fn start_server() -> (
     // rare case of intentional side-by-side debug instances. Tests do
     // not call `start_server`, so they are unaffected.
     if std::env::var_os("PANEFLOW_ALLOW_MULTIPLE").is_none()
-        && let Some(path) = socket_path()
-        && let Some(info) = detect_existing_instance(&path)
+        && let Some(socket_spec) = socket_path_spec()
+        && let Some(info) = detect_existing_instance(socket_spec.path())
     {
         eprintln!(
             "paneflow: another Paneflow instance is already running on {}.\n\
              Existing instance: {}\n\
              Close the open window first, or set PANEFLOW_ALLOW_MULTIPLE=1 to override.",
-            path.display(),
+            socket_spec.path().display(),
             info
         );
         log::error!(
             "singleton guard: refusing to start; existing instance on {} ({})",
-            path.display(),
+            socket_spec.path().display(),
             info
         );
         std::process::exit(1);
@@ -284,7 +310,7 @@ pub fn start_server() -> (
     let spawn_result = std::thread::Builder::new()
         .name("paneflow-ipc".into())
         .spawn(move || {
-            let Some(socket_path) = socket_path() else {
+            let Some(socket_spec) = socket_path_spec() else {
                 thread_status.disable();
                 log::warn!(
                     "paneflow: could not resolve a usable IPC socket path - IPC server disabled. \
@@ -292,21 +318,15 @@ pub fn start_server() -> (
                 );
                 return;
             };
+            let socket_path = socket_spec.path().to_path_buf();
 
             // Only Unix needs the containing directory to exist - the
             // Windows named-pipe path lives in the kernel namespace, not
             // the filesystem.
             #[cfg(unix)]
-            if let Some(parent) = socket_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-                // Lock the socket's containing dir to the owner. Under
-                // $XDG_RUNTIME_DIR this already holds, but the fallback chain
-                // ($TMPDIR / ~/.cache/run) can land in a world-traversable
-                // /tmp - 0700 stops other local users from reaching the socket
-                // at all (defense-in-depth atop the socket's own 0600 +
-                // SO_PEERCRED).
-                use std::os::unix::fs::PermissionsExt as _;
-                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+            if !prepare_socket_parent(&socket_spec) {
+                thread_status.disable();
+                return;
             }
 
             let listener = match bind_socket(&socket_path) {
@@ -443,7 +463,7 @@ pub fn start_server() -> (
             // belt-and-braces no-op there and never runs on Windows
             // (nothing to remove in the named-pipe namespace).
             #[cfg(unix)]
-            let _ = std::fs::remove_file(&socket_path);
+            let _ = remove_socket_file_if_socket(&socket_path, "shutdown cleanup");
         });
     if let Err(e) = spawn_result {
         status.disable();
@@ -472,7 +492,9 @@ fn bind_socket(socket_path: &std::path::Path) -> Option<Listener> {
     // Windows: no-op; the kernel pipe namespace does not retain stale
     // entries after the owning process exits.
     #[cfg(unix)]
-    let _ = std::fs::remove_file(socket_path);
+    if !remove_socket_file_if_socket(socket_path, "stale IPC socket cleanup") {
+        return None;
+    }
 
     let name = match socket_path.to_fs_name::<GenericFilePath>() {
         Ok(n) => n,
@@ -485,7 +507,24 @@ fn bind_socket(socket_path: &std::path::Path) -> Option<Listener> {
         }
     };
 
-    let listener = match ListenerOptions::new().name(name).create_sync() {
+    #[cfg(windows)]
+    let listener_result = match windows_named_pipe_security_descriptor() {
+        Ok(sd) => ListenerOptions::new()
+            .name(name)
+            .security_descriptor(sd)
+            .create_sync(),
+        Err(e) => {
+            log::error!(
+                "Failed to build IPC named-pipe security descriptor for {}: {e}",
+                socket_path.display()
+            );
+            return None;
+        }
+    };
+    #[cfg(not(windows))]
+    let listener_result = ListenerOptions::new().name(name).create_sync();
+
+    let listener = match listener_result {
         Ok(l) => l,
         Err(e) => {
             log::error!(
@@ -496,12 +535,7 @@ fn bind_socket(socket_path: &std::path::Path) -> Option<Listener> {
         }
     };
 
-    // chmod 0o600 - Unix only. Named pipes on Windows use ACLs; the
-    // default DACL from `CreateNamedPipe` grants access to LocalSystem,
-    // Administrators, and the owning user only, which matches the intent
-    // of 0o600. A custom SecurityDescriptor could be set via
-    // `ListenerOptions::security_descriptor` if we ever need to lock it
-    // down further, but v1 accepts the default.
+    // chmod 0o600 - Unix only. Windows named pipes use the explicit SDDL above.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -522,6 +556,105 @@ fn bind_socket(socket_path: &std::path::Path) -> Option<Listener> {
     }
     log::info!("IPC server listening on {}", socket_path.display());
     Some(listener)
+}
+
+#[cfg(windows)]
+fn windows_named_pipe_security_descriptor() -> std::io::Result<SecurityDescriptor> {
+    let sddl = widestring::U16CString::from_str("D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)")
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    SecurityDescriptor::deserialize(sddl.as_ucstr())
+}
+
+#[cfg(unix)]
+fn prepare_socket_parent(socket_spec: &crate::runtime_paths::IpcSocketPath) -> bool {
+    let Some(parent) = socket_spec.path().parent() else {
+        return true;
+    };
+
+    if socket_spec.owned_parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            log::error!(
+                "IPC server: failed to create socket parent {} ({e}); refusing to serve",
+                parent.display()
+            );
+            return false;
+        }
+        // Lock the socket's containing dir to the owner. Under
+        // $XDG_RUNTIME_DIR this already holds, but the fallback chain
+        // ($TMPDIR / ~/.cache/run) can land in a world-traversable
+        // /tmp - 0700 stops other local users from reaching the socket
+        // at all (defense-in-depth atop the socket's own 0600 +
+        // SO_PEERCRED).
+        use std::os::unix::fs::PermissionsExt as _;
+        if let Err(e) = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700)) {
+            log::error!(
+                "IPC server: failed to chmod owned socket parent {} to 0700 ({e}); refusing to serve",
+                parent.display()
+            );
+            return false;
+        }
+        return true;
+    }
+
+    if parent.is_dir() && unowned_socket_parent_is_safe(parent) {
+        true
+    } else {
+        log::error!(
+            "IPC server: PANEFLOW_SOCKET_PATH parent {} is missing, not a directory, or group/world writable without sticky bit; refusing to serve",
+            parent.display()
+        );
+        false
+    }
+}
+
+#[cfg(unix)]
+fn unowned_socket_parent_is_safe(parent: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let Ok(metadata) = std::fs::metadata(parent) else {
+        return false;
+    };
+    if !metadata.is_dir() {
+        return false;
+    }
+    let mode = metadata.permissions().mode();
+    let writable_by_group_or_other = mode & 0o022 != 0;
+    let sticky = mode & 0o1000 != 0;
+    !writable_by_group_or_other || sticky
+}
+
+#[cfg(unix)]
+fn remove_socket_file_if_socket(path: &std::path::Path, context: &str) -> bool {
+    use std::os::unix::fs::FileTypeExt as _;
+
+    let metadata = match std::fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+        Err(e) => {
+            log::error!(
+                "IPC server: failed to inspect {} before {context} ({e}); refusing to serve",
+                path.display()
+            );
+            return false;
+        }
+    };
+
+    if !metadata.file_type().is_socket() {
+        log::error!(
+            "IPC server: refusing to remove non-socket path {} during {context}",
+            path.display()
+        );
+        return false;
+    }
+
+    if let Err(e) = std::fs::remove_file(path) {
+        log::error!(
+            "IPC server: failed to remove stale socket {} during {context} ({e}); refusing to serve",
+            path.display()
+        );
+        return false;
+    }
+    true
 }
 
 /// Get the inode number of a filesystem path (0 if the file doesn't exist).
@@ -847,102 +980,82 @@ fn handle_connection(
             continue;
         }
 
-        // `ai.*` frames from `paneflow-ai-hook` are fire-and-forget: the hook
-        // writes one frame and closes its pipe IMMEDIATELY, never reading a
-        // reply. Writing a JSON-RPC response back to that already-closed Windows
-        // named pipe makes `interprocess`'s overlapped write panic internally,
-        // and its `CannotUnwind` guard converts the panic to `abort()` -
-        // crashing the WHOLE app (confirmed with a live debugger: the fault was
-        // `handle_connection` → `write_all` → interprocess `CannotUnwind::drop`
-        // → `std::process::abort`). So suppress the reply for those frames; the
-        // hook never reads it. Request/response clients (`paneflow-ipc-client`)
-        // keep the pipe open to read, so their replies are written normally.
         let mut suppress_reply = false;
         let response = match serde_json::from_str::<Value>(line) {
             Ok(req) => {
-                let id = req.get("id").cloned().unwrap_or(Value::Null);
-                let method = req
-                    .get("method")
-                    .and_then(|m| m.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let params = req.get("params").cloned().unwrap_or(json!({}));
+                let id = req.get("id").cloned();
+                let response_id = id.clone().unwrap_or(Value::Null);
+                suppress_reply = id.is_none();
+                match req.get("method").and_then(|m| m.as_str()) {
+                    Some(method) => {
+                        let method = method.to_string();
+                        let params = req.get("params").cloned().unwrap_or(json!({}));
 
-                // EP-002 / EP-006 (agent-control-plane): an `events.subscribe`
-                // connection STOPS being request/response and becomes a
-                // persistent event stream. It takes over this connection on BOTH
-                // platforms and `return`s before the one-request Windows `break`
-                // below. The Windows push path is guarded by a PeekNamedPipe
-                // liveness probe (US-013) so a disconnected subscriber evicts
-                // cleanly via RAII instead of tripping interprocess's overlapped-
-                // write abort - the same abort the request/response path dodges
-                // with `suppress_reply` + the one-request break.
-                if method == "events.subscribe" {
-                    serve_subscription(&mut writer, &params, &event_bus);
-                    return;
-                }
+                        if method == "events.subscribe" {
+                            serve_subscription(&mut writer, &params, &event_bus);
+                            return;
+                        }
 
-                // Hook-chain diagnostic: confirm the IPC server received the
-                // lifecycle frame at all (vs. the hook never connecting). Only
-                // `ai.*` frames drive the sidebar status, so scope the log to
-                // them to keep the trace readable. No-op unless PANEFLOW_HOOK_LOG.
-                if method.starts_with("ai.") {
-                    suppress_reply = true;
-                    crate::ai_hooks::hook_diag(&format!(
-                        "ipc server received {method} (tool={:?} pid={:?} ws={:?})",
-                        params.get("tool"),
-                        params.get("pid"),
-                        params.get("workspace_id"),
-                    ));
-                }
+                        if method.starts_with("ai.") {
+                            crate::ai_hooks::hook_diag(&format!(
+                                "ipc server received {method} (tool={:?} pid={:?} ws={:?})",
+                                params.get("tool"),
+                                params.get("pid"),
+                                params.get("workspace_id"),
+                            ));
+                        }
 
-                // Handle stateless methods directly on the socket thread
-                match method.as_str() {
-                    "system.ping" => {
-                        json!({"jsonrpc": "2.0", "result": {"pong": true}, "id": id})
+                        match method.as_str() {
+                            "system.ping" => {
+                                json!({"jsonrpc": "2.0", "result": {"pong": true}, "id": response_id})
+                            }
+                            "system.capabilities" => {
+                                json!({"jsonrpc": "2.0", "result": {
+                                    "scripting": std::env::var("PANEFLOW_IPC_SCRIPTING")
+                                        .is_ok_and(|v| v == "1"),
+                                    "orchestration": std::env::var("PANEFLOW_IPC_ORCHESTRATION")
+                                        .is_ok_and(|v| v == "1")
+                                        || std::env::var("PANEFLOW_IPC_SCRIPTING")
+                                            .is_ok_and(|v| v == "1"),
+                                    "methods": [
+                                        "system.ping", "system.capabilities", "system.identify",
+                                        "workspace.list", "workspace.create", "workspace.select",
+                                        "workspace.close", "workspace.current",
+                                        "workspace.restore_layout", "workspace.up",
+                                        "surface.list", "surface.read", "surface.search", "surface.rename",
+                                        "surface.send_text", "surface.send_keystroke", "surface.split",
+                                        "surface.focus", "surface.status",
+                                        "fleet.list",
+                                        "events.subscribe",
+                                        "ai.session_start",
+                                        "ai.prompt_submit",
+                                        "ai.tool_use",
+                                        "ai.notification",
+                                        "ai.stop",
+                                        "ai.exit",
+                                        "ai.session_end"
+                                    ]
+                                }, "id": response_id})
+                            }
+                            "system.identify" => {
+                                json!({"jsonrpc": "2.0", "result": {
+                                    "name": "PaneFlow",
+                                    "version": env!("CARGO_PKG_VERSION"),
+                                    "protocol": "jsonrpc-2.0"
+                                }, "id": response_id})
+                            }
+                            _ => dispatch_to_gpui(
+                                &request_tx,
+                                method,
+                                params,
+                                response_id,
+                                caller_pid,
+                            ),
+                        }
                     }
-                    "system.capabilities" => {
-                        json!({"jsonrpc": "2.0", "result": {
-                            // EP-003 (orchestration-v2): expose the scripting
-                            // gate so `paneflow flow` can refuse a submitting
-                            // flow up-front (run AND --dry-run) instead of
-                            // failing -32601 on its first send. Same process
-                            // as the gate check in the send_* handlers.
-                            "scripting": std::env::var("PANEFLOW_IPC_SCRIPTING")
-                                .is_ok_and(|v| v == "1"),
-                            "methods": [
-                                "system.ping", "system.capabilities", "system.identify",
-                                "workspace.list", "workspace.create", "workspace.select",
-                                "workspace.close", "workspace.current",
-                                "workspace.restore_layout", "workspace.up",
-                                "surface.list", "surface.read", "surface.search", "surface.rename",
-                                "surface.send_text", "surface.send_keystroke", "surface.split",
-                                "surface.focus", "surface.status",
-                                "fleet.list",
-                                "events.subscribe",
-                                "ai.session_start",
-                                "ai.prompt_submit",
-                                "ai.tool_use",
-                                "ai.notification",
-                                "ai.stop",
-                                "ai.exit",
-                                "ai.session_end"
-                            ]
-                        }, "id": id})
-                    }
-                    "system.identify" => {
-                        json!({"jsonrpc": "2.0", "result": {
-                            "name": "PaneFlow",
-                            "version": env!("CARGO_PKG_VERSION"),
-                            "protocol": "jsonrpc-2.0"
-                        }, "id": id})
-                    }
-                    _ => {
-                        // Dispatch to GPUI thread and wait for response.
-                        // `events.subscribe` never reaches here: it is handled by
-                        // the persistent-stream early return above on BOTH
-                        // platforms (EP-006 US-013).
-                        dispatch_to_gpui(&request_tx, method, params, id, caller_pid)
+                    None => {
+                        suppress_reply = false;
+                        json!({"jsonrpc": "2.0", "error": {"code": -32600, "message": "Invalid Request"}, "id": response_id})
                     }
                 }
             }
@@ -951,11 +1064,8 @@ fn handle_connection(
             }
         };
 
-        // Skip the reply for fire-and-forget `ai.*` frames (see `suppress_reply`
-        // above): the hook closed its pipe without reading, so the reply is dead
-        // weight. The write itself is abort-safe via `write_envelope` (CP-4), so
-        // this is now an optimisation, not the abort guard it once was. Other
-        // methods reply normally.
+        // JSON-RPC notifications do not receive replies. Requests with an `id`,
+        // including `ai.*`, reply normally.
         if !suppress_reply && !write_envelope(&mut writer, &response) {
             break;
         }
@@ -1084,10 +1194,15 @@ fn write_envelope(writer: &mut Stream, value: &Value) -> bool {
 fn push_bytes(writer: &mut Stream, buf: &[u8]) -> bool {
     #[cfg(windows)]
     {
-        pipe_write_all(writer, buf).is_ok()
+        pipe_write_all(writer, buf, IPC_WRITE_TIMEOUT).is_ok()
     }
     #[cfg(not(windows))]
     {
+        if let Err(e) = writer.set_send_timeout(Some(IPC_WRITE_TIMEOUT))
+            && e.kind() != std::io::ErrorKind::Unsupported
+        {
+            return false;
+        }
         writer.write_all(buf).is_ok() && writer.flush().is_ok()
     }
 }
@@ -1105,12 +1220,14 @@ fn push_bytes(writer: &mut Stream, buf: &[u8]) -> bool {
 /// `lpOverlapped` is not an option - MSDN documents it as potentially corrupting
 /// on an overlapped handle - hence the per-call manual-reset event.
 #[cfg(windows)]
-fn pipe_write_all(writer: &Stream, buf: &[u8]) -> std::io::Result<()> {
+fn pipe_write_all(writer: &Stream, buf: &[u8], timeout: Duration) -> std::io::Result<()> {
     use std::os::windows::io::{AsHandle, AsRawHandle};
-    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_IO_PENDING, HANDLE};
+    use windows_sys::Win32::Foundation::{
+        CloseHandle, ERROR_IO_PENDING, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    };
     use windows_sys::Win32::Storage::FileSystem::WriteFile;
-    use windows_sys::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
-    use windows_sys::Win32::System::Threading::CreateEventW;
+    use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
+    use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 
     let Stream::NamedPipe(np) = writer;
     let handle: HANDLE = np.as_handle().as_raw_handle() as _;
@@ -1153,6 +1270,33 @@ fn pipe_write_all(writer: &Stream, buf: &[u8]) -> std::io::Result<()> {
             let err = std::io::Error::last_os_error();
             if err.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
                 return Err(err);
+            }
+            let timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
+            let reap_pending_write = |ov: &OVERLAPPED| {
+                let _ = unsafe { CancelIoEx(handle, ov) };
+                let mut cancelled_transferred: u32 = 0;
+                let _ = unsafe { GetOverlappedResult(handle, ov, &mut cancelled_transferred, 1) };
+            };
+            match unsafe { WaitForSingleObject(event, timeout_ms) } {
+                WAIT_OBJECT_0 => {}
+                WAIT_TIMEOUT => {
+                    reap_pending_write(&ov);
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "named-pipe write timed out",
+                    ));
+                }
+                WAIT_FAILED => {
+                    let err = std::io::Error::last_os_error();
+                    reap_pending_write(&ov);
+                    return Err(err);
+                }
+                other => {
+                    reap_pending_write(&ov);
+                    return Err(std::io::Error::other(format!(
+                        "unexpected WaitForSingleObject result {other}"
+                    )));
+                }
             }
         }
         let mut transferred: u32 = 0;
@@ -1343,12 +1487,14 @@ fn dispatch_to_gpui(
     // U-053: shared cancel flag - set if we time out below so the GPUI
     // consumer skips a request the client already gave up on.
     let cancelled = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicBool::new(false));
     let ipc_req = IpcRequest {
         method: method.clone(),
         params,
         _id: id.clone(),
         response_tx: resp_tx,
         cancelled: Arc::clone(&cancelled),
+        started: Arc::clone(&started),
         caller_pid,
     };
 
@@ -1362,36 +1508,50 @@ fn dispatch_to_gpui(
         }
     }
 
-    // Wait for GPUI thread to process (timeout 5s).
-    await_or_cancel(&resp_rx, &cancelled, std::time::Duration::from_secs(5), id)
+    await_or_cancel(&resp_rx, &cancelled, &started, Duration::from_secs(5), id)
 }
 
-/// Wait up to `timeout` for the GPUI handler's response. On timeout, set
-/// `cancelled` so the GPUI consumer skips the (possibly not-yet-run) handler
-/// U-053: prevents a non-idempotent mutation from executing after the
-/// client received a timeout error and (likely) retried. Split out so the
-/// timeout/cancel contract is unit-testable without a 5 s wait.
+/// Wait for the GPUI handler's response. If the request is still queued after
+/// `timeout`, set `cancelled` so the GPUI consumer skips it. Once the handler
+/// has started, wait for the real response instead of telling the client to
+/// retry a mutation that may still complete.
 fn await_or_cancel(
     resp_rx: &mpsc::Receiver<Value>,
     cancelled: &AtomicBool,
+    started: &AtomicBool,
     timeout: Duration,
     id: Value,
 ) -> Value {
-    match resp_rx.recv_timeout(timeout) {
-        // US-001: handlers may return a structured JSON-RPC error via the
-        // `_jsonrpc_error` sentinel. `promote_response` rewrites those into
-        // the proper `error` envelope and leaves all other shapes wrapped
-        // under `result`.
-        Ok(result) => crate::app::ipc_handler::promote_response(result, id),
-        Err(_) => {
-            cancelled.store(true, Ordering::SeqCst);
-            json!({"jsonrpc": "2.0", "error": {"code": -32001, "message": "Request timeout"}, "id": id})
+    let queued_at = Instant::now();
+    loop {
+        let wait_for = if started.load(Ordering::Acquire) {
+            Duration::from_millis(50)
+        } else {
+            let Some(remaining) = timeout.checked_sub(queued_at.elapsed()) else {
+                cancelled.store(true, Ordering::SeqCst);
+                return json!({"jsonrpc": "2.0", "error": {"code": -32002, "message": "Request dispatch timeout"}, "id": id});
+            };
+            remaining.min(Duration::from_millis(50))
+        };
+
+        match resp_rx.recv_timeout(wait_for) {
+            Ok(result) => return crate::app::ipc_handler::promote_response(result, id),
+            Err(mpsc::RecvTimeoutError::Timeout) if started.load(Ordering::Acquire) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if queued_at.elapsed() >= timeout {
+                    cancelled.store(true, Ordering::SeqCst);
+                    return json!({"jsonrpc": "2.0", "error": {"code": -32002, "message": "Request dispatch timeout"}, "id": id});
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return json!({"jsonrpc": "2.0", "error": {"code": -32000, "message": "App shutting down"}, "id": id});
+            }
         }
     }
 }
 
-fn socket_path() -> Option<PathBuf> {
-    crate::runtime_paths::socket_path()
+fn socket_path_spec() -> Option<crate::runtime_paths::IpcSocketPath> {
+    crate::runtime_paths::socket_path_spec()
 }
 
 // ---------------------------------------------------------------------------
@@ -1603,6 +1763,38 @@ mod framing_tests {
             LineRead::Got
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn bind_socket_refuses_to_remove_regular_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("paneflow.sock");
+        std::fs::write(&path, b"do not delete").expect("write guard file");
+
+        assert!(
+            super::bind_socket(&path).is_none(),
+            "regular files at the socket path must not be reclaimed"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("regular file still exists"),
+            b"do not delete"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unowned_socket_parent_rejects_world_writable_without_sticky_bit() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777))
+            .expect("chmod tempdir");
+        assert!(!super::unowned_socket_parent_is_safe(dir.path()));
+
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o1777))
+            .expect("chmod sticky tempdir");
+        assert!(super::unowned_socket_parent_is_safe(dir.path()));
+    }
 }
 
 #[cfg(test)]
@@ -1621,6 +1813,7 @@ mod dispatch_tests {
             _id: json!(1),
             response_tx,
             cancelled: Arc::new(AtomicBool::new(false)),
+            started: Arc::new(AtomicBool::new(false)),
             caller_pid: None,
         }
     }
@@ -1663,22 +1856,57 @@ mod dispatch_tests {
 
     #[test]
     fn await_or_cancel_sets_flag_and_errors_on_timeout() {
-        // U-053: when the GPUI handler doesn't respond within the deadline,
-        // await_or_cancel must (a) return a -32001 timeout envelope to the
+        // U-053: when the GPUI handler is not started within the deadline,
+        // await_or_cancel must (a) return a -32002 timeout envelope to the
         // client AND (b) set the shared cancel flag so the GPUI consumer skips
         // the not-yet-run handler - preventing a duplicate non-idempotent
         // mutation on the client's retry. _tx is kept alive so we exercise the
         // Timeout path (not Disconnected); a short deadline keeps the test fast.
         let (_tx, rx) = mpsc::channel::<serde_json::Value>();
         let cancelled = AtomicBool::new(false);
-        let resp = await_or_cancel(&rx, &cancelled, Duration::from_millis(20), json!(7));
+        let started = AtomicBool::new(false);
+        let resp = await_or_cancel(
+            &rx,
+            &cancelled,
+            &started,
+            Duration::from_millis(20),
+            json!(7),
+        );
 
         assert!(
             cancelled.load(Ordering::Acquire),
             "timeout must set the cancel flag so the GPUI side skips the request"
         );
-        assert_eq!(resp["error"]["code"], -32001);
+        assert_eq!(resp["error"]["code"], -32002);
         assert_eq!(resp["id"], 7);
+    }
+
+    #[test]
+    fn await_or_cancel_waits_for_started_handler_instead_of_cancelling() {
+        let (tx, rx) = mpsc::channel::<serde_json::Value>();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(AtomicBool::new(true));
+        let send_started = Arc::clone(&started);
+        std::thread::spawn(move || {
+            assert!(send_started.load(Ordering::Acquire));
+            std::thread::sleep(Duration::from_millis(40));
+            tx.send(json!({"status": "ok"})).unwrap();
+        });
+
+        let resp = await_or_cancel(
+            &rx,
+            &cancelled,
+            &started,
+            Duration::from_millis(5),
+            json!(9),
+        );
+
+        assert!(
+            !cancelled.load(Ordering::Acquire),
+            "started handlers must not be cancelled behind the client"
+        );
+        assert_eq!(resp["result"]["status"], "ok");
+        assert_eq!(resp["id"], 9);
     }
 
     #[test]
@@ -1688,7 +1916,8 @@ mod dispatch_tests {
         let (tx, rx) = mpsc::channel::<serde_json::Value>();
         tx.send(json!({"status": "ok"})).unwrap();
         let cancelled = AtomicBool::new(false);
-        let resp = await_or_cancel(&rx, &cancelled, Duration::from_secs(5), json!(3));
+        let started = AtomicBool::new(false);
+        let resp = await_or_cancel(&rx, &cancelled, &started, Duration::from_secs(5), json!(3));
 
         assert!(
             !cancelled.load(Ordering::Acquire),
@@ -1738,6 +1967,11 @@ mod windows_pipe_tests {
             std::process::id(),
             seq
         ))
+    }
+
+    #[test]
+    fn named_pipe_security_descriptor_deserializes() {
+        super::windows_named_pipe_security_descriptor().expect("IPC named-pipe SDDL must be valid");
     }
 
     /// Bind a listener and return a live (server, client) named-pipe pair plus
@@ -1867,7 +2101,11 @@ mod windows_pipe_tests {
         // CP-4's managed WriteFile it aborted the whole process
         // (STATUS_STACK_BUFFER_OVERRUN 0xC0000409); now it must return a plain
         // `Err`. Reaching the assert at all proves the process did not abort.
-        let r = pipe_write_all(&server, b"{\"type\":\"heartbeat\"}\n");
+        let r = pipe_write_all(
+            &server,
+            b"{\"type\":\"heartbeat\"}\n",
+            Duration::from_secs(1),
+        );
         assert!(
             r.is_err(),
             "overlapped write to a closed pipe returns Err, never aborts"

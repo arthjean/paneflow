@@ -1,13 +1,19 @@
 # Paneflow MCP bridge (`paneflow-mcp`)
 
 Let an MCP-capable CLI agent running **inside a Paneflow pane** read the
-terminal output of **any other surface** - so you can say *"check the logs in
-the cargo-run pane"* instead of selecting, copying, and pasting by hand.
+terminal output of **other surfaces in the current workspace** - so you can say
+*"check the logs in the cargo-run pane"* instead of selecting, copying, and
+pasting by hand.
 
 `paneflow-mcp` is a small stdio [MCP](https://modelcontextprotocol.io) server.
 The agent spawns it as a subprocess; it proxies each call to Paneflow's local
 JSON-RPC socket (the same one the AI-hook uses). It is **read-only** - it can
 list, read, and search surfaces, but cannot type into or control them.
+
+By default the bridge inherits `PANEFLOW_WORKSPACE_ID` from the pane that
+launched the agent and filters discovery, tools, and resources to that
+workspace. Set `PANEFLOW_MCP_SCOPE=all` only when instance-wide read access is
+intentional.
 
 > Source: `crates/paneflow-mcp/`. The protocol is implemented by hand (not via
 > `rmcp`) to keep the dependency tree tiny and the surface fully unit-tested.
@@ -16,7 +22,7 @@ list, read, and search surfaces, but cannot type into or control them.
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `list_panes` | - | Every surface: `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`. Call this first to discover what to read. |
+| `list_panes` | - | Scoped surfaces: `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`. Call this first to discover what to read. The result is wrapped as untrusted terminal metadata. |
 | `read_pane` | `target` (name or `surface_id`), `lines?` (default 200, max 4000), `offset?` | The surface's scrollback as text, paginated. |
 | `search_pane` | `target`, `pattern`, `max_matches?` (default 50, max 1000) | Matching lines with their line numbers. |
 
@@ -25,8 +31,13 @@ list, read, and search surfaces, but cannot type into or control them.
 
 > **Security.** Returned content is wrapped in an `<untrusted_terminal_output>`
 > marker. A pane may contain attacker-controlled output (a server logging a
-> crafted string); the agent is instructed to treat it as data, never as
-> instructions to execute. The bridge exposes no write/keystroke tool by design.
+> crafted string), and pane titles can also be terminal-controlled; the agent
+> is instructed to treat bridge output as data, never as instructions to
+> execute. The bridge exposes no write/keystroke tool by design.
+
+MCP resources use stable `surface_id` URIs:
+`pane://surface/{surface_id}/content`. Human names and titles stay in
+`list_panes`; they are display metadata, not URI syntax.
 
 ## Install (one command)
 
@@ -63,16 +74,19 @@ paneflow mcp status      # report state per agent (read-only)
 paneflow mcp uninstall   # remove only the `paneflow` entry, everywhere
 ```
 
-`status` distinguishes four states per agent: *not detected*, *installed*,
-*detected but not installed*, and *stale path* (the config points at an old
-location - re-run `install` to fix).
+`status` distinguishes five states per agent: *not detected*, *installed*,
+*detected but not installed*, *stale path*, and *needs repair* when a
+`paneflow` entry exists but is disabled or no longer matches Paneflow's managed
+schema. `status` never extracts or writes the bridge binary.
 
-> Where each agent's entry lands: Claude Code → `~/.claude.json`
-> (`mcpServers.paneflow`, prefers `claude mcp add -s user`); Codex →
-> `~/.codex/config.toml` (`[mcp_servers.paneflow]`, prefers `codex mcp add`);
-> Gemini CLI → `~/.gemini/settings.json` (`mcpServers.paneflow`, `trust: true`);
-> opencode → `~/.config/opencode/opencode.json` (key `mcp`, `command` as an
-> array, `type: "local"`).
+> Where each agent's entry lands: Claude Code: `~/.claude.json`
+> (`mcpServers.paneflow`, backed up before `claude mcp add -s user`); Codex:
+> `$CODEX_HOME/config.toml` when `CODEX_HOME` is set, otherwise
+> `~/.codex/config.toml` (`[mcp_servers.paneflow]`, backed up before
+> `codex mcp add`); Gemini CLI: `~/.gemini/settings.json`
+> (`mcpServers.paneflow`, `trust: true`); opencode: `OPENCODE_CONFIG`, or
+> `OPENCODE_CONFIG_DIR`, or the global `opencode.jsonc` / `opencode.json`
+> config (key `mcp`, `command` as an array, `type: "local"`).
 
 ### Not supported: aider
 
@@ -107,6 +121,7 @@ Claude Code consumes MCP **tools** and resources.
 
 ### Codex CLI
 
+`$CODEX_HOME/config.toml` when `CODEX_HOME` is set, otherwise
 `~/.codex/config.toml`:
 
 ```toml
@@ -140,8 +155,9 @@ prefer Gemini's confirmation prompt given the untrusted-output surface.
 
 ### opencode
 
-`~/.config/opencode/opencode.json` - note the distinct schema (key `mcp`, not
-`mcpServers`; `command` is an array; `type: "local"`):
+`opencode.jsonc` or `opencode.json` in opencode's global config location
+(or `OPENCODE_CONFIG` / `OPENCODE_CONFIG_DIR`) - note the distinct schema
+(key `mcp`, not `mcpServers`; `command` is an array; `type: "local"`):
 
 ```json
 {

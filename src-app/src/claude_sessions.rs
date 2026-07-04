@@ -15,10 +15,11 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use serde::Deserialize;
 
-use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta};
+use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta, clean_session_label};
 
 /// Maximum number of leading lines to scan for envelope + title. The
 /// first lines of a Claude Code session file are typically
@@ -86,6 +87,33 @@ pub fn project_dir_for_cwd(cwd: &str) -> Option<PathBuf> {
     Some(home.join(".claude").join("projects").join(slug))
 }
 
+fn project_snapshot_mtime(project_dir: &Path) -> Option<SystemTime> {
+    let mut latest = fs::metadata(project_dir)
+        .ok()
+        .and_then(|m| m.modified().ok());
+    let entries = fs::read_dir(project_dir).ok()?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !is_jsonl_file(&path) {
+            continue;
+        }
+        let modified = entry.metadata().ok().and_then(|m| m.modified().ok());
+        latest = max_mtime(latest, modified);
+    }
+
+    latest
+}
+
+fn max_mtime(current: Option<SystemTime>, candidate: Option<SystemTime>) -> Option<SystemTime> {
+    match (current, candidate) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
 /// Read all Claude Code session metadata for the given working directory.
 /// Sessions are sorted by timestamp descending (most recent first) and only
 /// those whose first-line `cwd` matches `cwd` (via
@@ -106,12 +134,16 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
     let Some(project_dir) = project_dir_for_cwd(cwd) else {
         return (Vec::new(), 0);
     };
-    // US-017: mtime-keyed cache. The directory layout
-    // `~/.claude/projects/<slug>/*.jsonl` is flat, so adding or
-    // removing a session file reliably bumps `project_dir`'s mtime
-    // and the cache invalidates on the next call.
-    if let Some(cached) =
-        crate::agent_sessions::cache::lookup(SessionAgent::Claude, cwd, &project_dir)
+    // Existing Claude sessions are append-only JSONL files. Appending to a
+    // file does not reliably change the parent directory mtime, so include
+    // leaf-file mtimes in the cache fingerprint.
+    let snapshot_mtime = project_snapshot_mtime(&project_dir);
+    if let Some(snapshot_mtime) = snapshot_mtime
+        && let Some(cached) = crate::agent_sessions::cache::lookup_with_mtime(
+            SessionAgent::Claude,
+            cwd,
+            snapshot_mtime,
+        )
     {
         return cached;
     }
@@ -131,13 +163,15 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
         sessions,
         crate::agent_sessions::SIDEBAR_SESSION_RETAINED_PER_SOURCE,
     );
-    crate::agent_sessions::cache::store_result(
-        SessionAgent::Claude,
-        cwd,
-        &project_dir,
-        &sessions,
-        omitted,
-    );
+    if let Some(snapshot_mtime) = project_snapshot_mtime(&project_dir) {
+        crate::agent_sessions::cache::store_result_with_mtime(
+            SessionAgent::Claude,
+            cwd,
+            snapshot_mtime,
+            &sessions,
+            omitted,
+        );
+    }
     (sessions, omitted)
 }
 
@@ -344,9 +378,9 @@ fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta>
         match value.get("type").and_then(|v| v.as_str()) {
             Some("ai-title") => {
                 if let Some(title) = value.get("aiTitle").and_then(|v| v.as_str())
-                    && !title.is_empty()
+                    && let Some(cleaned) = clean_session_label(title, LABEL_MAX_CHARS)
                 {
-                    ai_title = Some(title.to_string());
+                    ai_title = Some(cleaned);
                     // Title-only path: stop as soon as we have envelope + title.
                     // Attribution path: keep walking to aggregate usage/model.
                     if envelope.is_some() && !scan_usage {
@@ -442,10 +476,10 @@ fn clean_user_message(raw: &str) -> Option<String> {
         } else {
             format!("{name} {args}")
         };
-        return Some(truncate_label(&joined));
+        return clean_session_label(&joined, LABEL_MAX_CHARS);
     }
 
-    Some(truncate_label(trimmed))
+    clean_session_label(trimmed, LABEL_MAX_CHARS)
 }
 
 fn extract_xml_block(haystack: &str, tag: &str) -> Option<String> {
@@ -454,16 +488,6 @@ fn extract_xml_block(haystack: &str, tag: &str) -> Option<String> {
     let start = haystack.find(&open)? + open.len();
     let end = haystack[start..].find(&close)? + start;
     Some(haystack[start..end].trim().to_string())
-}
-
-fn truncate_label(s: &str) -> String {
-    let collapsed: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() <= LABEL_MAX_CHARS {
-        return collapsed;
-    }
-    let mut out: String = collapsed.chars().take(LABEL_MAX_CHARS).collect();
-    out.push('…');
-    out
 }
 
 #[cfg(test)]
@@ -566,6 +590,30 @@ mod tests {
     }
 
     #[test]
+    fn ai_title_uses_same_label_normalization_as_fallback() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("title-normalized.jsonl");
+        let long_title = format!("Fix\n\t{}{}", "a".repeat(100), "\u{1b}");
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"parentUuid":null,"type":"user","message":{{"role":"user","content":"first user message body"}},"uuid":"u","timestamp":"2026-04-26T13:38:41.095Z","cwd":"/tmp/proj","sessionId":"s"}}
+{{"type":"ai-title","aiTitle":{}}}
+"#,
+                serde_json::to_string(&long_title).expect("json string")
+            ),
+        )
+        .expect("write fixture");
+
+        let meta = read_session_meta(&path).expect("meta");
+        let summary = meta.summary.as_deref().expect("summary");
+        assert!(!summary.contains('\n'));
+        assert!(!summary.contains('\t'));
+        assert!(summary.chars().count() <= LABEL_MAX_CHARS + 1);
+        assert!(summary.ends_with('…'));
+    }
+
+    #[test]
     fn falls_back_to_first_user_message_when_no_ai_title() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("legacy.jsonl");
@@ -644,7 +692,7 @@ mod tests {
     #[test]
     fn truncate_label_caps_long_text() {
         let long = "a".repeat(120);
-        let label = truncate_label(&long);
+        let label = clean_user_message(&long).expect("label");
         assert_eq!(label.chars().count(), LABEL_MAX_CHARS + 1);
         assert!(label.ends_with('…'));
     }

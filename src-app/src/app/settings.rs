@@ -117,8 +117,7 @@ impl PaneFlowApp {
         cx.background_spawn(async move {
             smol::unblock(move || {
                 let ok = if nested {
-                    config_writer::save_terminal_field(key, value);
-                    true
+                    config_writer::save_terminal_field_checked(key, value)
                 } else {
                     config_writer::save_config_value_checked(key, value)
                 };
@@ -133,7 +132,7 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn handle_default_shell_changed(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn handle_default_shell_changed(&mut self, cx: &mut Context<Self>) {
         let exited_thread_ids: Vec<u64> = self
             .agents_view
             .agents_terminal_view_cache

@@ -22,7 +22,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::agent_sessions::{SessionAgent, SessionMeta};
+use crate::agent_sessions::{SessionAgent, SessionMeta, clean_session_label};
 
 /// Cap stderr captured into the warn log when `opencode` exits non-zero.
 /// Keeps the log line readable when the CLI dumps a multi-kilobyte panic.
@@ -191,9 +191,7 @@ fn record_to_session(record: &Value, cwd: &str) -> Option<SessionMeta> {
     let summary = record
         .get("title")
         .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string);
+        .and_then(|title| clean_session_label(title, 80));
 
     Some(SessionMeta {
         agent: SessionAgent::OpenCode,
@@ -218,7 +216,7 @@ fn record_to_session(record: &Value, cwd: &str) -> Option<SessionMeta> {
 /// strings; accept both.
 fn value_as_i64(v: &Value) -> Option<i64> {
     v.as_i64()
-        .or_else(|| v.as_u64().map(|u| u as i64))
+        .or_else(|| v.as_u64().and_then(|u| i64::try_from(u).ok()))
         .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
 }
 
@@ -295,6 +293,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_sessions_normalizes_title_labels() {
+        let payload = br#"[
+            {"id":"ses_clean","directory":"/p","title":"  messy\n\tlabel\u001b  ","updated":1000}
+        ]"#;
+        let (sessions, omitted) = parse_sessions(payload, "/p");
+        assert_eq!(omitted, 0);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].summary.as_deref(), Some("messy label"));
+    }
+
+    #[test]
     fn parse_sessions_rejects_session_id_with_carriage_return() {
         // A malicious or PATH-hijacked `opencode` binary could return an id
         // containing `\r` / `\n` to inject a second command into the user's
@@ -357,5 +366,10 @@ mod tests {
             unix_ms_to_iso8601(1_736_944_245_000),
             "2025-01-15T12:30:45Z"
         );
+    }
+
+    #[test]
+    fn value_as_i64_rejects_u64_overflow() {
+        assert_eq!(value_as_i64(&serde_json::json!(i64::MAX as u64 + 1)), None);
     }
 }

@@ -70,7 +70,7 @@ impl AgentConfigWriter for Mock {
             .take()
             .unwrap_or(Ok(UninstallOutcome::NothingToRemove))
     }
-    fn status(&self, _bridge: &Path) -> Result<StatusOutcome> {
+    fn status(&self, _bridge: Option<&Path>) -> Result<StatusOutcome> {
         self.status
             .take()
             .unwrap_or(Ok(StatusOutcome::NotInstalled))

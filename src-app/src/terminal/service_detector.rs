@@ -35,7 +35,7 @@ pub(super) fn parse_service_line(line: &str) -> Option<ServiceInfo> {
     // degrades to a synthesized localhost URL so legitimate frontends stay
     // clickable.
     let url = extract_url(line)
-        .filter(|u| is_loopback_url(u))
+        .and_then(|u| normalize_loopback_url(&u, port))
         .or_else(|| Some(format!("http://localhost:{port}")));
     let (label, is_frontend) = detect_framework(line);
     Some(ServiceInfo {
@@ -49,21 +49,51 @@ pub(super) fn parse_service_line(line: &str) -> Option<ServiceInfo> {
 /// Whether a URL's host is a loopback/unspecified local address. Tiny
 /// scheme-then-host parse - no URL crate; conservative `false` on anything
 /// unrecognized (the caller then substitutes a synthesized localhost URL).
+#[cfg(test)]
 fn is_loopback_url(url: &str) -> bool {
+    normalize_loopback_url(url, 0).is_some()
+}
+
+fn normalize_loopback_url(url: &str, port: u16) -> Option<String> {
     let rest = url
         .strip_prefix("http://")
         .or_else(|| url.strip_prefix("https://"));
-    let Some(rest) = rest else {
-        return false;
-    };
-    // Host runs until the port, path, query, or fragment. Bracketed IPv6
-    // hosts (`[::1]:5173`) contain ':' - close the bracket first.
-    let host_end = if rest.starts_with('[') {
-        rest.find(']').map(|i| i + 1).unwrap_or(rest.len())
+    let rest = rest?;
+    let scheme = if url.starts_with("https://") {
+        "https"
     } else {
-        rest.find([':', '/', '?', '#']).unwrap_or(rest.len())
+        "http"
     };
-    let host = &rest[..host_end];
+    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let suffix = &rest[authority_end..];
+
+    let (host, host_tail) = if authority.starts_with('[') {
+        let close = authority.find(']')?;
+        (&authority[..=close], &authority[close + 1..])
+    } else {
+        let host_end = authority.find(':').unwrap_or(authority.len());
+        (&authority[..host_end], &authority[host_end..])
+    };
+
+    if !is_loopback_host(host) {
+        return None;
+    }
+    if host == "0.0.0.0" {
+        let tail = if host_tail.is_empty() {
+            format!(":{port}")
+        } else {
+            host_tail.to_string()
+        };
+        return Some(format!("{scheme}://localhost{tail}{suffix}"));
+    }
+    Some(url.to_string())
+}
+
+fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
         || host == "0.0.0.0"
         || host == "[::1]"
@@ -72,10 +102,11 @@ fn is_loopback_url(url: &str) -> bool {
             .is_some_and(|tail| tail.split('.').all(|seg| seg.parse::<u8>().is_ok()))
 }
 
-/// Extract a port number from localhost:PORT, 127.0.0.1:PORT, or 0.0.0.0:PORT patterns.
+/// Extract a port number from localhost:PORT, 127.0.0.1:PORT, 0.0.0.0:PORT,
+/// or [::1]:PORT patterns.
 /// Also handles Python's `http.server` format: "HTTP on 127.0.0.1 port 8000".
 fn extract_local_port(line: &str) -> Option<u16> {
-    for anchor in ["localhost:", "127.0.0.1:", "0.0.0.0:"] {
+    for anchor in ["localhost:", "127.0.0.1:", "0.0.0.0:", "[::1]:"] {
         if let Some(idx) = line.find(anchor) {
             let after = &line[idx + anchor.len()..];
             let port_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -86,7 +117,7 @@ fn extract_local_port(line: &str) -> Option<u16> {
     }
     // Python http.server: "HTTP on 127.0.0.1 port 8000"
     if let Some(idx) = line.find(" port ")
-        && (line.contains("127.0.0.1") || line.contains("0.0.0.0"))
+        && (line.contains("127.0.0.1") || line.contains("0.0.0.0") || line.contains("[::1]"))
     {
         let after = &line[idx + 6..];
         let port_str: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
@@ -197,6 +228,28 @@ mod tests {
     }
 
     #[test]
+    fn unspecified_host_url_is_rewritten_to_localhost() {
+        let info = parse_service_line("Local: http://0.0.0.0:5173/app").unwrap();
+        assert_eq!(info.port, 5173);
+        assert_eq!(info.url.as_deref(), Some("http://localhost:5173/app"));
+    }
+
+    #[test]
+    fn url_userinfo_cannot_smuggle_a_remote_host() {
+        let info =
+            parse_service_line("vite ready at http://localhost:5173@evil.example/path").unwrap();
+        assert_eq!(info.port, 5173);
+        assert_eq!(info.url.as_deref(), Some("http://localhost:5173"));
+    }
+
+    #[test]
+    fn ipv6_loopback_anchor_is_detected() {
+        let info = parse_service_line("Local: http://[::1]:5173/app").unwrap();
+        assert_eq!(info.port, 5173);
+        assert_eq!(info.url.as_deref(), Some("http://[::1]:5173/app"));
+    }
+
+    #[test]
     fn line_without_printed_url_synthesizes_loopback() {
         let info = parse_service_line("Serving HTTP on 127.0.0.1 port 8000").unwrap();
         assert_eq!(info.port, 8000);
@@ -247,6 +300,7 @@ mod tests {
         assert!(is_loopback_url("http://[::1]:5173/app"));
         assert!(!is_loopback_url("http://evil.example/x"));
         assert!(!is_loopback_url("http://localhost.evil.example:3000"));
+        assert!(!is_loopback_url("http://localhost:3000@evil.example"));
         assert!(!is_loopback_url("http://127.evil.example/"));
         assert!(!is_loopback_url("file:///etc/passwd"));
         assert!(!is_loopback_url("http://192.168.1.10:3000"));

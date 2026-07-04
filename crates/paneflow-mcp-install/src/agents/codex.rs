@@ -17,7 +17,7 @@ use anyhow::{anyhow, Result};
 
 use crate::agents::{support, AgentConfigWriter, InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::detect::{self, Presence};
-use crate::merge;
+use crate::{io, merge};
 
 const CLI: &str = "codex";
 
@@ -38,7 +38,7 @@ impl Codex {
     fn path(&self) -> Result<&Path> {
         self.config_path
             .as_deref()
-            .ok_or_else(|| anyhow!("cannot resolve home dir for ~/.codex/config.toml"))
+            .ok_or_else(|| anyhow!("cannot resolve Codex config path"))
     }
 }
 
@@ -74,13 +74,14 @@ impl AgentConfigWriter for Codex {
         let path = self.path()?;
         let bridge_s = bridge.to_string_lossy().into_owned();
 
-        let current = support::current_toml_command(path);
-        if current.as_deref() == Some(bridge_s.as_str()) {
+        let status = support::toml_status(path, Some(bridge))?;
+        if matches!(status, StatusOutcome::Installed { .. }) {
             return Ok(InstallOutcome::AlreadyCurrent);
         }
-        let had_prior = current.is_some();
+        let had_prior = support::toml_entry_present(path)?;
 
         if self.allow_cli && support::cli_on_path(CLI) {
+            io::backup(path)?;
             if had_prior {
                 let _ = support::shell_out(CLI, &["mcp", "remove", "paneflow"]);
             }
@@ -114,10 +115,11 @@ impl AgentConfigWriter for Codex {
         if path.exists() {
             merge::read_toml_or_default(path)?;
         }
-        if support::current_toml_command(path).is_none() {
+        if !support::toml_entry_present(path)? {
             return Ok(UninstallOutcome::NothingToRemove);
         }
         if self.allow_cli && support::cli_on_path(CLI) {
+            io::backup(path)?;
             if let Ok(()) = support::shell_out(CLI, &["mcp", "remove", "paneflow"]) {
                 return Ok(UninstallOutcome::Removed);
             }
@@ -125,7 +127,7 @@ impl AgentConfigWriter for Codex {
         support::toml_uninstall(path)
     }
 
-    fn status(&self, bridge: &Path) -> Result<StatusOutcome> {
+    fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
         support::toml_status(self.path()?, bridge)
     }
 }
@@ -192,6 +194,23 @@ mod tests {
         );
         assert_eq!(w.uninstall().unwrap(), UninstallOutcome::Removed);
         assert_eq!(w.uninstall().unwrap(), UninstallOutcome::NothingToRemove);
+    }
+
+    #[test]
+    fn status_needs_repair_when_disabled() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("config.toml");
+        std::fs::write(
+            &p,
+            "[mcp_servers.paneflow]\ncommand = \"/data/paneflow-mcp\"\nargs = []\nenabled = false\n",
+        )
+        .unwrap();
+        let w = test_writer(p);
+
+        assert!(matches!(
+            w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
+            StatusOutcome::NeedsRepair { .. }
+        ));
     }
 
     #[test]

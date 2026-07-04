@@ -2,21 +2,21 @@
 name = "paneflow-telemetry"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 description = "Telemetry plumbing (PostHog client + anonymous id + canonical-tag invariants) for the PaneFlow workspace."
 repository.workspace = true
 
 [dependencies]
-paneflow-config.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
-ureq = { version = "3", features = ["json"] }
-uuid = { version = "1", features = ["v4"] }
+log.workspace = true
+ureq.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -21,6 +21,23 @@ use crate::workspace::{Workspace, next_workspace_id};
 use crate::{PaneFlowApp, ipc, keybindings, update};
 
 impl PaneFlowApp {
+    pub(crate) fn spawn_telemetry_flusher(
+        telemetry: std::sync::Arc<telemetry::client::TelemetryClient>,
+        cx: &mut Context<Self>,
+    ) {
+        cx.background_spawn(async move {
+            loop {
+                smol::Timer::after(std::time::Duration::from_secs(5)).await;
+                let client = std::sync::Arc::clone(&telemetry);
+                if !client.is_active() {
+                    break;
+                }
+                smol::unblock(move || client.poll_flush()).await;
+            }
+        })
+        .detach();
+    }
+
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         let title_bar = cx.new(title_bar::TitleBar::new);
         cx.subscribe(&title_bar, Self::handle_title_bar_event)
@@ -73,14 +90,15 @@ impl PaneFlowApp {
             None::<paneflow_config::schema::PaneFlowConfig>,
         ));
         let pending_config_writer = std::sync::Arc::clone(&pending_config);
-        let _config_watcher = paneflow_config::watcher::ConfigWatcher::new(std::sync::Arc::new(
+        if let Some(Err(e)) = paneflow_config::watcher::ConfigWatcher::new(std::sync::Arc::new(
             move |cfg: paneflow_config::schema::PaneFlowConfig| {
                 *pending_config_writer
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = Some(cfg);
             },
-        ));
-        if let Err(e) = _config_watcher.start() {
+        ))
+        .map(|config_watcher| config_watcher.start())
+        {
             log::warn!("config watcher failed to start: {e}; config hot-reload disabled");
         }
 
@@ -137,28 +155,55 @@ impl PaneFlowApp {
             .and_then(|s| s.diff_scope.as_deref())
             .and_then(crate::diff::DiffScope::from_persisted)
             .unwrap_or_default();
-        let restored_projects: Vec<crate::project::Project> = saved_session
+        let (restored_projects, restored_chats): (
+            Vec<crate::project::Project>,
+            Vec<crate::project::Thread>,
+        ) = saved_session
             .as_ref()
             .map(|s| {
-                s.projects
+                let mut remaining_threads = crate::project::MAX_RESTORED_TOTAL_THREADS;
+                if s.projects.len() > crate::project::MAX_RESTORED_PROJECTS {
+                    log::warn!(
+                        "session restore: {} project(s) exceeds cap {}, restoring the first {}",
+                        s.projects.len(),
+                        crate::project::MAX_RESTORED_PROJECTS,
+                        crate::project::MAX_RESTORED_PROJECTS
+                    );
+                }
+                let projects = s
+                    .projects
                     .iter()
-                    .map(crate::project::project_from_session)
-                    .collect()
-            })
-            .unwrap_or_default();
-        // US-002 (prd-agents-ui-codex-redesign-2026-Q3.md): rehydrate free
-        // chats. Same `filter_map` shape as project threads - an unknown
-        // agent tag drops the row rather than crashing. Absent on a
-        // pre-refonte session.json (`#[serde(default)]` → empty).
-        let restored_chats: Vec<crate::project::Thread> = saved_session
-            .as_ref()
-            .map(|s| {
-                s.chats
+                    .take(crate::project::MAX_RESTORED_PROJECTS)
+                    .map(|project| {
+                        crate::project::project_from_session_with_budget(
+                            project,
+                            &mut remaining_threads,
+                        )
+                    })
+                    .collect();
+
+                if s.chats.len() > crate::project::MAX_RESTORED_CHATS {
+                    log::warn!(
+                        "session restore: {} chat(s) exceeds cap {}, restoring the first {}",
+                        s.chats.len(),
+                        crate::project::MAX_RESTORED_CHATS,
+                        crate::project::MAX_RESTORED_CHATS
+                    );
+                }
+                let chats = s
+                    .chats
                     .iter()
-                    .filter_map(crate::project::thread_from_session)
-                    .collect()
+                    .take(crate::project::MAX_RESTORED_CHATS)
+                    .filter_map(|chat| {
+                        crate::project::thread_from_session_with_budget(
+                            chat,
+                            &mut remaining_threads,
+                        )
+                    })
+                    .collect();
+                (projects, chats)
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| (Vec::new(), Vec::new()));
         // Bump the in-memory ID counters past anything the session
         // restored so a freshly-created project/thread/chat can never
         // collide with a restored ID (US-007's `bump_id_counters_to`
@@ -618,13 +663,6 @@ impl PaneFlowApp {
         #[cfg(target_os = "linux")]
         update::migrations::run_startup_migrations(&install_method);
 
-        // US-010/US-012 - resolve the anonymous telemetry_id (creates it
-        // on first launch) and build the consent-gated capture client. The
-        // `is_first_run` flag is reused below as a property on the
-        // `app_started` event; a second filesystem probe would race with the
-        // persistence we just did.
-        let (telemetry_distinct_id, is_first_run_for_telemetry) =
-            telemetry::id::telemetry_id_with_first_run();
         // Compile-time env vars: the PostHog project key is injected by the
         // release pipeline; the host defaults to EU Cloud so a build that
         // omits the override still honours the PRD's EU-residency constraint.
@@ -635,8 +673,18 @@ impl PaneFlowApp {
             .telemetry
             .as_ref()
             .and_then(|t| t.enabled);
-        let telemetry = std::sync::Arc::new(telemetry::client::TelemetryClient::from_config(
-            &telemetry_config_snapshot,
+        let telemetry_consent = telemetry::client::TelemetryConsent::new(telemetry_enabled_last);
+        // US-010/US-012 - resolve the anonymous telemetry_id only after the
+        // consent and kill-switch gates pass. Opt-out, unanswered consent, and
+        // env kill-switches must not create persistent telemetry state.
+        let (telemetry_distinct_id, is_first_run_for_telemetry) =
+            if telemetry::client::TelemetryClient::consent_allows_capture(telemetry_consent) {
+                telemetry::id::telemetry_id_with_first_run()
+            } else {
+                (String::new(), false)
+            };
+        let telemetry = std::sync::Arc::new(telemetry::client::TelemetryClient::from_consent(
+            telemetry_consent,
             posthog_api_key,
             posthog_host,
             &telemetry_distinct_id,
@@ -660,18 +708,9 @@ impl PaneFlowApp {
             update::checker::UpdateCheckTrigger::Auto,
         );
         // Background flusher: every 5 s the client inspects its queue and
-        // posts when the size or age threshold is met. Runs off the GPUI
-        // main thread - ureq blocks inside `post_batch` but never on the
-        // renderer - via `cx.background_spawn` + `smol::unblock`.
-        let telemetry_flusher = std::sync::Arc::clone(&telemetry);
-        cx.background_spawn(async move {
-            loop {
-                smol::Timer::after(std::time::Duration::from_secs(5)).await;
-                let client = std::sync::Arc::clone(&telemetry_flusher);
-                smol::unblock(move || client.poll_flush()).await;
-            }
-        })
-        .detach();
+        // posts when the size or age threshold is met. Re-spawned when the
+        // telemetry client is swapped by config reconciliation.
+        Self::spawn_telemetry_flusher(std::sync::Arc::clone(&telemetry), cx);
 
         // US-009 - coexistence detection + one-time advisory toast. Runs
         // strictly after the US-008 icon migration so a same-session

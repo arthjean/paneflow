@@ -26,7 +26,7 @@
 //! named pipe path `\\.\pipe\paneflow` (or `paneflow-dev` in debug). The
 //! XDG/TMPDIR chain and sun_path guard remain Unix-only.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// macOS `sockaddr_un.sun_path` is `[c_char; 104]`. Linux allows 108, but
 /// using the smaller ceiling keeps paths portable across both targets.
@@ -65,6 +65,30 @@ const SOCKET_FILE: &str = if cfg!(debug_assertions) {
     "paneflow.sock"
 };
 
+/// IPC endpoint plus ownership metadata for the server-side binder.
+///
+/// `PANEFLOW_SOCKET_PATH` is useful for tests and intentionally isolated debug
+/// instances, but the path belongs to the caller, not Paneflow. The IPC server
+/// must therefore not create/chmod its parent directory or reclaim a non-socket
+/// file there. The default path is Paneflow-owned and may be prepared by the
+/// server before bind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IpcSocketPath {
+    path: PathBuf,
+    owned_parent: bool,
+}
+
+impl IpcSocketPath {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn owned_parent(&self) -> bool {
+        self.owned_parent
+    }
+}
+
 /// Resolve the PaneFlow runtime directory. Fallback chain:
 /// 1. `$XDG_RUNTIME_DIR` - explicit Linux XDG (usually `/run/user/<uid>`).
 /// 2. `dirs::runtime_dir()` - same on Linux, `None` on macOS.
@@ -102,24 +126,44 @@ fn runtime_dir() -> Option<PathBuf> {
 /// Named pipes live in a global kernel namespace - there is no runtime dir
 /// to resolve, no sun_path limit to enforce, and no XDG fallback chain.
 #[cfg(unix)]
-pub(crate) fn socket_path() -> Option<PathBuf> {
+pub(crate) fn socket_path_spec() -> Option<IpcSocketPath> {
     if let Some(path) = socket_path_from_env(std::env::var_os("PANEFLOW_SOCKET_PATH")) {
-        return check_sun_path_fits(&path).then_some(path);
+        return check_sun_path_fits(&path).then_some(IpcSocketPath {
+            path,
+            owned_parent: false,
+        });
     }
     let path = runtime_dir()?.join(PANEFLOW_SUBDIR).join(SOCKET_FILE);
-    check_sun_path_fits(&path).then_some(path)
+    check_sun_path_fits(&path).then_some(IpcSocketPath {
+        path,
+        owned_parent: true,
+    })
 }
 
 #[cfg(windows)]
-pub(crate) fn socket_path() -> Option<PathBuf> {
+pub(crate) fn socket_path_spec() -> Option<IpcSocketPath> {
     if let Some(path) = socket_path_from_env(std::env::var_os("PANEFLOW_SOCKET_PATH")) {
-        return Some(path);
+        return Some(IpcSocketPath {
+            path,
+            owned_parent: false,
+        });
     }
-    Some(PathBuf::from(if cfg!(debug_assertions) {
-        r"\\.\pipe\paneflow-dev"
-    } else {
-        r"\\.\pipe\paneflow"
-    }))
+    Some(IpcSocketPath {
+        path: PathBuf::from(if cfg!(debug_assertions) {
+            r"\\.\pipe\paneflow-dev"
+        } else {
+            r"\\.\pipe\paneflow"
+        }),
+        owned_parent: false,
+    })
+}
+
+pub(crate) fn socket_path() -> Option<PathBuf> {
+    socket_path_spec().map(|spec| spec.path)
+}
+
+pub(crate) fn shell_integration_dir() -> Option<PathBuf> {
+    data_dir().map(|dir| dir.join("shell"))
 }
 
 fn socket_path_from_env(raw: Option<std::ffi::OsString>) -> Option<PathBuf> {
@@ -128,17 +172,15 @@ fn socket_path_from_env(raw: Option<std::ffi::OsString>) -> Option<PathBuf> {
 }
 
 /// Prepend the common per-user `bin/` directories to the process `PATH`
-/// so PATH-based lookups (notably `which::which` in `paneflow_acp::discovery`)
-/// see binaries installed under the user's home - `~/.bun/bin`,
+/// so PATH-based lookups see binaries installed under the user's home - `~/.bun/bin`,
 /// `~/.cargo/bin`, `~/.local/bin`, plus `/opt/homebrew/bin` on macOS.
 ///
 /// Why: when Paneflow is launched from a `.desktop` file, Finder, or the
 /// Windows Start Menu, it inherits the systemd-user / launchd / Explorer
-/// PATH, which does NOT include `~/.bun/bin`. The agent-discovery code
-/// gates on `which::which("bunx")` first; if `bunx` is invisible, the UI
-/// shows the "No AI agents detected" empty state even though both Claude
-/// Code and Codex are installed. Zed, VS Code, and most GUI dev tools all
-/// patch their own PATH at startup for the same reason.
+/// PATH, which does NOT include `~/.bun/bin`. Agent launch and CLI helper
+/// paths then fail to find user-installed tools even though they are available
+/// in a normal terminal. Zed, VS Code, and most GUI dev tools all patch their
+/// own PATH at startup for the same reason.
 ///
 /// Dirs are prepended (not appended), so user installs always win over any
 /// system-shadowed name. Existing entries in PATH are skipped - no
@@ -261,7 +303,7 @@ pub fn data_dir() -> Option<PathBuf> {
 /// Unlike the shim / ai-hook helpers - which live under
 /// `cache_dir()/paneflow/bin/<VERSION>/` and are re-resolved by Paneflow on
 /// every launch - the bridge path is written into **external, persistent
-/// agent configs** (`~/.claude/settings.json`, `~/.codex/config.toml`, …) by
+/// agent configs** (`~/.claude.json`, `~/.codex/config.toml`, ...) by
 /// `paneflow mcp install`. A version-pinned path would go stale on the next
 /// Paneflow update, and `cache_dir()` can be purged by the OS. So the bridge
 /// lives under `data_dir()` (durable, non-versioned):
@@ -425,6 +467,12 @@ mod tests {
             socket_path(),
             Some(PathBuf::from("/tmp/paneflow-isolated.sock"))
         );
+        let spec = socket_path_spec().expect("env socket path resolves");
+        assert_eq!(spec.path(), Path::new("/tmp/paneflow-isolated.sock"));
+        assert!(
+            !spec.owned_parent(),
+            "env override parent must not be treated as Paneflow-owned"
+        );
     }
 
     #[test]
@@ -439,6 +487,10 @@ mod tests {
             PathBuf::from(format!("/run/user/1000/{APP_SUBDIR}/{SOCKET_FILE}")),
             "AC5: Linux with XDG_RUNTIME_DIR must resolve to the XDG path \
              (subdir + filename vary by build profile via APP_SUBDIR / SOCKET_FILE)"
+        );
+        assert!(
+            socket_path_spec().expect("socket spec").owned_parent(),
+            "default runtime-dir socket is Paneflow-owned"
         );
     }
 

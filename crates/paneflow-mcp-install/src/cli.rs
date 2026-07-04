@@ -75,6 +75,10 @@ pub(crate) fn run_with(
         let _ = writeln!(err, "{USAGE}");
         return 2;
     };
+    if args.len() != 1 {
+        let _ = writeln!(err, "unexpected argument after `{}`\n\n{USAGE}", args[0]);
+        return 2;
+    }
 
     match command {
         Command::Install => run_install(bridge_path, writers, out, err),
@@ -194,6 +198,17 @@ fn run_status(
                     r.id
                 );
             }
+            StatusKind::NeedsRepair { path, reason } => {
+                let suffix = path
+                    .as_deref()
+                    .map(|p| format!(" at {p}"))
+                    .unwrap_or_default();
+                let _ = writeln!(
+                    out,
+                    "{}: needs repair{suffix} ({reason}) - re-run `paneflow mcp install`",
+                    r.id
+                );
+            }
             StatusKind::NotInstalled => {
                 let _ = writeln!(out, "{}: detected but not installed", r.id);
             }
@@ -244,6 +259,14 @@ mod tests {
         let (code, _out, err) = run(&["bogus"], None, &[]);
         assert_eq!(code, 2);
         assert!(err.contains("Usage:"));
+    }
+
+    #[test]
+    fn trailing_args_are_usage_error() {
+        let (code, out, err) = run(&["install", "--help"], None, &[]);
+        assert_eq!(code, 2);
+        assert!(out.is_empty());
+        assert!(err.contains("unexpected argument"));
     }
 
     #[test]

@@ -88,6 +88,7 @@ jobs:
               - 'crates/**/*.rs'
               - '**/Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
               - '.github/workflows/run_tests.yml'
             rendering:
               # GPUI Element + paint pipeline (where c3e2331 lived)
@@ -259,7 +260,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --workspace -- -D warnings
+        run: cargo clippy --workspace --locked -- -D warnings
 
   run_tests_linux:
     name: Tests (Linux x86_64)
@@ -295,7 +296,7 @@ jobs:
           key: run_tests_linux
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
   release_build_linux:
     name: Release build + binary-size budget (Linux x86_64)
@@ -339,7 +340,7 @@ jobs:
       # would never be built on CI (build.rs only fires for paneflow-app
       # builds) and the size-cap assertion would point at a missing file.
       - name: Release build (workspace)
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --locked
 
       # US-012 AC-4 - enforce the per-binary size caps from the PRD
       # Goals table, measured on the `release-min` profile (workspace
@@ -423,7 +424,7 @@ jobs:
   #   * advisories.ignore = [...] → explicit list with re-evaluation
   #     triggers (per-advisory rationale documented inline)
   #   * licenses → allow-list including GPL-3 + GPL-3-or-later
-  #   * sources → unknown-registry / unknown-git = warn
+  #   * sources → unknown-registry / unknown-git = deny
   # `unused-ignored-advisory = "warn"` in deny.toml surfaces stale
   # ignores as the dep graph evolves, so the list doesn't rot.
   #
@@ -571,7 +572,7 @@ jobs:
       # install_method::AppBundle, update_checker::AssetFormat::Dmg,
       # etc.) that the ubuntu `check` job would otherwise miss.
       - name: cargo clippy (aarch64-apple-darwin)
-        run: cargo clippy --workspace --target aarch64-apple-darwin -- -D warnings
+        run: cargo clippy --workspace --locked --target aarch64-apple-darwin -- -D warnings
 
       # cargo test on the config crate (39 tests) + app crate (testable
       # modules like keybindings / update_checker with 150+ tests).
@@ -579,15 +580,15 @@ jobs:
       # binaries are native Mach-O and the test run exercises the real
       # macOS codepath, not a Linux-host proxy.
       - name: cargo test --workspace
-        run: cargo test --workspace --target aarch64-apple-darwin
+        run: cargo test --workspace --locked --target aarch64-apple-darwin
 
       # AC1 - cargo check must exit 0 with no linker errors.
       - name: cargo check (aarch64-apple-darwin)
-        run: cargo check --workspace --target aarch64-apple-darwin
+        run: cargo check --workspace --locked --target aarch64-apple-darwin
 
       # AC2 - release build produces the expected binary path.
       - name: cargo build --release (aarch64-apple-darwin)
-        run: cargo build --release -p paneflow-app --target aarch64-apple-darwin
+        run: cargo build --release -p paneflow-app --locked --target aarch64-apple-darwin
 
       # AC3 - verify the produced binary is a Mach-O arm64 executable.
       - name: Verify Mach-O arm64 binary
@@ -901,7 +902,7 @@ jobs:
       # matching the Linux `check` job pattern (line 74) and the release
       # pipeline's clippy gate.
       - name: cargo clippy --target x86_64-pc-windows-msvc
-        run: cargo clippy --workspace --target x86_64-pc-windows-msvc -- -D warnings
+        run: cargo clippy --workspace --locked --target x86_64-pc-windows-msvc -- -D warnings
 
       # AC-2 step 3/4: tests. Currently all 39 tests live in paneflow-config
       # (platform-neutral: JSON schema, file watcher, keybinding parser);
@@ -920,7 +921,7 @@ jobs:
         run: |
           $ok = $false
           foreach ($attempt in 1..3) {
-            cargo test --workspace --target x86_64-pc-windows-msvc
+            cargo test --workspace --locked --target x86_64-pc-windows-msvc
             if ($LASTEXITCODE -eq 0) { $ok = $true; break }
             Write-Warning "cargo test attempt $attempt failed (likely a flaky PTY/IO test on a loaded runner); retrying"
           }
@@ -934,7 +935,7 @@ jobs:
       # symbol, etc.) rather than a lint. No `continue-on-error` anymore
       # (US-003 set it; EP-W2/W3 landing made it unnecessary).
       - name: cargo check --workspace --target x86_64-pc-windows-msvc
-        run: cargo check --workspace --target x86_64-pc-windows-msvc
+        run: cargo check --workspace --locked --target x86_64-pc-windows-msvc
 
       # US-012 (prd-ai-hooks-cross-platform.md) AC - the matrix requires
       # `cargo build --workspace --release` on every leg. On Windows this
@@ -952,7 +953,7 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
-        run: cargo build --workspace --release --target x86_64-pc-windows-msvc
+        run: cargo build --workspace --release --locked --target x86_64-pc-windows-msvc
 
       # Mirror of the macos_check `Upload aarch64 binary artifact` step:
       # exposes the just-built `paneflow.exe` as a workflow artifact so
@@ -1159,13 +1160,13 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy (aarch64-unknown-linux-gnu)
-        run: cargo clippy --workspace --target aarch64-unknown-linux-gnu -- -D warnings
+        run: cargo clippy --workspace --locked --target aarch64-unknown-linux-gnu -- -D warnings
 
       - name: cargo test --workspace (aarch64-unknown-linux-gnu)
-        run: cargo test --workspace --target aarch64-unknown-linux-gnu
+        run: cargo test --workspace --locked --target aarch64-unknown-linux-gnu
 
       - name: cargo build --workspace --release (aarch64-unknown-linux-gnu)
-        run: cargo build --workspace --release --target aarch64-unknown-linux-gnu
+        run: cargo build --workspace --release --locked --target aarch64-unknown-linux-gnu
 
   macos_x86_64_check:
     name: macOS x86_64 (x86_64-apple-darwin)
@@ -1204,13 +1205,13 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy (x86_64-apple-darwin)
-        run: cargo clippy --workspace --target x86_64-apple-darwin -- -D warnings
+        run: cargo clippy --workspace --locked --target x86_64-apple-darwin -- -D warnings
 
       - name: cargo test --workspace (x86_64-apple-darwin)
-        run: cargo test --workspace --target x86_64-apple-darwin
+        run: cargo test --workspace --locked --target x86_64-apple-darwin
 
       - name: cargo build --workspace --release (x86_64-apple-darwin)
-        run: cargo build --workspace --release --target x86_64-apple-darwin
+        run: cargo build --workspace --release --locked --target x86_64-apple-darwin
 
   windows_aarch64_check:
     name: Windows aarch64 (aarch64-pc-windows-msvc, check-only)
@@ -1271,10 +1272,10 @@ jobs:
           key: aarch64-pc-windows-msvc
 
       - name: cargo clippy --target aarch64-pc-windows-msvc
-        run: cargo clippy --workspace --target aarch64-pc-windows-msvc -- -D warnings
+        run: cargo clippy --workspace --locked --target aarch64-pc-windows-msvc -- -D warnings
 
       - name: cargo check --target aarch64-pc-windows-msvc
-        run: cargo check --workspace --target aarch64-pc-windows-msvc
+        run: cargo check --workspace --locked --target aarch64-pc-windows-msvc
 
   # ───────────────────────────────────────────────────────────────────────
   # Single aggregator job - mirrors Zed's run_tests.yml `tests_pass`

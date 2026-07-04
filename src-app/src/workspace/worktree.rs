@@ -28,6 +28,7 @@ const GIT_DEADLINE: Duration = Duration::from_secs(10);
 /// `worktree add` checks out a full tree - give it more room on big repos.
 const ADD_DEADLINE: Duration = Duration::from_secs(120);
 const STDOUT_CAP: u64 = 256 * 1024;
+const OWNER_MARKER_FILE: &str = ".paneflow-worktree";
 
 /// Teardown policy for a managed worktree (US-009). `Auto` removes the
 /// worktree at workspace close when it has no uncommitted changes; `Keep`
@@ -46,16 +47,6 @@ impl TeardownPolicy {
             TeardownPolicy::Keep => "keep",
         }
     }
-
-    /// Lenient parse - an unknown value falls back to `Auto` so a hand-edited
-    /// session.json can't disable data-loss protection by typo (the protection
-    /// is the clean-check, not the policy).
-    pub fn parse(s: &str) -> Self {
-        match s {
-            "keep" => TeardownPolicy::Keep,
-            _ => TeardownPolicy::Auto,
-        }
-    }
 }
 
 /// A worktree Paneflow created for a pane and therefore owns the lifecycle of.
@@ -71,6 +62,76 @@ pub struct ManagedWorktree {
     /// teardown never touches the branch.
     pub branch: String,
     pub teardown: TeardownPolicy,
+}
+
+pub fn owner_marker_path(worktree_path: &Path) -> PathBuf {
+    worktree_path.join(OWNER_MARKER_FILE)
+}
+
+pub fn has_owner_marker(worktree_path: &Path) -> bool {
+    owner_marker_path(worktree_path).is_file()
+}
+
+fn write_owner_marker(worktree_path: &Path, repo_root: &Path, branch: &str) -> Result<(), String> {
+    let marker = owner_marker_path(worktree_path);
+    let contents = format!(
+        "owner=paneflow\nrepo_root={}\nbranch={}\n",
+        repo_root.display(),
+        branch
+    );
+    std::fs::write(&marker, contents)
+        .map_err(|e| format!("cannot write owner marker {}: {e}", marker.display()))
+}
+
+/// Rehydrate a persisted or IPC-provided ownership record. The record is only
+/// accepted when it matches Paneflow's deterministic worktree directory and the
+/// on-disk worktree carries Paneflow's owner marker.
+pub fn managed_worktree_from_record(
+    path_raw: &str,
+    repo_root_raw: &str,
+    branch_raw: &str,
+    teardown_raw: &str,
+) -> Option<ManagedWorktree> {
+    let path = PathBuf::from(path_raw);
+    let repo_root = PathBuf::from(repo_root_raw);
+    if !path.is_absolute() || !repo_root.is_absolute() {
+        log::warn!("managed worktree: dropping record with non-absolute path");
+        return None;
+    }
+    let branch = branch_raw.trim();
+    if branch.is_empty() || branch_slug(branch).is_empty() {
+        log::warn!("managed worktree: dropping record with invalid branch");
+        return None;
+    }
+    let expected = worktree_dir(&repo_root, branch);
+    if path != expected {
+        log::warn!(
+            "managed worktree: dropping record outside Paneflow worktree dir: {}",
+            path.display()
+        );
+        return None;
+    }
+    if !has_owner_marker(&path) {
+        log::warn!(
+            "managed worktree: dropping record without owner marker: {}",
+            path.display()
+        );
+        return None;
+    }
+    let teardown = match teardown_raw {
+        "auto" => TeardownPolicy::Auto,
+        "keep" => TeardownPolicy::Keep,
+        other => {
+            log::warn!("managed worktree: unknown teardown policy {other:?}; keeping");
+            TeardownPolicy::Keep
+        }
+    };
+    Some(ManagedWorktree {
+        path,
+        repo_root,
+        branch: branch.to_string(),
+        teardown,
+    })
 }
 
 /// One entry of `git worktree list --porcelain`.
@@ -210,7 +271,12 @@ pub fn add_worktree(
         args.push("-b");
     }
     args.push(branch);
-    run_git(repo_root, &args, ADD_DEADLINE).map(|_| ())
+    run_git(repo_root, &args, ADD_DEADLINE)?;
+    if let Err(e) = write_owner_marker(path, repo_root, branch) {
+        let _ = remove_worktree(repo_root, path);
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// True when the worktree has no uncommitted changes (`status --porcelain`
@@ -278,6 +344,13 @@ pub fn teardown_all(worktrees: Vec<ManagedWorktree>) {
         if !wt.path.exists() {
             // Directory already gone (user rm -rf'd it): just prune the ref.
             let _ = prune(&wt.repo_root);
+            continue;
+        }
+        if !has_owner_marker(&wt.path) {
+            log::warn!(
+                "worktree kept: missing Paneflow owner marker in {}",
+                wt.path.display()
+            );
             continue;
         }
         match is_clean(&wt.path) {
@@ -365,11 +438,48 @@ mod tests {
     }
 
     #[test]
-    fn teardown_policy_parse_is_lenient_toward_auto() {
-        assert_eq!(TeardownPolicy::parse("keep"), TeardownPolicy::Keep);
-        assert_eq!(TeardownPolicy::parse("auto"), TeardownPolicy::Auto);
-        // Unknown → Auto: the data-loss protection is the clean-check.
-        assert_eq!(TeardownPolicy::parse("delete"), TeardownPolicy::Auto);
+    fn managed_worktree_record_requires_marker_and_generated_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        let branch = "feat/hardening";
+        let path = worktree_dir(&repo_root, branch);
+        std::fs::create_dir_all(&path).expect("worktree dir");
+
+        assert!(
+            managed_worktree_from_record(
+                &path.to_string_lossy(),
+                &repo_root.to_string_lossy(),
+                branch,
+                "auto",
+            )
+            .is_none(),
+            "a matching path without owner marker is not enough"
+        );
+
+        std::fs::write(owner_marker_path(&path), "owner=paneflow\n").expect("marker");
+        let restored = managed_worktree_from_record(
+            &path.to_string_lossy(),
+            &repo_root.to_string_lossy(),
+            branch,
+            "delete",
+        )
+        .expect("marker-backed record restores");
+        assert_eq!(restored.path, path);
+        assert_eq!(restored.teardown, TeardownPolicy::Keep);
+
+        let outside = tmp.path().join("external");
+        std::fs::create_dir_all(&outside).expect("outside dir");
+        std::fs::write(owner_marker_path(&outside), "owner=paneflow\n").expect("outside marker");
+        assert!(
+            managed_worktree_from_record(
+                &outside.to_string_lossy(),
+                &repo_root.to_string_lossy(),
+                branch,
+                "auto",
+            )
+            .is_none(),
+            "marker cannot bless a path outside the deterministic Paneflow dir"
+        );
     }
 
     #[test]

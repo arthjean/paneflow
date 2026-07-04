@@ -16,12 +16,11 @@
 //!
 //! - [`discovery::AgentKind`] - identity enum for legacy `Thread.agent`
 //!   metadata.
-//! - [`spawn::scrub_claudecode_env`] - strip the `CLAUDECODE` env var so
-//!   child CLIs do not refuse to launch inside a host Claude Code
-//!   session. Called once from `main()` before any thread spawns.
+//! - [`spawn::scrub_claudecode_env`] - unsafe process-wide startup scrub.
+//! - [`spawn::scrub_claudecode_from_command`] - safe per-child scrub.
 
 pub mod discovery;
 pub mod spawn;
 
 pub use discovery::AgentKind;
-pub use spawn::scrub_claudecode_env;
+pub use spawn::{scrub_claudecode_env, scrub_claudecode_from_command};

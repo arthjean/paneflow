@@ -57,6 +57,11 @@ pub enum StatusOutcome {
     /// current `bridge_binary_path()` - typically a stale path left by an
     /// older Paneflow install that moved data dirs.
     StalePath { found: String, expected: String },
+    /// A `paneflow` entry exists but does not match the managed schema.
+    NeedsRepair {
+        path: Option<String>,
+        reason: String,
+    },
     /// The agent is present but carries no `paneflow` entry.
     NotInstalled,
 }
@@ -86,8 +91,9 @@ pub trait AgentConfigWriter {
     fn uninstall(&self) -> Result<UninstallOutcome>;
 
     /// Inspect the current `paneflow` entry without writing. `bridge_path`
-    /// is the path the entry *should* point at, used to flag a stale path.
-    fn status(&self, bridge_path: &Path) -> Result<StatusOutcome>;
+    /// is the path the entry should point at, used to flag a stale path
+    /// when the caller can resolve it.
+    fn status(&self, bridge_path: Option<&Path>) -> Result<StatusOutcome>;
 }
 
 /// The registry of concrete writers driven by `paneflow mcp <cmd>`.

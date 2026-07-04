@@ -239,7 +239,7 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy
-        run: cargo clippy --workspace --target ${{ matrix.target }} -- -D warnings
+        run: cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
 
       # cargo test is intentionally NOT run here. run_tests.yml is the required
       # test gate on every PR; by the time release.yml runs (tag-push from main,
@@ -298,6 +298,7 @@ jobs:
           $cargo = if ([string]::IsNullOrEmpty($env:CARGO)) { 'cargo' } else { $env:CARGO }
           & $cargo build `
             --profile release-min `
+            --locked `
             --target $target `
             --target-dir target/embed-build `
             -p paneflow-shim `
@@ -373,7 +374,7 @@ jobs:
           if [ "${WINDOWS_HELPERS_PREPARED:-}" = "true" ]; then
             export PANEFLOW_SKIP_EMBED_BUILD=1
           fi
-          cargo build --release -p paneflow-app --target "$TARGET"
+          cargo build --release -p paneflow-app --locked --target "$TARGET"
 
       # --- Phase 1 artifacts ---
       - name: Produce tar.gz

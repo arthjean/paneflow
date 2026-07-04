@@ -253,13 +253,14 @@ where
     detected_tools.sort_by_key(|tool| tool.display_rank());
     detected_tools.dedup();
 
-    let mut active_labels: Vec<String> = detected_agents
+    let mut active_labels: Vec<String> = hooked
         .iter()
-        .map(|binary| {
+        .map(|row| row.tool.display_name().to_string())
+        .chain(detected_agents.iter().map(|binary| {
             TerminalAgent::from_binary(binary)
                 .map(|tool| tool.display_name().to_string())
                 .unwrap_or_else(|| binary.clone())
-        })
+        }))
         .collect();
     active_labels.sort();
     active_labels.dedup();
@@ -536,6 +537,18 @@ mod tests {
             status.active_labels,
             vec!["Claude Code".to_string(), "Copilot".to_string()]
         );
+    }
+
+    #[test]
+    fn workspace_agent_status_keeps_hook_only_label_active() {
+        let sessions = [s(TerminalAgent::ClaudeCode, AgentState::Thinking)];
+        let detected = HashSet::new();
+
+        let status = workspace_agent_status(sessions.iter(), &detected);
+
+        assert_eq!(status.hooked.len(), 1);
+        assert!(status.unhooked.is_empty());
+        assert_eq!(status.active_labels, vec!["Claude Code".to_string()]);
     }
 
     #[test]

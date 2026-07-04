@@ -6,6 +6,8 @@
 
 use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{App, AppContext, Context, Entity};
@@ -31,6 +33,15 @@ const MAX_CORRUPTION_BACKUPS: usize = 5;
 /// enough to absorb the multi-call bursts emitted when creating/closing many
 /// workspaces in quick succession.
 const SAVE_DEBOUNCE_MS: u64 = 150;
+
+static SESSION_WRITE_LOCK: Mutex<()> = Mutex::new(());
+static SESSION_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn session_write_guard() -> MutexGuard<'static, ()> {
+    SESSION_WRITE_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Forensic context emitted alongside a `session_corrupted` telemetry
 /// event (US-006). Gathered by [`PaneFlowApp::load_session_at`] inside
@@ -186,10 +197,7 @@ impl PaneFlowApp {
                 // for the drain sub-window. Both writers also share the
                 // `session.json.tmp` path, so skipping here avoids a concurrent
                 // temp-file clobber too.
-                if save_seq.load(std::sync::atomic::Ordering::SeqCst) != seq {
-                    return;
-                }
-                write_session_json(&path, &state);
+                write_session_json_if_current(&path, &state, &save_seq, seq);
             })
             .await;
         })
@@ -263,7 +271,7 @@ impl PaneFlowApp {
         // agent-written session.json (or a non-regular file swapped in) can't
         // OOM/stall the load before parse. On any guard hit we start from an
         // empty session - identical fallback to a missing file.
-        let data = match read_session_capped(path) {
+        let bytes = match read_session_capped(path) {
             Ok(Some(d)) => d,
             Ok(None) => return (None, None),
             Err(e) => {
@@ -271,6 +279,41 @@ impl PaneFlowApp {
                     log::warn!("session load: read failed at {}: {e}", path.display());
                 }
                 return (None, None);
+            }
+        };
+
+        let data = match String::from_utf8(bytes) {
+            Ok(data) => data,
+            Err(err) => {
+                log::warn!(
+                    "session load: invalid UTF-8 at {}; falling back to empty session",
+                    path.display()
+                );
+                let bytes = err.into_bytes();
+                let metadata = std::fs::metadata(path).ok();
+                let file_size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+                let file_age_seconds = metadata
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|mt| SystemTime::now().duration_since(mt).ok())
+                    .map(|d| d.as_secs());
+                let backup_path = write_corruption_backup(path, &bytes).unwrap_or_else(|e| {
+                    log::warn!(
+                        "session load: backup write failed at {}: {e}",
+                        path.display()
+                    );
+                    None
+                });
+
+                return (
+                    None,
+                    Some(SessionCorruptionInfo {
+                        error_category: "data",
+                        file_size,
+                        file_age_seconds,
+                        backup_path,
+                    }),
+                );
             }
         };
 
@@ -291,17 +334,18 @@ impl PaneFlowApp {
                     .and_then(|mt| SystemTime::now().duration_since(mt).ok())
                     .map(|d| d.as_secs());
 
-                let backup_path = write_corruption_backup(path, &data).unwrap_or_else(|e| {
-                    // AC6: backup write failure must not block startup.
-                    // Log and proceed - telemetry still fires with a
-                    // `backup_path: None`, so the operator can still see
-                    // the corruption rate even if forensics are missing.
-                    log::warn!(
-                        "session load: backup write failed at {}: {e}",
-                        path.display()
-                    );
-                    None
-                });
+                let backup_path =
+                    write_corruption_backup(path, data.as_bytes()).unwrap_or_else(|e| {
+                        // AC6: backup write failure must not block startup.
+                        // Log and proceed - telemetry still fires with a
+                        // `backup_path: None`, so the operator can still see
+                        // the corruption rate even if forensics are missing.
+                        log::warn!(
+                            "session load: backup write failed at {}: {e}",
+                            path.display()
+                        );
+                        None
+                    });
 
                 (
                     None,
@@ -390,12 +434,7 @@ impl PaneFlowApp {
             workspace.managed_worktrees = ws_session
                 .managed_worktrees
                 .iter()
-                .map(|def| crate::workspace::worktree::ManagedWorktree {
-                    path: PathBuf::from(&def.path),
-                    repo_root: PathBuf::from(&def.repo_root),
-                    branch: def.branch.clone(),
-                    teardown: crate::workspace::worktree::TeardownPolicy::parse(&def.teardown),
-                })
+                .filter_map(rehydrate_managed_worktree)
                 .collect();
             // US-007: rehydrate expanded dirs as absolute paths under this
             // workspace's cwd. Paths that no longer resolve to a directory are
@@ -572,7 +611,7 @@ impl PaneFlowApp {
 /// from an IO error (`Err`). Stats the OPEN fd, not the path, and caps the read
 /// with `take`, so a swap/grow between stat and read cannot defeat the bound
 /// (the FIFO/device + TOCTOU class, mirroring `read_config_string`).
-fn read_session_capped(path: &Path) -> std::io::Result<Option<String>> {
+fn read_session_capped(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
     use std::io::Read;
     let file = std::fs::File::open(path)?;
     let meta = file.metadata()?;
@@ -591,10 +630,10 @@ fn read_session_capped(path: &Path) -> std::io::Result<Option<String>> {
         );
         return Ok(None);
     }
-    let mut data = String::new();
+    let mut data = Vec::new();
     // +1 so a file grown past the cap between stat and read is still caught.
     file.take(MAX_SESSION_SIZE_BYTES + 1)
-        .read_to_string(&mut data)?;
+        .read_to_end(&mut data)?;
     if data.len() as u64 > MAX_SESSION_SIZE_BYTES {
         log::warn!(
             "session load: {} exceeded the {MAX_SESSION_SIZE_BYTES} cap during read; starting empty",
@@ -666,6 +705,17 @@ fn rehydrate_expanded_path(cwd: &str, rel: &str) -> Option<PathBuf> {
     Some(abs)
 }
 
+fn rehydrate_managed_worktree(
+    def: &paneflow_config::schema::ManagedWorktreeDef,
+) -> Option<crate::workspace::worktree::ManagedWorktree> {
+    crate::workspace::worktree::managed_worktree_from_record(
+        &def.path,
+        &def.repo_root,
+        &def.branch,
+        &def.teardown,
+    )
+}
+
 fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {
     let mut paths: Vec<String> = expanded
         .iter()
@@ -686,12 +736,30 @@ fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {
 /// the GPUI main thread in the deferred path (`save_session` wraps it in
 /// `smol::unblock`); `save_session_blocking` calls it directly at quit.
 fn write_session_json(path: &Path, state: &paneflow_config::schema::SessionState) {
+    let _guard = session_write_guard();
+    write_session_json_inner(path, state);
+}
+
+fn write_session_json_if_current(
+    path: &Path,
+    state: &paneflow_config::schema::SessionState,
+    save_seq: &AtomicU64,
+    seq: u64,
+) {
+    let _guard = session_write_guard();
+    if save_seq.load(Ordering::SeqCst) != seq {
+        return;
+    }
+    write_session_json_inner(path, state);
+}
+
+fn write_session_json_inner(path: &Path, state: &paneflow_config::schema::SessionState) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
     match serde_json::to_string_pretty(state) {
         Ok(json) => {
-            let tmp_path = path.with_extension("json.tmp");
+            let tmp_path = session_tmp_path(path);
             match std::fs::write(&tmp_path, &json) {
                 Ok(()) => {
                     if let Err(e) = std::fs::rename(&tmp_path, path) {
@@ -707,6 +775,18 @@ fn write_session_json(path: &Path, state: &paneflow_config::schema::SessionState
         }
         Err(e) => log::warn!("session serialize failed: {e}"),
     }
+}
+
+fn session_tmp_path(path: &Path) -> PathBuf {
+    let seq = SESSION_TMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let Some(parent) = path.parent() else {
+        return path.with_extension(format!("json.tmp.{}.{}", std::process::id(), seq));
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("session.json");
+    parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), seq))
 }
 
 /// Convert `serde_json::Error::classify()` to a fixed string. Telemetry
@@ -731,7 +811,7 @@ fn serde_category_tag(err: &serde_json::Error) -> &'static str {
 /// blocking startup.
 fn write_corruption_backup(
     session_path: &Path,
-    contents: &str,
+    contents: &[u8],
 ) -> std::io::Result<Option<PathBuf>> {
     let parent = match session_path.parent() {
         Some(p) => p,
@@ -928,7 +1008,7 @@ mod tests {
         std::fs::write(&path, "{\"ok\":true}").expect("seed");
         assert_eq!(
             read_session_capped(&path).expect("io ok"),
-            Some("{\"ok\":true}".to_string())
+            Some(b"{\"ok\":true}".to_vec())
         );
         // Non-regular (a directory) is treated as "start empty", not an error.
         assert!(matches!(read_session_capped(tmp.path()), Ok(None) | Err(_)));
@@ -962,6 +1042,22 @@ mod tests {
         );
         let backup_contents = std::fs::read_to_string(&backup).expect("backup is readable");
         assert_eq!(backup_contents, "{", "backup preserves original bytes");
+    }
+
+    #[test]
+    fn invalid_utf8_returns_corruption_info_and_writes_backup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+        std::fs::write(&session_path, [0xff, 0xfe, b'{']).expect("seed broken session");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+        assert!(state.is_none(), "fallback to empty session expected");
+
+        let info = info.expect("corruption info expected");
+        assert_eq!(info.error_category, "data");
+        let backup = info.backup_path.expect("backup path populated");
+        let backup_contents = std::fs::read(&backup).expect("backup is readable");
+        assert_eq!(backup_contents, vec![0xff, 0xfe, b'{']);
     }
 
     /// AC1: missing file is *not* corruption - both halves of the
@@ -1073,6 +1169,54 @@ mod tests {
             save_seq.load(SeqCst),
             deferred,
             "deferred write must be skipped after a quit-time bump"
+        );
+    }
+
+    #[test]
+    fn restored_managed_worktree_must_match_paneflow_worktree_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        let branch = "feat/session-hardening";
+        let owned_path = crate::workspace::worktree::worktree_dir(&repo_root, branch);
+        std::fs::create_dir_all(&owned_path).expect("owned worktree dir");
+        std::fs::write(
+            crate::workspace::worktree::owner_marker_path(&owned_path),
+            "owner=paneflow\n",
+        )
+        .expect("owner marker");
+        let valid = paneflow_config::schema::ManagedWorktreeDef {
+            path: owned_path.to_string_lossy().into_owned(),
+            repo_root: repo_root.to_string_lossy().into_owned(),
+            branch: branch.to_string(),
+            teardown: "auto".to_string(),
+        };
+
+        let restored = rehydrate_managed_worktree(&valid).expect("valid owned worktree restores");
+        assert_eq!(restored.path, owned_path);
+        assert_eq!(
+            restored.teardown,
+            crate::workspace::worktree::TeardownPolicy::Auto
+        );
+
+        let outside = paneflow_config::schema::ManagedWorktreeDef {
+            path: tmp.path().join("external").to_string_lossy().into_owned(),
+            ..valid.clone()
+        };
+        assert!(
+            rehydrate_managed_worktree(&outside).is_none(),
+            "a restored worktree path outside Paneflow's generated dir is dropped"
+        );
+
+        let unknown_policy = paneflow_config::schema::ManagedWorktreeDef {
+            teardown: "delete".to_string(),
+            ..valid
+        };
+        let restored =
+            rehydrate_managed_worktree(&unknown_policy).expect("shape-valid worktree restores");
+        assert_eq!(
+            restored.teardown,
+            crate::workspace::worktree::TeardownPolicy::Keep,
+            "unknown restored policy must not become auto-remove"
         );
     }
 }

@@ -2,6 +2,7 @@
 name = "paneflow-app"
 version.workspace = true
 edition = "2024"
+rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 description.workspace = true
@@ -15,6 +16,14 @@ readme = "../README.md"
 name = "paneflow"
 path = "src/main.rs"
 
+[features]
+default = []
+hera-dogfood = [
+    "dep:terminal-core",
+    "dep:terminal-protocol",
+    "dep:terminal-render-model",
+]
+
 [dependencies]
 # GPUI framework - pinned to a minimal Paneflow fork of Zed while
 # prd-markdown-append-fix-2026-Q3.md (US-021 of cli-hardening-followup
@@ -25,13 +34,13 @@ path = "src/main.rs"
 # 9 downstream Zed consumers compile unchanged on the patched fork.
 #
 # Switchover: when the upstream PR merges into zed-industries/zed, swap
-# the `branch =` clause back to `rev = "<merge_sha>"` against
-# zed-industries/zed (see prd-markdown-append-fix-2026-Q3.md Switchover
-# Plan in Technical Considerations). All eight git-dep entries below
-# share the same source so cargo collapses them to a single workspace
-# graph.
-# To bump within the fork: `git -C ~/dev/zed-paneflow-fork pull
-# --rebase` then `cargo update`.
+# the `git = "https://github.com/ArthurDEV44/zed"` origin back to
+# zed-industries/zed and keep `rev = "<merge_sha>"` exact (see
+# prd-markdown-append-fix-2026-Q3.md Switchover Plan in Technical
+# Considerations). All eight git-dep entries below share the same source
+# so cargo collapses them to a single workspace graph.
+# To bump within the fork: `git -C ~/dev/zed-paneflow-fork pull --rebase`,
+# update every `rev =` below to the tested commit, then `cargo update`.
 #
 # `gpui_platform` MUST carry the `font-kit` feature on macOS - without it,
 # `gpui_macos` compiles cleanly but the optional `zed-font-kit` dep + Core
@@ -44,27 +53,27 @@ path = "src/main.rs"
 # The feature is a no-op on Linux/Windows (where `gpui_macos` isn't
 # compiled in), so it's safe in the cross-platform default declaration
 # below - the Linux-only override on line ~97 adds wayland/x11 on top.
-gpui = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
-gpui_platform = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix", features = ["font-kit"] }
-collections = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
+gpui = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1" }
+gpui_platform = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1", features = ["font-kit"] }
+collections = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1" }
 
 # Zed markdown rendering pipeline + design-system primitives. Pinned at the
 # same rev as gpui so the workspace graph resolves consistently. Pulls ~51
 # Zed workspace crates transitively (language/theme/ui/lsp/...) - accepted
 # trade-off for visual parity with Zed's agent panel.
-markdown = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
+markdown = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1" }
 # Bootstraps Zed's `GlobalTheme` at startup. `MarkdownElement::paint` reads
 # `cx.theme().colors()` unconditionally for secondary chrome (borders, panel
 # backgrounds, etc.) regardless of the `MarkdownStyle` we pass in, so the
 # global must exist. `theme::init(LoadThemes::JustBase, cx)` is the minimal
 # bootstrap - no JSON theme bundles, no `theme_settings` integration.
-theme = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
+theme = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1" }
 # Zed's design-system primitives (Icon + IconName, Disclosure, Label, ...).
 # Pinned at the same rev as gpui/markdown/theme. Required so the agent-panel
 # thinking + tool-call rows match Zed's exact rendering (`Icon::new(IconName::
 # ToolSearch).size(IconSize::Small).color(Color::Muted)` etc.) instead of
 # hand-rolled svg() paths.
-ui = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
+ui = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1" }
 
 # Alacritty terminal emulation (upstream crates.io - migrated from Zed fork in US-005)
 alacritty_terminal = "0.26"
@@ -76,9 +85,8 @@ polling = "3"
 
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
-# US-001..US-005 of tasks/prd-agents-view.md: ACP wrappers + discovery +
-# auth-required parsing live in their own crate so the heavy
-# agent-client-protocol dep does not bleed into every src-app module.
+# Legacy agent identity plus the CLAUDECODE env scrub. The terminal-only
+# Agents view no longer carries the in-app ACP chat or SDK wrapper here.
 paneflow-acp = { path = "../crates/paneflow-acp" }
 # US-003: telemetry plumbing extracted to its own workspace crate so future
 # `paneflow-trust` member can emit events without pulling the desktop binary
@@ -97,6 +105,12 @@ paneflow-process = { workspace = true }
 # `paneflow <verb>` CLI subcommands use to drive a RUNNING instance over the
 # existing IPC socket and exit before any GPUI init.
 paneflow-ipc-client = { workspace = true }
+# M3 Hera dogfood: disabled by default. These proxy crates are local path deps
+# named after the Hera crates, but load the sibling Hera source only when the
+# `hera-dogfood` feature is enabled.
+terminal-core = { path = "../crates/hera-dogfood/terminal-core", optional = true, default-features = false, features = ["hera-dogfood"] }
+terminal-protocol = { path = "../crates/hera-dogfood/terminal-protocol", optional = true, default-features = false, features = ["hera-dogfood"] }
+terminal-render-model = { path = "../crates/hera-dogfood/terminal-render-model", optional = true, default-features = false, features = ["hera-dogfood"] }
 
 # File system watcher (OS-native: inotify/FSEvents/ReadDirectoryChanges)
 notify = "7"
@@ -115,30 +129,27 @@ parking_lot = "0.12"
 toml = "0.8"
 
 # Standard deps
-anyhow = "1.0.86"
+anyhow.workspace = true
 # EP-001 (prd-cli-agent-orchestration): argument parser for the `paneflow <verb>`
 # CLI surface. `Option<Commands>` keeps "no subcommand => launch the GUI" as the
 # default; the `mcp`/`--update-and-exit`/`--help`/`--version` intercepts stay
 # manual and run before clap so it never eats their flags.
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3"
-# US-016 (prd-agents-view.md): the ACP SDK (paneflow-acp) is tokio-
-# native. The agents runtime spawns a dedicated current-thread tokio
-# runtime on a background OS thread so it never blocks GPUI's smol
-# event loop. `rt` + `macros` are enough for the runtime + the
-# `agent-client-protocol` futures the SDK relies on.
+# Async utilities used by app subsystems that need tokio-compatible futures
+# without blocking GPUI's smol event loop.
 tokio = { version = "1", features = ["rt", "macros", "io-util", "sync", "time"] }
 tracing = "0.1"
-log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
+log.workspace = true
 env_logger = "0.11"
-serde = { version = "1.0.221", features = ["derive"] }
-serde_json = "1.0"
-dirs = "5.0"
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
 rust-embed = { version = "8.11", features = ["include-exclude"] }
 smol = "2.0"
 libc = "0.2"
 regex = "1"
-ctrlc = "3.4"
+ctrlc.workspace = true
 open = "5"
 # Native file picker (markdown "open file" button in the pane tab strip).
 # Default features = ["xdg-portal", "wayland"] on Linux: uses the FreeDesktop
@@ -157,7 +168,7 @@ pulldown-cmark = { version = "0.10", default-features = false }
 # syntax + theme sets plus the FancyRegex engine (~3 MB binary cost,
 # acceptable per the PRD's Technical Considerations section).
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-ureq = { version = "3", features = ["json"] }
+ureq.workspace = true
 # Multi-worktree diff engine (prd-multi-worktree-diff-2026-Q3.md, EP-002).
 # Histogram line-diff lifted from Zed's `buffer_diff::compute_hunks`; pinned to
 # the same 0.1.8 Zed uses so the ported algorithm matches the reference API.
@@ -200,9 +211,9 @@ semver = "1"
 # (`claude --session-id <uuid>`) so a live Agents thread maps 1:1 to its
 # on-disk session file and can adopt the LLM `ai-title` for its sidebar
 # row. `v4` only - already in the build graph via `paneflow-telemetry`.
-uuid = { version = "1", features = ["v4"] }
+uuid.workspace = true
 # Resolve `appimageupdatetool` on $PATH before falling back to download (US-010).
-which = "8"
+which.workspace = true
 # tar.gz self-update: SHA-256 verification + in-process extraction (US-011).
 # The sync `tar` crate guards against absolute paths and `..` traversal by
 # default, so we avoid shelling out to /bin/tar.
@@ -220,13 +231,13 @@ flate2 = "1"
 # (`src-app/src/ai_hooks/extract.rs`). `NamedTempFile::persist` wraps
 # `rename(2)` on Unix and `MoveFileEx(MOVEFILE_REPLACE_EXISTING)` on
 # Windows so the cache-dir publish step is atomic on all three OSes.
-tempfile = "3"
+tempfile.workspace = true
 
 # Cross-platform local IPC (US-009 - prd-windows-port.md). Dispatches to Unix
 # domain sockets on Linux/macOS and Windows named pipes (`\\.\pipe\...`)
 # transparently, so the JSON-RPC newline-delimited protocol is byte-identical
 # across platforms.
-interprocess = "2"
+interprocess.workspace = true
 
 # Grapheme-cluster boundaries for the cursor-aware TextInput widget
 # (widgets/text_input.rs). Already a transitive dep via GPUI, so Cargo
@@ -269,7 +280,7 @@ minisign-verify = "0.2.5"
 
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix", features = ["wayland", "x11"] }
+gpui_platform = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1", features = ["wayland", "x11"] }
 # Native compositor blur for PaneFlow's sidebar + title bar. Wayland prefers
 # ext-background-effect-v1 and falls back to GPUI's KDE protocol; X11 uses
 # KWin's _KDE_NET_WM_BLUR_BEHIND_REGION hint when the effect is advertised.
@@ -317,7 +328,9 @@ windows-sys = { version = "0.59", features = [
     # Native fixed-pitch font discovery for the Terminal settings picker.
     "Win32_Graphics_Gdi",
     "Win32_System_Diagnostics",
+    "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Kernel",
     # Workspace/sidebar dev-server detection on Windows: GetExtendedTcpTable
     # returns LISTEN sockets with owner PIDs, and WinSock provides AF_INET(6).
     "Win32_NetworkManagement_IpHelper",
@@ -357,7 +370,9 @@ windows-sys = { version = "0.59", features = [
     # under _System_IO; CreateEventW is in _Threading above.
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
+    "Wdk_System_Threading",
 ] }
+widestring.workspace = true
 # US-003: process-wide Job Object with KILL_ON_JOB_CLOSE so a kill -9
 # of Paneflow (or any uncaught crash) takes all spawned agent CLIs and
 # PTY hosts with it. win32job exposes the small subset of Job-Object
@@ -375,7 +390,7 @@ windows-registry = "0.5"
 winresource = "0.1.31"
 
 [dev-dependencies]
-gpui = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix", features = ["test-support"] }
+gpui = { git = "https://github.com/ArthurDEV44/zed", rev = "3d1a014119f12274d1985bd3390606ddf0878da1", features = ["test-support"] }
 # US-001: the sign-capable counterpart to `minisign-verify`. Test-only - used
 # to generate ephemeral keypairs and sign fixtures so `update/signature.rs`
 # exercises a real verify round-trip (happy path + tampered/wrong-key/no-key

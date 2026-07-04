@@ -37,22 +37,18 @@ impl ConfigWatcher {
     /// Creates a new `ConfigWatcher` that will invoke `callback` with the new
     /// configuration whenever the config file is successfully reloaded.
     ///
-    /// Uses `config_path()` to determine which file to watch. Panics if no
-    /// config directory can be determined (this should not happen on supported
-    /// platforms).
-    // Invariant: `config_path()` returns `Some` on every supported platform
-    // (Linux/macOS: `dirs::config_dir()`; Windows: `%APPDATA%`). A `None`
-    // here means the user's environment is so broken (e.g., unset `HOME`
-    // AND `USERPROFILE`) that starting the app is meaningless. `expect` is
-    // the right behavior - documented invariant per CLAUDE.md.
-    #[allow(clippy::expect_used)]
-    pub fn new(callback: Arc<dyn Fn(PaneFlowConfig) + Send + Sync>) -> Self {
-        let config_path =
-            config_path().expect("could not determine config path for the current platform");
-        Self {
+    /// Uses `config_path()` to determine which file to watch. Returns `None`
+    /// when the platform config directory cannot be resolved, letting the app
+    /// keep running with cold-loaded defaults and hot reload disabled.
+    pub fn new(callback: Arc<dyn Fn(PaneFlowConfig) + Send + Sync>) -> Option<Self> {
+        let Some(config_path) = config_path() else {
+            warn!("could not determine config path; config hot-reload disabled");
+            return None;
+        };
+        Some(Self {
             callback,
             config_path,
-        }
+        })
     }
 
     /// Creates a `ConfigWatcher` targeting a specific path - useful for testing.

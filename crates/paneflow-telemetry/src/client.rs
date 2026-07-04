@@ -23,14 +23,17 @@
 //!   enough for a ~30s batching window).
 //! - Event de-duplication.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use paneflow_config::schema::PaneFlowConfig;
 use serde_json::{json, Value};
 
 /// Flush threshold: a full batch of events triggers an immediate post.
 pub(crate) const BATCH_MAX: usize = 10;
+/// Hard queue bound. Capture is best effort, so once this many events are
+/// buffered we drop new events instead of retaining unbounded memory.
+pub(crate) const QUEUE_MAX: usize = 1_000;
 
 /// Flush threshold: if the oldest queued event has been waiting this
 /// long, post the batch even if it's under `BATCH_MAX`. Trades a small
@@ -56,10 +59,30 @@ struct Event {
 /// sections are `Vec::push` / `mem::take`.
 struct Queue {
     events: Vec<Event>,
+    dropped_events: usize,
     /// Wall-clock timestamp of the moment the currently-buffered batch
     /// started - reset to `None` every time the queue drains. Used to
     /// trigger the age-based flush in `should_flush`.
     first_queued_at: Option<Instant>,
+}
+
+/// Consent state supplied by the application layer.
+///
+/// The telemetry crate deliberately does not depend on the global Paneflow
+/// config schema. Callers adapt their own config into this tiny shape.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TelemetryConsent {
+    enabled: Option<bool>,
+}
+
+impl TelemetryConsent {
+    pub fn new(enabled: Option<bool>) -> Self {
+        Self { enabled }
+    }
+
+    pub fn enabled(self) -> Option<bool> {
+        self.enabled
+    }
 }
 
 /// Live PostHog client. Cheap to construct; all methods are `&self` so
@@ -68,6 +91,7 @@ pub struct ActiveClient {
     api_key: String,
     host: String,
     distinct_id: String,
+    enabled: AtomicBool,
     queue: Mutex<Queue>,
 }
 
@@ -81,14 +105,16 @@ pub enum TelemetryClient {
 impl TelemetryClient {
     /// Unconditional Active constructor. The caller has already decided
     /// telemetry is on - no consent checks happen here. Use
-    /// [`TelemetryClient::from_config`] for the gated factory.
+    /// [`TelemetryClient::from_consent`] for the gated factory.
     pub fn new(api_key: &str, host: &str, distinct_id: &str) -> Self {
         Self::Active(ActiveClient {
             api_key: api_key.to_string(),
             host: host.trim_end_matches('/').to_string(),
             distinct_id: distinct_id.to_string(),
+            enabled: AtomicBool::new(true),
             queue: Mutex::new(Queue {
                 events: Vec::new(),
+                dropped_events: 0,
                 first_queued_at: None,
             }),
         })
@@ -100,26 +126,21 @@ impl TelemetryClient {
     ///   de-facto community standards (`DO_NOT_TRACK` - .NET SDK / GitHub
     ///   CLI / Homebrew precedent; `NO_TELEMETRY` - the `no-telemetry`
     ///   universal opt-out). Unconditional; checked before consent state.
-    /// - `config.telemetry` is `None` (user never prompted).
-    /// - `config.telemetry.enabled` is `None` (block present but not answered).
-    /// - `config.telemetry.enabled` is `Some(false)` (user declined).
+    /// - `consent.enabled` is `None` (user never answered).
+    /// - `consent.enabled` is `Some(false)` (user declined).
     ///
     /// Only `Some(true)` with no env kill-switch returns Active.
     ///
     /// A WARN log is emitted once when the caller builds an Active client
     /// with an empty `api_key` - PostHog would otherwise 401 every batch
     /// silently, which only surfaces in the server dashboard.
-    pub fn from_config(
-        config: &PaneFlowConfig,
+    pub fn from_consent(
+        consent: TelemetryConsent,
         api_key: &str,
         host: &str,
         distinct_id: &str,
     ) -> Self {
-        if is_kill_switch_set() {
-            return Self::Null;
-        }
-        let enabled = config.telemetry.as_ref().and_then(|t| t.enabled);
-        if enabled != Some(true) {
+        if !Self::consent_allows_capture(consent) {
             return Self::Null;
         }
         if api_key.is_empty() {
@@ -131,6 +152,10 @@ impl TelemetryClient {
             );
         }
         Self::new(api_key, host, distinct_id)
+    }
+
+    pub fn consent_allows_capture(consent: TelemetryConsent) -> bool {
+        !is_kill_switch_set() && consent.enabled() == Some(true)
     }
 
     /// Queue one event. `Null` variant no-ops; no allocation.
@@ -159,26 +184,44 @@ impl TelemetryClient {
         }
     }
 
+    /// Permanently disable this handle and discard any queued events.
+    ///
+    /// Config reconciliation swaps `Arc<TelemetryClient>` handles, but background
+    /// flushers may still own an older `Arc`. Deactivation makes those stale
+    /// handles inert after opt-out.
+    pub fn deactivate(&self) {
+        if let Self::Active(c) = self {
+            c.deactivate();
+        }
+    }
+
     /// Lightweight introspection for US-014 (settings toggle) - callers
     /// need to know whether to swap the client handle when consent changes.
     ///
     /// Currently only exercised by the unit-test suite; the reconcile path
     /// in `app::ipc_handler::reconcile_telemetry` rebuilds via
-    /// [`TelemetryClient::from_config`] unconditionally. Kept public for
+    /// [`TelemetryClient::from_consent`] unconditionally. Kept public for
     /// future callers (settings UI, IPC "is telemetry active?" probe).
     #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Active(_))
+        matches!(self, Self::Active(c) if c.enabled.load(Ordering::Relaxed))
     }
 }
 
 impl ActiveClient {
     fn capture(&self, event: &str, properties: Value) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
         let Ok(mut q) = self.queue.lock() else {
             // Lock poisoning means a previous holder panicked. Silently
             // drop the event - telemetry must never surface errors.
             return;
         };
+        if q.events.len() >= QUEUE_MAX {
+            q.dropped_events = q.dropped_events.saturating_add(1);
+            return;
+        }
         if q.events.is_empty() {
             q.first_queued_at = Some(Instant::now());
         }
@@ -189,12 +232,22 @@ impl ActiveClient {
     }
 
     fn poll_flush(&self) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
         let batch = {
             let Ok(mut q) = self.queue.lock() else {
                 return;
             };
             if !should_flush(&q) {
                 return;
+            }
+            if q.dropped_events > 0 {
+                log::debug!(
+                    "telemetry: dropped {} event(s) because the in-memory queue was full",
+                    q.dropped_events
+                );
+                q.dropped_events = 0;
             }
             q.first_queued_at = None;
             std::mem::take(&mut q.events)
@@ -206,12 +259,22 @@ impl ActiveClient {
     }
 
     fn flush_blocking(&self, timeout: Duration) {
+        if !self.enabled.load(Ordering::Relaxed) {
+            return;
+        }
         let batch = {
             let Ok(mut q) = self.queue.lock() else {
                 return;
             };
             if q.events.is_empty() {
                 return;
+            }
+            if q.dropped_events > 0 {
+                log::debug!(
+                    "telemetry: dropped {} event(s) because the in-memory queue was full",
+                    q.dropped_events
+                );
+                q.dropped_events = 0;
             }
             q.first_queued_at = None;
             std::mem::take(&mut q.events)
@@ -243,11 +306,20 @@ impl ActiveClient {
         // intervention. No value in `join`-ing here since the caller
         // asked us to honor the deadline.
     }
+
+    fn deactivate(&self) {
+        self.enabled.store(false, Ordering::Relaxed);
+        if let Ok(mut q) = self.queue.lock() {
+            q.events.clear();
+            q.dropped_events = 0;
+            q.first_queued_at = None;
+        }
+    }
 }
 
 /// Env-var kill-switch predicate. Any one of the three disables telemetry
 /// unconditionally; checked before consent state in
-/// [`TelemetryClient::from_config`]. Kept as a free function (not a method)
+/// [`TelemetryClient::from_consent`]. Kept as a free function (not a method)
 /// so both the factory and the test module can call it without wiring.
 fn is_kill_switch_set() -> bool {
     std::env::var("PANEFLOW_NO_TELEMETRY").is_ok()
@@ -281,10 +353,11 @@ fn build_batch_body(api_key: &str, distinct_id: &str, batch: &[Event]) -> Value 
     let events: Vec<Value> = batch
         .iter()
         .map(|e| {
+            let properties = posthog_anonymous_properties(&e.properties);
             json!({
                 "event": e.event,
                 "distinct_id": distinct_id,
-                "properties": e.properties,
+                "properties": properties,
             })
         })
         .collect();
@@ -292,6 +365,21 @@ fn build_batch_body(api_key: &str, distinct_id: &str, batch: &[Event]) -> Value 
         "api_key": api_key,
         "batch": events,
     })
+}
+
+fn posthog_anonymous_properties(properties: &Value) -> Value {
+    match properties {
+        Value::Object(map) => {
+            let mut map = map.clone();
+            map.entry("$process_person_profile".to_string())
+                .or_insert_with(|| json!(false));
+            Value::Object(map)
+        }
+        other => json!({
+            "value": other,
+            "$process_person_profile": false,
+        }),
+    }
 }
 
 /// POST the batch. Swallows every failure - transport errors and
@@ -334,7 +422,6 @@ fn post_batch(api_key: &str, host: &str, distinct_id: &str, batch: &[Event]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use paneflow_config::schema::{PaneFlowConfig, TelemetryConfig};
     use std::sync::Mutex as StdMutex;
 
     // Env vars are process-global. Any test that mutates the kill-switch
@@ -397,11 +484,8 @@ mod tests {
         }
     }
 
-    fn cfg(enabled: Option<bool>) -> PaneFlowConfig {
-        PaneFlowConfig {
-            telemetry: Some(TelemetryConfig { enabled }),
-            ..Default::default()
-        }
+    fn consent(enabled: Option<bool>) -> TelemetryConsent {
+        TelemetryConsent::new(enabled)
     }
 
     fn active(c: &TelemetryClient) -> &ActiveClient {
@@ -433,62 +517,53 @@ mod tests {
     }
 
     #[test]
-    fn from_config_null_when_telemetry_block_missing() {
+    fn from_consent_null_when_unanswered() {
         let g = EnvGuard::take();
         g.set(None);
-        let cfg = PaneFlowConfig::default();
-        let c = TelemetryClient::from_config(&cfg, "phc", "http://h", "id");
+        let c = TelemetryClient::from_consent(consent(None), "phc", "http://h", "id");
         assert!(!c.is_active());
     }
 
     #[test]
-    fn from_config_null_when_unanswered() {
+    fn from_consent_null_when_opted_out() {
         let g = EnvGuard::take();
         g.set(None);
-        let c = TelemetryClient::from_config(&cfg(None), "phc", "http://h", "id");
+        let c = TelemetryClient::from_consent(consent(Some(false)), "phc", "http://h", "id");
         assert!(!c.is_active());
     }
 
     #[test]
-    fn from_config_null_when_opted_out() {
+    fn from_consent_active_when_opted_in() {
         let g = EnvGuard::take();
         g.set(None);
-        let c = TelemetryClient::from_config(&cfg(Some(false)), "phc", "http://h", "id");
-        assert!(!c.is_active());
-    }
-
-    #[test]
-    fn from_config_active_when_opted_in() {
-        let g = EnvGuard::take();
-        g.set(None);
-        let c = TelemetryClient::from_config(&cfg(Some(true)), "phc", "http://h", "id");
+        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
         assert!(c.is_active());
     }
 
     #[test]
-    fn from_config_env_kill_switch_overrides_opt_in() {
+    fn from_consent_env_kill_switch_overrides_opt_in() {
         let g = EnvGuard::take();
         g.set(Some("1"));
         // Even with explicit consent, the env var wins.
-        let c = TelemetryClient::from_config(&cfg(Some(true)), "phc", "http://h", "id");
+        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
         assert!(!c.is_active());
     }
 
     #[test]
-    fn from_config_do_not_track_env_kills_opt_in() {
+    fn from_consent_do_not_track_env_kills_opt_in() {
         // De-facto cross-tool standard (.NET SDK, GitHub CLI, Homebrew).
         let g = EnvGuard::take();
         g.set_var("DO_NOT_TRACK", Some("1"));
-        let c = TelemetryClient::from_config(&cfg(Some(true)), "phc", "http://h", "id");
+        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
         assert!(!c.is_active());
     }
 
     #[test]
-    fn from_config_no_telemetry_env_kills_opt_in() {
+    fn from_consent_no_telemetry_env_kills_opt_in() {
         // De-facto universal opt-out standard (`no-telemetry` project).
         let g = EnvGuard::take();
         g.set_var("NO_TELEMETRY", Some("1"));
-        let c = TelemetryClient::from_config(&cfg(Some(true)), "phc", "http://h", "id");
+        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
         assert!(!c.is_active());
     }
 
@@ -519,13 +594,40 @@ mod tests {
         let q = a.queue.lock().unwrap();
         assert_eq!(q.events.len(), 2);
         assert_eq!(q.events[0].event, "hello");
+        assert_eq!(q.dropped_events, 0);
         assert!(q.first_queued_at.is_some());
+    }
+
+    #[test]
+    fn capture_drops_new_events_when_queue_is_full() {
+        let c = TelemetryClient::new("phc", "http://h", "id");
+        for i in 0..QUEUE_MAX + 3 {
+            c.capture("hello", json!({"i": i}));
+        }
+        let a = active(&c);
+        let q = a.queue.lock().unwrap();
+        assert_eq!(q.events.len(), QUEUE_MAX);
+        assert_eq!(q.dropped_events, 3);
+    }
+
+    #[test]
+    fn deactivate_clears_queue_and_ignores_future_capture() {
+        let c = TelemetryClient::new("phc", "http://h", "id");
+        c.capture("hello", json!({"x": 1}));
+        c.deactivate();
+        assert!(!c.is_active());
+        c.capture("world", json!({"x": 2}));
+        let a = active(&c);
+        let q = a.queue.lock().unwrap();
+        assert!(q.events.is_empty());
+        assert_eq!(q.dropped_events, 0);
     }
 
     #[test]
     fn should_flush_false_for_empty_queue() {
         let q = Queue {
             events: Vec::new(),
+            dropped_events: 0,
             first_queued_at: None,
         };
         assert!(!should_flush(&q));
@@ -538,6 +640,7 @@ mod tests {
                 event: "e".into(),
                 properties: json!({}),
             }],
+            dropped_events: 0,
             first_queued_at: Some(Instant::now()),
         };
         assert!(!should_flush(&q));
@@ -553,6 +656,7 @@ mod tests {
             .collect();
         let q = Queue {
             events,
+            dropped_events: 0,
             first_queued_at: Some(Instant::now()),
         };
         assert!(should_flush(&q));
@@ -565,6 +669,7 @@ mod tests {
                 event: "e".into(),
                 properties: json!({}),
             }],
+            dropped_events: 0,
             first_queued_at: Some(Instant::now() - BATCH_MAX_AGE - Duration::from_millis(1)),
         };
         assert!(should_flush(&q));
@@ -589,8 +694,23 @@ mod tests {
         assert_eq!(batch[0]["event"], "app_started");
         assert_eq!(batch[0]["distinct_id"], "dist-123");
         assert_eq!(batch[0]["properties"]["os"], "linux");
+        assert_eq!(batch[0]["properties"]["$process_person_profile"], false);
         // No client-side timestamp - server stamps on receipt.
         assert!(batch[0].get("timestamp").is_none());
+    }
+
+    #[test]
+    fn non_object_properties_are_wrapped_before_posthog_batching() {
+        let events = vec![Event {
+            event: "odd".into(),
+            properties: json!("raw"),
+        }];
+        let body = build_batch_body("phc_test", "dist-123", &events);
+        assert_eq!(body["batch"][0]["properties"]["value"], "raw");
+        assert_eq!(
+            body["batch"][0]["properties"]["$process_person_profile"],
+            false
+        );
     }
 
     // An unroutable endpoint (port 1, reserved) forces `ureq` into its

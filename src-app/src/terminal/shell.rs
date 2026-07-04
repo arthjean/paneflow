@@ -2,8 +2,8 @@
 //!
 //! `resolve_default_shell` picks the shell binary to launch in every PTY,
 //! following a platform-specific fallback chain. `setup_shell_integration`
-//! writes small per-shell rc scripts into `$XDG_DATA_HOME/paneflow/shell/`
-//! (or `%APPDATA%\paneflow\shell\` on Windows) and returns the extra CLI
+//! writes small per-shell rc scripts into Paneflow's local data dir
+//! (`runtime_paths::shell_integration_dir`) and returns the extra CLI
 //! args/env needed to wire them in.
 //!
 //! Keep this module shell-specific: no terminal state, no GPUI.
@@ -318,7 +318,25 @@ fn well_known_shell_dir_lookup(name: &str) -> Option<std::path::PathBuf> {
 
 #[cfg(unix)]
 fn resolve_default_shell_fallback() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+    resolve_unix_default_shell_fallback(std::env::var("SHELL").ok().as_deref())
+}
+
+#[cfg(unix)]
+fn resolve_unix_default_shell_fallback(shell_env: Option<&str>) -> String {
+    if let Some(shell) = shell_env
+        && let Some(resolved) = configured_shell_if_usable(shell)
+    {
+        return resolved;
+    }
+    if let Some(shell) = shell_env
+        && !shell.trim().is_empty()
+    {
+        log::warn!(
+            "SHELL {:?} not found or not executable, falling back to /bin/sh",
+            shell
+        );
+    }
+    configured_shell_if_usable("/bin/sh").unwrap_or_else(|| "/bin/sh".to_string())
 }
 
 #[cfg(windows)]
@@ -476,8 +494,7 @@ fn to_shell_path(p: &std::path::Path) -> String {
 
 /// Write OSC 7 shell integration scripts and return the extra shell args
 /// and env vars needed to activate them. Scripts are written to
-/// `$XDG_DATA_HOME/paneflow/shell/{zsh,bash,fish,pwsh}/` (`%APPDATA%\paneflow\shell\`
-/// on Windows).
+/// `runtime_paths::shell_integration_dir()/{zsh,bash,fish,pwsh}/`.
 ///
 /// Supported shells:
 /// - **zsh, bash, fish** - BEL-terminated OSC 7 via per-prompt hooks.
@@ -493,9 +510,7 @@ pub(super) fn setup_shell_integration(
     env: &mut HashMap<String, String>,
     profile: TerminalSurfaceProfile,
 ) -> Vec<String> {
-    let Some(base) =
-        dirs::data_dir().map(|d| d.join(crate::runtime_paths::APP_SUBDIR).join("shell"))
-    else {
+    let Some(base) = crate::runtime_paths::shell_integration_dir() else {
         return vec![];
     };
 
@@ -558,7 +573,7 @@ pub(super) fn setup_shell_integration(
             }
             vec![
                 "--init-command".into(),
-                format!("source {}", to_shell_path(&initfile)),
+                format!("source {}", quote_fish_arg(&to_shell_path(&initfile))),
             ]
         }
         // US-012 - PowerShell 7 (pwsh) and Windows PowerShell 5.1 share
@@ -610,6 +625,22 @@ fn powershell_startup_args(profile: TerminalSurfaceProfile, init_command: String
     args
 }
 
+fn quote_fish_arg(arg: &str) -> String {
+    let mut quoted = String::with_capacity(arg.len() + 2);
+    quoted.push('"');
+    for ch in arg.chars() {
+        match ch {
+            '\\' | '"' | '$' => {
+                quoted.push('\\');
+                quoted.push(ch);
+            }
+            _ => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
 #[cfg(test)]
 mod tests {
     use super::{clear_then_for_shell, powershell_startup_args};
@@ -634,6 +665,32 @@ mod tests {
         assert!(
             super::well_known_shell_dir_lookup("definitely-not-a-real-shell-xyz").is_none(),
             "a non-existent bare name must not resolve"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_fallback_rejects_stale_shell_env() {
+        let shell = super::resolve_unix_default_shell_fallback(Some(
+            "/definitely/not/a/real/paneflow-shell",
+        ));
+        assert!(
+            std::path::Path::new(&shell)
+                .file_name()
+                .is_some_and(|name| name == std::ffi::OsStr::new("sh")),
+            "stale SHELL must fall back to sh, got {shell:?}"
+        );
+    }
+
+    #[test]
+    fn fish_init_command_quotes_spaces_and_metacharacters() {
+        assert_eq!(
+            super::quote_fish_arg("/Users/a/Application Support/paneflow/osc7.fish"),
+            "\"/Users/a/Application Support/paneflow/osc7.fish\""
+        );
+        assert_eq!(
+            super::quote_fish_arg("/tmp/$USER/osc7\"hook\".fish"),
+            "\"/tmp/\\$USER/osc7\\\"hook\\\".fish\""
         );
     }
 

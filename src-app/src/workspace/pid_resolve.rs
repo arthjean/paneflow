@@ -5,9 +5,9 @@
 //! an interactive shell the agent is a grand-child (or deeper), so the link
 //! is materialized by walking the parent-PID chain from the agent up until a
 //! known `child_pid` is hit. Per-OS parent lookup mirrors `ports.rs`:
-//! Linux reads `/proc/<pid>/stat`, macOS asks `libproc`, Windows is a
-//! documented stub (same as the ports scan) - an unresolved PID degrades
-//! gracefully to the workspace-level badge, never to a wrong pane.
+//! Linux reads `/proc/<pid>/stat`, macOS asks `libproc`, Windows uses a
+//! ToolHelp process snapshot. An unresolved PID degrades gracefully to the
+//! workspace-level badge, never to a wrong pane.
 //!
 //! The walk does I/O (`/proc` reads) - callers run it OFF the render thread
 //! (`smol::unblock`) and deposit the result back on the main thread.
@@ -73,11 +73,48 @@ fn parent_of(pid: u32) -> Option<u32> {
         .map(|info| info.pbi_ppid)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(windows)]
+fn parent_of(pid: u32) -> Option<u32> {
+    use std::mem;
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
+        TH32CS_SNAPPROCESS,
+    };
+
+    if pid == 0 {
+        return None;
+    }
+
+    // SAFETY: Win32 call. A successful snapshot handle is closed below.
+    let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snap == INVALID_HANDLE_VALUE {
+        return None;
+    }
+
+    let mut parent = None;
+    let mut entry: PROCESSENTRY32W = unsafe { mem::zeroed() };
+    entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
+    // SAFETY: `snap` is valid, and `entry` has the documented size.
+    if unsafe { Process32FirstW(snap, &mut entry) } != 0 {
+        loop {
+            if entry.th32ProcessID == pid {
+                parent = Some(entry.th32ParentProcessID);
+                break;
+            }
+            // SAFETY: same invariants as Process32FirstW.
+            if unsafe { Process32NextW(snap, &mut entry) } == 0 {
+                break;
+            }
+        }
+    }
+    // SAFETY: `snap` is a valid handle returned above.
+    unsafe { CloseHandle(snap) };
+    parent.filter(|p| *p > 0)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
 fn parent_of(_pid: u32) -> Option<u32> {
-    // Windows: no parent lookup yet (Toolhelp32 needs a winapi dependency
-    // the ports scan also avoids - same documented stub). The session stays
-    // at workspace level: badge in the sidebar, no per-pane glow.
     None
 }
 

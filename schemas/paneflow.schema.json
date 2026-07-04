@@ -178,7 +178,7 @@
         },
         "env": {
           "type": ["object", "null"],
-          "description": "Environment variables injected into every new terminal. Per-surface values win on collision.",
+          "description": "Environment variables injected into every new terminal. Per-surface values win on collision. TERM, COLORTERM, PANEFLOW_WORKSPACE_ID, PANEFLOW_SURFACE_ID, PANEFLOW_SOCKET_PATH, and PANEFLOW_BIN_DIR are protected at PTY spawn. LD_* and DYLD_* keys are dropped. PATH is accepted, but PANEFLOW_BIN_DIR is re-prepended so agent commands still route through the shim.",
           "additionalProperties": { "type": "string" }
         },
         "scroll_multiplier": {
@@ -387,6 +387,13 @@
       "required": ["name"],
       "description": "Either a workspace definition (set 'workspace') or a shell command (set 'command'). The two fields are mutually exclusive.",
       "additionalProperties": false,
+      "not": {
+        "required": ["workspace", "command"],
+        "properties": {
+          "workspace": { "not": { "type": "null" } },
+          "command": { "not": { "type": "null" } }
+        }
+      },
       "properties": {
         "name": {
           "type": "string",
@@ -522,7 +529,7 @@
         },
         "env": {
           "type": ["object", "null"],
-          "description": "Extra environment variables.",
+          "description": "Extra environment variables merged over terminal.env. The same protected-key and loader-key filtering applies at PTY spawn.",
           "additionalProperties": { "type": "string" }
         },
         "focus": {

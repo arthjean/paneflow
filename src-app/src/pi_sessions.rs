@@ -8,16 +8,16 @@
 
 use std::collections::VecDeque;
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::agent_sessions::{SessionAgent, SessionMeta};
+use crate::agent_sessions::{SessionAgent, SessionMeta, clean_session_label};
+use crate::limits::MAX_LINE_BYTES;
 
 const MAX_WALK_DEPTH: usize = 10;
 const MAX_HEADER_LINES: usize = 256;
-const MAX_LINE_BYTES: usize = 256 * 1024;
 
 pub(crate) fn sessions_root() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".pi").join("agent").join("sessions"))
@@ -77,14 +77,11 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
     let mut summary: Option<String> = None;
 
     for _ in 0..MAX_HEADER_LINES {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line).ok()?;
-        if read == 0 {
-            break;
-        }
-        if line.len() > MAX_LINE_BYTES {
-            continue;
-        }
+        let line = match read_capped_line(&mut reader, path)? {
+            CappedLine::Eof => break,
+            CappedLine::Oversized => continue,
+            CappedLine::Line(line) => line,
+        };
         let value: Value = match serde_json::from_str(&line) {
             Ok(value) => value,
             Err(_) => continue,
@@ -154,9 +151,62 @@ fn user_summary_from_value(value: &Value) -> Option<String> {
         .get("message")
         .and_then(|message| message.get("content"))
         .or_else(|| value.get("content"))?;
-    content_to_string(content)
-        .map(|s| s.chars().take(120).collect::<String>())
-        .filter(|s| !s.is_empty())
+    content_to_string(content).and_then(|s| clean_session_label(&s, 120))
+}
+
+enum CappedLine {
+    Eof,
+    Oversized,
+    Line(String),
+}
+
+fn read_capped_line<R: BufRead>(reader: &mut R, path: &Path) -> Option<CappedLine> {
+    let mut line = String::new();
+    let read = reader
+        .by_ref()
+        .take(MAX_LINE_BYTES)
+        .read_line(&mut line)
+        .ok()?;
+    if read == 0 {
+        return Some(CappedLine::Eof);
+    }
+
+    if read as u64 == MAX_LINE_BYTES && !line.ends_with('\n') {
+        let more_follows = match reader.fill_buf() {
+            Ok(buf) => !buf.is_empty(),
+            Err(_) => return None,
+        };
+        if more_follows {
+            log::debug!(
+                target: "paneflow_app::pi_sessions",
+                "skipped an oversized (>{} B) line in {}; continuing scan for the session header",
+                MAX_LINE_BYTES,
+                path.display(),
+            );
+            drain_oversized_line(reader)?;
+            return Some(CappedLine::Oversized);
+        }
+    }
+
+    Some(CappedLine::Line(line))
+}
+
+fn drain_oversized_line<R: BufRead>(reader: &mut R) -> Option<()> {
+    loop {
+        let chunk = match reader.fill_buf() {
+            Ok(buf) => buf,
+            Err(_) => return None,
+        };
+        if chunk.is_empty() {
+            return Some(());
+        }
+        if let Some(nl) = chunk.iter().position(|&b| b == b'\n') {
+            reader.consume(nl + 1);
+            return Some(());
+        }
+        let consumed = chunk.len();
+        reader.consume(consumed);
+    }
 }
 
 fn content_to_string(value: &Value) -> Option<String> {
@@ -215,6 +265,46 @@ mod tests {
             Some("Ship the sidebar sessions")
         );
         assert!(read_sessions_under_root(dir.path(), "/other").0.is_empty());
+    }
+
+    #[test]
+    fn skips_oversized_leading_line_and_reads_following_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        let oversized = format!(
+            r#"{{"type":"noise","blob":"{}"}}"#,
+            "x".repeat(MAX_LINE_BYTES as usize + 1024)
+        );
+        fs::write(
+            &path,
+            format!(
+                "{oversized}\n{}\n{}\n",
+                r#"{"type":"session","version":3,"id":"550e8400-e29b-41d4-a716-446655440000","timestamp":"2026-06-29T09:10:11Z","cwd":"/repo"}"#,
+                r#"{"type":"message","message":{"role":"user","content":"Still readable"}}"#
+            ),
+        )
+        .unwrap();
+
+        let (sessions, omitted) = read_sessions_under_root(dir.path(), "/repo");
+        assert_eq!(omitted, 0);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].summary.as_deref(), Some("Still readable"));
+    }
+
+    #[test]
+    fn user_summary_collapses_controls_and_whitespace() {
+        let value: Value = serde_json::json!({
+            "type": "message",
+            "message": {
+                "role": "user",
+                "content": "  Ship\n\tthis\u{1b} now  "
+            }
+        });
+
+        assert_eq!(
+            user_summary_from_value(&value).as_deref(),
+            Some("Ship this now")
+        );
     }
 
     #[test]

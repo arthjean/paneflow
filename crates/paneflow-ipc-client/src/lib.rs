@@ -26,12 +26,16 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
+#[cfg(windows)]
+use interprocess::local_socket::ConnectOptions;
 use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
 use serde_json::{json, Value};
 
 /// Wire timeout for a single request/response round-trip. The server always
-/// writes a response (it even synthesizes a `-32001 Request timeout`
+/// writes a response (it can synthesize a `-32002` dispatch timeout
 /// envelope), so a stall this long means the process is wedged.
 const IPC_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -95,13 +99,8 @@ pub(crate) fn build_request(id: u64, method: &str, params: Value) -> Value {
 pub(crate) fn parse_response(line: &str) -> Result<Value, String> {
     let value: Value = serde_json::from_str(line.trim())
         .map_err(|e| format!("invalid JSON-RPC response from paneflow: {e}"))?;
-    if let Some(err) = value.get("error") {
-        let code = err.get("code").and_then(Value::as_i64).unwrap_or(0);
-        let message = err
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown error");
-        return Err(format!("paneflow error {code}: {message}"));
+    if let Some(message) = jsonrpc_error_message_from_value(&value) {
+        return Err(message);
     }
     value
         .get("result")
@@ -109,21 +108,36 @@ pub(crate) fn parse_response(line: &str) -> Result<Value, String> {
         .ok_or_else(|| "paneflow response missing both `result` and `error`".to_string())
 }
 
+pub fn jsonrpc_error_message(line: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(line.trim()).ok()?;
+    jsonrpc_error_message_from_value(&value)
+}
+
+fn jsonrpc_error_message_from_value(value: &Value) -> Option<String> {
+    let err = value.get("error")?;
+    let code = err.get("code").and_then(Value::as_i64).unwrap_or(0);
+    let message = err
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown error");
+    Some(format!("paneflow error {code}: {message}"))
+}
+
 /// Open a connection, write the newline-terminated request, and read back one
 /// newline-delimited response line.
 ///
-/// US-023: the read deadline is enforced at the OS level via
-/// `set_recv_timeout` (Unix `SO_RCVTIMEO`, Windows named-pipe read timeout).
+/// US-023: the read deadline is enforced at the OS level on Unix and through
+/// nonblocking named-pipe polling on Windows.
 /// The previous scratch-thread + `recv_timeout` pattern leaked one OS thread
 /// and one socket FD on every timeout - the spawned reader owned `stream` and
 /// stayed blocked in `read_line` forever (no deadline ever reached it), so an
 /// agent retrying `read_pane` against a wedged Paneflow exhausted the
 /// long-lived bridge's threads/FDs. With an OS deadline, `read_line` returns
 /// the error itself, the owning `BufReader` drops, and the FD is released.
-/// Collapse an `ErrorKind::Unsupported` result to `Ok(())` - used for the
-/// optional socket-deadline setters, which Windows named pipes reject. Any
-/// other error is forwarded unchanged. See [`send_and_receive`] for why the
-/// timeout is best-effort.
+/// Collapse an `ErrorKind::Unsupported` result to `Ok(())` - used only for
+/// optional Unix socket-deadline setters. Any other error is forwarded
+/// unchanged.
+#[cfg(any(not(windows), test))]
 fn tolerate_unsupported(r: io::Result<()>) -> io::Result<()> {
     match r {
         Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(()),
@@ -132,55 +146,147 @@ fn tolerate_unsupported(r: io::Result<()>) -> io::Result<()> {
 }
 
 fn send_and_receive(socket: &Path, request: &Value) -> io::Result<String> {
-    let name = socket.to_fs_name::<GenericFilePath>()?;
-    let mut stream = Stream::connect(name)?;
+    let mut stream = connect_request_stream(socket)?;
     // Bound both directions on the same deadline: a peer that never drains our
     // write could otherwise wedge `write_all`.
-    //
-    // BEST-EFFORT: Windows named pipes do not support I/O timeouts
-    // (`interprocess` -> `ErrorKind::Unsupported`). The `?` here used to fail
-    // the whole request on Windows, so the MCP bridge (`read_pane`, …) and
-    // every `paneflow` CLI subcommand reported "paneflow IPC unreachable" even
-    // with PaneFlow running. Tolerate Unsupported and proceed; the read below
-    // still has its own `MAX_RESPONSE_LEN` byte cap, and the server always
-    // writes a response, so the round-trip stays bounded in practice. Any
-    // other error still propagates.
-    tolerate_unsupported(stream.set_recv_timeout(Some(IPC_TIMEOUT)))?;
-    tolerate_unsupported(stream.set_send_timeout(Some(IPC_TIMEOUT)))?;
+    #[cfg(not(windows))]
+    {
+        tolerate_unsupported(stream.set_recv_timeout(Some(IPC_TIMEOUT)))?;
+        tolerate_unsupported(stream.set_send_timeout(Some(IPC_TIMEOUT)))?;
+    }
 
     let mut payload =
         serde_json::to_vec(request).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     payload.push(b'\n');
-    stream.write_all(&payload)?;
-    stream.flush()?;
 
-    let mut reader = BufReader::new(stream);
-    let mut line = String::new();
-    // U-029: cap the reply read at MAX_RESPONSE_LEN (Take rebuilt per call, so
-    // the limit is per-reply) and treat hitting the cap without a terminating
-    // newline as a framing error rather than feeding a truncated line to the
-    // parser.
-    match reader.by_ref().take(MAX_RESPONSE_LEN).read_line(&mut line) {
-        Ok(n) if n as u64 >= MAX_RESPONSE_LEN && !line.ends_with('\n') => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "paneflow response exceeded the size cap",
-        )),
-        Ok(_) => Ok(line),
-        // SO_RCVTIMEO surfaces as EAGAIN/`WouldBlock` on Unix and `TimedOut`
-        // on Windows - normalize both to a friendly timeout message.
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-            ) =>
-        {
-            Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "paneflow did not respond within 10s",
-            ))
-        }
-        Err(e) => Err(e),
+    #[cfg(windows)]
+    {
+        write_all_with_deadline(&mut stream, &payload, IPC_TIMEOUT)?;
+        stream.flush()?;
+        read_line_with_deadline(&mut stream, IPC_TIMEOUT)
     }
+
+    #[cfg(not(windows))]
+    {
+        stream.write_all(&payload)?;
+        stream.flush()?;
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        // U-029: cap the reply read at MAX_RESPONSE_LEN (Take rebuilt per call, so
+        // the limit is per-reply) and treat hitting the cap without a terminating
+        // newline as a framing error rather than feeding a truncated line to the
+        // parser.
+        match reader.by_ref().take(MAX_RESPONSE_LEN).read_line(&mut line) {
+            Ok(n) if n as u64 >= MAX_RESPONSE_LEN && !line.ends_with('\n') => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "paneflow response exceeded the size cap",
+            )),
+            Ok(_) => Ok(line),
+            // SO_RCVTIMEO surfaces as EAGAIN/`WouldBlock` on Unix and `TimedOut`
+            // on Windows - normalize both to a friendly timeout message.
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                ) =>
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "paneflow did not respond within 10s",
+                ))
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+fn connect_request_stream(socket: &Path) -> io::Result<Stream> {
+    let name = socket.to_fs_name::<GenericFilePath>()?;
+    #[cfg(windows)]
+    {
+        ConnectOptions::new()
+            .name(name)
+            .nonblocking_stream(true)
+            .connect_sync()
+    }
+    #[cfg(not(windows))]
+    {
+        Stream::connect(name)
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_io(deadline: Instant) -> io::Result<()> {
+    let now = Instant::now();
+    if now >= deadline {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "paneflow did not respond within 10s",
+        ));
+    }
+    std::thread::sleep((deadline - now).min(Duration::from_millis(5)));
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_all_with_deadline(
+    stream: &mut Stream,
+    mut payload: &[u8],
+    timeout: Duration,
+) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    while !payload.is_empty() {
+        match stream.write(payload) {
+            Ok(0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::WriteZero,
+                    "paneflow IPC write made no progress",
+                ));
+            }
+            Ok(n) => payload = &payload[n..],
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => wait_for_io(deadline)?,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn read_line_with_deadline(stream: &mut Stream, timeout: Duration) -> io::Result<String> {
+    let deadline = Instant::now() + timeout;
+    let mut out = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        match stream.read(&mut chunk) {
+            Ok(0) if out.is_empty() => {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "paneflow closed the IPC connection without a response",
+                ));
+            }
+            Ok(0) => break,
+            Ok(n) => {
+                out.extend_from_slice(&chunk[..n]);
+                if let Some(pos) = out.iter().position(|&b| b == b'\n') {
+                    out.truncate(pos + 1);
+                    return String::from_utf8(out)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e));
+                }
+                if out.len() as u64 >= MAX_RESPONSE_LEN {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "paneflow response exceeded the size cap",
+                    ));
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => wait_for_io(deadline)?,
+            Err(e) => return Err(e),
+        }
+    }
+    String::from_utf8(out).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 /// EP-002 (agent-control-plane): open a persistent `events.subscribe` stream.
@@ -203,9 +309,9 @@ pub fn subscribe_stream(
     stream.write_all(&payload)?;
     stream.flush()?;
 
-    let reader = BufReader::new(stream);
-    for line in reader.lines() {
-        let line = line?;
+    let mut reader = BufReader::new(stream);
+    let mut buf = Vec::new();
+    while let Some(line) = read_capped_event_line(&mut reader, &mut buf)? {
         if line.trim().is_empty() {
             continue;
         }
@@ -214,6 +320,44 @@ pub fn subscribe_stream(
         }
     }
     Ok(())
+}
+
+fn read_capped_event_line<R>(reader: &mut R, buf: &mut Vec<u8>) -> io::Result<Option<String>>
+where
+    R: BufRead,
+{
+    buf.clear();
+    loop {
+        let remaining = MAX_RESPONSE_LEN.saturating_sub(buf.len() as u64);
+        if remaining == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "paneflow event line exceeded the size cap",
+            ));
+        }
+
+        let read = reader.by_ref().take(remaining).read_until(b'\n', buf)?;
+        if read == 0 {
+            if buf.is_empty() {
+                return Ok(None);
+            }
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "paneflow event stream ended mid-line",
+            ));
+        }
+
+        if buf.last() == Some(&b'\n') {
+            if buf.ends_with(b"\r\n") {
+                buf.truncate(buf.len().saturating_sub(2));
+            } else {
+                buf.truncate(buf.len().saturating_sub(1));
+            }
+            let line = String::from_utf8(buf.clone())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            return Ok(Some(line));
+        }
+    }
 }
 
 /// What a single read slice of [`subscribe_stream_timed`] yielded.
@@ -466,6 +610,15 @@ mod tests {
     }
 
     #[test]
+    fn jsonrpc_error_message_detects_stream_error_line() {
+        let line = r#"{"jsonrpc":"2.0","error":{"code":-32602,"message":"bad filter"},"id":null}"#;
+        let err = jsonrpc_error_message(line).expect("error");
+        assert!(err.contains("-32602"), "got: {err}");
+        assert!(err.contains("bad filter"), "got: {err}");
+        assert!(jsonrpc_error_message(r#"{"type":"subscribed"}"#).is_none());
+    }
+
+    #[test]
     fn parse_response_rejects_missing_result_and_error() {
         let line = r#"{"jsonrpc":"2.0","id":1}"#;
         assert!(parse_response(line).is_err());
@@ -474,6 +627,25 @@ mod tests {
     #[test]
     fn parse_response_rejects_malformed_json() {
         assert!(parse_response("not json").is_err());
+    }
+
+    #[test]
+    fn capped_event_line_rejects_oversized_unterminated_frame() {
+        let data = vec![b'x'; MAX_RESPONSE_LEN as usize];
+        let mut reader = BufReader::new(std::io::Cursor::new(data));
+        let mut buf = Vec::new();
+        let err = read_capped_event_line(&mut reader, &mut buf).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn capped_event_line_reads_one_frame() {
+        let mut reader = BufReader::new(std::io::Cursor::new(b"{\"type\":\"ai.stop\"}\nrest"));
+        let mut buf = Vec::new();
+        let line = read_capped_event_line(&mut reader, &mut buf)
+            .expect("read")
+            .expect("line");
+        assert_eq!(line, "{\"type\":\"ai.stop\"}");
     }
 
     #[test]

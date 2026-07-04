@@ -435,9 +435,8 @@ fn assert_envelope<'a>(
         "US-011 [{scenario}]: method mismatch"
     );
     assert!(
-        frame["id"].as_u64().is_some(),
-        "US-011 [{scenario}]: id must be a u64, got {:?}",
-        frame["id"]
+        frame.get("id").is_none(),
+        "US-011 [{scenario}]: hook frame must be a JSON-RPC notification"
     );
     let params = &frame["params"];
     assert_eq!(
@@ -501,8 +500,11 @@ fn claude_user_prompt_submit_dispatches_ai_prompt_submit() {
         },
         "claude_prompt_submit",
     );
-    assert_eq!(params["hook_payload"]["prompt"], "hello");
     assert_eq!(params["hook_payload"]["session_id"], "abc");
+    assert!(
+        params["hook_payload"].get("prompt").is_none(),
+        "prompt text must not be forwarded over lifecycle IPC"
+    );
 }
 
 #[test]

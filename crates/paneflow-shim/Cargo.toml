@@ -2,6 +2,7 @@
 name = "paneflow-shim"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [[bin]]
@@ -11,7 +12,7 @@ path = "src/main.rs"
 [dependencies]
 # US-005: idempotent merge of `.claude/settings.local.json` + atomic rename.
 serde_json = { workspace = true }
-tempfile = "3"
+tempfile.workspace = true
 # Cross-platform file identity for the hardlink loop guard.
 same-file = "1"
 
@@ -20,7 +21,7 @@ same-file = "1"
 # interrupt) while the shim survives long enough to send `ai.session_end`
 # to PaneFlow's IPC server. Same pattern time(1) / tee(1) / sudo(8) use.
 [target.'cfg(unix)'.dependencies]
-libc = "0.2"
+libc.workspace = true
 
 # Windows: a console-control handler emits `ai.stop` when the user Ctrl+C's an
 # agent that interrupts its turn WITHOUT exiting (claude/codex fire no Stop hook
@@ -28,7 +29,7 @@ libc = "0.2"
 # (EP-005 US-017). `ctrlc` is already this workspace's cross-platform Ctrl+C
 # crate (used by paneflow-app), wrapping `SetConsoleCtrlHandler` safely.
 [target.'cfg(windows)'.dependencies]
-ctrlc = "3.4"
+ctrlc.workspace = true
 
 [lints]
 workspace = true

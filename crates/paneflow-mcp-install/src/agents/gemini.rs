@@ -44,6 +44,19 @@ impl Gemini {
     fn entry(bridge: &str) -> serde_json::Value {
         json!({ "command": bridge, "args": [], "trust": true })
     }
+
+    fn validate_entry(entry: &serde_json::Value, expected: Option<&Path>) -> StatusOutcome {
+        let found = support::string_command(entry);
+        let shape_ok = found
+            .as_deref()
+            .is_some_and(|path| *entry == Self::entry(path));
+        support::classify_entry(
+            found,
+            expected,
+            shape_ok,
+            "Gemini MCP entry must have empty args and trust=true",
+        )
+    }
 }
 
 impl Default for Gemini {
@@ -80,8 +93,8 @@ impl AgentConfigWriter for Gemini {
         support::json_uninstall(self.path()?, CONTAINER)
     }
 
-    fn status(&self, bridge: &Path) -> Result<StatusOutcome> {
-        support::json_status(self.path()?, CONTAINER, bridge, support::string_command)
+    fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
+        support::json_status(self.path()?, CONTAINER, bridge, Self::validate_entry)
     }
 }
 
@@ -143,5 +156,42 @@ mod tests {
             InstallOutcome::AlreadyCurrent
         );
         assert_eq!(w.uninstall().unwrap(), UninstallOutcome::Removed);
+    }
+
+    #[test]
+    fn status_needs_repair_when_not_trusted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(
+            &p,
+            serde_json::to_vec(&json!({
+                "mcpServers": {
+                    "paneflow": {
+                        "command": "/data/paneflow-mcp",
+                        "args": [],
+                        "trust": false
+                    }
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let w = test_writer(p);
+
+        assert!(matches!(
+            w.status(Some(Path::new("/data/paneflow-mcp"))).unwrap(),
+            StatusOutcome::NeedsRepair { .. }
+        ));
+    }
+
+    #[test]
+    fn uninstall_malformed_config_is_error() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, b"{ broken").unwrap();
+        let w = test_writer(p.clone());
+
+        assert!(w.uninstall().is_err());
+        assert_eq!(std::fs::read(&p).unwrap(), b"{ broken");
     }
 }

@@ -1,6 +1,9 @@
 // US-017: JSON config loader with validation
 
 use crate::schema::{CommandDefinition, LayoutNode, PaneFlowConfig};
+use serde::de::DeserializeOwned;
+use serde_json::{Map, Value};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
 use tracing::warn;
@@ -89,14 +92,20 @@ pub enum ConfigRead {
 /// and the hot watcher reload so the DoS guard can never be missing on either
 /// path - the watcher's `attempt_reload` previously read with no cap at all.
 pub fn read_config_string(path: &Path) -> ConfigRead {
-    if !path.exists() {
-        return ConfigRead::Absent;
-    }
-    match std::fs::metadata(path) {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ConfigRead::Absent,
+        Err(e) => {
+            warn!("failed to open config file {}: {e}", path.display());
+            return ConfigRead::Rejected;
+        }
+    };
+
+    match file.metadata() {
         // U-028: a FIFO/character device reports len 0 (passing the size cap)
         // but `read_to_string` would then block indefinitely or stream unbounded
-        // bytes. `metadata` follows symlinks, so this also rejects a symlink that
-        // points at /dev/zero or a named pipe. Reject any non-regular file.
+        // bytes. Metadata is taken from the already-open file, so a path swap
+        // between stat and read cannot bypass the guard.
         Ok(meta) if !meta.file_type().is_file() => {
             warn!(
                 "config file {} is not a regular file; using defaults",
@@ -113,18 +122,73 @@ pub fn read_config_string(path: &Path) -> ConfigRead {
             );
             ConfigRead::Rejected
         }
-        Ok(_) => match std::fs::read_to_string(path) {
-            Ok(c) => ConfigRead::Contents(c),
-            Err(e) => {
-                warn!("failed to read config file {}: {e}", path.display());
-                ConfigRead::Rejected
+        Ok(_) => {
+            let mut contents = String::new();
+            match file
+                .take(MAX_CONFIG_SIZE_BYTES + 1)
+                .read_to_string(&mut contents)
+            {
+                Ok(_) if contents.len() as u64 <= MAX_CONFIG_SIZE_BYTES => {
+                    ConfigRead::Contents(contents)
+                }
+                Ok(_) => {
+                    warn!(
+                        "config file {} exceeded the {}-byte cap during read; using defaults",
+                        path.display(),
+                        MAX_CONFIG_SIZE_BYTES
+                    );
+                    ConfigRead::Rejected
+                }
+                Err(e) => {
+                    warn!("failed to read config file {}: {e}", path.display());
+                    ConfigRead::Rejected
+                }
             }
-        },
+        }
         Err(e) => {
-            warn!("failed to stat config file {}: {e}", path.display());
+            warn!(
+                "failed to inspect config file {} after open: {e}",
+                path.display()
+            );
             ConfigRead::Rejected
         }
     }
+}
+
+fn parse_config_field<T>(root: &Map<String, Value>, key: &str) -> Option<T>
+where
+    T: DeserializeOwned,
+{
+    root.get(key).and_then(|raw| {
+        serde_json::from_value(raw.clone())
+            .map_err(|e| warn!("ignoring invalid config field `{key}`: {e}"))
+            .ok()
+    })
+}
+
+fn parse_commands(root: &Map<String, Value>) -> Vec<CommandDefinition> {
+    let Some(raw) = root.get("commands") else {
+        return Vec::new();
+    };
+    let Some(items) = raw.as_array() else {
+        warn!("ignoring config field `commands`: expected an array");
+        return Vec::new();
+    };
+
+    items
+        .iter()
+        .enumerate()
+        .filter_map(
+            |(idx, raw)| match serde_json::from_value::<CommandDefinition>(raw.clone()) {
+                Ok(cmd) if validate_command(&cmd) => Some(cmd),
+                Ok(_) => None,
+                Err(e) => {
+                    warn!("skipping invalid command entry at index {idx}: {e}");
+                    None
+                }
+            },
+        )
+        .collect()
 }
 
 /// Load and validate configuration from a specific file path.
@@ -165,15 +229,77 @@ pub fn parse_and_validate_with_path(json: &str, path: &Path) -> PaneFlowConfig {
 /// `parse_and_validate_with_path`). Command filtering + layout fixups are
 /// applied on the success path, unchanged.
 pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, serde_json::Error> {
-    let mut config: PaneFlowConfig = serde_json::from_str(json)?;
+    let raw: Value = serde_json::from_str(json)?;
+    let Some(root) = raw.as_object() else {
+        warn!("config root is not a JSON object; using defaults");
+        return Ok(PaneFlowConfig::default());
+    };
+
+    let mut config = PaneFlowConfig::default();
+    match root.get("$schemaVersion") {
+        Some(Value::String(version)) if version != "1.0.0" => {
+            warn!("config schema version `{version}` is not recognized; loading leniently");
+        }
+        Some(Value::String(_)) | None => {}
+        Some(_) => warn!("config schema version is not a string; ignoring it"),
+    }
+
+    macro_rules! set_field {
+        ($field:ident) => {
+            if let Some(value) = parse_config_field(root, stringify!($field)) {
+                config.$field = value;
+            }
+        };
+    }
+
+    set_field!(shortcuts);
+    set_field!(default_shell);
+    set_field!(theme);
+    set_field!(window_decorations);
+    set_field!(window_backdrop);
+    set_field!(windows_terminal_material);
+    set_field!(windows_chrome_material);
+    set_field!(line_height);
+    set_field!(cell_width);
+    set_field!(font_family);
+    set_field!(font_fallbacks);
+    set_field!(font_size);
+    set_field!(font_weight);
+    set_field!(option_as_meta);
+    set_field!(shell_integration);
+    set_field!(agent_stall_detection);
+    set_field!(agent_stall_threshold_secs);
+    set_field!(review_prefill_delay_ms);
+    set_field!(submit_paste_delay_ms);
+    set_field!(external_editor);
+    set_field!(claude_code_bypass_permissions);
+    set_field!(ai_unrestricted);
+    set_field!(ai_injection_fence);
+    set_field!(rosetta_enabled);
+    set_field!(rosetta_show_passive);
+    set_field!(claude_code_button_visible);
+    set_field!(codex_button_visible);
+    set_field!(opencode_button_visible);
+    set_field!(pi_button_visible);
+    set_field!(hermes_agent_button_visible);
+    set_field!(grok_button_visible);
+    set_field!(amp_button_visible);
+    set_field!(cursor_button_visible);
+    set_field!(gemini_button_visible);
+    set_field!(kiro_button_visible);
+    set_field!(antigravity_button_visible);
+    set_field!(copilot_button_visible);
+    set_field!(codebuddy_button_visible);
+    set_field!(factory_button_visible);
+    set_field!(qoder_button_visible);
+    set_field!(openclaw_button_visible);
+    set_field!(telemetry);
+    set_field!(terminal);
+    set_field!(agent_panel);
+    set_field!(tool_permissions);
 
     // Validate and filter commands.
-    let validated: Vec<CommandDefinition> = config
-        .commands
-        .into_iter()
-        .filter(validate_command)
-        .collect();
-    config.commands = validated;
+    config.commands = parse_commands(root);
 
     // Validate and fix layout nodes in-place.
     for cmd in &mut config.commands {
@@ -191,6 +317,17 @@ pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, serde_json::
 fn validate_command(cmd: &CommandDefinition) -> bool {
     if cmd.name.trim().is_empty() {
         warn!("skipping command with blank name");
+        return false;
+    }
+    if cmd.workspace.is_some() && cmd.command.as_ref().is_some_and(|s| !s.trim().is_empty()) {
+        warn!(
+            "skipping command `{}` with both workspace and command",
+            cmd.name
+        );
+        return false;
+    }
+    if cmd.workspace.is_none() && cmd.command.as_ref().is_some_and(|s| s.trim().is_empty()) {
+        warn!("skipping command `{}` with blank shell command", cmd.name);
         return false;
     }
     true
@@ -228,11 +365,17 @@ pub fn validate_layout(node: &mut LayoutNode) {
 fn validate_node(node: &mut LayoutNode, leaf_budget: &mut usize) {
     match node {
         LayoutNode::Split {
+            ref mut direction,
             ref mut ratio,
             ref mut ratios,
             ref mut children,
             ..
         } => {
+            if direction != "horizontal" && direction != "vertical" {
+                warn!("split direction `{direction}` is invalid; resetting to horizontal");
+                *direction = "horizontal".to_string();
+            }
+
             // U-008: bound a single Split's direct breadth before anything else
             // touches the (possibly huge) children vec.
             if children.len() > MAX_SPLIT_CHILDREN {
@@ -496,6 +639,23 @@ mod tests {
             ]
         }"#;
         let config = parse_and_validate(json);
+        assert_eq!(config.commands.len(), 1);
+        assert_eq!(config.commands[0].name, "valid");
+    }
+
+    #[test]
+    fn test_malformed_command_entry_does_not_drop_valid_siblings_or_config() {
+        let json = r#"{
+            "theme": "One Dark",
+            "commands": [
+                {"description": "missing name", "command": "bad"},
+                {"name": "valid", "keywords": ["test"], "command": "echo ok"}
+            ]
+        }"#;
+
+        let config = parse_and_validate(json);
+
+        assert_eq!(config.theme.as_deref(), Some("One Dark"));
         assert_eq!(config.commands.len(), 1);
         assert_eq!(config.commands[0].name, "valid");
     }
@@ -1726,13 +1886,15 @@ mod tests {
 
     #[test]
     fn test_terminal_ligatures_wrong_type_falls_back_to_defaults() {
-        // Per Acceptance Criterion: a non-bool value (string here) must
-        // surface through the existing parse-error path, not panic. The
-        // loader's contract on JSON errors is to log a warning and return
-        // PaneFlowConfig::default(), which is what `parse_and_validate`
-        // tests below.
-        let config = parse_and_validate(r#"{"terminal": {"ligatures": "yes"}}"#);
-        assert_eq!(config, PaneFlowConfig::default());
+        // A typo in one terminal field must not discard siblings or the whole
+        // config. The bad bool resolves as absent, while valid neighbours stay.
+        let config = parse_and_validate(
+            r#"{"theme": "One Dark", "terminal": {"ligatures": "yes", "color_emoji": false}}"#,
+        );
+        assert_eq!(config.theme.as_deref(), Some("One Dark"));
+        let terminal = config.terminal.expect("terminal block survives");
+        assert_eq!(terminal.ligatures, None);
+        assert_eq!(terminal.color_emoji, Some(false));
     }
 
     // US-007 (prd-agents-view.md): SessionState gained `projects`,
@@ -2027,6 +2189,28 @@ mod tests {
             LayoutNode::Split { ratios, .. } => {
                 assert!(ratios.is_none(), "N-ary legacy ratio must not be converted")
             }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn validate_layout_normalizes_unknown_split_direction() {
+        let mut node = LayoutNode::Split {
+            direction: "diagonal".to_string(),
+            ratio: None,
+            ratios: None,
+            children: vec![
+                LayoutNode::Pane {
+                    surfaces: vec![Default::default()],
+                },
+                LayoutNode::Pane {
+                    surfaces: vec![Default::default()],
+                },
+            ],
+        };
+        validate_layout(&mut node);
+        match node {
+            LayoutNode::Split { direction, .. } => assert_eq!(direction, "horizontal"),
             _ => panic!("expected split"),
         }
     }

@@ -16,7 +16,8 @@
 use std::error::Error;
 use std::fmt;
 use std::io::{self, Read};
-use std::process::{Command, Output, Stdio};
+use std::process::{Child, Command, ExitStatus, Output, Stdio};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -42,15 +43,40 @@ const POLL_INTERVAL: Duration = Duration::from_millis(10);
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Why a bounded run did not produce a normal [`Output`].
+/// Output from a bounded process run.
+///
+/// `stdout` and `stderr` are always bounded. The truncation flags tell callers
+/// whether bytes were discarded after the configured caps while the pipe was
+/// still drained so the child could exit.
+#[derive(Debug)]
+pub struct BoundedOutput {
+    pub status: ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
+impl From<BoundedOutput> for Output {
+    fn from(value: BoundedOutput) -> Self {
+        Self {
+            status: value.status,
+            stdout: value.stdout,
+            stderr: value.stderr,
+        }
+    }
+}
+
+/// Why a bounded run did not produce a normal [`BoundedOutput`].
 #[derive(Debug)]
 pub enum ProcError {
     /// The child could not be spawned.
     Spawn(io::Error),
     /// Polling the child's status failed.
     Wait(io::Error),
-    /// The deadline elapsed before the child exited; the child was killed and
-    /// reaped before this error was returned.
+    /// The deadline elapsed before the child and its inherited pipes completed.
+    /// The child tree was terminated best-effort and cleanup was detached so the
+    /// caller is released by the deadline.
     Timeout,
 }
 
@@ -78,21 +104,27 @@ impl Error for ProcError {
 /// Run `cmd` to completion under a wall-clock `deadline`, capturing at most
 /// `stdout_cap` bytes of stdout (and a small fixed cap of stderr).
 ///
+/// The deadline starts after the child is successfully spawned. Process creation
+/// itself is owned by the OS and may still block on platform-level executable
+/// lookup or antivirus hooks.
+///
 /// - stdin is `/dev/null` so the child can never block waiting on a prompt.
 /// - stdout/stderr are read on dedicated threads so a child that writes more
 ///   than the cap is drained (and discarded past the cap) instead of blocking
 ///   on a full pipe - bounded memory, no deadlock.
-/// - the child is polled with [`Child::try_wait`]; if `deadline` elapses first
-///   the child is killed and reaped and [`ProcError::Timeout`] is returned.
+/// - the child is placed in a process group/job where the platform supports it;
+///   if `deadline` elapses before the direct child and inherited pipes finish,
+///   the process tree is terminated best-effort and [`ProcError::Timeout`] is
+///   returned.
 ///
-/// The returned [`Output::stdout`] is at most `stdout_cap` bytes; a child that
-/// produced more exited normally (its excess was discarded), so the status is
-/// still its real exit status.
+/// The returned [`BoundedOutput::stdout`] is at most `stdout_cap` bytes; a child
+/// that produced more exited normally (its excess was discarded), so the status
+/// is still its real exit status and [`BoundedOutput::stdout_truncated`] is set.
 pub fn run_with_timeout(
     mut cmd: Command,
     deadline: Duration,
     stdout_cap: u64,
-) -> Result<Output, ProcError> {
+) -> Result<BoundedOutput, ProcError> {
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -108,7 +140,9 @@ pub fn run_with_timeout(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
+    configure_process_tree(&mut cmd);
     let mut child = cmd.spawn().map_err(ProcError::Spawn)?;
+    let tree = ProcessTree::for_child(&child);
 
     // Hand the pipe ends to reader threads BEFORE polling: if we polled while
     // the child filled a ~64 KiB pipe buffer it would block on write and we'd
@@ -122,83 +156,313 @@ pub fn run_with_timeout(
         .take()
         .map(|pipe| spawn_bounded_reader(pipe, STDERR_CAP));
 
+    let mut stdout_reader = stdout_reader;
+    let mut stderr_reader = stderr_reader;
     let start = Instant::now();
     let status = loop {
         match child.try_wait().map_err(ProcError::Wait)? {
             Some(status) => break status,
             None => {
-                if start.elapsed() >= deadline {
-                    // Deadline hit. `kill()` only SENDS a signal (non-blocking);
-                    // it is `wait()` and the reader `join`s that can block -
-                    // and they block FOREVER on a child wedged in uninterruptible
-                    // sleep (D-state on a dead NFS/CIFS mount: the exact US-035
-                    // scenario), because SIGKILL is not delivered until the
-                    // kernel unblocks the task, and the readers can't hit EOF
-                    // while that child still holds the pipe write ends. So we
-                    // kill best-effort and hand the reap + drain to a DETACHED
-                    // thread, then return immediately - the deadline must bound
-                    // when the CALLER is freed, not just when the child is
-                    // signalled. (Bounded leak: one cleanup thread + its readers
-                    // per timed-out process, finishing whenever the OS finally
-                    // reaps the child.) On Windows a child that exited since the
-                    // last `try_wait` makes `kill()` return `InvalidInput`; the
-                    // `let _ =` absorbs it and the `wait()` below still reaps.
-                    let _ = child.kill();
-                    thread::spawn(move || {
-                        let _ = child.wait();
-                        join_reader(stdout_reader);
-                        join_reader(stderr_reader);
-                    });
+                let Some(sleep_for) = poll_sleep_duration(start, deadline) else {
+                    terminate_and_detach_cleanup(
+                        child,
+                        tree,
+                        stdout_reader.take(),
+                        stderr_reader.take(),
+                    );
                     return Err(ProcError::Timeout);
-                }
-                thread::sleep(POLL_INTERVAL);
+                };
+                thread::sleep(sleep_for);
             }
         }
     };
 
-    Ok(Output {
+    let stdout = match wait_for_reader(stdout_reader.take(), start, deadline) {
+        Ok(read) => read,
+        Err(reader) => {
+            terminate_and_detach_cleanup(child, tree, reader, stderr_reader.take());
+            return Err(ProcError::Timeout);
+        }
+    };
+    let stderr = match wait_for_reader(stderr_reader.take(), start, deadline) {
+        Ok(read) => read,
+        Err(reader) => {
+            terminate_and_detach_cleanup(child, tree, None, reader);
+            return Err(ProcError::Timeout);
+        }
+    };
+
+    Ok(BoundedOutput {
         status,
-        stdout: join_reader(stdout_reader),
-        stderr: join_reader(stderr_reader),
+        stdout: stdout.bytes,
+        stderr: stderr.bytes,
+        stdout_truncated: stdout.truncated,
+        stderr_truncated: stderr.truncated,
     })
+}
+
+#[cfg(unix)]
+fn configure_process_tree(cmd: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    cmd.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_tree(_cmd: &mut Command) {}
+
+fn poll_sleep_duration(start: Instant, deadline: Duration) -> Option<Duration> {
+    let elapsed = start.elapsed();
+    if elapsed >= deadline {
+        None
+    } else {
+        Some((deadline - elapsed).min(POLL_INTERVAL))
+    }
+}
+
+fn remaining_until(start: Instant, deadline: Duration) -> Option<Duration> {
+    let elapsed = start.elapsed();
+    if elapsed >= deadline {
+        None
+    } else {
+        Some(deadline - elapsed)
+    }
+}
+
+fn terminate_and_detach_cleanup(
+    mut child: Child,
+    tree: ProcessTree,
+    stdout_reader: Option<Receiver<BoundedRead>>,
+    stderr_reader: Option<Receiver<BoundedRead>>,
+) {
+    tree.terminate(&mut child);
+    thread::spawn(move || {
+        let _ = child.wait();
+        drain_reader(stdout_reader);
+        drain_reader(stderr_reader);
+    });
+}
+
+struct ProcessTree {
+    #[cfg(unix)]
+    pid: u32,
+    #[cfg(windows)]
+    job: Option<windows_job::Job>,
+}
+
+impl ProcessTree {
+    fn for_child(child: &Child) -> Self {
+        Self {
+            #[cfg(unix)]
+            pid: child.id(),
+            #[cfg(windows)]
+            job: windows_job::Job::for_child(child).ok(),
+        }
+    }
+
+    fn terminate(&self, child: &mut Child) {
+        #[cfg(unix)]
+        kill_process_group(self.pid);
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            job.terminate();
+        }
+        let _ = child.kill();
+    }
+}
+
+#[cfg(unix)]
+fn kill_process_group(pid: u32) {
+    const SIGKILL: i32 = 9;
+
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+
+    if let Ok(pid) = i32::try_from(pid) {
+        let _ = unsafe { kill(-pid, SIGKILL) };
+    }
+}
+
+#[cfg(windows)]
+mod windows_job {
+    use std::ffi::c_void;
+    use std::io;
+    use std::mem::{size_of, zeroed};
+    use std::os::windows::io::AsRawHandle;
+    use std::process::Child;
+    use std::ptr::null_mut;
+
+    type Handle = *mut c_void;
+
+    const JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS: u32 = 9;
+    const JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+
+    #[repr(C)]
+    struct IoCounters {
+        read_operation_count: u64,
+        write_operation_count: u64,
+        other_operation_count: u64,
+        read_transfer_count: u64,
+        write_transfer_count: u64,
+        other_transfer_count: u64,
+    }
+
+    #[repr(C)]
+    struct JobObjectBasicLimitInformation {
+        per_process_user_time_limit: i64,
+        per_job_user_time_limit: i64,
+        limit_flags: u32,
+        minimum_working_set_size: usize,
+        maximum_working_set_size: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    struct JobObjectExtendedLimitInformation {
+        basic_limit_information: JobObjectBasicLimitInformation,
+        io_info: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory_used: usize,
+        peak_job_memory_used: usize,
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> Handle;
+        fn SetInformationJobObject(
+            job: Handle,
+            info_class: u32,
+            info: *const c_void,
+            info_len: u32,
+        ) -> i32;
+        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+        fn TerminateJobObject(job: Handle, exit_code: u32) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+
+    pub(super) struct Job(Handle);
+
+    impl Job {
+        pub(super) fn for_child(child: &Child) -> io::Result<Self> {
+            let handle = unsafe { CreateJobObjectW(null_mut(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+
+            let job = Self(handle);
+            let mut limits: JobObjectExtendedLimitInformation = unsafe { zeroed() };
+            limits.basic_limit_information.limit_flags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+
+            let configured = unsafe {
+                SetInformationJobObject(
+                    job.0,
+                    JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS,
+                    (&limits as *const JobObjectExtendedLimitInformation).cast(),
+                    size_of::<JobObjectExtendedLimitInformation>() as u32,
+                )
+            };
+            if configured == 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let assigned = unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle().cast()) };
+            if assigned == 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            Ok(job)
+        }
+
+        pub(super) fn terminate(&self) {
+            let _ = unsafe { TerminateJobObject(self.0, 1) };
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct BoundedRead {
+    bytes: Vec<u8>,
+    truncated: bool,
 }
 
 /// Read up to `cap` bytes from `pipe`, then drain and discard the remainder so
 /// the child can finish writing and exit. Never retains more than `cap` bytes.
-fn spawn_bounded_reader<R>(mut pipe: R, cap: u64) -> thread::JoinHandle<Vec<u8>>
+fn spawn_bounded_reader<R>(pipe: R, cap: u64) -> Receiver<BoundedRead>
 where
     R: Read + Send + 'static,
 {
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let mut buf = Vec::new();
-        // Keep at most `cap` bytes.
-        let _ = pipe.by_ref().take(cap).read_to_end(&mut buf);
-        // Drain the rest into a small scratch buffer and throw it away: a
-        // chatty-but-honest child exits cleanly while a malicious stream stays
-        // bounded in memory (and is ultimately stopped by the caller's
-        // deadline, which kills the child). Throttle the drain: a producer that
-        // continuously SATURATES the pipe (a hijacked `yes`-like binary) would
-        // otherwise spin this thread at 100% of a core for the whole deadline.
-        // A read that comes back full is the saturation signal, so sleep 1 ms
-        // on it - that caps the discard rate near 8 MB/s at ~0 CPU while an
-        // honest bursty producer (whose reads return short or block) drains at
-        // full speed.
-        let mut scratch = [0u8; 8 * 1024];
-        loop {
-            match pipe.read(&mut scratch) {
-                Ok(0) | Err(_) => break,
-                Ok(n) if n == scratch.len() => thread::sleep(Duration::from_millis(1)),
-                Ok(_) => {}
-            }
-        }
-        buf
-    })
+        let _ = tx.send(read_bounded(pipe, cap));
+    });
+    rx
 }
 
-fn join_reader(reader: Option<thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
-    reader
-        .map(|h| h.join().unwrap_or_default())
-        .unwrap_or_default()
+fn read_bounded<R>(mut pipe: R, cap: u64) -> BoundedRead
+where
+    R: Read,
+{
+    let mut bytes = Vec::new();
+    let retain_cap = usize::try_from(cap).unwrap_or(usize::MAX);
+
+    let _ = pipe
+        .by_ref()
+        .take(cap.saturating_add(1))
+        .read_to_end(&mut bytes);
+    let truncated = bytes.len() > retain_cap;
+    if truncated {
+        bytes.truncate(retain_cap);
+    }
+
+    // Drain the rest into a small scratch buffer and throw it away: a
+    // chatty-but-honest child exits cleanly while a malicious stream stays
+    // bounded in memory. Throttle a saturated pipe so the drain thread does not
+    // spin a core for the whole deadline.
+    let mut scratch = [0u8; 8 * 1024];
+    loop {
+        match pipe.read(&mut scratch) {
+            Ok(0) | Err(_) => break,
+            Ok(n) if n == scratch.len() => thread::sleep(Duration::from_millis(1)),
+            Ok(_) => {}
+        }
+    }
+
+    BoundedRead { bytes, truncated }
+}
+
+fn wait_for_reader(
+    reader: Option<Receiver<BoundedRead>>,
+    start: Instant,
+    deadline: Duration,
+) -> Result<BoundedRead, Option<Receiver<BoundedRead>>> {
+    let Some(reader) = reader else {
+        return Ok(BoundedRead::default());
+    };
+    let Some(remaining) = remaining_until(start, deadline) else {
+        return Err(Some(reader));
+    };
+
+    match reader.recv_timeout(remaining) {
+        Ok(read) => Ok(read),
+        Err(RecvTimeoutError::Disconnected) => Ok(BoundedRead::default()),
+        Err(RecvTimeoutError::Timeout) => Err(Some(reader)),
+    }
+}
+
+fn drain_reader(reader: Option<Receiver<BoundedRead>>) {
+    if let Some(reader) = reader {
+        let _ = reader.recv();
+    }
 }
 
 #[cfg(test)]
@@ -248,10 +512,19 @@ mod tests {
     }
 
     #[test]
+    fn bounded_reader_reports_truncation() {
+        let read = read_bounded(std::io::Cursor::new(b"abcdef".to_vec()), 3);
+        assert_eq!(read.bytes, b"abc");
+        assert!(read.truncated);
+    }
+
+    #[test]
     fn completes_under_deadline_and_captures_stdout() {
         let out = run_with_timeout(stdout_command(), Duration::from_secs(5), 1 << 20)
             .expect("fast command should complete");
         assert!(out.status.success());
+        assert!(!out.stdout_truncated);
+        assert!(!out.stderr_truncated);
         // printf has no trailing newline on Unix; cmd `echo` would add CRLF, so
         // assert on a prefix to stay platform-tolerant.
         assert!(
@@ -304,9 +577,36 @@ mod tests {
             4096,
             "stdout must be capped, not buffered"
         );
+        assert!(out.stdout_truncated);
         assert!(
             start.elapsed() < Duration::from_secs(30),
             "drain must let the child exit well under the deadline"
+        );
+    }
+
+    #[test]
+    fn stderr_cap_reports_truncation() {
+        let read = read_bounded(std::io::Cursor::new(vec![b'x'; 128 * 1024]), STDERR_CAP);
+        assert_eq!(read.bytes.len(), STDERR_CAP as usize);
+        assert!(read.truncated);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn descendant_pipe_holder_is_bounded_by_deadline() {
+        let start = Instant::now();
+        let res = run_with_timeout(
+            sh("(sleep 30) & printf parent-exited"),
+            Duration::from_millis(200),
+            1 << 20,
+        );
+        assert!(
+            matches!(res, Err(ProcError::Timeout)),
+            "expected Timeout, got {res:?}"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "must not wait for a descendant that inherited stdout"
         );
     }
 

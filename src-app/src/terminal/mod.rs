@@ -6,6 +6,8 @@
 
 pub mod blink;
 pub mod element;
+#[cfg(feature = "hera-dogfood")]
+pub(crate) mod hera_dogfood;
 mod input;
 mod listener;
 mod pty_session;

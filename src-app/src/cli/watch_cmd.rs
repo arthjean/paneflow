@@ -37,11 +37,22 @@ pub fn watch(client: &IpcClient, surface: Option<&str>, types: &[String]) -> Res
     // dropped socket lets the server reap the subscription on its next write.
     let _ = ctrlc::set_handler(|| std::process::exit(EXIT_OK));
 
+    let mut stream_error = None;
     match paneflow_ipc_client::subscribe_stream(&socket, Value::Object(params), |line| {
+        if let Some(err) = paneflow_ipc_client::jsonrpc_error_message(line) {
+            stream_error = Some(err);
+            return false;
+        }
         println!("{line}");
         true
     }) {
-        Ok(()) => Ok(EXIT_OK), // server closed the stream
+        Ok(()) => {
+            if let Some(err) = stream_error {
+                Err(CliError::target(format!("watch failed: {err}")))
+            } else {
+                Ok(EXIT_OK)
+            }
+        }
         Err(e) => Err(CliError::target(format!(
             "watch failed: {e}; is Paneflow running?"
         ))),

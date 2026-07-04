@@ -525,6 +525,47 @@ fn scripting_enabled_from(value: Option<&str>) -> bool {
     matches!(value, Some("1"))
 }
 
+fn ipc_orchestration_enabled() -> bool {
+    orchestration_enabled_from(
+        std::env::var("PANEFLOW_IPC_ORCHESTRATION").ok().as_deref(),
+        std::env::var("PANEFLOW_IPC_SCRIPTING").ok().as_deref(),
+    )
+}
+
+fn orchestration_enabled_from(orchestration: Option<&str>, scripting: Option<&str>) -> bool {
+    matches!(orchestration, Some("1")) || scripting_enabled_from(scripting)
+}
+
+fn normalized_shell_value(shell: Option<&str>) -> &str {
+    shell.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("")
+}
+
+fn env_param_has_strings(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(|v| v.as_object())
+        .is_some_and(|obj| obj.values().any(serde_json::Value::is_string))
+}
+
+fn string_param_is_nonempty(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty())
+}
+
+fn pane_spec_requires_orchestration(spec: &serde_json::Value) -> bool {
+    string_param_is_nonempty(spec.get("command"))
+        || string_param_is_nonempty(spec.get("prompt"))
+        || string_param_is_nonempty(spec.get("context"))
+        || env_param_has_strings(spec.get("env"))
+}
+
+fn orchestration_disabled_error(method: &str) -> JsonRpcError {
+    JsonRpcError::method_not_enabled(format!(
+        "{method} orchestration disabled; set PANEFLOW_IPC_ORCHESTRATION=1 \
+         or PANEFLOW_IPC_SCRIPTING=1 to enable command, prompt, context, or env"
+    ))
+}
+
 /// EP-003 US-010 (agent-control-plane): the `surface.send_text` write gate is
 /// open when EITHER the process-wide env gate is set OR AI free-access mode
 /// (`ai_unrestricted`) is on. With free-access off this reduces to the legacy
@@ -684,21 +725,9 @@ fn parse_managed_worktree(
     let mw = value.filter(|v| !v.is_null())?;
     let path = mw.get("path").and_then(|p| p.as_str()).unwrap_or("");
     let repo_root = mw.get("repo_root").and_then(|p| p.as_str()).unwrap_or("");
-    if path.is_empty() || repo_root.is_empty() {
-        return None;
-    }
-    Some(crate::workspace::worktree::ManagedWorktree {
-        path: PathBuf::from(path),
-        repo_root: PathBuf::from(repo_root),
-        branch: mw
-            .get("branch")
-            .and_then(|b| b.as_str())
-            .unwrap_or_default()
-            .to_string(),
-        teardown: crate::workspace::worktree::TeardownPolicy::parse(
-            mw.get("teardown").and_then(|t| t.as_str()).unwrap_or(""),
-        ),
-    })
+    let branch = mw.get("branch").and_then(|b| b.as_str()).unwrap_or("");
+    let teardown = mw.get("teardown").and_then(|t| t.as_str()).unwrap_or("");
+    crate::workspace::worktree::managed_worktree_from_record(path, repo_root, branch, teardown)
 }
 
 /// Locate the pane (and tab index) hosting a surface, across all workspaces.
@@ -809,6 +838,7 @@ fn surface_read_value(
     total: usize,
     eof: bool,
     output_generation: u64,
+    truncated: bool,
 ) -> serde_json::Value {
     serde_json::json!({
         "text": text,
@@ -816,7 +846,26 @@ fn surface_read_value(
         "total_lines": total,
         "eof": eof,
         "output_generation": output_generation,
+        "truncated": truncated,
     })
+}
+
+fn truncate_ipc_text(text: String) -> (String, bool) {
+    if text.len() <= crate::limits::MAX_IPC_TEXT_BYTES {
+        return (text, false);
+    }
+
+    const MARKER: &str = "\n[paneflow: output truncated to fit IPC frame]\n";
+    let keep = crate::limits::MAX_IPC_TEXT_BYTES.saturating_sub(MARKER.len());
+    let mut boundary = keep.min(text.len());
+    while boundary > 0 && !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+
+    let mut out = text;
+    out.truncate(boundary);
+    out.push_str(MARKER);
+    (out, true)
 }
 
 // ---------------------------------------------------------------------------
@@ -1043,6 +1092,13 @@ fn session_event_value(
     })
 }
 
+fn resolved_event_surface_id(
+    session_surface_id: Option<u64>,
+    explicit_surface_id: Option<u64>,
+) -> Option<u64> {
+    session_surface_id.or(explicit_surface_id)
+}
+
 fn drain_ipc_requests_for_tick(
     rx: &std::sync::mpsc::Receiver<crate::ipc::IpcRequest>,
 ) -> Vec<crate::ipc::IpcRequest> {
@@ -1076,6 +1132,8 @@ impl PaneFlowApp {
             if req.cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 continue;
             }
+            req.started
+                .store(true, std::sync::atomic::Ordering::Release);
             let result = self.handle_ipc(&req.method, &req.params, req.caller_pid, cx);
             // EP-002 US-006: mirror a SUCCESSFUL ai.* lifecycle frame to event-
             // bus subscribers. Broadcast after the handler so the looked-up
@@ -1121,7 +1179,7 @@ impl PaneFlowApp {
                         .find(|s| s.surface_id == Some(sid))
                 })
             });
-        let (state, surface_id, message, active_tool) = match session {
+        let (state, session_surface_id, message, active_tool) = match session {
             Some(s) => (
                 Some(s.state.wire_str()),
                 s.surface_id,
@@ -1130,6 +1188,7 @@ impl PaneFlowApp {
             ),
             None => (None, None, None, None),
         };
+        let surface_id = resolved_event_surface_id(session_surface_id, explicit_surface_id);
         let event = session_event_value(
             method,
             workspace_id,
@@ -1192,6 +1251,9 @@ impl PaneFlowApp {
             .unwrap_or_else(|e| e.into_inner())
             .take();
         if let Some(config) = new_config {
+            let default_shell_changed =
+                normalized_shell_value(self.cached_config.default_shell.as_deref())
+                    != normalized_shell_value(config.default_shell.as_deref());
             keybindings::apply_keybindings(cx, &config.shortcuts);
             self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
             crate::theme::invalidate_theme_cache();
@@ -1207,6 +1269,9 @@ impl PaneFlowApp {
             // of `config` - move it in.
             self.cached_config = config;
             self.sync_rosetta_config_state();
+            if default_shell_changed {
+                self.handle_default_shell_changed(cx);
+            }
             // US-015: push the refreshed config to every pane's tab-bar cache.
             for ws in &self.workspaces {
                 ws.propagate_config(&self.cached_config, cx);
@@ -1234,7 +1299,7 @@ impl PaneFlowApp {
     /// Handle a `config.telemetry.enabled` change detected during config
     /// reconciliation. Compares against `self.telemetry_enabled_last` and
     /// performs the three mandated side effects:
-    /// 1. Rebuild the client handle via `TelemetryClient::from_config`.
+    /// 1. Rebuild the client handle via `TelemetryClient::from_consent`.
     /// 2. Emit `telemetry_reenabled` iff `Some(false) → Some(true)`.
     /// 3. Surface a toast mirroring the new state.
     ///
@@ -1252,19 +1317,28 @@ impl PaneFlowApp {
             return;
         }
 
-        // Swap the client handle. Distinct_id is re-read from disk - if
-        // the telemetry_id file is gone since last launch, we get a
-        // fresh ephemeral; otherwise the stable UUID persists.
-        let distinct_id = crate::telemetry::id::telemetry_id();
+        // Swap the client handle. Distinct_id is read only when the new
+        // consent state can actually capture events; opt-out must not create
+        // persistent telemetry state.
+        let consent = crate::telemetry::client::TelemetryConsent::new(new_enabled);
+        let distinct_id =
+            if crate::telemetry::client::TelemetryClient::consent_allows_capture(consent) {
+                crate::telemetry::id::telemetry_id()
+            } else {
+                String::new()
+            };
         let api_key = option_env!("POSTHOG_API_KEY").unwrap_or("");
         let host = option_env!("POSTHOG_HOST").unwrap_or("https://eu.i.posthog.com");
-        self.telemetry =
-            std::sync::Arc::new(crate::telemetry::client::TelemetryClient::from_config(
-                config,
+        self.telemetry.deactivate();
+        let telemetry =
+            std::sync::Arc::new(crate::telemetry::client::TelemetryClient::from_consent(
+                consent,
                 api_key,
                 host,
                 &distinct_id,
             ));
+        self.telemetry = std::sync::Arc::clone(&telemetry);
+        Self::spawn_telemetry_flusher(telemetry, cx);
 
         if decision.reenabled {
             // Explicit false → true transition. `telemetry_reenabled`
@@ -1421,12 +1495,10 @@ impl PaneFlowApp {
     /// command / prompt: each pane spawns in its own directory, optionally runs
     /// an agent CLI, and optionally gets a prompt pre-filled (never submitted).
     ///
-    /// Security: same-UID peer-cred is the gate (the socket is 0600 + peer-UID).
-    /// Launching a CLI here is no more privileged than the user's own shell, and
-    /// every pane is freshly created by this call (no injection into a
-    /// pre-existing foreign agent), so it does NOT require the
-    /// `PANEFLOW_IPC_SCRIPTING` gate `surface.send_text` carries - that gate
-    /// guards lateral injection into another agent's live session.
+    /// Security: navigation-only pane creation is allowed for same-UID clients,
+    /// but command/prompt/context/env fields are orchestration primitives. They
+    /// require `PANEFLOW_IPC_ORCHESTRATION=1`, with
+    /// `PANEFLOW_IPC_SCRIPTING=1` accepted as a broader legacy opt-in.
     ///
     /// Atomic: every pane's cwd is canonicalized BEFORE anything spawns, so a
     /// bad directory returns -32602 with no half-built workspace (US-012).
@@ -1459,6 +1531,9 @@ impl PaneFlowApp {
                 "layout exceeds maximum pane count ({MAX_PANES})"
             ))
             .into_value();
+        }
+        if pane_specs.iter().any(pane_spec_requires_orchestration) && !ipc_orchestration_enabled() {
+            return orchestration_disabled_error("workspace.up").into_value();
         }
 
         // Phase 1 (no mutation): validate + canonicalize every cwd up-front so a
@@ -1584,8 +1659,7 @@ impl PaneFlowApp {
         let ws_cwd = planned
             .iter()
             .find_map(|p| p.cwd.clone())
-            .or_else(|| std::env::current_dir().ok())
-            .unwrap_or_else(|| PathBuf::from("."));
+            .unwrap_or_else(crate::launch_cwd::implicit_launch_cwd);
         let mut ws = Workspace::with_layout_and_id(ws_id, &name, ws_cwd, tree);
         ws.managed_worktrees = managed_worktrees;
         self.watch_git_dir(&ws);
@@ -2287,6 +2361,7 @@ impl PaneFlowApp {
                     .get("fenced")
                     .and_then(|v| v.as_bool())
                     .unwrap_or_else(|| self.cached_config.ai_injection_fence_enabled());
+                let (text, truncated) = truncate_ipc_text(text);
                 let text = if fenced {
                     wrap_untrusted(
                         &format!("source=\"surface:{sid}\" total_lines=\"{total}\" eof=\"{eof}\""),
@@ -2295,7 +2370,7 @@ impl PaneFlowApp {
                 } else {
                     text
                 };
-                surface_read_value(text, returned, total, eof, output_generation)
+                surface_read_value(text, returned, total, eof, output_generation, truncated)
             }
             "fleet.list" => {
                 // EP-001 US-001 (agent-control-plane): snapshot every running
@@ -2462,30 +2537,33 @@ impl PaneFlowApp {
                 // composer). Only then is the historical text-required guard
                 // lifted; without `--submit` the refusal is unchanged.
                 if text.is_empty() && !submit {
-                    return serde_json::json!({"error": "Missing 'text' parameter"});
+                    return JsonRpcError::invalid_params("Missing 'text' parameter").into_value();
                 }
                 const MAX_TEXT_LEN: usize = 64 * 1024; // 64 KiB
                 if text.len() > MAX_TEXT_LEN {
-                    return serde_json::json!({"error": "Text exceeds 64 KiB limit"});
+                    return JsonRpcError::invalid_params("Text exceeds 64 KiB limit").into_value();
                 }
                 // Resolve the target to a single terminal entity (US-010 AC5: a
                 // vanished pane is an error, never a partial send). With no
                 // surface_id the active workspace's first terminal is used - the
                 // same default routing as `surface.send_keystroke`
                 // (`find_first_terminal` skips markdown leaves).
-                let target: Option<Entity<TerminalView>> =
-                    if let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) {
-                        match find_terminal_by_surface_id(&self.workspaces, sid, cx) {
-                            Some(t) => Some(t),
-                            None => return serde_json::json!({"error": "Surface not found"}),
+                let target: Option<Entity<TerminalView>> = if let Some(sid) =
+                    params.get("surface_id").and_then(|s| s.as_u64())
+                {
+                    match find_terminal_by_surface_id(&self.workspaces, sid, cx) {
+                        Some(t) => Some(t),
+                        None => {
+                            return JsonRpcError::invalid_params("Surface not found").into_value();
                         }
-                    } else {
-                        self.active_workspace()
-                            .and_then(|ws| ws.root.as_ref())
-                            .and_then(|root| find_first_terminal(root, cx))
-                    };
+                    }
+                } else {
+                    self.active_workspace()
+                        .and_then(|ws| ws.root.as_ref())
+                        .and_then(|root| find_first_terminal(root, cx))
+                };
                 let Some(terminal) = target else {
-                    return serde_json::json!({"error": "No active terminal"});
+                    return JsonRpcError::invalid_params("No active terminal").into_value();
                 };
                 let wrote_sid = terminal.entity_id().as_u64();
                 let agent_hint = self.surface_agent_hint(wrote_sid, cx);
@@ -2579,7 +2657,8 @@ impl PaneFlowApp {
                     .and_then(|k| k.as_str())
                     .unwrap_or("");
                 if keystroke.is_empty() {
-                    return serde_json::json!({"error": "Missing 'keystroke' parameter"});
+                    return JsonRpcError::invalid_params("Missing 'keystroke' parameter")
+                        .into_value();
                 }
                 if keystroke.contains('\r') || keystroke.contains('\n') {
                     return JsonRpcError::invalid_params(
@@ -2602,9 +2681,9 @@ impl PaneFlowApp {
                 match terminal {
                     Some(t) => match t.read(cx).send_keystroke(keystroke) {
                         Ok(()) => serde_json::json!({"sent": true}),
-                        Err(e) => serde_json::json!({"error": e}),
+                        Err(e) => JsonRpcError::invalid_params(e).into_value(),
                     },
-                    None => serde_json::json!({"error": "No active terminal"}),
+                    None => JsonRpcError::invalid_params("No active terminal").into_value(),
                 }
             }
             "surface.split" => {
@@ -2616,7 +2695,10 @@ impl PaneFlowApp {
                     "horizontal" => SplitDirection::Horizontal,
                     "vertical" => SplitDirection::Vertical,
                     _ => {
-                        return serde_json::json!({"error": "Missing or invalid 'direction' parameter (use \"horizontal\" or \"vertical\")"});
+                        return JsonRpcError::invalid_params(
+                            "Missing or invalid 'direction' parameter (use \"horizontal\" or \"vertical\")",
+                        )
+                        .into_value();
                     }
                 };
                 // EP-003 (orchestration-v2): `surface.split` can spawn a fully
@@ -2624,9 +2706,12 @@ impl PaneFlowApp {
                 // bad), `command` (launched like workspace.up panes), `env`,
                 // `name`, `prompt` (server-side prefill, never submitted) and
                 // `managed_worktree` (ownership registration, US-009). Same
-                // trust model as workspace.up: the pane is freshly created by
-                // this call (no lateral injection into a live agent session),
-                // so no scripting gate. All fields absent = legacy bare split.
+                // command/prompt/context/env are orchestration primitives and
+                // require the orchestration gate. All fields absent = legacy
+                // bare split.
+                if pane_spec_requires_orchestration(params) && !ipc_orchestration_enabled() {
+                    return orchestration_disabled_error("surface.split").into_value();
+                }
                 let spawn_cwd = match params.get("cwd").and_then(|c| c.as_str()) {
                     Some(raw) => match canonicalize_workspace_cwd(raw) {
                         Ok(canonical) => Some(canonical),
@@ -2671,18 +2756,18 @@ impl PaneFlowApp {
                         let Some((ws_idx, target_pane, _tab)) =
                             find_pane_by_surface_id(&self.workspaces, sid, cx)
                         else {
-                            return serde_json::json!({"error": "Surface not found"});
+                            return JsonRpcError::invalid_params("Surface not found").into_value();
                         };
                         (ws_idx, Some(target_pane))
                     } else {
                         (self.active_idx, None)
                     };
                 let Some(ws) = self.workspaces.get(ws_idx) else {
-                    return serde_json::json!({"error": "No active workspace"});
+                    return JsonRpcError::invalid_params("No active workspace").into_value();
                 };
                 let ws_id = ws.id;
                 if ws.root.as_ref().is_none_or(|r| r.leaf_count() >= MAX_PANES) {
-                    return serde_json::json!({"error": "Maximum pane count reached"});
+                    return JsonRpcError::invalid_params("Maximum pane count reached").into_value();
                 }
                 let new_terminal = cx.new(|cx| {
                     TerminalView::with_cwd_env_and_profile(
@@ -2702,14 +2787,14 @@ impl PaneFlowApp {
                 let surface_id = new_terminal.entity_id().as_u64();
                 let new_pane = self.create_pane(new_terminal.clone(), ws_id, cx);
                 let Some(root) = self.workspaces[ws_idx].root.as_mut() else {
-                    return serde_json::json!({"error": "Workspace has no root"});
+                    return JsonRpcError::invalid_params("Workspace has no root").into_value();
                 };
                 match target_pane {
                     Some(target) => {
                         if !root.split_at_pane(&target, direction, new_pane) {
                             // The pane vanished between lookup and mutation (a
                             // close raced this request); nothing was inserted.
-                            return serde_json::json!({"error": "Surface not found"});
+                            return JsonRpcError::invalid_params("Surface not found").into_value();
                         }
                     }
                     None => root.split_first_leaf(direction, new_pane),
@@ -2755,39 +2840,21 @@ impl PaneFlowApp {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
-                let Some(pid) = params
-                    .get("pid")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u32)
-                    .filter(|&p| p > 0)
-                else {
+                let Some(pid) = read_session_pid(params) else {
                     return serde_json::json!({"error": "Missing or invalid pid"});
                 };
-                // Tool name: check top-level "tool" param, then hook_payload.tool, default "claude"
-                let hook = params.get("hook_payload");
-                let tool_str = params
-                    .get("tool")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| hook.and_then(|h| h.get("tool")).and_then(|v| v.as_str()))
-                    .unwrap_or("claude");
-                // Validate tool name: alphanumeric + hyphens, max 64 chars
-                if tool_str.len() > 64
-                    || !tool_str
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                {
-                    return serde_json::json!({"error": "Invalid tool name"});
-                }
-                let tool = crate::agent_launcher::TerminalAgent::from_binary(tool_str);
+                let Some(tool) = read_tool(params) else {
+                    return serde_json::json!({"error": "Unknown tool"});
+                };
+                let _explicit_surface_id = self.validated_frame_surface_id(params, cx);
 
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
-                    // session_start is a no-op on `agent_sessions`: a
-                    // freshly-spawned shell with no prompt in flight
-                    // should NOT show any badge in the sidebar. The
-                    // first `ai.prompt_submit` / `ai.tool_use` will
-                    // create the row with `AgentState::Thinking`.
-                    // Stale-PID sweep covers session cleanup if the
-                    // process dies before its first prompt.
+                    // session_start intentionally stays off `agent_sessions`:
+                    // a freshly-spawned shell with no prompt in flight should
+                    // not show a sidebar badge. We still validate PID/tool
+                    // and surface binding here so bad hook frames fail early;
+                    // the first prompt/tool event creates the visible row.
+                    // session_id/cwd are currently reserved metadata.
                     let _ = (pid, tool, ws);
                     serde_json::json!({"registered": true})
                 } else if self.agents_thread_mut_by_env_id(workspace_id).is_some() {
@@ -3304,11 +3371,11 @@ impl PaneFlowApp {
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
 
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
-                    // Prefer exact PID removal; fall back to removing one
-                    // session matching the tool name (back-compat for older
-                    // shims that didn't carry `pid` on session_end). Last
-                    // resort keeps `agent_sessions` consistent with the
-                    // pre-refactor "one session per tool" assumption.
+                    // Prefer exact PID removal. Legacy no-PID frames are only
+                    // allowed to clear an unambiguous row: first by explicit
+                    // surface_id when present, otherwise by tool only when a
+                    // single non-errored candidate exists. This avoids
+                    // evicting a sibling session of the same agent.
                     //
                     // EP-004 US-010: an `Errored` session is SPARED - the
                     // shim's `ai.exit` lands just before this frame, and
@@ -3348,11 +3415,11 @@ impl PaneFlowApp {
                         // would evict an unrelated sibling session).
                         false
                     } else {
-                        let pid_to_remove = ws
-                            .agent_sessions
-                            .iter()
-                            .find(|(_, s)| Some(s.tool) == tool && !is_errored(s))
-                            .map(|(k, _)| *k);
+                        let pid_to_remove = session_end_fallback_candidate(
+                            &ws.agent_sessions,
+                            tool,
+                            explicit_surface_id,
+                        );
                         if let Some(k) = pid_to_remove {
                             if let Some(session) = ws.agent_sessions.get(&k) {
                                 if session.state == ai_types::AgentState::Finished {
@@ -3424,9 +3491,7 @@ impl PaneFlowApp {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
             }
-            _ => {
-                serde_json::json!({"error": format!("Unknown method: {method}")})
-            }
+            _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
         }
     }
 
@@ -3562,6 +3627,25 @@ fn read_tool(params: &serde_json::Value) -> Option<crate::agent_launcher::Termin
     crate::agent_launcher::TerminalAgent::from_binary(tool_str)
 }
 
+fn session_end_fallback_candidate(
+    sessions: &std::collections::HashMap<u32, AgentSession>,
+    tool: Option<crate::agent_launcher::TerminalAgent>,
+    explicit_surface_id: Option<u64>,
+) -> Option<u32> {
+    let mut candidates: Vec<u32> = sessions
+        .iter()
+        .filter(|(_, s)| s.state != ai_types::AgentState::Errored)
+        .filter(|(_, s)| tool.is_none_or(|t| s.tool == t))
+        .filter(|(_, s)| explicit_surface_id.is_none_or(|sid| s.surface_id == Some(sid)))
+        .map(|(k, _)| *k)
+        .collect();
+    candidates.sort_unstable();
+    match candidates.as_slice() {
+        [single] => Some(*single),
+        _ => None,
+    }
+}
+
 /// US-026: floor of the reserved synthetic-PID namespace. Legacy `ai.*` frames
 /// that carry no real `pid` get a placeholder key in `[BASE, u32::MAX]`, a band
 /// no real OS PID reaches on any supported platform, so the two keyspaces never
@@ -3685,10 +3769,28 @@ pub(crate) const JSONRPC_ERROR_KEY: &str = "_jsonrpc_error";
 impl JsonRpcError {
     /// JSON-RPC 2.0 reserved error code for invalid method parameters.
     pub(crate) const INVALID_PARAMS: i32 = -32602;
+    /// Paneflow uses JSON-RPC's method-disabled shape for gated local verbs.
+    pub(crate) const METHOD_NOT_ENABLED: i32 = -32601;
+    /// JSON-RPC 2.0 reserved error code for unknown methods.
+    pub(crate) const METHOD_NOT_FOUND: i32 = -32601;
 
     pub(crate) fn invalid_params(message: impl Into<String>) -> Self {
         Self {
             code: Self::INVALID_PARAMS,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn method_not_enabled(message: impl Into<String>) -> Self {
+        Self {
+            code: Self::METHOD_NOT_ENABLED,
+            message: message.into(),
+        }
+    }
+
+    pub(crate) fn method_not_found(message: impl Into<String>) -> Self {
+        Self {
+            code: Self::METHOD_NOT_FOUND,
             message: message.into(),
         }
     }
@@ -3725,6 +3827,13 @@ pub(crate) fn promote_response(
             "id": id,
         });
     }
+    if let Some(message) = handler_result.get("error").and_then(|m| m.as_str()) {
+        return serde_json::json!({
+            "jsonrpc": "2.0",
+            "error": { "code": -32603, "message": message },
+            "id": id,
+        });
+    }
     serde_json::json!({
         "jsonrpc": "2.0",
         "result": handler_result,
@@ -3750,7 +3859,8 @@ pub(crate) fn promote_response(
 /// Successful canonicalization is logged at `info!` for audit trail
 /// (relative-path resolution and symlink traversal visibility).
 pub(crate) fn canonicalize_workspace_cwd(raw: &str) -> Result<std::path::PathBuf, JsonRpcError> {
-    let canonical = std::fs::canonicalize(raw).map_err(|e| {
+    let expanded = expand_tilde(raw);
+    let canonical = std::fs::canonicalize(&expanded).map_err(|e| {
         JsonRpcError::invalid_params(format!("cwd does not exist or is unreadable: {raw} ({e})"))
     })?;
     let meta = std::fs::metadata(&canonical).map_err(|e| {
@@ -3766,6 +3876,23 @@ pub(crate) fn canonicalize_workspace_cwd(raw: &str) -> Result<std::path::PathBuf
         "ipc::workspace.create: canonical cwd resolved {raw:?} -> {canonical:?}; spawn cwd {spawn_cwd:?}"
     );
     Ok(spawn_cwd)
+}
+
+fn expand_tilde(raw: &str) -> PathBuf {
+    expand_tilde_with_home(raw, dirs::home_dir().as_deref())
+}
+
+fn expand_tilde_with_home(raw: &str, home: Option<&std::path::Path>) -> PathBuf {
+    match raw {
+        "~" => home
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(raw)),
+        _ => raw
+            .strip_prefix("~/")
+            .or_else(|| raw.strip_prefix("~\\"))
+            .and_then(|rest| home.map(|home| home.join(rest)))
+            .unwrap_or_else(|| PathBuf::from(raw)),
+    }
 }
 
 /// Strip Windows verbatim prefixes after canonical validation.
@@ -3862,6 +3989,7 @@ mod tests {
             _id: serde_json::json!(null),
             response_tx,
             cancelled: Arc::new(AtomicBool::new(cancelled)),
+            started: Arc::new(AtomicBool::new(false)),
             caller_pid: None,
         }
     }
@@ -4259,6 +4387,36 @@ mod tests {
     }
 
     #[test]
+    fn orchestration_gate_accepts_specific_gate_or_scripting_superset() {
+        assert!(!super::orchestration_enabled_from(None, None));
+        assert!(!super::orchestration_enabled_from(Some("0"), Some("0")));
+        assert!(super::orchestration_enabled_from(Some("1"), None));
+        assert!(super::orchestration_enabled_from(None, Some("1")));
+    }
+
+    #[test]
+    fn pane_spec_requires_orchestration_for_spawn_primitives_only() {
+        assert!(!super::pane_spec_requires_orchestration(
+            &serde_json::json!({"cwd": "."})
+        ));
+        assert!(super::pane_spec_requires_orchestration(
+            &serde_json::json!({"command": "cargo test"})
+        ));
+        assert!(super::pane_spec_requires_orchestration(
+            &serde_json::json!({"prompt": "inspect this"})
+        ));
+        assert!(super::pane_spec_requires_orchestration(
+            &serde_json::json!({"context": "notes"})
+        ));
+        assert!(super::pane_spec_requires_orchestration(
+            &serde_json::json!({"env": {"PROMPT_COMMAND": "date"}})
+        ));
+        assert!(!super::pane_spec_requires_orchestration(
+            &serde_json::json!({"env": {"IGNORED": 7}})
+        ));
+    }
+
+    #[test]
     fn resolve_paste_mode_auto_targets_agents_or_bracketed_tuis() {
         use super::resolve_paste_mode;
         // EP-001 US-002 AC1: a `--submit` dispatch into an agent auto-enables
@@ -4373,6 +4531,32 @@ mod tests {
     }
 
     #[test]
+    fn workspace_cwd_expands_home_prefix_before_canonicalize() {
+        let home = PathBuf::from(if cfg!(windows) {
+            r"C:\Users\Arthur"
+        } else {
+            "/home/arthur"
+        });
+
+        assert_eq!(
+            super::expand_tilde_with_home("~", Some(&home)),
+            home.clone()
+        );
+        assert_eq!(
+            super::expand_tilde_with_home("~/dev/backend", Some(&home)),
+            home.join("dev/backend")
+        );
+        assert_eq!(
+            super::expand_tilde_with_home("~\\dev\\backend", Some(&home)),
+            home.join("dev\\backend")
+        );
+        assert_eq!(
+            super::expand_tilde_with_home("rel/~not-home", Some(&home)),
+            PathBuf::from("rel/~not-home")
+        );
+    }
+
+    #[test]
     fn strip_verbatim_prefix_disk_unc_and_passthrough() {
         assert_eq!(
             super::strip_verbatim_prefix(PathBuf::from(r"\\?\C:\work\paneflow")),
@@ -4406,14 +4590,13 @@ mod tests {
     }
 
     #[test]
-    fn promote_response_preserves_legacy_application_error_strings() {
-        // Existing handlers return `{"error": "string"}` - those must keep
-        // flowing through the `result` field, not be promoted.
+    fn promote_response_promotes_legacy_application_error_strings() {
         let id = serde_json::json!(null);
         let legacy = serde_json::json!({"error": "Workspace limit reached"});
         let resp = promote_response(legacy, id);
-        assert_eq!(resp["result"]["error"], "Workspace limit reached");
-        assert!(resp.get("error").is_none());
+        assert_eq!(resp["error"]["code"], -32603);
+        assert_eq!(resp["error"]["message"], "Workspace limit reached");
+        assert!(resp.get("result").is_none());
     }
 
     // -----------------------------------------------------------------
@@ -4542,12 +4725,29 @@ mod tests {
         // AC1: the response includes text/lines/total_lines/eof AND the
         // additive output_generation (EP-001 US-003), so a stability poll can
         // read it and legacy clients ignoring it still parse the rest.
-        let v = super::surface_read_value("hello\nworld".to_string(), 2, 10, false, 42);
+        let v = super::surface_read_value("hello\nworld".to_string(), 2, 10, false, 42, false);
         assert_eq!(v["text"], "hello\nworld");
         assert_eq!(v["lines"], 2);
         assert_eq!(v["total_lines"], 10);
         assert_eq!(v["eof"], false);
         assert_eq!(v["output_generation"], 42);
+        assert_eq!(v["truncated"], false);
+    }
+
+    #[test]
+    fn truncate_ipc_text_marks_oversized_surface_read() {
+        let oversized = "x".repeat(crate::limits::MAX_IPC_TEXT_BYTES + 1024);
+        let (text, truncated) = super::truncate_ipc_text(oversized);
+        assert!(truncated);
+        assert!(text.len() <= crate::limits::MAX_IPC_TEXT_BYTES);
+        assert!(text.contains("output truncated"));
+    }
+
+    #[test]
+    fn event_surface_id_falls_back_to_explicit_frame_surface() {
+        assert_eq!(super::resolved_event_surface_id(Some(7), Some(9)), Some(7));
+        assert_eq!(super::resolved_event_surface_id(None, Some(9)), Some(9));
+        assert_eq!(super::resolved_event_surface_id(None, None), None);
     }
 
     #[test]
@@ -4619,6 +4819,43 @@ mod tests {
         assert!(
             key >= super::SYNTHETIC_SESSION_PID_BASE,
             "synthetic key lands in the reserved band"
+        );
+    }
+
+    #[test]
+    fn session_end_fallback_requires_unique_candidate() {
+        use crate::agent_launcher::TerminalAgent;
+        use crate::ai_types::{AgentSession, AgentState};
+
+        let mut sessions: std::collections::HashMap<u32, AgentSession> =
+            std::collections::HashMap::new();
+        let mut first = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Thinking);
+        first.surface_id = Some(10);
+        let mut second = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Thinking);
+        second.surface_id = Some(11);
+        sessions.insert(100, first);
+        sessions.insert(200, second);
+
+        assert_eq!(
+            super::session_end_fallback_candidate(&sessions, Some(TerminalAgent::ClaudeCode), None),
+            None,
+            "tool-only fallback must not pick an arbitrary sibling"
+        );
+        assert_eq!(
+            super::session_end_fallback_candidate(
+                &sessions,
+                Some(TerminalAgent::ClaudeCode),
+                Some(11)
+            ),
+            Some(200),
+            "surface_id disambiguates legacy no-pid session_end"
+        );
+
+        sessions.get_mut(&200).expect("session exists").state = AgentState::Errored;
+        assert_eq!(
+            super::session_end_fallback_candidate(&sessions, Some(TerminalAgent::ClaudeCode), None),
+            Some(100),
+            "errored rows are not fallback-removal candidates"
         );
     }
 

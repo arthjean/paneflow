@@ -2,7 +2,7 @@
 //!
 //! All functions operate on raw JSON to preserve unknown fields and formatting.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// US-016: serialize every read-modify-write of `paneflow.json`.
@@ -32,17 +32,32 @@ fn config_write_guard() -> MutexGuard<'static, ()> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Load the raw JSON config, or an empty object if missing/invalid.
-fn load_raw_config(path: &PathBuf) -> serde_json::Value {
-    if path.exists() {
-        match std::fs::read_to_string(path) {
-            Ok(contents) => {
-                serde_json::from_str(&contents).unwrap_or_else(|_| serde_json::json!({}))
+/// Load the raw JSON config.
+///
+/// Missing file means a fresh empty object. Existing but unreadable, oversized,
+/// non-regular, or syntactically invalid files are rejected so a settings write
+/// cannot overwrite the user's recoverable `paneflow.json` with `{}`.
+fn load_raw_config(path: &Path) -> Result<serde_json::Value, ()> {
+    match paneflow_config::loader::read_config_string(path) {
+        paneflow_config::loader::ConfigRead::Absent => Ok(serde_json::json!({})),
+        paneflow_config::loader::ConfigRead::Rejected => Err(()),
+        paneflow_config::loader::ConfigRead::Contents(contents) => {
+            let value: serde_json::Value = serde_json::from_str(&contents).map_err(|e| {
+                log::warn!(
+                    "config: invalid JSON at {}; refusing to overwrite: {e}",
+                    path.display()
+                );
+            })?;
+            if value.is_object() {
+                Ok(value)
+            } else {
+                log::warn!(
+                    "config: root at {} is not a JSON object; refusing to overwrite",
+                    path.display()
+                );
+                Err(())
             }
-            Err(_) => serde_json::json!({}),
         }
-    } else {
-        serde_json::json!({})
     }
 }
 
@@ -119,7 +134,9 @@ pub fn save_config_value_checked(key: &str, value: serde_json::Value) -> bool {
         return false;
     };
     let _guard = config_write_guard();
-    let mut json = load_raw_config(&path);
+    let Ok(mut json) = load_raw_config(&path) else {
+        return false;
+    };
     if let Some(root) = json.as_object_mut() {
         if value.is_null() {
             root.remove(key);
@@ -172,12 +189,12 @@ pub fn save_shortcut(new_key: &str, action_name: &str) {
         return;
     };
     let _guard = config_write_guard();
-    let mut json = load_raw_config(&path);
+    let Ok(mut json) = load_raw_config(&path) else {
+        return;
+    };
 
-    // A user's paneflow.json can be valid JSON but not an object (`[]`, `"x"`,
-    // `42`); `load_raw_config` returns it verbatim, so guard rather than
-    // `.expect()` (which would panic on the UI thread). Mirrors the graceful
-    // `if let Some(root)` idiom used by every other writer in this file.
+    // Guard rather than `.expect()` so a future loader contract change cannot
+    // panic on the UI thread.
     let Some(root) = json.as_object_mut() else {
         log::warn!("config: root is not a JSON object, not saving shortcut");
         return;
@@ -204,7 +221,9 @@ pub fn reset_shortcuts() {
         return;
     };
     let _guard = config_write_guard();
-    let mut json = load_raw_config(&path);
+    let Ok(mut json) = load_raw_config(&path) else {
+        return;
+    };
     if let Some(root) = json.as_object_mut() {
         root.remove("shortcuts");
     }
@@ -212,7 +231,7 @@ pub fn reset_shortcuts() {
 }
 
 /// Pure read-modify-write of the `"terminal"` sub-object. Extracted from
-/// [`save_terminal_field`] so the nesting/removal semantics can be unit-tested
+/// [`save_terminal_field_checked`] so the nesting/removal semantics can be unit-tested
 /// without resolving (or touching) the real config path.
 fn apply_terminal_field(json: &mut serde_json::Value, key: &str, value: serde_json::Value) {
     let Some(root) = json.as_object_mut() else {
@@ -257,7 +276,7 @@ fn apply_agent_panel_field(json: &mut serde_json::Value, key: &str, value: serde
 }
 
 /// US-016: return a copy of `config` with a single field updated *in memory*,
-/// mirroring the on-disk merge of [`save_config_value`] / [`save_terminal_field`]
+/// mirroring the on-disk merge of [`save_config_value`] / [`save_terminal_field_checked`]
 /// without touching disk. A settings handler uses this to refresh its render
 /// cache instantly, then persists asynchronously. `nested` routes the field
 /// into the `terminal` block; a `Null` value clears it. The config is the typed
@@ -308,15 +327,17 @@ pub fn with_commands(
 /// (US-016 Terminal settings tab). A `Null` value removes the key (restoring
 /// the schema default on next load); the `"terminal"` object itself is left in
 /// place (an empty block is harmless - `#[serde(default)]` handles it).
-pub fn save_terminal_field(key: &str, value: serde_json::Value) {
+pub fn save_terminal_field_checked(key: &str, value: serde_json::Value) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
-        return;
+        return false;
     };
     let _guard = config_write_guard();
-    let mut json = load_raw_config(&path);
+    let Ok(mut json) = load_raw_config(&path) else {
+        return false;
+    };
     apply_terminal_field(&mut json, key, value);
-    write_config(&path, &json);
+    write_config_checked(&path, &json)
 }
 
 /// Save a single field inside the `"agent_panel": { ... }` block in
@@ -327,7 +348,9 @@ pub fn save_agent_panel_field_checked(key: &str, value: serde_json::Value) -> bo
         return false;
     };
     let _guard = config_write_guard();
-    let mut json = load_raw_config(&path);
+    let Ok(mut json) = load_raw_config(&path) else {
+        return false;
+    };
     apply_agent_panel_field(&mut json, key, value);
     write_config_checked(&path, &json)
 }
@@ -347,7 +370,9 @@ pub fn save_commands_checked(commands: Vec<paneflow_config::schema::CommandDefin
         }
     };
     let _guard = config_write_guard();
-    let mut json = load_raw_config(&path);
+    let Ok(mut json) = load_raw_config(&path) else {
+        return false;
+    };
     if let Some(root) = json.as_object_mut() {
         root.insert("commands".to_string(), value);
     }
@@ -357,7 +382,8 @@ pub fn save_commands_checked(commands: Vec<paneflow_config::schema::CommandDefin
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_agent_panel_field, apply_terminal_field, merge_shortcut, write_config_checked,
+        apply_agent_panel_field, apply_terminal_field, load_raw_config, merge_shortcut,
+        write_config_checked,
     };
     use serde_json::{Value, json};
 
@@ -390,6 +416,30 @@ mod tests {
         assert!(write_config_checked(&p, &json!({"b": 2})));
         let got: Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
         assert!(got.get("a").is_none() && got["b"] == 2);
+    }
+
+    #[test]
+    fn load_raw_config_rejects_invalid_json_instead_of_emptying_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        std::fs::write(&p, "{").unwrap();
+
+        assert!(
+            load_raw_config(&p).is_err(),
+            "invalid existing config must fail closed so writers do not replace it with an empty object"
+        );
+    }
+
+    #[test]
+    fn load_raw_config_rejects_non_object_roots() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let p = dir.path().join("paneflow.json");
+        std::fs::write(&p, "[]").unwrap();
+
+        assert!(
+            load_raw_config(&p).is_err(),
+            "a valid JSON non-object is not a writable paneflow config root"
+        );
     }
 
     fn shortcuts(pairs: &[(&str, &str)]) -> serde_json::Map<String, Value> {

@@ -196,7 +196,7 @@ that were created remain in Paneflow.
 | Framing          | Newline-delimited JSON-RPC 2.0                                                       |
 | Request model    | One request per connection, except `events.subscribe`                                |
 | Local trust      | Same user only; no network listener, no token, no TLS                                |
-| Backpressure     | Connection cap and bounded event queues return structured errors or `dropped` frames |
+| Backpressure     | Connection cap, GPUI queue timeout, and bounded event queues return structured errors or `dropped` frames |
 
 Probe capabilities at runtime:
 
@@ -220,7 +220,7 @@ printf '%s\\n' '{"jsonrpc":"2.0","method":"system.capabilities","params":{},"id"
 | `workspace.up`             | `name`, `layout`, `panes[]`                                                                     | Declarative spawn used by `up` and flow roots            |
 | `workspace.restore_layout` | `layout`                                                                                        | Apply a layout tree                                      |
 | `surface.list`             | -                                                                                               | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace}]}` |
-| `surface.read`             | `surface_id`, `lines?`, `offset?`, `fenced?`                                                    | Scrollback and `output_generation`                       |
+| `surface.read`             | `surface_id`, `lines?`, `offset?`, `fenced?`                                                    | Scrollback, `output_generation`, `truncated`             |
 | `surface.search`           | `surface_id`, `pattern`, `max_matches?`                                                         | Case-insensitive substring matches                       |
 | `surface.rename`           | `surface_id`, `name`                                                                            | Rename or clear a pane name                              |
 | `surface.focus`            | `surface_id`                                                                                    | Focus pane and workspace                                 |
@@ -229,7 +229,7 @@ printf '%s\\n' '{"jsonrpc":"2.0","method":"system.capabilities","params":{},"id"
 | `surface.send_keystroke`   | `surface_id`, `keystroke`                                                                       | Env-gated non-submitting keystroke                       |
 | `surface.split`            | `direction`, `surface_id?`, `cwd?`, `command?`, `prompt?`, `env?`, `name?`, `managed_worktree?` | Split a pane                                             |
 | `fleet.list`               | -                                                                                               | Read-only fleet snapshot                                 |
-| `events.subscribe`         | `surfaces?`, `types?`                                                                           | Persistent newline-delimited event stream                |
+| `events.subscribe`         | `surfaces?`, `types?` arrays                                                                    | Persistent newline-delimited event stream                |
 | `ai.session_start`         | hook payload                                                                                    | Lifecycle telemetry                                      |
 | `ai.prompt_submit`         | hook payload                                                                                    | Lifecycle telemetry                                      |
 | `ai.tool_use`              | hook payload                                                                                    | Lifecycle telemetry                                      |
@@ -239,10 +239,9 @@ printf '%s\\n' '{"jsonrpc":"2.0","method":"system.capabilities","params":{},"id"
 | `ai.session_end`           | hook payload                                                                                    | Lifecycle telemetry                                      |
 
 Structured failures use JSON-RPC `error` envelopes: `-32602` invalid
-params, `-32601` gated method, `-32001` permission, and `-32000`
-backpressure. Some legacy validation errors still arrive as
-`{"error":"..."}` inside `result`; clients should treat both shapes as
-failures.
+params, `-32601` gated or unknown method, `-32001` permission,
+`-32002` dispatch timeout, and `-32000` backpressure or shutdown.
+Legacy handler errors are promoted into JSON-RPC `error` envelopes.
 
 ## Events [#events]
 

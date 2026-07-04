@@ -19,7 +19,7 @@ use std::time::Duration;
 
 use paneflow_config::schema::PaneFlowConfig;
 use paneflow_ipc_client::IpcTransport;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::workspace_spec::{self, PaneSpec};
 use super::{CliError, EXIT_OK};
@@ -93,6 +93,8 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
         return Ok(EXIT_OK);
     }
 
+    ensure_orchestration_gate(client)?;
+
     // Phase 4 (mutating, still CLI-side): create the planned worktrees, copy
     // `.env*`, run `setup`. A creation failure aborts before workspace.up so
     // no half-spawned workspace points at a missing directory.
@@ -105,6 +107,21 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
         .map_err(CliError::runtime)?;
     super::print_json(&result)?;
     Ok(EXIT_OK)
+}
+
+fn ensure_orchestration_gate(client: &impl IpcTransport) -> Result<(), CliError> {
+    let caps = client
+        .call("system.capabilities", json!({}))
+        .map_err(CliError::runtime)?;
+    let orchestration = caps.get("orchestration").and_then(Value::as_bool);
+    let scripting = caps.get("scripting").and_then(Value::as_bool);
+    match (orchestration, scripting) {
+        (Some(true), _) | (_, Some(true)) | (None, _) => Ok(()),
+        (Some(false), _) => Err(CliError::runtime(
+            "workspace up requires pane orchestration: relaunch Paneflow with \
+             PANEFLOW_IPC_ORCHESTRATION=1",
+        )),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -365,8 +382,8 @@ pub(super) fn extract_tokens(value: &str) -> Result<Vec<&str>, String> {
 }
 
 /// Allocate one free port stride per referencing pane: the k-th referencing
-/// pane gets the k-th stride of `PORT_STRIDE` above `port_base` whose base
-/// port probes free. `is_free` is injected so the policy is unit-testable
+/// pane gets the k-th stride of `PORT_STRIDE` above `port_base` whose full
+/// port range probes free. `is_free` is injected so the policy is unit-testable
 /// without binding sockets.
 pub(super) fn allocate_port_offsets(
     refs: &[bool],
@@ -380,9 +397,12 @@ pub(super) fn allocate_port_offsets(
                 return None;
             }
             loop {
-                let candidate = port_base.saturating_add(next_stride * PORT_STRIDE);
+                let candidate = next_stride
+                    .checked_mul(PORT_STRIDE)
+                    .and_then(|offset| port_base.checked_add(offset))
+                    .unwrap_or(u16::MAX);
                 next_stride = next_stride.saturating_add(1);
-                if is_free(candidate) || candidate == u16::MAX {
+                if candidate == u16::MAX || port_stride_is_free(candidate, &is_free) {
                     return Some(candidate);
                 }
             }
@@ -390,10 +410,30 @@ pub(super) fn allocate_port_offsets(
         .collect()
 }
 
+fn port_stride_is_free(port_base: u16, is_free: &impl Fn(u16) -> bool) -> bool {
+    (0..PORT_STRIDE).all(|offset| port_base.checked_add(offset).is_some_and(is_free))
+}
+
 /// Bind-probe: can we listen on this port right now? Cross-platform (real
 /// check on Windows too, unlike the /proc-based scan in `workspace::ports`).
 pub(super) fn port_is_free(port: u16) -> bool {
-    std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
+    use std::io::ErrorKind;
+
+    if std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).is_err() {
+        return false;
+    }
+    match std::net::TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, port)) {
+        Ok(_) => true,
+        Err(e)
+            if matches!(
+                e.kind(),
+                ErrorKind::AddrNotAvailable | ErrorKind::Unsupported
+            ) =>
+        {
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 /// Substitute `${port_offset}` in env values. Values without the token pass
@@ -529,6 +569,13 @@ mod tests {
         let refs = vec![true, false, true];
         let offsets = allocate_port_offsets(&refs, 3000, |p| p != 3010);
         assert_eq!(offsets, vec![Some(3000), None, Some(3020)]);
+    }
+
+    #[test]
+    fn allocate_port_offsets_checks_the_whole_stride() {
+        let refs = vec![true, true];
+        let offsets = allocate_port_offsets(&refs, 3000, |p| p != 3005);
+        assert_eq!(offsets, vec![Some(3010), Some(3020)]);
     }
 
     #[test]

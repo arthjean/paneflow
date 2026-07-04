@@ -13,7 +13,7 @@
 #                                  the dep graph evolves)
 #   * licenses.allow             → permissive set + GPL-3 family
 #                                  (33+ transitive deps from GPUI)
-#   * sources                    → unknown-registry / unknown-git warn
+#   * sources                    → unknown-registry / unknown-git deny
 #
 # Reference: https://embarkstudios.github.io/cargo-deny/
 
@@ -42,7 +42,7 @@ unused-ignored-advisory = "warn"
 # Explicit advisory ignores. Each entry below MUST document:
 #   1. why the advisory does not apply to PaneFlow's threat model
 #   2. what triggers re-evaluation (upstream patch, code-path change)
-# Reviewed 2026-05-27.
+# Reviewed 2026-07-03.
 ignore = [
     # RUSTSEC-2023-0071 - Marvin Attack on the `rsa` crate
     # (timing side-channel during RSA private-key decryption).
@@ -74,6 +74,32 @@ ignore = [
     #     `use rpc::` in src-app/** would invalidate this ignore).
     "RUSTSEC-2023-0071",
 
+    # RUSTSEC-2026-0194 / RUSTSEC-2026-0195 - quick-xml CPU and memory
+    # denial-of-service issues in duplicate-attribute and namespace handling.
+    #
+    # Why ignored:
+    #   * The only remaining vulnerable quick-xml instances after the
+    #     notify-rust refresh are transitive:
+    #       - quick-xml 0.38.4 via ArthurDEV44/zed mermaid_render,
+    #       - quick-xml 0.39.2 via syntect/plist and Linux Wayland/zbus tooling.
+    #   * Paneflow has no direct quick_xml usage (`rg 'quick_xml|quick-xml'
+    #     src-app crates -g '*.rs'` returns no Rust call sites), so the app
+    #     cannot apply the upstream workaround (`attributes().with_checks(false)`)
+    #     locally.
+    #   * Cargo cannot move these to quick-xml >= 0.41.0 without parent crate
+    #     releases: mermaid_render requires ^0.38, plist/wayland/zbus paths
+    #     require ^0.39.2. A forced lockfile update fails dependency selection.
+    #
+    # Re-evaluation triggers:
+    #   * Zed's mermaid_render moves to quick-xml >= 0.41.0 or the fork drops
+    #     mermaid rendering from Paneflow's markdown path,
+    #   * OR syntect/plist, wayland-scanner, and zbus_xml publish compatible
+    #     releases using quick-xml >= 0.41.0,
+    #   * OR Paneflow adds direct XML parsing, untrusted Mermaid XML ingestion,
+    #     or any `use quick_xml::` call site.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+
     # NOTE (2026-05-28, prd-cli-hardening-followup-2026-Q3 US-027):
     # a preemptive ignore for RUSTSEC-2025-0052 (async-std
     # discontinued) was removed -- `async-std` is NOT in the current
@@ -87,7 +113,7 @@ ignore = [
 
 [licenses]
 # Permissive-license allow list. An unlisted license raises a warning
-# per the sources warn-posture below. Covers the full Rust ecosystem
+# per the sources deny posture below. Covers the full Rust ecosystem
 # mainstream + the specific ones present in our current Cargo.lock
 # (Unicode-3.0 for the Unicode crates, Zlib for miniz_oxide, BSD
 # variants for misc parsers, plus extras pulled in by GPUI's image /
@@ -127,12 +153,12 @@ allow = [
 ]
 
 [sources]
-# Warn (don't block) on unknown crate registries or git sources so a
-# new GPUI-side fork added to `[patch.crates-io]` surfaces in CI
-# review but doesn't gate the merge. Promote to "deny" when the
-# GPUI pin stabilizes and the fork list stops churning.
-unknown-registry = "warn"
-unknown-git      = "warn"
+# Block unknown crate registries or git sources. The GPUI fork is now
+# commit-pinned in `src-app/Cargo.toml`, so new git origins should be an
+# intentional Cargo manifest change instead of background lockfile drift.
+unknown-registry = "deny"
+unknown-git      = "deny"
+required-git-spec = "rev"
 # Pin the crates.io registry explicitly; anything else is "unknown".
 allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
 
@@ -143,8 +169,8 @@ allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
 # which returns exactly these four orgs. When bumping the GPUI pin,
 # re-run that check and update the list if new orgs appear.
 #
-# `ArthurDEV44` hosts the Paneflow fork of `zed-industries/zed` (branch
-# `paneflow/markdown-append-fix`) used by `prd-markdown-append-fix-2026-Q3`.
+# `ArthurDEV44` hosts the Paneflow fork of `zed-industries/zed`, pinned to an
+# exact commit for `prd-markdown-append-fix-2026-Q3`.
 # Remove this entry when the upstream Zed PR merges and the fork pin is
 # reverted to mainline (see CLAUDE.md "Fork-pin maintenance").
 github = ["zed-industries", "smol-rs", "proptest-rs", "ArthurDEV44"]

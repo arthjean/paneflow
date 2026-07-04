@@ -9,9 +9,9 @@
 //! thread drains its receiver and writes each event line to the socket.
 //!
 //! Backpressure (US-004): each subscriber has a bounded queue. A slow client
-//! that stops draining sheds the OLDEST events (the bounded channel rejects the
-//! `try_send`) and a `dropped` counter conveys the loss; the broadcaster (the
-//! render thread) is never blocked.
+//! that stops draining sheds new events once the queue is full and a `dropped`
+//! counter conveys the loss; the broadcaster (the render thread) is never
+//! blocked.
 
 // EP-006 US-013: `events.subscribe` now streams on Windows too - the named-pipe
 // push path (`ipc.rs::serve_subscription`) is no longer Unix-only, and its write
@@ -33,8 +33,8 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-/// Per-subscriber outbound queue depth. Past this the bus drops the oldest
-/// events rather than block the broadcaster (the GPUI render thread). 1024
+/// Per-subscriber outbound queue depth. Past this the bus drops the current
+/// event rather than block the broadcaster (the GPUI render thread). 1024
 /// small JSON lines stays well under the PRD's 8 MiB ceiling in practice.
 const SUBSCRIBER_QUEUE_CAP: usize = 1024;
 
@@ -63,30 +63,51 @@ impl EventFilter {
     /// Parse `events.subscribe` params. Rejects an unknown event type so a typo
     /// fails loudly instead of producing a stream that silently never matches.
     pub fn from_params(params: &Value) -> Result<Self, String> {
-        let surfaces = params
-            .get("surfaces")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(Value::as_u64)
-                    .collect::<HashSet<u64>>()
-            });
-        let types = match params.get("types").and_then(|v| v.as_array()) {
-            Some(arr) => {
-                let set: HashSet<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(String::from))
-                    .collect();
-                if let Some(unknown) = set
-                    .iter()
-                    .find(|t| !KNOWN_EVENT_TYPES.contains(&t.as_str()))
-                {
-                    return Err(format!("unknown event type: {unknown}"));
+        let Some(obj) = params.as_object() else {
+            return Err("events.subscribe params must be an object".to_string());
+        };
+
+        let surfaces = match obj.get("surfaces") {
+            Some(v) => {
+                let Some(arr) = v.as_array() else {
+                    return Err("events.subscribe surfaces must be an array of numbers".to_string());
+                };
+                let mut set = HashSet::new();
+                for item in arr {
+                    let Some(surface_id) = item.as_u64() else {
+                        return Err(
+                            "events.subscribe surfaces must be an array of numbers".to_string()
+                        );
+                    };
+                    set.insert(surface_id);
                 }
                 Some(set)
             }
             None => None,
         };
+
+        let types = match obj.get("types") {
+            Some(v) => {
+                let Some(arr) = v.as_array() else {
+                    return Err("events.subscribe types must be an array of strings".to_string());
+                };
+                let mut set = HashSet::new();
+                for item in arr {
+                    let Some(type_) = item.as_str() else {
+                        return Err(
+                            "events.subscribe types must be an array of strings".to_string()
+                        );
+                    };
+                    if !KNOWN_EVENT_TYPES.contains(&type_) {
+                        return Err(format!("unknown event type: {type_}"));
+                    }
+                    set.insert(type_.to_string());
+                }
+                Some(set)
+            }
+            None => None,
+        };
+
         Ok(Self { surfaces, types })
     }
 
@@ -238,6 +259,30 @@ mod tests {
     }
 
     #[test]
+    fn from_params_rejects_non_object_params() {
+        let err = EventFilter::from_params(&json!(["ai.stop"])).unwrap_err();
+        assert!(err.contains("object"), "got: {err}");
+    }
+
+    #[test]
+    fn from_params_rejects_non_array_filters() {
+        let err = EventFilter::from_params(&json!({"types": "ai.stop"})).unwrap_err();
+        assert!(err.contains("types"), "got: {err}");
+
+        let err = EventFilter::from_params(&json!({"surfaces": "1"})).unwrap_err();
+        assert!(err.contains("surfaces"), "got: {err}");
+    }
+
+    #[test]
+    fn from_params_rejects_mixed_filter_arrays() {
+        let err = EventFilter::from_params(&json!({"types": ["ai.stop", 4]})).unwrap_err();
+        assert!(err.contains("types"), "got: {err}");
+
+        let err = EventFilter::from_params(&json!({"surfaces": [1, "bad"]})).unwrap_err();
+        assert!(err.contains("surfaces"), "got: {err}");
+    }
+
+    #[test]
     fn from_params_accepts_known_types_and_surfaces() {
         let f = EventFilter::from_params(&json!({"types":["ai.stop"],"surfaces":[7]})).unwrap();
         assert!(f.types.unwrap().contains("ai.stop"));
@@ -280,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn broadcast_drops_oldest_when_subscriber_queue_full() {
+    fn broadcast_drops_newest_when_subscriber_queue_full() {
         let bus = EventBus::new();
         let sub = bus.subscribe(EventFilter::default());
         // Nobody drains `sub.rx`, so everything past the cap is shed.

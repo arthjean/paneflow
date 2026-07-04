@@ -776,6 +776,44 @@ mod tests {
     }
 
     #[test]
+    fn first_guard_drop_preserves_hooks_for_sibling_session() {
+        let td = tempfile::TempDir::new().unwrap();
+        let claude_dir = td.path().join(".claude");
+
+        let first = HookConfigGuard::install_at(&claude_dir).unwrap();
+        let second = HookConfigGuard::install_at(&claude_dir).unwrap();
+
+        drop(first);
+        let root = read_settings(&claude_dir);
+        for event in CLAUDE_HOOK_EVENTS {
+            assert_eq!(
+                count_paneflow_entries(&root, event),
+                1,
+                "{event} must remain installed while a sibling guard is alive"
+            );
+        }
+
+        drop(second);
+        assert!(
+            !claude_dir.join("settings.local.json").exists(),
+            "last guard drop owns the final cleanup"
+        );
+    }
+
+    #[test]
+    fn merge_replaces_non_object_hooks_and_populates_events() {
+        let mut root = json!({ "hooks": "broken" });
+        merge_paneflow_hooks(&mut root);
+        for event in CLAUDE_HOOK_EVENTS {
+            assert_eq!(
+                count_paneflow_entries(&root, event),
+                1,
+                "{event} must be populated in the same merge pass"
+            );
+        }
+    }
+
+    #[test]
     fn cleanup_removes_managed_entries_even_when_marker_was_stripped() {
         // Simulate Claude Code re-serializing and stripping the
         // `_paneflow_managed` marker from the inner hook object. The
@@ -1007,6 +1045,7 @@ mod tests {
             "CodeBuddy",
             merge_codebuddy_hooks,
             remove_paneflow_hooks,
+            InvalidJsonPolicy::Replace,
         )
         .expect("install in fresh dir must succeed");
 
@@ -1029,6 +1068,31 @@ mod tests {
         assert!(
             !dir.exists(),
             "drop must delete the managed file and the created dir"
+        );
+    }
+
+    #[test]
+    fn managed_guard_refuses_invalid_primary_user_config() {
+        let td = tempfile::TempDir::new().unwrap();
+        let dir = td.path().join(".gemini");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "{ broken").unwrap();
+
+        let guard = ManagedHookConfigGuard::install_at(
+            &dir,
+            "settings.json",
+            "Gemini",
+            merge_gemini_hooks,
+            remove_gemini_hooks,
+            InvalidJsonPolicy::Refuse,
+        );
+
+        assert!(guard.is_none());
+        assert_eq!(
+            std::fs::read_to_string(path).unwrap(),
+            "{ broken",
+            "primary user config must not be overwritten on parse failure"
         );
     }
 
@@ -1196,11 +1260,12 @@ mod tests {
     fn hermes_guard_reinstall_is_idempotent_and_fresh_file_deleted() {
         let td = tempfile::TempDir::new().unwrap();
         let dir = td.path().join(".hermes");
+        std::fs::create_dir_all(&dir).unwrap();
 
-        // Fresh dir: file created from scratch…
-        let g1 = HermesHookConfigGuard::install_at(&dir).unwrap();
-        // …simulate a SIGKILL (no Drop) then a new session re-installing.
-        std::mem::forget(g1);
+        // Simulate a previous process that died after writing the managed
+        // block but before Drop. A real crash kills that process too, so no
+        // live lease remains in this process.
+        std::fs::write(dir.join("config.yaml"), hermes_managed_block()).unwrap();
         let g2 = HermesHookConfigGuard::install_at(&dir).unwrap();
         let content = std::fs::read_to_string(dir.join("config.yaml")).unwrap();
         assert_eq!(

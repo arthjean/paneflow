@@ -5,7 +5,7 @@
 //! compliance record at `tasks/compliance-analytics.md §5`).
 //!
 //! None of these helpers check consent - that's already the
-//! `TelemetryClient::from_config` factory's job in bootstrap. If the
+//! `TelemetryClient::from_consent` factory's job in bootstrap. If the
 //! client is `Null`, every `capture` call is a no-op and no HTTP
 //! request is made, satisfying PRD AC #6.
 

@@ -16,8 +16,9 @@
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
-use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta};
+use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta, clean_session_label};
 
 /// Maximum number of leading lines to scan for the first user message.
 /// In practice this lands within the first ~10 lines (after
@@ -114,7 +115,17 @@ fn read_sessions_for_cwd_inner(
         return (Vec::new(), 0);
     };
 
-    match cap {
+    let cache_mtime = (!scan_usage && cap.is_some())
+        .then(|| jsonl_tree_mtime(&root))
+        .flatten();
+    if let Some(cache_mtime) = cache_mtime
+        && let Some(cached) =
+            crate::agent_sessions::cache::lookup_with_mtime(SessionAgent::Codex, cwd, cache_mtime)
+    {
+        return cached;
+    }
+
+    let result = match cap {
         Some(cap) => {
             let mut collector = crate::agent_sessions::RecentSessionCollector::new(cap);
             walk_jsonl_files(&root, &mut |path| {
@@ -138,7 +149,22 @@ fn read_sessions_for_cwd_inner(
             all.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
             (all, 0)
         }
+    };
+
+    if !scan_usage
+        && cap.is_some()
+        && let Some(cache_mtime) = jsonl_tree_mtime(&root)
+    {
+        crate::agent_sessions::cache::store_result_with_mtime(
+            SessionAgent::Codex,
+            cwd,
+            cache_mtime,
+            &result.0,
+            result.1,
+        );
     }
+
+    result
 }
 
 /// Codex's layout is `YYYY/MM/DD/*.jsonl` - three levels below the root - so
@@ -175,6 +201,24 @@ fn walk_jsonl_files_bounded(dir: &Path, depth_left: u32, visit: &mut impl FnMut(
         } else if file_type.is_file() && is_jsonl_file(&path) {
             visit(&path);
         }
+    }
+}
+
+fn jsonl_tree_mtime(root: &Path) -> Option<SystemTime> {
+    let mut latest = fs::metadata(root).ok().and_then(|m| m.modified().ok());
+    walk_jsonl_files(root, &mut |path| {
+        let modified = fs::metadata(path).ok().and_then(|m| m.modified().ok());
+        latest = max_mtime(latest, modified);
+    });
+    latest
+}
+
+fn max_mtime(current: Option<SystemTime>, candidate: Option<SystemTime>) -> Option<SystemTime> {
+    match (current, candidate) {
+        (Some(a), Some(b)) => Some(a.max(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
     }
 }
 
@@ -429,18 +473,7 @@ fn scan_first_user_message(reader: &mut BufReader<fs::File>) -> Option<String> {
 }
 
 fn clean_user_message(raw: &str) -> Option<String> {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let collapsed: String = trimmed.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() <= LABEL_MAX_CHARS {
-        Some(collapsed)
-    } else {
-        let mut out: String = collapsed.chars().take(LABEL_MAX_CHARS).collect();
-        out.push('…');
-        Some(out)
-    }
+    clean_session_label(raw, LABEL_MAX_CHARS)
 }
 
 #[cfg(test)]
@@ -556,6 +589,22 @@ mod tests {
         let summary = meta.summary.expect("summary");
         assert_eq!(summary.chars().count(), LABEL_MAX_CHARS + 1);
         assert!(summary.ends_with('…'));
+    }
+
+    #[test]
+    fn user_message_label_collapses_whitespace_and_controls() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("messy-prompt.jsonl");
+        let session_meta_line = r#"{"type":"session_meta","payload":{"id":"s","cwd":"/p","timestamp":"2026-04-26T13:00:00Z"}}"#;
+        let prompt = serde_json::to_string("Explain\n\tthis\u{1b} now").expect("json string");
+        let user_msg_line = format!(
+            r#"{{"type":"event_msg","payload":{{"type":"user_message","message":{prompt}}}}}"#
+        );
+        std::fs::write(&path, format!("{session_meta_line}\n{user_msg_line}\n"))
+            .expect("write fixture");
+
+        let meta = read_session_meta(&path).expect("meta");
+        assert_eq!(meta.summary.as_deref(), Some("Explain this now"));
     }
 
     #[test]

@@ -4,10 +4,13 @@
 use crate::locate_sibling_hook_binary;
 use std::env;
 use std::ffi::OsStr;
+use std::fs::{File, OpenOptions};
 // The cross-platform atomic writers call `tmp.flush()` (method form), which
 // needs the `Write` trait in scope on both platforms.
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 // US-052: the Windows JSONL-tee path (`run_codex_with_jsonl_tee`, cfg'd out on
 // Unix) reuses the exec module's exit-status mapping and needs the process /
 // OS-string types. All cfg-gated so they aren't flagged unused on the Unix
@@ -51,6 +54,151 @@ pub(crate) const CLAUDE_HOOK_EVENTS: &[&str] = &[
 /// rule narrows this further than the previous bare-prefix rule did, but the
 /// theoretical collision remains.
 pub(crate) const HOOK_COMMAND_PREFIX: &str = "paneflow-ai-hook ";
+
+const CONFIG_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
+const CONFIG_LOCK_RETRY: Duration = Duration::from_millis(25);
+const STALE_CONFIG_LOCK_AFTER: Duration = Duration::from_secs(60);
+static NEXT_LEASE_ID: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InvalidJsonPolicy {
+    Replace,
+    Refuse,
+}
+
+struct ConfigFileLock {
+    path: PathBuf,
+    _file: File,
+}
+
+impl Drop for ConfigFileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn lock_path_for(path: &Path) -> PathBuf {
+    let mut lock = path.as_os_str().to_owned();
+    lock.push(".paneflow.lock");
+    PathBuf::from(lock)
+}
+
+fn remove_stale_lock(lock_path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(lock_path) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    let Ok(age) = modified.elapsed() else {
+        return false;
+    };
+    age > STALE_CONFIG_LOCK_AFTER && std::fs::remove_file(lock_path).is_ok()
+}
+
+fn acquire_config_lock(path: &Path) -> std::io::Result<ConfigFileLock> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "settings path has no parent",
+        )
+    })?;
+    std::fs::create_dir_all(parent)?;
+    let lock_path = lock_path_for(path);
+    let deadline = Instant::now() + CONFIG_LOCK_TIMEOUT;
+    loop {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(file) => {
+                return Ok(ConfigFileLock {
+                    path: lock_path,
+                    _file: file,
+                });
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                if remove_stale_lock(&lock_path) {
+                    continue;
+                }
+                if Instant::now() >= deadline {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("timed out waiting for {}", safe_path_display(&lock_path)),
+                    ));
+                }
+                std::thread::sleep(CONFIG_LOCK_RETRY);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+fn with_config_lock<T>(path: &Path, f: impl FnOnce() -> std::io::Result<T>) -> std::io::Result<T> {
+    let _lock = acquire_config_lock(path)?;
+    f()
+}
+
+fn resource_hash(path: &Path) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in path.to_string_lossy().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+fn lease_dir_for(path: &Path) -> Option<PathBuf> {
+    path.parent().map(|parent| {
+        parent
+            .join(".paneflow-hook-leases")
+            .join(format!("{:016x}", resource_hash(path)))
+    })
+}
+
+#[derive(Debug)]
+pub(crate) struct HookLease {
+    dir: PathBuf,
+    marker: PathBuf,
+}
+
+impl HookLease {
+    fn acquire(resource_path: &Path) -> Option<Self> {
+        let dir = lease_dir_for(resource_path)?;
+        std::fs::create_dir_all(&dir).ok()?;
+        let lease_id = NEXT_LEASE_ID.fetch_add(1, Ordering::Relaxed);
+        let marker = dir.join(format!(
+            "{}-{:?}-{lease_id}.lease",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        File::create(&marker).ok()?;
+        Some(Self { dir, marker })
+    }
+
+    fn release_and_is_last(&self) -> bool {
+        let _ = std::fs::remove_file(&self.marker);
+        let has_other = std::fs::read_dir(&self.dir)
+            .ok()
+            .into_iter()
+            .flat_map(|entries| entries.filter_map(Result::ok))
+            .any(|entry| entry.path().extension().and_then(OsStr::to_str) == Some("lease"));
+        if !has_other {
+            let _ = std::fs::remove_dir(&self.dir);
+            if let Some(parent) = self.dir.parent() {
+                let _ = std::fs::remove_dir(parent);
+            }
+        }
+        !has_other
+    }
+}
+
+impl Drop for HookLease {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.marker);
+    }
+}
 
 /// Render `path` for inclusion in an `eprintln!` going to the user's
 /// terminal. Replaces bytes outside the printable ASCII range (`0x20..=0x7E`)
@@ -167,35 +315,43 @@ pub(crate) fn sweep_orphan_hook_config(
     if settings_path.parent().is_some_and(config_dir_is_symlink) {
         return;
     }
-    let Ok(content) = std::fs::read_to_string(settings_path) else {
-        return;
-    };
-    let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return;
-    };
-    let before = root.clone();
-    remove_fn(&mut root);
-    if root == before {
-        // Nothing to sweep - file has no PaneFlow entries.
+    if !settings_path.exists() {
         return;
     }
-    let is_empty = root
-        .as_object()
-        .map(serde_json::Map::is_empty)
-        .unwrap_or(false);
-    let _ = if is_empty {
-        std::fs::remove_file(settings_path)
-    } else {
-        write_atomic(settings_path, &root)
-    };
+    let _ = with_config_lock(settings_path, || {
+        let Ok(content) = std::fs::read_to_string(settings_path) else {
+            return Ok(());
+        };
+        let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return Ok(());
+        };
+        let before = root.clone();
+        remove_fn(&mut root);
+        if root == before {
+            // Nothing to sweep - file has no PaneFlow entries.
+            return Ok(());
+        }
+        let is_empty = root
+            .as_object()
+            .map(serde_json::Map::is_empty)
+            .unwrap_or(false);
+        if is_empty {
+            let _ = std::fs::remove_file(settings_path);
+        } else {
+            write_atomic(settings_path, &root)?;
+        }
+        Ok(())
+    });
 }
 
 /// Shared scaffold for both Claude and Codex hook config installation:
 /// validate the config dir (creating it if absent), read+parse any existing
-/// JSON tree (treating corrupt JSON as empty), apply `merge_fn`, and write
-/// atomically. Returns `Some((settings_path, created_dir))` on success;
-/// `None` when the filesystem refuses our writes or the config dir is
-/// occupied by a non-directory.
+/// JSON tree, apply `merge_fn`, and write atomically. Project-local
+/// ephemeral configs can repair corrupt JSON; primary user configs refuse it
+/// so Paneflow never overwrites state it cannot parse. Returns
+/// `Some((settings_path, created_dir, lease))` on success; `None` when the
+/// filesystem refuses our writes or the config dir is occupied by a
+/// non-directory.
 ///
 /// Both `HookConfigGuard::install_at` (Claude) and
 /// `CodexHookConfigGuard::install_at` (Codex) layer their type-construction
@@ -206,7 +362,8 @@ pub(crate) fn install_hook_config_file(
     config_filename: &str,
     tool_label: &str,
     merge_fn: fn(&mut serde_json::Value),
-) -> Option<(PathBuf, bool)> {
+    invalid_json_policy: InvalidJsonPolicy,
+) -> Option<(PathBuf, bool, HookLease)> {
     let settings_path = config_dir.join(config_filename);
     // Refuse a symlinked config dir BEFORE the `is_dir()` gate: `is_dir()`
     // follows symlinks, so a repo-committed `.claude -> D` directory symlink
@@ -252,29 +409,44 @@ pub(crate) fn install_hook_config_file(
         }
     }
 
-    let existing = std::fs::read_to_string(&settings_path).unwrap_or_default();
-    let mut root: serde_json::Value = if existing.trim().is_empty() {
-        serde_json::json!({})
-    } else {
-        match serde_json::from_str(&existing) {
-            Ok(v) => v,
-            Err(e) => {
-                // Corrupt JSON treated as empty; overwriting is preferable
-                // to aborting the shim and leaving the user with a broken
-                // settings file they can't fix from inside the AI tool.
-                eprintln!(
-                    "paneflow-shim: {} contained invalid JSON ({e}); \
-                     overwriting with a fresh config",
-                    safe_path_display(&settings_path)
-                );
-                serde_json::json!({})
+    let lease = HookLease::acquire(&settings_path)?;
+    if let Err(e) = with_config_lock(&settings_path, || {
+        let existing = std::fs::read_to_string(&settings_path).unwrap_or_default();
+        let mut root: serde_json::Value = if existing.trim().is_empty() {
+            serde_json::json!({})
+        } else {
+            match serde_json::from_str(&existing) {
+                Ok(v) => v,
+                Err(e) => match invalid_json_policy {
+                    InvalidJsonPolicy::Replace => {
+                        // Project-local ephemeral configs can be repaired in
+                        // place: the user asked this shim invocation to own
+                        // that managed file for the current session.
+                        eprintln!(
+                            "paneflow-shim: {} contained invalid JSON ({e}); \
+                             overwriting with a fresh config",
+                            safe_path_display(&settings_path)
+                        );
+                        serde_json::json!({})
+                    }
+                    InvalidJsonPolicy::Refuse => {
+                        eprintln!(
+                            "paneflow-shim: {} contained invalid JSON ({e}); \
+                             refusing to overwrite primary {tool_label} config",
+                            safe_path_display(&settings_path)
+                        );
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid JSON in primary user config",
+                        ));
+                    }
+                },
             }
-        }
-    };
+        };
 
-    merge_fn(&mut root);
-
-    if let Err(e) = write_atomic(&settings_path, &root) {
+        merge_fn(&mut root);
+        write_atomic(&settings_path, &root)
+    }) {
         eprintln!(
             "paneflow-shim: cannot write {} ({e}); {tool_label} hooks \
              disabled this session",
@@ -286,7 +458,7 @@ pub(crate) fn install_hook_config_file(
         return None;
     }
 
-    Some((settings_path, !existed_as_dir))
+    Some((settings_path, !existed_as_dir, lease))
 }
 
 /// Shared cleanup used by both guards' `Drop` impls: read the settings
@@ -300,30 +472,41 @@ pub(crate) fn cleanup_hook_config_file(
     config_dir: &Path,
     created_dir: bool,
     remove_fn: fn(&mut serde_json::Value),
+    lease: &HookLease,
 ) {
-    let Ok(content) = std::fs::read_to_string(settings_path) else {
-        return;
-    };
-    let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
-        return;
-    };
-
-    remove_fn(&mut root);
-
-    let is_empty = root
-        .as_object()
-        .map(serde_json::Map::is_empty)
-        .unwrap_or(false);
-
-    if is_empty {
-        let _ = std::fs::remove_file(settings_path);
-        if created_dir {
-            // `remove_dir` only succeeds if the directory is empty - safe
-            // even if the user dropped other files into the config dir.
-            let _ = std::fs::remove_dir(config_dir);
+    let remove_created_dir = with_config_lock(settings_path, || {
+        if !lease.release_and_is_last() {
+            return Ok(false);
         }
-    } else {
-        let _ = write_atomic(settings_path, &root);
+        let Ok(content) = std::fs::read_to_string(settings_path) else {
+            return Ok(false);
+        };
+        let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
+            return Ok(false);
+        };
+
+        remove_fn(&mut root);
+
+        let is_empty = root
+            .as_object()
+            .map(serde_json::Map::is_empty)
+            .unwrap_or(false);
+
+        if is_empty {
+            let _ = std::fs::remove_file(settings_path);
+        } else {
+            let _ = write_atomic(settings_path, &root);
+        }
+        Ok(is_empty && created_dir)
+    })
+    .unwrap_or(false);
+
+    if remove_created_dir {
+        // `remove_dir` only succeeds if the directory is empty - safe even if
+        // the user dropped other files into the config dir. This must happen
+        // after the lock guard drops, otherwise the lock file itself keeps the
+        // directory non-empty.
+        let _ = std::fs::remove_dir(config_dir);
     }
 }
 
@@ -421,6 +604,7 @@ pub(crate) struct HookConfigGuard {
     // Whether the shim created `.claude/`. Only rmdir if we created it, so we
     // don't clobber a user-created directory that happened to be empty.
     created_dir: bool,
+    lease: HookLease,
 }
 
 impl HookConfigGuard {
@@ -511,16 +695,18 @@ impl HookConfigGuard {
     /// in `install()` so unit tests can drive `install_at` without
     /// fabricating a live IPC socket.
     pub(crate) fn install_at(claude_dir: &Path) -> Option<Self> {
-        let (settings_path, created_dir) = install_hook_config_file(
+        let (settings_path, created_dir, lease) = install_hook_config_file(
             claude_dir,
             "settings.local.json",
             "Claude Code",
             merge_paneflow_hooks,
+            InvalidJsonPolicy::Replace,
         )?;
         Some(Self {
             settings_path,
             claude_dir: claude_dir.to_path_buf(),
             created_dir,
+            lease,
         })
     }
 }
@@ -532,6 +718,7 @@ impl Drop for HookConfigGuard {
             &self.claude_dir,
             self.created_dir,
             remove_paneflow_hooks,
+            &self.lease,
         );
     }
 }
@@ -884,10 +1071,12 @@ fn merge_matcher_hooks_for_events_with_marker(
     let hooks_entry = root_obj
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));
-    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
+    if !hooks_entry.is_object() {
         // User's `hooks` key is not an object (e.g., user set it to a
         // string by mistake). Overwrite it - we own the managed entries.
         *hooks_entry = serde_json::json!({});
+    }
+    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
         return;
     };
 
@@ -1055,8 +1244,10 @@ fn merge_flat_hooks_for_events(
     let hooks_entry = root_obj
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));
-    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
+    if !hooks_entry.is_object() {
         *hooks_entry = serde_json::json!({});
+    }
+    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
         return;
     };
 
@@ -1149,8 +1340,10 @@ fn merge_gemini_hooks_for_events(root: &mut serde_json::Value, events: &[(&str, 
     let hooks_entry = root_obj
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));
-    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
+    if !hooks_entry.is_object() {
         *hooks_entry = serde_json::json!({});
+    }
+    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
         return;
     };
 
@@ -1213,6 +1406,7 @@ pub(crate) struct ManagedHookConfigGuard {
     config_dir: PathBuf,
     created_dir: bool,
     remove_fn: fn(&mut serde_json::Value),
+    lease: HookLease,
 }
 
 impl ManagedHookConfigGuard {
@@ -1231,6 +1425,7 @@ impl ManagedHookConfigGuard {
             tool_label,
             merge_fn,
             remove_fn,
+            InvalidJsonPolicy::Replace,
         )
     }
 
@@ -1249,6 +1444,7 @@ impl ManagedHookConfigGuard {
             tool_label,
             merge_fn,
             remove_fn,
+            InvalidJsonPolicy::Refuse,
         )
     }
 
@@ -1258,12 +1454,20 @@ impl ManagedHookConfigGuard {
         tool_label: &str,
         merge_fn: fn(&mut serde_json::Value),
         remove_fn: fn(&mut serde_json::Value),
+        invalid_json_policy: InvalidJsonPolicy,
     ) -> Option<Self> {
         if !paneflow_ipc_reachable() {
             sweep_orphan_hook_config(&config_dir.join(config_filename), remove_fn);
             return None;
         }
-        Self::install_at(config_dir, config_filename, tool_label, merge_fn, remove_fn)
+        Self::install_at(
+            config_dir,
+            config_filename,
+            tool_label,
+            merge_fn,
+            remove_fn,
+            invalid_json_policy,
+        )
     }
 
     /// Testable inner - no IPC gate, mirrors [`HookConfigGuard::install_at`].
@@ -1273,14 +1477,21 @@ impl ManagedHookConfigGuard {
         tool_label: &str,
         merge_fn: fn(&mut serde_json::Value),
         remove_fn: fn(&mut serde_json::Value),
+        invalid_json_policy: InvalidJsonPolicy,
     ) -> Option<Self> {
-        let (settings_path, created_dir) =
-            install_hook_config_file(config_dir, config_filename, tool_label, merge_fn)?;
+        let (settings_path, created_dir, lease) = install_hook_config_file(
+            config_dir,
+            config_filename,
+            tool_label,
+            merge_fn,
+            invalid_json_policy,
+        )?;
         Some(Self {
             settings_path,
             config_dir: config_dir.to_path_buf(),
             created_dir,
             remove_fn,
+            lease,
         })
     }
 }
@@ -1292,6 +1503,7 @@ impl Drop for ManagedHookConfigGuard {
             &self.config_dir,
             self.created_dir,
             self.remove_fn,
+            &self.lease,
         );
     }
 }
@@ -1318,6 +1530,7 @@ const OPENCODE_PLUGIN_SOURCE: &str = include_str!("../assets/opencode-paneflow-s
 /// Paneflow `pi` session is harmless.
 pub(crate) struct PiExtensionGuard {
     ext_path: PathBuf,
+    lease: HookLease,
 }
 
 impl PiExtensionGuard {
@@ -1326,7 +1539,13 @@ impl PiExtensionGuard {
         let ext_dir = home.join(".pi").join("agent").join("extensions");
         if !paneflow_ipc_reachable() {
             // Orphan sweep: a previous SIGKILL'd session never dropped.
-            let _ = std::fs::remove_file(ext_dir.join(PANEFLOW_TS_BASENAME));
+            let ext_path = ext_dir.join(PANEFLOW_TS_BASENAME);
+            if ext_path.exists() {
+                let _ = with_config_lock(&ext_path, || {
+                    let _ = std::fs::remove_file(&ext_path);
+                    Ok(())
+                });
+            }
             return None;
         }
         Self::install_at(&ext_dir)
@@ -1339,14 +1558,20 @@ impl PiExtensionGuard {
         }
         std::fs::create_dir_all(ext_dir).ok()?;
         let ext_path = ext_dir.join(PANEFLOW_TS_BASENAME);
-        write_text_atomic(&ext_path, PI_EXTENSION_SOURCE).ok()?;
-        Some(Self { ext_path })
+        let lease = HookLease::acquire(&ext_path)?;
+        with_config_lock(&ext_path, || {
+            write_text_atomic(&ext_path, PI_EXTENSION_SOURCE)
+        })
+        .ok()?;
+        Some(Self { ext_path, lease })
     }
 }
 
 impl Drop for PiExtensionGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.ext_path);
+        if self.lease.release_and_is_last() {
+            let _ = std::fs::remove_file(&self.ext_path);
+        }
     }
 }
 
@@ -1373,6 +1598,7 @@ pub(crate) struct OpenCodePluginGuard {
     plugin_path: PathBuf,
     config_path: PathBuf,
     created_config: bool,
+    lease: HookLease,
 }
 
 impl OpenCodePluginGuard {
@@ -1394,34 +1620,45 @@ impl OpenCodePluginGuard {
             return None;
         }
 
-        let existing = std::fs::read_to_string(&config_path).ok();
-        let created_config = existing.is_none();
-        let mut root: serde_json::Value = match existing {
-            None => serde_json::json!({}),
-            Some(content) => match serde_json::from_str(&content) {
-                Ok(v) => v,
-                Err(_) => {
-                    // PRIMARY config - never overwrite what we can't parse.
-                    eprintln!(
-                        "paneflow-shim: {} is not parseable JSON; skipping \
-                         OpenCode status plugin this session",
-                        safe_path_display(&config_path)
-                    );
-                    return None;
-                }
-            },
-        };
-
         let plugins_dir = dir.join("plugins");
         if config_dir_is_symlink(&plugins_dir) {
             return None;
         }
         std::fs::create_dir_all(&plugins_dir).ok()?;
         let plugin_path = plugins_dir.join(PANEFLOW_TS_BASENAME);
-        write_text_atomic(&plugin_path, OPENCODE_PLUGIN_SOURCE).ok()?;
+        let lease = HookLease::acquire(&plugin_path)?;
+        with_config_lock(&plugin_path, || {
+            write_text_atomic(&plugin_path, OPENCODE_PLUGIN_SOURCE)
+        })
+        .ok()?;
+        let mut created_config = false;
 
-        merge_opencode_plugin_entry(&mut root, &plugin_path.to_string_lossy());
-        if write_atomic(&config_path, &root).is_err() {
+        if with_config_lock(&config_path, || {
+            let existing = std::fs::read_to_string(&config_path).ok();
+            created_config = existing.is_none();
+            let mut root: serde_json::Value = match existing {
+                None => serde_json::json!({}),
+                Some(content) => match serde_json::from_str(&content) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        // PRIMARY config - never overwrite what we can't parse.
+                        eprintln!(
+                            "paneflow-shim: {} is not parseable JSON; skipping \
+                             OpenCode status plugin this session",
+                            safe_path_display(&config_path)
+                        );
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "invalid OpenCode JSON",
+                        ));
+                    }
+                },
+            };
+            merge_opencode_plugin_entry(&mut root, &plugin_path.to_string_lossy());
+            write_atomic(&config_path, &root)
+        })
+        .is_err()
+        {
             let _ = std::fs::remove_file(&plugin_path);
             return None;
         }
@@ -1430,54 +1667,73 @@ impl OpenCodePluginGuard {
             plugin_path,
             config_path,
             created_config,
+            lease,
         })
     }
 
     /// Best-effort removal of a previous session's leftovers (no live IPC).
     fn sweep_orphan(dir: &Path) {
-        let _ = std::fs::remove_file(dir.join("plugins").join(PANEFLOW_TS_BASENAME));
-        let config_path = dir.join("opencode.json");
-        let Ok(content) = std::fs::read_to_string(&config_path) else {
-            return;
-        };
-        let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
-            return;
-        };
-        let before = root.clone();
-        remove_opencode_plugin_entry(&mut root);
-        if root != before {
-            let is_empty = root
-                .as_object()
-                .map(serde_json::Map::is_empty)
-                .unwrap_or(false);
-            let _ = if is_empty {
-                std::fs::remove_file(&config_path)
-            } else {
-                write_atomic(&config_path, &root)
-            };
+        let plugin_path = dir.join("plugins").join(PANEFLOW_TS_BASENAME);
+        if plugin_path.exists() {
+            let _ = with_config_lock(&plugin_path, || {
+                let _ = std::fs::remove_file(&plugin_path);
+                Ok(())
+            });
         }
+        let config_path = dir.join("opencode.json");
+        if !config_path.exists() {
+            return;
+        }
+        let _ = with_config_lock(&config_path, || {
+            let Ok(content) = std::fs::read_to_string(&config_path) else {
+                return Ok(());
+            };
+            let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
+                return Ok(());
+            };
+            let before = root.clone();
+            remove_opencode_plugin_entry(&mut root);
+            if root != before {
+                let is_empty = root
+                    .as_object()
+                    .map(serde_json::Map::is_empty)
+                    .unwrap_or(false);
+                if is_empty {
+                    let _ = std::fs::remove_file(&config_path);
+                } else {
+                    write_atomic(&config_path, &root)?;
+                }
+            }
+            Ok(())
+        });
     }
 }
 
 impl Drop for OpenCodePluginGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.plugin_path);
-        let Ok(content) = std::fs::read_to_string(&self.config_path) else {
-            return;
-        };
-        let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
-            return;
-        };
-        remove_opencode_plugin_entry(&mut root);
-        let is_empty = root
-            .as_object()
-            .map(serde_json::Map::is_empty)
-            .unwrap_or(false);
-        let _ = if is_empty && self.created_config {
-            std::fs::remove_file(&self.config_path)
-        } else {
-            write_atomic(&self.config_path, &root)
-        };
+        let _ = with_config_lock(&self.config_path, || {
+            if !self.lease.release_and_is_last() {
+                return Ok(());
+            }
+            let _ = std::fs::remove_file(&self.plugin_path);
+            let Ok(content) = std::fs::read_to_string(&self.config_path) else {
+                return Ok(());
+            };
+            let Ok(mut root) = serde_json::from_str::<serde_json::Value>(&content) else {
+                return Ok(());
+            };
+            remove_opencode_plugin_entry(&mut root);
+            let is_empty = root
+                .as_object()
+                .map(serde_json::Map::is_empty)
+                .unwrap_or(false);
+            if is_empty && self.created_config {
+                let _ = std::fs::remove_file(&self.config_path);
+            } else {
+                write_atomic(&self.config_path, &root)?;
+            }
+            Ok(())
+        });
     }
 }
 
@@ -1562,6 +1818,7 @@ pub(crate) const GROK_HOOK_EVENTS: &[&str] = &[
 /// (fail-open), so the downside risk is bounded to a log line.
 pub(crate) struct GrokHookFileGuard {
     hook_path: PathBuf,
+    lease: HookLease,
 }
 
 impl GrokHookFileGuard {
@@ -1569,7 +1826,13 @@ impl GrokHookFileGuard {
         let home = home_dir_env()?;
         let hooks_dir = home.join(".grok").join("hooks");
         if !paneflow_ipc_reachable() {
-            let _ = std::fs::remove_file(hooks_dir.join("paneflow.json"));
+            let hook_path = hooks_dir.join("paneflow.json");
+            if hook_path.exists() {
+                let _ = with_config_lock(&hook_path, || {
+                    let _ = std::fs::remove_file(&hook_path);
+                    Ok(())
+                });
+            }
             return None;
         }
         Self::install_at(&hooks_dir)
@@ -1582,19 +1845,22 @@ impl GrokHookFileGuard {
         }
         std::fs::create_dir_all(hooks_dir).ok()?;
         let hook_path = hooks_dir.join("paneflow.json");
+        let lease = HookLease::acquire(&hook_path)?;
         // Grok's hook schema is the Claude matcher-group shape verbatim
         // (timeout in seconds, `type: command`) but its public docs do not
         // document `commandWindows`, so use the strict one-command handler.
         let mut root = serde_json::json!({});
         merge_strict_matcher_hooks_for_events_with(&mut root, GROK_HOOK_EVENTS, plain_hook_handler);
-        write_atomic(&hook_path, &root).ok()?;
-        Some(Self { hook_path })
+        with_config_lock(&hook_path, || write_atomic(&hook_path, &root)).ok()?;
+        Some(Self { hook_path, lease })
     }
 }
 
 impl Drop for GrokHookFileGuard {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.hook_path);
+        if self.lease.release_and_is_last() {
+            let _ = std::fs::remove_file(&self.hook_path);
+        }
     }
 }
 
@@ -1630,7 +1896,7 @@ fn yaml_quote(s: &str) -> String {
 /// - `on_session_start`/`on_session_end` are NOT registered: the shim's
 ///   universal `ai.exit`/`ai.session_end` already covers the lifecycle and
 ///   registering them would double-fire.
-fn hermes_managed_block() -> String {
+pub(crate) fn hermes_managed_block() -> String {
     let q = |event: &str| yaml_quote(&resolve_plain_hook_command(event));
     format!(
         "{HERMES_BLOCK_BEGIN}\n\
@@ -1695,6 +1961,7 @@ fn yaml_has_top_level_hooks_key(content: &str) -> bool {
 pub(crate) struct HermesHookConfigGuard {
     config_path: PathBuf,
     created_file: bool,
+    lease: HookLease,
 }
 
 impl HermesHookConfigGuard {
@@ -1720,63 +1987,87 @@ impl HermesHookConfigGuard {
         }
         std::fs::create_dir_all(hermes_dir).ok()?;
         let config_path = hermes_dir.join("config.yaml");
+        let lease = HookLease::acquire(&config_path)?;
 
-        let existing = std::fs::read_to_string(&config_path).ok();
-        let created_file = existing.is_none();
-        let content = existing.unwrap_or_default();
-        // Idempotent re-install: strip any block a previous session left.
-        let base = strip_hermes_managed_block(&content).unwrap_or(content);
+        let mut created_file = false;
+        if with_config_lock(&config_path, || {
+            let existing = std::fs::read_to_string(&config_path).ok();
+            created_file = existing.is_none();
+            let content = existing.unwrap_or_default();
+            // Idempotent re-install: strip any block a previous session left.
+            let base = strip_hermes_managed_block(&content).unwrap_or(content);
 
-        if yaml_has_top_level_hooks_key(&base) {
-            eprintln!(
-                "paneflow-shim: {} already defines a hooks: section; \
-                 skipping Hermes status hooks this session (a duplicate \
-                 YAML key would override yours)",
-                safe_path_display(&config_path)
-            );
+            if yaml_has_top_level_hooks_key(&base) {
+                eprintln!(
+                    "paneflow-shim: {} already defines a hooks: section; \
+                     skipping Hermes status hooks this session (a duplicate \
+                     YAML key would override yours)",
+                    safe_path_display(&config_path)
+                );
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "user Hermes config already has hooks",
+                ));
+            }
+
+            let mut next = base;
+            if !next.is_empty() && !next.ends_with('\n') {
+                next.push('\n');
+            }
+            next.push_str(&hermes_managed_block());
+            write_text_atomic(&config_path, &next)
+        })
+        .is_err()
+        {
             return None;
         }
-
-        let mut next = base;
-        if !next.is_empty() && !next.ends_with('\n') {
-            next.push('\n');
-        }
-        next.push_str(&hermes_managed_block());
-        write_text_atomic(&config_path, &next).ok()?;
 
         Some(Self {
             config_path,
             created_file,
+            lease,
         })
     }
 
     fn sweep_orphan(config_path: &Path) {
-        let Ok(content) = std::fs::read_to_string(config_path) else {
+        if !config_path.exists() {
             return;
-        };
-        if let Some(stripped) = strip_hermes_managed_block(&content) {
-            let _ = if stripped.trim().is_empty() {
-                std::fs::remove_file(config_path)
-            } else {
-                write_text_atomic(config_path, &stripped)
-            };
         }
+        let _ = with_config_lock(config_path, || {
+            let Ok(content) = std::fs::read_to_string(config_path) else {
+                return Ok(());
+            };
+            if let Some(stripped) = strip_hermes_managed_block(&content) {
+                if stripped.trim().is_empty() {
+                    let _ = std::fs::remove_file(config_path);
+                } else {
+                    write_text_atomic(config_path, &stripped)?;
+                }
+            }
+            Ok(())
+        });
     }
 }
 
 impl Drop for HermesHookConfigGuard {
     fn drop(&mut self) {
-        let Ok(content) = std::fs::read_to_string(&self.config_path) else {
-            return;
-        };
-        let Some(stripped) = strip_hermes_managed_block(&content) else {
-            return;
-        };
-        let _ = if stripped.trim().is_empty() && self.created_file {
-            std::fs::remove_file(&self.config_path)
-        } else {
-            write_text_atomic(&self.config_path, &stripped)
-        };
+        let _ = with_config_lock(&self.config_path, || {
+            if !self.lease.release_and_is_last() {
+                return Ok(());
+            }
+            let Ok(content) = std::fs::read_to_string(&self.config_path) else {
+                return Ok(());
+            };
+            let Some(stripped) = strip_hermes_managed_block(&content) else {
+                return Ok(());
+            };
+            if stripped.trim().is_empty() && self.created_file {
+                let _ = std::fs::remove_file(&self.config_path);
+            } else {
+                write_text_atomic(&self.config_path, &stripped)?;
+            }
+            Ok(())
+        });
     }
 }
 
@@ -1908,6 +2199,7 @@ pub(crate) struct CodexHookConfigGuard {
     /// Whether we appended the feature-flag block on install. Drop undoes it
     /// only if we did; never touches a pre-existing user-authored flag.
     added_feature_flag: bool,
+    lease: HookLease,
 }
 
 #[cfg(unix)]
@@ -1930,8 +2222,13 @@ impl CodexHookConfigGuard {
     /// the feature-flag step entirely (used by tests that don't want to
     /// pollute the test runner's home dir).
     pub(crate) fn install_at(codex_dir: &Path, config_toml_path: Option<&Path>) -> Option<Self> {
-        let (hooks_json_path, created_dir) =
-            install_hook_config_file(codex_dir, "hooks.json", "Codex", merge_codex_hooks)?;
+        let (hooks_json_path, created_dir, lease) = install_hook_config_file(
+            codex_dir,
+            "hooks.json",
+            "Codex",
+            merge_codex_hooks,
+            InvalidJsonPolicy::Replace,
+        )?;
 
         // Codex-specific extra: enable the `hooks = true` feature flag
         // in `~/.codex/config.toml`. Failure here is non-fatal - the user
@@ -1948,6 +2245,7 @@ impl CodexHookConfigGuard {
             created_dir,
             config_toml_path: config_toml_path.map(Path::to_path_buf),
             added_feature_flag,
+            lease,
         })
     }
 }
@@ -1967,6 +2265,7 @@ impl Drop for CodexHookConfigGuard {
             &self.codex_dir,
             self.created_dir,
             remove_codex_hooks,
+            &self.lease,
         );
     }
 }
@@ -1982,8 +2281,10 @@ pub(crate) fn merge_codex_hooks(root: &mut serde_json::Value) {
     let hooks_entry = root_obj
         .entry("hooks")
         .or_insert_with(|| serde_json::json!({}));
-    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
+    if !hooks_entry.is_object() {
         *hooks_entry = serde_json::json!({});
+    }
+    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
         return;
     };
 

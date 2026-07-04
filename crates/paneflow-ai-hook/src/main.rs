@@ -26,15 +26,23 @@ use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+#[cfg(windows)]
+use std::time::Instant;
 
+#[cfg(windows)]
+use interprocess::local_socket::ConnectOptions;
 use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
 
 /// U-027: write deadline for the one-shot hook frame. The hook is invoked
 /// synchronously by the shim, so a stalled same-UID socket peer must not block
 /// it indefinitely. 500 ms is ample for a local socket write.
 const HOOK_IPC_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// Mirrors the server's single-frame read cap. Stdin may be larger because the
+/// hook compacts payloads before emitting IPC.
+const MAX_HOOK_FRAME_BYTES: usize = 256 * 1024;
+const MAX_HOOK_TEXT_BYTES: usize = 4096;
 
 // ---------------------------------------------------------------------------
 // JSON-RPC method constants
@@ -109,8 +117,17 @@ fn send_frame_with_retry(socket_path: &Path, frame: &serde_json::Value) -> std::
 /// so a missing or stale socket never aborts the user's Claude Code / Codex
 /// session (PRD constraint C4).
 pub fn send_frame(socket_path: &Path, frame: &serde_json::Value) -> std::io::Result<()> {
-    let name = socket_path.to_fs_name::<GenericFilePath>()?;
-    let mut stream = Stream::connect(name)?;
+    let mut payload = serde_json::to_vec(frame)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    payload.push(b'\n');
+    if payload.len() > MAX_HOOK_FRAME_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "paneflow hook IPC frame exceeds the server size cap",
+        ));
+    }
+
+    let mut stream = connect_frame_stream(socket_path)?;
     // U-027: bound the write. The shim invokes this hook synchronously on
     // post-exit cleanup and the SIGINT path, blocking on its exit; a same-UID
     // squatter that accepts the connection but never drains would otherwise
@@ -119,27 +136,81 @@ pub fn send_frame(socket_path: &Path, frame: &serde_json::Value) -> std::io::Res
     // is the PRD's "fail silent, never break the session" contract (a bounded
     // failure is strictly better than an unbounded hang).
     //
-    // BEST-EFFORT on purpose: Windows named pipes do not support I/O timeouts
-    // (`interprocess` returns `ErrorKind::Unsupported`). The `?` here used to
-    // bail BEFORE the write on every Windows hook invocation, so NO `ai.*`
-    // frame was ever delivered and the sidebar agent status silently never
-    // updated on Windows (it worked on Unix domain sockets, which accept the
-    // timeout). Tolerate the Unsupported case and proceed unbounded - the peer
-    // is the same-UID local PaneFlow and the payload is a sub-kilobyte frame,
-    // so an unbounded write is an acceptable trade vs. dropping the frame. Any
-    // other error (a genuinely broken stream) still propagates.
-    if let Err(e) = stream.set_send_timeout(Some(HOOK_IPC_TIMEOUT)) {
-        if e.kind() != std::io::ErrorKind::Unsupported {
-            return Err(e);
+    // Windows named pipes reject set_send_timeout in interprocess, so Windows
+    // uses a nonblocking stream and an explicit deadline below.
+    #[cfg(not(windows))]
+    {
+        if let Err(e) = stream.set_send_timeout(Some(HOOK_IPC_TIMEOUT)) {
+            if e.kind() != std::io::ErrorKind::Unsupported {
+                return Err(e);
+            }
         }
     }
 
-    let mut payload = serde_json::to_vec(frame)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    payload.push(b'\n');
+    #[cfg(windows)]
+    {
+        write_all_with_deadline(&mut stream, &payload, HOOK_IPC_TIMEOUT)?;
+        stream.flush()?;
+        Ok(())
+    }
 
-    stream.write_all(&payload)?;
-    stream.flush()?;
+    #[cfg(not(windows))]
+    {
+        stream.write_all(&payload)?;
+        stream.flush()?;
+        Ok(())
+    }
+}
+
+fn connect_frame_stream(socket_path: &Path) -> std::io::Result<Stream> {
+    let name = socket_path.to_fs_name::<GenericFilePath>()?;
+    #[cfg(windows)]
+    {
+        ConnectOptions::new()
+            .name(name)
+            .nonblocking_stream(true)
+            .connect_sync()
+    }
+    #[cfg(not(windows))]
+    {
+        Stream::connect(name)
+    }
+}
+
+#[cfg(windows)]
+fn wait_for_io(deadline: Instant) -> std::io::Result<()> {
+    let now = Instant::now();
+    if now >= deadline {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "paneflow hook IPC write timed out",
+        ));
+    }
+    std::thread::sleep((deadline - now).min(Duration::from_millis(5)));
+    Ok(())
+}
+
+#[cfg(windows)]
+fn write_all_with_deadline(
+    stream: &mut Stream,
+    mut payload: &[u8],
+    timeout: Duration,
+) -> std::io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    while !payload.is_empty() {
+        match stream.write(payload) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "paneflow hook IPC write made no progress",
+                ));
+            }
+            Ok(n) => payload = &payload[n..],
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => wait_for_io(deadline)?,
+            Err(e) => return Err(e),
+        }
+    }
     Ok(())
 }
 
@@ -292,22 +363,101 @@ fn build_frame(
         _ => return None,
     };
 
-    params.insert("hook_payload".into(), hook_payload);
+    params.insert(
+        "hook_payload".into(),
+        compact_hook_payload(event, &hook_payload),
+    );
 
     Some(serde_json::json!({
         "jsonrpc": "2.0",
         "method": method,
         "params": serde_json::Value::Object(params),
-        "id": next_id(),
     }))
 }
 
-/// Monotonic request id. Within a single `paneflow-ai-hook` invocation, every
-/// frame gets a unique id; the counter does not need to persist across
-/// invocations because the server does not correlate ids across connections.
-fn next_id() -> u64 {
-    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
-    NEXT_ID.fetch_add(1, Ordering::Relaxed)
+fn compact_hook_payload(event: &str, payload: &serde_json::Value) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    copy_string_field(payload, &mut out, "session_id", 256);
+    copy_u64_field(payload, &mut out, "pid");
+
+    match event {
+        "SessionStart" => {
+            copy_string_field(payload, &mut out, "cwd", 2048);
+        }
+        "UserPromptSubmit" => {}
+        "Notification" => {
+            copy_string_field(payload, &mut out, "notification_type", 128);
+            copy_string_field(payload, &mut out, "message", MAX_HOOK_TEXT_BYTES);
+        }
+        "PermissionRequest" => {
+            copy_string_field(payload, &mut out, "message", MAX_HOOK_TEXT_BYTES);
+        }
+        "PreToolUse" | "PostToolUse" => {
+            copy_string_field(payload, &mut out, "tool_name", 128);
+        }
+        "Stop" | "SubagentStop" | "SessionEnd" => {
+            copy_string_field(payload, &mut out, "summary", MAX_HOOK_TEXT_BYTES);
+            copy_string_field(payload, &mut out, "last_result", MAX_HOOK_TEXT_BYTES);
+            copy_string_field(payload, &mut out, "transcript_path", 2048);
+        }
+        "Exit" => {
+            copy_i64_field(payload, &mut out, "exit_code");
+            copy_string_field(payload, &mut out, "summary", MAX_HOOK_TEXT_BYTES);
+        }
+        _ => {}
+    }
+
+    serde_json::Value::Object(out)
+}
+
+fn copy_string_field(
+    source: &serde_json::Value,
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    max_bytes: usize,
+) {
+    let Some(value) = source.get(key).and_then(|v| v.as_str()) else {
+        return;
+    };
+    target.insert(
+        key.to_string(),
+        serde_json::Value::String(truncate_utf8(value, max_bytes)),
+    );
+}
+
+fn copy_u64_field(
+    source: &serde_json::Value,
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(value) = source.get(key).and_then(|v| v.as_u64()) {
+        target.insert(key.to_string(), serde_json::Value::from(value));
+    }
+}
+
+fn copy_i64_field(
+    source: &serde_json::Value,
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+) {
+    if let Some(value) = source.get(key).and_then(|v| v.as_i64()) {
+        target.insert(key.to_string(), serde_json::Value::from(value));
+    }
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_string();
+    }
+    let marker = "...[truncated]";
+    let keep = max_bytes.saturating_sub(marker.len());
+    let mut boundary = keep.min(value.len());
+    while boundary > 0 && !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    let mut out = value[..boundary].to_string();
+    out.push_str(marker);
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -654,16 +804,14 @@ mod tests {
 
     use serde_json::{json, Value};
 
-    /// Assert frame envelope shape + return `params` for per-event further
-    /// assertions. Ignores `id` (monotonic, per AC) but verifies it is a
-    /// `u64`.
+    /// Assert frame envelope shape + return `params` for per-event assertions.
+    /// Hook frames are JSON-RPC notifications, so they intentionally omit `id`.
     fn assert_envelope<'a>(frame: &'a Value, expected_method: &str) -> &'a Value {
         assert_eq!(frame["jsonrpc"], "2.0");
         assert_eq!(frame["method"], expected_method);
         assert!(
-            frame["id"].is_u64(),
-            "id must be a u64 (monotonic), got {:?}",
-            frame["id"]
+            frame.get("id").is_none(),
+            "hook frames must be JSON-RPC notifications without id"
         );
         &frame["params"]
     }
@@ -686,7 +834,7 @@ mod tests {
         let params = assert_envelope(&frame, "ai.prompt_submit");
         assert_eq!(params["workspace_id"], 42);
         assert_eq!(params["tool"], "claude");
-        assert_eq!(params["hook_payload"], payload);
+        assert_eq!(params["hook_payload"], json!({"session_id": "s1"}));
         assert!(params.get("tool_name").is_none());
     }
 
@@ -790,7 +938,7 @@ mod tests {
             params["tool_name"], "Bash",
             "tool_name must be lifted to top-level params from hook_payload"
         );
-        assert_eq!(params["hook_payload"], payload);
+        assert_eq!(params["hook_payload"], json!({"tool_name": "Bash"}));
     }
 
     #[test]
@@ -815,7 +963,7 @@ mod tests {
             params.get("tool_name").is_none(),
             "tool_name must be absent when hook_payload does not provide it"
         );
-        assert_eq!(params["hook_payload"], payload);
+        assert_eq!(params["hook_payload"], json!({}));
     }
 
     #[test]
@@ -908,7 +1056,7 @@ mod tests {
 
         let params = assert_envelope(&frame, "ai.prompt_submit");
         assert_eq!(params["tool"], "codex");
-        assert_eq!(params["hook_payload"], payload);
+        assert_eq!(params["hook_payload"], json!({}));
     }
 
     #[test]
@@ -1040,13 +1188,33 @@ mod tests {
     }
 
     #[test]
-    fn next_id_is_monotonic_within_process() {
-        let a = next_id();
-        let b = next_id();
-        assert!(
-            b > a,
-            "next_id must be strictly monotonic (got {a} then {b})"
-        );
+    fn compact_hook_payload_drops_prompt_and_caps_text() {
+        let payload = json!({
+            "session_id": "s1",
+            "prompt": "x".repeat(10_000),
+            "message": "y".repeat(10_000),
+        });
+        let prompt = compact_hook_payload("UserPromptSubmit", &payload);
+        assert_eq!(prompt, json!({"session_id": "s1"}));
+
+        let notification = compact_hook_payload("Notification", &payload);
+        assert!(notification["message"].as_str().unwrap().len() <= MAX_HOOK_TEXT_BYTES);
+        assert!(notification.get("prompt").is_none());
+    }
+
+    #[test]
+    fn send_frame_rejects_oversized_frame_before_connecting() {
+        let frame = json!({
+            "jsonrpc": "2.0",
+            "method": "ai.notification",
+            "params": { "message": "x".repeat(MAX_HOOK_FRAME_BYTES) },
+        });
+        #[cfg(not(windows))]
+        let path = Path::new("/tmp/paneflow-oversized-hook-test.sock");
+        #[cfg(windows)]
+        let path = Path::new(r"\\.\pipe\paneflow-oversized-hook-test");
+        let err = send_frame(path, &frame).expect_err("oversized frame");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     }
 
     // `diagnose` tests call the testable inner `diagnose_to` directly with an

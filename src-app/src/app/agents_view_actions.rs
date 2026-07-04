@@ -2233,7 +2233,7 @@ fn switch_agents_environment_branch(
     Ok(read_agents_environment_git_state(cwd))
 }
 
-fn git_output_error(output: &std::process::Output) -> String {
+fn git_output_error(output: &paneflow_process::BoundedOutput) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let message = stderr.trim();
     if message.is_empty() {

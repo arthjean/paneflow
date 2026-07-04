@@ -286,9 +286,11 @@ fn set_managed_hooks(root: &mut Value, hook_path: &Path) {
         return;
     };
     let hooks_entry = obj.entry("hooks").or_insert_with(|| json!({}));
-    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
+    if !hooks_entry.is_object() {
         // User set `hooks` to a non-object; we own the managed entries.
         *hooks_entry = json!({});
+    }
+    let Some(hooks_obj) = hooks_entry.as_object_mut() else {
         return;
     };
     for event in CLAUDE_HOOK_EVENTS {
@@ -346,17 +348,20 @@ fn classify(found_path: &str, expected: &Path) -> StatusOutcome {
 fn install(hook_path: &Path) -> Result<(PathBuf, InstallOutcome)> {
     let path =
         claude_settings_path().ok_or_else(|| anyhow!("cannot resolve ~/.claude/settings.json"))?;
-    let mut root = merge::read_json_or_default(&path)?;
-    let had_prior = !collect_managed_commands(&root).is_empty();
-    set_managed_hooks(&mut root, hook_path);
-    let wrote = io::write_if_changed(&path, &merge::json_to_bytes(&root)?)?;
-    let outcome = if !wrote {
-        InstallOutcome::AlreadyCurrent
-    } else if had_prior {
-        InstallOutcome::Updated
-    } else {
-        InstallOutcome::Installed
-    };
+    let outcome = io::with_config_lock(&path, || {
+        let mut root = merge::read_json_or_default(&path)?;
+        let had_prior = !collect_managed_commands(&root).is_empty();
+        set_managed_hooks(&mut root, hook_path);
+        let wrote = io::write_if_changed_unlocked(&path, &merge::json_to_bytes(&root)?)?;
+        let outcome = if !wrote {
+            InstallOutcome::AlreadyCurrent
+        } else if had_prior {
+            InstallOutcome::Updated
+        } else {
+            InstallOutcome::Installed
+        };
+        Ok(outcome)
+    })?;
     Ok((path, outcome))
 }
 
@@ -366,12 +371,17 @@ fn uninstall() -> Result<UninstallOutcome> {
     if !path.exists() {
         return Ok(UninstallOutcome::NothingToRemove);
     }
-    let mut root = merge::read_json_or_default(&path)?;
-    if !remove_managed_hooks(&mut root) {
-        return Ok(UninstallOutcome::NothingToRemove);
-    }
-    io::write_if_changed(&path, &merge::json_to_bytes(&root)?)?;
-    Ok(UninstallOutcome::Removed)
+    io::with_config_lock(&path, || {
+        if !path.exists() {
+            return Ok(UninstallOutcome::NothingToRemove);
+        }
+        let mut root = merge::read_json_or_default(&path)?;
+        if !remove_managed_hooks(&mut root) {
+            return Ok(UninstallOutcome::NothingToRemove);
+        }
+        io::write_if_changed_unlocked(&path, &merge::json_to_bytes(&root)?)?;
+        Ok(UninstallOutcome::Removed)
+    })
 }
 
 fn status(expected_hook_path: &Path) -> Result<StatusOutcome> {
@@ -501,6 +511,14 @@ pub(crate) fn run_hooks_with(
                         out,
                         "claude-code: stale (found {found}, expected {expected})"
                     );
+                    0
+                }
+                Ok(StatusOutcome::NeedsRepair { path, reason }) => {
+                    let suffix = path
+                        .as_deref()
+                        .map(|p| format!(" at {p}"))
+                        .unwrap_or_default();
+                    let _ = writeln!(out, "claude-code: needs repair{suffix} ({reason})");
                     0
                 }
                 Ok(StatusOutcome::NotInstalled) => {
@@ -644,6 +662,17 @@ mod tests {
         assert!(remove_managed_hooks(&mut root));
         // `hooks` collapses away entirely.
         assert!(root.get("hooks").is_none(), "{root}");
+    }
+
+    #[test]
+    fn set_managed_hooks_replaces_non_object_hooks_in_one_pass() {
+        let mut root = json!({ "hooks": "broken" });
+        set_managed_hooks(&mut root, Path::new("/bin/paneflow-ai-hook"));
+        assert_eq!(
+            collect_managed_commands(&root).len(),
+            CLAUDE_HOOK_EVENTS.len(),
+            "{root}"
+        );
     }
 
     #[test]

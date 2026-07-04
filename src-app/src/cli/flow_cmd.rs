@@ -69,6 +69,10 @@ pub fn run(
     let config = paneflow_config::loader::load_config();
     let runs = prepare_runs(&plan, &config, up_cmd::port_is_free)?;
 
+    if !dry_run {
+        check_orchestration_gate(client, dry_run)?;
+    }
+
     // US-012: a submitting flow is refused up-front - run AND dry-run - when
     // the instance gate is off. Never a silent downgrade to non-submitted.
     if plan.requires_submit() {
@@ -93,6 +97,34 @@ pub fn run(
         anchor: None,
     }
     .execute()
+}
+
+/// Probe `system.capabilities` for the orchestration gate. An older server
+/// without the field falls through to the runtime `-32601` translation; an
+/// unreachable instance only degrades to a warning under `--dry-run` (the
+/// plan itself needs no instance).
+fn check_orchestration_gate(client: &impl IpcTransport, dry_run: bool) -> Result<(), CliError> {
+    match client.call("system.capabilities", json!({})) {
+        Ok(caps) => {
+            let orchestration = caps.get("orchestration").and_then(Value::as_bool);
+            let scripting = caps.get("scripting").and_then(Value::as_bool);
+            match (orchestration, scripting) {
+                (Some(true), _) | (_, Some(true)) | (None, _) => Ok(()),
+                (Some(false), _) => Err(CliError::runtime(
+                    "this flow creates panes with commands/prompts: relaunch Paneflow with \
+                     PANEFLOW_IPC_ORCHESTRATION=1",
+                )),
+            }
+        }
+        Err(e) if dry_run => {
+            eprintln!(
+                "paneflow: instance unreachable ({e}); cannot verify the orchestration gate \
+                 this flow requires"
+            );
+            Ok(())
+        }
+        Err(e) => Err(CliError::runtime(e)),
+    }
 }
 
 /// Probe `system.capabilities` for the scripting gate. An older server
@@ -590,8 +622,8 @@ impl<T: IpcTransport> Engine<'_, T> {
                 Ok(())
             }
             Err(e) if e.contains("-32601") => Err(format!(
-                "scripting gate is off on the instance; relaunch Paneflow with \
-                 PANEFLOW_IPC_SCRIPTING=1 ({e})"
+                "IPC gate is off on the instance; use PANEFLOW_IPC_ORCHESTRATION=1 for \
+                 pane spawning and PANEFLOW_IPC_SCRIPTING=1 for prompt submission ({e})"
             )),
             Err(e) => Err(format!("instance unreachable: {e}")),
         }
@@ -980,7 +1012,10 @@ mod tests {
                 .borrow_mut()
                 .push((method.to_string(), params.clone()));
             match method {
-                "system.capabilities" => Ok(json!({ "scripting": self.scripting })),
+                "system.capabilities" => Ok(json!({
+                    "scripting": self.scripting,
+                    "orchestration": self.scripting,
+                })),
                 "workspace.up" => {
                     let n = params["panes"].as_array().map_or(0, Vec::len);
                     let ids: Vec<u64> = (1..=n as u64).collect();
@@ -1023,6 +1058,26 @@ mod tests {
             err.message
         );
         // Only the capabilities probe ran - no mutation.
+        let calls = fake.calls.borrow();
+        assert!(calls.iter().all(|(m, _)| m == "system.capabilities"));
+    }
+
+    #[test]
+    fn flow_run_refused_when_orchestration_gate_off() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let file = dir.path().join("flow.toml");
+        std::fs::write(
+            &file,
+            "[defaults]\ntimeout_secs = 1\n\n[[step]]\nid = \"root\"\npane = { command = \"true\" }\n",
+        )
+        .unwrap();
+        let fake = FakeInstance::new(false);
+        let err = run(&fake, file.to_str().unwrap(), false, false).expect_err("refused");
+        assert!(
+            err.message.contains("PANEFLOW_IPC_ORCHESTRATION"),
+            "got: {}",
+            err.message
+        );
         let calls = fake.calls.borrow();
         assert!(calls.iter().all(|(m, _)| m == "system.capabilities"));
     }

@@ -1,0 +1,15 @@
+dims 8.000x16.000 grid 12x4 off=0 hist=0 exited=None signal=None
+bg=hsla(0.6111,0.1304,0.1804,1.0000) thumb=hsla(0.6000,0.2096,0.6725,0.3000) link=hsla(0.4775,0.6000,0.5882,1.0000)
+runs[1]:
+  L0 C0 "bg" fg=hsla(0.0000,0.0000,0.0000,1.0000) normal ul=false st=false
+rects[3]:
+  L0+1ln C0+2c hsla(0.5943,1.0000,0.7471,1.0000)
+  L1+3ln C0+12c hsla(0.6111,0.1304,0.1804,1.0000)
+  L0+1ln C2+10c hsla(0.6111,0.1304,0.1804,1.0000)
+blocks[0]:
+selection_rects[0]:
+search_rects[0]:
+cursor: L0 C1 Block hsla(0.0000,0.0000,1.0000,1.0000) wide=false text=Some('g') bold=false italic=false
+anchor: None
+ime: x=8.000 y=0.000 w=8.000 h=16.000
+diagnostics[0]:

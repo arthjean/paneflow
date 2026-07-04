@@ -272,10 +272,39 @@ fn native_backdrop_material_active(
             && terminal_material_active)
 }
 
+fn should_load_login_shell_env_for_startup(
+    is_msi_relay: bool,
+    is_mcp_subcommand: bool,
+    is_cli_subcommand: bool,
+    is_hooks_subcommand: bool,
+    is_update_and_exit: bool,
+    is_unknown_verb: bool,
+) -> bool {
+    !(is_msi_relay
+        || is_mcp_subcommand
+        || is_cli_subcommand
+        || is_hooks_subcommand
+        || is_update_and_exit
+        || is_unknown_verb)
+}
+
+fn should_extract_mcp_bridge_for_cli(args: &[String]) -> bool {
+    args.get(1).map(String::as_str) == Some("mcp")
+        && args.get(2).map(String::as_str) == Some("install")
+        && args.len() == 3
+}
+
 #[cfg(test)]
 mod native_material_tests {
-    use super::native_backdrop_material_active;
+    use super::{
+        native_backdrop_material_active, should_extract_mcp_bridge_for_cli,
+        should_load_login_shell_env_for_startup,
+    };
     use paneflow_config::schema::AppMode;
+
+    fn args(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|part| (*part).to_string()).collect()
+    }
 
     #[test]
     fn terminal_material_can_activate_backdrop_without_chrome_material() {
@@ -317,6 +346,46 @@ mod native_material_tests {
             false,
             true
         ));
+    }
+
+    #[test]
+    fn login_shell_env_capture_only_runs_for_gui_launches() {
+        assert!(should_load_login_shell_env_for_startup(
+            false, false, false, false, false, false
+        ));
+        assert!(!should_load_login_shell_env_for_startup(
+            false, true, false, false, false, false
+        ));
+        assert!(!should_load_login_shell_env_for_startup(
+            false, false, true, false, false, false
+        ));
+        assert!(!should_load_login_shell_env_for_startup(
+            false, false, false, true, false, false
+        ));
+        assert!(!should_load_login_shell_env_for_startup(
+            false, false, false, false, true, false
+        ));
+        assert!(!should_load_login_shell_env_for_startup(
+            false, false, false, false, false, true
+        ));
+    }
+
+    #[test]
+    fn mcp_bridge_extraction_only_runs_for_exact_install_command() {
+        assert!(should_extract_mcp_bridge_for_cli(&args(&[
+            "paneflow", "mcp", "install"
+        ])));
+        assert!(!should_extract_mcp_bridge_for_cli(&args(&[
+            "paneflow", "mcp", "status"
+        ])));
+        assert!(!should_extract_mcp_bridge_for_cli(&args(&[
+            "paneflow",
+            "mcp",
+            "uninstall"
+        ])));
+        assert!(!should_extract_mcp_bridge_for_cli(&args(&[
+            "paneflow", "mcp", "install", "--help"
+        ])));
     }
 }
 
@@ -2461,9 +2530,10 @@ fn main() {
     // `std::env::remove_var` `unsafe` precisely because it races
     // with concurrent `getenv` calls; the only race-free place to
     // mutate process env is the top of `main()` before any other
-    // thread exists. Subsequent calls from `spawn_acp_agent` are
-    // now idempotent no-ops, preserving the per-spawn safety net.
-    paneflow_acp::scrub_claudecode_env();
+    // thread exists.
+    // SAFETY: this is still before env_logger, GPUI, IPC, config watchers,
+    // async executors, and any app-owned thread.
+    unsafe { paneflow_acp::scrub_claudecode_env() };
 
     // Quiet by default: a plain `cargo run` (or a shipped binary) shows only
     // warnings + errors. `RUST_LOG=info` restores the startup/runtime
@@ -2476,31 +2546,46 @@ fn main() {
     )
     .init();
 
-    // US-003: install the process-wide kill-on-parent-death guard
-    // BEFORE any agent CLI or ConPTY spawns so children inherit the
-    // Job Object (Windows). On Linux + macOS this is a no-op shim
-    // pending upstream pre_exec exposure in paneflow-acp / portable-pty.
-    if let Err(err) = agents::parent_guard::install_process_job() {
-        log::warn!(
-            "parent_guard: failed to install Job Object -- kill -9 of Paneflow may orphan agent CLIs ({err})"
-        );
+    // US-003: install the process-wide kill-on-parent-death guard BEFORE any
+    // agent CLI or ConPTY spawns so children inherit the Job Object (Windows).
+    match agents::parent_guard::install_process_job() {
+        Ok(agents::parent_guard::ParentGuardStatus::Installed) => {}
+        Ok(agents::parent_guard::ParentGuardStatus::Unsupported) => {
+            log::debug!(
+                "parent_guard: kill-on-parent-death is unsupported on this platform until pre_exec-style hooks are available"
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                "parent_guard: failed to install Job Object; kill -9 of Paneflow may orphan agent CLIs ({err})"
+            );
+        }
     }
 
-    // Adopt the user's login-shell environment when launched from the GUI
+    // Adopt the user's login-shell environment only for the real GUI path
     // (Finder / Dock / `.desktop`), where the inherited launchd / systemd-user
     // PATH omits Homebrew, Nix, version managers, and `~/.zprofile` additions.
-    // No-op on a terminal launch (stdin is a TTY) and on Windows. Runs FIRST so
-    // the static prepend below layers the per-user bin dirs on top of the real
-    // login PATH. Must run before any other thread spawns - it mutates the
-    // process environment (see the module's safety note).
-    login_shell_env::load_login_shell_env();
+    // Scriptable CLI/MCP/hooks/update invocations must not execute an
+    // interactive login shell as a side effect. Runs before the static prepend
+    // below so per-user bin dirs stay first. Must run before any other thread
+    // spawns - it mutates the process environment (see the module's safety note).
+    if should_load_login_shell_env_for_startup(
+        is_msi_relay,
+        is_mcp_subcommand,
+        is_cli_subcommand,
+        is_hooks_subcommand,
+        is_update_and_exit,
+        is_unknown_verb,
+    ) {
+        login_shell_env::load_login_shell_env();
+    }
 
-    // Patch PATH BEFORE GPUI starts so `which::which("bunx")` in
-    // `paneflow_acp::discovery` finds binaries installed under `~/.bun/bin`
-    // when Paneflow is launched from a `.desktop` file / Finder / Start Menu
-    // (those inherit a minimal systemd-user / launchd / Explorer PATH that
-    // does not source the user's shell rc). Must run before any other
-    // thread spawns - see safety note on `augment_path_for_gui_launch`.
+    // Patch PATH BEFORE GPUI starts so agent launch and CLI helper lookups find
+    // binaries installed under `~/.bun/bin` when Paneflow is launched from a
+    // `.desktop` file / Finder / Start Menu (those inherit a minimal
+    // systemd-user / launchd / Explorer PATH that does not source the user's
+    // shell rc). Must run before any other thread spawns - see safety note on
+    // `augment_path_for_gui_launch`.
     runtime_paths::augment_path_for_gui_launch();
 
     // US-005: synchronous update flow for the e2e harness. Runs the same
@@ -2525,20 +2610,24 @@ fn main() {
     // and exits - it never initializes GPUI / opens a window. Placed after
     // `augment_path_for_gui_launch` (so agent-CLI detection sees `~/.bun/bin`
     // etc.) and after `--update-and-exit`, before any GUI bootstrap. The
-    // install engine lives in the GPU-free `paneflow-mcp-install` crate; we
-    // extract the bridge first so the path written into agent configs is
-    // guaranteed to exist (best-effort - the engine refuses cleanly if not).
+    // install engine lives in the GPU-free `paneflow-mcp-install` crate.
+    // Only `install` extracts the bridge; `status` and `uninstall` must stay
+    // read-only with respect to Paneflow's own data dir.
     // Diagnostics go to stderr (env_logger), the per-agent report to stdout.
     if args.get(1).map(String::as_str) == Some("mcp") {
-        let bridge_path = match ai_hooks::extract::ensure_bridge_extracted() {
-            Ok(p) => Some(p),
-            Err(e) => {
-                log::warn!("paneflow mcp: bridge extraction failed ({e:#})");
-                // Fall back to the resolved-but-maybe-missing path so the
-                // engine can emit the precise "binary missing at <path>"
-                // refusal rather than a vaguer "data dir unresolved".
-                runtime_paths::bridge_binary_path()
+        let bridge_path = if should_extract_mcp_bridge_for_cli(&args) {
+            match ai_hooks::extract::ensure_bridge_extracted() {
+                Ok(p) => Some(p),
+                Err(e) => {
+                    log::warn!("paneflow mcp: bridge extraction failed ({e:#})");
+                    // Fall back to the resolved-but-maybe-missing path so the
+                    // engine can emit the precise "binary missing at <path>"
+                    // refusal rather than a vaguer "data dir unresolved".
+                    runtime_paths::bridge_binary_path()
+                }
             }
+        } else {
+            runtime_paths::bridge_binary_path()
         };
         std::process::exit(paneflow_mcp_install::run_cli(&args[2..], bridge_path));
     }

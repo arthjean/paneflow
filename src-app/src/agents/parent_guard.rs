@@ -20,18 +20,18 @@
 //!   last job handle is closed and Windows kills every member -- agent
 //!   CLI, ConPTY host, descendants.
 //!
-//! - **Linux + macOS (partial)**. [`install_process_job`] is a no-op
-//!   shim. A real fix requires injecting `prctl(PR_SET_PDEATHSIG)`
-//!   (Linux) or a `kqueue NOTE_EXIT` watcher (macOS) inside the
-//!   child's `pre_exec` closure -- but `portable-pty::CommandBuilder`
-//!   does not expose `pre_exec`, and `paneflow-acp::spawn` hides
-//!   the `std::process::Command` behind its own API. Closing that
-//!   gap is a v2 follow-up requiring upstream changes in both crates.
-//!   Today the graceful-shutdown path is covered by `Drop` discipline:
-//!   `AgentTerminalSession::Drop` (US-009) and `SessionRuntime::Drop`
-//!   release master fds and signal child processes when Paneflow exits
-//!   cleanly. The `kill -9` case on Unix still leaks orphan agent
-//!   CLIs and is a documented known limitation.
+//! - **Linux + macOS (partial)**. [`install_process_job`] returns
+//!   [`ParentGuardStatus::Unsupported`] because there is no process-wide
+//!   Unix equivalent to Windows Job Objects in this app layer.
+//!   Shim-wrapped agent CLIs are covered separately: `paneflow-shim`
+//!   installs `prctl(PR_SET_PDEATHSIG)` on Linux and a parent-death
+//!   watcher on macOS before it waits on the real agent binary. The
+//!   remaining gap is unwrapped spawn paths: raw PTY shells, portable-pty
+//!   flows that bypass the shim, and `paneflow-acp::spawn`, where the
+//!   `std::process::Command` is hidden behind another API. Those still
+//!   rely on graceful `Drop` discipline and can leak on Unix `kill -9`
+//!   until the upstream spawn surfaces expose a child pre-exec hook or an
+//!   equivalent parent-death API.
 
 #[cfg(target_os = "windows")]
 mod windows_impl {
@@ -57,6 +57,13 @@ mod windows_impl {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum ParentGuardStatus {
+    Installed,
+    Unsupported,
+}
+
 /// Install the process-wide kill-on-parent-death guard. Call once,
 /// early in `fn main()`, before any agent CLI or PTY is spawned.
 ///
@@ -64,16 +71,17 @@ mod windows_impl {
 /// `CreateJobObject` (rare; restricted container or denied ACL) means
 /// orphan-on-crash is back to "best effort", but Paneflow itself
 /// remains functional. Caller logs the error and proceeds.
-pub fn install_process_job() -> Result<(), Box<dyn std::error::Error>> {
+pub fn install_process_job() -> Result<ParentGuardStatus, Box<dyn std::error::Error>> {
     #[cfg(target_os = "windows")]
     {
-        windows_impl::install()
+        windows_impl::install()?;
+        Ok(ParentGuardStatus::Installed)
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // No-op on Linux + macOS until paneflow-acp and portable-pty
+        // Unsupported on Linux + macOS until paneflow-acp and portable-pty
         // expose a pre_exec hook; see the module-level docstring.
-        Ok(())
+        Ok(ParentGuardStatus::Unsupported)
     }
 }
 
@@ -82,7 +90,7 @@ mod tests {
     use super::*;
 
     /// The call must NOT panic on any OS. On Windows it attempts a
-    /// real Job Object install; everywhere else the no-op shim
+    /// real Job Object install; everywhere else the unsupported shim
     /// short-circuits cleanly. We treat the Windows return value as
     /// best-effort: some hosted CI runners (GitHub Actions Windows,
     /// Azure DevOps) put the test process inside a parent Job Object
@@ -103,12 +111,15 @@ mod tests {
         let _ = install_process_job();
     }
 
-    /// Linux/macOS contract: the call must be a no-op. The behavioural
-    /// assertion is that we did not silently fall through to a panic
-    /// or to a `unimplemented!()`. Returning Ok is the contract.
+    /// Linux/macOS contract: the call must report unsupported explicitly. The
+    /// behavioural assertion is that we did not silently fall through to a panic
+    /// or to a `unimplemented!()`.
     #[cfg(not(target_os = "windows"))]
     #[test]
-    fn unix_install_is_a_documented_no_op() {
-        assert!(install_process_job().is_ok());
+    fn unix_install_is_documented_unsupported() {
+        assert_eq!(
+            install_process_job().unwrap(),
+            ParentGuardStatus::Unsupported
+        );
     }
 }

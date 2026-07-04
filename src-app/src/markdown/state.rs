@@ -15,6 +15,8 @@ use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 
+use crate::limits::MAX_MARKDOWN_STATE_SIZE_BYTES;
+
 /// On-disk schema. Serialized as `markdown_state.json`. New fields must be
 /// `#[serde(default)]` so older files still load.
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,7 +121,30 @@ pub fn load() -> MarkdownState {
     let Some(path) = state_file_path() else {
         return MarkdownState::default();
     };
-    let bytes = match std::fs::read(&path) {
+    load_from_path(&path)
+}
+
+fn load_from_path(path: &Path) -> MarkdownState {
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(_) => return MarkdownState::default(),
+    };
+    if !meta.is_file() {
+        log::warn!(
+            "markdown_state.json: {} is not a regular file; resetting",
+            path.display()
+        );
+        return MarkdownState::default();
+    }
+    if meta.len() > MAX_MARKDOWN_STATE_SIZE_BYTES {
+        log::warn!(
+            "markdown_state.json: {} exceeds {} bytes; resetting",
+            path.display(),
+            MAX_MARKDOWN_STATE_SIZE_BYTES
+        );
+        return MarkdownState::default();
+    }
+    let bytes = match std::fs::read(path) {
         Ok(b) => b,
         Err(_) => return MarkdownState::default(),
     };
@@ -215,5 +240,28 @@ mod tests {
         // without poking the user's cache dir, so test the parser directly.
         let res: Result<MarkdownState, _> = serde_json::from_str("{ malformed");
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn load_rejects_oversized_state_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("markdown_state.json");
+        std::fs::write(
+            &path,
+            vec![b' '; (crate::limits::MAX_MARKDOWN_STATE_SIZE_BYTES + 1) as usize],
+        )
+        .expect("write oversized cache");
+
+        let state = load_from_path(&path);
+        assert!(state.offsets.is_empty());
+        assert_eq!(state.version, 1);
+    }
+
+    #[test]
+    fn load_rejects_non_file_state_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let state = load_from_path(dir.path());
+        assert!(state.offsets.is_empty());
+        assert_eq!(state.version, 1);
     }
 }

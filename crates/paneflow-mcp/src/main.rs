@@ -44,8 +44,9 @@ fn main() -> ExitCode {
     let client = paneflow_ipc_client::IpcClient::new(socket);
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
+    let scope = tools::BridgeScope::from_env();
 
-    match mcp::serve(stdin, stdout, &client) {
+    match mcp::serve(stdin, stdout, &client, scope) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("paneflow-mcp: stdio loop terminated: {e}");

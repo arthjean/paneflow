@@ -27,8 +27,17 @@ pub enum InstallKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatusKind {
     NotDetected,
-    Installed { path: String },
-    Stale { found: String, expected: String },
+    Installed {
+        path: String,
+    },
+    Stale {
+        found: String,
+        expected: String,
+    },
+    NeedsRepair {
+        path: Option<String>,
+        reason: String,
+    },
     NotInstalled,
     Error(String),
 }
@@ -150,15 +159,17 @@ pub(crate) fn status_with(
     bridge: Option<&Path>,
     writers: &[Box<dyn AgentConfigWriter>],
 ) -> Vec<AgentResult<StatusKind>> {
-    let expected = bridge.unwrap_or_else(|| Path::new(""));
     writers
         .iter()
         .map(|w| {
             let kind = if w.presence().is_present() {
-                match w.status(expected) {
+                match w.status(bridge) {
                     Ok(StatusOutcome::Installed { path }) => StatusKind::Installed { path },
                     Ok(StatusOutcome::StalePath { found, expected }) => {
                         StatusKind::Stale { found, expected }
+                    }
+                    Ok(StatusOutcome::NeedsRepair { path, reason }) => {
+                        StatusKind::NeedsRepair { path, reason }
                     }
                     Ok(StatusOutcome::NotInstalled) => StatusKind::NotInstalled,
                     Err(e) => StatusKind::Error(format!("{e:#}")),
@@ -189,7 +200,7 @@ pub fn overall_state(statuses: &[AgentResult<StatusKind>]) -> OverallState {
     }
     if detected
         .iter()
-        .any(|k| matches!(k, StatusKind::Stale { .. }))
+        .any(|k| matches!(k, StatusKind::Stale { .. } | StatusKind::NeedsRepair { .. }))
     {
         return OverallState::NeedsRepair;
     }
@@ -302,6 +313,16 @@ mod tests {
             },
         ];
         assert_eq!(overall_state(&stale), OverallState::NeedsRepair);
+
+        let repair = vec![AgentResult {
+            id: "a".into(),
+            label: "A".into(),
+            kind: StatusKind::NeedsRepair {
+                path: Some("/p".into()),
+                reason: "disabled".into(),
+            },
+        }];
+        assert_eq!(overall_state(&repair), OverallState::NeedsRepair);
 
         // Some not installed → needs install.
         let partial = vec![

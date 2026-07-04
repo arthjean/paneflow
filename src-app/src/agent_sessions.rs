@@ -76,6 +76,7 @@ impl SessionAgent {
 }
 
 pub(crate) const SESSION_AGENT_COUNT: usize = SessionAgent::ALL.len();
+pub(crate) const MAX_SESSION_ID_CHARS: usize = 128;
 
 /// EP-004 US-016: token usage aggregated across a session's assistant turns.
 /// Additive on [`SessionMeta`]; `None` when the agent records no usage
@@ -115,20 +116,16 @@ impl AssistantUsage {
 
 /// US-017 (audit P2-5): module-level mtime-keyed cache for the
 /// session readers. The popover scan currently re-walks the on-disk
-/// JSONL store on every workspace switch -- a 100-session project
+/// JSONL store on every workspace switch, so a 100-session project
 /// pays the parse cost each time. The cache stores the last
-/// successful scan keyed by `(agent, cwd)` plus the directory mtime
-/// observed at scan time. A subsequent scan with an unchanged mtime
-/// returns the cached vector directly.
+/// successful scan keyed by `(agent, cwd)` plus a caller-supplied
+/// filesystem fingerprint observed at scan time. A subsequent scan
+/// with an unchanged fingerprint returns the cached vector directly.
 ///
-/// Only the Claude reader uses this in v1 because its on-disk layout
-/// (`~/.claude/projects/<slug>/*.jsonl`) is flat -- adding or
-/// removing a session file changes the parent directory mtime
-/// reliably. Codex stores sessions under a `YYYY/MM/DD/` partitioned
-/// tree where the root mtime does NOT reflect leaf-file changes;
-/// caching Codex correctly needs per-leaf-dir mtimes (deferred).
-/// OpenCode runs an external CLI (`opencode session list`) and
-/// cannot be invalidated via filesystem mtime at all.
+/// Readers with simple directory contracts can use `lookup` /
+/// `store_result` directly. Readers whose root directory mtime does
+/// not reflect leaf-file appends should compute a stronger snapshot
+/// and call `lookup_with_mtime` / `store_result_with_mtime`.
 pub mod cache {
     use std::collections::HashMap;
     use std::path::Path;
@@ -185,6 +182,7 @@ pub mod cache {
     /// not exist or its metadata is unreadable. Both cases skip the
     /// cache (caller falls through to the scan and does not store the
     /// result).
+    #[allow(dead_code)]
     fn dir_mtime(dir: &Path) -> Option<SystemTime> {
         std::fs::metadata(dir).ok().and_then(|m| m.modified().ok())
     }
@@ -205,12 +203,25 @@ pub mod cache {
     /// only when the dir's mtime is within `MTIME_FUZZ` of the cached
     /// snapshot's mtime -- catches real writes (seconds apart) without
     /// spurious invalidation on filesystem-internal jitter.
+    #[allow(dead_code)]
     pub fn lookup(
         agent: SessionAgent,
         cwd: &str,
         project_dir: &Path,
     ) -> Option<(Vec<SessionMeta>, usize)> {
         let observed = dir_mtime(project_dir)?;
+        lookup_with_mtime(agent, cwd, observed)
+    }
+
+    /// Try to read a fresh session snapshot from the cache using a
+    /// reader-computed fingerprint. Use this when the parent
+    /// directory mtime is not sufficient, for example JSONL appends
+    /// inside an existing leaf file.
+    pub fn lookup_with_mtime(
+        agent: SessionAgent,
+        cwd: &str,
+        observed: SystemTime,
+    ) -> Option<(Vec<SessionMeta>, usize)> {
         let mut guard = match store().lock() {
             Ok(g) => g,
             // US-008 (cli-hardening-followup-2026-Q3): a poisoned
@@ -246,6 +257,7 @@ pub mod cache {
     /// pre-scan mtime read and the post-scan write -- using the
     /// post-scan mtime means a follow-up write also invalidates the
     /// entry.
+    #[allow(dead_code)]
     pub fn store_result(
         agent: SessionAgent,
         cwd: &str,
@@ -256,6 +268,20 @@ pub mod cache {
         let Some(mtime) = dir_mtime(project_dir) else {
             return;
         };
+        store_result_with_mtime(agent, cwd, mtime, sessions, omitted);
+    }
+
+    /// Store a fresh scan using a reader-computed filesystem
+    /// fingerprint. The caller should capture this after the scan so
+    /// a concurrent write that lands during parsing invalidates the
+    /// next lookup.
+    pub fn store_result_with_mtime(
+        agent: SessionAgent,
+        cwd: &str,
+        mtime: SystemTime,
+        sessions: &[SessionMeta],
+        omitted: usize,
+    ) {
         let mut guard = match store().lock() {
             Ok(g) => g,
             // US-008 (cli-hardening-followup-2026-Q3): log poison
@@ -483,6 +509,37 @@ pub mod cache {
             );
             super::clear();
         }
+
+        #[test]
+        fn lookup_with_mtime_invalidates_on_leaf_file_advance() {
+            use super::super::{SessionAgent, SessionMeta};
+
+            let _serial = serial();
+            super::clear();
+            let cached = SystemTime::UNIX_EPOCH + Duration::from_secs(10);
+            let advanced = cached + Duration::from_secs(1);
+            let sessions = vec![SessionMeta {
+                agent: SessionAgent::Claude,
+                session_id: "s1".into(),
+                timestamp: "2026-07-03T10:00:00Z".into(),
+                cwd: "/repo".into(),
+                git_branch: "main".into(),
+                summary: Some("old".into()),
+                model: None,
+                usage: None,
+            }];
+
+            super::store_result_with_mtime(SessionAgent::Claude, "/repo", cached, &sessions, 0);
+            assert!(
+                super::lookup_with_mtime(SessionAgent::Claude, "/repo", cached).is_some(),
+                "same fingerprint should hit"
+            );
+            assert!(
+                super::lookup_with_mtime(SessionAgent::Claude, "/repo", advanced).is_none(),
+                "advanced leaf-file fingerprint should invalidate"
+            );
+            super::clear();
+        }
     }
 }
 
@@ -538,6 +595,24 @@ pub(crate) const SIDEBAR_SESSION_RETAINED_PER_SOURCE: usize = 100;
 /// Ranking happens first, then this cap keeps the most relevant matches.
 pub(crate) const DIFF_ATTRIBUTION_MATCH_CAP: usize = 50;
 
+pub(crate) fn clean_session_label(raw: &str, max_chars: usize) -> Option<String> {
+    let filtered: String = raw
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let collapsed = filtered.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return None;
+    }
+
+    let mut chars = collapsed.chars();
+    let mut label: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        label.push('…');
+    }
+    Some(label)
+}
+
 /// Strict allow-list guard for a session id before it is interpolated into a
 /// resume command (`claude --resume <id>`, `codex resume <id>`,
 /// `opencode --session <id>`, etc.) and sent to the user's PTY.
@@ -561,9 +636,30 @@ pub(crate) const DIFF_ATTRIBUTION_MATCH_CAP: usize = 50;
 /// never lead with `-` (UUIDs start hex, OpenCode with `ses_`), so the
 /// constraint has zero false-positive cost.
 pub(crate) fn is_valid_session_id(id: &str) -> bool {
+    if id.is_empty() || id.len() > MAX_SESSION_ID_CHARS {
+        return false;
+    }
     let mut chars = id.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphanumeric() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn trim_trailing_path_separators(path: &str) -> &str {
+    let mut end = path.len();
+    while end > 0 {
+        let current = &path[..end];
+        let Some(ch) = current.chars().next_back() else {
+            break;
+        };
+        if ch != '/' && ch != '\\' {
+            break;
+        }
+        if end <= 1 || (end == 3 && path.as_bytes().get(1) == Some(&b':')) {
+            break;
+        }
+        end -= ch.len_utf8();
+    }
+    &path[..end]
 }
 
 /// Compare a session's recorded working directory against the directory the
@@ -585,13 +681,15 @@ pub(crate) fn cwd_matches(recorded: &str, scanned: &str) -> bool {
         // ASCII dir names that dominate); both sides fold identically so the
         // comparison stays symmetric.
         fn normalize(path: &str) -> String {
-            path.replace('/', "\\").to_ascii_lowercase()
+            trim_trailing_path_separators(path)
+                .replace('/', "\\")
+                .to_ascii_lowercase()
         }
         normalize(recorded) == normalize(scanned)
     }
     #[cfg(not(windows))]
     {
-        recorded == scanned
+        trim_trailing_path_separators(recorded) == trim_trailing_path_separators(scanned)
     }
 }
 
@@ -1023,6 +1121,7 @@ mod tests {
         assert!(is_valid_session_id("019dc9ea-38d7-7372-9cc4-253ce944d41b"));
         assert!(is_valid_session_id("ses_1f80d49aeffeaKV4Lq4mc0c3cu"));
         assert!(is_valid_session_id("s"));
+        assert!(is_valid_session_id(&"a".repeat(MAX_SESSION_ID_CHARS)));
     }
 
     #[test]
@@ -1037,6 +1136,7 @@ mod tests {
         assert!(!is_valid_session_id("`id`"));
         // Control chars (the case the old guard already covered) stay rejected.
         assert!(!is_valid_session_id("abc\r\nrm -rf ~"));
+        assert!(!is_valid_session_id(&"a".repeat(MAX_SESSION_ID_CHARS + 1)));
     }
 
     #[test]
@@ -1053,6 +1153,29 @@ mod tests {
         assert!(is_valid_session_id("a-b-c"));
         // A leading underscore stays valid (no flag confusion).
         assert!(is_valid_session_id("_internal"));
+    }
+
+    #[test]
+    fn clean_session_label_collapses_controls_and_caps_chars() {
+        assert_eq!(
+            clean_session_label("  hello\n\tworld\u{1b}  ", 20).as_deref(),
+            Some("hello world")
+        );
+        assert_eq!(clean_session_label("abcdef", 3).as_deref(), Some("abc…"));
+        assert_eq!(clean_session_label("\n\t", 10), None);
+    }
+
+    #[test]
+    fn cwd_matches_ignores_trailing_separators() {
+        assert!(cwd_matches("/repo/", "/repo"));
+        assert!(cwd_matches("/", "/"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cwd_matches_normalizes_windows_case_and_separators() {
+        assert!(cwd_matches("C:/Dev/Paneflow/", "c:\\dev\\paneflow"));
+        assert!(cwd_matches("C:\\", "c:/"));
     }
 
     #[test]

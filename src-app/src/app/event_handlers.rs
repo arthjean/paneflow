@@ -1282,7 +1282,10 @@ impl PaneFlowApp {
                     .flat_map(|pane| {
                         pane.read(cx)
                             .terminals()
-                            .map(|tv| (tv.entity_id().as_u64(), tv.read(cx).terminal.child_pid))
+                            .filter_map(|tv| {
+                                let child_pid = tv.read(cx).terminal.child_pid;
+                                (child_pid > 0).then_some((tv.entity_id().as_u64(), child_pid))
+                            })
                             .collect::<Vec<_>>()
                     })
                     .collect()
