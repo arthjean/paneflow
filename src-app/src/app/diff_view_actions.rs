@@ -118,6 +118,7 @@ impl PaneFlowApp {
         self.mode = AppMode::Diff;
         // `rebuild_diff_view` mounts the entity and calls `cx.notify()`.
         self.rebuild_diff_view(cx);
+        self.save_session(cx);
     }
 
     /// (Re)point the mounted diff host to the active workspace's `repo_root` and
@@ -506,6 +507,7 @@ impl PaneFlowApp {
         if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
             ws.focus_first(window, cx);
         }
+        self.save_session(cx);
         cx.notify();
     }
 

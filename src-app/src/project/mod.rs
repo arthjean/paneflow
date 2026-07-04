@@ -31,7 +31,7 @@
 //! richer enums and conversion helpers.
 
 use paneflow_acp::AgentKind;
-use paneflow_config::schema::{ProjectSession, ThreadSession};
+use paneflow_config::schema::{AgentsTargetSession, ProjectSession, ThreadSession};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Monotonic project ID counter -- one per process. Mirrors
@@ -125,6 +125,62 @@ pub enum AgentsTarget {
     },
     /// A free chat inside `chats[chat_idx]` (anchored on the home dir).
     Chat { chat_idx: usize },
+}
+
+/// Convert a runtime Agents target to the stable persisted target.
+pub fn agents_target_to_session(
+    target: Option<AgentsTarget>,
+    projects: &[Project],
+    chats: &[Thread],
+) -> Option<AgentsTargetSession> {
+    match target? {
+        AgentsTarget::Thread {
+            project_idx,
+            thread_idx,
+        } => {
+            let project = projects.get(project_idx)?;
+            let thread = project.threads.get(thread_idx)?;
+            Some(AgentsTargetSession::Thread {
+                project_id: project.id,
+                thread_id: thread.id,
+            })
+        }
+        AgentsTarget::Chat { chat_idx } => {
+            chats.get(chat_idx).map(|thread| AgentsTargetSession::Chat {
+                thread_id: thread.id,
+            })
+        }
+    }
+}
+
+/// Convert a stable persisted target back to runtime indices.
+pub fn agents_target_from_session(
+    target: &AgentsTargetSession,
+    projects: &[Project],
+    chats: &[Thread],
+) -> Option<AgentsTarget> {
+    match *target {
+        AgentsTargetSession::Thread {
+            project_id,
+            thread_id,
+        } => {
+            let project_idx = projects
+                .iter()
+                .position(|project| project.id == project_id)?;
+            let thread_idx = projects[project_idx]
+                .threads
+                .iter()
+                .position(|thread| thread.id == thread_id)?;
+            Some(AgentsTarget::Thread {
+                project_idx,
+                thread_idx,
+            })
+        }
+        AgentsTargetSession::Chat { thread_id } => {
+            let chat_idx = chats.iter().position(|thread| thread.id == thread_id)?;
+            Some(AgentsTarget::Chat { chat_idx })
+        }
+    }
 }
 
 /// What a newly-launched agent is created into when no target is selected
@@ -761,6 +817,72 @@ mod tests {
         assert_eq!(restored.threads[1].agent, AgentKind::Codex);
         // Status always restores Idle regardless of pre-save value.
         assert_eq!(restored.threads[0].status, ThreadStatus::Idle);
+    }
+
+    #[test]
+    fn agents_target_round_trips_by_stable_ids() {
+        let mut first = Project::new("First", "/tmp/first");
+        first.id = 10;
+        let mut first_thread = Thread::new("First thread", AgentKind::ClaudeCode, &first.cwd);
+        first_thread.id = 100;
+        first.threads.push(first_thread);
+
+        let mut second = Project::new("Second", "/tmp/second");
+        second.id = 20;
+        let mut second_thread = Thread::new("Second thread", AgentKind::Codex, &second.cwd);
+        second_thread.id = 200;
+        second.threads.push(second_thread);
+
+        let saved = agents_target_to_session(
+            Some(AgentsTarget::Thread {
+                project_idx: 1,
+                thread_idx: 0,
+            }),
+            &[first.clone(), second.clone()],
+            &[],
+        )
+        .expect("target persists");
+
+        let restored = agents_target_from_session(&saved, &[second, first], &[])
+            .expect("target remaps after reorder");
+
+        assert_eq!(
+            restored,
+            AgentsTarget::Thread {
+                project_idx: 0,
+                thread_idx: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn agents_chat_target_round_trips_by_stable_id() {
+        let mut first = Thread::new_terminal("First chat", "/tmp", None);
+        first.id = 1;
+        let mut second = Thread::new_terminal("Second chat", "/tmp", None);
+        second.id = 2;
+
+        let saved = agents_target_to_session(
+            Some(AgentsTarget::Chat { chat_idx: 1 }),
+            &[],
+            &[first.clone(), second.clone()],
+        )
+        .expect("chat target persists");
+
+        let restored = agents_target_from_session(&saved, &[], &[second, first])
+            .expect("chat target remaps after reorder");
+
+        assert_eq!(restored, AgentsTarget::Chat { chat_idx: 0 });
+    }
+
+    #[test]
+    fn missing_agents_target_id_restores_to_none() {
+        let target = AgentsTargetSession::Thread {
+            project_id: 1,
+            thread_id: 404,
+        };
+
+        assert_eq!(agents_target_from_session(&target, &[], &[]), None);
     }
 
     #[test]

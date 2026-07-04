@@ -514,6 +514,17 @@ fn validate_node(node: &mut LayoutNode, leaf_budget: &mut usize) {
                 warn!("pane has no surfaces; adding a default surface");
                 surfaces.push(Default::default());
             }
+            let mut focus_seen = false;
+            for surface in surfaces.iter_mut() {
+                if surface.focus == Some(true) {
+                    if focus_seen {
+                        warn!("pane has multiple focused surfaces; dropping extra focus flag");
+                        surface.focus = None;
+                    } else {
+                        focus_seen = true;
+                    }
+                }
+            }
             *leaf_budget = leaf_budget.saturating_sub(1);
         }
     }
@@ -1360,6 +1371,7 @@ mod tests {
             projects: Vec::new(),
             active_project: 0,
             chats: Vec::new(),
+            agents_target: None,
             mode: AppMode::default(),
             diff_scope: None,
         };
@@ -1406,6 +1418,7 @@ mod tests {
             projects: Vec::new(),
             active_project: 0,
             chats: Vec::new(),
+            agents_target: None,
             mode: AppMode::default(),
             diff_scope: None,
         };
@@ -1454,6 +1467,7 @@ mod tests {
             projects: Vec::new(),
             active_project: 0,
             chats: Vec::new(),
+            agents_target: None,
             mode: AppMode::default(),
             diff_scope: None,
         };
@@ -1490,6 +1504,7 @@ mod tests {
             projects: Vec::new(),
             active_project: 0,
             chats: Vec::new(),
+            agents_target: None,
             mode: AppMode::default(),
             diff_scope: None,
         };
@@ -1941,6 +1956,7 @@ mod tests {
             }],
             active_project: 0,
             chats: Vec::new(),
+            agents_target: None,
             mode: AppMode::Agents,
             diff_scope: None,
         };
@@ -1998,6 +2014,7 @@ mod tests {
                 session_id: None,
                 title_user_set: false,
             }],
+            agents_target: None,
             mode: AppMode::Agents,
             diff_scope: None,
         };
@@ -2246,6 +2263,34 @@ mod tests {
         validate_layout(&mut node);
         match node {
             LayoutNode::Pane { surfaces, .. } => assert!(surfaces.len() <= MAX_PANE_SURFACES),
+            _ => panic!("expected pane"),
+        }
+    }
+
+    #[test]
+    fn validate_layout_keeps_only_first_surface_focus() {
+        let focused_surface = SurfaceDefinition {
+            focus: Some(true),
+            ..Default::default()
+        };
+        let mut node = LayoutNode::Pane {
+            surfaces: vec![
+                Default::default(),
+                focused_surface.clone(),
+                focused_surface.clone(),
+                Default::default(),
+            ],
+        };
+
+        validate_layout(&mut node);
+
+        match node {
+            LayoutNode::Pane { surfaces, .. } => {
+                assert_eq!(surfaces[0].focus, None);
+                assert_eq!(surfaces[1].focus, Some(true));
+                assert_eq!(surfaces[2].focus, None);
+                assert_eq!(surfaces[3].focus, None);
+            }
             _ => panic!("expected pane"),
         }
     }

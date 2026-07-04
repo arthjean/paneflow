@@ -2449,8 +2449,8 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
     crate::agents::notifications::set_window_active(window.is_window_active());
 
     view.update(cx, |app, cx| {
-        if !app.workspaces.is_empty() {
-            app.workspaces[0].focus_first(window, cx);
+        if let Some(ws) = app.workspaces.get(app.active_idx) {
+            ws.focus_first(window, cx);
         }
     });
     view

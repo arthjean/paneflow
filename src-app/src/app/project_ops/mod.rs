@@ -306,6 +306,7 @@ impl PaneFlowApp {
         // Selecting a row cancels any armed inline delete-confirm.
         self.agents_view.agents_delete_armed = None;
         self.spawn_agents_environment_git_refresh(cwd, cx);
+        self.save_session(cx);
         cx.notify();
         Ok(())
     }
@@ -330,6 +331,7 @@ impl PaneFlowApp {
         // Selecting a row cancels any armed inline delete-confirm.
         self.agents_view.agents_delete_armed = None;
         self.spawn_agents_environment_git_refresh(cwd, cx);
+        self.save_session(cx);
         cx.notify();
         Ok(())
     }

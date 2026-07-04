@@ -1216,6 +1216,21 @@ pub enum AppMode {
     Agents,
 }
 
+/// Stable selection target for the Agents view center surface.
+///
+/// The runtime target uses vector indices because the UI mutates those
+/// collections directly. The persisted shape stores stable IDs instead so a
+/// session restore after project/thread capping or reordering never points at
+/// the wrong row.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentsTargetSession {
+    /// A thread inside the project with `project_id`.
+    Thread { project_id: u64, thread_id: u64 },
+    /// A free chat thread.
+    Chat { thread_id: u64 },
+}
+
 /// Persisted session state written to `~/.cache/paneflow/session.json`.
 ///
 /// Backward-compat note: the three Agents-view fields (`projects`,
@@ -1248,6 +1263,11 @@ pub struct SessionState {
     /// the project serialization.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chats: Vec<ThreadSession>,
+    /// Last selected Agents-view center target. Stored by stable IDs rather
+    /// than indices so restore can remap through capped/filtered project and
+    /// chat lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agents_target: Option<AgentsTargetSession>,
     /// Last UI mode the user was in. The bootstrap reads this to
     /// reopen the Agents view if it was active at quit time (US-009).
     #[serde(default)]

@@ -141,6 +141,7 @@ impl PaneFlowApp {
         // US-116: panel is now front-and-center; the gate combines
         // this with window-active to decide notification firing.
         crate::agents::notifications::set_agents_panel_visible(true);
+        self.save_session(cx);
         cx.notify();
     }
 
@@ -157,6 +158,7 @@ impl PaneFlowApp {
         if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
             ws.focus_first(window, cx);
         }
+        self.save_session(cx);
         cx.notify();
     }
 

@@ -21,6 +21,21 @@ use crate::workspace::{Workspace, next_workspace_id};
 use crate::{PaneFlowApp, ipc, keybindings, update};
 
 impl PaneFlowApp {
+    fn default_workspace(cx: &mut Context<Self>) -> Workspace {
+        let ws_id = next_workspace_id();
+        let cwd = launch_cwd::implicit_launch_cwd();
+        let terminal_cwd = cwd.clone();
+        let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(terminal_cwd), None, cx));
+        cx.subscribe(&terminal, Self::handle_terminal_event)
+            .detach();
+        let pane = cx.new(|cx| Pane::new(terminal, ws_id, cx));
+        cx.subscribe(&pane, Self::handle_pane_event).detach();
+        let dir_name = launch_cwd::title_for_cwd_or(&cwd, "Terminal 1");
+        let ws = Workspace::with_cwd_and_id(ws_id, dir_name, cwd, pane);
+        Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
+        ws
+    }
+
     pub(crate) fn spawn_telemetry_flusher(
         telemetry: std::sync::Arc<telemetry::client::TelemetryClient>,
         cx: &mut Context<Self>,
@@ -211,19 +226,32 @@ impl PaneFlowApp {
         // US-002: chats share the `next_thread_id` counter, so they MUST
         // be folded into the bump or the next chat ID collides.
         crate::project::bump_id_counters_to(&restored_projects, &restored_chats);
-        let restored_active_project = saved_session
+        let restored_agents_target = saved_session
             .as_ref()
-            .map(|s| {
-                // Clamp to a valid index: a session.json hand-edit (or
-                // a future migration that drops projects) shouldn't
-                // leave `active_project_idx` pointing past the end.
-                if restored_projects.is_empty() {
-                    0
-                } else {
-                    s.active_project.min(restored_projects.len() - 1)
-                }
-            })
-            .unwrap_or(0);
+            .and_then(|s| s.agents_target.as_ref())
+            .and_then(|target| {
+                crate::project::agents_target_from_session(
+                    target,
+                    &restored_projects,
+                    &restored_chats,
+                )
+            });
+        let restored_active_project = match restored_agents_target {
+            Some(crate::project::AgentsTarget::Thread { project_idx, .. }) => project_idx,
+            _ => saved_session
+                .as_ref()
+                .map(|s| {
+                    // Clamp to a valid index: a session.json hand-edit (or
+                    // a future migration that drops projects) shouldn't
+                    // leave `active_project_idx` pointing past the end.
+                    if restored_projects.is_empty() {
+                        0
+                    } else {
+                        s.active_project.min(restored_projects.len() - 1)
+                    }
+                })
+                .unwrap_or(0),
+        };
 
         let (workspaces, active_idx) = match saved_session {
             Some(session) => {
@@ -233,24 +261,17 @@ impl PaneFlowApp {
                     session.projects.len(),
                     session.mode
                 );
-                Self::restore_workspaces(&session, cx)
+                let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
+                if workspaces.is_empty() {
+                    log::warn!(
+                        "session restore: session contained no restorable workspaces; creating default workspace"
+                    );
+                    (vec![Self::default_workspace(cx)], 0)
+                } else {
+                    (workspaces, active_idx)
+                }
             }
-            None => {
-                let ws_id = next_workspace_id();
-                let cwd = launch_cwd::implicit_launch_cwd();
-                let terminal_cwd = cwd.clone();
-                let terminal =
-                    cx.new(|cx| TerminalView::with_cwd(ws_id, Some(terminal_cwd), None, cx));
-                cx.subscribe(&terminal, Self::handle_terminal_event)
-                    .detach();
-                let pane = cx.new(|cx| Pane::new(terminal, ws_id, cx));
-                cx.subscribe(&pane, Self::handle_pane_event).detach();
-                let dir_name = launch_cwd::title_for_cwd_or(&cwd, "Terminal 1");
-                let ws = Workspace::with_cwd_and_id(ws_id, dir_name, cwd, pane);
-                // US-013: deferred git-stats probe off the render thread.
-                Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-                (vec![ws], 0)
-            }
+            None => (vec![Self::default_workspace(cx)], 0),
         };
 
         // Setup notify file watcher for .git directories
@@ -1005,9 +1026,9 @@ impl PaneFlowApp {
             // US-002: free chats restored from session (empty pre-refonte).
             chats: restored_chats,
             active_project_idx: restored_active_project,
-            // US-003: start at the picker/home state - no thread/chat
-            // selected. The unified target replaces the old `active_thread_idx`.
-            agents_target: None,
+            // US-003: restore the selected thread/chat when its stable ID still
+            // exists after capping/filtering; otherwise start at picker/home.
+            agents_target: restored_agents_target,
             // US-005: default picker context is the active project.
             agents_picker_context: crate::project::AgentsPickerContext::Project,
             // US-011: rename / context-menu / confirm-delete state.

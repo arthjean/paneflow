@@ -36,6 +36,7 @@ const SAVE_DEBOUNCE_MS: u64 = 150;
 
 static SESSION_WRITE_LOCK: Mutex<()> = Mutex::new(());
 static SESSION_TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+static SESSION_CORRUPTION_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn session_write_guard() -> MutexGuard<'static, ()> {
     SESSION_WRITE_LOCK
@@ -54,9 +55,9 @@ fn session_write_guard() -> MutexGuard<'static, ()> {
 /// up.
 #[derive(Debug, Clone)]
 pub(crate) struct SessionCorruptionInfo {
-    /// Canonical `serde_json::Error::classify()` bucket
-    /// (`io | syntax | data | eof`). Plain string keeps the telemetry
-    /// schema fixed even if serde widens its `Category` enum.
+    /// Canonical `serde_json::Error::classify()` bucket (`io | syntax | data
+    /// | eof`) or a guarded-load bucket such as `oversize`, `non_regular`, or
+    /// `unsupported_version`. Plain string keeps the telemetry schema fixed.
     pub(crate) error_category: &'static str,
     /// Size in bytes of the corrupted file, or `0` if the metadata
     /// call itself failed (rare - file just got read successfully).
@@ -134,6 +135,11 @@ impl PaneFlowApp {
                 .iter()
                 .map(crate::project::thread_to_session)
                 .collect(),
+            agents_target: crate::project::agents_target_to_session(
+                self.agents_target,
+                &self.projects,
+                &self.chats,
+            ),
             // US-008 (prd-agents-view.md): persist the live UI mode
             // so US-009's restore branch can reopen Paneflow in the
             // same screen the user left.
@@ -231,9 +237,11 @@ impl PaneFlowApp {
     /// | State on disk           | Returned session  | Corruption info | Backup written |
     /// |-------------------------|-------------------|-----------------|----------------|
     /// | File missing            | `None`            | `None`          | no             |
-    /// | Read error (perms, IO)  | `None`            | `None`          | no             |
+    /// | Read error (perms, IO)  | `None`            | `Some(info)`    | no             |
+    /// | Non-regular / oversize | `None`            | `Some(info)`    | no             |
     /// | Read OK + parse OK      | `Some(state)`     | `None`          | no             |
     /// | Read OK + parse FAIL    | `None` (fallback) | `Some(info)`    | yes            |
+    /// | Unsupported version     | `None` (fallback) | `Some(info)`    | yes            |
     ///
     /// On parse failure the bad file is preserved as
     /// `session.json.corrupted-<unix-timestamp>` *before* the next
@@ -269,16 +277,19 @@ impl PaneFlowApp {
     ) {
         // U-008/U-016: bound the read so a multi-hundred-MB hand-edited /
         // agent-written session.json (or a non-regular file swapped in) can't
-        // OOM/stall the load before parse. On any guard hit we start from an
-        // empty session - identical fallback to a missing file.
+        // OOM/stall the load before parse. Guard hits start from an empty
+        // session, but still surface forensic context to telemetry.
         let bytes = match read_session_capped(path) {
-            Ok(Some(d)) => d,
-            Ok(None) => return (None, None),
+            Ok(SessionRead::Data(d)) => d,
+            Ok(SessionRead::Missing) => return (None, None),
+            Ok(SessionRead::Rejected(category)) => {
+                return (None, Some(session_corruption_info(path, category, None)));
+            }
             Err(e) => {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("session load: read failed at {}: {e}", path.display());
                 }
-                return (None, None);
+                return (None, Some(session_corruption_info(path, "io", None)));
             }
         };
 
@@ -290,13 +301,6 @@ impl PaneFlowApp {
                     path.display()
                 );
                 let bytes = err.into_bytes();
-                let metadata = std::fs::metadata(path).ok();
-                let file_size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                let file_age_seconds = metadata
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|mt| SystemTime::now().duration_since(mt).ok())
-                    .map(|d| d.as_secs());
                 let backup_path = write_corruption_backup(path, &bytes).unwrap_or_else(|e| {
                     log::warn!(
                         "session load: backup write failed at {}: {e}",
@@ -307,32 +311,45 @@ impl PaneFlowApp {
 
                 return (
                     None,
-                    Some(SessionCorruptionInfo {
-                        error_category: "data",
-                        file_size,
-                        file_age_seconds,
-                        backup_path,
-                    }),
+                    Some(session_corruption_info(path, "data", backup_path)),
                 );
             }
         };
 
         match serde_json::from_str::<paneflow_config::schema::SessionState>(&data) {
-            Ok(state) => (Some(state), None),
+            Ok(state) if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION => {
+                (Some(state), None)
+            }
+            Ok(state) => {
+                log::warn!(
+                    "session load: unsupported schema version {} at {} (expected {}); falling back to empty session",
+                    state.version,
+                    path.display(),
+                    paneflow_config::schema::SESSION_SCHEMA_VERSION
+                );
+                let backup_path =
+                    write_corruption_backup(path, data.as_bytes()).unwrap_or_else(|e| {
+                        log::warn!(
+                            "session load: backup write failed at {}: {e}",
+                            path.display()
+                        );
+                        None
+                    });
+                (
+                    None,
+                    Some(session_corruption_info(
+                        path,
+                        "unsupported_version",
+                        backup_path,
+                    )),
+                )
+            }
             Err(parse_err) => {
                 log::warn!(
                     "session load: parse failed at {} ({}); falling back to empty session",
                     path.display(),
                     parse_err
                 );
-
-                let metadata = std::fs::metadata(path).ok();
-                let file_size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                let file_age_seconds = metadata
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|mt| SystemTime::now().duration_since(mt).ok())
-                    .map(|d| d.as_secs());
 
                 let backup_path =
                     write_corruption_backup(path, data.as_bytes()).unwrap_or_else(|e| {
@@ -349,12 +366,11 @@ impl PaneFlowApp {
 
                 (
                     None,
-                    Some(SessionCorruptionInfo {
-                        error_category: serde_category_tag(&parse_err),
-                        file_size,
-                        file_age_seconds,
+                    Some(session_corruption_info(
+                        path,
+                        serde_category_tag(&parse_err),
                         backup_path,
-                    }),
+                    )),
                 )
             }
         }
@@ -367,8 +383,6 @@ impl PaneFlowApp {
         session: &paneflow_config::schema::SessionState,
         cx: &mut Context<Self>,
     ) -> (Vec<Workspace>, usize) {
-        use std::path::PathBuf;
-
         let mut workspaces = Vec::new();
 
         // U-016: cap restored workspaces. Each layout's pane count is bounded by
@@ -382,7 +396,7 @@ impl PaneFlowApp {
             );
         }
         for ws_session in session.workspaces.iter().take(MAX_WORKSPACES) {
-            let mut cwd = PathBuf::from(&ws_session.cwd);
+            let mut cwd = restored_workspace_cwd(&ws_session.cwd);
             let mut title = ws_session.title.clone();
             if should_repair_restored_root_terminal(&title, &cwd) {
                 let repaired_cwd = launch_cwd::implicit_launch_cwd();
@@ -515,11 +529,7 @@ impl PaneFlowApp {
                         }
                         return Some(crate::pane::TabContent::Markdown(markdown));
                     }
-                    let cwd = surface
-                        .cwd
-                        .as_ref()
-                        .map(PathBuf::from)
-                        .unwrap_or_else(|| fallback_cwd.to_path_buf());
+                    let cwd = resolved_surface_cwd(surface.cwd.as_deref(), fallback_cwd);
 
                     // US-014: forward the per-surface env override; the global
                     // `terminal.env` default is merged underneath in
@@ -604,22 +614,31 @@ impl PaneFlowApp {
 // EP-003 ingress-bound helpers (free functions, free of `&self`)
 // ---------------------------------------------------------------------------
 
-/// Read `path` into a `String`, bounded at [`MAX_SESSION_SIZE_BYTES`] and
-/// rejecting non-regular files (U-008/U-016). Returns `Ok(None)` when the file
-/// should be treated as "start empty" (non-regular, or over the cap) - distinct
-/// from an IO error (`Err`). Stats the OPEN fd, not the path, and caps the read
-/// with `take`, so a swap/grow between stat and read cannot defeat the bound
-/// (the FIFO/device + TOCTOU class, mirroring `read_config_string`).
-fn read_session_capped(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
+#[derive(Debug, PartialEq, Eq)]
+enum SessionRead {
+    Data(Vec<u8>),
+    Missing,
+    Rejected(&'static str),
+}
+
+/// Read `path`, bounded at [`MAX_SESSION_SIZE_BYTES`] and rejecting
+/// non-regular files (U-008/U-016). Stats the OPEN fd, not the path, and caps
+/// the read with `take`, so a swap/grow between stat and read cannot defeat the
+/// bound (the FIFO/device + TOCTOU class, mirroring `read_config_string`).
+fn read_session_capped(path: &Path) -> std::io::Result<SessionRead> {
     use std::io::Read;
-    let file = std::fs::File::open(path)?;
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(SessionRead::Missing),
+        Err(e) => return Err(e),
+    };
     let meta = file.metadata()?;
     if !meta.is_file() {
         log::warn!(
             "session load: {} is not a regular file; starting empty",
             path.display()
         );
-        return Ok(None);
+        return Ok(SessionRead::Rejected("non_regular"));
     }
     if meta.len() > MAX_SESSION_SIZE_BYTES {
         log::warn!(
@@ -627,7 +646,7 @@ fn read_session_capped(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
             path.display(),
             meta.len()
         );
-        return Ok(None);
+        return Ok(SessionRead::Rejected("oversize"));
     }
     let mut data = Vec::new();
     // +1 so a file grown past the cap between stat and read is still caught.
@@ -638,9 +657,60 @@ fn read_session_capped(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
             "session load: {} exceeded the {MAX_SESSION_SIZE_BYTES} cap during read; starting empty",
             path.display()
         );
-        return Ok(None);
+        return Ok(SessionRead::Rejected("oversize"));
     }
-    Ok(Some(data))
+    Ok(SessionRead::Data(data))
+}
+
+fn session_corruption_info(
+    path: &Path,
+    error_category: &'static str,
+    backup_path: Option<PathBuf>,
+) -> SessionCorruptionInfo {
+    let metadata = std::fs::metadata(path).ok();
+    let file_size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+    let file_age_seconds = metadata
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|mt| SystemTime::now().duration_since(mt).ok())
+        .map(|d| d.as_secs());
+
+    SessionCorruptionInfo {
+        error_category,
+        file_size,
+        file_age_seconds,
+        backup_path,
+    }
+}
+
+fn restored_workspace_cwd(raw: &str) -> PathBuf {
+    let path = PathBuf::from(raw);
+    if path.is_dir() {
+        return path;
+    }
+    let fallback = launch_cwd::implicit_launch_cwd();
+    log::warn!(
+        "session restore: workspace cwd {} is not a directory; falling back to {}",
+        path.display(),
+        fallback.display()
+    );
+    fallback
+}
+
+fn resolved_surface_cwd(raw: Option<&str>, fallback_cwd: &Path) -> PathBuf {
+    let Some(raw) = raw else {
+        return fallback_cwd.to_path_buf();
+    };
+    let path = PathBuf::from(raw);
+    if path.is_dir() {
+        return path;
+    }
+    log::warn!(
+        "session restore: surface cwd {} is not a directory; falling back to {}",
+        path.display(),
+        fallback_cwd.display()
+    );
+    fallback_cwd.to_path_buf()
 }
 
 /// Validate a persisted layout and enforce the hard `MAX_PANES` ceiling
@@ -824,14 +894,18 @@ fn write_corruption_backup(
     std::fs::create_dir_all(parent)?;
 
     let ts = match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(d) => d.as_secs(),
+        Ok(d) => d.as_nanos(),
         Err(_) => return Ok(None),
     };
+    let seq = SESSION_CORRUPTION_COUNTER.fetch_add(1, Ordering::Relaxed);
     let stem = session_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("session.json");
-    let backup = parent.join(format!("{stem}.corrupted-{ts}"));
+    let backup = parent.join(format!(
+        "{stem}.corrupted-{ts}-{}-{seq}",
+        std::process::id()
+    ));
     std::fs::write(&backup, contents)?;
 
     rotate_corruption_backups(parent, stem);
@@ -862,15 +936,15 @@ fn rotate_corruption_backups(dir: &Path, stem: &str) {
         return;
     }
 
-    // Sort by trailing unix-timestamp ascending (oldest first). The
-    // suffix is purely numeric so a string compare suffices and avoids
-    // a metadata syscall per file.
+    // Sort by the timestamp prefix ascending (oldest first). Older builds used
+    // `corrupted-<seconds>`; current builds append `-<pid>-<seq>` to avoid
+    // same-second collisions.
     backups.sort_by_key(|p| {
         p.file_name()
             .and_then(|n| n.to_str())
             .and_then(|n| n.strip_prefix(&prefix))
-            .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(u64::MAX)
+            .and_then(corruption_backup_timestamp)
+            .unwrap_or(u128::MAX)
     });
 
     let drop_count = backups.len() - MAX_CORRUPTION_BACKUPS;
@@ -882,6 +956,10 @@ fn rotate_corruption_backups(dir: &Path, stem: &str) {
             );
         }
     }
+}
+
+fn corruption_backup_timestamp(suffix: &str) -> Option<u128> {
+    suffix.split('-').next()?.parse().ok()
 }
 
 #[cfg(test)]
@@ -1007,10 +1085,110 @@ mod tests {
         std::fs::write(&path, "{\"ok\":true}").expect("seed");
         assert_eq!(
             read_session_capped(&path).expect("io ok"),
-            Some(b"{\"ok\":true}".to_vec())
+            SessionRead::Data(b"{\"ok\":true}".to_vec())
         );
-        // Non-regular (a directory) is treated as "start empty", not an error.
-        assert!(matches!(read_session_capped(tmp.path()), Ok(None) | Err(_)));
+        // Opening a directory is platform-dependent: Unix usually reaches the
+        // metadata guard, Windows can fail at open. Either path must not be
+        // mistaken for a missing session.
+        assert!(matches!(
+            read_session_capped(tmp.path()),
+            Ok(SessionRead::Rejected("non_regular")) | Err(_)
+        ));
+    }
+
+    #[test]
+    fn oversized_session_returns_corruption_info_without_backup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+        let file = std::fs::File::create(&session_path).expect("seed");
+        file.set_len(MAX_SESSION_SIZE_BYTES + 1)
+            .expect("sparse oversize file");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+
+        assert!(state.is_none());
+        let info = info.expect("oversize rejection emits diagnostics");
+        assert_eq!(info.error_category, "oversize");
+        assert_eq!(info.file_size, MAX_SESSION_SIZE_BYTES + 1);
+        assert!(
+            info.backup_path.is_none(),
+            "do not copy huge rejected files"
+        );
+    }
+
+    #[test]
+    fn unsupported_session_version_returns_corruption_info_and_backup() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+        let contents = r#"{
+            "version": 999,
+            "active_workspace": 0,
+            "workspaces": []
+        }"#;
+        std::fs::write(&session_path, contents).expect("seed unsupported session");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+
+        assert!(state.is_none());
+        let info = info.expect("unsupported version emits diagnostics");
+        assert_eq!(info.error_category, "unsupported_version");
+        let backup = info.backup_path.expect("backup path populated");
+        assert_eq!(
+            std::fs::read_to_string(backup).expect("backup readable"),
+            contents
+        );
+    }
+
+    #[test]
+    fn corruption_backup_names_do_not_collide_within_same_second() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+
+        let first = write_corruption_backup(&session_path, b"first")
+            .expect("first backup")
+            .expect("first path");
+        let second = write_corruption_backup(&session_path, b"second")
+            .expect("second backup")
+            .expect("second path");
+
+        assert_ne!(first, second, "backups must not overwrite each other");
+        assert_eq!(std::fs::read(&first).expect("first readable"), b"first");
+        assert_eq!(std::fs::read(&second).expect("second readable"), b"second");
+    }
+
+    #[test]
+    fn restored_cwd_helpers_fall_back_for_missing_directories() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let valid = tmp.path().to_path_buf();
+        let missing = tmp.path().join("missing");
+        let valid_str = valid.to_string_lossy().into_owned();
+        let missing_str = missing.to_string_lossy().into_owned();
+
+        assert_eq!(
+            restored_workspace_cwd(&valid_str),
+            valid,
+            "existing workspace cwd is preserved"
+        );
+
+        let workspace_fallback = restored_workspace_cwd(&missing_str);
+        assert!(
+            workspace_fallback.is_dir(),
+            "missing workspace cwd falls back to a live directory"
+        );
+        assert_ne!(workspace_fallback, missing);
+
+        let surface_fallback = tmp.path().join("fallback");
+        std::fs::create_dir_all(&surface_fallback).expect("fallback dir");
+        assert_eq!(
+            resolved_surface_cwd(Some(&missing_str), &surface_fallback),
+            surface_fallback.clone(),
+            "missing surface cwd falls back to workspace cwd"
+        );
+        assert_eq!(
+            resolved_surface_cwd(None, &surface_fallback),
+            surface_fallback,
+            "absent surface cwd falls back to workspace cwd"
+        );
     }
 
     /// Write a `session.json` with deliberately broken JSON, run the

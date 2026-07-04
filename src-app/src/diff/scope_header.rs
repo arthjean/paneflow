@@ -94,6 +94,7 @@ impl PaneFlowApp {
                         if this.diff_mode.diff_scope != scope {
                             this.diff_mode.diff_scope = scope;
                             this.rebuild_diff_view(cx);
+                            this.save_session(cx);
                         } else {
                             cx.notify();
                         }

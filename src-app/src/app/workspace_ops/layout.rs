@@ -3,13 +3,13 @@
 //! Part of the US-023 workspace_ops decomposition.
 
 use std::collections::VecDeque;
+use std::path::PathBuf;
 
-use gpui::{AppContext, Context, Entity, Focusable, Window};
+use gpui::{Context, Entity, Focusable, Window};
 use paneflow_config::schema::LayoutNode;
 
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
 use crate::pane::Pane;
-use crate::terminal::TerminalView;
 use crate::{
     LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled, PaneFlowApp,
     SplitEqualize, ToggleZoom,
@@ -125,11 +125,14 @@ impl PaneFlowApp {
         // Keep only the panes we need; extras are dropped with the old tree
         let mut pane_deque: VecDeque<Entity<Pane>> = existing.into_iter().take(needed).collect();
 
-        let ws_id = self.active_workspace().map(|ws| ws.id).unwrap_or(0);
-        let app_ref = &mut *self;
-        let tree = LayoutTree::from_layout_node(layout, &mut pane_deque, &mut |_node| {
-            let terminal = cx.new(|cx| TerminalView::new(ws_id, cx));
-            app_ref.create_pane(terminal, ws_id, cx)
+        let ws_id = ws.id;
+        let fallback_cwd = PathBuf::from(&ws.cwd);
+        let tree = LayoutTree::from_layout_node(layout, &mut pane_deque, &mut |node| {
+            let surfaces = match node {
+                LayoutNode::Pane { surfaces } => surfaces.as_slice(),
+                _ => &[],
+            };
+            PaneFlowApp::spawn_pane_from_surfaces(ws_id, surfaces, &fallback_cwd, cx)
         });
 
         let Some(ws) = self.active_workspace_mut() else {
