@@ -8,6 +8,7 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column as GridCol, Point as AlacPoint};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
+use alacritty_terminal::term::cell::Flags;
 use regex::Regex;
 use std::sync::Arc;
 
@@ -31,6 +32,86 @@ pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     /// If regex mode and the pattern is invalid, contains the error message.
     pub regex_error: Option<String>,
+}
+
+fn extract_line_text_and_columns(
+    term: &Term<ZedListener>,
+    line: alacritty_terminal::index::Line,
+    cols: usize,
+    line_text: &mut String,
+    char_to_col: &mut Vec<usize>,
+) {
+    line_text.clear();
+    char_to_col.clear();
+    line_text.reserve(cols);
+    char_to_col.reserve(cols);
+    for col in 0..cols {
+        let cell = &term.grid()[AlacPoint::new(line, GridCol(col))];
+        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+            continue;
+        }
+        char_to_col.push(col);
+        if cell.c == '\0' {
+            line_text.push(' ');
+        } else {
+            line_text.push(cell.c);
+        }
+    }
+}
+
+fn byte_to_char_index(text: &str, byte: usize) -> usize {
+    text[..byte].chars().count()
+}
+
+fn search_match_from_chars(
+    line: alacritty_terminal::index::Line,
+    char_to_col: &[usize],
+    char_start: usize,
+    char_count: usize,
+) -> Option<SearchMatch> {
+    if char_count == 0 {
+        return None;
+    }
+    let char_end = char_start + char_count - 1;
+    let start_col = *char_to_col.get(char_start)?;
+    let end_col = *char_to_col.get(char_end)?;
+    Some(SearchMatch {
+        start: AlacPoint::new(line, GridCol(start_col)),
+        end: AlacPoint::new(line, GridCol(end_col)),
+    })
+}
+
+fn fold_char(c: char) -> String {
+    c.to_lowercase().collect()
+}
+
+fn push_plain_matches(
+    line_text: &str,
+    line: alacritty_terminal::index::Line,
+    char_to_col: &[usize],
+    query_folded: &[String],
+    matches: &mut Vec<SearchMatch>,
+) -> bool {
+    if query_folded.is_empty() {
+        return true;
+    }
+    let line_folded: Vec<String> = line_text.chars().map(fold_char).collect();
+    let query_len = query_folded.len();
+    if line_folded.len() < query_len {
+        return true;
+    }
+
+    for char_start in 0..=(line_folded.len() - query_len) {
+        if line_folded[char_start..char_start + query_len] == *query_folded
+            && let Some(m) = search_match_from_chars(line, char_to_col, char_start, query_len)
+        {
+            matches.push(m);
+            if matches.len() >= MAX_MATCHES {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Search the terminal's full grid (scrollback + visible) for matches.
@@ -63,82 +144,62 @@ pub fn search_term(
         None
     };
 
-    let query_lower = query.to_lowercase();
-    let query_char_count = query_lower.chars().count();
+    let query_folded: Vec<String> = if regex_mode {
+        Vec::new()
+    } else {
+        query.chars().map(fold_char).collect()
+    };
     let mut matches = Vec::new();
 
-    let term = term.lock();
-    let top = term.topmost_line();
-    let bottom = term.bottommost_line();
-    let cols = term.columns();
+    let (top, bottom, initial_cols) = {
+        let term = term.lock();
+        (term.topmost_line(), term.bottommost_line(), term.columns())
+    };
 
-    // US-036: reuse one `String` across every scrollback line instead of
-    // allocating a fresh `String::with_capacity(cols)` per line while the
-    // `Term` `FairMutex` is held. The lock is contended with the PTY threads,
-    // so trimming O(lines) allocations under it keeps real-time output smooth
-    // during an agent's burst.
-    let mut line_text = String::with_capacity(cols);
+    // Keep the `Term` lock only while copying one row. Regex and lowercase
+    // matching can be expensive on large scrollback, and holding the FairMutex
+    // for the whole scan blocks PTY output processing.
+    let mut line_text = String::with_capacity(initial_cols);
+    let mut char_to_col = Vec::with_capacity(initial_cols);
     let mut line = top;
     while line <= bottom {
-        line_text.clear();
-        for col in 0..cols {
-            let cell = &term.grid()[AlacPoint::new(line, GridCol(col))];
-            let c = cell.c;
-            if c == '\0' {
-                line_text.push(' ');
+        let Some(()) = ({
+            let term = term.lock();
+            if line < term.topmost_line() || line > term.bottommost_line() {
+                None
             } else {
-                line_text.push(c);
+                let cols = term.columns();
+                extract_line_text_and_columns(&term, line, cols, &mut line_text, &mut char_to_col);
+                Some(())
             }
-        }
+        }) else {
+            line += 1;
+            continue;
+        };
 
         if let Some(re) = &compiled_regex {
             // Regex mode: use find_iter for all non-overlapping matches
             for m in re.find_iter(&line_text) {
-                let col_start = line_text[..m.start()].chars().count();
+                let char_start = byte_to_char_index(&line_text, m.start());
                 let match_char_count = line_text[m.start()..m.end()].chars().count();
-                if match_char_count == 0 {
-                    continue;
-                }
-                let col_end = col_start + match_char_count - 1;
-
-                matches.push(SearchMatch {
-                    start: AlacPoint::new(line, GridCol(col_start)),
-                    end: AlacPoint::new(line, GridCol(col_end.min(cols.saturating_sub(1)))),
-                });
-
-                if matches.len() >= MAX_MATCHES {
-                    return SearchResult {
-                        matches,
-                        regex_error: None,
-                    };
+                if let Some(search_match) =
+                    search_match_from_chars(line, &char_to_col, char_start, match_char_count)
+                {
+                    matches.push(search_match);
+                    if matches.len() >= MAX_MATCHES {
+                        return SearchResult {
+                            matches,
+                            regex_error: None,
+                        };
+                    }
                 }
             }
         } else {
-            // Plain text mode: case-insensitive substring matching
-            let line_lower = line_text.to_lowercase();
-            let mut search_from = 0;
-            while let Some(byte_pos) = line_lower[search_from..].find(&query_lower) {
-                let byte_start = search_from + byte_pos;
-                let col_start = line_lower[..byte_start].chars().count();
-                let col_end = col_start + query_char_count - 1;
-
-                matches.push(SearchMatch {
-                    start: AlacPoint::new(line, GridCol(col_start)),
-                    end: AlacPoint::new(line, GridCol(col_end.min(cols.saturating_sub(1)))),
-                });
-
-                if matches.len() >= MAX_MATCHES {
-                    return SearchResult {
-                        matches,
-                        regex_error: None,
-                    };
-                }
-
-                search_from = byte_start
-                    + line_lower[byte_start..]
-                        .chars()
-                        .next()
-                        .map_or(1, |c| c.len_utf8());
+            if !push_plain_matches(&line_text, line, &char_to_col, &query_folded, &mut matches) {
+                return SearchResult {
+                    matches,
+                    regex_error: None,
+                };
             }
         }
 
@@ -177,4 +238,43 @@ pub fn scroll_to_match(term: &Arc<FairMutex<Term<ZedListener>>>, m: &SearchMatch
     }
 
     target_offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::terminal::TerminalState;
+
+    fn restored_search(text: &str, query: &str, regex_mode: bool) -> SearchResult {
+        let state = TerminalState::new_display_only(5, 20);
+        state.restore_scrollback(text);
+        search_term(&state.term, query, regex_mode)
+    }
+
+    #[test]
+    fn plain_search_matches_across_wide_char_spacer() {
+        let result = restored_search("中abc", "中a", false);
+
+        assert!(!result.matches.is_empty());
+        assert_eq!(result.matches[0].start.column, GridCol(0));
+        assert_eq!(result.matches[0].end.column, GridCol(2));
+    }
+
+    #[test]
+    fn plain_search_column_mapping_survives_lowercase_expansion() {
+        let result = restored_search("İabc", "abc", false);
+
+        assert!(!result.matches.is_empty());
+        assert_eq!(result.matches[0].start.column, GridCol(1));
+        assert_eq!(result.matches[0].end.column, GridCol(3));
+    }
+
+    #[test]
+    fn regex_search_matches_across_wide_char_spacer() {
+        let result = restored_search("中abc", "中a", true);
+
+        assert!(!result.matches.is_empty());
+        assert_eq!(result.matches[0].start.column, GridCol(0));
+        assert_eq!(result.matches[0].end.column, GridCol(2));
+    }
 }

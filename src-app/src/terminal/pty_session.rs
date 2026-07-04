@@ -28,9 +28,9 @@ use super::element::color::palette_color_at;
 use super::listener::{SpikeTermSize, ZedListener};
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
 use super::shell::{resolve_default_shell, setup_shell_integration};
-use super::types::SharedTerm;
 #[cfg(feature = "hera-dogfood")]
 use super::types::content_from_term;
+use super::types::{SharedTerm, ShellQuoting, TerminalWindowSize};
 use crate::limits::{MAX_CHARS, MAX_OSC52_BYTES};
 use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 
@@ -41,6 +41,8 @@ use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 /// [`paneflow_config::TerminalConfig::resolved_scrollback_lines`].
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
 const PTY_DRAIN_ON_EXIT: bool = true;
+const CLAUDECODE_ENV: &str = "CLAUDECODE";
+const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
 
 /// Read the user's configured scrollback length, clamped to the
 /// [`paneflow_config::TerminalConfig`] allowed range. Falls back to
@@ -211,17 +213,26 @@ impl Notify for PtyNotifier {
     }
 }
 
+#[inline]
+fn saturating_u16(value: usize) -> u16 {
+    u16::try_from(value).unwrap_or(u16::MAX)
+}
+
+pub(crate) fn alacritty_window_size(size: TerminalWindowSize) -> AlacWindowSize {
+    AlacWindowSize {
+        num_cols: saturating_u16(size.cols),
+        num_lines: saturating_u16(size.rows),
+        cell_width: size.cell_width,
+        cell_height: size.cell_height,
+    }
+}
+
 impl PtyNotifier {
-    /// Resize the PTY (drives SIGWINCH to the child) without the caller naming
-    /// alacritty's `Msg`/`WindowSize`. Keeps the renderer's resize path off
-    /// `alacritty_terminal` so EP-003 confinement holds in `element/`.
-    pub fn notify_resize(&self, num_cols: u16, num_lines: u16, cell_width: u16, cell_height: u16) {
-        self.0.resize(AlacWindowSize {
-            num_cols,
-            num_lines,
-            cell_width,
-            cell_height,
-        });
+    /// Resize the PTY using the full cached terminal window size. This includes
+    /// metrics-only changes, such as font zoom, that do not alter grid columns
+    /// or rows but still affect size query replies and platform PTY pixel fields.
+    pub fn notify_window_size(&self, size: TerminalWindowSize) {
+        self.0.resize(alacritty_window_size(size));
     }
 }
 
@@ -331,9 +342,17 @@ pub struct TerminalState {
     pub(super) cursor_color_override: Option<gpui::Hsla>,
     /// OSC 52 clipboard access mode (default: copy-only for security).
     pub osc52_mode: Osc52Mode,
+    /// Shell syntax used when Paneflow inserts OS file paths into the PTY.
+    pub(super) shell_quoting: ShellQuoting,
     /// Deferred clipboard operations from sync() - drained in the poll loop
     /// where cx is available for clipboard read/write.
     pub(super) pending_clipboard_ops: Vec<ClipboardOp>,
+    /// Foreground command cached by the off-thread pane process scanner.
+    /// `surface.list` reads this synchronously, so it must never perform
+    /// process-table I/O on the GPUI thread.
+    pub cached_foreground_command: Option<String>,
+    #[cfg(all(unix, not(test)))]
+    pty_guard: Option<crate::agents::parent_guard::PtyGuardHandle>,
     /// Deferred text area size request responses from sync().
     pub(super) pending_size_ops:
         Vec<std::sync::Arc<dyn Fn(AlacWindowSize) -> String + Sync + Send + 'static>>,
@@ -408,6 +427,7 @@ const MAX_PENDING_INPUT_BYTES: usize = 64 * 1024;
 /// thread). All fields are `Send`.
 pub(super) struct SpawnParams {
     shell: String,
+    pub(super) shell_quoting: ShellQuoting,
     extra_args: Vec<String>,
     env: std::collections::HashMap<String, String>,
     cwd: std::path::PathBuf,
@@ -430,6 +450,8 @@ pub(super) struct SpawnedPty {
     /// stub.
     cwd: std::path::PathBuf,
     cwd_rx: UnboundedReceiver<String>,
+    #[cfg(all(unix, not(test)))]
+    pty_guard: Option<crate::agents::parent_guard::PtyGuardHandle>,
     #[cfg(target_os = "macos")]
     pty_master_fd: Option<i32>,
 }
@@ -664,10 +686,19 @@ fn percent_decode_uri_path(path: &str) -> Option<String> {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' {
-            let hi = bytes.get(i + 1).copied().and_then(hex_value)?;
-            let lo = bytes.get(i + 2).copied().and_then(hex_value)?;
-            out.push((hi << 4) | lo);
-            i += 3;
+            match (
+                bytes.get(i + 1).copied().and_then(hex_value),
+                bytes.get(i + 2).copied().and_then(hex_value),
+            ) {
+                (Some(hi), Some(lo)) => {
+                    out.push((hi << 4) | lo);
+                    i += 3;
+                }
+                _ => {
+                    out.push(bytes[i]);
+                    i += 1;
+                }
+            }
         } else {
             out.push(bytes[i]);
             i += 1;
@@ -802,8 +833,12 @@ impl TerminalState {
             user_env,
             profile,
         );
-        let (mut state, events_tx) =
-            Self::new_pending_with_profile(params.cols, params.rows, params.profile);
+        let (mut state, events_tx) = Self::new_pending_with_profile_and_shell_quoting(
+            params.cols,
+            params.rows,
+            params.profile,
+            params.shell_quoting,
+        );
         let term = state.term.clone();
         #[cfg(feature = "hera-dogfood")]
         let hera_pty_tap = state.hera_pty_tap();
@@ -864,6 +899,7 @@ impl TerminalState {
                 .filter(|s| !s.is_empty());
             resolve_default_shell(configured)
         };
+        let shell_quoting = ShellQuoting::for_shell(&shell);
         // US-014: layer the per-surface `user_env` on top of the global
         // `terminal.env` default (surface wins on key collision).
         let global_env = config.terminal.as_ref().and_then(|t| t.env.clone());
@@ -896,6 +932,7 @@ impl TerminalState {
         let (cols, rows) = initial_size.unwrap_or((120, 40));
         SpawnParams {
             shell,
+            shell_quoting,
             extra_args,
             env,
             cwd,
@@ -920,7 +957,21 @@ impl TerminalState {
         rows: usize,
         profile: TerminalSurfaceProfile,
     ) -> (Self, UnboundedSender<AlacEvent>) {
-        Self::build_display_only(cols, rows, profile)
+        Self::new_pending_with_profile_and_shell_quoting(
+            cols,
+            rows,
+            profile,
+            ShellQuoting::default_for_platform(),
+        )
+    }
+
+    pub(super) fn new_pending_with_profile_and_shell_quoting(
+        cols: usize,
+        rows: usize,
+        profile: TerminalSurfaceProfile,
+        shell_quoting: ShellQuoting,
+    ) -> (Self, UnboundedSender<AlacEvent>) {
+        Self::build_display_only(cols, rows, profile, shell_quoting)
     }
 
     /// Open the PTY and start its `EventLoop` on the given (shared) `term` and
@@ -994,6 +1045,8 @@ impl TerminalState {
         let child_pid = pty.child().id();
         #[cfg(windows)]
         let child_pid = pty.child_watcher().pid().map(u32::from).unwrap_or(0);
+        #[cfg(all(unix, not(test)))]
+        let pty_guard = crate::agents::parent_guard::spawn_pty_guard(child_pid);
         #[cfg(target_os = "macos")]
         let pty_master_fd = {
             use std::os::unix::io::AsRawFd;
@@ -1034,6 +1087,8 @@ impl TerminalState {
             child_pid,
             cwd: launch_cwd,
             cwd_rx,
+            #[cfg(all(unix, not(test)))]
+            pty_guard,
             #[cfg(target_os = "macos")]
             pty_master_fd,
         })
@@ -1052,6 +1107,10 @@ impl TerminalState {
         self.notifier = PtyNotifier(sender);
         self.cwd_rx = Some(spawned.cwd_rx);
         self.child_pid = spawned.child_pid;
+        #[cfg(all(unix, not(test)))]
+        {
+            self.pty_guard = spawned.pty_guard;
+        }
         // Seed the working directory from the launch cwd. On Unix `sync_channels`
         // refines this to the live shell cwd within a few poll ticks via
         // `cwd_now()` (/proc, libproc); on Windows `cwd_now()` is a stub, so this
@@ -1110,7 +1169,7 @@ impl TerminalState {
         cols: usize,
         profile: TerminalSurfaceProfile,
     ) -> Self {
-        Self::build_display_only(cols, rows, profile).0
+        Self::build_display_only(cols, rows, profile, ShellQuoting::default_for_platform()).0
     }
 
     /// Shared constructor for the display-only / pending state. Returns the
@@ -1122,6 +1181,7 @@ impl TerminalState {
         cols: usize,
         rows: usize,
         profile: TerminalSurfaceProfile,
+        shell_quoting: ShellQuoting,
     ) -> (Self, UnboundedSender<AlacEvent>) {
         let (events_tx, events_rx) = unbounded();
         // The Term keeps one clone (emits Wakeup after VTE mutations); the
@@ -1168,7 +1228,11 @@ impl TerminalState {
             font_size_override: None,
             cursor_color_override: resolved_cursor_color_override(),
             osc52_mode: Osc52Mode::Disabled,
+            shell_quoting,
             pending_clipboard_ops: Vec::new(),
+            cached_foreground_command: None,
+            #[cfg(all(unix, not(test)))]
+            pty_guard: None,
             pending_size_ops: Vec::new(),
             cursor_blinking: false,
             title: String::from("Terminal"),
@@ -1227,11 +1291,10 @@ impl TerminalState {
 
     /// Refresh the shell CWD from the process table (EP-002 US-007).
     ///
-    /// The pre-VTE OSC 7 byte-scanner was removed with the 2-thread reader (the
-    /// EventLoop owns the read path with no pre-parse hook), so CWD is now
-    /// derived from `/proc` (Linux) / `libproc` (macOS) via `cwd_now()`.
-    /// Throttled so we don't `readlink` on every poll tick. Called by the
-    /// batched event loop, which handles alacritty events directly.
+    /// OSC 7 updates are captured by the `Osc7Pty` read tap before VTE consumes
+    /// the bytes. Unix/macOS also refresh from process-table state via
+    /// `cwd_now()` as a fallback. The fallback is throttled so we don't
+    /// `readlink` on every poll tick.
     pub fn sync_channels(&mut self) {
         #[cfg(feature = "hera-dogfood")]
         self.hera_shadow.drain_output();
@@ -1355,6 +1418,11 @@ impl TerminalState {
                 self.hera_shadow
                     .record_exit(&self.hera_pane_id(), self.exited.unwrap_or(-1));
                 self.dirty = true;
+                self.cached_foreground_command = None;
+                #[cfg(all(unix, not(test)))]
+                {
+                    self.pty_guard = None;
+                }
                 self.reported_ports.clear();
             }
             AlacEvent::Exit => {
@@ -1371,6 +1439,11 @@ impl TerminalState {
                 self.hera_shadow
                     .record_exit(&self.hera_pane_id(), self.exited.unwrap_or(-1));
                 self.dirty = true;
+                self.cached_foreground_command = None;
+                #[cfg(all(unix, not(test)))]
+                {
+                    self.pty_guard = None;
+                }
             }
             AlacEvent::Title(t) if !is_executable_path_title(&t) => {
                 self.title = t;
@@ -1395,14 +1468,13 @@ impl TerminalState {
                 let within_cap =
                     self.osc52_mode != Osc52Mode::Disabled && text.len() <= MAX_OSC52_BYTES;
                 if within_cap {
-                    self.pending_clipboard_ops.push(ClipboardOp::Store(text));
+                    self.queue_clipboard_op(ClipboardOp::Store(text));
                 }
             }
             AlacEvent::ClipboardLoad(_selection, format_fn)
                 if self.osc52_mode == Osc52Mode::CopyPaste =>
             {
-                self.pending_clipboard_ops
-                    .push(ClipboardOp::Load(format_fn));
+                self.queue_clipboard_op(ClipboardOp::Load(format_fn));
             }
             AlacEvent::ClipboardLoad(..) => {}
 
@@ -1452,6 +1524,13 @@ impl TerminalState {
             }
             _ => {} // MouseCursorDirty, etc.
         }
+    }
+
+    fn queue_clipboard_op(&mut self, op: ClipboardOp) {
+        if self.pending_clipboard_ops.len() >= MAX_PENDING_CLIPBOARD_OPS {
+            self.pending_clipboard_ops.remove(0);
+        }
+        self.pending_clipboard_ops.push(op);
     }
 
     /// Read the shell's CWD from the OS on demand.
@@ -1724,91 +1803,12 @@ impl TerminalState {
         }
     }
 
-    /// Best-effort foreground command of this surface, for naming (US-001,
-    /// prd-pane-context-bridge). Returns the command line (argv joined by
-    /// spaces) of the process currently in the shell's foreground, or the
-    /// shell itself when idle (which the namer maps to `shell`). `None` on
-    /// platforms without a cheap lookup - callers fall back to the OSC title.
-    #[cfg(target_os = "linux")]
+    /// Best-effort foreground command of this surface, cached by the off-thread
+    /// pane process scanner. Returns the shell command while idle or the current
+    /// child approximation while busy. `None` means callers fall back to the OSC
+    /// title.
     pub fn foreground_command(&self) -> Option<String> {
-        // US-034: stale `child_pid` after exit may name an unrelated process.
-        if self.exited.is_some() {
-            return None;
-        }
-        // Display-only terminal (no real PTY): `child_pid` is 0. Bail before the
-        // `/proc` lookup - the `highest_pid_child_via_ppid` fallback would
-        // otherwise match the kernel processes whose ppid is 0 (PID 1/2) and
-        // mis-name a display-only surface. Mirrors the macOS/Windows guards.
-        if self.child_pid == 0 {
-            return None;
-        }
-        // The most-recently-spawned child of the shell approximates the
-        // foreground job for the common interactive case (one job at a time).
-        // With no children the shell is idle → report its own comm so naming
-        // resolves to `shell`.
-        let children_path = format!("/proc/{pid}/task/{pid}/children", pid = self.child_pid);
-        let target = match std::fs::read_to_string(&children_path) {
-            // File present: empty means an idle shell (→ keep `child_pid`),
-            // otherwise the last (most-recent) child id.
-            Ok(content) => content
-                .split_whitespace()
-                .last()
-                .and_then(|p| p.parse::<u32>().ok())
-                .unwrap_or(self.child_pid),
-            // File MISSING (Err): the kernel lacks CONFIG_PROC_CHILDREN. Fall
-            // back to a ppid scan for the highest-pid child (≈ most recent,
-            // since pids are roughly monotonic) so naming still tracks the
-            // foreground job instead of always showing the shell.
-            Err(_) => highest_pid_child_via_ppid(self.child_pid).unwrap_or(self.child_pid),
-        };
-        read_proc_command(target)
-    }
-
-    /// macOS: the PTY's foreground process group (the job currently reading
-    /// input) via `tcgetpgrp(master_fd)`, resolved to its executable basename
-    /// with `proc_pidpath`. Falls back to the shell PID when idle so naming
-    /// resolves to the shell. Returns the basename only (no full argv on macOS).
-    /// `None` on any failure → caller falls back to the OSC title (US-019).
-    #[cfg(target_os = "macos")]
-    pub fn foreground_command(&self) -> Option<String> {
-        // US-034: stale `child_pid`/master fd after exit may name an unrelated
-        // process (or a reused fd reports an arbitrary pgid). Bail.
-        if self.exited.is_some() {
-            return None;
-        }
-        let pgid = self
-            .pty_master_fd
-            // SAFETY: `tcgetpgrp` is a pure query on a valid fd; returns -1 on
-            // error (no controlling terminal yet), which we filter out.
-            .map(|fd| unsafe { libc::tcgetpgrp(fd) })
-            .filter(|&p| p > 0)
-            .unwrap_or(self.child_pid as libc::c_int);
-        // Reachable on the display-only path (`pty_master_fd` is `None` and
-        // `child_pid` is 0): skip the FFI rather than call `proc_pidpath(0)`
-        // (kernel pid 0 / swapper). On the live-PTY path `pgid` is always > 0.
-        if pgid <= 0 {
-            return None;
-        }
-        macos_exe_basename(pgid)
-    }
-
-    /// Windows: walk the process tree from `child_pid` to the deepest descendant
-    /// (the most-recently-spawned leaf ≈ the foreground job under ConPTY) via a
-    /// Toolhelp32 snapshot, then resolve its executable basename. Best-effort;
-    /// `None` on any failure → caller falls back to the OSC title (US-019).
-    #[cfg(windows)]
-    pub fn foreground_command(&self) -> Option<String> {
-        if self.child_pid == 0 {
-            return None;
-        }
-        windows_foreground_command(self.child_pid)
-    }
-
-    /// Other platforms (BSDs, etc.): no cheap foreground lookup; naming
-    /// degrades to the OSC title (cross-platform rule - graceful fallback).
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-    pub fn foreground_command(&self) -> Option<String> {
-        None
+        self.cached_foreground_command.clone()
     }
 
     /// Search the scrollback for `pattern` (plain-text, case-insensitive) and
@@ -2126,6 +2126,10 @@ fn is_loader_influencing_env_key(key: &str) -> bool {
     key.starts_with("LD_") || key.starts_with("DYLD_")
 }
 
+fn is_forbidden_child_env_key(key: &str) -> bool {
+    key == CLAUDECODE_ENV || is_loader_influencing_env_key(key)
+}
+
 /// True if `key` is a well-formed environment variable name safe to insert into
 /// a child env block: non-empty and free of `=` and NUL, which would otherwise
 /// corrupt the name/value framing. Charset is intentionally NOT restricted to a
@@ -2233,13 +2237,17 @@ fn assemble_pty_env(
     inject_ai_hook_env(&mut env);
 
     // Merge user-supplied env on top, EXCEPT the protected keys PaneFlow owns:
-    // TERM/COLORTERM drive capability detection; the PANEFLOW_* identity vars
-    // are how the MCP bridge and the AI-hook shim find PaneFlow - letting a user
-    // clobber them would silently break those features.
+    // TERM/COLORTERM/TERM_PROGRAM drive capability detection; SHLVL is reset so
+    // shells start fresh; the PANEFLOW_* identity vars are how the MCP bridge
+    // and the AI-hook shim find PaneFlow - letting a user clobber them would
+    // silently break those features.
     if let Some(user_vars) = user_env {
         const PROTECTED: &[&str] = &[
             "TERM",
             "COLORTERM",
+            "TERM_PROGRAM",
+            "TERM_PROGRAM_VERSION",
+            "SHLVL",
             "PANEFLOW_WORKSPACE_ID",
             "PANEFLOW_SURFACE_ID",
             "PANEFLOW_SOCKET_PATH",
@@ -2258,7 +2266,7 @@ fn assemble_pty_env(
             // shell (RCE). `PATH` is deliberately still mergeable here (a
             // documented US-014 use case), but PANEFLOW_BIN_DIR is re-prepended
             // after the merge so agent commands still route through the shim.
-            if !is_valid_env_name(&k) || is_loader_influencing_env_key(&k) {
+            if !is_valid_env_name(&k) || is_forbidden_child_env_key(&k) {
                 continue;
             }
             if PROTECTED.contains(&k.as_str()) {
@@ -2268,6 +2276,7 @@ fn assemble_pty_env(
         }
     }
 
+    env.remove(CLAUDECODE_ENV);
     reassert_paneflow_bin_dir_first(&mut env);
 
     env
@@ -2449,92 +2458,6 @@ impl Drop for TerminalState {
     }
 }
 
-/// Highest-pid direct child of `parent`, found by scanning `/proc/*/stat` ppid
-/// (proc(5) field 4, taken after the last `)` since the comm field is
-/// parenthesized). Fallback for `foreground_command` on kernels without
-/// `CONFIG_PROC_CHILDREN` (no `children` file); highest pid ≈ most recent child
-/// since pids are roughly monotonic. `None` when `parent` has no children.
-#[cfg(target_os = "linux")]
-fn highest_pid_child_via_ppid(parent: u32) -> Option<u32> {
-    let mut best: Option<u32> = None;
-    let entries = std::fs::read_dir("/proc").ok()?;
-    for entry in entries.flatten() {
-        let Some(pid) = entry
-            .file_name()
-            .to_str()
-            .and_then(|s| s.parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            && let Some(after_comm) = stat.rfind(')').map(|i| &stat[i + 1..])
-            && after_comm
-                .split_whitespace()
-                .nth(1)
-                .and_then(|p| p.parse::<u32>().ok())
-                == Some(parent)
-            && best.is_none_or(|b| pid > b)
-        {
-            best = Some(pid);
-        }
-    }
-    best
-}
-
-/// Read a process's command line from `/proc/<pid>/cmdline`, falling back to
-/// `/proc/<pid>/comm` when the cmdline is empty (kernel thread / zombie).
-#[cfg(target_os = "linux")]
-fn read_proc_command(pid: u32) -> Option<String> {
-    if let Ok(bytes) = std::fs::read(format!("/proc/{pid}/cmdline"))
-        && let Some(cmd) = command_from_cmdline(&bytes)
-    {
-        return Some(cmd);
-    }
-    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
-    let trimmed = comm.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_string())
-}
-
-/// Parse a `/proc/<pid>/cmdline` blob (NUL-separated argv) into a space-joined
-/// command string. Pure, so the parsing is unit-testable without `/proc`.
-#[cfg(target_os = "linux")]
-fn command_from_cmdline(bytes: &[u8]) -> Option<String> {
-    let parts: Vec<String> = bytes
-        .split(|&b| b == 0)
-        .filter(|s| !s.is_empty())
-        .map(|s| String::from_utf8_lossy(s).into_owned())
-        .collect();
-    (!parts.is_empty()).then(|| parts.join(" "))
-}
-
-/// macOS (US-019): resolve a pid/pgid to its executable basename via
-/// `proc_pidpath`, mirroring the `cwd_now` FFI style. `None` on any error
-/// (process gone, SIP/sandbox denial - logged at debug, never panics).
-#[cfg(target_os = "macos")]
-fn macos_exe_basename(pid: libc::c_int) -> Option<String> {
-    use std::ffi::CStr;
-    use std::os::raw::c_void;
-
-    let mut buf = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
-    // SAFETY: `buf` is stack-allocated, zeroed, and sized exactly to
-    // PROC_PIDPATHINFO_MAXSIZE; it is only read when the call reports success.
-    let written =
-        unsafe { libc::proc_pidpath(pid, buf.as_mut_ptr() as *mut c_void, buf.len() as u32) };
-    if written <= 0 {
-        log::debug!("foreground_command: proc_pidpath(pid={pid}) returned {written}");
-        return None;
-    }
-    // SAFETY: `written > 0` and the buffer is zero-filled, so a NUL terminator
-    // is guaranteed within range.
-    let path = unsafe { CStr::from_ptr(buf.as_ptr() as *const libc::c_char) }
-        .to_str()
-        .ok()?;
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(ToOwned::to_owned)
-}
-
 #[cfg(windows)]
 fn windows_process_entries() -> Vec<(u32, u32)> {
     use std::mem;
@@ -2662,66 +2585,6 @@ fn terminate_windows_process_tree(root_pid: u32) {
             break;
         }
     }
-}
-
-/// Windows (US-019): walk the process tree from `root_pid` to its deepest
-/// descendant (the most-recently-spawned leaf ≈ the foreground job under
-/// ConPTY) via a Toolhelp32 snapshot, then resolve that process's executable
-/// basename with `QueryFullProcessImageNameW`. Best-effort (Windows recycles
-/// PIDs); `None` on any failure → caller falls back to the OSC title.
-#[cfg(windows)]
-fn windows_foreground_command(root_pid: u32) -> Option<String> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-        QueryFullProcessImageNameW,
-    };
-
-    let entries = windows_process_entries();
-
-    // Descend parent → child from the shell to the deepest leaf. At each level
-    // pick the child with the HIGHEST pid: Windows assigns pids in increasing
-    // order, so the highest pid is the most-recently-spawned child - the best
-    // available proxy for the foreground job under ConPTY (which, unlike Unix,
-    // has no `tcgetpgrp`). `.find()` would instead return snapshot-enumeration
-    // order (oldest-first), naming a stale background job in a multi-child
-    // shell. A visited set guards against a cycle from pid recycling.
-    let mut current = root_pid;
-    let mut visited = std::collections::HashSet::new();
-    while visited.insert(current) {
-        match entries
-            .iter()
-            .filter(|(_, parent)| *parent == current)
-            .max_by_key(|(pid, _)| *pid)
-        {
-            Some((child, _)) => current = *child,
-            None => break,
-        }
-    }
-
-    // PROCESS_QUERY_LIMITED_INFORMATION needs no elevation (Vista+).
-    // SAFETY: Win32 call; the handle is closed below.
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, current) };
-    if handle.is_null() {
-        return None;
-    }
-    let mut buf = [0u16; 1024];
-    let mut len = buf.len() as u32;
-    // SAFETY: `handle` is valid; `buf`/`len` are initialised; the call writes at
-    // most `len` u16s and updates `len` to the count written.
-    let ok = unsafe {
-        QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len)
-    };
-    // SAFETY: `handle` was obtained from OpenProcess above.
-    unsafe { CloseHandle(handle) };
-    if ok == 0 || len == 0 {
-        return None;
-    }
-    let path = String::from_utf16_lossy(&buf[..len as usize]);
-    std::path::Path::new(&path)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(ToOwned::to_owned)
 }
 
 #[cfg(test)]
@@ -2888,7 +2751,9 @@ mod tests {
     fn hera_shadow_resize_tracks_notifier_dimensions_and_disables_on_error() {
         let state = new_shadow_pending(80, 24);
 
-        state.notifier.notify_resize(100, 40, 8, 16);
+        state
+            .notifier
+            .notify_window_size(TerminalWindowSize::new(100, 40, 8, 16));
         let (columns, rows) = state
             .hera_shadow
             .with_shadow_mut(|shadow| {
@@ -2898,7 +2763,9 @@ mod tests {
             .expect("shadow session");
         assert_eq!((columns, rows), (100, 40));
 
-        state.notifier.notify_resize(0, 40, 8, 16);
+        state
+            .notifier
+            .notify_window_size(TerminalWindowSize::new(0, 40, 8, 16));
         let enabled = state
             .hera_shadow
             .with_shadow(crate::terminal::hera_dogfood::ShadowSession::is_enabled)
@@ -3371,6 +3238,9 @@ mod tests {
         let mut user = HashMap::new();
         user.insert("TERM".to_string(), "dumb".to_string());
         user.insert("COLORTERM".to_string(), "nope".to_string());
+        user.insert("TERM_PROGRAM".to_string(), "spoofed".to_string());
+        user.insert("TERM_PROGRAM_VERSION".to_string(), "0.0.0".to_string());
+        user.insert("SHLVL".to_string(), "99".to_string());
         user.insert("KEEP_ME".to_string(), "yes".to_string());
         let env = assemble_pty_env(HashMap::new(), 1, 1, Some(user));
 
@@ -3383,6 +3253,21 @@ mod tests {
             env.get("COLORTERM").map(String::as_str),
             Some("truecolor"),
             "US-014 AC: COLORTERM must stay Paneflow-owned even if the user sets it"
+        );
+        assert_eq!(
+            env.get("TERM_PROGRAM").map(String::as_str),
+            Some("paneflow"),
+            "TERM_PROGRAM must stay Paneflow-owned even if the user sets it"
+        );
+        assert_eq!(
+            env.get("TERM_PROGRAM_VERSION").map(String::as_str),
+            Some(env!("CARGO_PKG_VERSION")),
+            "TERM_PROGRAM_VERSION must stay Paneflow-owned even if the user sets it"
+        );
+        assert_eq!(
+            env.get("SHLVL").map(String::as_str),
+            Some("0"),
+            "SHLVL must stay reset so the child shell starts at level 1"
         );
         assert_eq!(
             env.get("KEEP_ME").map(String::as_str),
@@ -3434,22 +3319,22 @@ mod tests {
         );
     }
 
-    // US-001 (prd-pane-context-bridge): /proc cmdline parsing.
-    #[cfg(target_os = "linux")]
     #[test]
-    fn command_from_cmdline_joins_nul_separated_argv() {
+    fn claudecode_env_is_dropped_from_child_env() {
+        let mut base = HashMap::new();
+        base.insert("CLAUDECODE".to_string(), "1".to_string());
+        let mut user = HashMap::new();
+        user.insert("CLAUDECODE".to_string(), "1".to_string());
+        user.insert("KEEP_ME".to_string(), "yes".to_string());
+
+        let env = assemble_pty_env(base, 1, 1, Some(user));
+
         assert_eq!(
-            super::command_from_cmdline(b"cargo\0run\0--release\0"),
-            Some("cargo run --release".to_string())
+            env.get("CLAUDECODE"),
+            None,
+            "CLAUDECODE must never reach agent child processes"
         );
-        // Trailing/leading NULs and empty fields are dropped.
-        assert_eq!(
-            super::command_from_cmdline(b"\0node\0\0server.js\0"),
-            Some("node server.js".to_string())
-        );
-        // Empty blob → None (kernel thread / zombie).
-        assert_eq!(super::command_from_cmdline(b""), None);
-        assert_eq!(super::command_from_cmdline(b"\0\0"), None);
+        assert_eq!(env.get("KEEP_ME").map(String::as_str), Some("yes"));
     }
 
     // US-019: foreground_command degrades gracefully (no panic, None) on a
@@ -3565,11 +3450,34 @@ mod tests {
     }
 
     #[test]
+    fn osc7_payload_accepts_raw_percent_from_posix_shells() {
+        assert_eq!(
+            cwd_from_osc7_payload("7;file://host/tmp/100% legit"),
+            Some("/tmp/100% legit".to_string())
+        );
+    }
+
+    #[test]
     fn osc7_payload_rejects_legacy_malformed_windows_uri() {
         assert_eq!(
             cwd_from_osc7_payload(r"7;file://DESKTOP-123C:\dev\paneflow"),
             None
         );
+    }
+
+    #[test]
+    fn pending_clipboard_ops_are_bounded() {
+        let mut state = TerminalState::new_display_only(5, 20);
+
+        for i in 0..(MAX_PENDING_CLIPBOARD_OPS + 2) {
+            state.queue_clipboard_op(ClipboardOp::Store(format!("op-{i}")));
+        }
+
+        assert_eq!(state.pending_clipboard_ops.len(), MAX_PENDING_CLIPBOARD_OPS);
+        match &state.pending_clipboard_ops[0] {
+            ClipboardOp::Store(text) => assert_eq!(text, "op-2"),
+            ClipboardOp::Load(_) => panic!("expected store op"),
+        }
     }
 
     #[test]

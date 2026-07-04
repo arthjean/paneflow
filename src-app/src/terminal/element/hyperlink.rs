@@ -17,7 +17,7 @@ pub use crate::terminal::types::{HyperlinkSource, HyperlinkZone};
 /// Excludes C0/C1 control chars, whitespace, angle brackets, quotes, and other
 /// non-URL characters. Box-drawing chars (U+2500-U+257F) are not valid URL
 /// characters and won't match the allowed character class.
-pub(super) const URL_REGEX_PATTERN: &str = r#"(mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://|ipfs:|ipns:|magnet:)[^\x00-\x1f\x7f-\x9f<>"\s{}\^⟨⟩`']+"#;
+pub(super) const URL_REGEX_PATTERN: &str = r#"(mailto:|gemini://|gopher://|https://|http://|news:|git://|ssh:|ftp://|ipfs:|ipns:|magnet:)[^\x00-\x1f\x7f-\x9f<>"\s{}\^⟨⟩`']+"#;
 
 /// Lazily compiled URL regex (compiled once, reused across all calls).
 pub(super) fn url_regex() -> &'static regex::Regex {
@@ -120,8 +120,9 @@ pub(super) fn sanitize_url_punctuation(url: &str) -> &str {
 /// Mirrors the regex above: all schemes captured by `URL_REGEX_PATTERN` are
 /// considered openable, since `open::that` ultimately defers to the OS handler
 /// (`xdg-open` / `open` / `start`) which knows whether a scheme is registered.
-/// `file://` is still gated on localhost / empty host to keep the click handler
-/// from chasing remote file URIs.
+/// `file://` is intentionally excluded from the generic URL path. Local files
+/// must go through the canonicalized file/code scanners instead of OS scheme
+/// dispatch.
 pub fn is_url_scheme_openable(uri: &str) -> bool {
     if uri.starts_with("http://")
         || uri.starts_with("https://")
@@ -138,12 +139,6 @@ pub fn is_url_scheme_openable(uri: &str) -> bool {
     {
         return true;
     }
-    if let Some(rest) = uri.strip_prefix("file://") {
-        // file:// must have empty host or localhost
-        return rest.starts_with('/')
-            || rest.starts_with("localhost/")
-            || rest.starts_with("localhost:");
-    }
     false
 }
 
@@ -151,38 +146,52 @@ pub fn is_url_scheme_openable(uri: &str) -> bool {
 // File-path scanner (US-019)
 // ---------------------------------------------------------------------------
 
-/// Regex matching `.md` / `.markdown` path candidates on a terminal line.
-///
-/// The character class allows alphanumerics, common path/separator chars, and
-/// nothing else - explicitly excludes whitespace, quotes, brackets, and ANSI
-/// escape control chars (C0/C1). The trailing `\b` ensures `.md` is not matched
-/// inside a longer alphanumeric token (e.g. `.markdown_old`).
-///
-/// Boundary at the start is enforced post-match (preceding char must be start
-/// of string, whitespace, or an opening punctuation char). The `regex` crate
-/// has no lookbehind, so we filter in code.
-const FILE_PATH_REGEX_PATTERN: &str = r#"(?i)[A-Za-z0-9_:./\\\-]+\.(?:md|markdown)\b"#;
+const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];
 
-fn file_path_regex() -> &'static regex::Regex {
+fn markdown_extension_regex() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     RE.get_or_init(|| {
-        regex::Regex::new(FILE_PATH_REGEX_PATTERN).expect("file-path regex compilation failed")
+        regex::Regex::new(r"(?i)\.(?:md|markdown)\b")
+            .expect("markdown-extension regex compilation failed")
     })
 }
 
-/// Returns true if the byte position is at a clean left boundary for a path
-/// match: start of string, preceded by whitespace, or by an opening
-/// punctuation char (parens, brackets, quotes, backtick, brace).
-fn left_boundary_ok(line_text: &str, byte_pos: usize) -> bool {
-    if byte_pos == 0 {
-        return true;
+const CODE_EXTENSIONS: &[&str] = &[
+    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "rb", "java", "kt", "swift", "c",
+    "cpp", "cc", "cxx", "h", "hpp", "cs", "php", "sh", "bash", "zsh", "fish", "lua", "sql", "toml",
+    "yaml", "yml", "json", "jsonc", "html", "htm", "css", "scss", "sass", "vue", "svelte", "dart",
+    "scala", "clj", "cljs", "hs", "ml", "ex", "exs", "erl", "nim", "zig", "sol", "xml", "gradle",
+    "vim", "conf", "ini", "env",
+];
+
+fn code_extension_regex() -> &'static regex::Regex {
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        let extensions = CODE_EXTENSIONS.join("|");
+        regex::Regex::new(&format!(r"(?i)\.(?:{extensions})\b"))
+            .expect("code-extension regex compilation failed")
+    })
+}
+
+fn is_path_start_boundary(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '(' | '[' | '<' | '\'' | '"' | '`' | '{')
+}
+
+fn candidate_start_positions(line_text: &str, ext_start: usize) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (idx, ch) in line_text[..ext_start].char_indices() {
+        if is_path_start_boundary(ch) {
+            let next = idx + ch.len_utf8();
+            if next < ext_start {
+                starts.push(next);
+            }
+        }
     }
-    match line_text[..byte_pos].chars().next_back() {
-        None => true,
-        Some(c) if c.is_whitespace() => true,
-        Some('(' | '[' | '<' | '\'' | '"' | '`' | '{') => true,
-        _ => false,
-    }
+    starts
+}
+
+fn extension_tail_ok(line_text: &str, ext_end: usize) -> bool {
+    !line_text[ext_end..].starts_with('.')
 }
 
 /// Minimum stem length (basename without extension) for candidates that have
@@ -192,10 +201,23 @@ const MIN_BARE_STEM_LEN: usize = 4;
 /// Returns true if `path_str` looks like a Windows absolute path (`C:\foo` or `C:/foo`).
 fn is_windows_absolute(path_str: &str) -> bool {
     let bytes = path_str.as_bytes();
-    bytes.len() >= 3
+    if bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
         && (bytes[2] == b'\\' || bytes[2] == b'/')
+    {
+        return true;
+    }
+    if path_str.starts_with("\\\\?\\") || path_str.starts_with("\\\\.\\") {
+        return true;
+    }
+    if path_str.starts_with("\\\\") || path_str.starts_with("//") {
+        let normalized = path_str.replace('\\', "/");
+        let mut parts = normalized.trim_start_matches('/').split('/');
+        return parts.next().is_some_and(|p| !p.is_empty())
+            && parts.next().is_some_and(|p| !p.is_empty());
+    }
+    false
 }
 
 /// Returns true if `path_str` looks like a POSIX absolute path (`/foo`).
@@ -239,6 +261,16 @@ fn has_url_scheme_prefix(candidate: &str) -> bool {
     prefix.len() >= 2 && prefix.chars().all(|c| c.is_ascii_alphabetic())
 }
 
+fn expand_tilde_path(path_str: &str) -> Option<PathBuf> {
+    if path_str == "~" {
+        return dirs::home_dir();
+    }
+    let rest = path_str
+        .strip_prefix("~/")
+        .or_else(|| path_str.strip_prefix("~\\"))?;
+    dirs::home_dir().map(|home| home.join(rest))
+}
+
 /// Resolve `path_str` against `cwd` and canonicalize the result. Returns the
 /// canonical absolute path when:
 /// - the candidate is a POSIX or Windows absolute path that exists, or
@@ -250,7 +282,9 @@ fn has_url_scheme_prefix(candidate: &str) -> bool {
 /// passed to `open::that`, so the user opens the actual resolved target rather
 /// than a misleading traversal path printed by the terminal.
 fn resolve_path(path_str: &str, cwd: Option<&Path>) -> Option<PathBuf> {
-    let candidate = if is_posix_absolute(path_str) || is_windows_absolute(path_str) {
+    let candidate = if let Some(expanded) = expand_tilde_path(path_str) {
+        expanded
+    } else if is_posix_absolute(path_str) || is_windows_absolute(path_str) {
         PathBuf::from(path_str)
     } else {
         let cwd = cwd?;
@@ -267,10 +301,84 @@ fn resolve_path(path_str: &str, cwd: Option<&Path>) -> Option<PathBuf> {
 fn canonical_has_md_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|s| s.to_str())
-        .is_some_and(|ext| {
-            let lower = ext.to_ascii_lowercase();
-            lower == "md" || lower == "markdown"
-        })
+        .is_some_and(|ext| MARKDOWN_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
+}
+
+fn has_path_separator(path_str: &str) -> bool {
+    path_str.contains('/') || path_str.contains('\\')
+}
+
+fn validated_path_candidate(
+    path_str: &str,
+    cwd: Option<&Path>,
+    extension_ok: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    if path_str.is_empty() || contains_control_char(path_str) {
+        return None;
+    }
+    if has_url_scheme_prefix(path_str) && !is_windows_absolute(path_str) {
+        return None;
+    }
+    if !has_path_separator(path_str) && stem_len(path_str) < MIN_BARE_STEM_LEN {
+        return None;
+    }
+    let resolved = resolve_path(path_str, cwd)?;
+    if !resolved.is_file() {
+        return None;
+    }
+    if !extension_ok(&resolved) {
+        return None;
+    }
+    Some(resolved)
+}
+
+fn char_span_for_bytes(
+    line_text: &str,
+    byte_start: usize,
+    byte_end: usize,
+) -> Option<(usize, usize)> {
+    if byte_end <= byte_start {
+        return None;
+    }
+    let char_start = line_text[..byte_start].chars().count();
+    let char_end = line_text[..byte_end].chars().count().checked_sub(1)?;
+    Some((char_start, char_end))
+}
+
+struct CandidateZoneSpec {
+    byte_start: usize,
+    byte_end: usize,
+    source: HyperlinkSource,
+    line_no: Option<u32>,
+    col_no: Option<u32>,
+}
+
+fn zone_for_candidate(
+    line_text: &str,
+    line: alacritty_terminal::index::Line,
+    char_to_col: &[usize],
+    resolved: PathBuf,
+    spec: CandidateZoneSpec,
+) -> Option<HyperlinkZone> {
+    let (char_start, char_end) = char_span_for_bytes(line_text, spec.byte_start, spec.byte_end)?;
+    let col_start = char_to_col.get(char_start)?;
+    let col_end = char_to_col.get(char_end)?;
+    Some(HyperlinkZone {
+        uri: resolved.to_string_lossy().into_owned(),
+        id: String::new(),
+        start: alacritty_terminal::index::Point::new(
+            line,
+            alacritty_terminal::index::Column(*col_start),
+        ),
+        end: alacritty_terminal::index::Point::new(
+            line,
+            alacritty_terminal::index::Column(*col_end),
+        ),
+        is_openable: true,
+        source: spec.source,
+        line: spec.line_no,
+        col: spec.col_no,
+    })
 }
 
 /// Detect `.md` / `.markdown` file paths on a single terminal line.
@@ -291,83 +399,49 @@ pub fn detect_file_paths_on_line_mapped(
     char_to_col: &[usize],
     cwd: Option<&Path>,
 ) -> Vec<HyperlinkZone> {
-    let re = file_path_regex();
-    re.find_iter(line_text)
-        .filter_map(|m| {
-            if !left_boundary_ok(line_text, m.start()) {
-                return None;
+    let mut zones = Vec::new();
+    for ext_match in markdown_extension_regex().find_iter(line_text) {
+        let path_end = ext_match.end();
+        if !extension_tail_ok(line_text, path_end) {
+            continue;
+        }
+        for start in candidate_start_positions(line_text, ext_match.start()) {
+            let candidate = &line_text[start..path_end];
+            let Some(resolved) =
+                validated_path_candidate(candidate, cwd, canonical_has_md_extension)
+            else {
+                continue;
+            };
+            if let Some(zone) = zone_for_candidate(
+                line_text,
+                line,
+                char_to_col,
+                resolved,
+                CandidateZoneSpec {
+                    byte_start: start,
+                    byte_end: path_end,
+                    source: HyperlinkSource::FilePath,
+                    line_no: None,
+                    col_no: None,
+                },
+            ) {
+                zones.push(zone);
+                break;
             }
-            let candidate = m.as_str();
-            if contains_control_char(candidate) {
-                return None;
-            }
-            // Reject URL-scheme-prefixed candidates so `file:///etc/shadow.md`
-            // can never reach `open::that` (which would honour the scheme).
-            // Windows drive letters (`C:`) are single-letter and not rejected.
-            if has_url_scheme_prefix(candidate) && !is_windows_absolute(candidate) {
-                return None;
-            }
-            let has_separator = candidate.contains('/') || candidate.contains('\\');
-            if !has_separator && stem_len(candidate) < MIN_BARE_STEM_LEN {
-                return None;
-            }
-            let resolved = resolve_path(candidate, cwd)?;
-            // Defence-in-depth: a symlinked candidate could canonicalise to a
-            // file with a different (or no) extension. Confirm the canonical
-            // target still ends with `.md` / `.markdown`.
-            if !canonical_has_md_extension(&resolved) {
-                return None;
-            }
-            let absolute = resolved.to_string_lossy().into_owned();
-
-            let char_start = line_text[..m.start()].chars().count();
-            let char_end = line_text[..m.end()].chars().count().saturating_sub(1);
-            let col_start = char_to_col.get(char_start)?;
-            let col_end = char_to_col.get(char_end)?;
-
-            Some(HyperlinkZone {
-                uri: absolute,
-                id: String::new(),
-                start: alacritty_terminal::index::Point::new(
-                    line,
-                    alacritty_terminal::index::Column(*col_start),
-                ),
-                end: alacritty_terminal::index::Point::new(
-                    line,
-                    alacritty_terminal::index::Column(*col_end),
-                ),
-                is_openable: true,
-                source: HyperlinkSource::FilePath,
-                line: None,
-                col: None,
-            })
-        })
-        .collect()
+        }
+    }
+    zones
 }
 
 // ---------------------------------------------------------------------------
 // Code-file scanner (file:line:col)
 // ---------------------------------------------------------------------------
 
-/// Regex matching source-code file paths with optional `:line[:col]` suffix.
-///
-/// Extensions explicitly enumerated rather than `\w+\.` so that arbitrary
-/// dotted basenames (`.tar.gz`, `.eslintrc.json` - already covered as
-/// `json`) don't drag in non-code matches. `.md` / `.markdown` are
-/// deliberately absent: the existing `FilePath` scanner routes those to
-/// the in-pane markdown viewer.
-///
-/// `:` is allowed inside the character class so that Windows-drive paths
-/// (`C:\foo\bar.rs:42`) match as a single regex hit. The `:line[:col]`
-/// suffix is then peeled off in `split_path_and_location` by walking up
-/// to two pure-digit segments from the right.
-// The location suffix accepts two forms: the colon style `:line[:col]` and the
-// paren style `(line,col)` / `:(line,col)` that `tsc`, C#/Roslyn and MSBuild
-// emit (US-013). The paren alternative is tried FIRST so `app.ts(42,7)` is
-// consumed whole rather than stopping at `app.ts`. `(` and `)` stay OUT of the
-// path character class, so a mid-name paren like `Update(src/cool.rs)` still
-// matches just `src/cool.rs` (the leading `(` is a left boundary).
-const CODE_PATH_REGEX_PATTERN: &str = r#"(?i)[A-Za-z0-9_:./\\\-]+\.(?:rs|ts|tsx|js|jsx|mjs|cjs|py|go|rb|java|kt|swift|c|cpp|cc|cxx|h|hpp|cs|php|sh|bash|zsh|fish|lua|sql|toml|yaml|yml|json|jsonc|html|htm|css|scss|sass|vue|svelte|dart|scala|clj|cljs|hs|ml|ex|exs|erl|nim|zig|sol|xml|gradle|vim|conf|ini|env)(?::?\(\d+[,:]\d+\)|(?::\d+(?::\d+)?)?\b)"#;
+// The code-path scanner detects a known source extension, expands possible
+// path starts to the left, then validates the resolved file before emitting a
+// link. Location suffixes accept `:line[:col]`, `(line,col)`, and `(line:col)`.
+// `.md` / `.markdown` are deliberately absent: the markdown scanner routes
+// those to the in-pane markdown viewer.
 
 /// US-013: Python traceback frame `File "path", line N`. The path is quoted and
 /// the line number lives in a separate clause, so the generic code-path regex
@@ -380,13 +454,6 @@ fn python_traceback_regex() -> &'static regex::Regex {
     RE.get_or_init(|| {
         regex::Regex::new(PYTHON_TRACEBACK_REGEX_PATTERN)
             .expect("python-traceback regex compilation failed")
-    })
-}
-
-fn code_path_regex() -> &'static regex::Regex {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| {
-        regex::Regex::new(CODE_PATH_REGEX_PATTERN).expect("code-path regex compilation failed")
     })
 }
 
@@ -439,6 +506,73 @@ fn split_path_and_location(matched: &str) -> (&str, Option<u32>, Option<u32>) {
     }
 }
 
+fn parse_u32_at(text: &str, start: usize) -> Option<(u32, usize)> {
+    let mut end = start;
+    for (idx, ch) in text[start..].char_indices() {
+        if !ch.is_ascii_digit() {
+            break;
+        }
+        end = start + idx + ch.len_utf8();
+    }
+    if end == start {
+        return None;
+    }
+    text[start..end].parse::<u32>().ok().map(|n| (n, end))
+}
+
+fn location_suffix_tail_is_clean(text: &str, end: usize) -> bool {
+    !text[end..]
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn code_candidate_display_end(line_text: &str, path_end: usize) -> usize {
+    let suffix = &line_text[path_end..];
+
+    let paren_digits_start = if suffix.starts_with(":(") {
+        Some(path_end + 2)
+    } else if suffix.starts_with('(') {
+        Some(path_end + 1)
+    } else {
+        None
+    };
+    if let Some(digits_start) = paren_digits_start
+        && let Some((_, after_line)) = parse_u32_at(line_text, digits_start)
+        && let Some(separator) = line_text[after_line..].chars().next()
+        && matches!(separator, ',' | ':')
+    {
+        let col_start = after_line + separator.len_utf8();
+        if let Some((_, after_col)) = parse_u32_at(line_text, col_start)
+            && line_text[after_col..].starts_with(')')
+        {
+            let display_end = after_col + 1;
+            if location_suffix_tail_is_clean(line_text, display_end) {
+                return display_end;
+            }
+        }
+    }
+
+    if !suffix.starts_with(':') {
+        return path_end;
+    }
+    let Some((_, after_line)) = parse_u32_at(line_text, path_end + 1) else {
+        return path_end;
+    };
+    let mut display_end = after_line;
+    if line_text[display_end..].starts_with(':') {
+        let Some((_, after_col)) = parse_u32_at(line_text, display_end + 1) else {
+            return path_end;
+        };
+        display_end = after_col;
+    }
+    if location_suffix_tail_is_clean(line_text, display_end) {
+        display_end
+    } else {
+        path_end
+    }
+}
+
 /// Returns true if the canonicalised path's extension is a recognised
 /// code extension. Defence-in-depth against symlinks (`good.rs ->
 /// /usr/bin/sudo`) - without this, a malicious link in terminal output
@@ -448,65 +582,7 @@ fn canonical_has_code_extension(path: &Path) -> bool {
         return false;
     };
     let lower = ext.to_ascii_lowercase();
-    matches!(
-        lower.as_str(),
-        "rs" | "ts"
-            | "tsx"
-            | "js"
-            | "jsx"
-            | "mjs"
-            | "cjs"
-            | "py"
-            | "go"
-            | "rb"
-            | "java"
-            | "kt"
-            | "swift"
-            | "c"
-            | "cpp"
-            | "cc"
-            | "cxx"
-            | "h"
-            | "hpp"
-            | "cs"
-            | "php"
-            | "sh"
-            | "bash"
-            | "zsh"
-            | "fish"
-            | "lua"
-            | "sql"
-            | "toml"
-            | "yaml"
-            | "yml"
-            | "json"
-            | "jsonc"
-            | "html"
-            | "htm"
-            | "css"
-            | "scss"
-            | "sass"
-            | "vue"
-            | "svelte"
-            | "dart"
-            | "scala"
-            | "clj"
-            | "cljs"
-            | "hs"
-            | "ml"
-            | "ex"
-            | "exs"
-            | "erl"
-            | "nim"
-            | "zig"
-            | "sol"
-            | "xml"
-            | "gradle"
-            | "vim"
-            | "conf"
-            | "ini"
-            | "env"
-    )
+    CODE_EXTENSIONS.contains(&lower.as_str())
 }
 
 /// Detect source-code file paths with optional `:line[:col]` on a single
@@ -536,84 +612,55 @@ pub fn detect_code_paths_on_line_mapped(
             let path_m = cap.name("path")?;
             let path_str = path_m.as_str();
             let line_no = cap.name("line")?.as_str().parse::<u32>().ok()?;
-            if contains_control_char(path_str) {
-                return None;
-            }
-            let resolved = resolve_path(path_str, cwd)?;
-            if !canonical_has_code_extension(&resolved) {
-                return None;
-            }
-            let char_start = line_text[..path_m.start()].chars().count();
-            let char_end = line_text[..path_m.end()].chars().count().saturating_sub(1);
-            let col_start = char_to_col.get(char_start)?;
-            let col_end = char_to_col.get(char_end)?;
-            Some(HyperlinkZone {
-                uri: resolved.to_string_lossy().into_owned(),
-                id: String::new(),
-                start: alacritty_terminal::index::Point::new(
-                    line,
-                    alacritty_terminal::index::Column(*col_start),
-                ),
-                end: alacritty_terminal::index::Point::new(
-                    line,
-                    alacritty_terminal::index::Column(*col_end),
-                ),
-                is_openable: true,
-                source: HyperlinkSource::CodePath,
-                line: Some(line_no),
-                col: None,
-            })
+            let resolved = validated_path_candidate(path_str, cwd, canonical_has_code_extension)?;
+            zone_for_candidate(
+                line_text,
+                line,
+                char_to_col,
+                resolved,
+                CandidateZoneSpec {
+                    byte_start: path_m.start(),
+                    byte_end: path_m.end(),
+                    source: HyperlinkSource::CodePath,
+                    line_no: Some(line_no),
+                    col_no: None,
+                },
+            )
         })
         .collect();
 
-    let re = code_path_regex();
-    zones.extend(re.find_iter(line_text).filter_map(|m| {
-        if !left_boundary_ok(line_text, m.start()) {
-            return None;
+    for ext_match in code_extension_regex().find_iter(line_text) {
+        let path_end = ext_match.end();
+        if !extension_tail_ok(line_text, path_end) {
+            continue;
         }
-        let matched = m.as_str();
-        if contains_control_char(matched) {
-            return None;
-        }
-        // URL schemes (http://, file://, ssh:) must not reach the open
-        // path. Windows drive letters (`C:`) are single-letter and
-        // explicitly accepted by `has_url_scheme_prefix`.
-        if has_url_scheme_prefix(matched) && !is_windows_absolute(matched) {
-            return None;
-        }
-        let (path_str, line_no, col_no) = split_path_and_location(matched);
-        let has_separator = path_str.contains('/') || path_str.contains('\\');
-        if !has_separator && stem_len(path_str) < MIN_BARE_STEM_LEN {
-            return None;
-        }
-        let resolved = resolve_path(path_str, cwd)?;
-        if !canonical_has_code_extension(&resolved) {
-            return None;
-        }
-        let absolute = resolved.to_string_lossy().into_owned();
-
-        let char_start = line_text[..m.start()].chars().count();
-        let char_end = line_text[..m.end()].chars().count().saturating_sub(1);
-        let col_start = char_to_col.get(char_start)?;
-        let col_end = char_to_col.get(char_end)?;
-
-        Some(HyperlinkZone {
-            uri: absolute,
-            id: String::new(),
-            start: alacritty_terminal::index::Point::new(
+        let display_end = code_candidate_display_end(line_text, path_end);
+        for start in candidate_start_positions(line_text, ext_match.start()) {
+            let matched = &line_text[start..display_end];
+            let (path_str, line_no, col_no) = split_path_and_location(matched);
+            let Some(resolved) =
+                validated_path_candidate(path_str, cwd, canonical_has_code_extension)
+            else {
+                continue;
+            };
+            if let Some(zone) = zone_for_candidate(
+                line_text,
                 line,
-                alacritty_terminal::index::Column(*col_start),
-            ),
-            end: alacritty_terminal::index::Point::new(
-                line,
-                alacritty_terminal::index::Column(*col_end),
-            ),
-            is_openable: true,
-            source: HyperlinkSource::CodePath,
-            line: line_no,
-            col: col_no,
-        })
-    }));
+                char_to_col,
+                resolved,
+                CandidateZoneSpec {
+                    byte_start: start,
+                    byte_end: display_end,
+                    source: HyperlinkSource::CodePath,
+                    line_no,
+                    col_no,
+                },
+            ) {
+                zones.push(zone);
+                break;
+            }
+        }
+    }
     zones
 }
 
@@ -718,6 +765,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn file_urls_are_not_generic_openable_links() {
+        let line = "see file:///tmp/README.md and https://example.com";
+        let map = ascii_map(line);
+        let zones = detect_urls_on_line_mapped(line, line0(), &map);
+
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].uri, "https://example.com");
+        assert!(!is_url_scheme_openable("file:///tmp/README.md"));
+        assert!(!is_url_scheme_openable("file://localhost/tmp/README.md"));
+    }
+
     fn write_md(dir: &Path, name: &str) -> PathBuf {
         let p = dir.join(name);
         if let Some(parent) = p.parent() {
@@ -727,16 +786,9 @@ mod tests {
         p
     }
 
-    /// Resolve `p` to a string the file-path regex can match end-to-end.
-    ///
-    /// The regex character class `[A-Za-z0-9_:./\\\-]+` deliberately
-    /// excludes `~` and `?`. On Windows runners `tempfile::tempdir()`
-    /// often returns paths with 8.3 short-name segments (`RUNNER~1`);
-    /// `canonicalize` resolves them to long form but prepends the
-    /// `\\?\` UNC prefix that contains `?`. We strip that prefix so the
-    /// downstream regex pass sees a path made entirely of accepted
-    /// characters. On Unix `canonicalize` returns a regex-friendly path
-    /// already and the strip is a no-op.
+    /// Resolve `p` to a display string that stays readable in test output.
+    /// Windows canonicalization may prepend `\\?\`; stripping it keeps tests
+    /// independent from the host's verbatim-path formatting.
     fn canonical_display(p: &Path) -> String {
         let canonical = p.canonicalize().expect("canonicalize");
         let s = canonical.to_string_lossy().into_owned();
@@ -776,6 +828,8 @@ mod tests {
         // the host filesystem since `resolve_path` will reject it.
         assert!(is_windows_absolute("C:\\Users\\arthur\\doc.md"));
         assert!(is_windows_absolute("D:/repo/README.md"));
+        assert!(is_windows_absolute(r"\\server\share\README.md"));
+        assert!(is_windows_absolute(r"\\?\C:\repo\README.md"));
         assert!(!is_windows_absolute("/etc/foo.md"));
         assert!(!is_windows_absolute("foo.md"));
         assert!(!is_windows_absolute("C:foo"));
@@ -801,6 +855,38 @@ mod tests {
         let map = ascii_map(line_text);
         let zones = detect_file_paths_on_line_mapped(line_text, line0(), &map, Some(tmp.path()));
         assert_eq!(zones.len(), 1);
+    }
+
+    #[test]
+    fn quoted_markdown_path_with_spaces_resolves_against_cwd() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_md(tmp.path(), "My Project/README.md");
+        let line_text = "open \"My Project/README.md\"";
+        let map = ascii_map(line_text);
+        let zones = detect_file_paths_on_line_mapped(line_text, line0(), &map, Some(tmp.path()));
+        assert_eq!(zones.len(), 1);
+        assert!(zones[0].uri.ends_with("README.md"));
+    }
+
+    #[test]
+    fn unicode_markdown_path_resolves_against_cwd() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_md(tmp.path(), "café.md");
+        let line_text = "open café.md";
+        let map = ascii_map(line_text);
+        let zones = detect_file_paths_on_line_mapped(line_text, line0(), &map, Some(tmp.path()));
+        assert_eq!(zones.len(), 1);
+        assert!(zones[0].uri.ends_with("café.md"));
+    }
+
+    #[test]
+    fn markdown_prefix_of_longer_extension_is_rejected() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_md(tmp.path(), "README.md");
+        let line_text = "open README.md.old";
+        let map = ascii_map(line_text);
+        let zones = detect_file_paths_on_line_mapped(line_text, line0(), &map, Some(tmp.path()));
+        assert!(zones.is_empty());
     }
 
     #[test]
@@ -1161,9 +1247,6 @@ mod tests {
     fn code_path_scanner_matches_rust_at_line_col() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let rs_path = write_md(tmp.path(), "lib.rs"); // re-use the .md writer for any file
-        // Use `canonical_display` so Windows 8.3 short names and the
-        // `\\?\` UNC prefix don't leak into the test line - same
-        // workaround the file-path scanner tests use.
         let display = canonical_display(&rs_path);
         let line_text = format!("error at {display}:42:7");
         let map = ascii_map(&line_text);
@@ -1173,6 +1256,41 @@ mod tests {
         assert_eq!(zones[0].line, Some(42));
         assert_eq!(zones[0].col, Some(7));
         assert!(zones[0].uri.ends_with("lib.rs"));
+    }
+
+    #[test]
+    fn code_path_scanner_quoted_path_with_spaces_and_line_col() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_md(tmp.path(), "My Project/src/lib.rs");
+        let line_text = "\"My Project/src/lib.rs:12:3\"";
+        let map = ascii_map(line_text);
+        let zones = detect_code_paths_on_line_mapped(line_text, line0(), &map, Some(tmp.path()));
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].line, Some(12));
+        assert_eq!(zones[0].col, Some(3));
+        assert!(zones[0].uri.ends_with("lib.rs"));
+    }
+
+    #[test]
+    fn code_path_scanner_unicode_path_resolves_against_cwd() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_md(tmp.path(), "src/café.rs");
+        let line_text = "error at src/café.rs:9";
+        let map = ascii_map(line_text);
+        let zones = detect_code_paths_on_line_mapped(line_text, line0(), &map, Some(tmp.path()));
+        assert_eq!(zones.len(), 1);
+        assert_eq!(zones[0].line, Some(9));
+        assert!(zones[0].uri.ends_with("café.rs"));
+    }
+
+    #[test]
+    fn code_path_prefix_of_backup_extension_is_rejected() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        write_md(tmp.path(), "lib.rs");
+        let line_text = "error at lib.rs.bak";
+        let map = ascii_map(line_text);
+        let zones = detect_code_paths_on_line_mapped(line_text, line0(), &map, Some(tmp.path()));
+        assert!(zones.is_empty());
     }
 
     #[test]

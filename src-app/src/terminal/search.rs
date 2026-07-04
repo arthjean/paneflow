@@ -14,6 +14,22 @@ use gpui::{ClipboardItem, Context, Focusable};
 
 use super::TerminalView;
 
+const LOCAL_SEARCH_DEBOUNCE_MS: u64 = 80;
+
+fn copy_mode_entry_cursor(
+    cursor_point: AlacPoint,
+    display_offset: usize,
+    screen_lines: usize,
+) -> AlacPoint {
+    let cursor_display_line = cursor_point.line.0 + display_offset as i32;
+    if cursor_display_line >= 0 && cursor_display_line < screen_lines as i32 {
+        cursor_point
+    } else {
+        let center_display = screen_lines as i32 / 2;
+        AlacPoint::new(GridLine(center_display - display_offset as i32), GridCol(0))
+    }
+}
+
 impl TerminalView {
     // --- Terminal control actions ---
 
@@ -96,12 +112,13 @@ impl TerminalView {
         self.search_active = true;
         self.search_query = query.to_string();
         self.search_regex_mode = regex;
-        self.run_search();
+        self.schedule_search(cx);
         cx.notify();
     }
 
     pub(super) fn toggle_search(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
         self.search_active = !self.search_active;
+        self.search_generation = self.search_generation.wrapping_add(1);
         // Always reset the query state; the field starts empty on every open.
         self.search_query.clear();
         self.search_matches.clear();
@@ -148,13 +165,14 @@ impl TerminalView {
         }
         if q != self.search_query {
             self.search_query = q;
-            self.run_search();
+            self.schedule_search(cx);
             cx.notify();
         }
     }
 
     pub(super) fn dismiss_search(&mut self, cx: &mut Context<Self>) {
         self.search_active = false;
+        self.search_generation = self.search_generation.wrapping_add(1);
         self.search_query.clear();
         self.search_matches.clear();
         self.search_current = 0;
@@ -167,7 +185,7 @@ impl TerminalView {
     pub(super) fn toggle_search_regex(&mut self, cx: &mut Context<Self>) {
         self.search_regex_mode = !self.search_regex_mode;
         if !self.search_query.is_empty() {
-            self.run_search();
+            self.schedule_search(cx);
         }
         cx.notify();
     }
@@ -194,12 +212,45 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub(super) fn run_search(&mut self) {
-        let result = crate::search::search_term(
-            &self.terminal.term,
-            &self.search_query,
-            self.search_regex_mode,
-        );
+    fn schedule_search(&mut self, cx: &mut Context<Self>) {
+        self.search_generation = self.search_generation.wrapping_add(1);
+        let generation = self.search_generation;
+        if self.search_query.is_empty() {
+            self.search_matches.clear();
+            self.search_regex_error = None;
+            self.search_current = 0;
+            return;
+        }
+
+        let term = self.terminal.term.clone();
+        let query = self.search_query.clone();
+        let regex = self.search_regex_mode;
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                smol::Timer::after(std::time::Duration::from_millis(LOCAL_SEARCH_DEBOUNCE_MS))
+                    .await;
+                let worker_query = query.clone();
+                let result =
+                    smol::unblock(move || crate::search::search_term(&term, &worker_query, regex))
+                        .await;
+                let _ = cx.update(|cx| {
+                    this.update(cx, |view, cx| {
+                        if view.search_generation == generation
+                            && view.search_active
+                            && view.search_query == query
+                            && view.search_regex_mode == regex
+                        {
+                            view.apply_search_result(result);
+                            cx.notify();
+                        }
+                    })
+                });
+            },
+        )
+        .detach();
+    }
+
+    fn apply_search_result(&mut self, result: crate::search::SearchResult) {
         self.search_matches = result.matches;
         self.search_regex_error = result.regex_error;
         self.search_current = 0;
@@ -236,19 +287,7 @@ impl TerminalView {
         let screen_lines = term.screen_lines();
         term.selection = None;
 
-        // Convert display-relative cursor to grid coordinates.
-        // If the cursor is off-screen (scrolled away), place at viewport center.
-        let cursor_display_line = cursor_point.line.0;
-        let copy_cursor = if cursor_display_line >= 0 && cursor_display_line < screen_lines as i32 {
-            AlacPoint::new(
-                GridLine(cursor_display_line - display_offset as i32),
-                cursor_point.column,
-            )
-        } else {
-            // Cursor off-screen - place at center of viewport
-            let center_display = screen_lines as i32 / 2;
-            AlacPoint::new(GridLine(center_display - display_offset as i32), GridCol(0))
-        };
+        let copy_cursor = copy_mode_entry_cursor(cursor_point, display_offset, screen_lines);
         drop(term);
 
         self.copy_cursor = copy_cursor;
@@ -356,5 +395,31 @@ impl TerminalView {
                 term.scroll_display(AlacScroll::Delta(delta));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn copy_mode_entry_keeps_visible_raw_cursor_at_live_edge() {
+        let cursor = AlacPoint::new(GridLine(12), GridCol(8));
+        assert_eq!(copy_mode_entry_cursor(cursor, 0, 24), cursor);
+    }
+
+    #[test]
+    fn copy_mode_entry_centers_when_live_cursor_is_scrolled_out() {
+        let cursor = AlacPoint::new(GridLine(23), GridCol(8));
+        assert_eq!(
+            copy_mode_entry_cursor(cursor, 10, 24),
+            AlacPoint::new(GridLine(2), GridCol(0))
+        );
+    }
+
+    #[test]
+    fn copy_mode_entry_keeps_scrollback_cursor_when_visible() {
+        let cursor = AlacPoint::new(GridLine(-5), GridCol(3));
+        assert_eq!(copy_mode_entry_cursor(cursor, 10, 24), cursor);
     }
 }

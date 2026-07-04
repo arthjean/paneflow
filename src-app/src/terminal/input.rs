@@ -13,12 +13,12 @@ use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point as Al
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::TermMode;
 use gpui::{
-    ClipboardEntry, ClipboardItem, Context, ExternalPaths, KeyDownEvent, MouseButton,
+    ClipboardEntry, ClipboardItem, Context, ExternalPaths, Focusable, KeyDownEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, TouchPhase, Window,
 };
 
 use crate::mouse;
-use crate::terminal::types::{HyperlinkSource, HyperlinkZone, Modes};
+use crate::terminal::types::{HyperlinkSource, HyperlinkZone, Modes, ShellQuoting};
 
 #[cfg(debug_assertions)]
 use super::probe_enabled;
@@ -47,25 +47,26 @@ fn open_link_modifier_held(modifiers: &gpui::Modifiers) -> bool {
 /// newlines are kept literal on purpose: that is the whole point of bracketed
 /// paste (the agent's input editor receives them as text, not as submit).
 pub(super) fn wrap_bracketed_paste(text: &str) -> String {
-    let sanitized: String = text
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let sanitized: String = normalized
         .chars()
         .filter(|&c| c != '\x1b' && !(('\u{0080}'..='\u{009f}').contains(&c)))
         .collect();
     format!("\x1b[200~{sanitized}\x1b[201~")
 }
 
-/// Convert a slice of OS paths to a single space-joined, POSIX-shell-quoted
-/// string for pasting into a PTY (US-021). `None` when every path is filtered
-/// out (newline, carriage-return, or null bytes). Newline and CR are both
-/// rejected because the non-bracketed paste sink rewrites `\n` to `\r` and
-/// passes a bare `\r` verbatim, which the shell treats as Enter - a path like
-/// `evil\rrm -rf ~` would otherwise submit a second line.
+/// Convert a slice of OS paths to a single space-joined, shell-quoted string
+/// for pasting into a PTY (US-021). `None` when every path is filtered out
+/// (newline, carriage-return, or null bytes). Newline and CR are both rejected
+/// because the non-bracketed paste sink rewrites `\n` to `\r` and passes a bare
+/// `\r` verbatim, which the shell treats as Enter.
 ///
-/// Clean paths (no space / `'` / `"` / `\`) pass through verbatim; the rest are
-/// wrapped in `'…'` with embedded `'` escaped as `'\''`. Shared by
-/// `handle_file_drop` (drag-and-drop) and `handle_paste` (Ctrl+V after copying
-/// files in a file manager).
-fn paths_to_pty_text(paths: &[std::path::PathBuf]) -> Option<String> {
+/// Only a conservative ASCII path subset is left unquoted; metacharacters like
+/// `;`, `&`, `$`, spaces, and quotes are always quoted. Windows uses the
+/// PowerShell-compatible single-quote form because Paneflow's default Windows
+/// shell resolver prefers PowerShell over cmd.exe. Shared by `handle_file_drop`
+/// and `handle_paste`.
+fn paths_to_pty_text(paths: &[std::path::PathBuf], shell_quoting: ShellQuoting) -> Option<String> {
     let quoted: Vec<String> = paths
         .iter()
         .filter_map(|p| {
@@ -76,17 +77,58 @@ fn paths_to_pty_text(paths: &[std::path::PathBuf]) -> Option<String> {
             if s.contains('\n') || s.contains('\r') || s.contains('\0') {
                 return None;
             }
-            if s.contains(' ') || s.contains('\'') || s.contains('"') || s.contains('\\') {
-                Some(format!("'{}'", s.replace('\'', "'\\''")))
-            } else {
-                Some(s.into_owned())
-            }
+            Some(quote_path_for_shell(&s, shell_quoting))
         })
         .collect();
     if quoted.is_empty() {
         None
     } else {
         Some(quoted.join(" "))
+    }
+}
+
+fn quote_path_for_shell(path: &str, shell_quoting: ShellQuoting) -> String {
+    match shell_quoting {
+        ShellQuoting::Posix => quote_posix_path(path),
+        ShellQuoting::PowerShell => quote_powershell_path(path),
+        ShellQuoting::Cmd => quote_cmd_path(path),
+    }
+}
+
+fn quote_posix_path(path: &str) -> String {
+    if path.chars().all(posix_unquoted_path_char) {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', "'\\''"))
+    }
+}
+
+fn posix_unquoted_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | ':')
+}
+
+fn quote_powershell_path(path: &str) -> String {
+    if path.chars().all(windows_unquoted_path_char) {
+        path.to_string()
+    } else {
+        format!("'{}'", path.replace('\'', "''"))
+    }
+}
+
+fn windows_unquoted_path_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '/' | '\\' | '.' | '_' | '-' | ':')
+}
+
+fn quote_cmd_path(path: &str) -> String {
+    if path.chars().all(windows_unquoted_path_char) {
+        path.to_string()
+    } else {
+        let escaped = path
+            .replace('^', "^^")
+            .replace('%', "^%")
+            .replace('!', "^!")
+            .replace('"', "\"\"");
+        format!("\"{escaped}\"")
     }
 }
 
@@ -351,9 +393,11 @@ impl TerminalView {
     pub(super) fn handle_mouse_down(
         &mut self,
         event: &MouseDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.focus_handle(cx).focus(window, cx);
+
         // US-015: a Left press on the scrollbar strip starts a jump/drag and
         // consumes the event - no text selection, no mouse report. Checked
         // first so the strip wins over selection on the right edge. Gated on
@@ -390,6 +434,7 @@ impl TerminalView {
         if event.button == MouseButton::Left
             && open_link_modifier_held(&event.modifiers)
             && event.click_count == 1
+            && self.ctrl_hovered_link.is_some()
         {
             self.mouse_down_link = self.ctrl_hovered_link.clone();
             let (point, side) = self.pixel_to_grid(event.position);
@@ -773,14 +818,6 @@ impl TerminalView {
             return;
         };
 
-        // Image in clipboard: forward raw Ctrl+V (0x16) so TUI agents can read it
-        if let Some(ClipboardEntry::Image(image)) = clipboard.entries().first()
-            && !image.bytes.is_empty()
-        {
-            self.terminal.write_to_pty(vec![0x16]);
-            return;
-        }
-
         // US-021: file(s) copied in the OS file manager (Nautilus/Finder/
         // Explorer/Thunar) arrive as `ExternalPaths`. Insert the shell-quoted
         // path(s). Checked BEFORE `clipboard.text()`, which falls back to
@@ -790,7 +827,8 @@ impl TerminalView {
         // Wayland compositors that copy a `file://` URI as text instead).
         for entry in clipboard.entries() {
             if let ClipboardEntry::ExternalPaths(ext_paths) = entry
-                && let Some(text) = paths_to_pty_text(ext_paths.paths())
+                && let Some(text) =
+                    paths_to_pty_text(ext_paths.paths(), self.terminal.shell_quoting)
             {
                 let mode = { *self.terminal.term.lock().mode() };
                 self.write_paste_text(&text, mode);
@@ -802,6 +840,18 @@ impl TerminalView {
         if let Some(text) = clipboard.text() {
             let mode = { *self.terminal.term.lock().mode() };
             self.write_paste_text(&text, mode);
+            return;
+        }
+
+        // Image-only clipboard: forward raw Ctrl+V (0x16) so TUI agents can read
+        // it. Text and ExternalPaths win above because they are deterministic PTY
+        // input; Ctrl+V has shell-specific "literal next" behavior.
+        if clipboard
+            .entries()
+            .iter()
+            .any(|entry| matches!(entry, ClipboardEntry::Image(image) if !image.bytes.is_empty()))
+        {
+            self.terminal.write_to_pty(vec![0x16]);
         }
     }
 
@@ -813,7 +863,7 @@ impl TerminalView {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) {
-        if let Some(text) = paths_to_pty_text(paths.paths()) {
+        if let Some(text) = paths_to_pty_text(paths.paths(), self.terminal.shell_quoting) {
             let mode = *self.terminal.term.lock().mode();
             self.write_paste_text(&text, mode);
         }
@@ -1032,6 +1082,7 @@ impl TerminalView {
 #[cfg(test)]
 mod tests {
     use super::{paths_to_pty_text, wrap_bracketed_paste};
+    use crate::terminal::types::ShellQuoting;
     use std::path::PathBuf;
 
     // EP-001 US-001 (agent-control-plane-hardening): the wrap is the burst that
@@ -1055,6 +1106,13 @@ mod tests {
     }
 
     #[test]
+    fn bracketed_wrap_normalizes_crlf_to_lf() {
+        let wrapped = wrap_bracketed_paste("line one\r\nline two\rline three");
+        assert_eq!(wrapped, "\x1b[200~line one\nline two\nline three\x1b[201~");
+        assert!(!wrapped.contains('\r'));
+    }
+
+    #[test]
     fn bracketed_wrap_strips_esc_and_c1_to_block_paste_escape() {
         // An embedded ESC[201~ or C1 control could otherwise terminate the
         // paste early and smuggle a CSI; both bytes are filtered out.
@@ -1067,9 +1125,22 @@ mod tests {
 
     // US-021: shell-quoting of file-manager paths for paste.
     #[test]
-    fn clean_path_passes_through_unquoted() {
+    fn shell_quoting_detects_common_shells() {
+        assert_eq!(ShellQuoting::for_shell("/bin/zsh"), ShellQuoting::Posix);
         assert_eq!(
-            paths_to_pty_text(&[PathBuf::from("/clean/path")]),
+            ShellQuoting::for_shell(r"C:\Windows\System32\cmd.exe"),
+            ShellQuoting::Cmd
+        );
+        assert_eq!(
+            ShellQuoting::for_shell(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+            ShellQuoting::PowerShell
+        );
+    }
+
+    #[test]
+    fn clean_path_passes_through_unquoted_for_posix() {
+        assert_eq!(
+            paths_to_pty_text(&[PathBuf::from("/clean/path")], ShellQuoting::Posix),
             Some("/clean/path".to_string())
         );
     }
@@ -1077,7 +1148,10 @@ mod tests {
     #[test]
     fn path_with_space_is_single_quoted() {
         assert_eq!(
-            paths_to_pty_text(&[PathBuf::from("/home/user/my file.txt")]),
+            paths_to_pty_text(
+                &[PathBuf::from("/home/user/my file.txt")],
+                ShellQuoting::Posix
+            ),
             Some("'/home/user/my file.txt'".to_string())
         );
     }
@@ -1085,35 +1159,87 @@ mod tests {
     #[test]
     fn embedded_single_quote_is_escaped() {
         assert_eq!(
-            paths_to_pty_text(&[PathBuf::from("/path/it's/here")]),
+            paths_to_pty_text(&[PathBuf::from("/path/it's/here")], ShellQuoting::Posix),
             Some("'/path/it'\\''s/here'".to_string())
+        );
+        assert_eq!(
+            paths_to_pty_text(
+                &[PathBuf::from(r"C:\path\it's\here")],
+                ShellQuoting::PowerShell
+            ),
+            Some("'C:\\path\\it''s\\here'".to_string())
         );
     }
 
     #[test]
     fn multiple_paths_join_with_space() {
         assert_eq!(
-            paths_to_pty_text(&[PathBuf::from("/a"), PathBuf::from("/b c")]),
+            paths_to_pty_text(
+                &[PathBuf::from("/a"), PathBuf::from("/b c")],
+                ShellQuoting::Posix
+            ),
             Some("/a '/b c'".to_string())
         );
     }
 
     #[test]
     fn newline_path_is_rejected() {
-        assert_eq!(paths_to_pty_text(&[PathBuf::from("/bad\npath")]), None);
+        assert_eq!(
+            paths_to_pty_text(&[PathBuf::from("/bad\npath")], ShellQuoting::Posix),
+            None
+        );
     }
 
     #[test]
     fn carriage_return_path_is_rejected() {
         // A bare CR survives the non-bracketed paste rewrite and submits a
         // line (Enter), so a path like `evil\rrm -rf ~` must be dropped.
-        assert_eq!(paths_to_pty_text(&[PathBuf::from("/bad\rpath")]), None);
-        assert_eq!(paths_to_pty_text(&[PathBuf::from("evil\rrm -rf ~")]), None);
+        assert_eq!(
+            paths_to_pty_text(&[PathBuf::from("/bad\rpath")], ShellQuoting::Posix),
+            None
+        );
+        assert_eq!(
+            paths_to_pty_text(&[PathBuf::from("evil\rrm -rf ~")], ShellQuoting::Posix),
+            None
+        );
     }
 
     #[test]
     fn empty_after_filter_is_none() {
-        assert_eq!(paths_to_pty_text(&[]), None);
-        assert_eq!(paths_to_pty_text(&[PathBuf::from("/bad\0null")]), None);
+        assert_eq!(paths_to_pty_text(&[], ShellQuoting::Posix), None);
+        assert_eq!(
+            paths_to_pty_text(&[PathBuf::from("/bad\0null")], ShellQuoting::Posix),
+            None
+        );
+    }
+
+    #[test]
+    fn shell_metacharacter_path_is_quoted() {
+        assert_eq!(
+            paths_to_pty_text(&[PathBuf::from("/tmp/a;b")], ShellQuoting::Posix),
+            Some("'/tmp/a;b'".to_string())
+        );
+    }
+
+    #[test]
+    fn windows_path_with_spaces_uses_powershell_quotes() {
+        assert_eq!(
+            paths_to_pty_text(
+                &[PathBuf::from(r"C:\dev\my file.txt")],
+                ShellQuoting::PowerShell
+            ),
+            Some("'C:\\dev\\my file.txt'".to_string())
+        );
+    }
+
+    #[test]
+    fn cmd_path_with_spaces_uses_cmd_quotes_and_escapes_expansion() {
+        assert_eq!(
+            paths_to_pty_text(
+                &[PathBuf::from(r"C:\dev\100% done\bang!")],
+                ShellQuoting::Cmd
+            ),
+            Some("\"C:\\dev\\100^% done\\bang^!\"".to_string())
+        );
     }
 }
