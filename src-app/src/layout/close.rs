@@ -128,15 +128,15 @@ impl LayoutTree {
         }
     }
 
-    /// Remove a specific pane entity from the tree. Consumes `self`, returns
-    /// the surviving tree (None if the removed pane was the only leaf).
-    pub fn remove_pane(self, target: &Entity<Pane>) -> Option<LayoutTree> {
+    /// Remove a specific pane entity from the tree. Consumes `self` and returns
+    /// the surviving tree plus whether a pane was removed.
+    pub fn remove_pane(self, target: &Entity<Pane>) -> (Option<LayoutTree>, bool) {
         match self {
             LayoutTree::Leaf(ref pane) => {
                 if pane == target {
-                    None
+                    (None, true)
                 } else {
-                    Some(self)
+                    (Some(self), false)
                 }
             }
             LayoutTree::Container {
@@ -147,8 +147,13 @@ impl LayoutTree {
             } => {
                 let mut new_children = Vec::with_capacity(children.len());
                 let mut removed_ratio = 0.0_f32;
+                let mut removed = false;
                 for child in children {
-                    if let Some(node) = child.node.remove_pane(target) {
+                    let (new_node, child_removed) = child.node.remove_pane(target);
+                    if child_removed {
+                        removed = true;
+                    }
+                    if let Some(node) = new_node {
                         new_children.push(LayoutChild {
                             node,
                             ratio: child.ratio,
@@ -158,10 +163,22 @@ impl LayoutTree {
                     }
                 }
 
-                // Cancel any in-progress drag before structural changes
+                if !removed {
+                    return (
+                        Some(LayoutTree::Container {
+                            direction,
+                            children: new_children,
+                            drag,
+                            container_size,
+                        }),
+                        false,
+                    );
+                }
+
+                // Cancel any in-progress drag before structural changes.
                 drag.set(None);
 
-                match new_children.len() {
+                let tree = match new_children.len() {
                     0 => None,
                     1 => Some(new_children.into_iter().next().unwrap().node),
                     _ => {
@@ -177,7 +194,8 @@ impl LayoutTree {
                             container_size,
                         })
                     }
-                }
+                };
+                (tree, true)
             }
         }
     }
@@ -217,8 +235,10 @@ mod tests {
         )
         .expect("non-empty layout");
 
-        let tree = tree.remove_pane(&b).expect("two panes should remain");
+        let (tree, removed) = tree.remove_pane(&b);
+        let tree = tree.expect("two panes should remain");
 
+        assert!(removed);
         assert_eq!(tree.leaf_count(), 2);
         assert_eq!(leaf_ids(&tree), vec![a.entity_id(), c.entity_id()]);
         match tree {
@@ -242,10 +262,31 @@ mod tests {
             LayoutTree::Leaf(b.clone()),
         );
 
-        let tree = tree.remove_pane(&b).expect("one pane should remain");
+        let (tree, removed) = tree.remove_pane(&b);
+        let tree = tree.expect("one pane should remain");
 
+        assert!(removed);
         assert_eq!(tree.leaf_count(), 1);
         assert_eq!(leaf_ids(&tree), vec![a.entity_id()]);
         assert!(matches!(tree, LayoutTree::Leaf(_)));
+    }
+
+    #[gpui::test]
+    fn remove_pane_absent_target_preserves_layout(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let a = test_pane(cx, 3);
+        let b = test_pane(cx, 3);
+        let missing = test_pane(cx, 3);
+        let tree = LayoutTree::new_split(
+            SplitDirection::Horizontal,
+            LayoutTree::Leaf(a.clone()),
+            LayoutTree::Leaf(b.clone()),
+        );
+
+        let (tree, removed) = tree.remove_pane(&missing);
+        let tree = tree.expect("absent target must preserve the tree");
+
+        assert!(!removed);
+        assert_eq!(leaf_ids(&tree), vec![a.entity_id(), b.entity_id()]);
     }
 }

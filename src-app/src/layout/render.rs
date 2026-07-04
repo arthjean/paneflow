@@ -28,6 +28,11 @@ fn finish_drag(
     }
 }
 
+fn available_main_axis_px(container_px: f32, child_count: usize) -> f32 {
+    let divider_px = DIVIDER_PX * child_count.saturating_sub(1) as f32;
+    (container_px - divider_px).max(0.0)
+}
+
 impl LayoutTree {
     /// Render the layout tree recursively as nested GPUI flex divs.
     #[allow(clippy::only_used_in_recursion)]
@@ -55,6 +60,7 @@ impl LayoutTree {
                 let size_for_drag = container_size.clone();
                 let child_ratios: Vec<Rc<Cell<f32>>> =
                     children.iter().map(|c| c.ratio.clone()).collect();
+                let child_count = children.len();
                 let child_minimums: Vec<f32> = children
                     .iter()
                     .map(|child| child.node.min_main_axis_px(dir))
@@ -69,7 +75,7 @@ impl LayoutTree {
                                 window.refresh();
                                 return;
                             }
-                            let csize = size_for_drag.get();
+                            let csize = available_main_axis_px(size_for_drag.get(), child_count);
                             if csize <= 0.0 {
                                 return;
                             }
@@ -234,5 +240,20 @@ impl LayoutTree {
                 container.into_any_element()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::available_main_axis_px;
+
+    #[test]
+    fn available_main_axis_excludes_fixed_dividers() {
+        assert!((available_main_axis_px(500.0, 3) - 492.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn available_main_axis_never_goes_negative() {
+        assert_eq!(available_main_axis_px(4.0, 3), 0.0);
     }
 }

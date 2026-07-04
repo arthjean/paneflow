@@ -49,6 +49,13 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.files_sidebar_open {
+            self.files_pane = self
+                .workspaces
+                .get(self.active_idx)
+                .and_then(|ws| ws.root.as_ref())
+                .and_then(|root| root.focused_pane(window, cx));
+        }
         self.toggle_files_sidebar(cx);
         if self.files_sidebar_open {
             self.files_focus.focus(window, cx);
@@ -159,6 +166,7 @@ impl PaneFlowApp {
         self.files_watcher = None;
         self.files_event_rx = None;
         self.files_menu_open = None;
+        self.files_pane = None;
         self.files_selected = 0;
     }
 
@@ -222,10 +230,14 @@ impl PaneFlowApp {
         else {
             return;
         };
-        let Some(target) = root
-            .focused_pane(window, cx)
-            .or_else(|| root.collect_leaves().into_iter().next())
-        else {
+        let target = self
+            .files_pane
+            .as_ref()
+            .filter(|pane| root.contains_leaf(pane))
+            .cloned()
+            .or_else(|| root.focused_pane(window, cx))
+            .or_else(|| root.collect_leaves().into_iter().next());
+        let Some(target) = target else {
             return;
         };
         let markdown = cx.new(|cx| crate::markdown::MarkdownView::open(path, cx));
@@ -233,6 +245,7 @@ impl PaneFlowApp {
             pane.add_markdown_tab(markdown, cx);
             cx.notify();
         });
+        self.pending_pane_focus = Some(target);
         self.save_session(cx);
         cx.notify();
     }

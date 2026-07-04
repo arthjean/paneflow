@@ -169,12 +169,12 @@ pub(crate) struct WorkspaceContextMenu {
 }
 
 /// Open "Move to pane…" tab context menu (EP-002 US-006). Identifies the tab
-/// (its owning pane + index) and the click anchor; the destination panes are
+/// by stable entity id plus owning pane; the destination panes are
 /// resolved at render time from the workspace's split tree.
 #[derive(Clone)]
 pub(crate) struct TabContextMenu {
     pub(crate) source_pane: Entity<Pane>,
-    pub(crate) tab_idx: usize,
+    pub(crate) tab_id: gpui::EntityId,
     pub(crate) position: Point<Pixels>,
 }
 
@@ -188,9 +188,21 @@ pub(crate) struct FilesContextMenu {
 }
 
 /// Captured state of a closed pane for undo-close-pane (US-014).
+pub(crate) enum ClosedTabRecord {
+    Terminal {
+        cwd: Option<std::path::PathBuf>,
+        scrollback: Option<String>,
+        custom_name: Option<String>,
+        font_size: Option<f32>,
+    },
+    Markdown {
+        path: std::path::PathBuf,
+    },
+}
+
 pub(crate) struct ClosedPaneRecord {
-    pub(crate) cwd: Option<std::path::PathBuf>,
-    pub(crate) scrollback: Option<String>,
+    pub(crate) tabs: Vec<ClosedTabRecord>,
+    pub(crate) selected_idx: usize,
     pub(crate) workspace_idx: usize,
 }
 
@@ -1020,6 +1032,9 @@ struct PaneFlowApp {
     files_selected: usize,
     /// Focus target for keyboard navigation inside the docked Files sidebar.
     files_focus: FocusHandle,
+    /// Pane that opened the Files sidebar. Markdown rows open back into this
+    /// pane even while the sidebar owns keyboard focus.
+    files_pane: Option<Entity<Pane>>,
     /// Recursive `notify` watcher on the Files tree root (EP-002 US-005).
     /// `None` when the sidebar is closed or the watch could not be installed
     /// (US-006 graceful degradation - the tree then refreshes on expand).
@@ -1344,6 +1359,18 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> Entity<Pane> {
         let pane = cx.new(|cx| Pane::new_with_tab(tab, workspace_id, cx));
+        cx.subscribe(&pane, Self::handle_pane_event).detach();
+        pane
+    }
+
+    pub(crate) fn create_pane_with_existing_tabs(
+        &mut self,
+        tabs: Vec<TabContent>,
+        selected_idx: usize,
+        workspace_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Entity<Pane> {
+        let pane = cx.new(|cx| Pane::new_with_tabs(tabs, selected_idx, workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
     }
@@ -2432,6 +2459,10 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
 fn main() {
     // Handle --help and --version before initializing GPUI
     let args: Vec<String> = std::env::args().collect();
+    #[cfg(unix)]
+    if args.get(1).map(String::as_str) == Some(agents::parent_guard::PTY_GUARD_SUBCOMMAND) {
+        std::process::exit(agents::parent_guard::run_pty_guard_from_args(&args));
+    }
     #[cfg(windows)]
     let is_msi_relay = update::windows::msi::is_relay_invocation(&args);
     #[cfg(not(windows))]
@@ -2552,7 +2583,7 @@ fn main() {
         Ok(agents::parent_guard::ParentGuardStatus::Installed) => {}
         Ok(agents::parent_guard::ParentGuardStatus::Unsupported) => {
             log::debug!(
-                "parent_guard: kill-on-parent-death is unsupported on this platform until pre_exec-style hooks are available"
+                "parent_guard: process-wide job guard unsupported on Unix; PTY shells use per-PTY guards and shim-wrapped agents use shim guards"
             );
         }
         Err(err) => {

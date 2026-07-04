@@ -194,8 +194,59 @@ impl Workspace {
         self.saved_layout.is_some()
     }
 
+    pub fn exit_zoom(&mut self, cx: &mut App) -> Option<Entity<Pane>> {
+        let zoomed_pane = self.root.as_ref().and_then(|root| root.first_leaf());
+        let saved = self.saved_layout.take()?;
+        self.root = Some(saved);
+        if let Some(pane) = &zoomed_pane {
+            pane.update(cx, |pane, _| {
+                pane.zoomed = false;
+            });
+        }
+        zoomed_pane
+    }
+
     pub fn pane_count(&self) -> usize {
         self.root.as_ref().map_or(0, |r| r.leaf_count())
+    }
+
+    pub fn contains_pane(&self, pane: &Entity<Pane>) -> bool {
+        self.root
+            .as_ref()
+            .is_some_and(|root| root.contains_leaf(pane))
+            || self
+                .saved_layout
+                .as_ref()
+                .is_some_and(|saved| saved.contains_leaf(pane))
+    }
+
+    pub fn any_pane(&self, mut f: impl FnMut(&Entity<Pane>) -> bool) -> bool {
+        if let Some(root) = &self.root
+            && root.any_leaf(&mut f)
+        {
+            return true;
+        }
+        if let Some(saved) = &self.saved_layout
+            && saved.any_leaf(&mut f)
+        {
+            return true;
+        }
+        false
+    }
+
+    pub fn collect_panes(&self) -> Vec<Entity<Pane>> {
+        let mut panes = Vec::new();
+        if let Some(root) = &self.root {
+            panes.extend(root.collect_leaves());
+        }
+        if let Some(saved) = &self.saved_layout {
+            for pane in saved.collect_leaves() {
+                if !panes.contains(&pane) {
+                    panes.push(pane);
+                }
+            }
+        }
+        panes
     }
 
     pub fn focus_first(&self, window: &mut Window, cx: &mut App) {

@@ -20,7 +20,8 @@ impl PaneFlowApp {
             && let Some(pane) = root.focused_pane(window, cx)
         {
             let ws_id = ws.id;
-            let terminal = cx.new(|cx| TerminalView::new(ws_id, cx));
+            let cwd = (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd));
+            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
             cx.subscribe(&terminal, Self::handle_terminal_event)
                 .detach();
             pane.update(cx, |p, cx| {

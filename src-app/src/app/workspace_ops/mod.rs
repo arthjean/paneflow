@@ -25,7 +25,7 @@ use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
 use crate::terminal::TerminalView;
 use crate::workspace::{MAX_WORKSPACES, Workspace, next_workspace_id};
 use crate::{
-    ClosePane, CloseWorkspace, ClosedPaneRecord, CopyWorkspacePath,
+    ClosePane, CloseWorkspace, ClosedPaneRecord, ClosedTabRecord, CopyWorkspacePath,
     MAX_CLOSED_PANE_SCROLLBACK_BYTES, MAX_CLOSED_PANES, NewWorkspace, NextWorkspace,
     OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
     PaneFlowApp, RevealWorkspaceInFileManager, SelectWorkspace1, SelectWorkspace2,
@@ -34,8 +34,14 @@ use crate::{
 };
 
 fn push_closed_pane_record(records: &mut Vec<ClosedPaneRecord>, mut record: ClosedPaneRecord) {
-    if let Some(scrollback) = record.scrollback.as_mut() {
-        scrollback.shrink_to_fit();
+    for tab in &mut record.tabs {
+        if let ClosedTabRecord::Terminal {
+            scrollback: Some(scrollback),
+            ..
+        } = tab
+        {
+            scrollback.shrink_to_fit();
+        }
     }
     if records.len() >= MAX_CLOSED_PANES {
         records.remove(0);
@@ -53,8 +59,15 @@ fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedPaneRecord], budge
         if total <= budget {
             break;
         }
-        if let Some(scrollback) = record.scrollback.take() {
-            total = total.saturating_sub(scrollback.len());
+        for tab in &mut record.tabs {
+            if total <= budget {
+                break;
+            }
+            if let ClosedTabRecord::Terminal { scrollback, .. } = tab
+                && let Some(scrollback) = scrollback.take()
+            {
+                total = total.saturating_sub(scrollback.len());
+            }
         }
     }
 }
@@ -62,9 +75,87 @@ fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedPaneRecord], budge
 fn closed_pane_scrollback_bytes(records: &[ClosedPaneRecord]) -> usize {
     records
         .iter()
-        .filter_map(|record| record.scrollback.as_ref())
+        .flat_map(|record| &record.tabs)
+        .filter_map(|tab| match tab {
+            ClosedTabRecord::Terminal { scrollback, .. } => scrollback.as_ref(),
+            ClosedTabRecord::Markdown { .. } => None,
+        })
         .map(String::len)
         .sum()
+}
+
+fn capture_closed_pane_record(
+    pane: &gpui::Entity<crate::pane::Pane>,
+    workspace_idx: usize,
+    cx: &App,
+) -> Option<ClosedPaneRecord> {
+    let pane_ref = pane.read(cx);
+    let mut tabs = Vec::new();
+    for tab in &pane_ref.tabs {
+        match tab {
+            crate::pane::TabContent::Terminal(tv) => {
+                let tv_ref = tv.read(cx);
+                tabs.push(ClosedTabRecord::Terminal {
+                    cwd: tv_ref
+                        .terminal
+                        .current_cwd
+                        .as_ref()
+                        .map(std::path::PathBuf::from)
+                        .or_else(|| tv_ref.terminal.cwd_now()),
+                    scrollback: tv_ref.terminal.extract_scrollback(),
+                    custom_name: tv_ref.terminal.custom_name.clone(),
+                    font_size: tv_ref.terminal.font_size_override,
+                });
+            }
+            crate::pane::TabContent::Markdown(markdown) => {
+                tabs.push(ClosedTabRecord::Markdown {
+                    path: markdown.read(cx).path.clone(),
+                });
+            }
+            crate::pane::TabContent::Diff(_) => {}
+        }
+    }
+    if tabs.is_empty() {
+        return None;
+    }
+    Some(ClosedPaneRecord {
+        tabs,
+        selected_idx: pane_ref.selected_idx,
+        workspace_idx,
+    })
+}
+
+fn restore_closed_tab_record(
+    tab: ClosedTabRecord,
+    ws_id: u64,
+    cx: &mut Context<PaneFlowApp>,
+) -> crate::pane::TabContent {
+    match tab {
+        ClosedTabRecord::Terminal {
+            cwd,
+            scrollback,
+            custom_name,
+            font_size,
+        } => {
+            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+            terminal.update(cx, |view, _| {
+                view.terminal.custom_name = custom_name;
+                view.terminal.font_size_override = font_size;
+            });
+            if let Some(scrollback) = scrollback {
+                terminal.read(cx).restore_scrollback(&scrollback);
+            }
+            cx.subscribe(&terminal, PaneFlowApp::handle_terminal_event)
+                .detach();
+            crate::pane::TabContent::Terminal(terminal)
+        }
+        ClosedTabRecord::Markdown { path } => {
+            let markdown = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
+                crate::markdown::MarkdownView::open(path, cx)
+            });
+            crate::pane::TabContent::Markdown(markdown)
+        }
+    }
 }
 
 impl PaneFlowApp {
@@ -255,44 +346,50 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // No split while zoomed - the zoomed view is a temporary single-leaf root
-        if let Some(ws) = self.active_workspace()
-            && ws.is_zoomed()
-        {
+        let Some(ws) = self.active_workspace() else {
+            return;
+        };
+        if ws.is_zoomed() {
             self.show_toast("Unzoom before splitting panes", cx);
             return;
         }
-        if let Some(ws) = self.active_workspace()
-            && let Some(root) = &ws.root
-            && root.leaf_count() >= MAX_PANES
-        {
+        let Some(root) = &ws.root else {
+            return;
+        };
+        if root.leaf_count() >= MAX_PANES {
             self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
             return;
         }
+        let Some(focused) = root.focused_pane(window, cx) else {
+            self.show_toast("No focused pane to split", cx);
+            return;
+        };
+        let ws_id = ws.id;
+
         // Inherit CWD from the focused pane's active terminal. `cwd_now()` is
         // best-effort: `None` for a markdown pane (US-020) and on platforms
         // without child-cwd introspection (always on Windows). `new_terminal_cwd`
         // then falls back to the workspace root, so the new pane never drops to
         // the process `current_dir()` (`C:\Program Files\PaneFlow` when installed).
-        let source_cwd = self
-            .active_workspace()
-            .and_then(|ws| ws.root.as_ref())
-            .and_then(|root| root.focused_pane(window, cx))
-            .and_then(|pane| {
-                pane.read(cx)
-                    .active_terminal_opt()
-                    .and_then(|tv| tv.read(cx).terminal.cwd_now())
-            });
+        let source_cwd = focused
+            .read(cx)
+            .active_terminal_opt()
+            .and_then(|tv| tv.read(cx).terminal.cwd_now());
         let source_cwd = self.new_terminal_cwd(source_cwd);
-        let ws_id = self.active_workspace().map(|ws| ws.id).unwrap_or(0);
         let new_terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, source_cwd, None, cx));
         let new_pane = self.create_pane(new_terminal, ws_id, cx);
-        if let Some(ws) = self.active_workspace_mut()
+        let inserted = if let Some(ws) = self.active_workspace_mut()
             && let Some(root) = &mut ws.root
-            && root.split_at_focused(direction, new_pane.clone(), window, cx)
         {
-            new_pane.read(cx).focus_handle(cx).focus(window, cx);
+            root.split_at_pane(&focused, direction, new_pane.clone())
+        } else {
+            false
+        };
+        if !inserted {
+            self.show_toast("Focused pane no longer exists", cx);
+            return;
         }
+        new_pane.read(cx).focus_handle(cx).focus(window, cx);
         self.save_session(cx);
         cx.notify();
     }
@@ -331,23 +428,9 @@ impl PaneFlowApp {
             } else {
                 root.focused_pane(window, cx)
             };
-            // US-020: only record undo state for terminal panes - markdown
-            // panes have no scrollback / cwd to restore. Closing one simply
-            // removes it from the layout without populating the undo stack.
             if let Some(pane) = closing_pane
-                && let Some(tv) = pane.read(cx).active_terminal_opt()
+                && let Some(record) = capture_closed_pane_record(&pane, workspace_idx, cx)
             {
-                let tv_ref = tv.read(cx);
-                let record = ClosedPaneRecord {
-                    cwd: tv_ref
-                        .terminal
-                        .current_cwd
-                        .as_ref()
-                        .map(std::path::PathBuf::from)
-                        .or_else(|| tv_ref.terminal.cwd_now()),
-                    scrollback: tv_ref.terminal.extract_scrollback(),
-                    workspace_idx,
-                };
                 push_closed_pane_record(&mut self.closed_panes, record);
             }
         }
@@ -355,20 +438,14 @@ impl PaneFlowApp {
         if let Some(ws) = self.active_workspace_mut()
             && ws.is_zoomed()
         {
-            // Close-while-zoomed: exit zoom first, then remove the pane from the
-            // restored layout. This prevents orphan pane references in saved_layout.
-            let zoomed_pane = ws.root.as_ref().and_then(|r| r.first_leaf());
-            if let Some(saved) = ws.saved_layout.take() {
-                ws.root = Some(saved);
-                if let Some(pane) = zoomed_pane
-                    && let Some(root) = ws.root.take()
-                {
-                    ws.root = root.remove_pane(&pane);
-                }
-                // Focus the next available pane
-                if let Some(ref root) = ws.root {
-                    root.focus_first(window, cx);
-                }
+            if let Some(pane) = ws.exit_zoom(cx)
+                && let Some(root) = ws.root.take()
+            {
+                let (new_root, _) = root.remove_pane(&pane);
+                ws.root = new_root;
+            }
+            if let Some(ref root) = ws.root {
+                root.focus_first(window, cx);
             }
         } else if let Some(ws) = self.active_workspace_mut()
             && let Some(root) = ws.root.take()
@@ -426,31 +503,42 @@ impl PaneFlowApp {
             self.active_idx = record.workspace_idx;
         }
 
-        let ws_id = self.active_workspace().map(|ws| ws.id).unwrap_or(0);
-        let cwd = record.cwd;
-        let new_terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
-
-        // Restore scrollback into the new terminal's grid
-        if let Some(ref scrollback) = record.scrollback {
-            new_terminal
-                .read(cx)
-                .terminal
-                .restore_scrollback(scrollback);
+        let Some(ws_id) = self.active_workspace().map(|ws| ws.id) else {
+            self.closed_panes.push(record);
+            self.show_toast("No active workspace to restore pane", cx);
+            return;
+        };
+        let selected_idx = record.selected_idx;
+        let tabs = record
+            .tabs
+            .into_iter()
+            .map(|tab| restore_closed_tab_record(tab, ws_id, cx))
+            .collect::<Vec<_>>();
+        if tabs.is_empty() {
+            self.show_toast("Closed pane had no restorable tabs", cx);
+            return;
         }
 
-        let new_pane = self.create_pane(new_terminal, ws_id, cx);
+        let new_pane = self.create_pane_with_existing_tabs(tabs, selected_idx, ws_id, cx);
 
         // Insert via split from the currently focused pane
-        if let Some(ws) = self.active_workspace_mut()
-            && let Some(ref mut root) = ws.root
-            && root.split_at_focused(SplitDirection::Horizontal, new_pane.clone(), window, cx)
-        {
-            new_pane.read(cx).focus_handle(cx).focus(window, cx);
-        } else if let Some(ws) = self.active_workspace_mut() {
-            // No existing root (empty workspace) - set as the root
-            ws.root = Some(LayoutTree::Leaf(new_pane.clone()));
-            new_pane.read(cx).focus_handle(cx).focus(window, cx);
+        let inserted = if let Some(ws) = self.active_workspace_mut() {
+            if let Some(root) = &mut ws.root {
+                if !root.split_at_focused(SplitDirection::Horizontal, new_pane.clone(), window, cx)
+                {
+                    root.split_first_leaf(SplitDirection::Horizontal, new_pane.clone());
+                }
+            } else {
+                ws.root = Some(LayoutTree::Leaf(new_pane.clone()));
+            }
+            true
+        } else {
+            false
+        };
+        if !inserted {
+            return;
         }
+        new_pane.read(cx).focus_handle(cx).focus(window, cx);
 
         self.save_session(cx);
         cx.notify();
@@ -1036,8 +1124,13 @@ mod tests {
 
     fn closed_pane_record_with_scrollback(len: usize) -> ClosedPaneRecord {
         ClosedPaneRecord {
-            cwd: None,
-            scrollback: Some("x".repeat(len)),
+            tabs: vec![ClosedTabRecord::Terminal {
+                cwd: None,
+                scrollback: Some("x".repeat(len)),
+                custom_name: None,
+                font_size: None,
+            }],
+            selected_idx: 0,
             workspace_idx: 0,
         }
     }
@@ -1054,11 +1147,29 @@ mod tests {
 
         assert_eq!(records.len(), 3, "budget must preserve undo records");
         assert!(
-            records[0].scrollback.is_none(),
+            matches!(
+                records[0].tabs.first(),
+                Some(ClosedTabRecord::Terminal {
+                    scrollback: None,
+                    ..
+                })
+            ),
             "oldest scrollback should be released first"
         );
-        assert!(records[1].scrollback.is_some());
-        assert!(records[2].scrollback.is_some());
+        assert!(matches!(
+            records[1].tabs.first(),
+            Some(ClosedTabRecord::Terminal {
+                scrollback: Some(_),
+                ..
+            })
+        ));
+        assert!(matches!(
+            records[2].tabs.first(),
+            Some(ClosedTabRecord::Terminal {
+                scrollback: Some(_),
+                ..
+            })
+        ));
         assert_eq!(
             closed_pane_scrollback_bytes(&records),
             MAX_CLOSED_PANE_SCROLLBACK_BYTES
@@ -1071,14 +1182,25 @@ mod tests {
         push_closed_pane_record(
             &mut records,
             ClosedPaneRecord {
-                cwd: None,
-                scrollback: None,
+                tabs: vec![ClosedTabRecord::Terminal {
+                    cwd: None,
+                    scrollback: None,
+                    custom_name: None,
+                    font_size: None,
+                }],
+                selected_idx: 0,
                 workspace_idx: 0,
             },
         );
 
         assert_eq!(records.len(), 1);
-        assert!(records[0].scrollback.is_none());
+        assert!(matches!(
+            records[0].tabs.first(),
+            Some(ClosedTabRecord::Terminal {
+                scrollback: None,
+                ..
+            })
+        ));
         assert_eq!(closed_pane_scrollback_bytes(&records), 0);
     }
 

@@ -137,12 +137,9 @@ pub struct PaneFlowConfig {
     /// all four support that suffix natively to jump to the target
     /// position.
     pub external_editor: Option<String>,
-    /// When `Some(true)`, every permission gate is disabled:
-    /// 1. The "Claude Code" tab-bar terminal launcher adds
-    ///    `--permission-mode bypassPermissions` to the spawned CLI.
-    /// 2. The Agents view auto-approves every ACP `RequestPermission`
-    ///    for both Claude Code and Codex sessions (any tool kind:
-    ///    Read / Edit / Delete / Move / Execute / Search / Fetch).
+    /// When `Some(true)`, the Claude Code terminal launcher adds
+    /// `--permission-mode bypassPermissions` to the spawned CLI in the tab bar,
+    /// Agents view, Launch Pad, and session resume paths.
     ///
     /// `Some(false)` or `None` (the default) keeps the per-tool confirmation
     /// prompts enabled.
@@ -150,8 +147,7 @@ pub struct PaneFlowConfig {
     /// prompt injection - opt out (toggle off in Settings -> AI Agent)
     /// if you want explicit confirmation for every tool call. The key
     /// retains its `claude_code_` prefix for backwards compatibility
-    /// with existing user configs even though the scope now covers
-    /// Codex too.
+    /// with existing user configs.
     pub claude_code_bypass_permissions: Option<bool>,
     /// EP-003 US-008 (agent-control-plane): "AI free access" master switch.
     /// `Some(true)` debrays the *bridling* guardrails so a conductor (a CLI
@@ -1336,8 +1332,10 @@ pub struct ThreadSession {
     /// `src-app` to keep `paneflow-config` a leaf crate).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    /// Which CLI coding agent a Terminal Thread launches on first mount
-    /// (`"claude_code"`, `"codex"`, `"opencode"`, `"pi"`, `"hermes"`).
+    /// Which CLI coding agent a Terminal Thread launches on first mount.
+    /// Valid values are runtime `TerminalAgent::tag()` strings such as
+    /// `"claude_code"`, `"codex"`, `"opencode"`, `"pi"`, `"hermes"`,
+    /// `"grok"`, `"cursor"`, `"gemini"`, `"kiro"`, and other launcher tags.
     /// Drives the sidebar row icon and the auto-run command. `None`
     /// restores as a bare shell (legacy Terminal Threads + plain
     /// "New terminal thread" rows). Stored as a tag string so this crate
@@ -1455,6 +1453,9 @@ pub struct SurfaceDefinition {
     pub prompt: Option<String>,
     /// Working directory override for this surface.
     pub cwd: Option<String>,
+    /// File path for non-terminal surfaces such as markdown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
     /// Extra environment variables merged over `terminal.env`. The same
     /// protected-key and loader-key filtering applies at PTY spawn.
     pub env: Option<HashMap<String, String>>,
@@ -1639,6 +1640,7 @@ mod tests {
                         command: Some("claude".to_string()),
                         prompt: Some("Review this".to_string()),
                         cwd: Some("~/dev/app".to_string()),
+                        path: None,
                         env: Some(HashMap::new()),
                         focus: Some(true),
                         scrollback: Some("previous output".to_string()),

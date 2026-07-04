@@ -22,6 +22,7 @@ use gpui::{
     MouseButton, ParentElement, SharedString, Styled, WeakEntity, Window, deferred, div,
     prelude::*, px, svg,
 };
+use paneflow_config::schema::TerminalSurfaceProfile;
 
 use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
@@ -312,11 +313,12 @@ impl PaneFlowApp {
                     .is_some_and(|r| r.contains_leaf(t))
             });
         let new_terminal = cx.new(|cx| {
-            TerminalView::with_cwd_and_env(
+            TerminalView::with_cwd_env_and_profile(
                 plan.ws_id,
                 Some(plan.worktree_path.clone()),
                 None,
                 None,
+                TerminalSurfaceProfile::Agent,
                 cx,
             )
         });

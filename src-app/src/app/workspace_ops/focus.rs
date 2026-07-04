@@ -28,14 +28,18 @@ impl PaneFlowApp {
                 if let Some(target) = root.focused_pane(window, cx)
                     && target != source
                 {
-                    // Swap the panes in the tree
-                    if let Some(ws) = self.active_workspace_mut()
+                    let swapped = if let Some(ws) = self.active_workspace_mut()
                         && let Some(ref mut root) = ws.root
                     {
-                        root.swap_panes(&source, &target);
+                        root.swap_panes(&source, &target)
+                    } else {
+                        false
+                    };
+                    if swapped {
+                        source.read(cx).focus_handle(cx).focus(window, cx);
+                    } else {
+                        self.show_toast("Swap source pane is no longer available", cx);
                     }
-                    // Focus the original source pane (now at the target's position)
-                    source.read(cx).focus_handle(cx).focus(window, cx);
                 } else if !moved {
                     self.show_toast("No pane in that direction", cx);
                 }

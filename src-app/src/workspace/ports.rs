@@ -57,6 +57,9 @@ pub struct PaneScan {
     /// identity-pill agent (US-013); the union across panes feeds the
     /// workspace-level `detected_agents` aggregate.
     pub agents: Vec<String>,
+    /// Best-effort foreground command for surface naming, resolved by the same
+    /// off-thread process scan so IPC/UI callers never do process-table I/O.
+    pub foreground_command: Option<String>,
 }
 
 /// Soft cap on PIDs walked per root subtree (fork-bomb bound, both
@@ -91,6 +94,16 @@ fn agents_in_bfs_order<'a>(
         }
     }
     found
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn command_from_nul_args(bytes: &[u8]) -> Option<String> {
+    let parts: Vec<String> = bytes
+        .split(|&b| b == 0)
+        .filter(|s| !s.is_empty())
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join(" "))
 }
 
 /// Parse one `/proc/net/tcp`-format line into `(port, socket_inode)` for a
@@ -302,6 +315,37 @@ fn cmdline_args_linux(pid: u32) -> Vec<String> {
         .unwrap_or_default()
 }
 
+#[cfg(target_os = "linux")]
+fn linux_command_for_pid(pid: u32) -> Option<String> {
+    if let Ok(bytes) = std::fs::read(format!("/proc/{pid}/cmdline"))
+        && let Some(command) = command_from_nul_args(&bytes)
+    {
+        return Some(command);
+    }
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let trimmed = comm.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_foreground_command(root_pid: u32, pids: &[u32]) -> Option<String> {
+    let children_path = format!("/proc/{root_pid}/task/{root_pid}/children");
+    let target = match read_capped(std::path::Path::new(&children_path), 4096) {
+        Ok(content) => content
+            .split_whitespace()
+            .last()
+            .and_then(|pid| pid.parse::<u32>().ok())
+            .unwrap_or(root_pid),
+        Err(_) => pids
+            .iter()
+            .copied()
+            .filter(|pid| *pid != root_pid)
+            .max()
+            .unwrap_or(root_pid),
+    };
+    linux_command_for_pid(target)
+}
+
 /// Collect socket inodes from `/proc/{pid}/fd/` for one PID.
 #[cfg(target_os = "linux")]
 fn socket_inodes_of(pid: u32, inodes: &mut Vec<u64>) {
@@ -353,6 +397,10 @@ pub fn scan_panes(
     let mut inode_owner: std::collections::HashMap<u64, (usize, u32)> =
         std::collections::HashMap::new();
     for (idx, (key, pids)) in subtrees.iter().enumerate() {
+        let foreground_command = roots
+            .iter()
+            .find(|(root_key, _)| root_key == key)
+            .and_then(|(_, root_pid)| linux_foreground_command(*root_pid, pids));
         let comms: Vec<String> = if agent_binaries.is_empty() {
             Vec::new()
         } else {
@@ -382,6 +430,7 @@ pub fn scan_panes(
             PaneScan {
                 ports: Vec::new(),
                 agents,
+                foreground_command,
             },
         );
     }
@@ -658,6 +707,17 @@ fn parse_procargs2(buf: &[u8]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(target_os = "macos")]
+fn macos_foreground_command(pids: &[u32]) -> Option<String> {
+    use libproc::libproc::proc_pid::name;
+
+    let pid = pids.last().copied()?;
+    name(pid as i32)
+        .ok()
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.is_empty())
+}
+
 /// Scan every terminal's PTY subtree in one pass (macOS). libproc's socket
 /// queries are naturally per-pid, so per-subtree attribution falls out of
 /// the BFS partition without a global socket table. Same shared-`visited` /
@@ -718,7 +778,14 @@ pub fn scan_panes(
         ports.sort_by_key(|e| (e.port, e.frontend.is_none()));
         ports.dedup_by_key(|e| e.port);
 
-        results.insert(key, PaneScan { ports, agents });
+        results.insert(
+            key,
+            PaneScan {
+                ports,
+                agents,
+                foreground_command: macos_foreground_command(&pids),
+            },
+        );
     }
 
     results
@@ -814,6 +881,30 @@ fn bfs_descendants_windows(
         }
     }
     result
+}
+
+#[cfg(windows)]
+fn windows_foreground_command(
+    root_pid: u32,
+    entries: &[WindowsProcessEntry],
+    exe_by_pid: &std::collections::HashMap<u32, String>,
+) -> Option<String> {
+    let mut current = root_pid;
+    let mut visited = std::collections::HashSet::new();
+    while visited.insert(current) {
+        match entries
+            .iter()
+            .filter(|entry| entry.parent_pid == current)
+            .max_by_key(|entry| entry.pid)
+        {
+            Some(child) => current = child.pid,
+            None => break,
+        }
+    }
+    exe_by_pid
+        .get(&current)
+        .map(|exe| normalize_process_basename(exe).to_string())
+        .filter(|name| !name.is_empty())
 }
 
 #[cfg(windows)]
@@ -1122,7 +1213,14 @@ pub fn scan_panes(
         }
         ports.sort_by_key(|e| (e.port, e.frontend.is_none()));
         ports.dedup_by_key(|e| e.port);
-        results.insert(key, PaneScan { ports, agents });
+        results.insert(
+            key,
+            PaneScan {
+                ports,
+                agents,
+                foreground_command: windows_foreground_command(root_pid, &entries, &exe_by_pid),
+            },
+        );
     }
 
     results
@@ -1173,6 +1271,20 @@ mod tests {
     fn agents_in_bfs_order_empty_inputs() {
         assert!(agents_in_bfs_order(std::iter::empty(), &["claude"]).is_empty());
         assert!(agents_in_bfs_order(["claude"].into_iter(), &[]).is_empty());
+    }
+
+    #[test]
+    fn command_from_nul_args_joins_argv() {
+        assert_eq!(
+            command_from_nul_args(b"cargo\0run\0--release\0"),
+            Some("cargo run --release".to_string())
+        );
+        assert_eq!(
+            command_from_nul_args(b"\0node\0\0server.js\0"),
+            Some("node server.js".to_string())
+        );
+        assert_eq!(command_from_nul_args(b""), None);
+        assert_eq!(command_from_nul_args(b"\0\0"), None);
     }
 
     #[test]

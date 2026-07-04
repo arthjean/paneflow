@@ -55,72 +55,78 @@ impl LayoutTree {
         match self {
             LayoutTree::Leaf(pane) => {
                 let pane_ref = pane.read(cx);
-                // Markdown tabs are ephemeral - they hold no shell state and
-                // their file path can be reopened on demand. We persist only
-                // terminal tabs and let the user re-open markdown viewers
-                // after restart via the doc button. The active-tab marker
-                // tracks the position of the active terminal among terminals
-                // (not among all tabs), so the restore path lands focus
-                // somewhere meaningful even when the previously-focused tab
-                // was a markdown viewer.
-                let active_terminal_idx = pane_ref
-                    .tabs
-                    .iter()
-                    .take(pane_ref.selected_idx + 1)
-                    .filter(|t| t.as_terminal().is_some())
-                    .count()
-                    .saturating_sub(1);
                 let surfaces: Vec<SurfaceDefinition> = pane_ref
                     .tabs
                     .iter()
-                    .filter_map(|t| t.as_terminal())
                     .enumerate()
-                    .map(|(i, tv)| {
-                        let tv_ref = tv.read(cx);
-                        let name = if tv_ref.terminal.title.is_empty() {
-                            None
-                        } else {
-                            Some(tv_ref.terminal.title.clone())
-                        };
-                        let cwd =
-                            tv_ref.terminal.current_cwd.clone().or_else(|| {
+                    .map(|(i, tab)| match tab {
+                        crate::pane::TabContent::Terminal(tv) => {
+                            let tv_ref = tv.read(cx);
+                            let name = if tv_ref.terminal.title.is_empty() {
+                                None
+                            } else {
+                                Some(tv_ref.terminal.title.clone())
+                            };
+                            let cwd = tv_ref.terminal.current_cwd.clone().or_else(|| {
                                 tv_ref.terminal.cwd_now().map(|p| p.display().to_string())
                             });
-                        let scrollback = match capture {
-                            ScrollbackCapture::Inline => tv_ref.terminal.extract_scrollback(),
-                            ScrollbackCapture::Deferred(terms) => {
-                                // Clone the term mutex handle (cheap Arc bump) and
-                                // drain it off-thread later; emit None for now.
-                                terms.push(tv_ref.terminal.term.clone());
-                                None
+                            let scrollback = match capture {
+                                ScrollbackCapture::Inline => tv_ref.terminal.extract_scrollback(),
+                                ScrollbackCapture::Deferred(terms) => {
+                                    // Clone the term mutex handle (cheap Arc bump) and
+                                    // drain it off-thread later; emit None for now.
+                                    terms.push(tv_ref.terminal.term.clone());
+                                    None
+                                }
+                            };
+                            SurfaceDefinition {
+                                surface_type: Some("terminal".to_string()),
+                                name,
+                                custom_name: tv_ref.terminal.custom_name.clone(),
+                                command: None,
+                                prompt: None,
+                                cwd,
+                                path: None,
+                                env: None,
+                                focus: (i == pane_ref.selected_idx).then_some(true),
+                                scrollback,
+                                agent: tv_ref.terminal.detected_agent.map(|a| a.tag().to_string()),
+                                font_size: tv_ref.terminal.font_size_override,
                             }
-                        };
-                        SurfaceDefinition {
-                            surface_type: Some("terminal".to_string()),
-                            name,
-                            // US-013: persist the user's custom name so it
-                            // survives restart (keyed by layout position, since
-                            // surface_id is not restart-stable).
-                            custom_name: tv_ref.terminal.custom_name.clone(),
+                        }
+                        crate::pane::TabContent::Markdown(markdown) => {
+                            let path = markdown.read(cx).path.display().to_string();
+                            SurfaceDefinition {
+                                surface_type: Some("markdown".to_string()),
+                                name: None,
+                                custom_name: None,
+                                command: None,
+                                prompt: None,
+                                cwd: None,
+                                path: Some(path),
+                                env: None,
+                                focus: (i == pane_ref.selected_idx).then_some(true),
+                                scrollback: None,
+                                agent: None,
+                                font_size: None,
+                            }
+                        }
+                        crate::pane::TabContent::Diff(_) => SurfaceDefinition {
+                            surface_type: Some("diff".to_string()),
+                            name: None,
+                            custom_name: None,
                             command: None,
                             prompt: None,
-                            cwd,
+                            cwd: None,
+                            path: None,
                             env: None,
-                            focus: if i == active_terminal_idx {
-                                Some(true)
-                            } else {
-                                None
-                            },
-                            scrollback,
-                            // EP-005 US-013: persist the detected agent's
-                            // stable tag (confirmed or "last known" alike, so
-                            // the pill survives consecutive restarts even
-                            // when no scan ran in between).
-                            agent: tv_ref.terminal.detected_agent.map(|a| a.tag().to_string()),
-                            // EP-006 US-019: per-pane font zoom override.
-                            font_size: tv_ref.terminal.font_size_override,
-                        }
+                            focus: None,
+                            scrollback: None,
+                            agent: None,
+                            font_size: None,
+                        },
                     })
+                    .filter(|surface| surface.surface_type.as_deref() != Some("diff"))
                     .collect();
                 LayoutNode::Pane { surfaces }
             }

@@ -138,10 +138,19 @@ impl LayoutTree {
         }
     }
 
-    /// Swap two pane entities in the tree. Walks recursively, replacing
-    /// every `Leaf(a)` with `Leaf(b)` and vice versa. Ratios and tree shape
-    /// are preserved - only the pane references move.
-    pub fn swap_panes(&mut self, a: &Entity<Pane>, b: &Entity<Pane>) {
+    /// Swap two pane entities in the tree. Ratios and tree shape are preserved.
+    ///
+    /// Returns `false` if either pane is absent so stale handles cannot replace
+    /// a live leaf with a closed pane.
+    pub fn swap_panes(&mut self, a: &Entity<Pane>, b: &Entity<Pane>) -> bool {
+        if a == b || !self.contains_leaf(a) || !self.contains_leaf(b) {
+            return false;
+        }
+        self.swap_panes_unchecked(a, b);
+        true
+    }
+
+    fn swap_panes_unchecked(&mut self, a: &Entity<Pane>, b: &Entity<Pane>) {
         match self {
             LayoutTree::Leaf(pane) => {
                 if pane == a {
@@ -152,7 +161,7 @@ impl LayoutTree {
             }
             LayoutTree::Container { children, .. } => {
                 for child in children {
-                    child.node.swap_panes(a, b);
+                    child.node.swap_panes_unchecked(a, b);
                 }
             }
         }
@@ -241,5 +250,36 @@ mod tests {
             }
             LayoutTree::Leaf(_) => panic!("split should keep a container root"),
         }
+    }
+
+    #[gpui::test]
+    fn swap_panes_refuses_absent_source(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let a = test_pane(cx, 3);
+        let b = test_pane(cx, 3);
+        let stale = test_pane(cx, 3);
+        let mut tree = LayoutTree::new_split(
+            SplitDirection::Vertical,
+            LayoutTree::Leaf(a.clone()),
+            LayoutTree::Leaf(b.clone()),
+        );
+
+        assert!(!tree.swap_panes(&stale, &b));
+        assert_eq!(leaf_ids(&tree), vec![a.entity_id(), b.entity_id()]);
+    }
+
+    #[gpui::test]
+    fn swap_panes_swaps_when_both_exist(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let a = test_pane(cx, 4);
+        let b = test_pane(cx, 4);
+        let mut tree = LayoutTree::new_split(
+            SplitDirection::Vertical,
+            LayoutTree::Leaf(a.clone()),
+            LayoutTree::Leaf(b.clone()),
+        );
+
+        assert!(tree.swap_panes(&a, &b));
+        assert_eq!(leaf_ids(&tree), vec![b.entity_id(), a.entity_id()]);
     }
 }

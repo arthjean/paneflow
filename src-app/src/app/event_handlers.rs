@@ -9,6 +9,7 @@
 
 use gpui::{App, AppContext, Context, Entity};
 use notify::Watcher;
+use paneflow_config::schema::TerminalSurfaceProfile;
 
 use crate::layout::{LayoutTree, MAX_PANES};
 use crate::pane::{self, Pane};
@@ -81,12 +82,15 @@ fn split_pane_at_edge(
     target: &Entity<Pane>,
     edge: DropEdge,
     new_pane: Entity<Pane>,
-) {
+) -> bool {
     let (direction, swap) = edge.to_split();
-    root.split_at_pane(target, direction, new_pane.clone());
+    if !root.split_at_pane(target, direction, new_pane.clone()) {
+        return false;
+    }
     if swap {
         root.swap_panes(target, &new_pane);
     }
+    true
 }
 
 /// Parse the `starttime` field (22) from `/proc/{pid}/stat` content. The
@@ -299,6 +303,18 @@ fn merge_scan_workspace_state(
     if service_labels.len() != before {
         changed = true;
     }
+    let frontend_ports: std::collections::HashSet<u16> = scan
+        .values()
+        .flat_map(|s| s.ports.iter())
+        .filter(|entry| entry.frontend.is_some())
+        .map(|entry| entry.port)
+        .collect();
+    for info in service_labels.values_mut() {
+        if info.is_frontend && !frontend_ports.contains(&info.port) {
+            info.is_frontend = false;
+            changed = true;
+        }
+    }
     if *detected_agents != next_agents {
         *detected_agents = next_agents;
         changed = true;
@@ -350,6 +366,38 @@ fn announced_port_conflicts(
 }
 
 impl PaneFlowApp {
+    fn duplicate_tab_content(
+        &mut self,
+        tab: &crate::pane::TabContent,
+        ws_idx: usize,
+        cx: &mut Context<Self>,
+    ) -> Option<crate::pane::TabContent> {
+        match tab {
+            crate::pane::TabContent::Terminal(t) => {
+                let ws_id = self.workspaces[ws_idx].id;
+                let cwd = t.read(cx).terminal.cwd_now().or_else(|| {
+                    let workspace_cwd = self.workspaces[ws_idx].cwd.as_str();
+                    (!workspace_cwd.is_empty()).then(|| std::path::PathBuf::from(workspace_cwd))
+                });
+                let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
+                cx.subscribe(&terminal, Self::handle_terminal_event)
+                    .detach();
+                Some(crate::pane::TabContent::Terminal(terminal))
+            }
+            crate::pane::TabContent::Markdown(markdown) => {
+                let path = markdown.read(cx).path.clone();
+                let duplicate = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
+                    crate::markdown::MarkdownView::open(path, cx)
+                });
+                Some(crate::pane::TabContent::Markdown(duplicate))
+            }
+            crate::pane::TabContent::Diff(_) => {
+                self.show_toast("Diff tabs cannot be duplicated yet", cx);
+                None
+            }
+        }
+    }
+
     pub(crate) fn handle_title_bar_event(
         &mut self,
         _title_bar: Entity<title_bar::TitleBar>,
@@ -453,14 +501,32 @@ impl PaneFlowApp {
                 let ws_idx = self
                     .workspaces
                     .iter()
-                    .position(|ws| ws.root.as_ref().is_some_and(|r| r.contains_leaf(&pane)));
+                    .position(|ws| ws.contains_pane(&pane));
                 let Some(ws_idx) = ws_idx else {
                     return;
                 };
 
-                // Remove this pane from the split tree
-                if let Some(root) = self.workspaces[ws_idx].root.take() {
-                    self.workspaces[ws_idx].root = root.remove_pane(&pane);
+                let root_contains = self.workspaces[ws_idx]
+                    .root
+                    .as_ref()
+                    .is_some_and(|root| root.contains_leaf(&pane));
+                let saved_contains = self.workspaces[ws_idx]
+                    .saved_layout
+                    .as_ref()
+                    .is_some_and(|saved| saved.contains_leaf(&pane));
+
+                if saved_contains {
+                    if let Some(saved) = self.workspaces[ws_idx].saved_layout.take() {
+                        let (new_saved, _) = saved.remove_pane(&pane);
+                        if root_contains {
+                            self.workspaces[ws_idx].root = new_saved;
+                        } else {
+                            self.workspaces[ws_idx].saved_layout = new_saved;
+                        }
+                    }
+                } else if let Some(root) = self.workspaces[ws_idx].root.take() {
+                    let (new_root, _) = root.remove_pane(&pane);
+                    self.workspaces[ws_idx].root = new_root;
                 }
 
                 // Never leave a workspace without a pane - respawn at the
@@ -469,8 +535,6 @@ impl PaneFlowApp {
                     let ws_id = self.workspaces[ws_idx].id;
                     let cwd = std::path::PathBuf::from(&self.workspaces[ws_idx].cwd);
                     let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(cwd), None, cx));
-                    cx.subscribe(&terminal, Self::handle_terminal_event)
-                        .detach();
                     let new_pane = self.create_pane(terminal, ws_id, cx);
                     self.workspaces[ws_idx].root = Some(LayoutTree::Leaf(new_pane));
                     // The freshly-spawned replacement pane starts with an
@@ -496,6 +560,9 @@ impl PaneFlowApp {
                 // Open/close the docked Files tree for the active workspace's
                 // folder. Mutual exclusion with the sessions sidebar is handled
                 // inside `toggle_files_sidebar`.
+                if !self.files_sidebar_open {
+                    self.files_pane = Some(pane.clone());
+                }
                 self.toggle_files_sidebar(cx);
             }
             pane::PaneEvent::CopySurfaceRef(surface_id) => {
@@ -518,7 +585,11 @@ impl PaneFlowApp {
                 self.save_session(cx);
                 cx.notify();
             }
-            pane::PaneEvent::OpenTabMenu { tab_idx, position } => {
+            pane::PaneEvent::TabsChanged => {
+                self.save_session(cx);
+                cx.notify();
+            }
+            pane::PaneEvent::OpenTabMenu { tab_id, position } => {
                 // EP-002 US-006: open the "Move to pane…" menu for this tab.
                 // Mutually exclusive with the other popovers, matching the
                 // workspace/profile/sessions menu pattern.
@@ -526,7 +597,7 @@ impl PaneFlowApp {
                 self.profile_menu_open = None;
                 self.tab_menu_open = Some(crate::TabContextMenu {
                     source_pane: pane.clone(),
-                    tab_idx: *tab_idx,
+                    tab_id: *tab_id,
                     position: *position,
                 });
                 cx.notify();
@@ -534,11 +605,11 @@ impl PaneFlowApp {
             pane::PaneEvent::DropSplit {
                 edge,
                 source_pane,
-                source_idx,
+                source_tab_id,
                 duplicate,
             } => {
                 let edge = *edge;
-                let source_idx = *source_idx;
+                let source_tab_id = *source_tab_id;
                 let duplicate = *duplicate;
                 let source_pane = source_pane.clone();
                 let target = &pane; // the emitting pane is the split target
@@ -547,7 +618,7 @@ impl PaneFlowApp {
                 let Some(ws_idx) = self
                     .workspaces
                     .iter()
-                    .position(|ws| ws.root.as_ref().is_some_and(|r| r.contains_leaf(target)))
+                    .position(|ws| ws.contains_pane(target))
                 else {
                     return;
                 };
@@ -576,28 +647,35 @@ impl PaneFlowApp {
                 // Build the new pane: a fresh terminal at the dragged tab's cwd
                 // (duplicate, US-010) or the moved tab itself (US-009).
                 let new_pane = if duplicate {
-                    let cwd = source_pane
+                    let Some(source_tab) = source_pane
                         .read(cx)
                         .tabs
-                        .get(source_idx)
-                        .and_then(crate::pane::TabContent::as_terminal)
-                        .and_then(|t| t.read(cx).terminal.cwd_now());
-                    // Windows `cwd_now()` is always `None`; fall back to the
-                    // workspace root instead of the process `current_dir()`.
-                    let cwd = self.new_terminal_cwd(cwd);
-                    let term = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
-                    self.create_pane(term, ws_id, cx)
+                        .iter()
+                        .find(|tab| tab.entity_id() == source_tab_id)
+                        .cloned()
+                    else {
+                        return;
+                    };
+                    let Some(tab) = self.duplicate_tab_content(&source_tab, ws_idx, cx) else {
+                        return;
+                    };
+                    self.create_pane_with_existing_tab(tab, ws_id, cx)
                 } else {
                     let Some(tab) =
-                        source_pane.update(cx, |src, _| src.take_tab_for_move(source_idx))
+                        source_pane.update(cx, |src, _| src.take_tab_for_move_by_id(source_tab_id))
                     else {
                         return;
                     };
                     self.create_pane_with_existing_tab(tab, ws_id, cx)
                 };
 
-                if let Some(root) = &mut self.workspaces[ws_idx].root {
-                    split_pane_at_edge(root, target, edge, new_pane.clone());
+                let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
+                    split_pane_at_edge(root, target, edge, new_pane.clone())
+                } else {
+                    false
+                };
+                if !inserted {
+                    return;
                 }
 
                 // Move-only: reflow away the source pane if it emptied.
@@ -639,11 +717,13 @@ impl PaneFlowApp {
                 cx.subscribe(&terminal, Self::handle_terminal_event)
                     .detach();
                 pane.update(cx, |p, cx| p.add_tab(terminal, cx));
+                self.pending_pane_focus = Some(pane.clone());
+                self.save_session(cx);
                 cx.notify();
             }
             pane::PaneEvent::DuplicateTabInto {
                 source_pane,
-                source_idx,
+                source_tab_id,
                 dest_idx,
             } => {
                 // EP-003 US-010: a strip/center drop with the duplicate modifier
@@ -652,7 +732,7 @@ impl PaneFlowApp {
                 // stays put. Spawning here (not in the Pane) is required so the
                 // app-level CWD/port subscription gets wired, exactly like the
                 // `DropSplit` duplicate path and `create_pane`.
-                let source_idx = *source_idx;
+                let source_tab_id = *source_tab_id;
                 let dest_idx = *dest_idx;
                 let source_pane = source_pane.clone();
                 let dest = pane.clone(); // the emitting pane is the destination
@@ -663,32 +743,25 @@ impl PaneFlowApp {
                 let Some(ws_idx) = self
                     .workspaces
                     .iter()
-                    .position(|ws| ws.root.as_ref().is_some_and(|r| r.contains_leaf(&dest)))
+                    .position(|ws| ws.contains_pane(&dest))
                 else {
                     return;
                 };
-                let ws_id = self.workspaces[ws_idx].id;
-
-                // CWD of the dragged terminal. `None` (non-terminal tab, or a
-                // stale `source_idx`) → fresh terminal at the default cwd,
-                // matching `DropSplit`'s duplicate path.
-                let cwd = source_pane
+                let Some(source_tab) = source_pane
                     .read(cx)
                     .tabs
-                    .get(source_idx)
-                    .and_then(crate::pane::TabContent::as_terminal)
-                    .and_then(|t| t.read(cx).terminal.cwd_now());
-                // Windows `cwd_now()` is always `None`; fall back to the workspace
-                // root instead of the process `current_dir()`.
-                let cwd = self.new_terminal_cwd(cwd);
-                let term = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
-                // App-level subscription so CWD/port/service events route
-                // (mirrors `create_pane`); the pane-level subscription is wired
-                // by `insert_duplicated_tab`.
-                cx.subscribe(&term, Self::handle_terminal_event).detach();
+                    .iter()
+                    .find(|tab| tab.entity_id() == source_tab_id)
+                    .cloned()
+                else {
+                    return;
+                };
+                let Some(tab) = self.duplicate_tab_content(&source_tab, ws_idx, cx) else {
+                    return;
+                };
 
                 dest.update(cx, |p, cx| {
-                    p.insert_duplicated_tab(crate::pane::TabContent::Terminal(term), dest_idx, cx);
+                    p.insert_duplicated_tab(tab, dest_idx, cx);
                 });
                 self.workspaces[ws_idx].propagate_custom_buttons(cx);
                 // Focus the destination pane (its newly-selected duplicate tab)
@@ -716,7 +789,7 @@ impl PaneFlowApp {
                 let Some(ws_idx) = self
                     .workspaces
                     .iter()
-                    .position(|ws| ws.root.as_ref().is_some_and(|r| r.contains_leaf(&target)))
+                    .position(|ws| ws.contains_pane(&target))
                 else {
                     return;
                 };
@@ -737,13 +810,23 @@ impl PaneFlowApp {
 
                 let ws_id = self.workspaces[ws_idx].id;
                 let cwd_path = (!cwd.is_empty()).then(|| std::path::PathBuf::from(&cwd));
-                let term = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd_path, None, cx));
+                let term = cx.new(|cx| {
+                    TerminalView::with_cwd_and_profile(
+                        ws_id,
+                        cwd_path,
+                        None,
+                        TerminalSurfaceProfile::Agent,
+                        cx,
+                    )
+                });
                 // Resume the picked session in the new terminal. Honors the
                 // Claude bypass flag exactly like a tab-bar launch. Skips the
                 // send if the id fails the allow-list (defence-in-depth).
-                if let Some(resume) =
-                    crate::app::sessions_sidebar::resume_command(agent, &session_id)
-                {
+                if let Some(resume) = crate::app::sessions_sidebar::resume_command(
+                    agent,
+                    &session_id,
+                    &self.cached_config,
+                ) {
                     term.read(cx).send_command(&resume);
                 }
 
@@ -752,8 +835,13 @@ impl PaneFlowApp {
                         // `create_pane` wires the app-level CWD/port subscription
                         // and the pane-event subscription (mirrors `DropSplit`).
                         let new_pane = self.create_pane(term, ws_id, cx);
-                        if let Some(root) = &mut self.workspaces[ws_idx].root {
-                            split_pane_at_edge(root, &target, edge, new_pane.clone());
+                        let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
+                            split_pane_at_edge(root, &target, edge, new_pane.clone())
+                        } else {
+                            false
+                        };
+                        if !inserted {
+                            return;
                         }
                         self.workspaces[ws_idx].propagate_custom_buttons(cx);
                         self.pending_pane_focus = Some(new_pane);
@@ -790,7 +878,7 @@ impl PaneFlowApp {
                 let Some(ws_idx) = self
                     .workspaces
                     .iter()
-                    .position(|ws| ws.root.as_ref().is_some_and(|r| r.contains_leaf(&target)))
+                    .position(|ws| ws.contains_pane(&target))
                 else {
                     return;
                 };
@@ -818,8 +906,13 @@ impl PaneFlowApp {
                             ws_id,
                             cx,
                         );
-                        if let Some(root) = &mut self.workspaces[ws_idx].root {
-                            split_pane_at_edge(root, &target, edge, new_pane.clone());
+                        let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
+                            split_pane_at_edge(root, &target, edge, new_pane.clone())
+                        } else {
+                            false
+                        };
+                        if !inserted {
+                            return;
                         }
                         self.workspaces[ws_idx].propagate_custom_buttons(cx);
                         self.pending_pane_focus = Some(new_pane);
@@ -838,9 +931,21 @@ impl PaneFlowApp {
             }
             pane::PaneEvent::Split(direction) => {
                 let direction = *direction;
-                if let Some(ws) = self.active_workspace()
-                    && let Some(root) = &ws.root
-                    && root.leaf_count() >= MAX_PANES
+                let Some(ws_idx) = self.workspaces.iter().position(|ws| {
+                    ws.root
+                        .as_ref()
+                        .is_some_and(|root| root.contains_leaf(&pane))
+                }) else {
+                    return;
+                };
+                if self.workspaces[ws_idx].is_zoomed() {
+                    self.show_toast("Unzoom before splitting panes", cx);
+                    return;
+                }
+                if self.workspaces[ws_idx]
+                    .root
+                    .as_ref()
+                    .is_none_or(|root| root.leaf_count() >= MAX_PANES)
                 {
                     self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
                     return;
@@ -871,22 +976,29 @@ impl PaneFlowApp {
                 // without child-cwd introspection (always on Windows); fall back
                 // to the workspace root so the split never lands in the process
                 // `current_dir()` (`C:\Program Files\PaneFlow` when installed).
-                let source_cwd = self.new_terminal_cwd(source_cwd);
-                let ws_id = self.active_workspace().map(|ws| ws.id).unwrap_or(0);
+                let source_cwd = source_cwd.or_else(|| {
+                    let cwd = self.workspaces[ws_idx].cwd.as_str();
+                    (!cwd.is_empty()).then(|| std::path::PathBuf::from(cwd))
+                });
+                let ws_id = self.workspaces[ws_idx].id;
                 let new_terminal =
                     cx.new(|cx| TerminalView::with_cwd(ws_id, source_cwd, Some(initial_size), cx));
                 let new_pane = self.create_pane(new_terminal, ws_id, cx);
-                if let Some(ws) = self.active_workspace_mut()
-                    && let Some(root) = &mut ws.root
-                {
-                    root.split_at_pane(&pane, direction, new_pane);
+                let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
+                    root.split_at_pane(&pane, direction, new_pane.clone())
+                } else {
+                    false
+                };
+                if !inserted {
+                    return;
                 }
                 // The freshly-spawned pane starts with an empty
                 // `custom_buttons` list - push the workspace's current set
                 // so the new pane's tab bar matches its siblings.
-                if let Some(ws) = self.workspaces.get(self.active_idx) {
+                if let Some(ws) = self.workspaces.get(ws_idx) {
                     ws.propagate_custom_buttons(cx);
                 }
+                self.pending_pane_focus = Some(new_pane);
                 self.save_session(cx);
                 cx.notify();
             }
@@ -919,7 +1031,9 @@ impl PaneFlowApp {
                 terminal.update(cx, |view, _| view.terminal.note_announced_port(info.port));
                 if let Some(ws_idx) = self.workspace_idx_for_terminal(&terminal, cx) {
                     let ws = &mut self.workspaces[ws_idx];
-                    if merge_service_label(&mut ws.service_labels, info.clone())
+                    let mut terminal_info = info.clone();
+                    terminal_info.is_frontend = false;
+                    if merge_service_label(&mut ws.service_labels, terminal_info)
                         && self.settings_section.is_none()
                     {
                         cx.notify();
@@ -1017,13 +1131,9 @@ impl PaneFlowApp {
         terminal: &Entity<TerminalView>,
         cx: &App,
     ) -> Option<usize> {
-        self.workspaces.iter().position(|ws| {
-            ws.root.as_ref().is_some_and(|root| {
-                // U-013: zero-alloc - `any_leaf` short-circuits without the
-                // `collect_leaves()` Vec<Entity<Pane>> clone the old form built.
-                root.any_leaf(&mut |pane| pane.read(cx).contains_terminal(terminal))
-            })
-        })
+        self.workspaces
+            .iter()
+            .position(|ws| ws.any_pane(|pane| pane.read(cx).contains_terminal(terminal)))
     }
 
     /// Immediately drop agent sessions anchored to a dying surface (the
@@ -1075,8 +1185,7 @@ impl PaneFlowApp {
         let live_surfaces: std::collections::HashSet<u64> = self
             .workspaces
             .iter()
-            .filter_map(|ws| ws.root.as_ref())
-            .flat_map(|root| root.collect_leaves())
+            .flat_map(|ws| ws.collect_panes())
             .flat_map(|pane| {
                 pane.read(cx)
                     .terminals()
@@ -1454,6 +1563,10 @@ impl PaneFlowApp {
                         t.detected_ports = ports_with_links;
                         pane_changed = true;
                     }
+                    if t.cached_foreground_command != s.foreground_command {
+                        t.cached_foreground_command = s.foreground_command.clone();
+                        pane_changed = true;
+                    }
                     let conflicts = announced_port_conflicts(
                         &t.announced_ports,
                         tid,
@@ -1733,6 +1846,7 @@ mod tests {
                     frontend: Some("Vite"),
                 }],
                 agents: vec!["codex".to_string()],
+                foreground_command: None,
             },
         )]);
 
@@ -1773,6 +1887,7 @@ mod tests {
                     frontend: Some("Vite"),
                 }],
                 agents: Vec::new(),
+                foreground_command: None,
             },
         )]);
 
@@ -1789,6 +1904,79 @@ mod tests {
     }
 
     #[test]
+    fn merge_scan_workspace_state_downgrades_unconfirmed_frontend_label() {
+        let mut active_ports = vec![5173];
+        let mut service_labels = HashMap::from([(
+            5173,
+            ServiceInfo {
+                port: 5173,
+                url: Some("http://localhost:5173/app".to_string()),
+                label: Some("Vite".to_string()),
+                is_frontend: true,
+            },
+        )]);
+        let mut detected_agents = HashSet::new();
+        let scan = HashMap::from([(
+            7,
+            PaneScan {
+                ports: vec![PortEntry {
+                    port: 5173,
+                    frontend: None,
+                }],
+                agents: Vec::new(),
+                foreground_command: None,
+            },
+        )]);
+
+        assert!(merge_scan_workspace_state(
+            &mut active_ports,
+            &mut service_labels,
+            &mut detected_agents,
+            &scan,
+        ));
+        let info = service_labels.get(&5173).unwrap();
+        assert!(!info.is_frontend);
+        assert_eq!(info.label.as_deref(), Some("Vite"));
+        assert_eq!(info.url.as_deref(), Some("http://localhost:5173/app"));
+    }
+
+    #[test]
+    fn merge_scan_workspace_state_upgrades_terminal_label_from_frontend_scan() {
+        let mut active_ports = vec![5173];
+        let mut service_labels = HashMap::from([(
+            5173,
+            ServiceInfo {
+                port: 5173,
+                url: Some("http://localhost:5173/app".to_string()),
+                label: Some("Vite".to_string()),
+                is_frontend: false,
+            },
+        )]);
+        let mut detected_agents = HashSet::new();
+        let scan = HashMap::from([(
+            7,
+            PaneScan {
+                ports: vec![PortEntry {
+                    port: 5173,
+                    frontend: Some("Vite"),
+                }],
+                agents: Vec::new(),
+                foreground_command: None,
+            },
+        )]);
+
+        assert!(merge_scan_workspace_state(
+            &mut active_ports,
+            &mut service_labels,
+            &mut detected_agents,
+            &scan,
+        ));
+        let info = service_labels.get(&5173).unwrap();
+        assert!(info.is_frontend);
+        assert_eq!(info.url.as_deref(), Some("http://localhost:5173/app"));
+    }
+
+    #[test]
     fn announced_port_conflicts_ignore_shared_ports() {
         let shared_scan = HashMap::from([
             (
@@ -1799,6 +1987,7 @@ mod tests {
                         frontend: None,
                     }],
                     agents: Vec::new(),
+                    foreground_command: None,
                 },
             ),
             (
@@ -1809,6 +1998,7 @@ mod tests {
                         frontend: None,
                     }],
                     agents: Vec::new(),
+                    foreground_command: None,
                 },
             ),
         ]);
@@ -1825,6 +2015,7 @@ mod tests {
                     frontend: Some("Vite"),
                 }],
                 agents: Vec::new(),
+                foreground_command: None,
             },
         )]);
         let (owner, shared) = port_ownership(&single_owner_scan);

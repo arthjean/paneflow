@@ -494,17 +494,27 @@ impl PaneFlowApp {
         use std::path::PathBuf;
 
         let mut focus_idx: usize = 0;
-        let terminals: Vec<Entity<TerminalView>> = if surfaces.is_empty() {
+        let tabs: Vec<crate::pane::TabContent> = if surfaces.is_empty() {
             let t = cx.new(|cx| {
                 TerminalView::with_cwd(workspace_id, Some(fallback_cwd.to_path_buf()), None, cx)
             });
             cx.subscribe(&t, Self::handle_terminal_event).detach();
-            vec![t]
+            vec![crate::pane::TabContent::Terminal(t)]
         } else {
             surfaces
                 .iter()
                 .enumerate()
-                .map(|(i, surface)| {
+                .filter_map(|(i, surface)| {
+                    if surface.surface_type.as_deref() == Some("markdown") {
+                        let path = surface.path.as_ref().map(PathBuf::from)?;
+                        let markdown = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
+                            crate::markdown::MarkdownView::open(path, cx)
+                        });
+                        if surface.focus == Some(true) {
+                            focus_idx = i;
+                        }
+                        return Some(crate::pane::TabContent::Markdown(markdown));
+                    }
                     let cwd = surface
                         .cwd
                         .as_ref()
@@ -526,7 +536,7 @@ impl PaneFlowApp {
                     });
 
                     if let Some(ref scrollback) = surface.scrollback {
-                        t.read(cx).terminal.restore_scrollback(scrollback);
+                        t.read(cx).restore_scrollback(scrollback);
                     }
                     // US-013: re-apply the persisted custom name.
                     if let Some(ref custom) = surface.custom_name {
@@ -569,17 +579,13 @@ impl PaneFlowApp {
                     if surface.focus == Some(true) {
                         focus_idx = i;
                     }
-                    t
+                    Some(crate::pane::TabContent::Terminal(t))
                 })
                 .collect()
         };
 
-        // Both branches above yield >= 1 terminal, so `.first()` is never None
-        // in practice. Guard it anyway (US-058): a future refactor that empties
-        // `terminals` degrades to a fresh fallback pane instead of panicking on
-        // `terminals[0]`.
-        let Some(first) = terminals.first().cloned() else {
-            log::error!("spawn_pane_from_surfaces: no terminals built (bug); using fallback");
+        let Some(_) = tabs.first() else {
+            log::error!("spawn_pane_from_surfaces: no restorable tabs built; using fallback");
             let t = cx.new(|cx| {
                 TerminalView::with_cwd(workspace_id, Some(fallback_cwd.to_path_buf()), None, cx)
             });
@@ -588,14 +594,7 @@ impl PaneFlowApp {
             cx.subscribe(&pane, Self::handle_pane_event).detach();
             return pane;
         };
-        let pane = cx.new(|cx| {
-            let mut p = Pane::new(first, workspace_id, cx);
-            for tab in terminals.iter().skip(1) {
-                p.add_tab(tab.clone(), cx);
-            }
-            p.selected_idx = focus_idx.min(terminals.len().saturating_sub(1));
-            p
-        });
+        let pane = cx.new(|cx| Pane::new_with_tabs(tabs, focus_idx, workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
     }

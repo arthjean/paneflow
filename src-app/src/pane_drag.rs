@@ -12,36 +12,25 @@
 //! (`app/drag.rs`, `sidebar/mod.rs`) - same GPUI commit, identical API shape.
 
 use gpui::{
-    Context, Entity, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled, Window,
-    div, px, svg,
+    Context, Entity, EntityId, FontWeight, IntoElement, ParentElement, Render, SharedString,
+    Styled, Window, div, px, svg,
 };
 
 use crate::agent_sessions::SessionAgent;
-use crate::pane::{Pane, PaneEvent, TabContent};
+use crate::pane::{Pane, PaneEvent};
 
 /// Drag payload for a terminal/markdown tab. Cloned cheaply (the `content`
 /// field is an `Entity` handle, not the entity itself) so GPUI can stash it for
 /// the duration of the drag. `title` and `icon` are snapshotted at drag start
 /// so the floating [`TabDragPreview`] can render without re-reading the entity.
 ///
-/// `source_pane` + `source_idx` identify where the tab came from. A drop
-/// whose `source_pane == cx.entity()` is a same-pane reorder (EP-001); a drop
-/// on a different pane migrates the entity across panes (EP-002).
+/// `source_pane` + `source_tab_id` identify where the tab came from. The
+/// source index is kept only as a drag-start hint for insertion previews.
 #[derive(Clone)]
 pub struct TabDrag {
     pub source_pane: Entity<Pane>,
     pub source_idx: usize,
-    /// The dragged tab itself, mandated by US-001's payload shape. Reorder
-    /// (EP-001) and cross-pane move (EP-002) both address the tab by
-    /// `source_pane` + `source_idx` - taking it from the source `Vec` so the
-    /// removal and insertion stay atomic - so this handle is currently carried
-    /// for API completeness (and future direct-handle consumers like
-    /// drop-to-split/duplicate) rather than read on the move path.
-    #[expect(
-        dead_code,
-        reason = "payload shape fixed in US-001; move addresses the tab by source_pane+source_idx"
-    )]
-    pub content: TabContent,
+    pub source_tab_id: EntityId,
     pub title: SharedString,
     pub icon: SharedString,
 }
@@ -262,12 +251,12 @@ pub fn move_tab_into(
     dest: &mut Pane,
     dest_cx: &mut Context<Pane>,
     source: &Entity<Pane>,
-    source_idx: usize,
+    source_tab_id: EntityId,
     dest_idx: usize,
     window: &mut Window,
 ) {
     let (taken, source_emptied) = source.update(dest_cx, |src, src_cx| {
-        let tab = src.take_tab_for_move(source_idx);
+        let tab = src.take_tab_for_move_by_id(source_tab_id);
         let emptied = tab.is_some() && src.tabs.is_empty();
         // A surviving source still needs a repaint (its strip lost a tab and
         // `selected_idx` may have shifted); an emptied one is handled below.
@@ -280,6 +269,7 @@ pub fn move_tab_into(
         return;
     };
     dest.insert_moved_tab(tab, dest_idx, window, dest_cx);
+    dest_cx.emit(PaneEvent::TabsChanged);
     if source_emptied {
         // Reuse the existing Remove path: the tree owner finds the now-empty
         // source pane and drops it from the layout, reflowing siblings.

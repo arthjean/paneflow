@@ -27,14 +27,8 @@ impl PaneFlowApp {
         };
 
         if ws.is_zoomed() {
-            // Un-zoom: restore the saved layout
-            let zoomed_pane = ws.root.as_ref().and_then(|r| r.first_leaf());
-            if let Some(saved) = ws.saved_layout.take() {
-                ws.root = Some(saved);
-                if let Some(pane) = zoomed_pane {
-                    pane.update(cx, |p, _| p.zoomed = false);
-                    pane.read(cx).focus_handle(cx).focus(window, cx);
-                }
+            if let Some(pane) = ws.exit_zoom(cx) {
+                pane.read(cx).focus_handle(cx).focus(window, cx);
             }
         } else {
             // Zoom: save the full tree, replace root with the focused pane
@@ -65,12 +59,8 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Exit zoom if active
-        if let Some(ws) = self.active_workspace_mut()
-            && ws.is_zoomed()
-            && let Some(saved) = ws.saved_layout.take()
-        {
-            ws.root = Some(saved);
+        if let Some(ws) = self.active_workspace_mut() {
+            ws.exit_zoom(cx);
         }
 
         let Some(ws) = self.active_workspace_mut() else {
@@ -117,17 +107,8 @@ impl PaneFlowApp {
             return Err(format!("Layout exceeds maximum pane count ({MAX_PANES})"));
         }
 
-        // Exit zoom if active, clearing the zoomed flag on the pane
-        if let Some(ws) = self.active_workspace_mut()
-            && ws.is_zoomed()
-        {
-            let zoomed_pane = ws.root.as_ref().and_then(|r| r.first_leaf());
-            if let Some(saved) = ws.saved_layout.take() {
-                ws.root = Some(saved);
-            }
-            if let Some(pane) = zoomed_pane {
-                pane.update(cx, |p, _| p.zoomed = false);
-            }
+        if let Some(ws) = self.active_workspace_mut() {
+            ws.exit_zoom(cx);
         }
 
         let Some(ws) = self.active_workspace_mut() else {
@@ -193,12 +174,8 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Exit zoom if active
-        if let Some(ws) = self.active_workspace_mut()
-            && ws.is_zoomed()
-            && let Some(saved) = ws.saved_layout.take()
-        {
-            ws.root = Some(saved);
+        if let Some(ws) = self.active_workspace_mut() {
+            ws.exit_zoom(cx);
         }
 
         let Some(ws) = self.active_workspace() else {

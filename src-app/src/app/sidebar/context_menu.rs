@@ -364,7 +364,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let source = menu.source_pane.clone();
-        let source_idx = menu.tab_idx;
+        let source_idx = source.read(cx).index_for_tab_id(menu.tab_id);
 
         // Enumerate the panes of the workspace that owns the source pane, in
         // tree order, dropping the source itself.
@@ -388,13 +388,10 @@ impl PaneFlowApp {
         let tab_path = source
             .read(cx)
             .tabs
-            .get(source_idx)
+            .get(source_idx.unwrap_or(usize::MAX))
             .and_then(|tab| Self::tab_context_path(tab, cx));
-        let target_tab_id = source
-            .read(cx)
-            .tabs
-            .get(source_idx)
-            .map(|tab| tab.entity_id());
+        let target_tab_id =
+            source_idx.and_then(|idx| source.read(cx).tabs.get(idx).map(|tab| tab.entity_id()));
         let full_path = tab_path
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned());
@@ -410,7 +407,7 @@ impl PaneFlowApp {
         let pending_sid = source
             .read(cx)
             .tabs
-            .get(source_idx)
+            .get(source_idx.unwrap_or(usize::MAX))
             .and_then(|t| t.as_terminal())
             .map(|t| t.entity_id().as_u64())
             .filter(|sid| self.broadcast.pending.contains_key(sid));
@@ -486,7 +483,17 @@ impl PaneFlowApp {
                 .bg(menu_divider_color(ui)),
         );
 
-        if others.is_empty() {
+        if source_idx.is_none() {
+            context_menu = context_menu.child(
+                div()
+                    .px(px(8.))
+                    .py(px(5.))
+                    .rounded(px(4.))
+                    .text_size(px(11.))
+                    .text_color(ui.muted)
+                    .child("Tab no longer exists"),
+            );
+        } else if others.is_empty() {
             // AC US-006: with a single pane there is nowhere to move to.
             context_menu = context_menu.child(
                 div()
@@ -506,6 +513,7 @@ impl PaneFlowApp {
                 );
                 let dest_for_click = dest.clone();
                 let source_for_click = source.clone();
+                let source_tab_id = menu.tab_id;
                 context_menu = context_menu.child(self.render_select_menu_item(
                     SharedString::from(format!("tab-move-{orig_idx}")),
                     &label,
@@ -537,7 +545,7 @@ impl PaneFlowApp {
                                 dest_pane,
                                 dest_cx,
                                 &source_for_click,
-                                source_idx,
+                                source_tab_id,
                                 dest_idx,
                                 window,
                             );

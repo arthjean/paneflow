@@ -1356,6 +1356,7 @@ impl PaneFlowApp {
             launches.push((terminal, plan.command, plan.prompt));
             panes.push(new_pane);
         }
+        let focus_pane = panes.get(focus_idx).cloned();
         let tree = build_up_layout(preset, panes, focus_idx)
             .ok_or_else(|| "could not build layout from panes".to_string())?;
         if let Some(workspace) = self.workspaces.get_mut(target_idx) {
@@ -1372,6 +1373,9 @@ impl PaneFlowApp {
         if self.active_idx != target_idx {
             self.active_idx = target_idx;
             self.reroot_files_tree(cx);
+        }
+        if let Some(pane) = focus_pane {
+            self.pending_pane_focus = Some(pane);
         }
         for (pane_idx, (terminal, command, prompt)) in launches.into_iter().enumerate() {
             if let Some(command) = command {
@@ -2225,27 +2229,35 @@ fn tiled_layout(leaves: Vec<LayoutNode>) -> LayoutNode {
     if leaves.len() <= 2 {
         return split("vertical", leaves, None);
     }
-    let midpoint = leaves.len().div_ceil(2);
-    let mut top = Vec::new();
-    let mut bottom = Vec::new();
-    for (idx, leaf) in leaves.into_iter().enumerate() {
-        if idx < midpoint {
-            top.push(leaf);
+    let n = leaves.len();
+    let mut rows = 1usize;
+    let mut cols = 1usize;
+    while rows * cols < n {
+        if cols <= rows {
+            cols += 1;
         } else {
-            bottom.push(leaf);
+            rows += 1;
         }
     }
-    let top_node = if top.len() == 1 {
-        top.remove(0)
-    } else {
-        split("vertical", top, None)
-    };
-    let bottom_node = if bottom.len() == 1 {
-        bottom.remove(0)
-    } else {
-        split("vertical", bottom, None)
-    };
-    split("horizontal", vec![top_node, bottom_node], None)
+
+    let row_ratio = 1.0 / rows as f64;
+    let mut leaf_iter = leaves.into_iter();
+    let mut row_nodes = Vec::with_capacity(rows);
+    for row_idx in 0..rows {
+        let panes_in_row = if row_idx < rows - 1 {
+            cols
+        } else {
+            n - cols * (rows - 1)
+        };
+        let mut row_leaves: Vec<_> = leaf_iter.by_ref().take(panes_in_row).collect();
+        let row_node = if row_leaves.len() == 1 {
+            row_leaves.remove(0)
+        } else {
+            split("vertical", row_leaves, None)
+        };
+        row_nodes.push(row_node);
+    }
+    split("horizontal", row_nodes, Some(vec![row_ratio; rows]))
 }
 
 fn pane_kind(surface: &SurfaceDefinition) -> PaneKind {
@@ -2263,6 +2275,50 @@ fn pane_kind(surface: &SurfaceDefinition) -> PaneKind {
         PaneKind::Command
     } else {
         PaneKind::Empty
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use paneflow_config::schema::LayoutNode;
+
+    use super::tiled_layout;
+
+    fn leaf() -> LayoutNode {
+        LayoutNode::Pane {
+            surfaces: Vec::new(),
+        }
+    }
+
+    fn leaf_count(node: &LayoutNode) -> usize {
+        match node {
+            LayoutNode::Pane { .. } => 1,
+            LayoutNode::Split { children, .. } => children.iter().map(leaf_count).sum(),
+        }
+    }
+
+    #[test]
+    fn tiled_layout_matches_runtime_grid_for_seven_panes() {
+        let leaves = (0..7).map(|_| leaf()).collect();
+        let layout = tiled_layout(leaves);
+
+        let LayoutNode::Split {
+            direction,
+            ratios,
+            children,
+            ..
+        } = layout
+        else {
+            panic!("tiled layout should split rows");
+        };
+
+        assert_eq!(direction, "horizontal");
+        assert_eq!(ratios, Some(vec![1.0 / 3.0; 3]));
+        assert_eq!(children.len(), 3);
+        assert_eq!(
+            children.iter().map(leaf_count).collect::<Vec<_>>(),
+            vec![3, 3, 1]
+        );
     }
 }
 

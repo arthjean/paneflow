@@ -908,6 +908,7 @@ impl PaneFlowApp {
             files_tree_scroll: gpui::ScrollHandle::new(),
             files_selected: 0,
             files_focus: cx.focus_handle(),
+            files_pane: None,
             files_watcher: None,
             files_event_rx: None,
             files_menu_open: None,

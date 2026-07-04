@@ -528,6 +528,7 @@ impl Default for crate::schema::SurfaceDefinition {
             command: None,
             prompt: None,
             cwd: None,
+            path: None,
             env: None,
             focus: None,
             scrollback: None,

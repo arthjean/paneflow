@@ -195,12 +195,14 @@ pub enum PaneEvent {
     /// A surface's custom name changed via inline rename (US-013) - the parent
     /// should persist the session so the name survives restart.
     SurfaceRenamed,
+    /// The tab order, active tab, or membership changed without changing the
+    /// layout tree. The app persists this because pane-local mutations can
+    /// otherwise be lost on crash.
+    TabsChanged,
     /// Right-click on a tab requested the "Move to pane…" context menu
-    /// (EP-002 US-006, WCAG 2.5.7 non-drag alternative). Carries the tab's
-    /// index and the click anchor (window-space); the parent resolves the
-    /// other panes in the workspace and paints the menu at the app layer.
+    /// (EP-002 US-006, WCAG 2.5.7 non-drag alternative).
     OpenTabMenu {
-        tab_idx: usize,
+        tab_id: gpui::EntityId,
         position: Point<Pixels>,
     },
     /// A tab was dropped on this pane's content edge to create a split
@@ -210,7 +212,7 @@ pub enum PaneEvent {
     DropSplit {
         edge: DropEdge,
         source_pane: Entity<Pane>,
-        source_idx: usize,
+        source_tab_id: gpui::EntityId,
         /// `true` when the duplicate modifier was held (Ctrl on Linux/Windows,
         /// Alt on macOS) - spawn a fresh terminal at the dragged tab's CWD
         /// instead of moving the original (US-010).
@@ -224,7 +226,7 @@ pub enum PaneEvent {
     /// subscription wiring (mirrors `DropSplit`'s duplicate path).
     DuplicateTabInto {
         source_pane: Entity<Pane>,
-        source_idx: usize,
+        source_tab_id: gpui::EntityId,
         dest_idx: usize,
     },
     /// An agent-session row was dropped out of the sessions sidebar onto this
@@ -406,14 +408,26 @@ impl Pane {
     /// subscription is NOT re-added, because the moved terminal already has
     /// one from its original creation (re-adding would double CWD/port events).
     pub fn new_with_tab(tab: TabContent, workspace_id: u64, cx: &mut Context<Self>) -> Self {
+        Self::new_with_tabs(vec![tab], 0, workspace_id, cx)
+    }
+
+    pub fn new_with_tabs(
+        tabs: Vec<TabContent>,
+        selected_idx: usize,
+        workspace_id: u64,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let cached_config = paneflow_config::loader::load_config();
-        if let TabContent::Terminal(t) = &tab {
-            Self::subscribe_terminal(t, cx);
-            Self::apply_terminal_render_config(t, &cached_config, cx);
+        for tab in &tabs {
+            if let TabContent::Terminal(t) = tab {
+                Self::subscribe_terminal(t, cx);
+                Self::apply_terminal_render_config(t, &cached_config, cx);
+            }
         }
+        let selected_idx = selected_idx.min(tabs.len().saturating_sub(1));
         Self {
-            tabs: vec![tab],
-            selected_idx: 0,
+            tabs,
+            selected_idx,
             attention: std::collections::HashMap::new(),
             errored: std::collections::HashSet::new(),
             search_hits: std::collections::HashMap::new(),
@@ -884,14 +898,17 @@ impl Pane {
             return custom.clone();
         }
         let raw = &view.terminal.title;
-        if let Some(agent_title) = Self::agent_title_from_terminal_title(raw) {
-            return agent_title.into();
+        if let Some(agent) = view.terminal.detected_agent {
+            return agent.display_name().into();
         }
         // For shell titles like "user@host: /path/to/dir", extract the last path component
         if let Some(path_title) =
             Self::shell_path_title(raw).and_then(|path| Self::cwd_label(&path))
         {
             return path_title;
+        }
+        if let Some(agent_title) = Self::agent_title_from_terminal_title(raw) {
+            return agent_title.into();
         }
         if Self::is_default_terminal_title(raw)
             && let Some(cwd) = view.terminal.current_cwd.as_deref()
@@ -915,11 +932,14 @@ impl Pane {
             return custom.clone();
         }
         let raw = &view.terminal.title;
-        if let Some(agent_title) = Self::agent_title_from_terminal_title(raw) {
-            return agent_title.into();
+        if let Some(agent) = view.terminal.detected_agent {
+            return agent.display_name().into();
         }
         if let Some(path_title) = Self::shell_path_title(raw) {
             return path_title;
+        }
+        if let Some(agent_title) = Self::agent_title_from_terminal_title(raw) {
+            return agent_title.into();
         }
         if Self::is_default_terminal_title(raw)
             && let Some(cwd) = view
@@ -942,22 +962,19 @@ impl Pane {
     }
 
     fn agent_title_from_terminal_title(title: &str) -> Option<&'static str> {
-        let lower = title.to_lowercase();
-        if lower.contains("claude") {
-            Some("Claude Code")
-        } else if lower.contains("codex") {
-            Some("Codex")
-        } else if lower.contains("nvim") || lower.contains("neovim") {
-            Some("Neovim")
-        } else if lower.contains("vim") && !lower.contains("nvim") {
-            Some("Vim")
-        } else if lower.contains("htop")
-            || lower.contains("btop")
-            || lower.contains("top") && lower.len() < 10
-        {
-            Some("System Monitor")
-        } else {
-            None
+        let first = title.split_whitespace().next()?.trim();
+        let first = first
+            .strip_suffix(".exe")
+            .or_else(|| first.strip_suffix(".EXE"))
+            .unwrap_or(first);
+        if let Some(agent) = crate::agent_launcher::TerminalAgent::from_binary(first) {
+            return Some(agent.display_name());
+        }
+        match first.to_ascii_lowercase().as_str() {
+            "nvim" | "neovim" => Some("Neovim"),
+            "vim" => Some("Vim"),
+            "top" | "htop" | "btop" => Some("System Monitor"),
+            _ => None,
         }
     }
 
@@ -1101,15 +1118,44 @@ impl Pane {
         if idx >= self.tabs.len() {
             return;
         }
+        let selected_id = self.tabs.get(self.selected_idx).map(TabContent::entity_id);
+        let removed_id = self.tabs[idx].entity_id();
         self.tabs.remove(idx);
         if self.tabs.is_empty() {
             cx.emit(PaneEvent::Remove);
             return;
         }
-        if self.selected_idx >= self.tabs.len() {
-            self.selected_idx = self.tabs.len().saturating_sub(1);
-        }
+        self.restore_selection_after_removal(idx, removed_id, selected_id);
+        cx.emit(PaneEvent::TabsChanged);
         cx.notify();
+    }
+
+    pub fn index_for_tab_id(&self, tab_id: gpui::EntityId) -> Option<usize> {
+        self.tabs.iter().position(|tab| tab.entity_id() == tab_id)
+    }
+
+    fn restore_selection_after_removal(
+        &mut self,
+        removed_idx: usize,
+        removed_id: gpui::EntityId,
+        selected_id: Option<gpui::EntityId>,
+    ) {
+        if self.tabs.is_empty() {
+            self.selected_idx = 0;
+            return;
+        }
+        match selected_id {
+            Some(id) if id != removed_id => {
+                if let Some(idx) = self.index_for_tab_id(id) {
+                    self.selected_idx = idx;
+                } else {
+                    self.selected_idx = self.selected_idx.min(self.tabs.len() - 1);
+                }
+            }
+            _ => {
+                self.selected_idx = removed_idx.min(self.tabs.len() - 1);
+            }
+        }
     }
 
     /// Move a tab from one slot to another within this pane (EP-001 US-002).
@@ -1131,7 +1177,14 @@ impl Pane {
         let tab = self.tabs.remove(from);
         self.tabs.insert(dest, tab);
         self.selected_idx = dest;
+        cx.emit(PaneEvent::TabsChanged);
         cx.notify();
+    }
+
+    pub fn reorder_tab_by_id(&mut self, tab_id: gpui::EntityId, to: usize, cx: &mut Context<Self>) {
+        if let Some(from) = self.index_for_tab_id(tab_id) {
+            self.reorder_tab(from, to, cx);
+        }
     }
 
     /// Remove a tab for a cross-pane move (EP-002 US-004). Unlike
@@ -1144,11 +1197,18 @@ impl Pane {
         if idx >= self.tabs.len() {
             return None;
         }
+        let selected_id = self.tabs.get(self.selected_idx).map(TabContent::entity_id);
+        let removed_id = self.tabs[idx].entity_id();
         let tab = self.tabs.remove(idx);
-        if !self.tabs.is_empty() && self.selected_idx >= self.tabs.len() {
-            self.selected_idx = self.tabs.len().saturating_sub(1);
+        if !self.tabs.is_empty() {
+            self.restore_selection_after_removal(idx, removed_id, selected_id);
         }
         Some(tab)
+    }
+
+    pub fn take_tab_for_move_by_id(&mut self, tab_id: gpui::EntityId) -> Option<TabContent> {
+        let idx = self.index_for_tab_id(tab_id)?;
+        self.take_tab_for_move(idx)
     }
 
     /// Insert a tab moved in from another pane (EP-002 US-004), making it the
@@ -1443,18 +1503,22 @@ impl Pane {
         tabs_row = tabs_row.child(div().id("pane-tabs-trailing").flex_1().h_full().on_drop(
             cx.listener(move |this, drag: &TabDrag, window, cx| {
                 if crate::pane_drag::duplicate_modifier_held(window) {
-                    // US-010: modifier held → duplicate at the dragged tab's CWD
+                    // US-010: modifier held, duplicate at the dragged tab's CWD
                     // into this pane's last slot; the original stays put.
                     cx.emit(PaneEvent::DuplicateTabInto {
                         source_pane: drag.source_pane.clone(),
-                        source_idx: drag.source_idx,
+                        source_tab_id: drag.source_tab_id,
                         dest_idx: this.tabs.len(),
                     });
                 } else if drag.source_pane == cx.entity() {
                     // Same pane: reorder to the last slot (EP-001 US-002). Use
                     // the live count so a tab opened/closed since render is
                     // accounted for.
-                    this.reorder_tab(drag.source_idx, this.tabs.len().saturating_sub(1), cx);
+                    this.reorder_tab_by_id(
+                        drag.source_tab_id,
+                        this.tabs.len().saturating_sub(1),
+                        cx,
+                    );
                 } else {
                     // Cross-pane: append the migrated terminal after the last
                     // tab of this pane (EP-002 US-004).
@@ -1463,7 +1527,7 @@ impl Pane {
                         this,
                         cx,
                         &drag.source_pane,
-                        drag.source_idx,
+                        drag.source_tab_id,
                         dest_idx,
                         window,
                     );
@@ -1638,14 +1702,13 @@ impl Pane {
         {
             let drag_title: SharedString = Self::tab_title(&self.tabs[i], cx).into();
             let drag_icon: SharedString = Self::tab_icon(&self.tabs[i]).into();
-            let drag_content = self.tabs[i].clone();
             let pane_entity = self_entity.clone();
             tab = tab
                 .on_drag(
                     TabDrag {
                         source_pane: pane_entity.clone(),
                         source_idx: tab_idx,
-                        content: drag_content,
+                        source_tab_id: tab_id,
                         title: drag_title.clone(),
                         icon: drag_icon.clone(),
                     },
@@ -1660,11 +1723,16 @@ impl Pane {
                 // land. Same-pane only - a cross-pane hover shows nothing
                 // in the strip (EP-002 adds the pane-level highlight); the
                 // drag's own origin slot shows nothing either.
-                .drag_over::<TabDrag>(move |style, drag, _window, _cx| {
+                .drag_over::<TabDrag>(move |style, drag, _window, cx| {
                     if drag.source_pane != pane_entity {
                         return style;
                     }
-                    match insertion_side(drag.source_idx, tab_idx) {
+                    let pane = pane_entity.read(cx);
+                    let source_idx = pane
+                        .index_for_tab_id(drag.source_tab_id)
+                        .unwrap_or(drag.source_idx);
+                    let target_idx = pane.index_for_tab_id(tab_id).unwrap_or(tab_idx);
+                    match insertion_side(source_idx, target_idx) {
                         Some(InsertSide::Left) => style.border_l_2().border_color(accent),
                         Some(InsertSide::Right) => style.border_r_2().border_color(accent),
                         None => style,
@@ -1678,12 +1746,13 @@ impl Pane {
                         // (it wires the app-level CWD/port subscription).
                         cx.emit(PaneEvent::DuplicateTabInto {
                             source_pane: drag.source_pane.clone(),
-                            source_idx: drag.source_idx,
+                            source_tab_id: drag.source_tab_id,
                             dest_idx: tab_idx,
                         });
                     } else if drag.source_pane == cx.entity() {
                         // Same pane: reorder in place (EP-001 US-002).
-                        this.reorder_tab(drag.source_idx, tab_idx, cx);
+                        let dest_idx = this.index_for_tab_id(tab_id).unwrap_or(tab_idx);
+                        this.reorder_tab_by_id(drag.source_tab_id, dest_idx, cx);
                     } else {
                         // Cross-pane: migrate the terminal into this pane at
                         // the dropped slot, preserving its PTY (EP-002 US-004).
@@ -1691,7 +1760,7 @@ impl Pane {
                             this,
                             cx,
                             &drag.source_pane,
-                            drag.source_idx,
+                            drag.source_tab_id,
                             tab_idx,
                             window,
                         );
@@ -1705,7 +1774,7 @@ impl Pane {
                     MouseButton::Right,
                     cx.listener(move |_this, e: &MouseDownEvent, _window, cx| {
                         cx.emit(PaneEvent::OpenTabMenu {
-                            tab_idx,
+                            tab_id,
                             position: e.position,
                         });
                         cx.stop_propagation();
@@ -1965,7 +2034,8 @@ impl Pane {
 
         let config = &self.cached_config;
         let visible_agents = crate::agent_launcher::TerminalAgent::visible(config);
-        let show_sessions_button = !crate::agent_sessions::enabled_session_agents().is_empty();
+        let show_sessions_button =
+            !crate::agent_sessions::enabled_session_agents_from_config(config).is_empty();
         let fixed_button_count = 4 + usize::from(show_sessions_button);
         let action_cluster_width = Self::tab_bar_action_cluster_width(
             self.zoomed,
@@ -2274,7 +2344,7 @@ impl Render for Pane {
                         cx.emit(PaneEvent::DropSplit {
                             edge,
                             source_pane: drag.source_pane.clone(),
-                            source_idx: drag.source_idx,
+                            source_tab_id: drag.source_tab_id,
                             duplicate,
                         });
                     }
@@ -2284,7 +2354,7 @@ impl Render for Pane {
                         // for a same-pane drop (spawns a sibling shell).
                         cx.emit(PaneEvent::DuplicateTabInto {
                             source_pane: drag.source_pane.clone(),
-                            source_idx: drag.source_idx,
+                            source_tab_id: drag.source_tab_id,
                             dest_idx: this.tabs.len(),
                         });
                     }
@@ -2297,7 +2367,7 @@ impl Render for Pane {
                                 this,
                                 cx,
                                 &drag.source_pane,
-                                drag.source_idx,
+                                drag.source_tab_id,
                                 dest_idx,
                                 window,
                             );
@@ -2505,6 +2575,23 @@ mod tests {
         assert_eq!(
             super::Pane::tab_bar_action_cluster_width(true, 1, 0, 0),
             super::ZOOM_BADGE_WIDTH + super::TAB_GAP + super::ACTION_BUTTON_SIZE
+        );
+    }
+
+    #[test]
+    fn agent_title_detection_uses_exact_command_token() {
+        assert_eq!(
+            super::Pane::agent_title_from_terminal_title("codex"),
+            Some("Codex")
+        );
+        assert_eq!(
+            super::Pane::agent_title_from_terminal_title("codex.exe"),
+            Some("Codex")
+        );
+        assert_eq!(
+            super::Pane::agent_title_from_terminal_title("user@host: /repo/codex-adapter"),
+            None,
+            "repo names must not be mistaken for agent processes"
         );
     }
 }
