@@ -51,7 +51,7 @@ fn parse_selector(raw: &str) -> Selector<'_> {
     Selector::Name(raw)
 }
 
-/// Fetch the active workspace's surfaces via `surface.list`.
+/// Fetch terminal surfaces via `surface.list`.
 pub fn fetch_surfaces(client: &impl IpcTransport) -> Result<Vec<Surface>, CliError> {
     let result = client
         .call("surface.list", json!({}))

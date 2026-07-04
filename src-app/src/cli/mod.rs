@@ -103,7 +103,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// List the panes (surfaces) of the active workspace.
+    /// List terminal surfaces.
     // EP-005 US-011: `list_panes` is the MCP tool name; accept it as a hidden
     // alias so a conductor can type either.
     #[command(alias = "list_panes")]
@@ -152,7 +152,7 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Read one pane's agent state (thinking / waiting / idle / errored / …).
+    /// Read one surface's agent state (thinking / waiting / idle / errored / …).
     Status {
         /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
         target: String,
@@ -216,7 +216,7 @@ enum Commands {
         #[arg(long, value_name = "PATH")]
         report_file: Option<String>,
     },
-    /// Give a targeted pane the keyboard focus (switches workspace/tab too).
+    /// Give a targeted surface the keyboard focus.
     Focus {
         /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
         target: String,

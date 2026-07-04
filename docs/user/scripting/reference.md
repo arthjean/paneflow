@@ -19,15 +19,15 @@ launching the app.
 
 | Verb                                       | Primary method or engine           | Writes to panes?           | Use                                    |
 | ------------------------------------------ | ---------------------------------- | -------------------------- | -------------------------------------- |
-| `ls [--human]`                             | `surface.list`                     | No                         | List panes in the active workspace     |
+| `ls [--human]`                             | `surface.list`                     | No                         | List terminal surfaces                 |
 | `read <target>`                            | `surface.read`                     | No                         | Read pane scrollback                   |
 | `search <target> <pattern>`                | `surface.search`                   | No                         | Search pane scrollback                 |
 | `ps [--json]`                              | `fleet.list`                       | No                         | List detected agents across workspaces |
-| `status <target> [--json]`                 | `surface.status`                   | No                         | Read one pane's agent state            |
+| `status <target> [--json]`                 | `surface.status`                   | No                         | Read one surface's agent state         |
 | `new`                                      | `workspace.create`                 | No                         | Create a workspace                     |
 | `select <index>`                           | `workspace.select`                 | No                         | Select a workspace                     |
 | `split <h\|v>`                             | `surface.split`                    | No                         | Split a pane                           |
-| `focus <target>`                           | `surface.focus`                    | No                         | Focus a pane and its workspace         |
+| `focus <target>`                           | `surface.focus`                    | No                         | Focus a terminal surface               |
 | `send <target> <text>`                     | `surface.send_text`                | Gated                      | Stage or submit text                   |
 | `key <target> <keystroke>`                 | `surface.send_keystroke`           | Gated                      | Send one non-submitting keystroke      |
 | `wait --match <sel>`                       | `surface.read`, `events.subscribe` | No                         | Block until pattern, idle, or both     |
@@ -219,12 +219,12 @@ printf '%s\\n' '{"jsonrpc":"2.0","method":"system.capabilities","params":{},"id"
 | `workspace.close`          | `index?`                                                                                        | Close a workspace                                        |
 | `workspace.up`             | `name`, `layout`, `panes[]`                                                                     | Declarative spawn used by `up` and flow roots            |
 | `workspace.restore_layout` | `layout`                                                                                        | Apply a layout tree                                      |
-| `surface.list`             | -                                                                                               | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace}]}` |
+| `surface.list`             | -                                                                                               | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace,scope}]}` |
 | `surface.read`             | `surface_id`, `lines?`, `offset?`, `fenced?`                                                    | Scrollback, `output_generation`, `truncated`             |
 | `surface.search`           | `surface_id`, `pattern`, `max_matches?`                                                         | Case-insensitive substring matches                       |
 | `surface.rename`           | `surface_id`, `name`                                                                            | Rename or clear a pane name                              |
-| `surface.focus`            | `surface_id`                                                                                    | Focus pane and workspace                                 |
-| `surface.status`           | `surface_id`                                                                                    | Agent state for one pane                                 |
+| `surface.focus`            | `surface_id`                                                                                    | Focus a workspace or Agents surface                      |
+| `surface.status`           | `surface_id`                                                                                    | Agent state for one surface                              |
 | `surface.send_text`        | `surface_id`, `text`, `submit?`, `paste?`                                                       | Gated PTY text write                                     |
 | `surface.send_keystroke`   | `surface_id`, `keystroke`                                                                       | Env-gated non-submitting keystroke                       |
 | `surface.split`            | `direction`, `surface_id?`, `cwd?`, `command?`, `prompt?`, `env?`, `name?`, `managed_worktree?` | Split a pane                                             |
@@ -258,7 +258,7 @@ The first frame acknowledges the subscription.
 | `ai.stop`          | Agent turn stops                       |
 | `ai.exit`          | Agent process exits                    |
 | `ai.session_end`   | Agent session closes                   |
-| `surface_changed`  | Pane `output_generation` advanced      |
+| `surface_changed`  | Terminal surface `output_generation` advanced |
 | `heartbeat`        | Idle keepalive                         |
 | `dropped`          | Subscriber lagged and events were shed |
 
@@ -272,7 +272,7 @@ socket.
 
 | Tool          | Params                              | Returns                                                             |
 | ------------- | ----------------------------------- | ------------------------------------------------------------------- |
-| `list_panes`  | -                                   | Panes with `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace` |
+| `list_panes`  | -                                   | Panes with `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`, `scope` |
 | `read_pane`   | `target`, `lines?`, `offset?`       | Scrollback text                                                     |
 | `search_pane` | `target`, `pattern`, `max_matches?` | Matching lines                                                      |
 

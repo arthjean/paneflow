@@ -710,6 +710,11 @@ pub(crate) fn find_terminal_by_surface_id(
         {
             return Some(t);
         }
+        if let Some(saved) = &ws.saved_layout
+            && let Some(t) = find_terminal_in_tree(saved, surface_id, cx)
+        {
+            return Some(t);
+        }
     }
     None
 }
@@ -811,7 +816,74 @@ pub(crate) struct SurfaceMeta {
     pub title: String,
     pub cwd: Option<String>,
     pub cmd: Option<String>,
-    pub workspace: usize,
+    pub workspace: Option<usize>,
+    pub scope: &'static str,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SurfaceScope {
+    Workspace(usize),
+    AgentsThread(u64),
+    AgentsBottom(u64),
+}
+
+impl SurfaceScope {
+    fn as_wire(self) -> &'static str {
+        match self {
+            SurfaceScope::Workspace(_) => "workspace",
+            SurfaceScope::AgentsThread(_) => "agents_thread",
+            SurfaceScope::AgentsBottom(_) => "agents_bottom",
+        }
+    }
+
+    fn workspace_index(self) -> Option<usize> {
+        match self {
+            SurfaceScope::Workspace(idx) => Some(idx),
+            SurfaceScope::AgentsThread(_) | SurfaceScope::AgentsBottom(_) => None,
+        }
+    }
+}
+
+struct SurfaceEntry {
+    entity: Entity<TerminalView>,
+    custom_name: Option<String>,
+    title: String,
+    cwd: Option<String>,
+    cmd: Option<String>,
+    scope: SurfaceScope,
+}
+
+fn surface_entry_for(entity: Entity<TerminalView>, scope: SurfaceScope, cx: &App) -> SurfaceEntry {
+    let (custom_name, title, cwd, cmd) = {
+        let view = entity.read(cx);
+        let ts = &view.terminal;
+        (
+            ts.custom_name.clone(),
+            ts.title.clone(),
+            ts.current_cwd.clone(),
+            ts.foreground_command(),
+        )
+    };
+    SurfaceEntry {
+        entity,
+        custom_name,
+        title,
+        cwd,
+        cmd,
+        scope,
+    }
+}
+
+fn surface_meta_value(s: SurfaceMeta) -> serde_json::Value {
+    serde_json::json!({
+        "surface_id": s.surface_id,
+        "name": s.name,
+        "title": s.title,
+        "cwd": s.cwd,
+        "cmd": s.cmd,
+        "workspace": s.workspace,
+        "scope": s.scope,
+    })
 }
 
 /// Window a scrollback string by line for `surface.read` (US-003). `offset`
@@ -1136,6 +1208,16 @@ fn drain_ipc_requests_for_tick(
 }
 
 impl PaneFlowApp {
+    /// One automation poll tick for IPC, surface events, config reloads, and
+    /// update-check completion. Keeping this order in one method prevents the
+    /// bootstrap closure from becoming the implicit event-loop contract.
+    pub(crate) fn process_automation_tick(&mut self, cx: &mut Context<Self>) {
+        self.process_ipc_requests(cx);
+        self.broadcast_surface_changes(cx);
+        self.process_config_changes(cx);
+        self.process_update_check(cx);
+    }
+
     pub(crate) fn process_ipc_requests(&mut self, cx: &mut Context<Self>) {
         for req in drain_ipc_requests_for_tick(&self.ipc_rx) {
             if req.cancelled.load(std::sync::atomic::Ordering::Acquire) {
@@ -1211,28 +1293,17 @@ impl PaneFlowApp {
         self.event_bus.broadcast(method, surface_id, &event);
     }
 
-    /// EP-002 US-006: emit a `surface_changed` event for every pane whose
-    /// `output_generation` advanced since the last sweep. Runs on the 50 ms IPC
-    /// pump, which provides the debounce for free; skips all work when nobody is
-    /// subscribed.
+    /// EP-002 US-006: emit a `surface_changed` event for every terminal surface
+    /// whose `output_generation` advanced since the last sweep. Runs on the
+    /// 50 ms IPC pump, which provides the debounce for free; skips all work when
+    /// nobody is subscribed.
     pub(crate) fn broadcast_surface_changes(&mut self, cx: &mut Context<Self>) {
         if !self.event_bus.has_subscribers() {
             return;
         }
-        // Snapshot (surface_id, output_generation) for every pane first, so the
-        // immutable workspace/entity reads end before the cache is mutated.
-        let mut current: Vec<(u64, u64)> = Vec::new();
-        for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
-                for pane in root.collect_leaves() {
-                    for terminal in pane.read(cx).terminals() {
-                        let sid = terminal.entity_id().as_u64();
-                        let generation = terminal.read(cx).terminal.output_generation;
-                        current.push((sid, generation));
-                    }
-                }
-            }
-        }
+        // Snapshot (surface_id, output_generation) for every terminal surface
+        // first, so entity reads end before the cache is mutated.
+        let current = self.collect_surface_generations(cx);
         let mut seen: HashSet<u64> = HashSet::with_capacity(current.len());
         for (sid, generation) in &current {
             seen.insert(*sid);
@@ -1390,44 +1461,37 @@ impl PaneFlowApp {
         }
     }
 
-    /// Walk every workspace's layout tree and build per-surface metadata with
+    /// Walk every mounted terminal surface and build per-surface metadata with
     /// globally-disambiguated human-readable names (US-002). Order is
-    /// deterministic: workspace index, then tree-traversal order.
+    /// deterministic: workspaces first, then Agents threads, then bottom dock.
     pub(crate) fn collect_surface_meta(&self, cx: &App) -> Vec<SurfaceMeta> {
         // Stage 1: gather raw signals per surface in stable order, with an
-        // empty `name` placeholder filled in by stage 2. `customs` tracks each
-        // surface's user-assigned name (US-013) in parallel.
-        let mut metas: Vec<SurfaceMeta> = Vec::new();
-        let mut customs: Vec<Option<String>> = Vec::new();
-        for (ws_idx, ws) in self.workspaces.iter().enumerate() {
-            for pane in ws.collect_panes() {
-                for entity in pane.read(cx).terminals() {
-                    let view = entity.read(cx);
-                    let ts = &view.terminal;
-                    customs.push(ts.custom_name.clone());
-                    metas.push(SurfaceMeta {
-                        surface_id: entity.entity_id().as_u64(),
-                        name: String::new(),
-                        title: ts.title.clone(),
-                        cwd: ts.current_cwd.clone(),
-                        cmd: ts.foreground_command(),
-                        workspace: ws_idx,
-                    });
-                }
-            }
-        }
+        // empty `name` placeholder filled in by stage 2.
+        let entries = self.collect_surface_entries(cx);
+        let mut metas: Vec<SurfaceMeta> = entries
+            .iter()
+            .map(|entry| SurfaceMeta {
+                surface_id: entry.entity.entity_id().as_u64(),
+                name: String::new(),
+                title: entry.title.clone(),
+                cwd: entry.cwd.clone(),
+                cmd: entry.cmd.clone(),
+                workspace: entry.scope.workspace_index(),
+                scope: entry.scope.as_wire(),
+            })
+            .collect();
 
         // Stage 2: a custom name (US-013) wins verbatim; otherwise derive a
         // base name. Globally resolve to unique names, then assign.
         let inputs: Vec<(Option<String>, String, Option<String>)> = metas
             .iter()
-            .zip(&customs)
-            .map(|(m, custom)| {
+            .zip(&entries)
+            .map(|(m, entry)| {
                 let base = crate::workspace::surface_naming::derive_surface_base_name(
                     m.cmd.as_deref(),
                     Some(m.title.as_str()).filter(|t| !t.is_empty()),
                 );
-                (custom.clone(), base, m.cwd.clone())
+                (entry.custom_name.clone(), base, m.cwd.clone())
             })
             .collect();
         for (meta, name) in
@@ -1442,6 +1506,153 @@ impl PaneFlowApp {
         metas
     }
 
+    fn collect_surface_entries(&self, cx: &App) -> Vec<SurfaceEntry> {
+        let mut entries = Vec::new();
+        for (ws_idx, ws) in self.workspaces.iter().enumerate() {
+            for pane in ws.collect_panes() {
+                for entity in pane.read(cx).terminals() {
+                    entries.push(surface_entry_for(
+                        entity.clone(),
+                        SurfaceScope::Workspace(ws_idx),
+                        cx,
+                    ));
+                }
+            }
+        }
+        let mut thread_ids: Vec<u64> = self
+            .agents_view
+            .agents_terminal_view_cache
+            .keys()
+            .copied()
+            .collect();
+        thread_ids.sort_unstable();
+        for thread_id in thread_ids {
+            if let Some(entity) = self.agents_view.agents_terminal_view_cache.get(&thread_id) {
+                entries.push(surface_entry_for(
+                    entity.clone(),
+                    SurfaceScope::AgentsThread(thread_id),
+                    cx,
+                ));
+            }
+        }
+        for term in &self.agents_view.bottom_terminals {
+            entries.push(surface_entry_for(
+                term.view.clone(),
+                SurfaceScope::AgentsBottom(term.id),
+                cx,
+            ));
+        }
+        entries
+    }
+
+    fn collect_surface_generations(&self, cx: &App) -> Vec<(u64, u64)> {
+        let mut current = Vec::new();
+        for ws in &self.workspaces {
+            for pane in ws.collect_panes() {
+                for terminal in pane.read(cx).terminals() {
+                    let sid = terminal.entity_id().as_u64();
+                    let generation = terminal.read(cx).terminal.output_generation;
+                    current.push((sid, generation));
+                }
+            }
+        }
+        for terminal in self.agents_view.agents_terminal_view_cache.values() {
+            let sid = terminal.entity_id().as_u64();
+            let generation = terminal.read(cx).terminal.output_generation;
+            current.push((sid, generation));
+        }
+        for term in &self.agents_view.bottom_terminals {
+            let sid = term.view.entity_id().as_u64();
+            let generation = term.view.read(cx).terminal.output_generation;
+            current.push((sid, generation));
+        }
+        current
+    }
+
+    fn find_surface_terminal_by_id(
+        &self,
+        surface_id: u64,
+        cx: &App,
+    ) -> Option<Entity<TerminalView>> {
+        find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
+            .or_else(|| {
+                self.agents_view
+                    .agents_terminal_view_cache
+                    .values()
+                    .find(|terminal| terminal.entity_id().as_u64() == surface_id)
+                    .cloned()
+            })
+            .or_else(|| {
+                self.agents_view
+                    .bottom_terminals
+                    .iter()
+                    .find(|term| term.view.entity_id().as_u64() == surface_id)
+                    .map(|term| term.view.clone())
+            })
+    }
+
+    fn surface_scope_by_id(&self, surface_id: u64, cx: &App) -> Option<SurfaceScope> {
+        find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
+            .and_then(|_| {
+                find_pane_by_surface_id(&self.workspaces, surface_id, cx)
+                    .map(|(ws_idx, _, _)| SurfaceScope::Workspace(ws_idx))
+            })
+            .or_else(|| {
+                self.agents_view
+                    .agents_terminal_view_cache
+                    .iter()
+                    .find(|(_, terminal)| terminal.entity_id().as_u64() == surface_id)
+                    .map(|(thread_id, _)| SurfaceScope::AgentsThread(*thread_id))
+            })
+            .or_else(|| {
+                self.agents_view
+                    .bottom_terminals
+                    .iter()
+                    .find(|term| term.view.entity_id().as_u64() == surface_id)
+                    .map(|term| SurfaceScope::AgentsBottom(term.id))
+            })
+    }
+
+    fn focus_agents_surface(
+        &mut self,
+        surface_id: u64,
+        scope: SurfaceScope,
+        cx: &mut Context<Self>,
+    ) -> Option<serde_json::Value> {
+        let terminal = self.find_surface_terminal_by_id(surface_id, cx)?;
+        match scope {
+            SurfaceScope::AgentsThread(thread_id) => {
+                let target = self.agents_thread_target_by_id(thread_id)?;
+                self.enter_agents_mode(cx);
+                self.select_agents_target(target, cx);
+            }
+            SurfaceScope::AgentsBottom(bottom_id) => {
+                self.enter_agents_mode(cx);
+                self.agents_view.agents_skills_visible = false;
+                self.agents_view.bottom_panel_open = true;
+                self.agents_view.bottom_panel_active = Some(bottom_id);
+            }
+            SurfaceScope::Workspace(_) => return None,
+        }
+        cx.defer(move |cx| {
+            for handle in cx.windows() {
+                if let Some(main) = handle.downcast::<PaneFlowApp>() {
+                    let _ = main.update(cx, |_, window, cx| {
+                        terminal.read(cx).focus_handle(cx).focus(window, cx);
+                    });
+                }
+            }
+        });
+        self.save_session(cx);
+        cx.notify();
+        Some(serde_json::json!({
+            "focused": true,
+            "surface_id": surface_id,
+            "workspace": serde_json::Value::Null,
+            "scope": scope.as_wire(),
+        }))
+    }
+
     /// Resolve a `surface.*` target from the request params to a terminal
     /// entity (US-003/US-004). Precedence: explicit `surface_id` → `name` →
     /// the active workspace's first leaf. Returns a structured `-32602` error
@@ -1452,7 +1663,7 @@ impl PaneFlowApp {
         cx: &App,
     ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
         if let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) {
-            return find_terminal_by_surface_id(&self.workspaces, sid, cx).ok_or_else(|| {
+            return self.find_surface_terminal_by_id(sid, cx).ok_or_else(|| {
                 JsonRpcError::invalid_params(format!("surface_id {sid} not found"))
             });
         }
@@ -1466,9 +1677,9 @@ impl PaneFlowApp {
             match matches.as_slice() {
                 [one] => {
                     let sid = one.surface_id;
-                    return find_terminal_by_surface_id(&self.workspaces, sid, cx).ok_or_else(
-                        || JsonRpcError::invalid_params(format!("surface '{name}' vanished")),
-                    );
+                    return self.find_surface_terminal_by_id(sid, cx).ok_or_else(|| {
+                        JsonRpcError::invalid_params(format!("surface '{name}' vanished"))
+                    });
                 }
                 [] => {
                     let available: Vec<&str> = meta.iter().map(|m| m.name.as_str()).collect();
@@ -2286,16 +2497,7 @@ impl PaneFlowApp {
                 let surfaces: Vec<_> = self
                     .collect_surface_meta(cx)
                     .into_iter()
-                    .map(|s| {
-                        serde_json::json!({
-                            "surface_id": s.surface_id,
-                            "name": s.name,
-                            "title": s.title,
-                            "cwd": s.cwd,
-                            "cmd": s.cmd,
-                            "workspace": s.workspace,
-                        })
-                    })
+                    .map(surface_meta_value)
                     .collect();
                 let count = self.active_workspace().map_or(0, |ws| ws.pane_count());
                 serde_json::json!({
@@ -2477,7 +2679,15 @@ impl PaneFlowApp {
                 let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) else {
                     return serde_json::json!({"error": "Missing 'surface_id' parameter"});
                 };
-                let Some((ws_idx, pane, tab_idx)) =
+                let Some(scope) = self.surface_scope_by_id(sid, cx) else {
+                    return serde_json::json!({"error": "Surface not found"});
+                };
+                let SurfaceScope::Workspace(ws_idx) = scope else {
+                    return self
+                        .focus_agents_surface(sid, scope, cx)
+                        .unwrap_or_else(|| serde_json::json!({"error": "Surface not found"}));
+                };
+                let Some((_found_ws_idx, pane, tab_idx)) =
                     find_pane_by_surface_id(&self.workspaces, sid, cx)
                 else {
                     return serde_json::json!({"error": "Surface not found"});
@@ -2506,7 +2716,12 @@ impl PaneFlowApp {
                 });
                 self.save_session(cx);
                 cx.notify();
-                serde_json::json!({"focused": true, "surface_id": sid, "workspace": ws_idx})
+                serde_json::json!({
+                    "focused": true,
+                    "surface_id": sid,
+                    "workspace": ws_idx,
+                    "scope": scope.as_wire(),
+                })
             }
             "surface.send_text" => {
                 // US-012 (cli-hardening-followup-2026-Q3): same-UID RCE
@@ -2558,7 +2773,7 @@ impl PaneFlowApp {
                 let target: Option<Entity<TerminalView>> = if let Some(sid) =
                     params.get("surface_id").and_then(|s| s.as_u64())
                 {
-                    match find_terminal_by_surface_id(&self.workspaces, sid, cx) {
+                    match self.find_surface_terminal_by_id(sid, cx) {
                         Some(t) => Some(t),
                         None => {
                             return JsonRpcError::invalid_params("Surface not found").into_value();
@@ -2686,7 +2901,7 @@ impl PaneFlowApp {
                 // Route by surface_id if provided, otherwise use active terminal
                 let terminal = if let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64())
                 {
-                    find_terminal_by_surface_id(&self.workspaces, sid, cx)
+                    self.find_surface_terminal_by_id(sid, cx)
                 } else if let Some(ws) = self.active_workspace()
                     && let Some(root) = &ws.root
                 {
@@ -3533,6 +3748,10 @@ impl PaneFlowApp {
 
     fn agents_thread_target_by_env_id(&self, env_id: u64) -> Option<crate::project::AgentsTarget> {
         let thread_id = crate::project::thread_id_from_env_id(env_id)?;
+        self.agents_thread_target_by_id(thread_id)
+    }
+
+    fn agents_thread_target_by_id(&self, thread_id: u64) -> Option<crate::project::AgentsTarget> {
         for (project_idx, project) in self.projects.iter().enumerate() {
             if let Some(thread_idx) = project
                 .threads
@@ -4793,6 +5012,33 @@ mod tests {
         assert_eq!(v["eof"], false);
         assert_eq!(v["output_generation"], 42);
         assert_eq!(v["truncated"], false);
+    }
+
+    #[test]
+    fn surface_meta_value_exposes_scope_and_optional_workspace() {
+        let workspace = super::surface_meta_value(super::SurfaceMeta {
+            surface_id: 7,
+            name: "shell".to_string(),
+            title: "zsh".to_string(),
+            cwd: Some("/repo".to_string()),
+            cmd: Some("zsh".to_string()),
+            workspace: Some(2),
+            scope: "workspace",
+        });
+        assert_eq!(workspace["workspace"], 2);
+        assert_eq!(workspace["scope"], "workspace");
+
+        let agents = super::surface_meta_value(super::SurfaceMeta {
+            surface_id: 8,
+            name: "codex".to_string(),
+            title: "codex".to_string(),
+            cwd: None,
+            cmd: Some("codex".to_string()),
+            workspace: None,
+            scope: "agents_thread",
+        });
+        assert_eq!(agents["workspace"], serde_json::Value::Null);
+        assert_eq!(agents["scope"], "agents_thread");
     }
 
     #[test]

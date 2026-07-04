@@ -509,17 +509,14 @@ impl PaneFlowApp {
         )
         .detach();
 
-        // Poll IPC requests + config changes every 50ms
+        // Poll automation channels every 50 ms.
         cx.spawn(
             async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 loop {
                     smol::Timer::after(std::time::Duration::from_millis(50)).await;
                     let result = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            app.process_ipc_requests(cx);
-                            app.broadcast_surface_changes(cx);
-                            app.process_config_changes(cx);
-                            app.process_update_check(cx);
+                            app.process_automation_tick(cx);
                         })
                     });
                     if result.is_err() {

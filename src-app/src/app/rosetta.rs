@@ -1134,8 +1134,8 @@ impl crate::PaneFlowApp {
                     cx.notify();
                     return false;
                 };
-                self.mode = AppMode::Cli;
                 self.active_idx = ws_idx;
+                self.enter_cli_mode(window, cx);
                 pane.update(cx, |pane, cx| {
                     if pane.selected_idx != tab_idx {
                         pane.selected_idx = tab_idx;
@@ -1155,7 +1155,7 @@ impl crate::PaneFlowApp {
                     cx.notify();
                     return false;
                 };
-                self.mode = AppMode::Agents;
+                self.enter_agents_mode(cx);
                 self.select_agents_target(target, cx);
                 if let Some(view) = self
                     .agents_view
