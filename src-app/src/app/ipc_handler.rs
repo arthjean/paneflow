@@ -594,6 +594,33 @@ fn resolve_paste_mode(
     paste_param.unwrap_or(submit && (is_agent || bracketed_paste_enabled))
 }
 
+fn text_contains_submit_byte(text: &str) -> bool {
+    text.contains('\r') || text.contains('\n')
+}
+
+fn resolve_send_text_body_mode(
+    text: &str,
+    paste_param: Option<bool>,
+    resolved_paste: bool,
+    bracketed_paste_enabled: bool,
+) -> Result<bool, &'static str> {
+    if !text_contains_submit_byte(text) {
+        return Ok(resolved_paste);
+    }
+
+    let paste = if paste_param.is_none() && bracketed_paste_enabled {
+        true
+    } else {
+        resolved_paste
+    };
+
+    if paste && bracketed_paste_enabled {
+        Ok(paste)
+    } else {
+        Err("text contains CR or LF; multiline surface.send_text requires active bracketed paste")
+    }
+}
+
 fn first_command_token(command: &str) -> Option<&str> {
     let command = command.trim_start();
     let mut chars = command.char_indices();
@@ -746,6 +773,11 @@ pub(crate) fn find_pane_by_surface_id(
         {
             return Some((ws_idx, pane, tab_idx));
         }
+        if let Some(saved) = &ws.saved_layout
+            && let Some((pane, tab_idx)) = find_pane_in_tree(saved, surface_id, cx)
+        {
+            return Some((ws_idx, pane, tab_idx));
+        }
     }
     None
 }
@@ -768,29 +800,6 @@ fn find_pane_in_tree(
         LayoutTree::Container { children, .. } => children
             .iter()
             .find_map(|child| find_pane_in_tree(&child.node, surface_id, cx)),
-    }
-}
-
-/// Collect every terminal entity in a layout tree, in deterministic traversal
-/// order. Unlike [`find_first_terminal`] this includes ALL tabs of each pane
-/// (a pane can hold several terminal surfaces). Used by `surface.list`
-/// (US-002, prd-pane-context-bridge).
-fn collect_surface_entities(
-    node: &LayoutTree,
-    cx: &App,
-    out: &mut Vec<gpui::Entity<TerminalView>>,
-) {
-    match node {
-        LayoutTree::Leaf(pane) => {
-            for terminal in pane.read(cx).terminals() {
-                out.push(terminal.clone());
-            }
-        }
-        LayoutTree::Container { children, .. } => {
-            for child in children {
-                collect_surface_entities(&child.node, cx, out);
-            }
-        }
     }
 }
 
@@ -1391,10 +1400,8 @@ impl PaneFlowApp {
         let mut metas: Vec<SurfaceMeta> = Vec::new();
         let mut customs: Vec<Option<String>> = Vec::new();
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
-            if let Some(root) = &ws.root {
-                let mut entities = Vec::new();
-                collect_surface_entities(root, cx, &mut entities);
-                for entity in entities {
+            for pane in ws.collect_panes() {
+                for entity in pane.read(cx).terminals() {
                     let view = entity.read(cx);
                     let ts = &view.terminal;
                     customs.push(ts.custom_name.clone());
@@ -2579,6 +2586,15 @@ impl PaneFlowApp {
                     agent_hint.is_some(),
                     terminal_bracketed_paste,
                 );
+                let paste = match resolve_send_text_body_mode(
+                    text,
+                    paste_param,
+                    paste,
+                    terminal_bracketed_paste,
+                ) {
+                    Ok(paste) => paste,
+                    Err(message) => return JsonRpcError::invalid_params(message).into_value(),
+                };
                 // Write the payload (skipped for a bare `--submit ""`).
                 if !text.is_empty() {
                     if paste {
@@ -2645,10 +2661,11 @@ impl PaneFlowApp {
                 // as `surface.send_text`. Even when enabled, CRLF
                 // bytes are rejected so a multi-keystroke payload
                 // cannot smuggle a newline-terminated PTY command.
-                if !ipc_scripting_enabled() {
+                let unrestricted = self.cached_config.ai_unrestricted_enabled();
+                if !send_text_gate_open(ipc_scripting_enabled(), unrestricted) {
                     return JsonRpcError {
                         code: -32601,
-                        message: "surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 to enable".to_string(),
+                        message: "surface.send_keystroke disabled; set PANEFLOW_IPC_SCRIPTING=1 or enable ai_unrestricted to use".to_string(),
                     }
                     .into_value();
                 }
@@ -2766,8 +2783,16 @@ impl PaneFlowApp {
                     return JsonRpcError::invalid_params("No active workspace").into_value();
                 };
                 let ws_id = ws.id;
-                if ws.root.as_ref().is_none_or(|r| r.leaf_count() >= MAX_PANES) {
+                let Some(root) = ws.root.as_ref() else {
+                    return JsonRpcError::invalid_params("Workspace has no root").into_value();
+                };
+                if root.leaf_count() >= MAX_PANES {
                     return JsonRpcError::invalid_params("Maximum pane count reached").into_value();
+                }
+                if let Some(target) = &target_pane
+                    && !root.contains_leaf(target)
+                {
+                    return JsonRpcError::invalid_params("Surface not found").into_value();
                 }
                 let new_terminal = cx.new(|cx| {
                     TerminalView::with_cwd_env_and_profile(
@@ -4435,6 +4460,42 @@ mod tests {
         // of target or submit.
         assert!(resolve_paste_mode(Some(true), false, false, false));
         assert!(!resolve_paste_mode(Some(false), true, true, true));
+    }
+
+    #[test]
+    fn send_text_body_mode_rejects_crlf_without_active_bracketed_paste() {
+        use super::resolve_send_text_body_mode;
+
+        assert_eq!(
+            resolve_send_text_body_mode("one line", None, false, false),
+            Ok(false)
+        );
+        assert!(
+            resolve_send_text_body_mode("line one\nline two", None, false, false).is_err(),
+            "bare multiline writes can smuggle a submit"
+        );
+        assert!(
+            resolve_send_text_body_mode("line one\rline two", Some(true), true, false).is_err(),
+            "explicit paste is still unsafe until the terminal enabled bracketed paste"
+        );
+    }
+
+    #[test]
+    fn send_text_body_mode_auto_pastes_multiline_when_bracketed_is_active() {
+        use super::resolve_send_text_body_mode;
+
+        assert_eq!(
+            resolve_send_text_body_mode("line one\nline two", None, false, true),
+            Ok(true)
+        );
+        assert_eq!(
+            resolve_send_text_body_mode("line one\nline two", Some(true), true, true),
+            Ok(true)
+        );
+        assert!(
+            resolve_send_text_body_mode("line one\nline two", Some(false), false, true).is_err(),
+            "explicit paste=false must not bypass the CR/LF guard"
+        );
     }
 
     #[test]

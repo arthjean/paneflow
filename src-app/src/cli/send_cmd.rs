@@ -2,9 +2,9 @@
 //! US-003/US-004/US-005).
 //!
 //! Wraps `surface.send_text` / `surface.send_keystroke`. The human-in-loop
-//! invariant is enforced server side: `send_text` writes the bytes verbatim
-//! with no trailing carriage return, so the text lands in the agent's input
-//! box and the user/agent presses Enter themselves - UNLESS `--submit` is
+//! invariant is enforced server side: `send_text` writes text with no trailing
+//! carriage return, and rejects raw CR/LF unless the target has active bracketed
+//! paste, so the user/agent presses Enter themselves - UNLESS `--submit` is
 //! passed explicitly (US-005), the only sanctioned submission path.
 //! `key` refuses submitting keystrokes (`enter`, `ctrl-m`, …) server-side.
 //!
@@ -133,7 +133,7 @@ fn send_to(
     match client.call("surface.send_text", params) {
         Ok(result) => {
             let mut result = super::reject_legacy_error(result)?;
-            if submit && result["agent_target"].as_bool().unwrap_or(false) {
+            if should_wait_for_submit_start(&result) {
                 match wait_for_submit_start(client, surface_id, before.as_ref()) {
                     SubmitStart::Confirmed(reason) => {
                         result["started"] = json!(true);
@@ -230,6 +230,14 @@ pub(super) fn wait_for_submit_start(
         }
         std::thread::sleep(SUBMIT_START_POLL);
     }
+}
+
+pub(super) fn should_wait_for_submit_start(result: &serde_json::Value) -> bool {
+    if !result["submitted"].as_bool().unwrap_or(false) {
+        return false;
+    }
+    result["agent_target"].as_bool().unwrap_or(false)
+        || result["submit_mode"].as_str() == Some("deferred_paste_cr")
 }
 
 /// `send --broadcast`: every pane matching the selector gets the text. A pane
@@ -423,6 +431,48 @@ mod tests {
         let result = send_to(&fake, 12, "hi", true, false).expect("output confirms start");
         assert_eq!(result["started"], true);
         assert_eq!(result["start_reason"], "output_generation_changed");
+    }
+
+    #[test]
+    fn deferred_paste_submit_without_agent_hint_still_waits_for_start() {
+        let fake = ScriptedTransport::new(vec![
+            Ok(json!({ "state": "idle", "hooked": false, "output_generation": 10 })),
+            Ok(json!({
+                "sent": true,
+                "submitted": true,
+                "agent_target": false,
+                "paste": true,
+                "submit_mode": "deferred_paste_cr",
+                "terminal_bracketed_paste": true
+            })),
+            Ok(json!({ "state": "idle", "hooked": false, "output_generation": 11 })),
+        ]);
+
+        let result = send_to(&fake, 12, "hi", true, false).expect("output confirms start");
+        assert_eq!(result["started"], true);
+        assert_eq!(result["start_reason"], "output_generation_changed");
+    }
+
+    #[test]
+    fn inline_submit_without_agent_hint_does_not_wait_for_start() {
+        let fake = ScriptedTransport::new(vec![Ok(json!({
+            "sent": true,
+            "submitted": true,
+            "agent_target": false,
+            "submit_mode": "inline_cr"
+        }))]);
+
+        let result = send_to(&fake, 12, "hi", true, false).expect("inline shell submit is ok");
+        assert!(result.get("started").is_none());
+        assert_eq!(
+            fake.calls
+                .borrow()
+                .iter()
+                .filter(|(method, _)| method == "surface.status")
+                .count(),
+            1,
+            "only the pre-submit snapshot should run"
+        );
     }
 
     #[test]

@@ -13,6 +13,7 @@
 //! (`element_id`) is stable across re-renders.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
@@ -58,6 +59,8 @@ const SCROLL_POLL_CADENCE: Duration = Duration::from_millis(250);
 /// fine, but a 10 MB markdown copied to the clipboard is almost certainly
 /// not what the user wanted - search-match copies are the common path.
 const COPY_MAX_BYTES: usize = 64 * 1024;
+
+static MARKDOWN_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A markdown viewer pane. One instance per opened file.
 pub struct MarkdownView {
@@ -815,13 +818,11 @@ fn walk_text(nodes: &[MdNode], buf: &mut String) {
     }
 }
 
-/// Compute a stable GPUI element id for `path`, used once at construction so
-/// `Render` doesn't `format!` on every frame. The path is encoded verbatim -
-/// uniqueness within a workspace is sufficient (two markdown panes for the
-/// same file would have identical ids, but that does not happen in practice
-/// because the click handler always splits and creates a new entity).
+/// Compute a stable GPUI element id for one view instance. Multiple tabs may
+/// point at the same file, so the path alone is not unique enough for GPUI.
 fn make_element_id(path: &std::path::Path) -> SharedString {
-    SharedString::from(format!("markdown-{}", path.display()))
+    let id = MARKDOWN_VIEW_ID.fetch_add(1, Ordering::Relaxed);
+    SharedString::from(format!("markdown-{id}-{}", path.display()))
 }
 
 /// US-021 - true when `result` carries a notify event that should trigger a
@@ -845,8 +846,10 @@ fn event_is_relevant(
 /// the three states `load_from_disk` needs to surface distinct messages for,
 /// without leaking platform-specific `io::ErrorKind`/errno details to callers.
 enum ReadOutcome {
-    /// File read successfully; carries the raw bytes (size cap applied later).
+    /// File read successfully within the markdown byte cap.
     Bytes(Vec<u8>),
+    /// File exceeded the markdown byte cap.
+    TooLarge(usize),
     /// The final path component was (or became) a symlink - refused.
     Symlink,
     /// The file does not exist (deleted between watch fire and read).
@@ -864,12 +867,8 @@ enum ReadOutcome {
 /// attacker cannot swap a regular file for a symlink in between. We read from
 /// the resulting fd, never re-resolving the name.
 ///
-/// Windows: `O_NOFOLLOW` has no equivalent and `FILE_FLAG_OPEN_REPARSE_POINT`
-/// would require raw `CreateFileW` plumbing; we keep the documented
-/// `symlink_metadata`-then-read fallback. This leaves the narrow TOCTOU window
-/// on Windows only, where the sole in-scope attacker is a same-UID in-project
-/// agent that can already read the secret directly (no privilege boundary
-/// crossed), so the residual risk is accepted.
+/// Windows: open with `FILE_FLAG_OPEN_REPARSE_POINT`, inspect the handle's
+/// attributes, and refuse reparse points before reading from that same handle.
 fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
     #[cfg(unix)]
     {
@@ -886,13 +885,47 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
             Err(e) => return ReadOutcome::Other(e),
         };
-        let mut bytes = Vec::new();
-        match file.read_to_end(&mut bytes) {
+        let mut bytes = Vec::with_capacity(MAX_INPUT_BYTES.min(64 * 1024));
+        let mut limited = file.take((MAX_INPUT_BYTES + 1) as u64);
+        match limited.read_to_end(&mut bytes) {
+            Ok(_) if bytes.len() > MAX_INPUT_BYTES => ReadOutcome::TooLarge(bytes.len()),
             Ok(_) => ReadOutcome::Bytes(bytes),
             Err(e) => ReadOutcome::Other(e),
         }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        use std::io::Read;
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_OPEN_REPARSE_POINT,
+        };
+
+        let file = match std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
+            Err(e) => return ReadOutcome::Other(e),
+        };
+        match file.metadata() {
+            Ok(meta) if meta.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 => {
+                return ReadOutcome::Symlink;
+            }
+            Ok(_) => {}
+            Err(e) => return ReadOutcome::Other(e),
+        }
+        let mut bytes = Vec::with_capacity(MAX_INPUT_BYTES.min(64 * 1024));
+        let mut limited = file.take((MAX_INPUT_BYTES + 1) as u64);
+        match limited.read_to_end(&mut bytes) {
+            Ok(_) if bytes.len() > MAX_INPUT_BYTES => ReadOutcome::TooLarge(bytes.len()),
+            Ok(_) => ReadOutcome::Bytes(bytes),
+            Err(e) => ReadOutcome::Other(e),
+        }
+    }
+    #[cfg(all(not(unix), not(windows)))]
     {
         match std::fs::symlink_metadata(path) {
             Ok(meta) if meta.file_type().is_symlink() => return ReadOutcome::Symlink,
@@ -900,8 +933,16 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
             Err(e) => return ReadOutcome::Other(e),
         }
-        match std::fs::read(path) {
-            Ok(bytes) => ReadOutcome::Bytes(bytes),
+        let mut file = match std::fs::File::open(path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
+            Err(e) => return ReadOutcome::Other(e),
+        };
+        let mut bytes = Vec::with_capacity(MAX_INPUT_BYTES.min(64 * 1024));
+        let mut limited = std::io::Read::take(&mut file, (MAX_INPUT_BYTES + 1) as u64);
+        match std::io::Read::read_to_end(&mut limited, &mut bytes) {
+            Ok(_) if bytes.len() > MAX_INPUT_BYTES => ReadOutcome::TooLarge(bytes.len()),
+            Ok(_) => ReadOutcome::Bytes(bytes),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => ReadOutcome::NotFound,
             Err(e) => ReadOutcome::Other(e),
         }
@@ -926,6 +967,19 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
 fn load_from_disk(path: &std::path::Path) -> (Option<Vec<MdNode>>, Option<SharedString>) {
     let bytes = match read_no_follow(path) {
         ReadOutcome::Bytes(bytes) => bytes,
+        ReadOutcome::TooLarge(bytes) => {
+            return (
+                None,
+                Some(
+                    format!(
+                        "Markdown file too large ({} KB) - max {} KB.",
+                        bytes / 1024,
+                        MAX_INPUT_BYTES / 1024
+                    )
+                    .into(),
+                ),
+            );
+        }
         ReadOutcome::Symlink => {
             return (
                 None,
@@ -937,19 +991,6 @@ fn load_from_disk(path: &std::path::Path) -> (Option<Vec<MdNode>>, Option<Shared
         ReadOutcome::NotFound => return (None, Some("File deleted".into())),
         ReadOutcome::Other(e) => return (None, Some(format!("Could not read file: {}", e).into())),
     };
-    if bytes.len() > MAX_INPUT_BYTES {
-        return (
-            None,
-            Some(
-                format!(
-                    "Markdown file too large ({} KB) - max {} KB.",
-                    bytes.len() / 1024,
-                    MAX_INPUT_BYTES / 1024
-                )
-                .into(),
-            ),
-        );
-    }
     match String::from_utf8(bytes) {
         Ok(text) => match parse_with_limit(&text) {
             Ok(nodes) => (Some(nodes), None),

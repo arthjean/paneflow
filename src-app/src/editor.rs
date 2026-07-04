@@ -116,28 +116,72 @@ fn format_path_line_col(path: &str, line: Option<u32>, col: Option<u32>) -> Stri
 }
 
 /// Parse a shell-style env value into (binary, leading-flags). Splits on
-/// ASCII whitespace; the first token is the binary, the rest are extra
-/// flags the user pre-configured (e.g. `EDITOR="code --wait"`). Returns
-/// `None` when the value is empty after trim.
+/// whitespace outside quotes; the first token is the binary, the rest are
+/// extra flags the user pre-configured (e.g. `EDITOR="code --wait"`).
+/// Returns `None` when the value is empty after trim.
 fn parse_env_editor(value: &str) -> Option<(String, Vec<String>)> {
-    let mut iter = value.split_whitespace().map(str::to_owned);
-    let bin = iter.next()?;
+    let mut parts = split_editor_command_line(value).into_iter();
+    let bin = parts.next()?;
     if bin.is_empty() {
         return None;
     }
-    Some((bin, iter.collect()))
+    Some((bin, parts.collect()))
 }
 
-/// Resolve `name` to an executable on `PATH`.
-///
-/// US-042: delegates to the `which` crate - the same resolver
-/// `workspace_ops::resolve_editor_binary_in` uses - so editor probing behaves
-/// identically across the codebase. On Windows this honors the full `PATHEXT`
-/// (`.com`, `.ps1`, … - not just a hardcoded `.exe`/`.cmd`/`.bat` list, which
-/// let a `$VISUAL`/`$EDITOR` in an uncommon extension escape the probe); on
-/// Unix it checks the executable bit (a plain `is_file()` did not).
-fn find_on_path(name: &str) -> Option<PathBuf> {
-    which::which(name).ok()
+fn split_editor_command_line(value: &str) -> Vec<String> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut chars = value.chars().peekable();
+    let mut quote: Option<char> = None;
+    let mut token_started = false;
+
+    while let Some(ch) = chars.next() {
+        match quote {
+            Some('\'') => {
+                if ch == '\'' {
+                    quote = None;
+                } else {
+                    current.push(ch);
+                }
+            }
+            Some('"') => match ch {
+                '"' => quote = None,
+                '\\' if matches!(chars.peek(), Some('"') | Some('\\')) => {
+                    current.push(chars.next().expect("peeked char exists"));
+                }
+                _ => current.push(ch),
+            },
+            Some(_) => unreachable!("only single and double quotes are set"),
+            None if ch.is_whitespace() => {
+                if token_started {
+                    args.push(std::mem::take(&mut current));
+                    token_started = false;
+                }
+            }
+            None if matches!(ch, '\'' | '"') => {
+                quote = Some(ch);
+                token_started = true;
+            }
+            None => {
+                current.push(ch);
+                token_started = true;
+            }
+        }
+    }
+
+    if token_started {
+        args.push(current);
+    }
+    args
+}
+
+fn resolve_editor_command(command: &str) -> PathBuf {
+    let path = Path::new(command);
+    if path.is_absolute() || path.components().count() > 1 {
+        PathBuf::from(command)
+    } else {
+        crate::app::workspace_ops::resolve_editor_binary(command)
+    }
 }
 
 /// Ordered probe list for the fallback chain when no `$VISUAL`/`$EDITOR`
@@ -171,7 +215,8 @@ pub fn open_at_location(path: &Path, line: Option<u32>, col: Option<u32>) -> boo
             let kind = EditorKind::from_binary_name(&bin);
             let mut args = extra_args;
             args.extend(kind.argv_for(path, line, col));
-            if try_spawn(&bin, &args) {
+            let resolved = resolve_editor_command(&bin);
+            if try_spawn(&resolved.to_string_lossy(), &args) {
                 return true;
             }
             log::warn!("editor: ${var}={value:?} failed to spawn - falling through");
@@ -180,12 +225,14 @@ pub fn open_at_location(path: &Path, line: Option<u32>, col: Option<u32>) -> boo
 
     // 2. Fallback probe
     for probe in FALLBACK_PROBES {
-        if let Some(found) = find_on_path(probe) {
-            let kind = EditorKind::from_binary_name(probe);
-            let args = kind.argv_for(path, line, col);
-            if try_spawn(&found.to_string_lossy(), &args) {
-                return true;
-            }
+        let found = resolve_editor_command(probe);
+        if found == PathBuf::from(probe) {
+            continue;
+        }
+        let kind = EditorKind::from_binary_name(probe);
+        let args = kind.argv_for(path, line, col);
+        if try_spawn(&found.to_string_lossy(), &args) {
+            return true;
         }
     }
 
@@ -298,6 +345,25 @@ mod tests {
         let (bin, args) = parse_env_editor("code --wait").unwrap();
         assert_eq!(bin, "code");
         assert_eq!(args, vec!["--wait".to_string()]);
+    }
+
+    #[test]
+    fn parse_env_editor_preserves_quoted_windows_binary() {
+        let (bin, args) =
+            parse_env_editor(r#""C:\Program Files\Microsoft VS Code\bin\code.cmd" --wait"#)
+                .unwrap();
+        assert_eq!(bin, r"C:\Program Files\Microsoft VS Code\bin\code.cmd");
+        assert_eq!(args, vec!["--wait".to_string()]);
+    }
+
+    #[test]
+    fn parse_env_editor_preserves_quoted_flag_value() {
+        let (bin, args) = parse_env_editor(r#"code --profile "Arthur Dev""#).unwrap();
+        assert_eq!(bin, "code");
+        assert_eq!(
+            args,
+            vec!["--profile".to_string(), "Arthur Dev".to_string()]
+        );
     }
 
     #[test]

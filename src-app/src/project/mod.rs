@@ -365,7 +365,7 @@ pub fn project_to_session(p: &Project) -> ProjectSession {
 pub fn thread_to_session(t: &Thread) -> ThreadSession {
     ThreadSession {
         id: t.id,
-        title: t.title.clone(),
+        title: clean_sidebar_title(&t.title).unwrap_or_else(|| "Terminal".to_string()),
         agent: agent_kind_to_str(t.agent).to_string(),
         cwd: t.cwd.clone(),
         created_at: t.created_at,
@@ -469,7 +469,7 @@ pub fn thread_from_session(s: &ThreadSession) -> Option<Thread> {
     // Code's `✻`, Codex's braille spinner, generic `●`). Falls back
     // to the raw title if cleaning yields nothing meaningful so the
     // row never restores empty.
-    let title = clean_sidebar_title(&s.title).unwrap_or_else(|| s.title.clone());
+    let title = clean_sidebar_title(&s.title).unwrap_or_else(|| "Terminal".to_string());
     Some(Thread {
         id: s.id,
         title,
@@ -529,15 +529,53 @@ pub const THREAD_KIND_TAG_TERMINAL: &str = "terminal";
 /// Returns `None` when nothing meaningful remains after stripping
 /// (the caller treats that the same as an empty title -- the row
 /// keeps its previous label rather than flashing blank).
+const MAX_SIDEBAR_TITLE_CHARS: usize = 240;
+
 pub fn clean_sidebar_title(raw: &str) -> Option<String> {
-    let cleaned = raw
+    let normalized: String = raw
+        .chars()
+        .map(|c| {
+            if is_title_invisible_or_control(c) {
+                ' '
+            } else {
+                c
+            }
+        })
+        .collect();
+    let stripped = normalized
         .trim_start_matches(|c: char| !is_title_meaningful_lead(c))
         .trim();
-    if cleaned.is_empty() {
+    if stripped.is_empty() {
         None
     } else {
-        Some(cleaned.to_string())
+        let collapsed = stripped.split_whitespace().collect::<Vec<_>>().join(" ");
+        Some(cap_sidebar_title(&collapsed))
     }
+}
+
+fn cap_sidebar_title(title: &str) -> String {
+    let mut chars = title.chars();
+    let mut capped: String = chars.by_ref().take(MAX_SIDEBAR_TITLE_CHARS).collect();
+    if chars.next().is_some() {
+        capped.push('…');
+    }
+    capped
+}
+
+fn is_title_invisible_or_control(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061C}'
+                | '\u{200B}'
+                | '\u{200C}'
+                | '\u{200D}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{FEFF}'
+        )
 }
 
 /// Whitelist of characters that can legitimately *start* a sidebar
@@ -860,6 +898,25 @@ mod tests {
             restored.session_id.is_none(),
             "a flag-shaped session id must not survive restore"
         );
+    }
+
+    #[test]
+    fn sidebar_titles_are_cleaned_and_bounded_before_persisting() {
+        let long = "x".repeat(MAX_SIDEBAR_TITLE_CHARS + 8);
+        let raw = format!("● hello\n\u{202E}world {long}");
+
+        let cleaned = clean_sidebar_title(&raw).expect("title should survive cleanup");
+
+        assert!(cleaned.starts_with("hello world "));
+        assert!(!cleaned.contains('\n'));
+        assert!(!cleaned.contains('\u{202E}'));
+        assert_eq!(cleaned.chars().count(), MAX_SIDEBAR_TITLE_CHARS + 1);
+        assert!(cleaned.ends_with('…'));
+
+        let mut thread = Thread::new_terminal(raw, "/home/me", None);
+        thread.title_user_set = true;
+        let session = thread_to_session(&thread);
+        assert_eq!(session.title, cleaned);
     }
 
     /// US-002: free chats draw IDs from the same `next_thread_id` counter as

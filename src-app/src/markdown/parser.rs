@@ -192,6 +192,16 @@ struct Walker {
 }
 
 impl Walker {
+    fn reserve_synthetic_node(&mut self) -> bool {
+        if self.node_count >= MAX_AST_NODES {
+            self.truncated = true;
+            false
+        } else {
+            self.node_count += 1;
+            true
+        }
+    }
+
     fn drive<'a, I: Iterator<Item = Event<'a>>>(mut self, events: I) -> Vec<MdNode> {
         for event in events {
             self.on_event(event);
@@ -336,6 +346,7 @@ impl Walker {
             TagEnd::Link => self.link_url = None,
             TagEnd::Image => { /* nothing to pop - image is a placeholder text */ }
             TagEnd::TableHead => {
+                let keep_row = self.reserve_synthetic_node();
                 if let Some(Frame::Table {
                     in_head,
                     header,
@@ -343,11 +354,16 @@ impl Walker {
                     ..
                 }) = self.stack.last_mut()
                 {
-                    *header = std::mem::take(current_row);
+                    if keep_row {
+                        *header = std::mem::take(current_row);
+                    } else {
+                        current_row.clear();
+                    }
                     *in_head = false;
                 }
             }
             TagEnd::TableRow => {
+                let keep_row = self.reserve_synthetic_node();
                 if let Some(Frame::Table {
                     in_head,
                     rows,
@@ -356,19 +372,24 @@ impl Walker {
                 }) = self.stack.last_mut()
                 {
                     let row = std::mem::take(current_row);
-                    if !*in_head {
+                    if keep_row && !*in_head {
                         rows.push(row);
                     }
                 }
             }
             TagEnd::TableCell => {
+                let keep_cell = self.reserve_synthetic_node();
                 if let Some(Frame::Table {
                     current_row,
                     current_cell,
                     ..
                 }) = self.stack.last_mut()
                 {
-                    current_row.push(std::mem::take(current_cell));
+                    if keep_cell {
+                        current_row.push(std::mem::take(current_cell));
+                    } else {
+                        current_cell.clear();
+                    }
                 }
             }
             TagEnd::MetadataBlock(_) => {

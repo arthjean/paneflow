@@ -597,7 +597,7 @@ impl<T: IpcTransport> Engine<'_, T> {
                     self.fail(i, &msg, false);
                     return Ok(());
                 }
-                if submit && result["agent_target"].as_bool().unwrap_or(false) {
+                if super::send_cmd::should_wait_for_submit_start(&result) {
                     match super::send_cmd::wait_for_submit_start(
                         self.client,
                         sid,
