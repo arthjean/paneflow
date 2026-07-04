@@ -16,23 +16,8 @@ use super::super::geometry::CellGeometry;
 
 /// Search match highlight rects (`.floor()` / `.ceil()` matches background).
 pub fn paint_search_highlights(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
-    let CellGeometry {
-        origin,
-        cell_width,
-        line_height,
-    } = *geom;
-
     for rect in &layout.search_rects {
-        let x = (origin.x + cell_width * rect.col as f32).floor();
-        let y = origin.y + line_height * rect.line as f32;
-        let w = (cell_width * rect.num_cols as f32).ceil();
-        let rect_bounds = Bounds::new(
-            Point { x, y },
-            gpui::Size {
-                width: w,
-                height: line_height,
-            },
-        );
+        let rect_bounds = geom.cell_span_bounds(rect.line, rect.col, rect.num_cols);
         window.paint_quad(fill(rect_bounds, rect.color));
     }
 }
@@ -302,12 +287,6 @@ pub fn paint_exit_overlay(
 /// gaps the probe is meant to expose.
 #[cfg(debug_assertions)]
 pub fn paint_pixel_probe_overlay(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
-    let CellGeometry {
-        origin,
-        cell_width,
-        line_height,
-    } = *geom;
-
     let rows = layout.desired_rows;
     let cols = layout.desired_cols;
     if rows == 0 || cols == 0 {
@@ -320,16 +299,7 @@ pub fn paint_pixel_probe_overlay(layout: &LayoutState, geom: &CellGeometry, wind
 
     for row in 0..rows {
         for col in 0..cols {
-            let x = (origin.x + cell_width * col as f32).floor();
-            let y = origin.y + line_height * row as f32;
-            let next_x = (origin.x + cell_width * (col + 1) as f32).floor();
-            let bounds = Bounds::new(
-                Point { x, y },
-                gpui::Size {
-                    width: (next_x - x).max(px(0.0)),
-                    height: line_height,
-                },
-            );
+            let bounds = geom.cell_span_bounds(row as i32, col, 1);
             window.paint_quad(
                 outline(bounds, border_color, BorderStyle::Solid).border_widths(border_width),
             );

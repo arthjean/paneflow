@@ -21,9 +21,12 @@ use gpui::{
 use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 
 use super::element::TerminalElement;
-use super::pty_session::ClipboardOp;
+use super::pty_session::{ClipboardOp, alacritty_window_size};
 use super::service_detector::ServiceInfo;
-use super::types::{CopyModeCursorState, CursorShape, HyperlinkZone, Modes, SearchHighlight};
+use super::types::{
+    CopyModeCursorState, CursorShape, HyperlinkZone, Modes, SearchHighlight, TerminalWindowSize,
+    terminal_metric_to_u16,
+};
 use super::{PtyNotifier, TerminalState};
 use crate::limits::MAX_OSC52_BYTES;
 
@@ -212,13 +215,21 @@ pub(super) struct ScrollbarDrag {
     pub(super) anchor_offset: usize,
 }
 
+#[derive(Clone)]
+pub(super) struct HoverLinkCache {
+    line: GridLine,
+    cwd: Option<String>,
+    line_text: String,
+    zones: Vec<HyperlinkZone>,
+}
+
 pub struct TerminalView {
     pub terminal: TerminalState,
     focus_handle: FocusHandle,
     pub(super) cursor_visible: bool,
     /// Track mouse button state for drag selection
     pub(super) selecting: bool,
-    /// Last known cell dimensions (from TerminalElement::measure_cell)
+    /// Last known cell dimensions (from element::resolve_frame_metrics)
     pub(super) cell_width: gpui::Pixels,
     pub(super) line_height: gpui::Pixels,
     /// Element origin in window coordinates - set by TerminalElement::paint(),
@@ -243,6 +254,8 @@ pub struct TerminalView {
     /// Current search query string (kept in sync with `search_input` via
     /// `cx.observe`; the source of truth for match scanning + the counter).
     pub(super) search_query: String,
+    /// Monotonic token used to discard stale async local-search results.
+    pub(super) search_generation: u64,
     /// Cached search matches (grid coordinates)
     pub(super) search_matches: Vec<crate::search::SearchMatch>,
     /// Index of the currently focused match (for navigation)
@@ -288,6 +301,9 @@ pub struct TerminalView {
     pub(super) hovered_cell: Option<AlacPoint>,
     /// Active hyperlink under Ctrl+hover - drives underline rendering and Ctrl+click.
     pub(super) ctrl_hovered_link: Option<HyperlinkZone>,
+    /// Last full-line link detection result. Avoids repeating canonicalize on
+    /// every mouse move while the pointer stays on the same terminal line.
+    pub(super) hover_link_cache: Option<HoverLinkCache>,
     /// US-012: the link under the cursor at modifier+mouse-down. The open is
     /// deferred to mouse-up and fires only if no drag occurred (empty
     /// selection), so a Ctrl+drag starting on a link selects text instead of
@@ -300,9 +316,39 @@ pub struct TerminalView {
     /// window dimensions, so shell init bytes land in a 120×40 grid. After the
     /// first resize we clear the grid so those garbled bytes don't appear.
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
+    /// Last window size measured by `TerminalElement::build_layout`.
+    terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
 }
 
 impl TerminalView {
+    fn recorded_window_size(&self) -> Option<TerminalWindowSize> {
+        *self
+            .terminal_window_size
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn current_window_size(&self) -> alacritty_terminal::event::WindowSize {
+        if let Some(size) = self.recorded_window_size() {
+            return alacritty_window_size(size);
+        }
+
+        let term = self.terminal.term.lock_unfair();
+        let (cols, rows) = crate::terminal::types::grid_size(&term);
+        alacritty_window_size(TerminalWindowSize::new(
+            cols,
+            rows,
+            terminal_metric_to_u16(self.cell_width.as_f32()),
+            terminal_metric_to_u16(self.line_height.as_f32()),
+        ))
+    }
+
+    pub(crate) fn restore_scrollback(&self, text: &str) {
+        self.needs_initial_clear
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.terminal.restore_scrollback(text);
+    }
+
     pub(crate) fn set_terminal_material_active(&mut self, active: bool, cx: &mut Context<Self>) {
         if self.terminal_material_active != active {
             self.terminal_material_active = active;
@@ -404,8 +450,12 @@ impl TerminalView {
             user_env,
             profile,
         );
-        let (mut terminal, events_tx) =
-            TerminalState::new_pending_with_profile(params.cols, params.rows, params.profile);
+        let (mut terminal, events_tx) = TerminalState::new_pending_with_profile_and_shell_quoting(
+            params.cols,
+            params.rows,
+            params.profile,
+            params.shell_quoting,
+        );
         // Route the Drop-time force-kill timer through GPUI's background
         // executor instead of a detached OS thread (Zed parity, prevents a
         // thread leak per closed pane under heavy use).
@@ -442,26 +492,17 @@ impl TerminalView {
                     match spawned {
                         Ok(spawned) => {
                             view.terminal.promote(spawned);
-                            // The grid may have been resized to the real display
-                            // size during the pending phase (before the PTY existed,
-                            // so that SIGWINCH was dropped). Push the current grid
-                            // size to the freshly-opened child now, or it stays at
-                            // the initial spawn size until the next resize.
-                            let (cols, rows) = crate::terminal::types::grid_size(
-                                &view.terminal.term.lock_unfair(),
-                            );
-                            view.terminal.notifier.notify_resize(
-                                cols as u16,
-                                rows as u16,
-                                view.cell_width.as_f32() as u16,
-                                view.line_height.as_f32() as u16,
-                            );
+                            if let Some(size) = view.recorded_window_size() {
+                                view.terminal.notifier.notify_window_size(size);
+                            }
                         }
                         Err(e) => {
                             // Spawn failed: keep the display-only placeholder and
                             // surface the error in-pane (no orphan, no panic - same
                             // outcome as the old synchronous fallback).
                             log::error!("PTY creation failed: {e:#}");
+                            view.needs_initial_clear
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
                             view.terminal
                                 .write_output(spawn_error_message(&e).as_bytes());
                         }
@@ -603,17 +644,10 @@ impl TerminalView {
                                 let drop_count = view.terminal.pending_size_ops.len() - 8;
                                 view.terminal.pending_size_ops.drain(..drop_count);
                             }
-                            for format_fn in view.terminal.pending_size_ops.drain(..) {
-                                // Read-only snapshot; lock_unfair avoids queueing
-                                // behind the PTY reader thread on the main path.
-                                let term = view.terminal.term.lock_unfair();
-                                let size = alacritty_terminal::event::WindowSize {
-                                    num_cols: term.columns() as u16,
-                                    num_lines: term.screen_lines() as u16,
-                                    cell_width: view.cell_width.as_f32() as u16,
-                                    cell_height: view.line_height.as_f32() as u16,
-                                };
-                                drop(term);
+                            let pending_size_ops =
+                                std::mem::take(&mut view.terminal.pending_size_ops);
+                            for format_fn in pending_size_ops {
+                                let size = view.current_window_size();
                                 let response = format_fn(size);
                                 view.terminal.notifier.notify(response.into_bytes());
                             }
@@ -749,6 +783,7 @@ impl TerminalView {
             search_active: false,
             search_input,
             search_query: String::new(),
+            search_generation: 0,
             search_matches: Vec::new(),
             search_current: 0,
             search_regex_mode: false,
@@ -769,9 +804,11 @@ impl TerminalView {
             was_focused: false,
             hovered_cell: None,
             ctrl_hovered_link: None,
+            hover_link_cache: None,
             mouse_down_link: None,
             ime_marked_text: String::new(),
             needs_initial_clear: Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            terminal_window_size: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -928,18 +965,23 @@ impl TerminalView {
         Some((line, line_text, char_to_col))
     }
 
-    pub(super) fn detect_links_at_hover(&self) -> Vec<HyperlinkZone> {
+    pub(super) fn detect_links_at_hover(&mut self) -> Vec<HyperlinkZone> {
         let Some((line, line_text, char_to_col)) = self.hovered_line_text() else {
+            self.hover_link_cache = None;
             return Vec::new();
         };
         let trimmed = line_text.trim_end();
         let trimmed_chars = trimmed.chars().count();
         let map = &char_to_col[..trimmed_chars];
-        let cwd = self
-            .terminal
-            .current_cwd
-            .as_deref()
-            .map(std::path::Path::new);
+        let cwd_key = self.terminal.current_cwd.clone();
+        if let Some(cache) = &self.hover_link_cache
+            && cache.line == line
+            && cache.cwd == cwd_key
+            && cache.line_text == trimmed
+        {
+            return cache.zones.clone();
+        }
+        let cwd = cwd_key.as_deref().map(std::path::Path::new);
 
         let mut zones = crate::terminal::element::detect_urls_on_line_mapped(trimmed, line, map);
         zones.extend(crate::terminal::element::detect_file_paths_on_line_mapped(
@@ -948,6 +990,12 @@ impl TerminalView {
         zones.extend(crate::terminal::element::detect_code_paths_on_line_mapped(
             trimmed, line, map, cwd,
         ));
+        self.hover_link_cache = Some(HoverLinkCache {
+            line,
+            cwd: cwd_key,
+            line_text: trimmed.to_string(),
+            zones: zones.clone(),
+        });
         zones
     }
 
@@ -1327,11 +1375,11 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus_handle.is_focused(window);
+        let terminal_mode = { *self.terminal.term.lock_unfair().mode() };
 
         // DEC 1004: send focus in/out events on focus transitions
         if focused != self.was_focused {
-            let mode = { *self.terminal.term.lock_unfair().mode() };
-            if mode.contains(TermMode::FOCUS_IN_OUT) {
+            if terminal_mode.contains(TermMode::FOCUS_IN_OUT) {
                 // Automated protocol write, NOT user input - go through the
                 // notifier directly so US-002's keyboard_input_sent flag is not
                 // tripped by a mere focus change (a failed-spawn pane that gets
@@ -1346,10 +1394,13 @@ impl Render for TerminalView {
         }
 
         // Update cell dimensions for mouse → grid mapping
-        let dims =
-            crate::terminal::element::measure_cell(window, cx, self.terminal.font_size_override);
-        self.cell_width = dims.cell_width;
-        self.line_height = dims.line_height;
+        let frame_metrics = crate::terminal::element::resolve_frame_metrics(
+            window,
+            cx,
+            self.terminal.font_size_override,
+        );
+        self.cell_width = frame_metrics.dimensions.cell_width;
+        self.line_height = frame_metrics.dimensions.line_height;
 
         #[cfg(debug_assertions)]
         let keystroke_at = self.terminal.last_keystroke_at.take();
@@ -1360,8 +1411,8 @@ impl Render for TerminalView {
                 .iter()
                 .enumerate()
                 .map(|(i, m)| SearchHighlight {
-                    start: m.start,
-                    end: m.end,
+                    start: m.start.into(),
+                    end: m.end.into(),
                     is_active: i == self.search_current,
                 })
                 .collect()
@@ -1392,13 +1443,8 @@ impl Render for TerminalView {
         };
 
         // ALT_SCREEN: cursor always visible (no blink-off) for TUI apps
-        let cursor_visible = self.cursor_visible
-            || self
-                .terminal
-                .term
-                .lock_unfair()
-                .mode()
-                .contains(TermMode::ALT_SCREEN);
+        let alt_screen = terminal_mode.contains(TermMode::ALT_SCREEN);
+        let cursor_visible = self.cursor_visible || alt_screen;
 
         // EP-006 US-017: match positions for the scrollbar rail, converted
         // from grid-absolute lines to lines-from-bottom under a short lock
@@ -1433,6 +1479,7 @@ impl Render for TerminalView {
             self.focus_handle.clone(),
             cx.entity().clone(),
             self.needs_initial_clear.clone(),
+            self.terminal_window_size.clone(),
             self.scrollbar_metrics.clone(),
             search_rail_lines,
             self.default_cursor_shape,
@@ -1440,6 +1487,8 @@ impl Render for TerminalView {
             self.terminal_material_active,
             self.integrated_glyphs_enabled,
             self.color_emoji_enabled,
+            frame_metrics,
+            alt_screen,
             #[cfg(debug_assertions)]
             keystroke_at,
         );
@@ -1484,8 +1533,11 @@ impl Render for TerminalView {
             .on_any_mouse_down(cx.listener(Self::handle_mouse_down))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up_out(MouseButton::Right, cx.listener(Self::handle_mouse_up))
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up_out(MouseButton::Middle, cx.listener(Self::handle_mouse_up))
             .on_action(cx.listener(|this, _: &crate::TerminalCopy, window, cx| {
                 this.handle_copy(window, cx);
             }))

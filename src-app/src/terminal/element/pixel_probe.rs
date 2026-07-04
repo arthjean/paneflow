@@ -70,8 +70,8 @@ fn fmt_pix(value: f32) -> String {
     format!("{value:.4}|frac={:+.6}", value.fract())
 }
 
-/// Log raw + snapped cell dimensions. Called once per `measure_cell()`
-/// invocation, which itself runs once per repaint. Logging both the raw
+/// Log raw + snapped cell dimensions. Called by `resolve_frame_metrics()`
+/// for each rendered terminal frame. Logging both the raw
 /// (font-system measurement) and snapped (US-002 integer-rounded) values
 /// in the same record lets a reader spot a fractional residual at a glance
 /// the snap is a no-op when the raw value is already integer.

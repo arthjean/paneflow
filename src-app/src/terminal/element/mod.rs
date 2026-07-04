@@ -13,9 +13,9 @@ use gpui::{
 
 use crate::terminal::PtyNotifier;
 use crate::terminal::types::{
-    Cell, CellFlags, Color, Content, CopyModeCursorState, CursorShape, Modes, NamedColor,
+    Cell, CellFlags, Color, Content, CopyModeCursorState, CursorShape, NamedColor,
     Point as GridPoint, RenderableCursor, SearchHighlight, SelectionRange, SharedTerm,
-    content_from_term_visible, modes_of, resize_if_needed,
+    TerminalWindowSize, content_from_term_visible, resize_if_needed, terminal_metric_to_u16,
 };
 
 pub(super) mod color;
@@ -31,10 +31,9 @@ pub(crate) use font::{
     DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, normalize_font_weight_key,
 };
 pub use font::{
-    MAX_FONT_SIZE, MIN_FONT_SIZE, global_font_size, measure_cell, resolve_font_family,
+    MAX_FONT_SIZE, MIN_FONT_SIZE, global_font_size, resolve_font_family, resolve_frame_metrics,
     sanitize_font_override,
 };
-use font::{base_font, font_size};
 use geometry::CellGeometry;
 pub use hyperlink::{
     detect_code_paths_on_line_mapped, detect_file_paths_on_line_mapped, detect_urls_on_line_mapped,
@@ -198,6 +197,30 @@ fn terminal_panel_background(
     }
 }
 
+fn resolved_cell_background(
+    cell_fg: Color,
+    cell_bg: Color,
+    flags: CellFlags,
+    theme: &crate::theme::TerminalTheme,
+    terminal_material_active: bool,
+) -> Hsla {
+    let raw_bg = if flags.contains(CellFlags::INVERSE) {
+        cell_fg
+    } else {
+        cell_bg
+    };
+
+    if matches!(raw_bg, Color::Named(NamedColor::Background)) {
+        if terminal_material_active {
+            gpui::transparent_black()
+        } else {
+            theme.ansi_background
+        }
+    } else {
+        terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme)
+    }
+}
+
 fn selection_marker_color() -> Hsla {
     Hsla {
         h: 0.5,
@@ -215,6 +238,13 @@ fn selection_marker_color() -> Hsla {
 pub struct CellDimensions {
     pub cell_width: Pixels,
     pub line_height: Pixels,
+}
+
+#[derive(Clone)]
+pub struct TerminalFrameMetrics {
+    pub dimensions: CellDimensions,
+    pub base_font: Font,
+    pub font_size: Pixels,
 }
 
 struct BatchedTextRun {
@@ -256,7 +286,7 @@ struct BlockQuad {
 /// Most block-element codepoints are a single rectangle, but the multi-quadrant
 /// chars (`▙ ▚ ▛ ▜ ▞ ▟`) need 2 rects each - that's why this returns a slice.
 /// Each emitted rect becomes one [`BlockQuad`] at the call site, all sharing
-/// the same outer cell boundaries through [`paint::background::cell_x_boundaries`].
+/// the same outer cell boundaries through [`geometry::cell_x_boundaries`].
 ///
 /// US-005 fallback: extension beyond the original `U+2580..U+2590` range, after
 /// the pixel probe revealed Claude Code's banner robot uses single + multi
@@ -337,6 +367,7 @@ pub(crate) struct CursorInfo {
     col: usize,
     shape: CursorShape,
     color: Hsla,
+    cell_bg: Hsla,
     wide: bool,
     /// Character under the cursor (None for whitespace or non-Block shapes).
     text: Option<char>,
@@ -344,15 +375,22 @@ pub(crate) struct CursorInfo {
     italic: bool,
 }
 
+#[derive(Clone, Copy)]
+struct CursorCellContext<'a> {
+    desired_cols: usize,
+    desired_rows: usize,
+    theme: &'a crate::theme::TerminalTheme,
+    terminal_material_active: bool,
+}
+
 fn selection_marker_cursor(
     cells: &[Cell],
     line: i32,
     col: usize,
     color: Hsla,
-    desired_cols: usize,
-    desired_rows: usize,
+    ctx: CursorCellContext<'_>,
 ) -> Option<CursorInfo> {
-    if line < 0 || line >= desired_rows as i32 || col >= desired_cols {
+    if line < 0 || line >= ctx.desired_rows as i32 || col >= ctx.desired_cols {
         return None;
     }
 
@@ -360,7 +398,7 @@ fn selection_marker_cursor(
         .iter()
         .find(|cell| cell.point.line.0 == line && cell.point.column.0 == col);
 
-    let (wide, text, bold, italic) = cell
+    let (wide, text, bold, italic, cell_bg) = cell
         .map(|cell| {
             let is_spacer = cell.flags.contains(CellFlags::WIDE_CHAR_SPACER);
             (
@@ -369,15 +407,35 @@ fn selection_marker_cursor(
                 cell.flags.contains(CellFlags::BOLD) || cell.flags.contains(CellFlags::BOLD_ITALIC),
                 cell.flags.contains(CellFlags::ITALIC)
                     || cell.flags.contains(CellFlags::BOLD_ITALIC),
+                resolved_cell_background(
+                    cell.fg,
+                    cell.bg,
+                    cell.flags,
+                    ctx.theme,
+                    ctx.terminal_material_active,
+                ),
             )
         })
-        .unwrap_or((false, None, false, false));
+        .unwrap_or((
+            false,
+            None,
+            false,
+            false,
+            resolved_cell_background(
+                Color::Named(NamedColor::Foreground),
+                Color::Named(NamedColor::Background),
+                CellFlags::empty(),
+                ctx.theme,
+                ctx.terminal_material_active,
+            ),
+        ));
 
     Some(CursorInfo {
         line,
         col,
         shape: CursorShape::Block,
         color,
+        cell_bg,
         wide,
         text,
         bold,
@@ -391,6 +449,8 @@ fn cursor_from_content(
     focused: bool,
     cursor_color: Hsla,
     default_cursor_shape: CursorShape,
+    theme: &crate::theme::TerminalTheme,
+    terminal_material_active: bool,
 ) -> Option<CursorInfo> {
     if matches!(cursor.shape, CursorShape::Hidden) || !cursor_visible || !focused {
         return None;
@@ -413,6 +473,13 @@ fn cursor_from_content(
         col: cursor.point.column.0,
         shape,
         color: cursor_color,
+        cell_bg: resolved_cell_background(
+            cursor.fg,
+            cursor.bg,
+            cursor.flags,
+            theme,
+            terminal_material_active,
+        ),
         wide: cursor.wide,
         text,
         bold: cursor.bold,
@@ -544,6 +611,8 @@ pub struct TerminalElement {
     cursor_color_override: Option<Hsla>,
     /// Gate for clearing pre-resize shell startup content on first render.
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
+    /// Last terminal window size measured by layout and sent to the PTY.
+    terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
     /// US-015: shared sink for the painted scrollbar geometry. `paint()` writes
     /// the current frame's [`ScrollbarMetrics`] (or `None`) here so the view's
     /// mouse handlers can hit-test interactive scroll against the exact strip
@@ -560,6 +629,10 @@ pub struct TerminalElement {
     integrated_glyphs_enabled: bool,
     /// When enabled, emoji glyphs are rendered through GPUI's color path.
     color_emoji_enabled: bool,
+    /// Font and cell metrics resolved once by the view for this frame.
+    frame_metrics: TerminalFrameMetrics,
+    /// True while the terminal is in DEC alternate screen.
+    alt_screen: bool,
     /// Timestamp of the keystroke that triggered this render, for latency measurement.
     #[cfg(debug_assertions)]
     last_keystroke_at: Option<std::time::Instant>,
@@ -583,6 +656,7 @@ impl TerminalElement {
         focus_handle: gpui::FocusHandle,
         terminal_view: gpui::Entity<crate::terminal::TerminalView>,
         needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
+        terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
         scrollbar_metrics: Arc<Mutex<Option<ScrollbarMetrics>>>,
         search_rail_lines: Vec<usize>,
         default_cursor_shape: CursorShape,
@@ -590,6 +664,8 @@ impl TerminalElement {
         terminal_material_active: bool,
         integrated_glyphs_enabled: bool,
         color_emoji_enabled: bool,
+        frame_metrics: TerminalFrameMetrics,
+        alt_screen: bool,
         #[cfg(debug_assertions)] last_keystroke_at: Option<std::time::Instant>,
     ) -> Self {
         Self {
@@ -609,30 +685,27 @@ impl TerminalElement {
             terminal_view,
             default_cursor_shape,
             needs_initial_clear,
+            terminal_window_size,
             scrollbar_metrics,
             search_rail_lines,
             terminal_material_active,
             cursor_color_override,
             integrated_glyphs_enabled,
             color_emoji_enabled,
+            frame_metrics,
+            alt_screen,
             #[cfg(debug_assertions)]
             last_keystroke_at,
         }
-    }
-
-    /// EP-006 US-019: this view's font-size override, read live from the
-    /// entity so the same frame that mutates it lays out with it.
-    fn size_override(&self, cx: &App) -> Option<f32> {
-        self.terminal_view.read(cx).terminal.font_size_override
     }
 
     fn build_layout(
         &self,
         bounds: Bounds<Pixels>,
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> LayoutState {
-        let dims = measure_cell(window, cx, self.size_override(cx));
+        let dims = self.frame_metrics.dimensions;
         let theme = crate::theme::active_theme();
 
         // Compute desired terminal grid size from pixel bounds (accounting for left gutter)
@@ -674,31 +747,44 @@ impl TerminalElement {
         // time. The renderer never touches alacritty types - the lock-and-read
         // is confined to the `types` seam (`content_from_term`, EP-003).
         let cursor_color = self.cursor_color_override.unwrap_or(theme.cursor);
+        let window_size = TerminalWindowSize::new(
+            desired_cols,
+            desired_rows,
+            terminal_metric_to_u16(dims.cell_width.as_f32()),
+            terminal_metric_to_u16(dims.line_height.as_f32()),
+        );
 
         let content: Content = {
             let mut term = self.term.lock();
-            // Resize the terminal grid if bounds have changed; fire SIGWINCH to
-            // the child only on an actual dimension change.
-            if resize_if_needed(&mut term, desired_cols, desired_rows) {
-                self.notifier.notify_resize(
-                    desired_cols as u16,
-                    desired_rows as u16,
-                    dims.cell_width.as_f32() as u16,
-                    dims.line_height.as_f32() as u16,
-                );
-            }
-            // On the very first resize, clear any shell startup content that
-            // landed in the grid before we knew the actual window dimensions.
-            // The shell receives SIGWINCH and redraws its prompt at the
-            // correct width, so nothing visible is lost.
+            // Resize the terminal grid if bounds have changed.
+            let resized_grid = resize_if_needed(&mut term, desired_cols, desired_rows);
+            // On the first real grid resize, clear shell startup content that
+            // landed before the actual window dimensions were known. Preserved
+            // display-only content disables this flag at the view boundary.
             if self
                 .needs_initial_clear
                 .swap(false, std::sync::atomic::Ordering::Relaxed)
+                && resized_grid
             {
                 term.grid_mut().reset();
             }
             content_from_term_visible(&term, first_visible_row, last_visible_row)
         };
+        let notify_resize = {
+            let mut last = self
+                .terminal_window_size
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if *last == Some(window_size) {
+                false
+            } else {
+                *last = Some(window_size);
+                true
+            }
+        };
+        if notify_resize {
+            self.notifier.notify_window_size(window_size);
+        }
 
         let display_offset = content.display_offset;
         let history_size = content.history_size;
@@ -710,6 +796,8 @@ impl TerminalElement {
             self.focused,
             cursor_color,
             self.default_cursor_shape,
+            &theme,
+            self.terminal_material_active,
         );
         let copy_mode_cursor =
             focused_copy_mode_cursor(self.copy_mode_cursor.as_ref(), self.focused);
@@ -729,7 +817,7 @@ impl TerminalElement {
             first_visible_row,
             last_visible_row,
             dims,
-            base_font: base_font(),
+            base_font: self.frame_metrics.base_font.clone(),
             theme: &theme,
             exited: self.exited,
             exit_signal: self.exit_signal.clone(),
@@ -777,7 +865,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     } else {
         theme.background
     };
-    let ansi_background = theme.ansi_background;
     let selection_color = theme.selection;
 
     let cursor_snapshot = cursor_snapshot.and_then(|mut cursor| {
@@ -790,15 +877,14 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     let (cursor_snapshot, anchor_cursor) = if let Some(cm) = copy_mode_cursor {
         let display_line = cm.grid_line + display_offset as i32;
         let marker_color = selection_marker_color();
-
-        let main = selection_marker_cursor(
-            &cells,
-            display_line,
-            cm.col,
-            marker_color,
+        let cursor_ctx = CursorCellContext {
             desired_cols,
             desired_rows,
-        );
+            theme,
+            terminal_material_active,
+        };
+
+        let main = selection_marker_cursor(&cells, display_line, cm.col, marker_color, cursor_ctx);
 
         let anchor = cm.anchor_grid_line.and_then(|anchor_line| {
             let display_anchor = anchor_line + display_offset as i32;
@@ -807,8 +893,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
                 display_anchor,
                 cm.anchor_col,
                 marker_color,
-                desired_cols,
-                desired_rows,
+                cursor_ctx,
             )
         });
 
@@ -821,7 +906,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         (cursor_snapshot, None)
     };
 
-    let mut batch = BatchAccumulator::new();
+    let mut batch = BatchAccumulator::new(base_font.clone());
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut block_quads: Vec<BlockQuad> = Vec::new();
     let mut current_rect: Option<LayoutRect> = None;
@@ -867,8 +952,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         } else {
             (*cell_fg, *cell_bg)
         };
-        let is_default_bg = matches!(raw_bg, Color::Named(NamedColor::Background));
-
         let mut fg = convert_color(raw_fg, theme);
         let bg = terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme);
 
@@ -930,15 +1013,8 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         } else {
             1
         };
-        let cell_bg_color = if is_default_bg {
-            if terminal_material_active {
-                gpui::transparent_black()
-            } else {
-                ansi_background
-            }
-        } else {
-            bg
-        };
+        let cell_bg_color =
+            resolved_cell_background(*cell_fg, *cell_bg, flags, theme, terminal_material_active);
         match &mut current_rect {
             Some(rect)
                 if rect.line == point.line.0
@@ -1077,6 +1153,23 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         let start_col = sel.start.column.0;
         let end_col = sel.end.column.0;
         let num_cols = desired_cols.max(1);
+        let visible_start = first_visible_row.max(0).min(desired_rows as i32);
+        let visible_end = last_visible_row.max(0).min(desired_rows as i32);
+
+        let push_selection_rect =
+            |rects: &mut Vec<LayoutRect>, line: i32, col: usize, rect_cols: usize| {
+                if line < visible_start || line >= visible_end || col >= num_cols || rect_cols == 0
+                {
+                    return;
+                }
+                rects.push(LayoutRect {
+                    line,
+                    num_lines: 1,
+                    col,
+                    num_cols: rect_cols.min(num_cols - col),
+                    color: selection_color,
+                });
+            };
 
         if sel.is_block {
             // US-007: block (rectangular) selection - emit one rect per
@@ -1094,58 +1187,45 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             } else {
                 (end_col, start_col)
             };
-            let block_cols = c_max.saturating_sub(c_min) + 1;
-            let mut line = l_min;
-            while line <= l_max {
-                selection_rects.push(LayoutRect {
-                    line,
-                    num_lines: 1,
-                    col: c_min,
-                    num_cols: block_cols,
-                    color: selection_color,
-                });
-                line += 1;
+            let block_cols = c_max.saturating_sub(c_min).saturating_add(1);
+            let line_start = l_min.max(visible_start);
+            let line_end = l_max.saturating_add(1).min(visible_end);
+            for line in line_start..line_end {
+                push_selection_rect(&mut selection_rects, line, c_min, block_cols);
             }
-        } else if start_line == end_line {
-            // Single-line linear selection
-            selection_rects.push(LayoutRect {
-                line: start_line,
-                num_lines: 1,
-                col: start_col,
-                num_cols: end_col.saturating_sub(start_col) + 1,
-                color: selection_color,
-            });
         } else {
-            // Multi-line linear: first line from start.col to end of line
-            selection_rects.push(LayoutRect {
-                line: start_line,
-                num_lines: 1,
-                col: start_col,
-                num_cols: num_cols.saturating_sub(start_col),
-                color: selection_color,
-            });
-            // Middle full lines
-            let mut line = start_line + 1;
-            while line < end_line {
-                selection_rects.push(LayoutRect {
-                    line,
-                    num_lines: 1,
-                    col: 0,
-                    num_cols,
-                    color: selection_color,
-                });
-                line += 1;
+            let ((s_line, s_col), (e_line, e_col)) =
+                if start_line < end_line || (start_line == end_line && start_col <= end_col) {
+                    ((start_line, start_col), (end_line, end_col))
+                } else {
+                    ((end_line, end_col), (start_line, start_col))
+                };
+            if s_line == e_line {
+                push_selection_rect(
+                    &mut selection_rects,
+                    s_line,
+                    s_col,
+                    e_col.saturating_sub(s_col).saturating_add(1),
+                );
+            } else {
+                // Multi-line linear: first line from start.col to end of line
+                push_selection_rect(
+                    &mut selection_rects,
+                    s_line,
+                    s_col,
+                    num_cols.saturating_sub(s_col),
+                );
+                // Middle full lines
+                let middle_start = s_line.saturating_add(1).max(visible_start);
+                let middle_end = e_line.min(visible_end);
+                for line in middle_start..middle_end {
+                    push_selection_rect(&mut selection_rects, line, 0, num_cols);
+                }
+                // Last line from col 0 to end.col. `saturating_add` matches the
+                // defensive arithmetic of the sibling rects (U-047): a stale
+                // `end_col` from a pre-resize selection can't overflow the count.
+                push_selection_rect(&mut selection_rects, e_line, 0, e_col.saturating_add(1));
             }
-            // Last line from col 0 to end.col. `saturating_add` matches the
-            // defensive arithmetic of the sibling rects (U-047): a stale
-            // `end_col` from a pre-resize selection can't overflow the count.
-            selection_rects.push(LayoutRect {
-                line: end_line,
-                num_lines: 1,
-                col: 0,
-                num_cols: end_col.saturating_add(1),
-                color: selection_color,
-            });
         }
     }
 
@@ -1243,12 +1323,12 @@ struct BatchAccumulator {
 }
 
 impl BatchAccumulator {
-    fn new() -> Self {
+    fn new(font: Font) -> Self {
         Self {
             runs: Vec::new(),
             text: String::new(),
             style: None,
-            font: base_font(),
+            font,
             fg: Hsla::default(),
             underline: false,
             undercurl: false,
@@ -1434,7 +1514,7 @@ impl Element for TerminalElement {
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = origin;
         let line_height = layout.dimensions.line_height;
-        let font_size = font_size(self.size_override(cx));
+        let font_size = self.frame_metrics.font_size;
 
         let geom = CellGeometry {
             origin,
@@ -1444,11 +1524,11 @@ impl Element for TerminalElement {
 
         // PANEFLOW_PIXEL_PROBE: log the per-frame origin once, before any
         // glyph/background record carries it implicitly. Pairs with the
-        // `cell_dims` record emitted from `measure_cell()`.
+        // `cell_dims` record emitted from `resolve_frame_metrics()`.
         #[cfg(debug_assertions)]
         pixel_probe::record_origin(origin);
 
-        let base_font = base_font();
+        let base_font = &self.frame_metrics.base_font;
 
         // US-047: the shared integer pixel boundary arrays are derived purely
         // from `geom` + the viewport size, so compute them ONCE here and lend
@@ -1460,16 +1540,8 @@ impl Element for TerminalElement {
             (Vec::new(), Vec::new())
         } else {
             (
-                paint::background::cell_x_boundaries(
-                    geom.origin.x,
-                    geom.cell_width,
-                    layout.desired_cols,
-                ),
-                paint::background::cell_y_boundaries(
-                    geom.origin.y,
-                    geom.line_height,
-                    layout.desired_rows,
-                ),
+                geom.x_boundaries(layout.desired_cols),
+                geom.y_boundaries(layout.desired_rows),
             )
         };
 
@@ -1511,10 +1583,10 @@ impl Element for TerminalElement {
             paint::overlay::paint_hyperlink_tooltip(self, &layout, &geom, window, cx);
 
             // 4. Primary cursor
-            paint::cursor::paint_cursor(&layout, &geom, &base_font, font_size, window, cx);
+            paint::cursor::paint_cursor(&layout, &geom, base_font, font_size, window, cx);
 
             // 4b. Copy-mode / mouse-selection secondary marker
-            paint::cursor::paint_anchor_cursor(&layout, &geom, &base_font, font_size, window, cx);
+            paint::cursor::paint_anchor_cursor(&layout, &geom, base_font, font_size, window, cx);
 
             // 5. Scrollbar thumb
             paint::scrollbar::paint_scrollbar(&layout, &geom, bounds, window);
@@ -1549,27 +1621,26 @@ impl Element for TerminalElement {
                 .unwrap_or_else(|p| p.into_inner()) = metrics;
 
             // 6. IME handler registration + preedit overlay
-            let term_for_ime = self.term.clone();
             let view_for_ime = self.terminal_view.clone();
             paint::overlay::paint_ime_preedit(
                 self,
                 &layout,
                 &geom,
                 font_size,
-                &base_font,
+                base_font,
                 window,
                 cx,
                 |cursor_bounds| TerminalInputHandler {
                     terminal_view: view_for_ime,
-                    term: term_for_ime,
                     cursor_bounds,
+                    alt_screen: self.alt_screen,
                 },
             );
 
             // 7. Exit overlay
             let exit_fg = rgb_to_hsla(0x6c, 0x70, 0x86); // Overlay6
             paint::overlay::paint_exit_overlay(
-                &layout, &geom, bounds, font_size, &base_font, exit_fg, window, cx,
+                &layout, &geom, bounds, font_size, base_font, exit_fg, window, cx,
             );
         });
 
@@ -1618,8 +1689,19 @@ impl IntoElement for TerminalElement {
 
 struct TerminalInputHandler {
     terminal_view: gpui::Entity<crate::terminal::TerminalView>,
-    term: SharedTerm,
     cursor_bounds: Option<Bounds<Pixels>>,
+    alt_screen: bool,
+}
+
+fn ime_selected_text_range(alt_screen: bool) -> Option<gpui::UTF16Selection> {
+    if alt_screen {
+        None
+    } else {
+        Some(gpui::UTF16Selection {
+            range: 0..0,
+            reversed: false,
+        })
+    }
 }
 
 impl gpui::InputHandler for TerminalInputHandler {
@@ -1629,15 +1711,7 @@ impl gpui::InputHandler for TerminalInputHandler {
         _window: &mut Window,
         _cx: &mut App,
     ) -> Option<gpui::UTF16Selection> {
-        // Disable IME on ALT_SCREEN (TUI apps handle their own input)
-        let mode = modes_of(&self.term.lock());
-        if mode.contains(Modes::ALT_SCREEN) {
-            return None;
-        }
-        Some(gpui::UTF16Selection {
-            range: 0..0,
-            reversed: false,
-        })
+        ime_selected_text_range(self.alt_screen)
     }
 
     fn marked_text_range(
@@ -1709,6 +1783,20 @@ impl gpui::InputHandler for TerminalInputHandler {
         _cx: &mut App,
     ) -> Option<usize> {
         None
+    }
+}
+
+#[cfg(test)]
+mod ime_input_handler_tests {
+    use super::ime_selected_text_range;
+
+    #[test]
+    fn ime_selection_is_disabled_in_alt_screen() {
+        assert!(ime_selected_text_range(true).is_none());
+
+        let selection = ime_selected_text_range(false).expect("normal screen accepts IME");
+        assert_eq!(selection.range, 0..0);
+        assert!(!selection.reversed);
     }
 }
 
@@ -2080,6 +2168,7 @@ mod golden_frame_tests {
             col,
             shape,
             color: white(),
+            cell_bg: crate::theme::one_dark().ansi_background,
             wide: false,
             text,
             bold: false,
@@ -2091,6 +2180,9 @@ mod golden_frame_tests {
         RenderableCursor {
             point: GridPoint::new(0, col),
             shape,
+            fg: default_fg(),
+            bg: default_bg(),
+            flags: CellFlags::empty(),
             wide: false,
             text,
             bold: false,
@@ -2134,6 +2226,35 @@ mod golden_frame_tests {
             exit_signal: None,
             terminal_material_active: false,
             integrated_glyphs_enabled,
+            color_emoji_enabled: true,
+        })
+    }
+
+    fn run_selection_with_visible(
+        selection: SelectionRange,
+        first_visible_row: i32,
+        last_visible_row: i32,
+    ) -> LayoutState {
+        let theme = crate::theme::one_dark();
+        layout_from_snapshot(LayoutInputs {
+            cells: Vec::new(),
+            cursor: None,
+            selection_range: Some(selection),
+            copy_mode_cursor: None,
+            search_highlights: &[],
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: COLS,
+            desired_rows: ROWS,
+            first_visible_row,
+            last_visible_row,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme: &theme,
+            exited: None,
+            exit_signal: None,
+            terminal_material_active: false,
+            integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
         })
     }
@@ -2183,10 +2304,18 @@ mod golden_frame_tests {
 
     #[cfg(feature = "hera-dogfood")]
     fn run_hera_case(case: crate::terminal::hera_dogfood::HeraLayoutGoldenCase) -> String {
-        let theme = crate::theme::one_dark();
         let diagnostics = case.layout.diagnostics().to_vec();
         let content = case.layout.into_content();
-        let cursor = cursor_from_content(content.cursor, true, true, white(), CursorShape::Block);
+        let theme = crate::theme::one_dark();
+        let cursor = cursor_from_content(
+            content.cursor,
+            true,
+            true,
+            white(),
+            CursorShape::Block,
+            &theme,
+            false,
+        );
         let state = layout_from_snapshot(LayoutInputs {
             cells: content.cells,
             cursor,
@@ -2214,10 +2343,6 @@ mod golden_frame_tests {
     /// The full fixture corpus. One test so a `BLESS` run regenerates every
     /// golden in a single pass; each fixture still asserts independently.
     #[test]
-    #[cfg_attr(
-        windows,
-        ignore = "render golden is OS-sensitive (font metrics + text shaping); blessed on Linux, drifts on Windows. Per-OS Windows goldens tracked as a follow-up."
-    )]
     fn golden_frame_corpus() {
         // plain ASCII
         assert_golden(
@@ -2402,10 +2527,6 @@ mod golden_frame_tests {
 
     #[test]
     #[cfg(feature = "hera-dogfood")]
-    #[cfg_attr(
-        windows,
-        ignore = "render golden is OS-sensitive (font metrics + text shaping); blessed on Linux, drifts on Windows. Per-OS Windows goldens tracked as a follow-up."
-    )]
     fn hera_golden_frame_corpus() {
         let cases = crate::terminal::hera_dogfood::hera_layout_golden_cases();
         assert!(
@@ -2502,13 +2623,32 @@ mod golden_frame_tests {
     #[test]
     fn unfocused_terminal_hides_live_cursor() {
         let cursor = renderable_cursor_at(0, CursorShape::Block, 'a');
+        let theme = crate::theme::one_dark();
 
         assert!(
-            cursor_from_content(cursor, true, true, white(), CursorShape::Block).is_some(),
+            cursor_from_content(
+                cursor,
+                true,
+                true,
+                white(),
+                CursorShape::Block,
+                &theme,
+                false
+            )
+            .is_some(),
             "focused terminals should keep the live cursor"
         );
         assert!(
-            cursor_from_content(cursor, true, false, white(), CursorShape::Block).is_none(),
+            cursor_from_content(
+                cursor,
+                true,
+                false,
+                white(),
+                CursorShape::Block,
+                &theme,
+                false
+            )
+            .is_none(),
             "unfocused terminals must not paint a hollow cursor outline"
         );
     }
@@ -2516,8 +2656,17 @@ mod golden_frame_tests {
     #[test]
     fn configured_custom_cursor_shapes_override_native_fallbacks() {
         let block_cursor = renderable_cursor_at(0, CursorShape::Block, 'a');
-        let vintage =
-            cursor_from_content(block_cursor, true, true, white(), CursorShape::Vintage).unwrap();
+        let theme = crate::theme::one_dark();
+        let vintage = cursor_from_content(
+            block_cursor,
+            true,
+            true,
+            white(),
+            CursorShape::Vintage,
+            &theme,
+            false,
+        )
+        .unwrap();
         assert_eq!(vintage.shape, CursorShape::Vintage);
         assert!(
             vintage.text.is_none(),
@@ -2531,9 +2680,63 @@ mod golden_frame_tests {
             true,
             white(),
             CursorShape::DoubleUnderline,
+            &theme,
+            false,
         )
         .unwrap();
         assert_eq!(double.shape, CursorShape::DoubleUnderline);
+    }
+
+    #[test]
+    fn block_cursor_carries_cell_background_for_inverse_text() {
+        let theme = crate::theme::one_dark();
+        let explicit_bg = Color::Spec(Rgb {
+            r: 12,
+            g: 34,
+            b: 56,
+        });
+        let mut cursor = renderable_cursor_at(0, CursorShape::Block, 'x');
+        cursor.bg = explicit_bg;
+
+        let info = cursor_from_content(
+            cursor,
+            true,
+            true,
+            white(),
+            CursorShape::Block,
+            &theme,
+            false,
+        )
+        .expect("cursor visible");
+        assert_eq!(info.cell_bg, rgb_to_hsla(12, 34, 56));
+
+        let mut inverse = renderable_cursor_at(0, CursorShape::Block, 'x');
+        inverse.fg = Color::Spec(Rgb { r: 90, g: 8, b: 7 });
+        inverse.flags = CellFlags::INVERSE;
+        let info = cursor_from_content(
+            inverse,
+            true,
+            true,
+            white(),
+            CursorShape::Block,
+            &theme,
+            false,
+        )
+        .expect("cursor visible");
+        assert_eq!(info.cell_bg, rgb_to_hsla(90, 8, 7));
+
+        let transparent = renderable_cursor_at(0, CursorShape::Block, 'x');
+        let info = cursor_from_content(
+            transparent,
+            true,
+            true,
+            white(),
+            CursorShape::Block,
+            &theme,
+            true,
+        )
+        .expect("cursor visible");
+        assert_eq!(info.cell_bg.a, 0.0);
     }
 
     #[test]
@@ -2644,6 +2847,39 @@ mod golden_frame_tests {
         });
         assert_eq!(state.batched_runs.len(), 1, "row 2 is culled");
         assert_eq!(state.batched_runs[0].text, "a");
+    }
+
+    #[test]
+    fn selection_rects_are_culled_to_visible_rows() {
+        let selection = SelectionRange {
+            start: GridPoint::new(0, 0),
+            end: GridPoint::new(5, 2),
+            is_block: false,
+        };
+        let state = run_selection_with_visible(selection, 2, 4);
+
+        let lines: Vec<i32> = state.selection_rects.iter().map(|rect| rect.line).collect();
+        assert_eq!(lines, vec![2, 3]);
+    }
+
+    #[test]
+    fn reversed_linear_selection_rects_are_normalized() {
+        let selection = SelectionRange {
+            start: GridPoint::new(2, 3),
+            end: GridPoint::new(0, 1),
+            is_block: false,
+        };
+        let state = run_selection_with_visible(selection, 0, ROWS as i32);
+
+        assert_eq!(state.selection_rects.len(), 3);
+        assert_eq!(state.selection_rects[0].line, 0);
+        assert_eq!(state.selection_rects[0].col, 1);
+        assert_eq!(state.selection_rects[1].line, 1);
+        assert_eq!(state.selection_rects[1].col, 0);
+        assert_eq!(state.selection_rects[1].num_cols, COLS);
+        assert_eq!(state.selection_rects[2].line, 2);
+        assert_eq!(state.selection_rects[2].col, 0);
+        assert_eq!(state.selection_rects[2].num_cols, 4);
     }
 
     #[test]

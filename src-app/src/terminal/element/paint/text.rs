@@ -16,16 +16,8 @@ use super::super::geometry::CellGeometry;
 /// future change re-introduces a fractional residual (origin drift,
 /// non-integer cell stride from a refactor, etc.), this snap keeps
 /// glyphs aligned with their cell backgrounds without further fix.
-pub(super) fn glyph_origin(
-    origin: Point<Pixels>,
-    cell_width: Pixels,
-    line_height: Pixels,
-    line: i32,
-    col_start: usize,
-) -> Point<Pixels> {
-    let x = (origin.x + cell_width * col_start as f32).round();
-    let y = (origin.y + line_height * line as f32).round();
-    Point { x, y }
+pub(super) fn glyph_origin(geom: &CellGeometry, line: i32, col_start: usize) -> Point<Pixels> {
+    geom.cell_origin(line, col_start)
 }
 
 /// Paint all batched text runs produced during `build_layout`.
@@ -36,14 +28,11 @@ pub fn paint_text_runs(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let CellGeometry {
-        origin,
-        cell_width,
-        line_height,
-    } = *geom;
+    let cell_width = geom.cell_width;
+    let line_height = geom.line_height;
 
     for run in &layout.batched_runs {
-        let Point { x, y } = glyph_origin(origin, cell_width, line_height, run.line, run.col_start);
+        let Point { x, y } = glyph_origin(geom, run.line, run.col_start);
 
         // PANEFLOW_PIXEL_PROBE: log glyph X/Y per run (sampled to first 16
         // columns of each row inside the probe). Post-US-003 these are
@@ -170,11 +159,21 @@ mod tests {
         let line_height = px(18.2);
 
         for col in [0usize, 1, 5, 17, 100, 1000] {
-            let p = glyph_origin(origin, cell_width, line_height, 0, col);
+            let geom = CellGeometry {
+                origin,
+                cell_width,
+                line_height,
+            };
+            let p = glyph_origin(&geom, 0, col);
             assert_pixel_aligned(p.x.as_f32(), "glyph_x");
         }
         for line in [0i32, 1, 10, 100] {
-            let p = glyph_origin(origin, cell_width, line_height, line, 0);
+            let geom = CellGeometry {
+                origin,
+                cell_width,
+                line_height,
+            };
+            let p = glyph_origin(&geom, line, 0);
             assert_pixel_aligned(p.y.as_f32(), "glyph_y");
         }
     }
@@ -190,7 +189,12 @@ mod tests {
         };
         let cell_width = px(9.0);
         let line_height = px(18.0);
-        let p = glyph_origin(origin, cell_width, line_height, 5, 7);
+        let geom = CellGeometry {
+            origin,
+            cell_width,
+            line_height,
+        };
+        let p = glyph_origin(&geom, 5, 7);
         assert_eq!(p.x, px(63.0)); // 9.0 * 7
         assert_eq!(p.y, px(90.0)); // 18.0 * 5
     }
@@ -207,7 +211,12 @@ mod tests {
         };
         let cell_width = px(9.0);
         let line_height = px(18.0);
-        let p = glyph_origin(origin, cell_width, line_height, 3, 11);
+        let geom = CellGeometry {
+            origin,
+            cell_width,
+            line_height,
+        };
+        let p = glyph_origin(&geom, 3, 11);
         assert_pixel_aligned(p.x.as_f32(), "glyph_x with fractional origin");
         assert_pixel_aligned(p.y.as_f32(), "glyph_y with fractional origin");
     }

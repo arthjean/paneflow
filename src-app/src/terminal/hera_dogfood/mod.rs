@@ -666,6 +666,9 @@ fn renderable_cursor_from_hera(snapshot: &RenderSnapshot) -> RenderableCursor {
         } else {
             CursorShape::Hidden
         },
+        fg: hera_foreground(style),
+        bg: hera_background(style),
+        flags: hera_cell_flags_from_style(style, cell.is_some_and(|cell| cell.width() > 1)),
         wide: cell.is_some_and(|cell| cell.width() > 1),
         text,
         bold: style.bold(),
@@ -674,7 +677,10 @@ fn renderable_cursor_from_hera(snapshot: &RenderSnapshot) -> RenderableCursor {
 }
 
 fn hera_cell_flags(cell: &RenderCell) -> CellFlags {
-    let style = cell.style();
+    hera_cell_flags_from_style(cell.style(), cell.width() > 1)
+}
+
+fn hera_cell_flags_from_style(style: CellStyle, wide: bool) -> CellFlags {
     let mut flags = CellFlags::empty();
     if style.bold() {
         flags |= CellFlags::BOLD;
@@ -688,7 +694,7 @@ fn hera_cell_flags(cell: &RenderCell) -> CellFlags {
     if style.inverse() {
         flags |= CellFlags::INVERSE;
     }
-    if cell.width() > 1 {
+    if wide {
         flags |= CellFlags::WIDE_CHAR;
     }
     flags

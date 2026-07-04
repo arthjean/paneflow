@@ -2,9 +2,8 @@
 //!
 //! Owns the embedded-font primary contract, the installed-monospace-font
 //! registry (cross-platform), and the cached font config read from
-//! `paneflow.json`. Exposes `measure_cell` - the sole entry point used by
-//! the renderer to turn the current font + size into per-cell pixel
-//! dimensions.
+//! `paneflow.json`. Exposes `resolve_frame_metrics` to turn the current font
+//! config + size into a per-frame font snapshot and terminal cell strides.
 //!
 //! Extracted from `terminal_element.rs` per US-008 of the src-app refactor PRD.
 
@@ -16,7 +15,7 @@ use gpui::{
     App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Pixels, SharedString, Window, px,
 };
 
-use super::CellDimensions;
+use super::{CellDimensions, TerminalFrameMetrics};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -497,11 +496,11 @@ pub fn global_font_size() -> f32 {
     size
 }
 
-pub fn measure_cell(
+pub fn resolve_frame_metrics(
     window: &mut Window,
     _cx: &mut App,
     size_override: Option<f32>,
-) -> CellDimensions {
+) -> TerminalFrameMetrics {
     let font = base_font();
     let font_size = font_size(size_override);
     let font_id = window.text_system().resolve_font(&font);
@@ -548,8 +547,9 @@ pub fn measure_cell(
         });
     }
 
-    // Width and line height scale with the effective rendered size so Windows
-    // Terminal-style multipliers stay comparable across font-size changes.
+    // Cell width and line height are config-derived terminal strides, not
+    // measured glyph advances. They scale with the effective rendered size so
+    // Windows Terminal-style multipliers stay comparable across font changes.
     let (_, _, line_multiplier, cell_multiplier, _, _, _) = cached_font_config();
     let cell_width_raw = px(font_size.as_f32() * cell_multiplier);
     let line_height_raw = px(font_size.as_f32() * line_multiplier);
@@ -578,9 +578,13 @@ pub fn measure_cell(
         window.scale_factor(),
     );
 
-    CellDimensions {
-        cell_width,
-        line_height,
+    TerminalFrameMetrics {
+        dimensions: CellDimensions {
+            cell_width,
+            line_height,
+        },
+        base_font: font,
+        font_size,
     }
 }
 

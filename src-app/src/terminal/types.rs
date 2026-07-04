@@ -8,11 +8,11 @@
 //!
 //! ## Backend-neutral types (EP-003 / Zed #57483)
 //!
-//! This module is the single **translation seam**: it is the only UI-adjacent
-//! file allowed to import `alacritty_terminal`, and it owns the neutral
+//! This module is the primary **translation seam**: it is the UI-adjacent
+//! file that owns backend conversions, and it owns the neutral
 //! `Point` / `CursorShape` / `Color` / `CellFlags` / `Modes` / `SelectionRange`
 //! / `Cell` / `Content` types plus their `From<alac>` conversions. Every other
-//! rendering/input file (element, search, mouse, keys, event_handlers) consumes
+//! rendering/input file should consume
 //! these neutral types so a breaking `alacritty_terminal` bump ripples through
 //! one module instead of the whole UI. Mirrors Zed's `terminal.rs:296-330`
 //! neutral types + the `alacritty.rs` single-seam pattern.
@@ -36,6 +36,75 @@ use crate::terminal::ZedListener;
 /// in this seam module so the renderer can hold it without naming
 /// `alacritty_terminal` directly (EP-003 confinement).
 pub type SharedTerm = Arc<FairMutex<Term<ZedListener>>>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellQuoting {
+    Posix,
+    PowerShell,
+    Cmd,
+}
+
+impl ShellQuoting {
+    pub fn for_shell(shell: &str) -> Self {
+        let basename = shell
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or(shell)
+            .to_ascii_lowercase();
+        let key = basename.trim_end_matches(".exe");
+        match key {
+            "cmd" => Self::Cmd,
+            "pwsh" | "powershell" => Self::PowerShell,
+            "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "ash" | "mksh" => Self::Posix,
+            _ => Self::default_for_platform(),
+        }
+    }
+
+    #[cfg(windows)]
+    pub const fn default_for_platform() -> Self {
+        Self::PowerShell
+    }
+
+    #[cfg(not(windows))]
+    pub const fn default_for_platform() -> Self {
+        Self::Posix
+    }
+}
+
+/// Last known terminal window metrics sent to terminal clients.
+///
+/// `cols` and `rows` drive the grid size. `cell_width` and `cell_height` are
+/// needed by terminal size queries and platform PTY pixel fields, so callers
+/// must treat changes to any field as a resize notification candidate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalWindowSize {
+    pub cols: usize,
+    pub rows: usize,
+    pub cell_width: u16,
+    pub cell_height: u16,
+}
+
+impl TerminalWindowSize {
+    #[inline]
+    pub const fn new(cols: usize, rows: usize, cell_width: u16, cell_height: u16) -> Self {
+        Self {
+            cols,
+            rows,
+            cell_width,
+            cell_height,
+        }
+    }
+}
+
+/// Convert a measured pixel metric to the integer form used by PTY size
+/// notifications and terminal size query replies.
+#[inline]
+pub fn terminal_metric_to_u16(value: f32) -> u16 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(0.0, u16::MAX as f32) as u16
+}
 
 // ---------------------------------------------------------------------------
 // Neutral grid coordinate
@@ -459,6 +528,11 @@ pub struct Cell {
 pub struct RenderableCursor {
     pub point: Point,
     pub shape: CursorShape,
+    /// Raw foreground of the cell under the cursor, before inverse-mode swap.
+    pub fg: Color,
+    /// Raw background of the cell under the cursor, before inverse-mode swap.
+    pub bg: Color,
+    pub flags: CellFlags,
     /// Whether the cell under the cursor is a wide (CJK) glyph.
     pub wide: bool,
     /// Char under the cursor (for the block-cursor inverse glyph).
@@ -548,6 +622,9 @@ fn content_from_term_rows(
         // snapshot in build_layout.
         point: Point::new(cur.point.line.0, cur.point.column.0),
         shape: cur.shape.into(),
+        fg: cursor_cell.fg.into(),
+        bg: cursor_cell.bg.into(),
+        flags: cursor_cell.flags.into(),
         wide: cursor_cell.flags.contains(AlacFlags::WIDE_CHAR),
         text: cursor_cell.c,
         bold: cursor_cell.flags.contains(AlacFlags::BOLD)
@@ -565,13 +642,6 @@ fn content_from_term_rows(
         display_offset,
         history_size: term.history_size(),
     }
-}
-
-/// Snapshot just the private-mode flags into neutral [`Modes`], for callers
-/// (IME gating, key/mouse encoding) that need the mode but not a full content
-/// snapshot. Keeps the lock-and-read confined to this seam module.
-pub fn modes_of(term: &Term<ZedListener>) -> Modes {
-    (*term.mode()).into()
 }
 
 /// Current grid size as `(columns, screen_lines)`. Confines the `Dimensions`
@@ -602,14 +672,9 @@ pub fn resize_if_needed(term: &mut Term<ZedListener>, cols: usize, rows: usize) 
 // ---------------------------------------------------------------------------
 
 /// A search match highlight to be painted by TerminalElement.
-///
-/// `start`/`end` still carry `alacritty_terminal::index::Point` (this module is
-/// the alacritty-allowlisted seam); migrating them to the neutral [`Point`] is
-/// folded into US-009/US-010 where the producer (`view.rs`) and consumer
-/// (`element`) are already being touched.
 pub struct SearchHighlight {
-    pub start: AlacPoint,
-    pub end: AlacPoint,
+    pub start: Point,
+    pub end: Point,
     pub is_active: bool,
 }
 

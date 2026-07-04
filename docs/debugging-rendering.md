@@ -34,7 +34,8 @@ residual is visible at a glance.
 
 | Record | Fields |
 |---|---|
-| `cell_dims` | `cell_width`, `line_height`, `scale_factor`, `origin_x`, `origin_y` |
+| `cell_dims` | `cell_width_raw`, `cell_width_snapped`, `line_height_raw`, `line_height_snapped`, `scale_factor` |
+| `origin` | `x`, `y` |
 | `glyph` | `line`, `col`, `x`, `y` (one per text run, sampled to first 16 columns of each row) |
 | `bg` | `col`, `line`, `x`, `y`, `w`, `h` (one per cell background, same row sampling) |
 | `block_quad` | `col`, `line`, `x`, `y`, `w`, `h` (block elements `▀ ▄ █` etc.) |
@@ -91,8 +92,8 @@ assert_pixel_aligned(glyph_x.as_f32(), "glyph_x after US-003 snap");
 ## Release builds
 
 The whole `pixel_probe` module is gated `#[cfg(debug_assertions)]` at its
-declaration in `src-app/src/terminal/element/mod.rs`. The four call sites
-(`measure_cell`, `paint_text_runs`, `paint_cell_backgrounds`,
+declaration in `src-app/src/terminal/element/mod.rs`. The call sites
+(`resolve_frame_metrics`, `paint`, `paint_text_runs`, `paint_cell_backgrounds`,
 `paint_block_quads`) are likewise gated, and the overlay paint pass is
 both `cfg`-gated and behind a runtime check on `overlay_enabled()`. A
 release build links nothing from this module.

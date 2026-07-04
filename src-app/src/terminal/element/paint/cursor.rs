@@ -11,8 +11,10 @@ use super::super::geometry::CellGeometry;
 use super::super::{CursorInfo, LayoutState};
 use crate::terminal::types::CursorShape;
 
-fn cursor_text_color(layout: &LayoutState) -> gpui::Hsla {
-    if layout.background_color.a > 0.01 {
+fn cursor_text_color(cursor: &CursorInfo, layout: &LayoutState) -> gpui::Hsla {
+    if cursor.cell_bg.a > 0.01 {
+        cursor.cell_bg
+    } else if layout.background_color.a > 0.01 {
         layout.background_color
     } else {
         gpui::hsla(0.0, 0.0, 0.08, 1.0)
@@ -28,20 +30,12 @@ fn paint_cursor_info(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let CellGeometry {
-        origin,
-        cell_width,
-        line_height,
-    } = *geom;
-
-    let cx_ = origin.x + cell_width * cursor.col as f32;
-    let cy = origin.y + line_height * cursor.line as f32;
-    let mut cw = if cursor.wide {
-        cell_width * 2.0
-    } else {
-        cell_width
-    };
-    let ch = line_height;
+    let cols = if cursor.wide { 2 } else { 1 };
+    let cell_bounds = geom.cell_span_bounds(cursor.line, cursor.col, cols);
+    let cx_ = cell_bounds.origin.x;
+    let cy = cell_bounds.origin.y;
+    let mut cw = cell_bounds.size.width;
+    let ch = cell_bounds.size.height;
     let color = cursor.color;
 
     match cursor.shape {
@@ -78,7 +72,7 @@ fn paint_cursor_info(
                     &[TextRun {
                         len,
                         font: cursor_font,
-                        color: cursor_text_color(layout),
+                        color: cursor_text_color(cursor, layout),
                         background_color: None,
                         underline: None,
                         strikethrough: None,
@@ -107,7 +101,7 @@ fn paint_cursor_info(
             if let Some(shaped) = shaped {
                 let _ = shaped.paint(
                     Point { x: cx_, y: cy },
-                    line_height,
+                    geom.line_height,
                     TextAlign::Left,
                     None,
                     window,
