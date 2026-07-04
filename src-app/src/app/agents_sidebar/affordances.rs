@@ -378,6 +378,10 @@ impl PaneFlowApp {
         agent: crate::agent_launcher::TerminalAgent,
         cx: &mut Context<Self>,
     ) {
+        if !agent.is_installed() {
+            self.show_toast(format!("{} is not installed", agent.display_name()), cx);
+            return;
+        }
         let new_thread_id =
             match self.add_terminal_thread(project_idx, agent.display_name(), Some(agent), cx) {
                 Ok(id) => id,
@@ -674,6 +678,10 @@ impl PaneFlowApp {
         agent: crate::agent_launcher::TerminalAgent,
         cx: &mut Context<Self>,
     ) {
+        if !agent.is_installed() {
+            self.show_toast(format!("{} is not installed", agent.display_name()), cx);
+            return;
+        }
         let new_chat_id = self.add_chat_thread(agent.display_name(), Some(agent), cx);
         if let Some(chat_idx) = self.chats.iter().position(|t| t.id == new_chat_id) {
             let _ = self.select_chat(chat_idx, cx);

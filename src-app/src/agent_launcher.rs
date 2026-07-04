@@ -300,39 +300,33 @@ impl TerminalAgent {
         installed_binaries().contains(self.binary())
     }
 
+    /// Static arguments appended after [`Self::binary`] for interactive agents
+    /// whose CLI entry point is a subcommand rather than the bare executable.
+    fn command_args(self) -> &'static [&'static str] {
+        match self {
+            TerminalAgent::Kiro => &["chat"],
+            TerminalAgent::Openclaw => &["tui"],
+            _ => &[],
+        }
+    }
+
+    fn command_parts(self, config: &PaneFlowConfig) -> Vec<String> {
+        let mut parts = Vec::with_capacity(4);
+        parts.push(self.binary().to_string());
+        parts.extend(self.command_args().iter().map(|arg| (*arg).to_string()));
+        if self == TerminalAgent::ClaudeCode
+            && config.claude_code_bypass_permissions.unwrap_or(false)
+        {
+            parts.push("--permission-mode".to_string());
+            parts.push("bypassPermissions".to_string());
+        }
+        parts
+    }
+
     /// Bare command that starts the agent. Honors
     /// `claude_code_bypass_permissions` for Claude Code.
-    fn command(self, config: &PaneFlowConfig) -> &'static str {
-        match self {
-            TerminalAgent::ClaudeCode => {
-                if config.claude_code_bypass_permissions.unwrap_or(false) {
-                    "claude --permission-mode bypassPermissions"
-                } else {
-                    "claude"
-                }
-            }
-            TerminalAgent::Codex => "codex",
-            TerminalAgent::OpenCode => "opencode",
-            TerminalAgent::Pi => "pi",
-            TerminalAgent::Hermes => "hermes",
-            TerminalAgent::Grok => "grok",
-            TerminalAgent::Amp => "amp",
-            // Cursor's CLI binary is `cursor-agent`, not `cursor`.
-            TerminalAgent::Cursor => "cursor-agent",
-            TerminalAgent::Gemini => "gemini",
-            // Kiro's interactive entry point is the `chat` subcommand.
-            TerminalAgent::Kiro => "kiro-cli chat",
-            // Antigravity ships as the `agy` binary.
-            TerminalAgent::Antigravity => "agy",
-            TerminalAgent::Copilot => "copilot",
-            TerminalAgent::CodeBuddy => "codebuddy",
-            // Factory's CLI binary is `droid`.
-            TerminalAgent::Factory => "droid",
-            // Qoder's CLI binary is `qodercli`.
-            TerminalAgent::Qoder => "qodercli",
-            // Openclaw's interactive entry point is the `tui` subcommand.
-            TerminalAgent::Openclaw => "openclaw tui",
-        }
+    fn command(self, config: &PaneFlowConfig) -> String {
+        render_command_parts(&self.command_parts(config))
     }
 
     /// Whether the CLI accepts a caller-forced session UUID via
@@ -370,22 +364,17 @@ impl TerminalAgent {
     /// `--permission-mode bypassPermissions` already baked into the base
     /// command. Any other agent (or `None`) yields the plain base command.
     fn command_with_session(self, config: &PaneFlowConfig, session_id: Option<&str>) -> String {
-        let base = self.command(config);
-        match (self, session_id) {
-            (TerminalAgent::ClaudeCode, Some(id))
-                if crate::agent_sessions::is_valid_session_id(id) =>
-            {
-                // `base` is "claude" or "claude --permission-mode
-                // bypassPermissions"; splice the id after the leading token
-                // so both arms keep "claude" as the launch command's first
-                // token (the PATH-probe invariant).
-                format!(
-                    "claude --session-id {id}{}",
-                    base.strip_prefix("claude").unwrap_or("")
-                )
-            }
-            _ => base.to_string(),
+        if self != TerminalAgent::ClaudeCode {
+            return self.command(config);
         }
+        let Some(id) = session_id.filter(|id| crate::agent_sessions::is_valid_session_id(id))
+        else {
+            return self.command(config);
+        };
+        let mut parts = self.command_parts(config);
+        parts.insert(1, "--session-id".to_string());
+        parts.insert(2, id.to_string());
+        render_command_parts(&parts)
     }
 
     /// Shell-aware launch command. The clear prefix is selected for the
@@ -425,6 +414,10 @@ impl TerminalAgent {
             .filter(|a| a.is_visible(config))
             .collect()
     }
+}
+
+fn render_command_parts(parts: &[String]) -> String {
+    parts.join(" ")
 }
 
 /// Agent binaries found on `PATH`, probed once and cached for the process
@@ -485,11 +478,8 @@ mod tests {
         // launcher runs, or default visibility detects the wrong binary.
         let cfg = PaneFlowConfig::default();
         for agent in TerminalAgent::ALL {
-            let leading = agent
-                .command(&cfg)
-                .split_whitespace()
-                .next()
-                .unwrap_or_default();
+            let command = agent.command(&cfg);
+            let leading = command.split_whitespace().next().unwrap_or_default();
             assert_eq!(
                 leading,
                 agent.binary(),
@@ -660,6 +650,13 @@ mod tests {
                 "hostile id {hostile:?} must be dropped"
             );
         }
+    }
+
+    #[test]
+    fn bare_commands_preserve_multi_token_agent_commands() {
+        let cfg = PaneFlowConfig::default();
+        assert_eq!(TerminalAgent::Kiro.command(&cfg), "kiro-cli chat");
+        assert_eq!(TerminalAgent::Openclaw.command(&cfg), "openclaw tui");
     }
 
     #[test]

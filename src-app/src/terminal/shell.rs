@@ -700,6 +700,10 @@ mod tests {
             clear_then_for_shell("codex", r"C:\Windows\System32\cmd.exe"),
             "cls && codex"
         );
+        assert_eq!(
+            clear_then_for_shell("openclaw tui", r"C:\Windows\System32\cmd.exe"),
+            "cls && openclaw tui"
+        );
     }
 
     #[test]
@@ -709,6 +713,10 @@ mod tests {
             "Clear-Host; claude"
         );
         assert_eq!(clear_then_for_shell("claude", "pwsh"), "Clear-Host; claude");
+        assert_eq!(
+            clear_then_for_shell("kiro-cli chat", "pwsh"),
+            "Clear-Host; kiro-cli chat"
+        );
     }
 
     #[test]
@@ -716,6 +724,10 @@ mod tests {
         assert_eq!(
             clear_then_for_shell("opencode", "/bin/zsh"),
             "clear && opencode"
+        );
+        assert_eq!(
+            clear_then_for_shell("kiro-cli chat", "/bin/zsh"),
+            "clear && kiro-cli chat"
         );
     }
 

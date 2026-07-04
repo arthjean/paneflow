@@ -317,8 +317,7 @@ impl PaneFlowApp {
         };
 
         let ui = crate::theme::ui_colors();
-        let config = paneflow_config::loader::load_config();
-        let agents = TerminalAgent::visible(&config);
+        let agents = TerminalAgent::visible(&self.cached_config);
 
         // Codex-style hover: a whisper darken of the filled `ui.subtle` tile,
         // mirroring the settings `select_trigger` - no border, no accent ring.
@@ -331,6 +330,7 @@ impl PaneFlowApp {
             .into_iter()
             .map(|agent| {
                 let name = agent.display_name();
+                let installed = agent.is_installed();
                 let icon_color: gpui::Hsla =
                     agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text);
                 div()
@@ -350,6 +350,7 @@ impl PaneFlowApp {
                     .py(px(10.))
                     .rounded(px(10.))
                     .bg(ui.subtle)
+                    .when(!installed, |d| d.opacity(0.58))
                     .cursor(CursorStyle::PointingHand)
                     .hover(move |s| s.bg(hover_bg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
@@ -1118,10 +1119,8 @@ impl PaneFlowApp {
         // Cache hits (in-session re-selection) skip this, so a running
         // agent is never relaunched on navigation.
         if let Some(agent) = terminal_agent {
-            let cmd = agent.launch_command_with_session(
-                &paneflow_config::loader::load_config(),
-                bound_session.as_deref(),
-            );
+            let cmd =
+                agent.launch_command_with_session(&self.cached_config, bound_session.as_deref());
             view.read(cx).send_command(&cmd);
         }
         // Mirror Zed's `AgentTerminal::refresh_terminal_metadata`

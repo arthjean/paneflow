@@ -543,17 +543,23 @@ pub mod cache {
     }
 }
 
-/// Read user config and return the agents whose AI Agent launcher is currently
-/// visible, in PaneFlow's launcher display order. Both the sidebar render and
-/// the on-open session scans filter through this so a hidden Settings → AI
-/// Agent row never appears in the UI and we don't pay the I/O cost of a scan
-/// the user can't see.
-pub fn enabled_session_agents() -> Vec<SessionAgent> {
-    let cfg = paneflow_config::loader::load_config();
-    crate::agent_launcher::TerminalAgent::visible(&cfg)
+/// Return the session-readable agents whose AI Agent launcher is currently
+/// visible, in PaneFlow's launcher display order. Render paths should use this
+/// with the already-cached app config so they never hit the filesystem.
+pub fn enabled_session_agents_from_config(
+    cfg: &paneflow_config::schema::PaneFlowConfig,
+) -> Vec<SessionAgent> {
+    crate::agent_launcher::TerminalAgent::visible(cfg)
         .into_iter()
         .filter_map(|agent| agent.session_agent())
         .collect()
+}
+
+/// Read user config and return the currently enabled session agents. Use this
+/// only from non-render paths that do not already hold a fresh config snapshot.
+pub fn enabled_session_agents() -> Vec<SessionAgent> {
+    let cfg = paneflow_config::loader::load_config();
+    enabled_session_agents_from_config(&cfg)
 }
 
 /// Blocking title-only session scan for the given agent and cwd. Call from
@@ -1044,6 +1050,29 @@ fn parse_iso8601_to_unix_secs(iso: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enabled_session_agents_from_config_uses_visible_session_capable_agents() {
+        let cfg = paneflow_config::schema::PaneFlowConfig {
+            claude_code_button_visible: Some(true),
+            codex_button_visible: Some(false),
+            opencode_button_visible: Some(true),
+            pi_button_visible: Some(false),
+            hermes_agent_button_visible: Some(false),
+            grok_button_visible: Some(false),
+            cursor_button_visible: Some(false),
+            gemini_button_visible: Some(false),
+            kiro_button_visible: Some(false),
+            amp_button_visible: Some(true),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            enabled_session_agents_from_config(&cfg),
+            vec![SessionAgent::Claude, SessionAgent::OpenCode],
+            "visible agents without session readers must not create sidebar groups"
+        );
+    }
 
     #[test]
     fn relative_label_under_minute() {

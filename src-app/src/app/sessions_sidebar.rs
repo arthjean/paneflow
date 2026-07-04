@@ -84,7 +84,8 @@ impl PaneFlowApp {
         self.agent_sessions.sessions_scan_generation =
             self.agent_sessions.sessions_scan_generation.wrapping_add(1);
         let scan_generation = self.agent_sessions.sessions_scan_generation;
-        let enabled_agents = crate::agent_sessions::enabled_session_agents();
+        let enabled_agents =
+            crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config);
         // Fresh handle so a previous scroll offset doesn't bleed into the new
         // sidebar.
         self.agent_sessions.sessions_scroll = gpui::ScrollHandle::new();
@@ -280,10 +281,11 @@ impl PaneFlowApp {
         }
 
         // US-008: an agent can be toggled off in Settings while the sidebar is
-        // open. The list is driven entirely by `enabled_session_agents()`, so a
-        // disabled agent's group simply disappears on the next render; if the
+        // open. The list is driven by the cached config snapshot, so a disabled
+        // agent's group disappears on the next render after propagation; if the
         // user disables them all, show an empty state rather than a blank panel.
-        let enabled = crate::agent_sessions::enabled_session_agents();
+        let enabled =
+            crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config);
         if enabled.is_empty() {
             return div()
                 .flex()
@@ -595,7 +597,7 @@ impl PaneFlowApp {
         session_id: &str,
         cx: &mut Context<Self>,
     ) {
-        let Some(command) = resume_command(agent, session_id) else {
+        let Some(command) = resume_command(agent, session_id, &self.cached_config) else {
             self.show_toast("Could not resume session - invalid session id", cx);
             return;
         };
@@ -676,7 +678,8 @@ impl PaneFlowApp {
 
     fn sessions_nav_targets(&self) -> Vec<SessionNavTarget> {
         let mut rows = Vec::new();
-        for agent in crate::agent_sessions::enabled_session_agents() {
+        for agent in crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config)
+        {
             let idx = agent_index(agent);
             if self.agent_sessions.sessions_group_collapsed[idx] {
                 continue;
@@ -944,12 +947,10 @@ fn agent_icon_element(agent: SessionAgent, size: Pixels, ui: crate::theme::UiCol
     }
 }
 
-/// True when Settings → AI Agent has `claude_code_bypass_permissions` toggled
-/// on. Read at click time so a Settings flip takes effect without a restart.
-fn claude_bypass_enabled() -> bool {
-    paneflow_config::loader::load_config()
-        .claude_code_bypass_permissions
-        .unwrap_or(false)
+/// True when Settings -> AI Agent has `claude_code_bypass_permissions` toggled
+/// on in the caller's config snapshot.
+fn claude_bypass_enabled(config: &paneflow_config::schema::PaneFlowConfig) -> bool {
+    config.claude_code_bypass_permissions.unwrap_or(false)
 }
 
 /// Build the command sent to the bound terminal when a session row is clicked.
@@ -960,14 +961,18 @@ fn claude_bypass_enabled() -> bool {
 /// before interpolation so a tampered record that somehow bypassed the scanner
 /// filter (`*_sessions.rs`) can never inject a second shell command. Callers
 /// skip the send on `None`.
-pub(crate) fn resume_command(agent: SessionAgent, session_id: &str) -> Option<String> {
+pub(crate) fn resume_command(
+    agent: SessionAgent,
+    session_id: &str,
+    config: &paneflow_config::schema::PaneFlowConfig,
+) -> Option<String> {
     if !crate::agent_sessions::is_valid_session_id(session_id) {
         log::warn!("resume_command: refused invalid session id, not sending to PTY");
         return None;
     }
     Some(match agent {
         SessionAgent::Claude => {
-            if claude_bypass_enabled() {
+            if claude_bypass_enabled(config) {
                 format!("claude --resume {session_id} --permission-mode bypassPermissions")
             } else {
                 format!("claude --resume {session_id}")
@@ -1004,20 +1009,21 @@ mod tests {
         // the builder boundary - the call sites skip the send on `None`.
         // This proves the integration, not just the predicate
         // (`agent_sessions::valid_session_id_rejects_leading_dash_*`).
+        let cfg = paneflow_config::schema::PaneFlowConfig::default();
         for agent in SessionAgent::ALL {
             assert_eq!(
-                resume_command(agent, "--dangerously-skip-permissions"),
+                resume_command(agent, "--dangerously-skip-permissions", &cfg),
                 None,
                 "{agent:?}: a `--`-prefixed id must not build a command"
             );
-            assert_eq!(resume_command(agent, "-x"), None);
-            assert_eq!(resume_command(agent, "ses_x; rm -rf ~"), None);
-            assert_eq!(resume_command(agent, "$(reboot)"), None);
+            assert_eq!(resume_command(agent, "-x", &cfg), None);
+            assert_eq!(resume_command(agent, "ses_x; rm -rf ~", &cfg), None);
+            assert_eq!(resume_command(agent, "$(reboot)", &cfg), None);
         }
         // A legitimate UUID session id still builds a command for every agent.
         let valid = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
         for agent in SessionAgent::ALL {
-            assert!(resume_command(agent, valid).is_some());
+            assert!(resume_command(agent, valid, &cfg).is_some());
         }
     }
 
