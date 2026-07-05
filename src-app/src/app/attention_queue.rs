@@ -115,7 +115,7 @@ impl PaneFlowApp {
             return;
         }
         if self.attention_queue_open {
-            self.close_attention_queue(cx);
+            self.close_attention_queue_and_restore_focus(window, cx);
             return;
         }
         self.attention_queue_open = true;
@@ -128,6 +128,17 @@ impl PaneFlowApp {
         self.attention_queue_open = false;
         self.attention_queue_selected = 0;
         cx.notify();
+    }
+
+    pub(crate) fn close_attention_queue_and_restore_focus(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_attention_queue(cx);
+        if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
+            ws.focus_first(window, cx);
+        }
     }
 
     /// Enter / click on a row: teleport to the waiting pane (workspace
@@ -171,7 +182,7 @@ impl PaneFlowApp {
         let rows = self.attention_queue_rows(cx);
         let len = rows.len();
         match key {
-            "escape" => self.close_attention_queue(cx),
+            "escape" => self.close_attention_queue_and_restore_focus(window, cx),
             "enter" if len > 0 => {
                 let idx = self.attention_queue_selected.min(len - 1);
                 if let Some(sid) = rows[idx].surface_id {
@@ -202,8 +213,8 @@ impl PaneFlowApp {
             .occlude()
             .track_focus(&self.attention_queue_focus)
             .on_key_down(cx.listener(Self::handle_attention_queue_key_down))
-            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
-                this.close_attention_queue(cx);
+            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+                this.close_attention_queue_and_restore_focus(window, cx);
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())

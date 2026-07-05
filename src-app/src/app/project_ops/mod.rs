@@ -216,6 +216,7 @@ impl PaneFlowApp {
         if project.threads.len() >= MAX_THREADS_PER_PROJECT {
             return Err(OpError::ThreadLimitReached);
         }
+        let now = std::time::Instant::now();
         let thread = Thread {
             id: next_thread_id(),
             title: title.into(),
@@ -235,6 +236,11 @@ impl PaneFlowApp {
             pinned: false,
             agent_pid: None,
             agent_proc_start: None,
+            message: None,
+            waiting_since: None,
+            last_activity: now,
+            active_tool_name: None,
+            last_result: None,
             // Legacy Agent-kind row (not a Terminal Thread): no forced
             // session id, no manual-rename lock.
             session_id: None,

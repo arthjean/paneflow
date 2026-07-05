@@ -1,8 +1,4 @@
-//! Pure Rosetta projection helpers.
-//!
-//! This module is intentionally render-agnostic for EP-001: rows are derived
-//! from existing in-memory app state, while follow-up stories can decide how to
-//! paint and activate them.
+//! Rosetta projection, recent-history, and GPUI surface helpers.
 #![allow(dead_code)]
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -23,7 +19,6 @@ use crate::settings::components::with_alpha;
 use crate::workspace::Workspace;
 
 pub(crate) const ROSETTA_AGENT_TEXT_CAP_CHARS: usize = 512;
-pub(crate) const ROSETTA_TYPED_ACTION_COMPACT_COMMAND_CHARS: usize = 160;
 pub(crate) const ROSETTA_RECENT_EVENT_CAP: usize = 25;
 pub(crate) const ROSETTA_RECENT_EVENT_RETENTION: Duration = Duration::from_secs(5 * 60);
 const ROSETTA_COMPACT_MAX_WIDTH: f32 = 460.;
@@ -81,7 +76,7 @@ impl RosettaRowState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RosettaFocusTarget {
     WorkspaceSurface { workspace_id: u64, surface_id: u64 },
-    AgentsThread(AgentsTarget),
+    AgentsThread { thread_id: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +116,6 @@ pub(crate) struct RosettaRow {
     pub(crate) last_activity_secs: Option<u64>,
     pub(crate) active_tool_name: Option<String>,
     pub(crate) last_result: Option<String>,
-    pub(crate) typed_action: Option<RosettaTypedAction>,
     sort_order: usize,
 }
 
@@ -136,56 +130,6 @@ impl RosettaRow {
             }
             RosettaRowSource::RecentEvent { sequence } => RosettaRowKey::RecentEvent { sequence },
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RosettaActionRisk {
-    Low,
-    Medium,
-    Destructive,
-    Network,
-    Credential,
-    Publish,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RosettaTypedAction {
-    pub(crate) action_id: Option<String>,
-    pub(crate) command: Option<String>,
-    pub(crate) cwd: Option<String>,
-    pub(crate) tool: Option<TerminalAgent>,
-    pub(crate) risk: RosettaActionRisk,
-}
-
-impl RosettaTypedAction {
-    fn is_complete(&self) -> bool {
-        self.action_id
-            .as_deref()
-            .is_some_and(|value| !value.trim().is_empty())
-            && self
-                .command
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            && self
-                .cwd
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            && self.tool.is_some()
-    }
-
-    fn direct_approval_allowed_in_compact(&self) -> bool {
-        self.is_complete()
-            && self.command.as_deref().is_some_and(|command| {
-                command.chars().count() <= ROSETTA_TYPED_ACTION_COMPACT_COMMAND_CHARS
-            })
-            && !matches!(
-                self.risk,
-                RosettaActionRisk::Destructive
-                    | RosettaActionRisk::Network
-                    | RosettaActionRisk::Credential
-                    | RosettaActionRisk::Publish
-            )
     }
 }
 
@@ -353,6 +297,19 @@ pub(crate) struct RosettaRecentHistory {
 
 impl RosettaRecentHistory {
     pub(crate) fn push(&mut self, mut event: RosettaRecentEvent) {
+        if let Some(target) = event.focus_target {
+            self.events.retain(|existing| {
+                existing.focus_target != Some(target)
+                    || existing.state != RosettaRowState::Finished
+                    || event.state != RosettaRowState::Finished
+            });
+            if event.state != RosettaRowState::Finished {
+                self.events.retain(|existing| {
+                    !(existing.focus_target == Some(target)
+                        && existing.state == RosettaRowState::Finished)
+                });
+            }
+        }
         event.sequence = self.next_sequence;
         self.next_sequence = self.next_sequence.saturating_add(1);
         event.message = cap_optional_agent_text(event.message.as_deref());
@@ -371,14 +328,6 @@ impl RosettaRecentHistory {
     pub(crate) fn dismiss_sequence(&mut self, sequence: u64) -> bool {
         let before = self.events.len();
         self.events.retain(|event| event.sequence != sequence);
-        before != self.events.len()
-    }
-
-    pub(crate) fn remove_finished_for_target(&mut self, target: RosettaFocusTarget) -> bool {
-        let before = self.events.len();
-        self.events.retain(|event| {
-            !(event.state == RosettaRowState::Finished && event.focus_target == Some(target))
-        });
         before != self.events.len()
     }
 
@@ -448,7 +397,7 @@ impl crate::PaneFlowApp {
                     .map(|project| project.title.as_str()),
                 AgentsTarget::Chat { .. } => Some("Chat"),
             };
-            rosetta_recent_event_from_agents_thread(thread, target, context, state, occurred_at)
+            rosetta_recent_event_from_agents_thread(thread, context, state, occurred_at)
         });
         if let Some(event) = event {
             self.rosetta_recent_history.push(event);
@@ -763,7 +712,7 @@ impl crate::PaneFlowApp {
         &self,
         row: &RosettaRow,
         idx: usize,
-        _selected: bool,
+        selected: bool,
         status: RosettaTargetStatus,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
@@ -834,6 +783,7 @@ impl crate::PaneFlowApp {
             .px(px(12.))
             .py(px(7.))
             .text_size(px(12.))
+            .when(selected, |d| d.bg(ui.subtle))
             .when(is_read, |d| d.opacity(0.68))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
@@ -1150,8 +1100,8 @@ impl crate::PaneFlowApp {
                 cx.notify();
                 true
             }
-            RosettaFocusTarget::AgentsThread(target) => {
-                let Some(thread_id) = self.thread_for_target(target).map(|thread| thread.id) else {
+            RosettaFocusTarget::AgentsThread { thread_id } => {
+                let Some(target) = self.agents_thread_target_by_id(thread_id) else {
                     cx.notify();
                     return false;
                 };
@@ -1254,8 +1204,8 @@ impl crate::PaneFlowApp {
                     RosettaTargetStatus::Unavailable
                 }
             }
-            Some(RosettaFocusTarget::AgentsThread(target)) => {
-                if self.thread_for_target(target).is_some() {
+            Some(RosettaFocusTarget::AgentsThread { thread_id }) => {
+                if self.agents_thread_target_by_id(thread_id).is_some() {
                     RosettaTargetStatus::Navigable
                 } else {
                     RosettaTargetStatus::Unavailable
@@ -1350,6 +1300,7 @@ fn build_rosetta_projection_from_parts(
                 state,
                 target,
                 Some(project.title.as_str()),
+                now,
                 sort_order,
             ));
             sort_order += 1;
@@ -1365,6 +1316,7 @@ fn build_rosetta_projection_from_parts(
             state,
             AgentsTarget::Chat { chat_idx },
             Some("Chat"),
+            now,
             sort_order,
         ));
         sort_order += 1;
@@ -1435,7 +1387,6 @@ fn row_from_workspace_session(
         last_activity_secs: Some(elapsed(now, session.last_activity).as_secs()),
         active_tool_name: cap_optional_agent_text(session.active_tool_name.as_deref()),
         last_result: cap_optional_agent_text(session.last_result.as_deref()),
-        typed_action: None,
         sort_order,
     }
 }
@@ -1445,6 +1396,7 @@ fn row_from_agents_thread(
     state: RosettaRowState,
     target: AgentsTarget,
     context: Option<&str>,
+    now: Instant,
     sort_order: usize,
 ) -> RosettaRow {
     RosettaRow {
@@ -1458,13 +1410,16 @@ fn row_from_agents_thread(
         thread_title: Some(thread.title.clone()),
         context: context.map(ToOwned::to_owned),
         surface_id: None,
-        focus_target: Some(RosettaFocusTarget::AgentsThread(target)),
-        message: None,
-        waiting_secs: None,
-        last_activity_secs: None,
-        active_tool_name: None,
-        last_result: None,
-        typed_action: None,
+        focus_target: Some(RosettaFocusTarget::AgentsThread {
+            thread_id: thread.id,
+        }),
+        message: cap_optional_agent_text(thread.message.as_deref()),
+        waiting_secs: thread
+            .waiting_since
+            .map(|since| elapsed(now, since).as_secs()),
+        last_activity_secs: Some(elapsed(now, thread.last_activity).as_secs()),
+        active_tool_name: cap_optional_agent_text(thread.active_tool_name.as_deref()),
+        last_result: cap_optional_agent_text(thread.last_result.as_deref()),
         sort_order,
     }
 }
@@ -1490,7 +1445,6 @@ fn row_from_recent_event(
         last_activity_secs: Some(elapsed(now, event.occurred_at).as_secs()),
         active_tool_name: None,
         last_result: event.last_result.clone(),
-        typed_action: None,
         sort_order,
     }
 }
@@ -1520,7 +1474,6 @@ pub(crate) fn rosetta_recent_event_from_workspace_session(
 
 pub(crate) fn rosetta_recent_event_from_agents_thread(
     thread: &Thread,
-    target: AgentsTarget,
     context: Option<&str>,
     state: RosettaRowState,
     occurred_at: Instant,
@@ -1529,7 +1482,11 @@ pub(crate) fn rosetta_recent_event_from_agents_thread(
     event.tool = Some(thread_tool(thread));
     event.thread_title = Some(thread.title.clone());
     event.context = context.map(ToOwned::to_owned);
-    event.focus_target = Some(RosettaFocusTarget::AgentsThread(target));
+    event.focus_target = Some(RosettaFocusTarget::AgentsThread {
+        thread_id: thread.id,
+    });
+    event.message = thread.message.clone();
+    event.last_result = thread.last_result.clone();
     event
 }
 
@@ -1731,8 +1688,6 @@ fn rosetta_primary_action_label(row: &RosettaRow, status: RosettaTargetStatus) -
         RosettaTargetStatus::Navigable => {
             if row.state == RosettaRowState::WaitingForInput {
                 "Reply"
-            } else if rosetta_direct_approval_controls(row, false).is_some() {
-                "Review"
             } else {
                 "Open"
             }
@@ -1754,20 +1709,6 @@ fn rosetta_secondary_actions(row: &RosettaRow, is_read: bool) -> Vec<RosettaSeco
         RosettaRowState::Stalled | RosettaRowState::Thinking | RosettaRowState::Finished => {}
     }
     actions
-}
-
-fn rosetta_direct_approval_controls(
-    row: &RosettaRow,
-    expanded: bool,
-) -> Option<(&'static str, &'static str)> {
-    let action = row.typed_action.as_ref()?;
-    if expanded {
-        action.is_complete().then_some(("Approve", "Deny"))
-    } else {
-        action
-            .direct_approval_allowed_in_compact()
-            .then_some(("Approve", "Deny"))
-    }
 }
 
 fn rosetta_agent_label(row: &RosettaRow) -> &'static str {
@@ -2032,7 +1973,6 @@ mod tests {
             last_activity_secs: Some(3),
             active_tool_name: None,
             last_result: None,
-            typed_action: None,
             sort_order: 0,
         }
     }
@@ -2196,7 +2136,6 @@ mod tests {
             rosetta_primary_action_label(&row, RosettaTargetStatus::Navigable),
             "Reply"
         );
-        assert_eq!(rosetta_direct_approval_controls(&row, true), None);
     }
 
     #[test]
@@ -2265,60 +2204,6 @@ mod tests {
     }
 
     #[test]
-    fn typed_approval_requires_complete_metadata_and_compact_risk_gate() {
-        let mut row = sample_row(RosettaRowState::WaitingForInput, "waiting", Some(20));
-        row.typed_action = Some(RosettaTypedAction {
-            action_id: Some("approve-1".to_string()),
-            command: Some("cargo test".to_string()),
-            cwd: Some("C:/dev/paneflow-rosetta".to_string()),
-            tool: Some(TerminalAgent::Codex),
-            risk: RosettaActionRisk::Low,
-        });
-
-        assert_eq!(
-            rosetta_direct_approval_controls(&row, false),
-            Some(("Approve", "Deny"))
-        );
-
-        row.typed_action.as_mut().expect("typed action").risk = RosettaActionRisk::Network;
-        assert_eq!(rosetta_direct_approval_controls(&row, false), None);
-        assert_eq!(
-            rosetta_direct_approval_controls(&row, true),
-            Some(("Approve", "Deny"))
-        );
-
-        row.typed_action.as_mut().expect("typed action").risk = RosettaActionRisk::Low;
-        row.typed_action.as_mut().expect("typed action").command =
-            Some("x".repeat(ROSETTA_TYPED_ACTION_COMPACT_COMMAND_CHARS + 1));
-        assert_eq!(rosetta_direct_approval_controls(&row, false), None);
-        assert_eq!(
-            rosetta_direct_approval_controls(&row, true),
-            Some(("Approve", "Deny"))
-        );
-
-        row.typed_action.as_mut().expect("typed action").action_id = None;
-        assert_eq!(rosetta_direct_approval_controls(&row, true), None);
-    }
-
-    #[test]
-    fn incomplete_typed_action_falls_back_to_open() {
-        let mut row = sample_row(RosettaRowState::Thinking, "running", None);
-        row.typed_action = Some(RosettaTypedAction {
-            action_id: Some("approve-1".to_string()),
-            command: Some("cargo test".to_string()),
-            cwd: None,
-            tool: Some(TerminalAgent::Codex),
-            risk: RosettaActionRisk::Low,
-        });
-
-        assert_eq!(rosetta_direct_approval_controls(&row, true), None);
-        assert_eq!(
-            rosetta_primary_action_label(&row, RosettaTargetStatus::Navigable),
-            "Open"
-        );
-    }
-
-    #[test]
     fn compact_rows_demote_snoozed_waiting_but_keep_expanded_row_available() {
         let mut waiting = sample_row(RosettaRowState::WaitingForInput, "waiting", Some(300));
         waiting.source = RosettaRowSource::RecentEvent { sequence: 1 };
@@ -2380,7 +2265,7 @@ mod tests {
     }
 
     #[test]
-    fn recent_history_removes_finished_events_for_target_only() {
+    fn recent_history_replaces_finished_events_for_same_target_only() {
         let now = Instant::now();
         let target = RosettaFocusTarget::WorkspaceSurface {
             workspace_id: 3,
@@ -2391,22 +2276,24 @@ mod tests {
             surface_id: 88,
         };
         let mut history = RosettaRecentHistory::default();
-        let mut closed_finished = RosettaRecentEvent::new(RosettaRowState::Finished, now);
-        closed_finished.focus_target = Some(target);
-        let mut waiting = RosettaRecentEvent::new(RosettaRowState::WaitingForInput, now);
-        waiting.focus_target = Some(target);
+        let mut old_finished = RosettaRecentEvent::new(RosettaRowState::Finished, now);
+        old_finished.focus_target = Some(target);
+        old_finished.last_result = Some("old".to_string());
         let mut other_finished = RosettaRecentEvent::new(RosettaRowState::Finished, now);
         other_finished.focus_target = Some(other_target);
-        history.push(closed_finished);
-        history.push(waiting);
+        let mut new_finished = RosettaRecentEvent::new(RosettaRowState::Finished, now);
+        new_finished.focus_target = Some(target);
+        new_finished.last_result = Some("new".to_string());
+        history.push(old_finished);
         history.push(other_finished);
-
-        assert!(history.remove_finished_for_target(target));
+        history.push(new_finished);
 
         let events: Vec<_> = history.visible_events(now).collect();
         assert_eq!(events.len(), 2);
         assert!(events.iter().any(|event| {
-            event.state == RosettaRowState::WaitingForInput && event.focus_target == Some(target)
+            event.state == RosettaRowState::Finished
+                && event.focus_target == Some(target)
+                && event.last_result.as_deref() == Some("new")
         }));
         assert!(events.iter().any(|event| {
             event.state == RosettaRowState::Finished && event.focus_target == Some(other_target)
@@ -2414,11 +2301,39 @@ mod tests {
     }
 
     #[test]
+    fn recent_history_clears_finished_when_same_target_changes_state() {
+        let now = Instant::now();
+        let target = RosettaFocusTarget::WorkspaceSurface {
+            workspace_id: 3,
+            surface_id: 77,
+        };
+        let mut history = RosettaRecentHistory::default();
+        let mut finished = RosettaRecentEvent::new(RosettaRowState::Finished, now);
+        finished.focus_target = Some(target);
+        let mut errored = RosettaRecentEvent::new(RosettaRowState::Errored, now);
+        errored.focus_target = Some(target);
+
+        history.push(finished);
+        history.push(errored);
+
+        let events: Vec<_> = history.visible_events(now).collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].state, RosettaRowState::Errored);
+        assert_eq!(events[0].focus_target, Some(target));
+    }
+
+    #[test]
     fn agents_threads_project_waiting_rows_include_context_and_target() {
+        let now = Instant::now();
         let mut project = Project::new("paneflow-web", "C:/dev/paneflow-web");
         let mut thread =
             Thread::new_terminal("Codex polish", &project.cwd, Some(TerminalAgent::Codex));
         thread.status = ThreadStatus::WaitingForInput;
+        thread.message = Some("Approve cargo test?".to_string());
+        thread.waiting_since = Some(now - Duration::from_secs(33));
+        thread.last_activity = now - Duration::from_secs(7);
+        thread.active_tool_name = Some("Bash".to_string());
+        thread.last_result = Some("Previous turn".to_string());
         let thread_id = thread.id;
         project.threads.push(thread);
 
@@ -2427,7 +2342,7 @@ mod tests {
             &[project],
             &[],
             &RosettaRecentHistory::default(),
-            Instant::now(),
+            now,
         );
         let row = &projection.rows[0];
 
@@ -2437,11 +2352,13 @@ mod tests {
         assert_eq!(row.context.as_deref(), Some("paneflow-web"));
         assert_eq!(
             row.focus_target,
-            Some(RosettaFocusTarget::AgentsThread(AgentsTarget::Thread {
-                project_idx: 0,
-                thread_idx: 0,
-            }))
+            Some(RosettaFocusTarget::AgentsThread { thread_id })
         );
+        assert_eq!(row.message.as_deref(), Some("Approve cargo test?"));
+        assert_eq!(row.waiting_secs, Some(33));
+        assert_eq!(row.last_activity_secs, Some(7));
+        assert_eq!(row.active_tool_name.as_deref(), Some("Bash"));
+        assert_eq!(row.last_result.as_deref(), Some("Previous turn"));
         assert_eq!(
             row.source,
             RosettaRowSource::AgentsThread {
@@ -2522,6 +2439,7 @@ mod tests {
         let mut chat =
             Thread::new_terminal("Ask Codex", "C:/Users/Arthur", Some(TerminalAgent::Codex));
         chat.status = ThreadStatus::Thinking;
+        let thread_id = chat.id;
 
         let projection = build_rosetta_projection_from_parts(
             &[],
@@ -2534,9 +2452,7 @@ mod tests {
         assert_eq!(projection.rows[0].context.as_deref(), Some("Chat"));
         assert_eq!(
             projection.rows[0].focus_target,
-            Some(RosettaFocusTarget::AgentsThread(AgentsTarget::Chat {
-                chat_idx: 0
-            }))
+            Some(RosettaFocusTarget::AgentsThread { thread_id })
         );
     }
 
@@ -2647,14 +2563,8 @@ mod tests {
             "C:/dev/paneflow",
             Some(TerminalAgent::Codex),
         );
-        let target = AgentsTarget::Thread {
-            project_idx: 2,
-            thread_idx: 4,
-        };
-
         let event = rosetta_recent_event_from_agents_thread(
             &thread,
-            target,
             Some("paneflow"),
             RosettaRowState::Finished,
             now,
@@ -2666,7 +2576,9 @@ mod tests {
         assert_eq!(event.context.as_deref(), Some("paneflow"));
         assert_eq!(
             event.focus_target,
-            Some(RosettaFocusTarget::AgentsThread(target))
+            Some(RosettaFocusTarget::AgentsThread {
+                thread_id: thread.id
+            })
         );
     }
 

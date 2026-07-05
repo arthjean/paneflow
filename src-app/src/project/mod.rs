@@ -295,6 +295,19 @@ pub struct Thread {
     /// Transient and best-effort: when present, stale sweeping can detect PID
     /// reuse instead of treating a recycled PID as the original live agent.
     pub agent_proc_start: Option<u64>,
+    /// Latest agent question or approval prompt for a live waiting terminal
+    /// thread. Runtime-only and display-only, never persisted.
+    pub message: Option<String>,
+    /// Monotonic timestamp for entering `WaitingForInput`. Runtime-only so a
+    /// restored thread starts neutral.
+    pub waiting_since: Option<std::time::Instant>,
+    /// Last hook activity for the thread, used by Rosetta relative labels.
+    pub last_activity: std::time::Instant,
+    /// Name of the currently active CLI sub-tool, when reported by hooks.
+    pub active_tool_name: Option<String>,
+    /// Best-effort summary of the last completed turn. Runtime-only, same
+    /// provenance as workspace `AgentSession::last_result`.
+    pub last_result: Option<String>,
     /// Forced agent session UUID for a Claude Terminal Thread. Generated
     /// at creation for agents that support `--session-id`
     /// ([`crate::agent_launcher::TerminalAgent::supports_forced_session_id`])
@@ -315,6 +328,7 @@ impl Thread {
     /// Create a fresh thread with auto-allocated ID, current timestamp,
     /// and `Idle` status.
     pub fn new(title: impl Into<String>, agent: AgentKind, cwd: impl Into<String>) -> Self {
+        let now = std::time::Instant::now();
         Self {
             id: next_thread_id(),
             title: title.into(),
@@ -330,6 +344,11 @@ impl Thread {
             pinned: false,
             agent_pid: None,
             agent_proc_start: None,
+            message: None,
+            waiting_since: None,
+            last_activity: now,
+            active_tool_name: None,
+            last_result: None,
             session_id: None,
             title_user_set: false,
         }
@@ -352,6 +371,7 @@ impl Thread {
         let session_id = terminal_agent
             .filter(|a| a.supports_forced_session_id())
             .map(|_| uuid::Uuid::new_v4().to_string());
+        let now = std::time::Instant::now();
         Self {
             id: next_thread_id(),
             title: title.into(),
@@ -367,6 +387,11 @@ impl Thread {
             pinned: false,
             agent_pid: None,
             agent_proc_start: None,
+            message: None,
+            waiting_since: None,
+            last_activity: now,
+            active_tool_name: None,
+            last_result: None,
             session_id,
             title_user_set: false,
         }
@@ -546,6 +571,11 @@ pub fn thread_from_session(s: &ThreadSession) -> Option<Thread> {
         pinned: s.pinned,
         agent_pid: None,
         agent_proc_start: None,
+        message: None,
+        waiting_since: None,
+        last_activity: std::time::Instant::now(),
+        active_tool_name: None,
+        last_result: None,
         // Re-gate the restored session id through the same allow-list the
         // PTY-injection path uses: a tampered session.json must never
         // smuggle a flag-shaped value into `claude --session-id`. An

@@ -1594,6 +1594,9 @@ impl Render for PaneFlowApp {
                 .into_any_element()
         };
         let rosetta_surface_allowed = self.rosetta_surface_allowed();
+        if !rosetta_surface_allowed {
+            self.reset_rosetta_surface_state();
+        }
         let rosetta_surface = rosetta_surface_allowed
             .then(|| self.render_rosetta_surface(window, cx))
             .flatten();

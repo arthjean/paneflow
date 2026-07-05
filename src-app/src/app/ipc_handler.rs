@@ -3137,7 +3137,7 @@ impl PaneFlowApp {
                 } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
                     // The row spinner self-animates (declarative GPUI
                     // Animation in `thread_row`) - no loader-loop start here.
-                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid);
+                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid, None);
                     cx.notify();
                     serde_json::json!({"status": "running"})
                 } else {
@@ -3188,7 +3188,12 @@ impl PaneFlowApp {
                 } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
                     // tool_use keeps (or promotes) the thread spinner -
                     // same Finished-revival rationale as the workspace arm.
-                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid);
+                    apply_agents_thread_state(
+                        t,
+                        ai_types::AgentState::Thinking,
+                        pid,
+                        active_tool_name,
+                    );
                     cx.notify();
                     serde_json::json!({"status": "running"})
                 } else {
@@ -3245,7 +3250,8 @@ impl PaneFlowApp {
                     self.agent_sessions_changed(cx);
                     serde_json::json!({"status": "waiting"})
                 } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
-                    apply_agents_thread_state(t, ai_types::AgentState::WaitingForInput, pid);
+                    apply_agents_thread_state(t, ai_types::AgentState::WaitingForInput, pid, None);
+                    t.message = message.clone();
                     // Notification body uses the cleaned title so a CLI
                     // spinner glyph baked into the OSC title never leaks
                     // into the desktop notification.
@@ -3391,14 +3397,15 @@ impl PaneFlowApp {
                     let bound_session = thread.session_id.clone();
                     let title_locked = thread.title_user_set;
                     let (session_summary, transcript_to_read) = read_stop_summary(params);
+                    if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
+                        t.last_result = session_summary.clone();
+                        apply_agents_thread_state(t, ai_types::AgentState::Finished, pid, None);
+                    }
                     self.record_agents_thread_rosetta_event(
                         target,
                         crate::app::rosetta::RosettaRowState::Finished,
                         std::time::Instant::now(),
                     );
-                    if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
-                        apply_agents_thread_state(t, ai_types::AgentState::Finished, pid);
-                    }
                     cx.notify();
                     if let Some(path) = transcript_to_read {
                         Self::schedule_transcript_turn_end(
@@ -3470,16 +3477,6 @@ impl PaneFlowApp {
                     if let Some(s) = ws.agent_sessions.get_mut(&key) {
                         s.message = None;
                     }
-                    let finished_target = (!errored)
-                        .then(|| {
-                            let surface_id = ws
-                                .agent_sessions
-                                .get(&key)
-                                .and_then(|s| s.surface_id)
-                                .or(explicit_surface_id);
-                            workspace_rosetta_focus_target(workspace_id, surface_id)
-                        })
-                        .flatten();
                     let ws_title = ws.title.clone();
                     cx.notify();
                     if errored {
@@ -3506,9 +3503,19 @@ impl PaneFlowApp {
                             crate::app::rosetta::RosettaRowState::Errored,
                             std::time::Instant::now(),
                         );
-                    } else if let Some(target) = finished_target {
-                        self.rosetta_recent_history
-                            .remove_finished_for_target(target);
+                    } else {
+                        self.bind_or_resolve_session_surface(
+                            workspace_id,
+                            key,
+                            explicit_surface_id,
+                            cx,
+                        );
+                        self.record_workspace_rosetta_event(
+                            workspace_id,
+                            key,
+                            crate::app::rosetta::RosettaRowState::Finished,
+                            std::time::Instant::now(),
+                        );
                     }
                     // Finished (exit 0 / interrupt) intentionally fires no
                     // notification - `ai.stop` already announced the turn
@@ -3529,20 +3536,18 @@ impl PaneFlowApp {
                     let thread_id = thread.id;
                     let title = crate::project::clean_sidebar_title(&thread.title)
                         .unwrap_or_else(|| thread.title.clone());
-                    if errored {
-                        self.record_agents_thread_rosetta_event(
-                            target,
-                            crate::app::rosetta::RosettaRowState::Errored,
-                            std::time::Instant::now(),
-                        );
-                    } else {
-                        self.rosetta_recent_history.remove_finished_for_target(
-                            crate::app::rosetta::RosettaFocusTarget::AgentsThread(target),
-                        );
-                    }
                     if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
-                        apply_agents_thread_state(t, state, pid);
+                        apply_agents_thread_state(t, state, pid, None);
                     }
+                    self.record_agents_thread_rosetta_event(
+                        target,
+                        if errored {
+                            crate::app::rosetta::RosettaRowState::Errored
+                        } else {
+                            crate::app::rosetta::RosettaRowState::Finished
+                        },
+                        std::time::Instant::now(),
+                    );
                     if errored {
                         fire_agent_exit_notification(
                             tool,
@@ -3598,27 +3603,18 @@ impl PaneFlowApp {
                     let is_errored =
                         |s: &ai_types::AgentSession| s.state == ai_types::AgentState::Errored;
                     let mut recent_event = None;
-                    let mut finished_target_to_clear = None;
                     let removed = if let Some(p) = pid
                         && let Some(session) = ws.agent_sessions.get(&p)
                         && !is_errored(session)
                     {
-                        if session.state == ai_types::AgentState::Finished {
-                            finished_target_to_clear = workspace_rosetta_focus_target(
-                                ws.id,
-                                session.surface_id.or(explicit_surface_id),
-                            );
-                        } else {
-                            recent_event = Some(
-                                crate::app::rosetta::rosetta_recent_event_from_workspace_session(
-                                    ws.id,
-                                    &ws.title,
-                                    session,
-                                    crate::app::rosetta::RosettaRowState::Finished,
-                                    std::time::Instant::now(),
-                                ),
-                            );
-                        }
+                        recent_event = Some(workspace_recent_event_with_surface_fallback(
+                            ws.id,
+                            &ws.title,
+                            session,
+                            crate::app::rosetta::RosettaRowState::Finished,
+                            std::time::Instant::now(),
+                            explicit_surface_id,
+                        ));
                         ws.agent_sessions.remove(&p).is_some()
                     } else if pid.is_some_and(|p| ws.agent_sessions.contains_key(&p)) {
                         // Exact-PID match exists but is Errored: keep it, and
@@ -3633,22 +3629,14 @@ impl PaneFlowApp {
                         );
                         if let Some(k) = pid_to_remove {
                             if let Some(session) = ws.agent_sessions.get(&k) {
-                                if session.state == ai_types::AgentState::Finished {
-                                    finished_target_to_clear = workspace_rosetta_focus_target(
-                                        ws.id,
-                                        session.surface_id.or(explicit_surface_id),
-                                    );
-                                } else {
-                                    recent_event = Some(
-                                        crate::app::rosetta::rosetta_recent_event_from_workspace_session(
-                                            ws.id,
-                                            &ws.title,
-                                            session,
-                                            crate::app::rosetta::RosettaRowState::Finished,
-                                            std::time::Instant::now(),
-                                        ),
-                                    );
-                                }
+                                recent_event = Some(workspace_recent_event_with_surface_fallback(
+                                    ws.id,
+                                    &ws.title,
+                                    session,
+                                    crate::app::rosetta::RosettaRowState::Finished,
+                                    std::time::Instant::now(),
+                                    explicit_surface_id,
+                                ));
                             }
                             ws.agent_sessions.remove(&k);
                             true
@@ -3657,10 +3645,6 @@ impl PaneFlowApp {
                         }
                     };
                     if removed {
-                        if let Some(target) = finished_target_to_clear {
-                            self.rosetta_recent_history
-                                .remove_finished_for_target(target);
-                        }
                         if let Some(event) = recent_event {
                             self.rosetta_recent_history.push(event);
                         }
@@ -3684,10 +3668,6 @@ impl PaneFlowApp {
                             target,
                             crate::app::rosetta::RosettaRowState::Finished,
                             std::time::Instant::now(),
-                        );
-                    } else if thread.status == crate::project::ThreadStatus::Idle {
-                        self.rosetta_recent_history.remove_finished_for_target(
-                            crate::app::rosetta::RosettaFocusTarget::AgentsThread(target),
                         );
                     }
                     let Some(t) = self.agents_thread_mut_by_id(thread_id) else {
@@ -3722,7 +3702,10 @@ impl PaneFlowApp {
         self.agents_thread_target_by_id(thread_id)
     }
 
-    fn agents_thread_target_by_id(&self, thread_id: u64) -> Option<crate::project::AgentsTarget> {
+    pub(crate) fn agents_thread_target_by_id(
+        &self,
+        thread_id: u64,
+    ) -> Option<crate::project::AgentsTarget> {
         for (project_idx, project) in self.projects.iter().enumerate() {
             if let Some(thread_idx) = project
                 .threads
@@ -3746,8 +3729,27 @@ fn apply_agents_thread_state(
     thread: &mut crate::project::Thread,
     state: ai_types::AgentState,
     pid: Option<u32>,
+    active_tool_name: Option<String>,
 ) {
-    thread.status = crate::project::ThreadStatus::from_agent_state(state);
+    let previous_status = thread.status;
+    let next_status = crate::project::ThreadStatus::from_agent_state(state);
+    let now = std::time::Instant::now();
+    thread.status = next_status;
+    thread.last_activity = now;
+    thread.active_tool_name = active_tool_name;
+    match next_status {
+        crate::project::ThreadStatus::WaitingForInput => {
+            if previous_status != crate::project::ThreadStatus::WaitingForInput
+                || thread.waiting_since.is_none()
+            {
+                thread.waiting_since = Some(now);
+            }
+        }
+        _ => {
+            thread.waiting_since = None;
+            thread.message = None;
+        }
+    }
     match thread.status {
         crate::project::ThreadStatus::Idle | crate::project::ThreadStatus::Failed => {
             thread.agent_pid = None;
@@ -3770,19 +3772,38 @@ fn clear_agents_thread_on_session_end(thread: &mut crate::project::Thread) -> bo
     thread.status = crate::project::ThreadStatus::Idle;
     thread.agent_pid = None;
     thread.agent_proc_start = None;
+    thread.waiting_since = None;
+    thread.message = None;
+    thread.active_tool_name = None;
+    thread.last_activity = std::time::Instant::now();
     was_active
 }
 
-fn workspace_rosetta_focus_target(
+fn workspace_recent_event_with_surface_fallback(
     workspace_id: u64,
-    surface_id: Option<u64>,
-) -> Option<crate::app::rosetta::RosettaFocusTarget> {
-    surface_id.map(
-        |surface_id| crate::app::rosetta::RosettaFocusTarget::WorkspaceSurface {
-            workspace_id,
-            surface_id,
-        },
-    )
+    workspace_title: &str,
+    session: &ai_types::AgentSession,
+    state: crate::app::rosetta::RosettaRowState,
+    occurred_at: std::time::Instant,
+    fallback_surface_id: Option<u64>,
+) -> crate::app::rosetta::RosettaRecentEvent {
+    let mut event = crate::app::rosetta::rosetta_recent_event_from_workspace_session(
+        workspace_id,
+        workspace_title,
+        session,
+        state,
+        occurred_at,
+    );
+    if event.surface_id.is_none() {
+        event.surface_id = fallback_surface_id;
+        event.focus_target = fallback_surface_id.map(|surface_id| {
+            crate::app::rosetta::RosettaFocusTarget::WorkspaceSurface {
+                workspace_id,
+                surface_id,
+            }
+        });
+    }
+    event
 }
 
 // ---------------------------------------------------------------------------
@@ -5145,24 +5166,38 @@ mod tests {
         let self_pid = std::process::id();
         let mut thread = Thread::new_terminal("Codex", "/tmp", None);
 
-        super::apply_agents_thread_state(&mut thread, AgentState::Thinking, Some(self_pid));
+        super::apply_agents_thread_state(
+            &mut thread,
+            AgentState::Thinking,
+            Some(self_pid),
+            Some("Bash".to_string()),
+        );
         assert_eq!(thread.status, ThreadStatus::Thinking);
         assert_eq!(thread.agent_pid, Some(self_pid));
+        assert_eq!(thread.active_tool_name.as_deref(), Some("Bash"));
+        assert!(thread.last_activity.elapsed().as_secs() < 2);
 
-        super::apply_agents_thread_state(&mut thread, AgentState::WaitingForInput, None);
+        super::apply_agents_thread_state(&mut thread, AgentState::WaitingForInput, None, None);
         assert_eq!(thread.status, ThreadStatus::WaitingForInput);
+        assert!(thread.waiting_since.is_some());
+        thread.message = Some("Approve?".to_string());
+        let first_waiting_since = thread.waiting_since;
+        super::apply_agents_thread_state(&mut thread, AgentState::WaitingForInput, None, None);
+        assert_eq!(thread.waiting_since, first_waiting_since);
         assert_eq!(
             thread.agent_pid,
             Some(self_pid),
             "no-pid frames preserve the last known PID for stale sweeping"
         );
 
-        super::apply_agents_thread_state(&mut thread, AgentState::Finished, None);
+        super::apply_agents_thread_state(&mut thread, AgentState::Finished, None, None);
         assert_eq!(thread.status, ThreadStatus::Idle);
+        assert!(thread.waiting_since.is_none());
+        assert!(thread.message.is_none());
         assert!(thread.agent_pid.is_none());
         assert!(thread.agent_proc_start.is_none());
 
-        super::apply_agents_thread_state(&mut thread, AgentState::Errored, Some(self_pid));
+        super::apply_agents_thread_state(&mut thread, AgentState::Errored, Some(self_pid), None);
         assert_eq!(thread.status, ThreadStatus::Failed);
         assert!(
             thread.agent_pid.is_none(),
