@@ -15,7 +15,7 @@
 //! dependencies are READY. Wall-clock resolution is `TICK` (500 ms), with
 //! settling based on `output_generation` instead of text diffs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -227,7 +227,7 @@ fn prepare_runs(
     // Same static dedup as `up`: two units on one worktree path would fail
     // at the second `git worktree add` MID-FLOW otherwise (non-atomic).
     up_cmd::check_worktree_conflicts(&mut worktree_plans)?;
-    let port_offsets = up_cmd::allocate_port_offsets(&port_refs, plan.port_base, port_is_free);
+    let port_offsets = up_cmd::allocate_port_offsets(&port_refs, plan.port_base, port_is_free)?;
 
     Ok(plan
         .units
@@ -264,6 +264,7 @@ enum State {
     Polling {
         deadline: Instant,
         re: Regex,
+        baseline: Option<ReadSnapshot>,
     },
     Ready,
     Failed {
@@ -314,12 +315,15 @@ impl UnitRun {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ReadSnapshot {
+    text: String,
+    output_generation: Option<u64>,
+}
+
 /// What a barrier/settle poll saw.
 enum Read {
-    Snapshot {
-        text: String,
-        output_generation: u64,
-    },
+    Snapshot(ReadSnapshot),
     Gone,
 }
 
@@ -360,22 +364,16 @@ impl<T: IpcTransport> Engine<'_, T> {
             if let Err(e) = self.progress() {
                 break Some(e);
             }
+            if self.on_failure == OnFailure::FailFast && self.any_failed() {
+                self.skip_pending_after_fail_fast();
+                break None;
+            }
             self.propagate_and_schedule()?;
-            if self.on_failure == OnFailure::FailFast
-                && self
-                    .runs
-                    .iter()
-                    .any(|r| matches!(r.state, State::Failed { .. }))
-            {
+            if self.on_failure == OnFailure::FailFast && self.any_failed() {
                 // Fail-fast: stop orchestrating NOW. In-flight units stay
                 // alive in their panes (never killed); pending ones are
                 // skipped for the report.
-                for r in &mut self.runs {
-                    if matches!(r.state, State::Pending) {
-                        r.state = State::Skipped;
-                        r.error = Some("fail_fast: an earlier step failed".to_string());
-                    }
-                }
+                self.skip_pending_after_fail_fast();
                 break None;
             }
             if self.runs.iter().all(|r| r.state.is_terminal()) {
@@ -395,9 +393,16 @@ impl<T: IpcTransport> Engine<'_, T> {
             .filter(|&i| self.runs[i].unit.needs.is_empty())
             .collect();
         let mut panes = Vec::with_capacity(roots.len());
+        let mut created_worktrees: Vec<&WorktreePlan> = Vec::new();
         for &i in &roots {
             if let Some(plan) = &self.runs[i].worktree {
-                up_cmd::execute_worktree_plan(plan)?;
+                if let Err(err) = up_cmd::execute_worktree_plan(plan) {
+                    up_cmd::rollback_created_worktrees(&created_worktrees);
+                    return Err(err);
+                }
+                if plan.creates_worktree() {
+                    created_worktrees.push(plan);
+                }
             }
             let r = &self.runs[i];
             let UnitAction::Spawn(s) = &r.unit.action else {
@@ -420,14 +425,24 @@ impl<T: IpcTransport> Engine<'_, T> {
             }));
         }
 
-        let result = self
-            .client
-            .call(
-                "workspace.up",
-                json!({ "name": self.name, "layout": self.layout, "panes": panes }),
-            )
-            .map_err(CliError::runtime)?;
-        let result = super::reject_legacy_error(result)?;
+        let result = match self.client.call(
+            "workspace.up",
+            json!({ "name": self.name, "layout": self.layout, "panes": panes }),
+        ) {
+            Ok(result) => result,
+            Err(e) => {
+                up_cmd::rollback_created_worktrees(&created_worktrees);
+                return Err(CliError::runtime(e));
+            }
+        };
+        let result = match super::reject_legacy_error(result) {
+            Ok(result) => result,
+            Err(err) => {
+                up_cmd::rollback_created_worktrees(&created_worktrees);
+                return Err(err);
+            }
+        };
+        drop(created_worktrees);
         let ids: Vec<u64> = result
             .get("surface_ids")
             .and_then(|v| v.as_array())
@@ -466,17 +481,18 @@ impl<T: IpcTransport> Engine<'_, T> {
                 since: Instant::now(),
             }
         } else {
-            self.barrier_or_ready(i)
+            self.barrier_or_ready(i, None)
         };
         self.transition(i, next);
     }
 
-    fn barrier_or_ready(&self, i: usize) -> State {
+    fn barrier_or_ready(&self, i: usize, baseline: Option<ReadSnapshot>) -> State {
         match &self.runs[i].unit.ready {
             Some((pattern, timeout)) => State::Polling {
                 deadline: Instant::now() + Duration::from_secs(*timeout),
                 // Validated at parse - unreachable in practice.
                 re: Regex::new(pattern).expect("ready.pattern validated at parse"),
+                baseline,
             },
             None => State::Ready,
         }
@@ -486,15 +502,28 @@ impl<T: IpcTransport> Engine<'_, T> {
     /// (instance unreachable - US-015 AC5).
     fn progress(&mut self) -> Result<(), String> {
         for i in 0..self.runs.len() {
+            if self.on_failure == OnFailure::FailFast && self.any_failed() {
+                break;
+            }
             match &self.runs[i].state {
-                State::Polling { deadline, re } => {
-                    let (deadline, re) = (*deadline, re.clone());
+                State::Polling {
+                    deadline,
+                    re,
+                    baseline,
+                } => {
+                    let (deadline, re, baseline) = (*deadline, re.clone(), baseline.clone());
                     let sid = self.runs[i].surface_id.expect("polling has a surface");
                     match self.read_window(sid, READ_WINDOW_LINES)? {
                         Read::Gone => {
                             self.fail(i, "pane closed before the pattern appeared", false);
                         }
-                        Read::Snapshot { text, .. } => {
+                        Read::Snapshot(snapshot) => {
+                            let text = match baseline.as_ref() {
+                                Some(base) => {
+                                    text_after_baseline(base, &snapshot).unwrap_or_default()
+                                }
+                                None => snapshot.text,
+                            };
                             if re.is_match(&text) {
                                 if let Some((var, lines)) = self.runs[i].unit.capture.clone() {
                                     let tail = last_lines(&text, lines as usize);
@@ -528,10 +557,9 @@ impl<T: IpcTransport> Engine<'_, T> {
                                 self.fail(i, "pane closed before the text could be fed", false);
                                 continue;
                             }
-                            Read::Snapshot {
-                                output_generation, ..
-                            } => {
-                                if last_generation == Some(output_generation) {
+                            Read::Snapshot(snapshot) => {
+                                let output_generation = snapshot.output_generation;
+                                if last_generation == output_generation {
                                     stable += 1;
                                 } else {
                                     stable = 0;
@@ -543,7 +571,7 @@ impl<T: IpcTransport> Engine<'_, T> {
                                 fire = settle_fire(elapsed, stable, SETTLE_FLOOR, SETTLE_MAX);
                                 if !fire {
                                     self.runs[i].state = State::Settling {
-                                        last_generation: Some(output_generation),
+                                        last_generation: output_generation,
                                         stable,
                                         since,
                                     };
@@ -581,6 +609,13 @@ impl<T: IpcTransport> Engine<'_, T> {
             }
         };
         let sid = self.runs[i].surface_id.expect("feeding has a surface");
+        let baseline = match self.read_window(sid, READ_WINDOW_LINES)? {
+            Read::Snapshot(snapshot) => Some(snapshot),
+            Read::Gone => {
+                self.fail(i, "pane closed before the text could be fed", false);
+                return Ok(());
+            }
+        };
         let submit = self.runs[i].unit.submit;
         let before_submit = if submit {
             super::send_cmd::status_snapshot(self.client, sid)
@@ -617,11 +652,11 @@ impl<T: IpcTransport> Engine<'_, T> {
                         }
                     }
                 }
-                let next = self.barrier_or_ready(i);
+                let next = self.barrier_or_ready(i, baseline);
                 self.transition(i, next);
                 Ok(())
             }
-            Err(e) if e.contains("-32601") => Err(format!(
+            Err(e) if super::send_cmd::is_send_text_disabled_error(&e) => Err(format!(
                 "IPC gate is off on the instance; use PANEFLOW_IPC_ORCHESTRATION=1 for \
                  pane spawning and PANEFLOW_IPC_SCRIPTING=1 for prompt submission ({e})"
             )),
@@ -684,8 +719,10 @@ impl<T: IpcTransport> Engine<'_, T> {
         self.runs[i].started = Some(Instant::now());
         match &self.runs[i].unit.action {
             UnitAction::Spawn(_) => {
+                let mut created_worktree = false;
                 if let Some(plan) = &self.runs[i].worktree {
                     up_cmd::execute_worktree_plan(plan)?;
+                    created_worktree = plan.creates_worktree();
                 }
                 let r = &self.runs[i];
                 let UnitAction::Spawn(s) = &r.unit.action else {
@@ -715,31 +752,32 @@ impl<T: IpcTransport> Engine<'_, T> {
                     Ok(result) => {
                         if let Some(msg) = result.get("error").and_then(Value::as_str) {
                             let msg = msg.to_string();
+                            self.rollback_unit_worktree(i, created_worktree);
                             self.fail(i, &msg, false);
                             return Ok(());
                         }
                         self.runs[i].surface_id = result.get("surface_id").and_then(Value::as_u64);
                         if self.runs[i].surface_id.is_none() {
+                            self.rollback_unit_worktree(i, created_worktree);
                             self.fail(i, "surface.split returned no surface_id", false);
                             return Ok(());
                         }
                         self.enter_post_action_state(i);
                     }
-                    Err(e) => return Err(CliError::runtime(e)),
+                    Err(e) => {
+                        self.rollback_unit_worktree(i, created_worktree);
+                        return Err(CliError::runtime(e));
+                    }
                 }
             }
             UnitAction::Send { target, .. } => {
-                // Flow pane names take precedence (they're what the spec
-                // refers to); fall back to the instance-wide selector.
+                // Flow-owned aliases take precedence; fall back to the
+                // instance-wide selector for arbitrary panes.
                 let target = target.clone();
-                let sid = self
-                    .runs
-                    .iter()
-                    .find_map(|r| match &r.unit.action {
-                        UnitAction::Spawn(s) if s.name == target => r.surface_id,
-                        _ => None,
-                    })
-                    .map_or_else(|| super::selector::resolve_target(self.client, &target), Ok);
+                let sid = match self.resolve_flow_target(&target) {
+                    Some(result) => result,
+                    None => super::selector::resolve_target(self.client, &target),
+                };
                 match sid {
                     Ok(sid) => {
                         self.runs[i].surface_id = Some(sid);
@@ -755,6 +793,45 @@ impl<T: IpcTransport> Engine<'_, T> {
         Ok(())
     }
 
+    fn resolve_flow_target(&self, target: &str) -> Option<Result<u64, CliError>> {
+        let matches: Vec<(&str, u64)> = self
+            .runs
+            .iter()
+            .filter_map(|r| {
+                let UnitAction::Spawn(s) = &r.unit.action else {
+                    return None;
+                };
+                if s.name == target || r.unit.id == target || r.unit.group == target {
+                    return r.surface_id.map(|sid| (r.unit.id.as_str(), sid));
+                }
+                None
+            })
+            .collect();
+        match matches.as_slice() {
+            [] => None,
+            [(_, sid)] => Some(Ok(*sid)),
+            many => {
+                let listed = many
+                    .iter()
+                    .map(|(id, sid)| format!("{id}({sid})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                Some(Err(CliError::target(format!(
+                    "ambiguous flow target '{target}'; matches: {listed}"
+                ))))
+            }
+        }
+    }
+
+    fn rollback_unit_worktree(&self, i: usize, created_worktree: bool) {
+        if !created_worktree {
+            return;
+        }
+        if let Some(plan) = self.runs[i].worktree.as_ref() {
+            up_cmd::rollback_created_worktrees(&[plan]);
+        }
+    }
+
     fn read_window(&self, sid: u64, lines: u64) -> Result<Read, String> {
         match self.client.call(
             "surface.read",
@@ -764,22 +841,22 @@ impl<T: IpcTransport> Engine<'_, T> {
             json!({ "surface_id": sid, "lines": lines, "fenced": false }),
         ) {
             Ok(result) => {
-                if result.get("error").is_some() {
-                    return Ok(Read::Gone);
+                if let Some(message) = legacy_error_message(&result) {
+                    if is_surface_gone_error(&message) {
+                        return Ok(Read::Gone);
+                    }
+                    return Err(format!("surface.read failed: {message}"));
                 }
-                Ok(Read::Snapshot {
+                Ok(Read::Snapshot(ReadSnapshot {
                     text: result
                         .get("text")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string(),
-                    output_generation: result
-                        .get("output_generation")
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0),
-                })
+                    output_generation: result.get("output_generation").and_then(Value::as_u64),
+                }))
             }
-            Err(e) if e.contains("-32602") || e.contains("not found") => Ok(Read::Gone),
+            Err(e) if is_surface_gone_error(&e) => Ok(Read::Gone),
             Err(e) => Err(format!("instance unreachable: {e}")),
         }
     }
@@ -787,6 +864,21 @@ impl<T: IpcTransport> Engine<'_, T> {
     fn fail(&mut self, i: usize, error: &str, timeout: bool) {
         self.runs[i].error = Some(error.to_string());
         self.transition(i, State::Failed { timeout });
+    }
+
+    fn any_failed(&self) -> bool {
+        self.runs
+            .iter()
+            .any(|r| matches!(r.state, State::Failed { .. }))
+    }
+
+    fn skip_pending_after_fail_fast(&mut self) {
+        for r in &mut self.runs {
+            if matches!(r.state, State::Pending) {
+                r.state = State::Skipped;
+                r.error = Some("fail_fast: an earlier step failed".to_string());
+            }
+        }
     }
 
     fn transition(&mut self, i: usize, next: State) {
@@ -884,6 +976,50 @@ impl<T: IpcTransport> Engine<'_, T> {
     }
 }
 
+fn legacy_error_message(value: &Value) -> Option<String> {
+    let error = value.get("error")?;
+    error
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .or_else(|| Some(error.to_string()))
+}
+
+fn is_surface_gone_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("not found") || lower.contains("-32602")
+}
+
+fn text_after_baseline(baseline: &ReadSnapshot, current: &ReadSnapshot) -> Option<String> {
+    if matches!(
+        (current.output_generation, baseline.output_generation),
+        (Some(current), Some(previous)) if current <= previous
+    ) {
+        return None;
+    }
+    Some(new_text_since_baseline(&baseline.text, &current.text))
+}
+
+fn new_text_since_baseline(baseline: &str, current: &str) -> String {
+    if current == baseline {
+        return String::new();
+    }
+    if let Some(rest) = current.strip_prefix(baseline) {
+        return rest.to_string();
+    }
+    let old_lines: HashSet<&str> = baseline.lines().collect();
+    current
+        .lines()
+        .filter(|line| !old_lines.contains(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Substitute `${var}` tokens from the capture store. `${item}` was resolved
 /// at expansion, so every remaining token must be a captured variable -
 /// unknown means the capturing step failed or was skipped (US-014). The
@@ -979,6 +1115,93 @@ mod tests {
         assert_eq!(last_lines("a\nb\nc", 2), "b\nc");
         assert_eq!(last_lines("a\nb", 10), "a\nb");
         assert_eq!(last_lines("", 3), "");
+    }
+
+    #[test]
+    fn ready_baseline_uses_only_new_output() {
+        let baseline = ReadSnapshot {
+            text: "old READY\n".to_string(),
+            output_generation: Some(10),
+        };
+        let unchanged = ReadSnapshot {
+            text: "old READY\nnew READY\n".to_string(),
+            output_generation: Some(10),
+        };
+        assert!(text_after_baseline(&baseline, &unchanged).is_none());
+
+        let advanced = ReadSnapshot {
+            text: "old READY\nnew READY\n".to_string(),
+            output_generation: Some(11),
+        };
+        assert_eq!(
+            text_after_baseline(&baseline, &advanced).expect("delta"),
+            "new READY\n"
+        );
+    }
+
+    #[test]
+    fn flow_target_aliases_include_unit_id_group_and_custom_name() {
+        let spawn = Unit {
+            id: "impl".to_string(),
+            group: "feature".to_string(),
+            needs: Vec::new(),
+            action: UnitAction::Spawn(Box::new(flow_spec::SpawnUnit {
+                pane: crate::cli::workspace_spec::PaneSpec {
+                    cwd: None,
+                    agent: None,
+                    command: Some("true".to_string()),
+                    prompt: None,
+                    focus: None,
+                    env: None,
+                    name: Some("custom".to_string()),
+                    worktree: None,
+                    copy_env: None,
+                    setup: None,
+                    setup_timeout_secs: None,
+                    worktree_teardown: None,
+                },
+                name: "custom".to_string(),
+            })),
+            ready: None,
+            capture: None,
+            submit: false,
+        };
+        let mut run = UnitRun::new(spawn, Some("true".to_string()), None);
+        run.surface_id = Some(42);
+        let fake = FakeInstance::new(true);
+        let engine = Engine {
+            client: &fake,
+            on_failure: OnFailure::FailFast,
+            name: "flow".to_string(),
+            layout: "even_h",
+            runs: vec![run],
+            vars: HashMap::new(),
+            started: Instant::now(),
+            json_out: true,
+            split_count: 0,
+            anchor: Some(42),
+        };
+        assert_eq!(
+            engine
+                .resolve_flow_target("impl")
+                .expect("found")
+                .expect("ok"),
+            42
+        );
+        assert_eq!(
+            engine
+                .resolve_flow_target("custom")
+                .expect("found")
+                .expect("ok"),
+            42
+        );
+        assert_eq!(
+            engine
+                .resolve_flow_target("feature")
+                .expect("found")
+                .expect("ok"),
+            42
+        );
     }
 
     // --- end-to-end engine run over a scripted fake transport -------------

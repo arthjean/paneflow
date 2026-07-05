@@ -152,7 +152,7 @@ fn send_to(
             Ok(result)
         }
         // The scripting gate is off on the running instance.
-        Err(e) if e.contains("-32601") => Err(CliError::runtime(format!(
+        Err(e) if is_send_text_disabled_error(&e) => Err(CliError::runtime(format!(
             "send is disabled on the running Paneflow instance; relaunch it with \
              PANEFLOW_IPC_SCRIPTING=1 to enable text injection (server said: {e})"
         ))),
@@ -285,12 +285,25 @@ pub fn key(client: &impl IpcTransport, target: &str, keystroke: &str) -> Result<
             super::print_json(&result)?;
             Ok(EXIT_OK)
         }
-        Err(e) if e.contains("-32601") => Err(CliError::runtime(format!(
+        Err(e) if is_send_keystroke_disabled_error(&e) => Err(CliError::runtime(format!(
             "key is disabled on the running Paneflow instance; relaunch it with \
              PANEFLOW_IPC_SCRIPTING=1 to enable keystroke injection (server said: {e})"
         ))),
         Err(e) => Err(CliError::runtime(e)),
     }
+}
+
+pub(super) fn is_send_text_disabled_error(error: &str) -> bool {
+    method_disabled_error(error, "surface.send_text")
+}
+
+fn is_send_keystroke_disabled_error(error: &str) -> bool {
+    method_disabled_error(error, "surface.send_keystroke")
+}
+
+fn method_disabled_error(error: &str, method: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("-32601") && lower.contains(method) && lower.contains("disabled")
 }
 
 #[cfg(test)]
@@ -530,6 +543,19 @@ mod tests {
         assert_eq!(err.code, EXIT_RUNTIME);
         assert!(err.message.contains("PANEFLOW_IPC_SCRIPTING"));
         assert_eq!(fake.calls.borrow().len(), 1, "aborted after first reply");
+    }
+
+    #[test]
+    fn gate_hint_requires_the_specific_disabled_method() {
+        assert!(is_send_text_disabled_error(
+            "server error -32601: surface.send_text disabled"
+        ));
+        assert!(!is_send_text_disabled_error(
+            "server error -32601: Method not found"
+        ));
+        assert!(!is_send_text_disabled_error(
+            "server error -32601: surface.send_keystroke disabled"
+        ));
     }
 
     #[test]

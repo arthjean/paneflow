@@ -363,7 +363,7 @@ fn validate(spec: &FlowSpec) -> Result<(), String> {
             }
         }
 
-        validate_tokens(step, &vars)?;
+        validate_tokens(spec, step, &vars)?;
     }
 
     if spawn_units > MAX_PANES {
@@ -386,7 +386,11 @@ fn validate(spec: &FlowSpec) -> Result<(), String> {
 /// `${…}` rules (US-013/US-014): `${item}` only inside `foreach` steps, in
 /// any field; capture variables only in `send.text` / `pane.prompt`; a var
 /// captured by a foreach step must be referenced as `${var.<item>}`.
-fn validate_tokens(step: &StepSpec, vars: &HashMap<&str, &StepSpec>) -> Result<(), String> {
+fn validate_tokens(
+    spec: &FlowSpec,
+    step: &StepSpec,
+    vars: &HashMap<&str, &StepSpec>,
+) -> Result<(), String> {
     let is_foreach = step.foreach.is_some();
 
     // Fields where ONLY ${item} makes sense (resolved at expansion).
@@ -511,6 +515,17 @@ fn validate_tokens(step: &StepSpec, vars: &HashMap<&str, &StepSpec>) -> Result<(
                 }
                 (None, None) => {}
             }
+            if !step_depends_on(spec, step.id.as_str(), owner.id.as_str()) {
+                return Err(err_in(
+                    step,
+                    label,
+                    &format!(
+                        "capture variable '${{{token}}}' is produced by step '{}' but \
+                         that step is not a transitive dependency",
+                        owner.id
+                    ),
+                ));
+            }
         }
     }
     Ok(())
@@ -518,6 +533,30 @@ fn validate_tokens(step: &StepSpec, vars: &HashMap<&str, &StepSpec>) -> Result<(
 
 fn err_in(step: &StepSpec, label: &str, msg: &str) -> String {
     format!("step '{}': {label}: {msg}", step.id)
+}
+
+fn step_depends_on(spec: &FlowSpec, step_id: &str, dependency: &str) -> bool {
+    let index: HashMap<&str, &StepSpec> = spec.steps.iter().map(|s| (s.id.as_str(), s)).collect();
+    let mut seen = HashSet::new();
+
+    fn visit<'a>(
+        id: &'a str,
+        dependency: &str,
+        index: &HashMap<&'a str, &'a StepSpec>,
+        seen: &mut HashSet<&'a str>,
+    ) -> bool {
+        if !seen.insert(id) {
+            return false;
+        }
+        let Some(step) = index.get(id) else {
+            return false;
+        };
+        step.needs
+            .iter()
+            .any(|need| need == dependency || visit(need, dependency, index, seen))
+    }
+
+    visit(step_id, dependency, &index, &mut seen)
 }
 
 /// Static cycle detection on the step graph (US-010 - refuse at parse, the
@@ -805,6 +844,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("port_offset"), "got: {err}");
+    }
+
+    #[test]
+    fn capture_ref_must_be_reachable_through_needs() {
+        let src = "[defaults]\ntimeout_secs = 60\n\n[[step]]\nid = \"root\"\npane = { command = \"true\" }\n\n[[step]]\nid = \"producer\"\nneeds = [\"root\"]\npane = { command = \"true\" }\nready = { pattern = \"ok\" }\ncapture = { var = \"sum\", lines = 1 }\n\n[[step]]\nid = \"consumer\"\nneeds = [\"root\"]\nsend = { target = \"root\", text = \"${sum}\" }\n";
+        let err = load(src).unwrap_err();
+        assert!(err.contains("not a transitive dependency"), "got: {err}");
     }
 
     #[test]

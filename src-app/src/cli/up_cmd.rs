@@ -56,7 +56,7 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     // Phase 3: allocate a free port stride per referencing pane (bind-probe;
     // cross-platform - no /proc parsing, works on Windows too).
     let port_base = spec.port_base.unwrap_or(DEFAULT_PORT_BASE);
-    let offsets = allocate_port_offsets(&port_refs, port_base, port_is_free);
+    let offsets = allocate_port_offsets(&port_refs, port_base, port_is_free)?;
 
     let config = paneflow_config::loader::load_config();
     let mut panes = Vec::with_capacity(spec.panes.len());
@@ -93,20 +93,57 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
         return Ok(EXIT_OK);
     }
 
-    ensure_orchestration_gate(client)?;
+    if panes_need_orchestration(&spec.panes) {
+        ensure_orchestration_gate(client)?;
+    }
 
     // Phase 4 (mutating, still CLI-side): create the planned worktrees, copy
     // `.env*`, run `setup`. A creation failure aborts before workspace.up so
     // no half-spawned workspace points at a missing directory.
+    let mut created_worktrees: Vec<&WorktreePlan> = Vec::new();
     for plan in worktree_plans.iter().flatten() {
-        execute_worktree_plan(plan)?;
+        if let Err(err) = execute_worktree_plan(plan) {
+            rollback_created_worktrees(&created_worktrees);
+            return Err(err);
+        }
+        if plan.creates_worktree() {
+            created_worktrees.push(plan);
+        }
     }
 
-    let result = client
-        .call("workspace.up", params)
-        .map_err(CliError::runtime)?;
+    let result = match client.call("workspace.up", params) {
+        Ok(result) => result,
+        Err(e) => {
+            rollback_created_worktrees(&created_worktrees);
+            return Err(CliError::runtime(e));
+        }
+    };
+    let result = match super::reject_legacy_error(result) {
+        Ok(result) => result,
+        Err(err) => {
+            rollback_created_worktrees(&created_worktrees);
+            return Err(err);
+        }
+    };
     super::print_json(&result)?;
     Ok(EXIT_OK)
+}
+
+fn panes_need_orchestration(panes: &[PaneSpec]) -> bool {
+    panes.iter().any(pane_needs_orchestration)
+}
+
+fn pane_needs_orchestration(pane: &PaneSpec) -> bool {
+    pane.agent.is_some()
+        || pane
+            .command
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        || pane
+            .prompt
+            .as_deref()
+            .is_some_and(|value| !value.is_empty())
+        || pane.env.as_ref().is_some_and(|env| !env.is_empty())
 }
 
 fn ensure_orchestration_gate(client: &impl IpcTransport) -> Result<(), CliError> {
@@ -145,7 +182,7 @@ pub(super) struct WorktreePlan {
 }
 
 impl WorktreePlan {
-    fn create_branch_known(&self) -> bool {
+    pub(super) fn creates_worktree(&self) -> bool {
         self.create.is_some()
     }
 
@@ -157,7 +194,7 @@ impl WorktreePlan {
             "repo_root": self.repo_root.to_string_lossy(),
             "branch": self.branch,
             "teardown": self.teardown,
-            "action": if self.create_branch_known() { "create" } else { "reuse" },
+            "action": if self.creates_worktree() { "create" } else { "reuse" },
         })
     }
 }
@@ -412,7 +449,22 @@ pub(super) fn execute_worktree_plan(plan: &WorktreePlan) -> Result<(), CliError>
     Ok(())
 }
 
-/// Expand a leading `~` / `~/` to the home directory (the server does this
+pub(super) fn rollback_created_worktrees(plans: &[&WorktreePlan]) {
+    for plan in plans.iter().rev() {
+        if !plan.creates_worktree() {
+            continue;
+        }
+        if let Err(e) = worktree::remove_worktree(&plan.repo_root, &plan.path) {
+            eprintln!(
+                "pane {}: could not roll back worktree {} ({e})",
+                plan.pane_idx,
+                plan.path.display()
+            );
+        }
+    }
+}
+
+/// Expand a leading `~`, `~/` or `~\` to the home directory (the server does this
 /// via `canonicalize_workspace_cwd`, but worktree planning needs the real
 /// path CLI-side, before any IPC round-trip).
 fn expand_tilde(raw: &str) -> String {
@@ -421,6 +473,10 @@ fn expand_tilde(raw: &str) -> String {
             return home.to_string_lossy().into_owned();
         }
     } else if let Some(rest) = raw.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir()
+    {
+        return home.join(rest).to_string_lossy().into_owned();
+    } else if let Some(rest) = raw.strip_prefix("~\\")
         && let Some(home) = dirs::home_dir()
     {
         return home.join(rest).to_string_lossy().into_owned();
@@ -488,25 +544,36 @@ pub(super) fn allocate_port_offsets(
     refs: &[bool],
     port_base: u16,
     is_free: impl Fn(u16) -> bool,
-) -> Vec<Option<u16>> {
+) -> Result<Vec<Option<u16>>, CliError> {
     let mut next_stride: u16 = 0;
-    refs.iter()
-        .map(|wants| {
-            if !*wants {
-                return None;
-            }
-            loop {
-                let candidate = next_stride
+    let mut offsets = Vec::with_capacity(refs.len());
+    for wants in refs {
+        offsets.push(if !*wants {
+            None
+        } else {
+            let candidate = loop {
+                let offset = next_stride
                     .checked_mul(PORT_STRIDE)
-                    .and_then(|offset| port_base.checked_add(offset))
-                    .unwrap_or(u16::MAX);
-                next_stride = next_stride.saturating_add(1);
-                if candidate == u16::MAX || port_stride_is_free(candidate, &is_free) {
-                    return Some(candidate);
+                    .ok_or_else(port_exhausted)?;
+                let candidate = port_base.checked_add(offset).ok_or_else(port_exhausted)?;
+                if candidate > u16::MAX - (PORT_STRIDE - 1) {
+                    return Err(port_exhausted());
                 }
-            }
-        })
-        .collect()
+                next_stride = next_stride.checked_add(1).ok_or_else(port_exhausted)?;
+                if port_stride_is_free(candidate, &is_free) {
+                    break candidate;
+                }
+            };
+            Some(candidate)
+        });
+    }
+    Ok(offsets)
+}
+
+fn port_exhausted() -> CliError {
+    CliError::runtime(format!(
+        "no free {PORT_STRIDE}-port stride is available at or above the configured port_base"
+    ))
 }
 
 fn port_stride_is_free(port_base: u16, is_free: &impl Fn(u16) -> bool) -> bool {
@@ -662,19 +729,43 @@ mod tests {
     }
 
     #[test]
+    fn navigation_only_panes_do_not_need_orchestration_gate() {
+        let mut navigation = pane(None, None);
+        navigation.cwd = Some("/tmp".to_string());
+        navigation.focus = Some(true);
+        assert!(!panes_need_orchestration(&[navigation]));
+        assert!(panes_need_orchestration(&[pane(None, Some("true"))]));
+
+        let mut with_prompt = pane(None, None);
+        with_prompt.prompt = Some("prefill".to_string());
+        assert!(panes_need_orchestration(&[with_prompt]));
+    }
+
+    #[test]
     fn allocate_port_offsets_skips_busy_strides() {
         // Pane 0 and 2 reference the variable; 3010 is "busy" → pane 2 jumps
         // to 3020 (US-008 AC2). Non-referencing panes get None.
         let refs = vec![true, false, true];
-        let offsets = allocate_port_offsets(&refs, 3000, |p| p != 3010);
+        let offsets = allocate_port_offsets(&refs, 3000, |p| p != 3010).expect("offsets");
         assert_eq!(offsets, vec![Some(3000), None, Some(3020)]);
     }
 
     #[test]
     fn allocate_port_offsets_checks_the_whole_stride() {
         let refs = vec![true, true];
-        let offsets = allocate_port_offsets(&refs, 3000, |p| p != 3005);
+        let offsets = allocate_port_offsets(&refs, 3000, |p| p != 3005).expect("offsets");
         assert_eq!(offsets, vec![Some(3010), Some(3020)]);
+    }
+
+    #[test]
+    fn allocate_port_offsets_errors_when_stride_cannot_fit() {
+        let refs = vec![true];
+        let err = allocate_port_offsets(&refs, u16::MAX, |_| true).unwrap_err();
+        assert!(
+            err.message.contains("no free") && err.message.contains("port_base"),
+            "got: {}",
+            err.message
+        );
     }
 
     #[test]
@@ -810,6 +901,7 @@ mod tests {
             .into_owned();
         assert_eq!(expand_tilde("~"), home);
         assert!(expand_tilde("~/dev").starts_with(&home));
+        assert!(expand_tilde("~\\dev").starts_with(&home));
         assert_eq!(expand_tilde("/abs/path"), "/abs/path");
         assert_eq!(expand_tilde("rel/~nothome"), "rel/~nothome");
     }

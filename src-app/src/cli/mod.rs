@@ -285,6 +285,9 @@ enum Commands {
         /// Only stream these event types (repeatable). Omit for all types.
         #[arg(long = "type", value_name = "TYPE")]
         types: Vec<String>,
+        /// Hide subscription protocol frames and print user events only.
+        #[arg(long)]
+        events_only: bool,
     },
 }
 
@@ -484,7 +487,11 @@ fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
                 wait_cmd::wait(client, &selector, &pattern, timeout, mode)
             }
         }
-        Commands::Watch { surface, types } => watch_cmd::watch(client, surface.as_deref(), &types),
+        Commands::Watch {
+            surface,
+            types,
+            events_only,
+        } => watch_cmd::watch(client, surface.as_deref(), &types, events_only),
     }
 }
 
@@ -723,12 +730,29 @@ mod tests {
         ])
         .expect("parse");
         match cli.command {
-            Some(Commands::Watch { surface, types }) => {
+            Some(Commands::Watch {
+                surface,
+                types,
+                events_only,
+            }) => {
                 assert_eq!(surface.as_deref(), Some("backend"));
                 assert_eq!(types, vec!["ai.stop", "ai.notification"]);
+                assert!(!events_only);
             }
             other => panic!("expected Watch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn watch_parses_events_only() {
+        let cli = Cli::try_parse_from(["paneflow", "watch", "--events-only"]).expect("parse");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Watch {
+                events_only: true,
+                ..
+            })
+        ));
     }
 
     #[test]

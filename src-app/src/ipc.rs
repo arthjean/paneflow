@@ -158,11 +158,16 @@ const IPC_STATE_DISABLED: u8 = 1;
 // accessible as `super::MAX_REQUEST_LEN` from the tests submodule via this use.
 use crate::limits::MAX_REQUEST_LEN;
 
-/// US-022: ceiling on concurrently-served IPC connections. The accept loop
-/// spawns one blocking thread per connection; without a cap a same-UID peer
-/// opening connections in a loop fans out unbounded OS threads. Beyond this,
-/// new connections are refused with backpressure (`-32000`) and closed.
-const MAX_CONCURRENT_CONNECTIONS: usize = 16;
+/// US-022: ceiling on concurrently-served request IPC connections. The accept
+/// loop spawns one blocking thread per connection; without a cap a same-UID
+/// peer opening connections in a loop fans out unbounded OS threads.
+const MAX_REQUEST_CONNECTIONS: usize = 16;
+
+/// Persistent `events.subscribe` streams keep a socket open by design. They
+/// get their own cap so watches cannot consume every short-request slot.
+const MAX_SUBSCRIPTION_CONNECTIONS: usize = 16;
+
+const MAX_CONCURRENT_CONNECTIONS: usize = MAX_REQUEST_CONNECTIONS + MAX_SUBSCRIPTION_CONNECTIONS;
 
 /// EP-004 US-010: bounded queue from the socket handler threads to the GPUI
 /// thread. Once 256 requests are pending, new GPUI-bound requests fail fast
@@ -370,6 +375,7 @@ pub fn start_server() -> (
             // Only this (single) accept thread increments; handler threads
             // decrement via the RAII guard below, so the load is exact.
             let active_connections = Arc::new(AtomicUsize::new(0));
+            let active_subscriptions = Arc::new(AtomicUsize::new(0));
 
             // Decrement the live-connection count on any handler exit path
             // (return, EOF, panic-unwind). Hoisted out of the spawn closure so
@@ -395,6 +401,7 @@ pub fn start_server() -> (
                         let guard = ActiveGuard(Arc::clone(&active_connections));
                         let tx = tx.clone();
                         let bus = Arc::clone(&thread_event_bus);
+                        let subscriptions = Arc::clone(&active_subscriptions);
                         // EP-001 US-005 parity: use the fallible `Builder::spawn`,
                         // never the panicking `thread::spawn`. Under
                         // RLIMIT_NPROC / EAGAIN the latter panics and unwinds
@@ -408,7 +415,7 @@ pub fn start_server() -> (
                             .name("paneflow-ipc-conn".into())
                             .spawn(move || {
                                 let _guard = guard;
-                                handle_connection(stream, tx, bus);
+                                handle_connection(stream, tx, bus, subscriptions);
                             })
                         {
                             log::warn!(
@@ -839,19 +846,50 @@ fn read_request_line(stream: &mut Stream, line: &mut String) -> std::io::Result<
     }
 }
 
+struct ActiveCountGuard {
+    counter: Arc<AtomicUsize>,
+}
+
+impl ActiveCountGuard {
+    fn try_acquire(counter: Arc<AtomicUsize>, limit: usize) -> Option<Self> {
+        loop {
+            let current = counter.load(Ordering::Acquire);
+            if current >= limit {
+                return None;
+            }
+            if counter
+                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Some(Self { counter });
+            }
+        }
+    }
+}
+
+impl Drop for ActiveCountGuard {
+    fn drop(&mut self) {
+        self.counter.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn write_overloaded_error(writer: &mut Stream, message: &str) {
+    let envelope = json!({
+        "jsonrpc": "2.0",
+        "error": {"code": -32000, "message": message},
+        "id": Value::Null,
+    });
+    let _ = write_envelope(writer, &envelope);
+}
+
 /// US-022 backpressure: refuse a connection once the concurrency cap is hit.
 /// Writes one JSON-RPC error envelope and drops the stream (closing it) so the
 /// peer gets a structured rejection rather than a silent hang.
 fn reject_overloaded(mut stream: Stream) {
-    let envelope = json!({
-        "jsonrpc": "2.0",
-        "error": {"code": -32000, "message": "server busy: too many concurrent connections"},
-        "id": Value::Null,
-    });
     // Abort-safe write (CP-4): on Windows a peer that already closed must not
     // trip interprocess's overlapped-write abort; `write_envelope` routes
     // through our managed WriteFile. `stream` is dropped right after either way.
-    let _ = write_envelope(&mut stream, &envelope);
+    write_overloaded_error(&mut stream, "server busy: too many concurrent connections");
 }
 
 /// EP-003 US-010 (agent-control-plane): the connected peer's PID, for tracing
@@ -877,6 +915,7 @@ fn handle_connection(
     stream: Stream,
     request_tx: mpsc::SyncSender<IpcRequest>,
     event_bus: Arc<crate::ipc_events::EventBus>,
+    active_subscriptions: Arc<AtomicUsize>,
 ) {
     // EP-006 US-013: `event_bus` now feeds `serve_subscription` on BOTH
     // platforms (the Windows event stream is no longer stubbed), so the former
@@ -992,6 +1031,16 @@ fn handle_connection(
                         let params = req.get("params").cloned().unwrap_or(json!({}));
 
                         if method == "events.subscribe" {
+                            let Some(_subscription_guard) = ActiveCountGuard::try_acquire(
+                                Arc::clone(&active_subscriptions),
+                                MAX_SUBSCRIPTION_CONNECTIONS,
+                            ) else {
+                                write_overloaded_error(
+                                    &mut writer,
+                                    "server busy: too many event subscriptions",
+                                );
+                                return;
+                            };
                             serve_subscription(&mut writer, &params, &event_bus);
                             return;
                         }
@@ -1713,6 +1762,40 @@ mod auth {
                 }
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod connection_limit_tests {
+    use super::{ActiveCountGuard, MAX_SUBSCRIPTION_CONNECTIONS};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    #[test]
+    fn subscription_slots_are_capped_and_released() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mut guards = Vec::new();
+        for _ in 0..MAX_SUBSCRIPTION_CONNECTIONS {
+            guards.push(
+                ActiveCountGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
+                    .expect("slot"),
+            );
+        }
+        assert!(
+            ActiveCountGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
+                .is_none()
+        );
+        drop(guards.pop());
+        assert_eq!(
+            counter.load(Ordering::Acquire),
+            MAX_SUBSCRIPTION_CONNECTIONS - 1
+        );
+        assert!(
+            ActiveCountGuard::try_acquire(Arc::clone(&counter), MAX_SUBSCRIPTION_CONNECTIONS)
+                .is_some()
+        );
     }
 }
 

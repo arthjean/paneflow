@@ -38,17 +38,25 @@ enum Selector<'a> {
     Cwd(&'a str),
 }
 
-fn parse_selector(raw: &str) -> Selector<'_> {
+fn parse_selector(raw: &str) -> Result<Selector<'_>, CliError> {
     if let Some(rest) = raw.strip_prefix("cmdline:") {
-        return Selector::Cmdline(rest);
+        if rest.is_empty() {
+            return Err(CliError::target(
+                "cmdline: selector needs a non-empty substring",
+            ));
+        }
+        return Ok(Selector::Cmdline(rest));
     }
     if let Some(rest) = raw.strip_prefix("cwd:") {
-        return Selector::Cwd(rest);
+        if rest.is_empty() {
+            return Err(CliError::target("cwd: selector needs a non-empty path"));
+        }
+        return Ok(Selector::Cwd(rest));
     }
     if let Ok(id) = raw.parse::<u64>() {
-        return Selector::Id(id);
+        return Ok(Selector::Id(id));
     }
-    Selector::Name(raw)
+    Ok(Selector::Name(raw))
 }
 
 /// Fetch terminal surfaces via `surface.list`.
@@ -64,7 +72,7 @@ pub fn fetch_surfaces(client: &impl IpcTransport) -> Result<Vec<Surface>, CliErr
 /// Resolve a `<target>` string to a `surface_id` against the live surface list.
 pub fn resolve_target(client: &impl IpcTransport, target: &str) -> Result<u64, CliError> {
     let surfaces = fetch_surfaces(client)?;
-    resolve(parse_selector(target), &surfaces)
+    resolve(parse_selector(target)?, &surfaces)
 }
 
 /// All `surface_id`s matching the selector (for `wait --any/--all`, US-014).
@@ -72,7 +80,8 @@ pub fn resolve_target(client: &impl IpcTransport, target: &str) -> Result<u64, C
 /// wants the whole set).
 pub fn resolve_all(client: &impl IpcTransport, target: &str) -> Result<Vec<u64>, CliError> {
     let surfaces = fetch_surfaces(client)?;
-    let ids: Vec<u64> = matches_for(&parse_selector(target), &surfaces)
+    let selector = parse_selector(target)?;
+    let ids: Vec<u64> = matches_for(&selector, &surfaces)
         .iter()
         .map(|s| s.surface_id)
         .collect();
@@ -111,10 +120,30 @@ fn matches_for<'s>(selector: &Selector<'_>, surfaces: &'s [Surface]) -> Vec<&'s 
             .filter(|s| {
                 s.cwd
                     .as_deref()
-                    .is_some_and(|c| c == *path || c.starts_with(*path))
+                    .is_some_and(|c| cwd_selector_matches(path, c))
             })
             .collect(),
     }
+}
+
+fn cwd_selector_matches(selector: &str, cwd: &str) -> bool {
+    let selector = normalize_path_selector(selector);
+    let cwd = normalize_path_selector(cwd);
+    cwd == selector
+        || cwd
+            .strip_prefix(&selector)
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn normalize_path_selector(raw: &str) -> String {
+    let mut normalized = raw.replace('\\', "/");
+    while normalized.len() > 1 && normalized.ends_with('/') {
+        normalized.pop();
+    }
+    if cfg!(windows) {
+        normalized.make_ascii_lowercase();
+    }
+    normalized
 }
 
 fn matches_by_name<'s>(name: &str, surfaces: &'s [Surface]) -> Vec<&'s Surface> {
@@ -195,13 +224,31 @@ mod tests {
 
     #[test]
     fn parses_each_selector_kind() {
-        assert_eq!(parse_selector("12"), Selector::Id(12));
-        assert_eq!(parse_selector("cargo-run"), Selector::Name("cargo-run"));
+        assert_eq!(parse_selector("12").unwrap(), Selector::Id(12));
         assert_eq!(
-            parse_selector("cmdline:claude"),
+            parse_selector("cargo-run").unwrap(),
+            Selector::Name("cargo-run")
+        );
+        assert_eq!(
+            parse_selector("cmdline:claude").unwrap(),
             Selector::Cmdline("claude")
         );
-        assert_eq!(parse_selector("cwd:/home/a"), Selector::Cwd("/home/a"));
+        assert_eq!(
+            parse_selector("cwd:/home/a").unwrap(),
+            Selector::Cwd("/home/a")
+        );
+    }
+
+    #[test]
+    fn empty_prefixed_selectors_are_rejected() {
+        assert_eq!(
+            parse_selector("cmdline:").unwrap_err().code,
+            super::super::EXIT_TARGET
+        );
+        assert_eq!(
+            parse_selector("cwd:").unwrap_err().code,
+            super::super::EXIT_TARGET
+        );
     }
 
     #[test]
@@ -240,6 +287,25 @@ mod tests {
         // Two panes under /home/a/proj-backend.
         let err = resolve(Selector::Cwd("/home/a/proj-backend"), &fixtures()).unwrap_err();
         assert!(err.message.contains("ambiguous"), "got: {}", err.message);
+    }
+
+    #[test]
+    fn cwd_selector_matches_path_components_not_sibling_prefixes() {
+        let surfaces = vec![
+            surface(1, "repo", "sh", "/home/a/repo"),
+            surface(2, "child", "sh", "/home/a/repo/api"),
+            surface(3, "sibling", "sh", "/home/a/repo2"),
+        ];
+        let ids: Vec<u64> = matches_for(&Selector::Cwd("/home/a/repo"), &surfaces)
+            .iter()
+            .map(|s| s.surface_id)
+            .collect();
+        assert_eq!(ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn cwd_selector_normalizes_separator_variants() {
+        assert!(cwd_selector_matches(r"C:\dev\repo", "C:/dev/repo/api"));
     }
 
     #[test]

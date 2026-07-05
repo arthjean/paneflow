@@ -66,7 +66,7 @@ enum PaneState {
 #[derive(Clone, Debug)]
 struct ReadSnapshot {
     text: String,
-    output_generation: u64,
+    output_generation: Option<u64>,
 }
 
 /// `paneflow wait --match <sel> --pattern <regex> [--timeout N] [--any|--all]`.
@@ -95,24 +95,58 @@ pub fn wait(
         .map(|&id| (id, read_snapshot(client, id).ok().flatten()))
         .collect();
 
+    let mut all_matches: HashMap<u64, Vec<String>> = HashMap::new();
+
     loop {
-        let mut matched_ids: Vec<u64> = Vec::new();
-        let mut matches_out: Vec<Value> = Vec::new();
+        let mut matched_now: HashMap<u64, Vec<String>> = HashMap::new();
         let mut alive = 0usize;
         for &id in &ids {
+            if mode == MatchMode::All && all_matches.contains_key(&id) {
+                continue;
+            }
             match read_matches_since(client, id, &re, baselines.get(&id).and_then(|b| b.as_ref()))?
             {
                 PaneState::Matched(lines) => {
                     alive += 1;
-                    matched_ids.push(id);
-                    matches_out.push(json!({ "surface_id": id, "lines": lines }));
+                    matched_now.insert(id, lines.clone());
+                    if mode == MatchMode::All {
+                        all_matches.insert(id, lines);
+                    }
                 }
                 PaneState::NoMatch => alive += 1,
                 PaneState::Gone => {}
             }
         }
 
-        if is_done(mode, matched_ids.len(), ids.len()) {
+        let matched_count = match mode {
+            MatchMode::All => all_matches.len(),
+            MatchMode::Single | MatchMode::Any => matched_now.len(),
+        };
+        if is_done(mode, matched_count, ids.len()) {
+            let matched_ids: Vec<u64> = match mode {
+                MatchMode::All => ids
+                    .iter()
+                    .copied()
+                    .filter(|id| all_matches.contains_key(id))
+                    .collect(),
+                MatchMode::Single | MatchMode::Any => ids
+                    .iter()
+                    .copied()
+                    .filter(|id| matched_now.contains_key(id))
+                    .collect(),
+            };
+            let matches_out: Vec<Value> = matched_ids
+                .iter()
+                .map(|id| {
+                    let lines = match mode {
+                        MatchMode::All => all_matches.get(id),
+                        MatchMode::Single | MatchMode::Any => matched_now.get(id),
+                    }
+                    .cloned()
+                    .unwrap_or_default();
+                    json!({ "surface_id": id, "lines": lines })
+                })
+                .collect();
             super::print_json(
                 &json!({ "matched": true, "panes": matched_ids, "matches": matches_out }),
             )?;
@@ -156,14 +190,14 @@ fn read_snapshot(client: &impl IpcTransport, id: u64) -> Result<Option<ReadSnaps
         json!({ "surface_id": id, "lines": READ_WINDOW_LINES, "fenced": false }),
     ) {
         Ok(result) => {
-            if result.get("error").is_some() {
-                return Ok(None);
+            if let Some(message) = legacy_error_message(&result) {
+                if is_surface_gone_error(&message) {
+                    return Ok(None);
+                }
+                return Err(CliError::runtime(message));
             }
             let text = result.get("text").and_then(Value::as_str).unwrap_or("");
-            let output_generation = result
-                .get("output_generation")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
+            let output_generation = result.get("output_generation").and_then(Value::as_u64);
             Ok(Some(ReadSnapshot {
                 text: text.to_string(),
                 output_generation,
@@ -171,9 +205,28 @@ fn read_snapshot(client: &impl IpcTransport, id: u64) -> Result<Option<ReadSnaps
         }
         // A down instance is fatal - propagate the "is Paneflow running?" error.
         Err(e) if e.contains("unreachable") => Err(CliError::runtime(e)),
-        // Anything else (e.g. -32602 surface not found) means the pane closed.
-        Err(_) => Ok(None),
+        Err(e) if is_surface_gone_error(&e) => Ok(None),
+        Err(e) => Err(CliError::runtime(e)),
     }
+}
+
+fn legacy_error_message(value: &Value) -> Option<String> {
+    let error = value.get("error")?;
+    error
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| {
+            error
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        })
+        .or_else(|| Some(error.to_string()))
+}
+
+fn is_surface_gone_error(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("not found") || lower.contains("-32602")
 }
 
 fn read_matches_since(
@@ -186,7 +239,12 @@ fn read_matches_since(
         return Ok(PaneState::Gone);
     };
     let text = match baseline {
-        Some(base) if current.output_generation <= base.output_generation => {
+        Some(base)
+            if matches!(
+                (current.output_generation, base.output_generation),
+                (Some(current), Some(previous)) if current <= previous
+            ) =>
+        {
             return Ok(PaneState::NoMatch);
         }
         Some(base) => new_text_since_baseline(&base.text, &current.text),
@@ -444,8 +502,8 @@ fn wait_idle_poll(
     baseline: Option<&ReadSnapshot>,
 ) -> Result<i32, CliError> {
     let deadline = Instant::now() + timeout;
-    let mut last_generation = match read_snapshot(client, id)? {
-        Some(s) => s.output_generation,
+    let mut last_snapshot = match read_snapshot(client, id)? {
+        Some(s) => s,
         None => {
             return Err(CliError::runtime(
                 "target pane closed before idle wait started",
@@ -459,8 +517,12 @@ fn wait_idle_poll(
         let Some(current) = read_snapshot(client, id)? else {
             return Err(CliError::runtime("target pane closed before it went idle"));
         };
-        if current.output_generation > last_generation {
-            last_generation = current.output_generation;
+        let changed = match (current.output_generation, last_snapshot.output_generation) {
+            (Some(current), Some(previous)) => current > previous,
+            _ => current.text != last_snapshot.text,
+        };
+        if changed {
+            last_snapshot = current;
             since_change = Instant::now();
             if let Some(re) = re
                 && pane_matches_since(client, id, re, baseline)
@@ -589,6 +651,77 @@ mod tests {
         let fake = FakeWait::new(vec![None]);
         let err = wait(&fake, "1", "DONE", Some(30), MatchMode::Single).unwrap_err();
         assert!(err.message.contains("closed"), "got: {}", err.message);
+    }
+
+    struct MultiWait {
+        reads: std::cell::RefCell<HashMap<u64, Vec<&'static str>>>,
+        generations: std::cell::RefCell<HashMap<u64, u64>>,
+    }
+    impl MultiWait {
+        fn new() -> Self {
+            Self {
+                reads: std::cell::RefCell::new(HashMap::from([
+                    (1, vec!["", "DONE one"]),
+                    (2, vec!["", "", "DONE two"]),
+                ])),
+                generations: std::cell::RefCell::new(HashMap::new()),
+            }
+        }
+    }
+    impl IpcTransport for MultiWait {
+        fn call(&self, method: &str, params: Value) -> Result<Value, String> {
+            match method {
+                "surface.list" => Ok(json!({
+                    "surfaces": [
+                        { "surface_id": 1u64, "name": "agent-a", "cmd": "agent", "cwd": "/tmp/a" },
+                        { "surface_id": 2u64, "name": "agent-b", "cmd": "agent", "cwd": "/tmp/b" }
+                    ]
+                })),
+                "surface.read" => {
+                    let sid = params["surface_id"].as_u64().unwrap_or(0);
+                    let mut generations = self.generations.borrow_mut();
+                    let generation = generations.entry(sid).or_insert(0);
+                    *generation += 1;
+                    let mut reads = self.reads.borrow_mut();
+                    let script = reads.entry(sid).or_default();
+                    let text = if script.len() > 1 {
+                        script.remove(0)
+                    } else {
+                        script.first().copied().unwrap_or_default()
+                    };
+                    Ok(json!({ "text": text, "output_generation": *generation }))
+                }
+                other => Err(format!("unexpected method {other}")),
+            }
+        }
+    }
+
+    #[test]
+    fn wait_all_persists_matches_across_polls() {
+        let fake = MultiWait::new();
+        let code = wait(&fake, "cmdline:agent", "DONE", Some(2), MatchMode::All).expect("ok");
+        assert_eq!(code, EXIT_OK);
+    }
+
+    struct ReadError(&'static str);
+    impl IpcTransport for ReadError {
+        fn call(&self, method: &str, _params: Value) -> Result<Value, String> {
+            match method {
+                "surface.read" => Err(self.0.to_string()),
+                other => Err(format!("unexpected method {other}")),
+            }
+        }
+    }
+
+    #[test]
+    fn read_snapshot_only_treats_not_found_as_gone() {
+        assert!(
+            read_snapshot(&ReadError("server error -32602: surface not found"), 1)
+                .expect("ok")
+                .is_none()
+        );
+        let err = read_snapshot(&ReadError("server error -32000: overloaded"), 1).unwrap_err();
+        assert!(err.message.contains("overloaded"), "got: {}", err.message);
     }
 
     #[test]
