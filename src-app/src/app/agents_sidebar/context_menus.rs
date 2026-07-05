@@ -4,7 +4,7 @@
 //! Lives in its own file so [`super::PaneFlowApp::render_agents_sidebar`]
 //! does not have to host another 200 lines of menu plumbing. Both
 //! renderers reuse [`PaneFlowApp::render_context_menu_item`] +
-//! [`PaneFlowApp::shortcut_for_description`] from the workspace
+//! [`PaneFlowApp::shortcut_for_action`] from the workspace
 //! context-menu module so the visual language stays identical (AC #8).
 
 use gpui::{
@@ -102,9 +102,9 @@ impl PaneFlowApp {
         );
 
         // Editor entries
-        for &(id, label, command, shortcut_desc) in EDITOR_CONTEXT_MENU_ITEMS {
+        for &(id, label, command, shortcut_action) in EDITOR_CONTEXT_MENU_ITEMS {
             let shortcut = self
-                .shortcut_for_description(shortcut_desc)
+                .shortcut_for_action(shortcut_action)
                 .map(|s| SharedString::from(s.to_string()));
             let command = command.to_string();
             let label_owned = label.to_string();
@@ -122,7 +122,7 @@ impl PaneFlowApp {
 
         // Reveal in file manager
         let reveal_shortcut = self
-            .shortcut_for_description("Reveal in file manager")
+            .shortcut_for_action("reveal_workspace_in_file_manager")
             .map(|s| SharedString::from(s.to_string()));
         menu = menu.child(self.render_select_menu_item(
             "agents-project-reveal".into(),

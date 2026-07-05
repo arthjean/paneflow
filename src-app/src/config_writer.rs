@@ -115,20 +115,18 @@ fn write_config_checked(path: &PathBuf, value: &serde_json::Value) -> bool {
     }
 }
 
-/// Save a top-level config field (e.g. `"font_size"`, `"line_height"`).
-pub fn save_config_value(key: &str, value: serde_json::Value) {
-    let _ = save_config_value_checked(key, value);
-}
-
-/// Same as `save_config_value`, but returns `true` on success and `false`
+/// Save a top-level config field, returning `true` on success and `false`
 /// when the config path could not be resolved or the file write failed.
 ///
 /// Callers that need to surface persistence failures to the user (e.g. the
 /// telemetry consent modal in US-011, which must honor the choice
-/// in-memory and show a toast when the disk write fails) should use this
-/// variant. The void `save_config_value` wrapper above is kept for
-/// fire-and-forget call sites that already accept best-effort writes.
+/// in-memory and show a toast when the disk write fails) use this variant.
 pub fn save_config_value_checked(key: &str, value: serde_json::Value) -> bool {
+    save_config_values_checked([(key, value)])
+}
+
+/// Save several top-level config fields in one read-modify-write cycle.
+pub fn save_config_values_checked<const N: usize>(values: [(&str, serde_json::Value); N]) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
         return false;
@@ -138,10 +136,12 @@ pub fn save_config_value_checked(key: &str, value: serde_json::Value) -> bool {
         return false;
     };
     if let Some(root) = json.as_object_mut() {
-        if value.is_null() {
-            root.remove(key);
-        } else {
-            root.insert(key.to_string(), value);
+        for (key, value) in values {
+            if value.is_null() {
+                root.remove(key);
+            } else {
+                root.insert(key.to_string(), value);
+            }
         }
     }
     write_config_checked(&path, &json)
@@ -183,21 +183,21 @@ fn merge_shortcut(
 ///
 /// Merges the new binding into `shortcuts`, removing any previous key for the
 /// same action and any other action that already held `new_key`.
-pub fn save_shortcut(new_key: &str, action_name: &str) {
+pub fn save_shortcut_checked(new_key: &str, action_name: &str) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
-        return;
+        return false;
     };
     let _guard = config_write_guard();
     let Ok(mut json) = load_raw_config(&path) else {
-        return;
+        return false;
     };
 
     // Guard rather than `.expect()` so a future loader contract change cannot
     // panic on the UI thread.
     let Some(root) = json.as_object_mut() else {
         log::warn!("config: root is not a JSON object, not saving shortcut");
-        return;
+        return false;
     };
     // Ensure `shortcuts` exists and is an object (replace a non-object).
     let shortcuts = root
@@ -207,12 +207,12 @@ pub fn save_shortcut(new_key: &str, action_name: &str) {
         *shortcuts = serde_json::json!({});
     }
     let Some(shortcuts_obj) = shortcuts.as_object_mut() else {
-        return;
+        return false;
     };
 
     merge_shortcut(shortcuts_obj, new_key, action_name);
 
-    write_config(&path, &json);
+    write_config_checked(&path, &json)
 }
 
 /// Remove all user shortcut overrides from `paneflow.json`, restoring defaults.

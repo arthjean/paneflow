@@ -7,7 +7,7 @@ pub type ThemeEntry = (&'static str, fn() -> TerminalTheme);
 pub static THEMES: &[ThemeEntry] = &[("One Dark", one_dark), ("PaneFlow Light", paneflow_light)];
 
 pub fn paneflow_light() -> TerminalTheme {
-    TerminalTheme {
+    let mut theme = TerminalTheme {
         // Keep the work surface fully opaque and exactly white. Native
         // translucency is reserved for the navigation rail and title bar.
         background: h(0xffffff),
@@ -17,8 +17,7 @@ pub fn paneflow_light() -> TerminalTheme {
         ansi_background: h(0xffffff),
         cursor: h(0x007aff),
         selection: ha(0x4c6fff, 0.20),
-        // Placeholder - replaced with the APCA-validated value by
-        // `apply_surface_overrides()` / `recompute_selection_foreground()`.
+        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0x25262b, 0.28),
         link_text: h(0x315ecf),
@@ -50,11 +49,13 @@ pub fn paneflow_light() -> TerminalTheme {
         dim_cyan: h(0x6aa9c0),
         dim_white: h(0x777984),
         syntax: SyntaxPalette::catppuccin_latte(),
-    }
+    };
+    theme.recompute_selection_foreground();
+    theme
 }
 
 pub fn one_dark() -> TerminalTheme {
-    TerminalTheme {
+    let mut theme = TerminalTheme {
         background: h(0x282c34),
         foreground: h(0xf0f3f7),
         bright_foreground: h(0xffffff),
@@ -62,8 +63,7 @@ pub fn one_dark() -> TerminalTheme {
         ansi_background: h(0x282c34),
         cursor: h(0x007aff),
         selection: ha(0x5aa6ff, 0.22),
-        // Placeholder - replaced with the APCA-validated value by
-        // `apply_surface_overrides()` / `recompute_selection_foreground()`.
+        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0x9aa8bd, 0.30),
         link_text: h(0x57d5c4),
@@ -94,7 +94,9 @@ pub fn one_dark() -> TerminalTheme {
         dim_cyan: h(0x3d9b91),
         dim_white: h(0x9ca7b5),
         syntax: SyntaxPalette::catppuccin_mocha(),
-    }
+    };
+    theme.recompute_selection_foreground();
+    theme
 }
 
 /// Look up a bundled theme by name (case-insensitive).

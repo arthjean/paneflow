@@ -24,6 +24,12 @@
       "description": "Bundled theme name.",
       "enum": ["One Dark", "PaneFlow Light", null]
     },
+    "theme_mode": {
+      "type": ["string", "null"],
+      "description": "Theme selection mode. 'light' and 'dark' force the matching bundled theme. 'system' follows the current OS window appearance while keeping theme as the resolved concrete theme for older Paneflow versions.",
+      "enum": ["light", "dark", "system", null],
+      "default": "dark"
+    },
     "font_family": {
       "type": ["string", "null"],
       "description": "Font family. Default: JetBrainsMono NFM when installed, otherwise bundled Lilex. Accepts the special aliases '.PaneflowMono' (bundled Lilex) and '.PaneflowSans' (bundled IBM Plex Sans), the concrete embedded names ('Lilex', 'IBM Plex Mono', 'IBM Plex Sans'), or any installed system monospace family such as 'JetBrainsMono NFM'. Unknown families fall back to the default with a warning."

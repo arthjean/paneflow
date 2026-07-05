@@ -68,13 +68,13 @@ pub fn resize_edge(
     }
 
     // Edges
-    if !tiling.top && pos.y < border {
+    if !tiling.top && pos.y <= border {
         Some(ResizeEdge::Top)
-    } else if !tiling.bottom && pos.y > window_size.height - border {
+    } else if !tiling.bottom && pos.y >= window_size.height - border {
         Some(ResizeEdge::Bottom)
-    } else if !tiling.left && pos.x < border {
+    } else if !tiling.left && pos.x <= border {
         Some(ResizeEdge::Left)
-    } else if !tiling.right && pos.x > window_size.width - border {
+    } else if !tiling.right && pos.x >= window_size.width - border {
         Some(ResizeEdge::Right)
     } else {
         None

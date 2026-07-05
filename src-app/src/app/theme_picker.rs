@@ -10,7 +10,7 @@ use gpui::{
 
 use crate::settings::components::{menu_divider_color, menu_surface, select_item};
 use crate::widgets::scrollbar;
-use crate::{PaneFlowApp, config_writer};
+use crate::{PaneFlowApp, ThemeMode, config_writer};
 
 impl PaneFlowApp {
     /// Resolve the theme currently persisted in config (or the built-in
@@ -60,15 +60,59 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    pub(crate) fn apply_theme_by_name(name: &str) {
-        config_writer::save_config_value("theme", serde_json::Value::String(name.to_string()));
+    pub(crate) fn persist_theme_selection(
+        &mut self,
+        mode: ThemeMode,
+        name: &str,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let ok = config_writer::save_config_values_checked([
+            (
+                "theme_mode",
+                serde_json::Value::String(mode.as_config_str().to_string()),
+            ),
+            ("theme", serde_json::Value::String(name.to_string())),
+        ]);
+        if !ok {
+            self.show_toast("Could not save theme", cx);
+            return false;
+        }
+        self.theme_mode = mode;
+        self.cached_config.theme_mode = Some(mode.as_config_str().to_string());
+        self.cached_config.theme = Some(name.to_string());
         crate::theme::invalidate_theme_cache();
+        crate::theme::sync_markdown_global_theme(cx);
+        cx.notify();
+        true
+    }
+
+    pub(crate) fn apply_theme_by_name(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+        self.persist_theme_selection(ThemeMode::from_theme_name(name), name, cx)
+    }
+
+    pub(crate) fn reset_theme_selection(&mut self, cx: &mut Context<Self>) {
+        let ok = config_writer::save_config_values_checked([
+            ("theme_mode", serde_json::Value::Null),
+            ("theme", serde_json::Value::Null),
+        ]);
+        if !ok {
+            self.show_toast("Could not reset theme", cx);
+            return;
+        }
+        self.theme_mode = ThemeMode::Dark;
+        self.cached_config.theme_mode = None;
+        self.cached_config.theme = None;
+        crate::theme::invalidate_theme_cache();
+        crate::theme::sync_markdown_global_theme(cx);
+        cx.notify();
     }
 
     fn commit_theme_picker_selection(&mut self, cx: &mut Context<Self>) {
         let matches = self.theme_picker_matches();
-        if let Some(name) = matches.get(self.theme_picker_selected_idx) {
-            Self::apply_theme_by_name(name);
+        if let Some(name) = matches.get(self.theme_picker_selected_idx)
+            && !self.apply_theme_by_name(name, cx)
+        {
+            return;
         }
         self.close_theme_picker(cx);
     }
@@ -191,8 +235,9 @@ impl PaneFlowApp {
                     )
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        Self::apply_theme_by_name(&name_owned);
-                        this.close_theme_picker(cx);
+                        if this.apply_theme_by_name(&name_owned, cx) {
+                            this.close_theme_picker(cx);
+                        }
                         cx.stop_propagation();
                     }))
                     .child(

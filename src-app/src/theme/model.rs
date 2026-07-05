@@ -445,7 +445,7 @@ pub fn ui_colors() -> UiColors {
 /// O(visible_items) mutex acquisitions per frame.
 pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
     let is_light = is_light_theme(theme);
-    let colors = if is_light {
+    if is_light {
         UiColors {
             // Codex-style light shell: the right-hand work area is pure white,
             // while controls use cool, near-white layers for hierarchy.
@@ -535,54 +535,7 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             agent_claude: h(0xffa657),
             agent_codex: h(0x7eb6ff),
         }
-    };
-
-    // DIAGNOSTIC B - fires once per process. Surfaces the actual Hsla
-    // values resolved for the UI palette so we can rule in/out the
-    // "text rendered but invisible" hypothesis (alpha=0 or
-    // foreground == background after `Rgba` -> `Hsla` conversion on
-    // the platform). If `text.a < 1.0` or `text` is numerically
-    // identical to a background color, glyphs paint but cannot be
-    // distinguished from the surface beneath them. Also logs
-    // `is_light` and the source `theme.background` so a misclassified
-    // light/dark branch is immediately visible.
-    {
-        use std::sync::Once;
-        static LOG_ONCE: Once = Once::new();
-        LOG_ONCE.call_once(|| {
-            log::debug!(
-                "ui_colors diagnostic: is_light={} \
-                 theme.background=(h={:.3},s={:.3},l={:.3},a={:.3}) \
-                 text=(h={:.3},s={:.3},l={:.3},a={:.3}) \
-                 muted=(h={:.3},s={:.3},l={:.3},a={:.3}) \
-                 base=(h={:.3},s={:.3},l={:.3},a={:.3}) \
-                 surface=(h={:.3},s={:.3},l={:.3},a={:.3})",
-                is_light,
-                theme.background.h,
-                theme.background.s,
-                theme.background.l,
-                theme.background.a,
-                colors.text.h,
-                colors.text.s,
-                colors.text.l,
-                colors.text.a,
-                colors.muted.h,
-                colors.muted.s,
-                colors.muted.l,
-                colors.muted.a,
-                colors.base.h,
-                colors.base.s,
-                colors.base.l,
-                colors.base.a,
-                colors.surface.h,
-                colors.surface.s,
-                colors.surface.l,
-                colors.surface.a,
-            );
-        });
     }
-
-    colors
 }
 
 #[cfg(test)]

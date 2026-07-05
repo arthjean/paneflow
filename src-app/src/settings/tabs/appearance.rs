@@ -19,16 +19,12 @@ impl PaneFlowApp {
             "Reset to default",
             ui,
             cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.persist_setting(false, "theme", serde_json::Value::Null, cx);
-                crate::theme::invalidate_theme_cache();
+                this.reset_theme_selection(cx);
             }),
         );
         let header = section_header_with_action(ui, "Theme", reset_btn);
 
-        // Theme mode selector (Light / Dark / System) - the Codex-style card at
-        // the top of the page. `theme_mode` is UI state for now; selecting a
-        // segment highlights it, ready to drive theme resolution once the light
-        // theme lands.
+        // Theme mode selector (Light / Dark / System).
         let modes: [(crate::ThemeMode, &str, &str, &str); 3] = [
             (
                 crate::ThemeMode::Light,
@@ -152,33 +148,29 @@ impl PaneFlowApp {
         content
     }
 
-    /// Apply a Light/Dark/System selection from the Themes page. Records the
-    /// chosen segment, resolves it to a concrete bundled theme name (System
-    /// follows the OS appearance reported by GPUI), then switches the active
-    /// theme via the shared `apply_theme_by_name` path (synchronous config
-    /// write + cache invalidation) and repaints.
+    /// Apply a Light/Dark/System selection from the Themes page.
     pub(crate) fn apply_theme_mode(
         &mut self,
         mode: crate::ThemeMode,
         window: &gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        self.theme_mode = mode;
-        let name = match mode {
-            crate::ThemeMode::Light => "PaneFlow Light",
-            crate::ThemeMode::Dark => "One Dark",
-            crate::ThemeMode::System => {
-                if matches!(
-                    window.appearance(),
-                    gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
-                ) {
-                    "PaneFlow Light"
-                } else {
-                    "One Dark"
-                }
-            }
-        };
-        Self::apply_theme_by_name(name);
-        cx.notify();
+        let name = mode.resolved_theme_name(window.appearance());
+        self.persist_theme_selection(mode, name, cx);
+    }
+
+    pub(crate) fn sync_system_theme_from_window(
+        &mut self,
+        window: &gpui::Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.theme_mode != crate::ThemeMode::System {
+            return;
+        }
+        let name = self.theme_mode.resolved_theme_name(window.appearance());
+        if self.cached_config.theme.as_deref() == Some(name) {
+            return;
+        }
+        self.persist_theme_selection(crate::ThemeMode::System, name, cx);
     }
 }

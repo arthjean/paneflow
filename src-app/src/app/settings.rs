@@ -300,8 +300,6 @@ impl PaneFlowApp {
         // Escape cancels recording.
         if event.keystroke.key == "escape" {
             self.recording_shortcut_idx = None;
-            let config = paneflow_config::loader::load_config();
-            keybindings::apply_keybindings(cx, &config.shortcuts);
             cx.notify();
             return;
         }
@@ -312,15 +310,18 @@ impl PaneFlowApp {
         // would rebind the wrong action and corrupt `paneflow.json`).
         let Some(action_name) = self.effective_shortcuts.get(idx).map(|e| e.action_name) else {
             self.recording_shortcut_idx = None;
-            let config = paneflow_config::loader::load_config();
-            keybindings::apply_keybindings(cx, &config.shortcuts);
             cx.notify();
             return;
         };
 
         // Format keystroke to a GPUI string (e.g. "ctrl-shift-d") and save it.
         let new_key = event.keystroke.to_string();
-        config_writer::save_shortcut(&new_key, action_name);
+        if !config_writer::save_shortcut_checked(&new_key, action_name) {
+            self.recording_shortcut_idx = None;
+            self.show_toast("Could not save shortcut", cx);
+            cx.notify();
+            return;
+        }
 
         // Re-apply keybindings from the updated config.
         let config = paneflow_config::loader::load_config();

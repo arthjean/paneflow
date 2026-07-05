@@ -1,9 +1,10 @@
 //! Render shortcut entries for the settings UI + menu bar.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui::Keystroke;
 
+use super::apply::canonical_keystroke;
 use super::defaults::{DEFAULTS, MACOS_ONLY_DEFAULTS};
 use super::registry::{ACTIONS, action_description};
 
@@ -91,63 +92,86 @@ pub fn format_keystroke(key: &str) -> String {
 /// Compute the effective shortcut list by merging defaults with user overrides.
 ///
 /// User overrides replace default bindings for the same action. Additional user
-/// bindings (new keys) are appended. Keys bound to `"none"` are excluded.
+/// bindings are appended. Registry actions with no binding are still listed as
+/// `Unassigned` so every action exposed by the keybinding registry is rebindable
+/// from Settings.
 pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<ShortcutEntry> {
-    // Build reverse map: action_name → user key (last one wins if duplicates)
+    // Build reverse map: action_name -> user key (last one wins if duplicates).
     let mut user_by_action: HashMap<&str, &str> = HashMap::new();
     for (key, action_name) in user_shortcuts {
-        if action_name != "none" {
+        if action_name != "none" && ACTIONS.iter().any(|a| a.name == action_name) {
             user_by_action.insert(action_name.as_str(), key.as_str());
         }
     }
 
-    // Collect keys that user has explicitly unbound
-    let unbound_keys: std::collections::HashSet<&str> = user_shortcuts
+    let unbound_canonical: HashSet<Keystroke> = user_shortcuts
         .iter()
         .filter(|(_, v)| v.as_str() == "none")
-        .map(|(k, _)| k.as_str())
+        .filter_map(|(k, _)| canonical_keystroke(k))
         .collect();
+    let user_bound_canonical: HashSet<Keystroke> = user_shortcuts
+        .iter()
+        .filter(|(_, v)| v.as_str() != "none")
+        .filter(|(_, action_name)| ACTIONS.iter().any(|a| a.name == *action_name))
+        .filter_map(|(k, _)| canonical_keystroke(k))
+        .collect();
+    let is_unbound =
+        |key: &str| canonical_keystroke(key).is_some_and(|k| unbound_canonical.contains(&k));
+    let is_user_claimed =
+        |key: &str| canonical_keystroke(key).is_some_and(|k| user_bound_canonical.contains(&k));
 
     let mut entries = Vec::new();
+    let mut seen_actions: HashSet<&'static str> = HashSet::new();
 
     // Defaults first, with user overrides applied. US-010: include the
     // macOS-only defaults so the settings page reflects cmd-c/cmd-v on
     // macOS (and stays unchanged on Linux where MACOS_ONLY_DEFAULTS is empty).
     for d in DEFAULTS.iter().chain(MACOS_ONLY_DEFAULTS.iter()) {
-        // If this default key was unbound by user, skip it
-        if unbound_keys.contains(d.key) {
+        let Some(meta) = ACTIONS.iter().find(|a| a.name == d.action_name) else {
             continue;
-        }
+        };
 
-        // If user overrode this action to a different key, use the user's key
+        // If user overrode this action to a different key, show that key. If a
+        // different action claimed this default chord, mirror apply_keybindings
+        // and hide the displaced default row until it is explicitly rebound.
         let key = if let Some(user_key) = user_by_action.get(d.action_name) {
             format_keystroke(user_key)
         } else {
+            if is_unbound(d.key) || is_user_claimed(d.key) {
+                continue;
+            }
             format_keystroke(d.key)
         };
 
+        seen_actions.insert(meta.name);
         entries.push(ShortcutEntry {
             key,
-            description: action_description(d.action_name).to_string(),
-            action_name: d.action_name,
+            description: meta.description.to_string(),
+            action_name: meta.name,
         });
     }
 
-    // Add user bindings for actions not in defaults (if any)
+    // Add user bindings for actions that are not in the default tables.
     for (key, action_name) in user_shortcuts {
         if action_name == "none" {
             continue;
         }
-        let is_default_action = DEFAULTS
-            .iter()
-            .chain(MACOS_ONLY_DEFAULTS.iter())
-            .any(|d| d.action_name == action_name);
-        // Resolve the registry's `&'static str` so the entry carries a stable
-        // action identity (not the borrowed config key).
-        if !is_default_action && let Some(meta) = ACTIONS.iter().find(|a| a.name == action_name) {
+        if let Some(meta) = ACTIONS.iter().find(|a| a.name == action_name)
+            && seen_actions.insert(meta.name)
+        {
             entries.push(ShortcutEntry {
                 key: format_keystroke(key),
-                description: action_description(action_name).to_string(),
+                description: meta.description.to_string(),
+                action_name: meta.name,
+            });
+        }
+    }
+
+    for meta in ACTIONS {
+        if seen_actions.insert(meta.name) {
+            entries.push(ShortcutEntry {
+                key: "Unassigned".to_string(),
+                description: action_description(meta.name).to_string(),
                 action_name: meta.name,
             });
         }
@@ -245,11 +269,34 @@ mod tests {
         // canonical default key string.
         overrides.insert("secondary-shift-d".to_string(), "none".to_string());
         let entries = effective_shortcuts(&overrides);
-        let has_split_h = entries.iter().any(|e| e.description == "Split horizontal");
-        assert!(
-            !has_split_h,
-            "Unbound default binding should not appear in effective list"
-        );
+        let split_h = entries
+            .iter()
+            .find(|e| e.action_name == "split_horizontally")
+            .expect("unbound actions remain visible for rebinding");
+        assert_eq!(split_h.key, "Unassigned");
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn effective_shortcuts_none_unbinds_canonical_equivalent_key() {
+        let mut overrides = HashMap::new();
+        overrides.insert("ctrl+shift+d".to_string(), "none".to_string());
+        let entries = effective_shortcuts(&overrides);
+        let split_h = entries
+            .iter()
+            .find(|e| e.action_name == "split_horizontally")
+            .expect("unbound actions remain visible for rebinding");
+        assert_eq!(split_h.key, "Unassigned");
+    }
+
+    #[test]
+    fn effective_shortcuts_lists_registry_actions_without_defaults() {
+        let entries = effective_shortcuts(&HashMap::new());
+        let close_window = entries
+            .iter()
+            .find(|e| e.action_name == "close_window")
+            .expect("registry action should be visible in shortcuts settings");
+        assert_eq!(close_window.key, "Unassigned");
     }
 
     #[test]

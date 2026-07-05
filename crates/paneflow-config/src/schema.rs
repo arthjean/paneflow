@@ -41,6 +41,9 @@ pub struct PaneFlowConfig {
     pub default_shell: Option<String>,
     /// Terminal color theme name (e.g. "One Dark", "PaneFlow Light").
     pub theme: Option<String>,
+    /// Theme selection mode: `"light"`, `"dark"`, or `"system"`. `theme`
+    /// stores the currently resolved concrete bundled theme for compatibility.
+    pub theme_mode: Option<String>,
     /// Workspace command definitions (cmux-compatible format).
     pub commands: Vec<CommandDefinition>,
     /// Window decoration mode: `"client"` (CSD, default) or `"server"` (SSD).
@@ -315,10 +318,15 @@ impl PaneFlowConfig {
         cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)
     }
 
-    /// Resolve the desktop chrome material switch. Windows follows the explicit
-    /// user setting; other platforms keep their existing native/tinted chrome
-    /// behavior and ignore the Windows-only field.
+    /// Resolve the desktop chrome material switch. `window_backdrop = "opaque"`
+    /// or `"off"` disables transparent chrome on every platform.
     pub fn cockpit_chrome_material_enabled(&self) -> bool {
+        if self.window_backdrop.as_deref().is_some_and(|value| {
+            let value = value.trim();
+            value.eq_ignore_ascii_case("opaque") || value.eq_ignore_ascii_case("off")
+        }) {
+            return false;
+        }
         !cfg!(target_os = "windows") || self.windows_chrome_material.unwrap_or(false)
     }
 
@@ -1545,6 +1553,7 @@ mod tests {
             shortcuts: HashMap::new(),
             default_shell: Some("sh".to_string()),
             theme: Some("One Dark".to_string()),
+            theme_mode: Some("dark".to_string()),
             commands: Vec::new(),
             window_decorations: Some("client".to_string()),
             window_backdrop: Some("auto".to_string()),
@@ -1801,6 +1810,13 @@ mod tests {
             cfg.cockpit_chrome_material_enabled(),
             !cfg!(target_os = "windows")
         );
+
+        let cfg = PaneFlowConfig {
+            window_backdrop: Some("opaque".to_string()),
+            windows_chrome_material: Some(true),
+            ..Default::default()
+        };
+        assert!(!cfg.cockpit_chrome_material_enabled());
     }
 
     #[test]

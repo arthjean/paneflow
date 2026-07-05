@@ -837,6 +837,10 @@ impl PaneFlowApp {
         let cached_config = paneflow_config::loader::load_config();
         let effective_shortcuts = keybindings::effective_shortcuts(&cached_config.shortcuts);
         let rosetta_passive_display_enabled = cached_config.rosetta_show_passive_enabled();
+        let theme_mode = crate::ThemeMode::from_config(
+            cached_config.theme_mode.as_deref(),
+            cached_config.theme.as_deref(),
+        );
 
         let mut app = Self {
             workspaces,
@@ -893,14 +897,7 @@ impl PaneFlowApp {
             mono_font_names: Vec::new(),
             font_dropdown_open: false,
             font_search: String::new(),
-            // Reflect the persisted theme in the Themes-page selector: a light
-            // theme shows the Light segment active, anything else Dark. (A prior
-            // "System" choice resolves to whichever concrete theme it picked.)
-            theme_mode: if crate::theme::active_theme().background.l > 0.5 {
-                crate::ThemeMode::Light
-            } else {
-                crate::ThemeMode::Dark
-            },
+            theme_mode,
             workspace_menu_open: None,
             tab_menu_open: None,
             pending_pane_focus: None,

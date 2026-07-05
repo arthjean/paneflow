@@ -1382,6 +1382,10 @@ impl PaneFlowApp {
             let default_shell_changed =
                 normalized_shell_value(self.cached_config.default_shell.as_deref())
                     != normalized_shell_value(config.default_shell.as_deref());
+            let theme_mode = crate::ThemeMode::from_config(
+                config.theme_mode.as_deref(),
+                config.theme.as_deref(),
+            );
             keybindings::apply_keybindings(cx, &config.shortcuts);
             self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
             crate::theme::invalidate_theme_cache();
@@ -1396,6 +1400,7 @@ impl PaneFlowApp {
             // pick up the reload without a per-frame `load_config()`. Last use
             // of `config` - move it in.
             self.cached_config = config;
+            self.theme_mode = theme_mode;
             self.sync_rosetta_config_state();
             if default_shell_changed {
                 self.handle_default_shell_changed(cx);

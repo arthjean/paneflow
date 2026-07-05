@@ -147,6 +147,14 @@ pub(crate) fn window_backdrop_uses_mica(config_value: Option<&str>) -> bool {
     )
 }
 
+#[cfg(target_os = "macos")]
+pub(crate) fn macos_sidebar_material_enabled(config_value: Option<&str>) -> bool {
+    !matches!(
+        window_backdrop_preference(config_value),
+        WindowBackdropPreference::Opaque | WindowBackdropPreference::Transparent
+    )
+}
+
 #[cfg(target_os = "windows")]
 fn windows_supports_system_backdrop() -> bool {
     #[repr(C)]
@@ -237,7 +245,14 @@ pub(crate) fn cockpit_chrome_background(
 /// a different surface than the rail and the radius reads as a square patch.
 /// Native semantic materials remain raw; Linux uses the same theme tint here as
 /// the rail because its blur protocols do not expose light/dark appearances.
-pub(crate) fn cockpit_backdrop_background(background: Hsla, material_active: bool) -> Hsla {
+pub(crate) fn cockpit_backdrop_background(
+    background: Hsla,
+    is_window_active: bool,
+    material_active: bool,
+) -> Hsla {
+    #[cfg(not(target_os = "linux"))]
+    let _ = is_window_active;
+
     if !material_active {
         return background;
     }
@@ -255,7 +270,12 @@ pub(crate) fn cockpit_backdrop_background(background: Hsla, material_active: boo
             tint
         };
     } else if crate::window_chrome::linux_backdrop::native_blur_active() {
-        return gpui::transparent_black();
+        let tint = Hsla::from(gpui::rgb(DARK_CHROME_TINT));
+        return if is_window_active {
+            tint.opacity(LINUX_CHROME_ACTIVE_OPACITY)
+        } else {
+            tint
+        };
     }
 
     background
@@ -361,6 +381,9 @@ mod material_tests {
             cockpit_chrome_background(background, true, false),
             background
         );
-        assert_eq!(cockpit_backdrop_background(background, false), background);
+        assert_eq!(
+            cockpit_backdrop_background(background, true, false),
+            background
+        );
     }
 }

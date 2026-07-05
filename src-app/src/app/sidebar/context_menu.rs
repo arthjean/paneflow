@@ -1,5 +1,5 @@
 //! Context-menu row helpers shared between the sidebar workspace menu and the
-//! title-bar burger menu. Includes the `shortcut_for_description` lookup used
+//! title-bar burger menu. Includes the action-name shortcut lookup used
 //! to render the keyboard-shortcut label next to each action.
 //!
 //! Part of the US-025 sidebar decomposition.
@@ -18,14 +18,24 @@ use crate::settings::components::{menu_divider_color, select_item, select_menu, 
 use crate::{PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
 
 pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
-    ("zed", "Open in Zed", "zed", "Open in Zed"),
-    ("cursor", "Open in Cursor", "cursor", "Open in Cursor"),
-    ("vscode", "Open in VS Code", "code", "Open in VS Code"),
+    ("zed", "Open in Zed", "zed", "open_workspace_in_zed"),
+    (
+        "cursor",
+        "Open in Cursor",
+        "cursor",
+        "open_workspace_in_cursor",
+    ),
+    (
+        "vscode",
+        "Open in VS Code",
+        "code",
+        "open_workspace_in_vscode",
+    ),
     (
         "windsurf",
         "Open in Windsurf",
         "windsurf",
-        "Open in Windsurf",
+        "open_workspace_in_windsurf",
     ),
 ];
 
@@ -50,10 +60,10 @@ pub(crate) fn clamped_context_menu_position(
 }
 
 impl PaneFlowApp {
-    pub(crate) fn shortcut_for_description(&self, description: &str) -> Option<&str> {
+    pub(crate) fn shortcut_for_action(&self, action_name: &str) -> Option<&str> {
         self.effective_shortcuts
             .iter()
-            .find(|entry| entry.description == description)
+            .find(|entry| entry.action_name == action_name && entry.key != "Unassigned")
             .map(|entry| entry.key.as_str())
     }
 
@@ -232,9 +242,9 @@ impl PaneFlowApp {
             );
         }
 
-        for &(id, label, command, shortcut_desc) in EDITOR_CONTEXT_MENU_ITEMS {
+        for &(id, label, command, shortcut_action) in EDITOR_CONTEXT_MENU_ITEMS {
             let shortcut = self
-                .shortcut_for_description(shortcut_desc)
+                .shortcut_for_action(shortcut_action)
                 .map(|s| SharedString::from(s.to_string()));
             let command = command.to_string();
             let label_owned = label.to_string();
@@ -261,7 +271,7 @@ impl PaneFlowApp {
 
         // Reveal in file manager
         let reveal_shortcut = self
-            .shortcut_for_description("Reveal in file manager")
+            .shortcut_for_action("reveal_workspace_in_file_manager")
             .map(|s| SharedString::from(s.to_string()));
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-reveal".into(),
@@ -276,7 +286,7 @@ impl PaneFlowApp {
 
         // Copy path
         let copy_shortcut = self
-            .shortcut_for_description("Copy path")
+            .shortcut_for_action("copy_workspace_path")
             .map(|s| SharedString::from(s.to_string()));
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-copy".into(),
@@ -312,7 +322,7 @@ impl PaneFlowApp {
 
         // Delete workspace (conditionally disabled)
         let close_shortcut = self
-            .shortcut_for_description("Close workspace")
+            .shortcut_for_action("close_workspace")
             .map(|s| SharedString::from(s.to_string()));
         context_menu = context_menu.child(
             div()

@@ -127,14 +127,59 @@ pub(crate) enum SettingsSection {
 }
 
 /// Light / dark / system selector shown at the top of the Themes settings page.
-/// UI state for now - the light theme is still being built; selecting a segment
-/// highlights it and is ready to drive theme resolution once the light theme
-/// lands.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum ThemeMode {
     Light,
     Dark,
     System,
+}
+
+impl ThemeMode {
+    pub(crate) fn from_config(mode: Option<&str>, theme_name: Option<&str>) -> Self {
+        match mode.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+            Some("light") => Self::Light,
+            Some("dark") => Self::Dark,
+            Some("system") => Self::System,
+            _ => Self::from_theme_name(theme_name.unwrap_or("One Dark")),
+        }
+    }
+
+    pub(crate) fn from_theme_name(name: &str) -> Self {
+        if name.eq_ignore_ascii_case("PaneFlow Light") {
+            Self::Light
+        } else {
+            Self::Dark
+        }
+    }
+
+    pub(crate) fn as_config_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::System => "system",
+        }
+    }
+
+    pub(crate) fn resolved_theme_name(self, appearance: gpui::WindowAppearance) -> &'static str {
+        match self {
+            Self::Light => "PaneFlow Light",
+            Self::Dark => "One Dark",
+            Self::System => {
+                if Self::appearance_is_light(appearance) {
+                    "PaneFlow Light"
+                } else {
+                    "One Dark"
+                }
+            }
+        }
+    }
+
+    pub(crate) fn appearance_is_light(appearance: gpui::WindowAppearance) -> bool {
+        matches!(
+            appearance,
+            gpui::WindowAppearance::Light | gpui::WindowAppearance::VibrantLight
+        )
+    }
 }
 
 /// Which Terminal-page enum dropdown is currently open (only one at a time).
@@ -544,6 +589,7 @@ impl Render for StartupSplashView {
             .size_full()
             .bg(crate::app::constants::cockpit_backdrop_background(
                 crate::theme::active_theme().title_bar_background,
+                window.is_window_active(),
                 self.native_material_active,
             ))
             .flex()
@@ -1435,20 +1481,9 @@ impl Render for PaneFlowApp {
             theme.background.l > 0.5,
         );
         // Every mode is cockpit now (Agents first, then Cli, then Diff): the
-        // title bar always floats as a rail-confined overlay (never a flex
-        // child), so the right panel rises to y=0 with rounded rail-side
-        // corners. `title_bar_h` mirrors the title bar's own height so the
-        // rail content clears the floating window controls.
+        // title bar floats above the full window and the right panel reserves
+        // a matching strip so content clears window controls.
         let title_bar_h = (1.75 * window.rem_size()).max(px(34.));
-        // All three desktop platforms span the title bar full-width so the right
-        // panel reserves a top strip instead of rising into the title-bar band.
-        // Window controls land top-right on Windows, per-DE on Linux; macOS
-        // keeps its native traffic lights floating top-left over the spanned bar
-        // (AppKit paints them above the overlay, so there's no conflict).
-        let title_bar_spans_window = cfg!(target_os = "windows")
-            || cfg!(target_os = "linux")
-            || cfg!(target_os = "macos")
-            || !self.primary_sidebar_visible;
         let settings_open = self.settings_section.is_some();
         let sessions_sidebar_width = self.rendered_sessions_sidebar_width(window);
         let sessions_sidebar_mounted = self.agent_sessions.sessions_sidebar_open
@@ -1501,11 +1536,7 @@ impl Render for PaneFlowApp {
             window.is_window_active(),
             chrome_material_active,
         );
-        let panel_top = if title_bar_spans_window {
-            title_bar_h
-        } else {
-            px(0.)
-        };
+        let panel_top = title_bar_h;
         let primary_sidebar_width = self.rendered_primary_sidebar_width(window);
         let primary_sidebar_mounted = self.settings_section.is_some()
             || self.primary_sidebar_visible
@@ -1515,6 +1546,24 @@ impl Render for PaneFlowApp {
         } else {
             (primary_sidebar_width / self.primary_sidebar_expanded_width().max(1.)).clamp(0., 1.)
         };
+        #[cfg(target_os = "linux")]
+        {
+            crate::window_chrome::linux_backdrop::set_chrome_geometry(
+                crate::window_chrome::linux_backdrop::ChromeGeometry {
+                    left_sidebar_width: primary_sidebar_width,
+                    right_sidebar_width: if sessions_sidebar_mounted {
+                        sessions_sidebar_width
+                    } else if files_sidebar_mounted {
+                        files_sidebar_width
+                    } else {
+                        0.
+                    },
+                    title_bar_height: f32::from(title_bar_h),
+                    title_bar_spans_window: true,
+                },
+            );
+            crate::window_chrome::linux_backdrop::refresh_blur_region(window);
+        }
 
         // EP-003 US-009: focus the pane created by a drop-to-split. Deferred
         // here from the `DropSplit` subscription handler (no `Window` there).
@@ -1630,9 +1679,6 @@ impl Render for PaneFlowApp {
         // Update CTA state - extracted to `update_pill_info()` so the Cli/
         // Agents sidebar banner and the Diff title-bar pill share one source.
         let update_info = self.update_pill_info();
-        // Push the current sidebar width so a confined title bar follows the
-        // animated rail edge instead of snapping to the final target width.
-        let sidebar_px = primary_sidebar_width;
         self.title_bar.update(cx, |tb, _| {
             tb.workspace_name = ws_name;
             tb.sidebar_visible = self.primary_sidebar_visible;
@@ -1795,6 +1841,7 @@ impl Render for PaneFlowApp {
                     // fills when Chrome material is off.
                     .bg(crate::app::constants::cockpit_backdrop_background(
                         theme.title_bar_background,
+                        window.is_window_active(),
                         native_material_active,
                     ))
                     // While settings is open the left rail becomes the Codex
@@ -1878,33 +1925,7 @@ impl Render for PaneFlowApp {
                             // content (terminal cells, diff rows, settings cards)
                             // off the arc; the window backdrop then shows in the
                             // corner notch (a clean radius on every platform).
-                            .when(!title_bar_spans_window, |d| {
-                                // Shared #181818 right panel on the #141414
-                                // rail/chrome, plus
-                                // a faint rail-side hairline so the panel
-                                // edge reads even where rail and panel grays
-                                // blur together.
-                                // 16px matches the Cli/Diff corner-mask
-                                // radius so the panel silhouette is the
-                                // same in every mode. The inset must stay
-                                // ≥ r·(1−1/√2) ≈ 4.7px or the content's
-                                // square corner pokes through the arc
-                                // (GPUI doesn't clip children to the
-                                // radius) - hence 5px, not the old 4px.
-                                d.bg(panel_bg)
-                                    .rounded_tl(px(16.))
-                                    .rounded_bl(px(16.))
-                                    .when(secondary_sidebar_open, |d| {
-                                        d.rounded_tr(px(16.)).rounded_br(px(16.))
-                                    })
-                                    .p(px(5.))
-                            })
-                            // A full-width title bar is used on Windows and
-                            // whenever the primary rail is hidden. Reserve its
-                            // strip so content never sits beneath the controls.
-                            .when(title_bar_spans_window, |d| {
-                                d.child(div().h(title_bar_h).flex_none())
-                            })
+                            .child(div().h(title_bar_h).flex_none())
                             .child(
                                 div()
                                     .flex_1()
@@ -1913,15 +1934,13 @@ impl Render for PaneFlowApp {
                                     .flex()
                                     .flex_col()
                                     .overflow_hidden()
-                                    .when(title_bar_spans_window, |d| {
-                                        d.bg(panel_bg)
-                                            .rounded_tl(px(16.))
-                                            .rounded_bl(px(16.))
-                                            .when(secondary_sidebar_open, |d| {
-                                                d.rounded_tr(px(16.)).rounded_br(px(16.))
-                                            })
-                                            .p(px(5.))
+                                    .bg(panel_bg)
+                                    .rounded_tl(px(16.))
+                                    .rounded_bl(px(16.))
+                                    .when(secondary_sidebar_open, |d| {
+                                        d.rounded_tr(px(16.)).rounded_br(px(16.))
                                     })
+                                    .p(px(5.))
                                     .child(main_content)
                                     .when_some(rosetta_surface, |d, surface| d.child(surface)),
                             )
@@ -2016,7 +2035,7 @@ impl Render for PaneFlowApp {
                                 .opacity(sessions_sidebar_opacity)
                                 // Keep the right rail below the full-width
                                 // title bar, aligned with the main panel.
-                                .when(title_bar_spans_window, |d| d.pt(title_bar_h))
+                                .pt(title_bar_h)
                                 .child(self.render_sessions_sidebar(window, cx))
                                 .into_any_element(),
                         )
@@ -2036,7 +2055,7 @@ impl Render for PaneFlowApp {
                                 .opacity(files_sidebar_opacity)
                                 // Keep the right rail below the full-width
                                 // title bar, aligned with the main panel.
-                                .when(title_bar_spans_window, |d| d.pt(title_bar_h))
+                                .pt(title_bar_h)
                                 .child(self.render_files_sidebar(window, cx))
                                 .into_any_element(),
                         )
@@ -2044,33 +2063,18 @@ impl Render for PaneFlowApp {
             );
 
         {
-            // Codex cockpit: title bar floats as a confined overlay so the rail
-            // + panel fill the full window height. It still owns window drag +
-            // min/max/close (rendered on top of the top strip).
+            // Codex cockpit: title bar floats as an overlay above the rail and
+            // panel. It still owns window drag and custom controls where the
+            // platform needs them.
             app_content = app_content.child(
                 div()
                     .absolute()
                     .top_0()
                     .left_0()
-                    // Linux/macOS cockpit: confine the title bar (drag +
-                    // controls) to the rail width so the floating overlay never
-                    // covers the panel - the compositor (Linux) / traffic
-                    // lights (macOS) own the window controls, and the terminal
-                    // fills the full height with no reserved top strip.
-                    //
-                    // Windows: span the FULL window width so the in-bar
-                    // min/max/close cluster lands at the window's top-right
-                    // corner (Explorer / VS Code / Codex convention, and what
-                    // `settings/window.rs` already does). The right panel
-                    // reserves a matching top strip below (see its `pt` guard)
-                    // so its content clears this bar.
-                    .map(|d| {
-                        if title_bar_spans_window {
-                            d.w_full()
-                        } else {
-                            d.w(px(sidebar_px))
-                        }
-                    })
+                    // Supported desktop platforms span the full window. The
+                    // right panel reserves a matching top strip, so content
+                    // clears native or custom window controls.
+                    .w_full()
                     .overflow_hidden()
                     .child(self.title_bar.clone()),
             );
@@ -2174,6 +2178,7 @@ impl Render for PaneFlowApp {
             .id("window-backdrop")
             .bg(crate::app::constants::cockpit_backdrop_background(
                 theme.title_bar_background,
+                window.is_window_active(),
                 native_material_active,
             ))
             .size_full()
@@ -2227,8 +2232,16 @@ impl Render for PaneFlowApp {
                     .when(!tiling.bottom, |d| d.pb(RESIZE_BORDER))
                     .when(!tiling.left, |d| d.pl(RESIZE_BORDER))
                     .when(!tiling.right, |d| d.pr(RESIZE_BORDER))
-                    // Refresh on mouse move so cursor style updates every frame
-                    .on_mouse_move(|_e, window, _cx| window.refresh())
+                    // Refresh only around the resize band so cursor style can
+                    // enter and leave resize mode without repainting on every
+                    // content-area mouse move.
+                    .on_mouse_move(move |e, window, _cx| {
+                        let win_size = window.window_bounds().get_bounds().size;
+                        let hover_band = RESIZE_BORDER * 2.;
+                        if resize_edge(e.position, hover_band, win_size, tiling).is_some() {
+                            window.refresh();
+                        }
+                    })
                     // Initiate resize on mouse-down in the border zone
                     .on_mouse_down(MouseButton::Left, move |e, window, _cx| {
                         let win_size = window.window_bounds().get_bounds().size;
@@ -2459,6 +2472,15 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
         subscription.detach();
     });
     crate::agents::notifications::set_window_active(window.is_window_active());
+
+    view.update(cx, |app, cx| {
+        app.sync_system_theme_from_window(window, cx);
+        let subscription = cx.observe_window_appearance(window, |this, window, cx| {
+            this.sync_system_theme_from_window(window, cx);
+            cx.notify();
+        });
+        subscription.detach();
+    });
 
     view.update(cx, |app, cx| {
         if let Some(ws) = app.workspaces.get(app.active_idx) {
@@ -2912,10 +2934,14 @@ fn main() {
                         );
                     }
                     #[cfg(target_os = "macos")]
-                    crate::window_chrome::macos_backdrop::apply_subtle_sidebar_material(
-                        window,
-                        crate::theme::active_theme().background.l > 0.5,
-                    );
+                    if crate::app::constants::macos_sidebar_material_enabled(
+                        config.window_backdrop.as_deref(),
+                    ) {
+                        crate::window_chrome::macos_backdrop::apply_subtle_sidebar_material(
+                            window,
+                            crate::theme::active_theme().background.l > 0.5,
+                        );
+                    }
                     #[cfg(target_os = "linux")]
                     crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(window);
 

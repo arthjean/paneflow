@@ -255,6 +255,7 @@ pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, serde_json::
     set_field!(shortcuts);
     set_field!(default_shell);
     set_field!(theme);
+    set_field!(theme_mode);
     set_field!(window_decorations);
     set_field!(window_backdrop);
     set_field!(windows_terminal_material);
@@ -1033,6 +1034,7 @@ mod tests {
             },
             default_shell: Some("/bin/fish".to_string()),
             theme: Some("One Dark".to_string()),
+            theme_mode: Some("dark".to_string()),
             commands: vec![CommandDefinition {
                 name: "test".to_string(),
                 description: Some("A test command".to_string()),

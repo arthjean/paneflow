@@ -20,6 +20,32 @@ static NATIVE_BLUR_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static BACKDROP: RefCell<Option<LinuxBackdrop>> = const { RefCell::new(None) };
+    static CHROME_GEOMETRY: RefCell<Option<ChromeGeometry>> = const { RefCell::new(None) };
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ChromeGeometry {
+    pub(crate) left_sidebar_width: f32,
+    pub(crate) right_sidebar_width: f32,
+    pub(crate) title_bar_height: f32,
+    pub(crate) title_bar_spans_window: bool,
+}
+
+impl ChromeGeometry {
+    fn fallback(window: &Window) -> Self {
+        Self {
+            left_sidebar_width: crate::SIDEBAR_WIDTH,
+            right_sidebar_width: 0.,
+            title_bar_height: (1.75 * f32::from(window.rem_size())).max(34.),
+            title_bar_spans_window: true,
+        }
+    }
+}
+
+pub(crate) fn set_chrome_geometry(geometry: ChromeGeometry) {
+    CHROME_GEOMETRY.with(|slot| {
+        *slot.borrow_mut() = Some(geometry);
+    });
 }
 
 /// Whether PaneFlow can safely expose translucent application chrome.
@@ -187,16 +213,39 @@ fn chrome_rectangles(window: &Window, scale: f32) -> Vec<[i32; 4]> {
     let bounds = window.bounds().size;
     let width = (f32::from(bounds.width) * scale).ceil().max(1.0) as i32;
     let height = (f32::from(bounds.height) * scale).ceil().max(1.0) as i32;
-    let sidebar = (crate::SIDEBAR_WIDTH * scale)
+    let geometry = CHROME_GEOMETRY.with(|slot| {
+        slot.borrow()
+            .unwrap_or_else(|| ChromeGeometry::fallback(window))
+    });
+    let left_sidebar = (geometry.left_sidebar_width * scale)
         .ceil()
-        .clamp(1.0, width as f32) as i32;
-    let title_bar = ((1.75 * f32::from(window.rem_size())).max(34.0) * scale)
+        .clamp(0.0, width as f32) as i32;
+    let right_sidebar = (geometry.right_sidebar_width * scale)
+        .ceil()
+        .clamp(0.0, width.saturating_sub(left_sidebar) as f32) as i32;
+    let title_bar = (geometry.title_bar_height * scale)
         .ceil()
         .clamp(1.0, height as f32) as i32;
 
-    let mut rectangles = vec![[0, 0, sidebar, height]];
-    if sidebar < width {
-        rectangles.push([sidebar, 0, width - sidebar, title_bar]);
+    let mut rectangles = Vec::with_capacity(3);
+    if left_sidebar > 0 {
+        rectangles.push([0, 0, left_sidebar, height]);
+    }
+    if geometry.title_bar_spans_window && left_sidebar < width {
+        let title_width = width - left_sidebar;
+        rectangles.push([left_sidebar, 0, title_width, title_bar]);
+    }
+    if right_sidebar > 0 {
+        let x = width - right_sidebar;
+        let y = if geometry.title_bar_spans_window {
+            title_bar
+        } else {
+            0
+        };
+        let h = height.saturating_sub(y);
+        if h > 0 {
+            rectangles.push([x, y, right_sidebar, h]);
+        }
     }
     rectangles
 }

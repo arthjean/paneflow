@@ -23,7 +23,7 @@ pub(super) fn normalize_keystroke(keystrokes: &str) -> String {
 /// `"shift-ctrl-d"`, and `"secondary-shift-d"` all compare equal on Linux.
 /// Returns `None` for unparseable input (which then only matches by raw
 /// equality at the call site).
-fn canonical(keystrokes: &str) -> Option<Keystroke> {
+pub(super) fn canonical_keystroke(keystrokes: &str) -> Option<Keystroke> {
     Keystroke::parse(&normalize_keystroke(keystrokes)).ok()
 }
 
@@ -33,7 +33,7 @@ fn canonical(keystrokes: &str) -> Option<Keystroke> {
 /// is already taken instead of leaving two live entries (GPUI would resolve
 /// the conflict order-dependently).
 pub fn keystrokes_conflict(a: &str, b: &str) -> bool {
-    match (canonical(a), canonical(b)) {
+    match (canonical_keystroke(a), canonical_keystroke(b)) {
         (Some(ka), Some(kb)) => ka == kb,
         _ => a == b,
     }
@@ -89,7 +89,7 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
     let unbound_canonical: std::collections::HashSet<Keystroke> = user_shortcuts
         .iter()
         .filter(|(_, v)| v.as_str() == "none")
-        .filter_map(|(k, _)| canonical(k))
+        .filter_map(|(k, _)| canonical_keystroke(k))
         .collect();
 
     // Actions the user remapped to a different key (drop their default key).
@@ -115,12 +115,13 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
         .iter()
         .filter(|(_, v)| v.as_str() != "none")
         .filter(|(_, action_name)| action_from_name(action_name).is_some())
-        .filter_map(|(k, _)| canonical(k))
+        .filter_map(|(k, _)| canonical_keystroke(k))
         .collect();
 
-    let is_unbound = |key: &str| canonical(key).is_some_and(|k| unbound_canonical.contains(&k));
+    let is_unbound =
+        |key: &str| canonical_keystroke(key).is_some_and(|k| unbound_canonical.contains(&k));
     let is_user_claimed =
-        |key: &str| canonical(key).is_some_and(|k| user_bound_canonical.contains(&k));
+        |key: &str| canonical_keystroke(key).is_some_and(|k| user_bound_canonical.contains(&k));
 
     // Register defaults, skipping unbound keys, remapped actions, and keys the
     // user reassigned to another action.
@@ -144,8 +145,12 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
     // bindings at `zed/assets/keymaps/default-{macos,linux,windows}.json`.
     // `secondary` resolves to Cmd on macOS and Ctrl elsewhere.
     cx.bind_keys([
-        KeyBinding::new("secondary-c", markdown::Copy, None),
-        KeyBinding::new("secondary-shift-c", markdown::CopyAsMarkdown, None),
+        KeyBinding::new("secondary-c", markdown::Copy, Some("Markdown")),
+        KeyBinding::new(
+            "secondary-shift-c",
+            markdown::CopyAsMarkdown,
+            Some("Markdown"),
+        ),
     ]);
 
     // Layer user overrides

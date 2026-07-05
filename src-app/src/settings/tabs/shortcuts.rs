@@ -80,7 +80,6 @@ impl PaneFlowApp {
                 .hover(|s| s.bg(ui.subtle))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.recording_shortcut_idx = Some(i);
-                    cx.clear_key_bindings();
                     this.settings_focus.focus(window, cx);
                     cx.notify();
                 }))
