@@ -62,7 +62,7 @@ pub(crate) fn opencode_configs() -> Vec<PathBuf> {
 
 fn opencode_configs_from(
     home: Option<PathBuf>,
-    platform_config_dir: Option<PathBuf>,
+    _platform_config_dir: Option<PathBuf>,
     _xdg_config_home: Option<OsString>,
     opencode_config: Option<OsString>,
     opencode_config_dir: Option<OsString>,
@@ -88,7 +88,7 @@ fn opencode_configs_from(
         if let Some(home) = home.clone() {
             push_opencode_names(&mut out, home.join(".config"));
         }
-        if let Some(dir) = platform_config_dir {
+        if let Some(dir) = _platform_config_dir {
             push_opencode_names(&mut out, dir);
         }
     }

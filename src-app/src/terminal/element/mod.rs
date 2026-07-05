@@ -2280,10 +2280,23 @@ mod golden_frame_tests {
                  PANEFLOW_BLESS_GOLDEN=1 cargo test -p paneflow-app golden_frame"
             )
         });
+        let expected = normalize_golden_line_endings(&expected);
         assert_eq!(
             actual, expected,
             "golden '{name}' drifted; if intentional, regenerate with \
              PANEFLOW_BLESS_GOLDEN=1 cargo test -p paneflow-app golden_frame"
+        );
+    }
+
+    fn normalize_golden_line_endings(text: &str) -> String {
+        text.replace("\r\n", "\n")
+    }
+
+    #[test]
+    fn golden_line_endings_are_checkout_agnostic() {
+        assert_eq!(
+            normalize_golden_line_endings("runs[1]:\r\n  L0 C0\r\n"),
+            "runs[1]:\n  L0 C0\n"
         );
     }
 
