@@ -932,7 +932,7 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
     {
         use std::io::Read;
         use std::os::unix::fs::OpenOptionsExt;
-        let mut file = match std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .read(true)
             .custom_flags(libc::O_NOFOLLOW)
             .open(path)
