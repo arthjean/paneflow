@@ -75,6 +75,11 @@ pub enum UrlError {
     /// depth - if every other check passes, we still refuse to
     /// pass an unbounded string into `xdg-open`.
     TooLong,
+    /// Scheme is allowed, but the URL shape is not safe to delegate to
+    /// the OS URL handler. We require `http://` or `https://` with a
+    /// non-empty authority and reject whitespace, control characters,
+    /// backslashes, and userinfo.
+    Malformed,
 }
 
 /// Why an image reference was refused.
@@ -118,6 +123,12 @@ pub fn validate_link_url(url: &str) -> Result<ValidatedUrl, UrlError> {
     if url.len() > MAX_LINK_URL_LEN {
         return Err(UrlError::TooLong);
     }
+    if url
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '\\')
+    {
+        return Err(UrlError::Malformed);
+    }
     let scheme = match extract_scheme(url) {
         Some(s) => s,
         None => return Err(UrlError::MissingScheme),
@@ -125,6 +136,15 @@ pub fn validate_link_url(url: &str) -> Result<ValidatedUrl, UrlError> {
     let scheme_lower = scheme.to_ascii_lowercase();
     if !ALLOWED_LINK_SCHEMES.contains(&scheme_lower.as_str()) {
         return Err(UrlError::DisallowedScheme(scheme_lower));
+    }
+    let rest = url
+        .get(scheme.len()..)
+        .filter(|rest| rest.starts_with("://"))
+        .ok_or(UrlError::Malformed)?;
+    let authority = &rest[3..];
+    let authority = authority.split(['/', '?', '#']).next().unwrap_or(authority);
+    if authority.is_empty() || authority.contains('@') {
+        return Err(UrlError::Malformed);
     }
     Ok(ValidatedUrl(url.to_string()))
 }
@@ -303,6 +323,26 @@ mod tests {
         // tag isn't accidentally rejected.
         let v = validate_link_url("HTTPS://example.com").expect("https accepted");
         assert_eq!(v.as_str(), "HTTPS://example.com");
+    }
+
+    #[test]
+    fn link_url_allowed_scheme_must_be_absolute() {
+        let err = validate_link_url("https:example.com/path").expect_err("relative rejected");
+        assert!(matches!(err, UrlError::Malformed));
+        let err = validate_link_url("https:///path").expect_err("empty authority rejected");
+        assert!(matches!(err, UrlError::Malformed));
+    }
+
+    #[test]
+    fn link_url_rejects_confusing_payloads() {
+        let err = validate_link_url("https://example.com/\nfile:///bin/sh")
+            .expect_err("newline rejected");
+        assert!(matches!(err, UrlError::Malformed));
+        let err = validate_link_url("https:\\\\example.com").expect_err("backslash rejected");
+        assert!(matches!(err, UrlError::Malformed));
+        let err =
+            validate_link_url("https://user@example.com/path").expect_err("userinfo rejected");
+        assert!(matches!(err, UrlError::Malformed));
     }
 
     #[test]

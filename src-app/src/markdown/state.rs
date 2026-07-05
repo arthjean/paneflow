@@ -10,7 +10,7 @@
 //! versioned so a future field addition can be additive.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -51,8 +51,8 @@ impl MarkdownState {
     /// Look up a previously-saved scroll offset for `path`. Returns `None` if
     /// the path was never opened, or the cache is missing/corrupt.
     pub fn lookup_offset(&self, path: &Path) -> Option<f32> {
-        let key = path.to_str()?;
-        self.offsets.get(key).copied()
+        let key = key_for_path(path);
+        self.offsets.get(&key).copied()
     }
 
     /// Update the offset for `path`. Caller is responsible for calling `save`
@@ -63,10 +63,49 @@ impl MarkdownState {
         if !offset_y.is_finite() {
             return;
         }
-        if let Some(key) = path.to_str() {
-            self.offsets.insert(key.to_string(), offset_y);
+        let key = key_for_path(path);
+        self.offsets.insert(key, offset_y);
+    }
+}
+
+fn key_for_path(path: &Path) -> String {
+    normalized_state_path(path).to_string_lossy().into_owned()
+}
+
+fn normalized_state_path(path: &Path) -> PathBuf {
+    if std::fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return absolutize_lexical(path);
+    }
+    path.canonicalize()
+        .unwrap_or_else(|_| absolutize_lexical(path))
+}
+
+fn absolutize_lexical(path: &Path) -> PathBuf {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    };
+    lexical_normalize(absolute)
+}
+
+fn lexical_normalize(path: PathBuf) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
         }
     }
+    out
 }
 
 /// Process-wide shared state. All `MarkdownView` panes serialize their
@@ -170,7 +209,7 @@ pub fn save(state: &MarkdownState) -> std::io::Result<()> {
     }
     let json = serde_json::to_string_pretty(state)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    let tmp = path.with_extension("json.tmp");
+    let tmp = temp_path_for(&path);
     if let Err(e) = std::fs::write(&tmp, &json) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
@@ -184,6 +223,15 @@ pub fn save(state: &MarkdownState) -> std::io::Result<()> {
         return Err(e);
     }
     Ok(())
+}
+
+fn temp_path_for(path: &Path) -> PathBuf {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let filename = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "markdown_state.json".to_string());
+    parent.join(format!(".{filename}.tmp.{}", std::process::id()))
 }
 
 #[cfg(test)]
@@ -201,6 +249,21 @@ mod tests {
         let mut s = MarkdownState::default();
         s.record_offset(Path::new("/foo/bar.md"), 1234.5);
         assert_eq!(s.lookup_offset(Path::new("/foo/bar.md")), Some(1234.5));
+    }
+
+    #[test]
+    fn lookup_uses_normalized_existing_paths() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).expect("create subdir");
+        let path = sub.join("doc.md");
+        std::fs::write(&path, "# title\n").expect("write doc");
+
+        let mut s = MarkdownState::default();
+        s.record_offset(&path, 321.0);
+        let alias = sub.join(".").join("doc.md");
+
+        assert_eq!(s.lookup_offset(&alias), Some(321.0));
     }
 
     #[test]
@@ -230,7 +293,7 @@ mod tests {
         let json = r#"{ "offsets": { "/x.md": 5.0 } }"#;
         let restored: MarkdownState = serde_json::from_str(json).expect("de");
         assert_eq!(restored.version, 1);
-        assert_eq!(restored.lookup_offset(Path::new("/x.md")), Some(5.0));
+        assert_eq!(restored.offsets.get("/x.md"), Some(&5.0));
     }
 
     #[test]

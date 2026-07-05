@@ -179,6 +179,10 @@ struct Walker {
     /// When `Some`, every text/code event is also given this URL so the view
     /// layer can render it as a hyperlink.
     link_url: Option<String>,
+    /// Pulldown emits the image alt text as nested inline events after
+    /// `Tag::Image`. We render one placeholder for the image itself, so the
+    /// nested alt stream must be drained instead of appended a second time.
+    image_depth: usize,
     output: Vec<MdNode>,
     /// Running tally of `MdNode` instances installed (in `output` or in any
     /// child `Vec<MdNode>`). When this exceeds `MAX_AST_NODES`, the walker
@@ -222,6 +226,19 @@ impl Walker {
     }
 
     fn on_event(&mut self, event: Event<'_>) {
+        if self.image_depth > 0 {
+            match event {
+                Event::Start(Tag::Image { .. }) => {
+                    self.image_depth += 1;
+                }
+                Event::End(TagEnd::Image) => {
+                    self.image_depth = self.image_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         match event {
             Event::Start(tag) => self.on_start(tag),
             Event::End(end) => self.on_end(end),
@@ -325,6 +342,7 @@ impl Walker {
                     title.as_ref()
                 };
                 self.push_text(format!("[image: {}]", sanitize_placeholder(raw)));
+                self.image_depth = 1;
             }
             Tag::FootnoteDefinition(label) => self.stack.push(Frame::Footnote {
                 label: label.into_string(),
@@ -344,7 +362,9 @@ impl Walker {
             TagEnd::Strong => self.style.strong = false,
             TagEnd::Strikethrough => self.style.strikethrough = false,
             TagEnd::Link => self.link_url = None,
-            TagEnd::Image => { /* nothing to pop - image is a placeholder text */ }
+            TagEnd::Image => {
+                // Handled by the `image_depth` drain at the top of `on_event`.
+            }
             TagEnd::TableHead => {
                 let keep_row = self.reserve_synthetic_node();
                 if let Some(Frame::Table {
@@ -437,10 +457,11 @@ impl Walker {
                 mut children,
                 inline,
             } => {
+                let keep_item = self.reserve_synthetic_node();
                 // The synthesised Paragraph for inline-only items is a node
                 // that bypasses `install()` - count it here so adversarial
                 // bullet-only inputs respect `MAX_AST_NODES`.
-                if !inline.is_empty() {
+                if keep_item && !inline.is_empty() {
                     if self.node_count >= MAX_AST_NODES {
                         self.truncated = true;
                     } else {
@@ -448,7 +469,7 @@ impl Walker {
                         children.push(MdNode::Paragraph { spans: inline });
                     }
                 }
-                if let Some(Frame::List { items, .. }) = self.stack.last_mut() {
+                if keep_item && let Some(Frame::List { items, .. }) = self.stack.last_mut() {
                     items.push(children);
                 }
                 None
@@ -548,8 +569,13 @@ impl Walker {
             }
             Frame::Item { children, inline } => {
                 if !inline.is_empty() {
-                    let spans = std::mem::take(inline);
-                    children.push(MdNode::Paragraph { spans });
+                    if self.node_count >= MAX_AST_NODES {
+                        self.truncated = true;
+                    } else {
+                        self.node_count += 1;
+                        let spans = std::mem::take(inline);
+                        children.push(MdNode::Paragraph { spans });
+                    }
                 }
                 children.push(node);
             }
@@ -681,6 +707,16 @@ mod tests {
             !text.contains('\u{202E}'),
             "bidi override must be stripped: {text:?}"
         );
+    }
+
+    #[test]
+    fn image_node_does_not_duplicate_alt_text() {
+        let nodes = parse_with_limit("![alt text](cat.png)").expect("parse");
+        let MdNode::Paragraph { spans } = first(&nodes) else {
+            panic!("expected a paragraph for a top-level image");
+        };
+        let text: String = spans.iter().map(|s| s.text.as_str()).collect();
+        assert_eq!(text, "[image: cat.png]");
     }
 
     #[test]
@@ -992,6 +1028,7 @@ mod tests {
                     }
                     MdNode::List { items, .. } => {
                         for item in items {
+                            total += 1;
                             total += count(item);
                         }
                     }

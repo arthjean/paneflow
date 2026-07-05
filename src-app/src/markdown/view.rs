@@ -60,6 +60,9 @@ const SCROLL_POLL_CADENCE: Duration = Duration::from_millis(250);
 /// not what the user wanted - search-match copies are the common path.
 const COPY_MAX_BYTES: usize = 64 * 1024;
 
+const RENDER_PATH_ROOT: u64 = 14_695_981_039_346_656_037;
+const MAX_RENDERED_TABLE_COLUMNS: u16 = 64;
+
 static MARKDOWN_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A markdown viewer pane. One instance per opened file.
@@ -97,6 +100,10 @@ pub struct MarkdownView {
     /// changes. Searching this string is O(n) per query - fine for files up
     /// to `MAX_INPUT_BYTES`.
     search_corpus: String,
+    /// Lowercased search corpus plus a byte-offset map back to `search_corpus`.
+    /// Kept only while search is active so normal reading does not pay for it.
+    search_corpus_lower: String,
+    search_lower_to_source: Vec<usize>,
     /// Byte offsets of each match in `search_corpus`. Empty when no query is
     /// set or no matches exist.
     search_matches: Vec<usize>,
@@ -120,10 +127,10 @@ impl MarkdownView {
         // Goes through the shared state mutex so concurrent panes never
         // observe a half-written cache.
         let pending_restore_y = state::lookup_offset_for(&path);
-        let mut view = Self {
+        let view = Self {
             path,
             ast: None,
-            error: None,
+            error: Some("Loading...".into()),
             focus_handle: cx.focus_handle(),
             element_id,
             _watcher: None,
@@ -132,26 +139,36 @@ impl MarkdownView {
             search_active: false,
             search_query: String::new(),
             search_corpus: String::new(),
+            search_corpus_lower: String::new(),
+            search_lower_to_source: Vec::new(),
             search_matches: Vec::new(),
             search_current: 0,
             scroll_drag: None,
         };
-        view.reload_from_disk();
-        // Always start the watcher, even on initial-load error: the file may
-        // appear/be-fixed later (e.g. UTF-8 invalid → user re-saves) and the
-        // user expects the pane to track the path until they close it.
-        view.start_watcher(cx);
+        view.start_initial_load(cx);
         view.start_scroll_persistence(cx);
-        view.maybe_apply_pending_restore(cx);
         view
     }
 
-    /// Re-read the file from disk and refresh `ast`/`error`. Called both on
-    /// initial open and on each watcher fire (US-021). Pure data: takes
-    /// `&mut self`, no GPUI context.
-    fn reload_from_disk(&mut self) {
-        let (ast, error) = load_from_disk(&self.path);
-        self.apply_loaded(ast, error);
+    fn start_initial_load(&self, cx: &mut Context<Self>) {
+        let path = self.path.clone();
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let (ast, error) = smol::unblock(move || load_from_disk(&path)).await;
+                cx.update(|cx| {
+                    let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                        view.apply_loaded(ast, error);
+                        // Start watching after the first snapshot is applied
+                        // so a slow initial read cannot overwrite a newer
+                        // watcher reload that raced ahead of it.
+                        view.start_watcher(cx);
+                        view.maybe_apply_pending_restore(cx);
+                        cx.notify();
+                    });
+                });
+            },
+        )
+        .detach();
     }
 
     fn apply_loaded(&mut self, ast: Option<Vec<MdNode>>, error: Option<SharedString>) {
@@ -163,9 +180,14 @@ impl MarkdownView {
         // work for the common case where the user is just reading.
         if self.search_active {
             self.search_corpus = self.ast.as_deref().map(harvest_text).unwrap_or_default();
+            let (lower, map) = lowercase_with_byte_map(&self.search_corpus);
+            self.search_corpus_lower = lower;
+            self.search_lower_to_source = map;
             self.recompute_matches();
         } else {
             self.search_corpus.clear();
+            self.search_corpus_lower.clear();
+            self.search_lower_to_source.clear();
             self.search_matches.clear();
             self.search_current = 0;
         }
@@ -179,12 +201,14 @@ impl MarkdownView {
             self.search_current = 0;
             return;
         }
-        let needle = self.search_query.to_ascii_lowercase();
-        let haystack = self.search_corpus.to_ascii_lowercase();
+        let needle = self.search_query.to_lowercase();
+        let haystack = &self.search_corpus_lower;
         let mut start = 0;
         while let Some(pos) = haystack[start..].find(&needle) {
             let abs = start + pos;
-            self.search_matches.push(abs);
+            if let Some(&source_abs) = self.search_lower_to_source.get(abs) {
+                self.search_matches.push(source_abs);
+            }
             start = abs + needle.len().max(1);
         }
         if !self.search_matches.is_empty() {
@@ -258,6 +282,12 @@ impl MarkdownView {
             loop {
                 smol::Timer::after(SCROLL_POLL_CADENCE).await;
                 if this.upgrade().is_none() {
+                    let current: f32 = f32::from(handle.offset().y);
+                    if (current - last_persisted).abs() >= 1.0
+                        && let Err(e) = state::save_offset_for(&path, -current)
+                    {
+                        log::warn!("markdown_state.json final save failed: {}", e);
+                    }
                     break;
                 }
                 let current: f32 = f32::from(handle.offset().y);
@@ -318,10 +348,15 @@ impl MarkdownView {
     ) {
         self.search_active = true;
         // Build the corpus on demand the first time the bar opens (M-1).
-        if self.search_corpus.is_empty()
-            && let Some(ast) = self.ast.as_deref()
-        {
+        if let Some(ast) = self.ast.as_deref() {
             self.search_corpus = harvest_text(ast);
+            let (lower, map) = lowercase_with_byte_map(&self.search_corpus);
+            self.search_corpus_lower = lower;
+            self.search_lower_to_source = map;
+        } else {
+            self.search_corpus.clear();
+            self.search_corpus_lower.clear();
+            self.search_lower_to_source.clear();
         }
         self.recompute_matches();
         cx.notify();
@@ -335,6 +370,9 @@ impl MarkdownView {
     ) {
         self.search_active = false;
         self.search_query.clear();
+        self.search_corpus.clear();
+        self.search_corpus_lower.clear();
+        self.search_lower_to_source.clear();
         self.search_matches.clear();
         self.search_current = 0;
         cx.notify();
@@ -551,6 +589,7 @@ impl MarkdownView {
                         .update(|cx| {
                             this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                                 view.apply_loaded(ast, error);
+                                view.maybe_apply_pending_restore(cx);
                                 cx.notify();
                             })
                         })
@@ -598,7 +637,7 @@ impl Render for MarkdownView {
             // resolve to the intrinsic content width and stop wrapping.
             let mut col = div().flex().flex_col().gap(px(12.)).p(px(16.)).w_full();
             for (idx, node) in ast.iter().enumerate() {
-                col = col.child(render_node(idx, node, palette));
+                col = col.child(render_node(RENDER_PATH_ROOT, idx, node, palette));
             }
             col.into_any_element()
         } else {
@@ -664,7 +703,6 @@ impl Render for MarkdownView {
             .on_action(cx.listener(Self::handle_find_prev))
             .on_action(cx.listener(Self::handle_find_dismiss))
             .on_action(cx.listener(Self::handle_copy))
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
                 if let Some(drag) = this.scroll_drag
                     && let Some(off) = crate::widgets::scrollbar::drag_offset(
@@ -768,6 +806,20 @@ fn harvest_text(nodes: &[MdNode]) -> String {
     buf
 }
 
+fn lowercase_with_byte_map(input: &str) -> (String, Vec<usize>) {
+    let mut lower = String::with_capacity(input.len());
+    let mut map = Vec::with_capacity(input.len());
+    for (source_idx, ch) in input.char_indices() {
+        for lower_ch in ch.to_lowercase() {
+            let mut encoded = [0_u8; 4];
+            let encoded = lower_ch.encode_utf8(&mut encoded);
+            lower.push_str(encoded);
+            map.extend(std::iter::repeat_n(source_idx, encoded.len()));
+        }
+    }
+    (lower, map)
+}
+
 fn walk_text(nodes: &[MdNode], buf: &mut String) {
     for node in nodes {
         match node {
@@ -823,6 +875,12 @@ fn walk_text(nodes: &[MdNode], buf: &mut String) {
 fn make_element_id(path: &std::path::Path) -> SharedString {
     let id = MARKDOWN_VIEW_ID.fetch_add(1, Ordering::Relaxed);
     SharedString::from(format!("markdown-{id}-{}", path.display()))
+}
+
+fn render_path_child(parent: u64, idx: usize) -> u64 {
+    parent
+        .wrapping_mul(1_099_511_628_211)
+        .wrapping_add(idx as u64 + 1)
 }
 
 /// US-021 - true when `result` carries a notify event that should trigger a
@@ -1017,26 +1075,29 @@ fn load_from_disk(path: &std::path::Path) -> (Option<Vec<MdNode>>, Option<Shared
 // Render helpers - pure functions, no `&mut Context` needed.
 // ---------------------------------------------------------------------------
 
-fn render_node(idx: usize, node: &MdNode, palette: MarkdownPalette) -> AnyElement {
+fn render_node(
+    parent_path: u64,
+    idx: usize,
+    node: &MdNode,
+    palette: MarkdownPalette,
+) -> AnyElement {
+    let path = render_path_child(parent_path, idx);
     match node {
         MdNode::Heading { level, spans } => render_heading(*level, spans, palette),
         MdNode::Paragraph { spans } => render_paragraph(spans, palette).into_any_element(),
-        // U-020: the sibling index disambiguates the scroll-state id of two
-        // code blocks with identical text - without it both get the same
-        // ElementId and their horizontal scroll positions couple.
-        MdNode::CodeBlock { lang: _, text } => render_code_block(idx, text, palette),
-        MdNode::BlockQuote { children } => render_blockquote(children, palette),
+        MdNode::CodeBlock { lang: _, text } => render_code_block(path, text, palette),
+        MdNode::BlockQuote { children } => render_blockquote(path, children, palette),
         MdNode::List {
             ordered_start,
             items,
-        } => render_list(*ordered_start, items, palette),
+        } => render_list(path, *ordered_start, items, palette),
         MdNode::Table {
             alignments,
             header,
             rows,
         } => render_table(alignments, header, rows, palette),
         MdNode::Rule => render_rule(palette),
-        MdNode::Footnote { label, children } => render_footnote(label, children, palette),
+        MdNode::Footnote { label, children } => render_footnote(path, label, children, palette),
     }
 }
 
@@ -1161,22 +1222,15 @@ fn render_paragraph(spans: &[Span], palette: MarkdownPalette) -> impl IntoElemen
     row
 }
 
-fn render_code_block(idx: usize, text: &str, palette: MarkdownPalette) -> AnyElement {
+fn render_code_block(path: u64, text: &str, palette: MarkdownPalette) -> AnyElement {
     // Code blocks contain pre-formatted content that must NOT soft-wrap
     // (preserves indentation + intent). Long lines previously clipped at the
     // pane edge; following Zed's `markdown.rs` pattern (`overflow_x_scroll`
     // + a stable id), each block becomes its own horizontally scrollable
-    // container. The id is derived from the content hash so the scroll
-    // position survives re-renders triggered by US-021 live reload of
-    // sibling blocks.
-    use std::hash::{DefaultHasher, Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    // U-020: hash (idx, text) so two identical code blocks get distinct ids.
-    idx.hash(&mut hasher);
-    text.hash(&mut hasher);
-    let id_hash = hasher.finish();
+    // container. The id is derived from the AST path, not the text, so large
+    // blocks do not get hashed during render.
     div()
-        .id(("md-code-block", id_hash))
+        .id(("md-code-block", path))
         .bg(palette.code_bg)
         .text_color(palette.code_fg)
         .font_family("monospace")
@@ -1190,7 +1244,7 @@ fn render_code_block(idx: usize, text: &str, palette: MarkdownPalette) -> AnyEle
         .into_any_element()
 }
 
-fn render_blockquote(children: &[MdNode], palette: MarkdownPalette) -> AnyElement {
+fn render_blockquote(path: u64, children: &[MdNode], palette: MarkdownPalette) -> AnyElement {
     let mut col = div()
         .flex()
         .flex_col()
@@ -1201,18 +1255,20 @@ fn render_blockquote(children: &[MdNode], palette: MarkdownPalette) -> AnyElemen
         .w_full()
         .text_color(palette.blockquote_text);
     for (idx, child) in children.iter().enumerate() {
-        col = col.child(render_node(idx, child, palette));
+        col = col.child(render_node(path, idx, child, palette));
     }
     col.into_any_element()
 }
 
 fn render_list(
+    path: u64,
     ordered_start: Option<u64>,
     items: &[Vec<MdNode>],
     palette: MarkdownPalette,
 ) -> AnyElement {
     let mut col = div().flex().flex_col().gap(px(4.)).pl(px(20.)).w_full();
     for (idx, item) in items.iter().enumerate() {
+        let item_path = render_path_child(path, idx);
         let marker: SharedString = match ordered_start {
             Some(start) => format!("{}.", start.saturating_add(idx as u64)).into(),
             None => "•".into(),
@@ -1233,7 +1289,7 @@ fn render_list(
         );
         let mut item_body = div().flex().flex_col().gap(px(4.)).flex_1().min_w(px(0.));
         for (cidx, child) in item.iter().enumerate() {
-            item_body = item_body.child(render_node(cidx, child, palette));
+            item_body = item_body.child(render_node(item_path, cidx, child, palette));
         }
         item_row = item_row.child(item_body);
         col = col.child(item_row);
@@ -1242,19 +1298,18 @@ fn render_list(
 }
 
 /// Column count for a markdown table: the max of header arity and the longest
-/// data row, saturated to `u16::MAX`.
+/// data row, capped to a renderer-safe maximum.
 ///
 /// U-050: the input is untrusted file content (MAX_INPUT_BYTES = 10 MB admits
-/// a multi-million-column delimiter row), and a raw `as u16` cast wraps the
-/// count modulo 65536 - feeding `grid_cols` a garbage value (and, for exact
-/// multiples of 65536, wrapping to 0 so the table silently vanishes).
-/// `try_from(..).unwrap_or(u16::MAX)` saturates instead, and a genuine 0-column
-/// table still reports 0 so the `cols == 0` bail in `render_table` holds.
+/// a multi-million-column delimiter row). `grid_cols` with thousands of
+/// columns is not useful UI, so we render a bounded prefix.
 fn table_col_count(header: &[Vec<Span>], rows: &[Vec<Vec<Span>>]) -> u16 {
     let cols = header
         .len()
         .max(rows.iter().map(|r| r.len()).max().unwrap_or(0));
-    u16::try_from(cols).unwrap_or(u16::MAX)
+    u16::try_from(cols)
+        .unwrap_or(MAX_RENDERED_TABLE_COLUMNS)
+        .min(MAX_RENDERED_TABLE_COLUMNS)
 }
 
 fn render_table(
@@ -1288,12 +1343,12 @@ fn render_table(
         .rounded(px(4.));
 
     if !header.is_empty() {
-        for cell in header {
+        for cell in header.iter().take(cols as usize) {
             table = table.child(render_table_cell(cell, palette, true));
         }
     }
     for row in rows {
-        for cell in row {
+        for cell in row.iter().take(cols as usize) {
             table = table.child(render_table_cell(cell, palette, false));
         }
     }
@@ -1334,7 +1389,12 @@ fn render_rule(palette: MarkdownPalette) -> AnyElement {
         .into_any_element()
 }
 
-fn render_footnote(label: &str, children: &[MdNode], palette: MarkdownPalette) -> AnyElement {
+fn render_footnote(
+    path: u64,
+    label: &str,
+    children: &[MdNode],
+    palette: MarkdownPalette,
+) -> AnyElement {
     let mut col = div()
         .flex()
         .flex_col()
@@ -1348,7 +1408,7 @@ fn render_footnote(label: &str, children: &[MdNode], palette: MarkdownPalette) -
             .child(SharedString::from(format!("[^{}]", label))),
     );
     for (idx, child) in children.iter().enumerate() {
-        col = col.child(render_node(idx, child, palette));
+        col = col.child(render_node(path, idx, child, palette));
     }
     col.into_any_element()
 }
@@ -1365,22 +1425,28 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
-    /// U-050: a `> u16::MAX`-column table must saturate, not wrap modulo 65536
-    /// (which would feed grid_cols a garbage count, or vanish the table at
-    /// exact multiples). A genuinely empty table still reports 0.
+    /// U-050: a pathological table must be capped before it reaches grid_cols.
+    /// A genuinely empty table still reports 0.
     #[test]
-    fn table_col_count_saturates_past_u16() {
-        // One data row with u16::MAX + 2 cells - past the wrap point.
+    fn table_col_count_caps_pathological_tables() {
         let huge: Vec<Vec<Span>> = vec![Vec::new(); u16::MAX as usize + 2];
-        assert_eq!(table_col_count(&[], std::slice::from_ref(&huge)), u16::MAX);
-        // Exactly u16::MAX + 1 cells would wrap to 0 under `as u16`; saturate.
-        let exact_wrap: Vec<Vec<Span>> = vec![Vec::new(); u16::MAX as usize + 1];
-        assert_eq!(table_col_count(&[], &[exact_wrap]), u16::MAX);
+        assert_eq!(
+            table_col_count(&[], std::slice::from_ref(&huge)),
+            MAX_RENDERED_TABLE_COLUMNS
+        );
         // Empty table reports 0 so the `cols == 0` bail still fires.
         assert_eq!(table_col_count(&[], &[]), 0);
         // Header arity counts too, and a normal small table is unchanged.
         let header: Vec<Vec<Span>> = vec![Vec::new(); 3];
         assert_eq!(table_col_count(&header, &[]), 3);
+    }
+
+    #[test]
+    fn lowercase_map_preserves_source_offsets_for_unicode_search() {
+        let corpus = "Cafe İSTANBUL";
+        let (lower, map) = lowercase_with_byte_map(corpus);
+        let pos = lower.find("i").expect("lowercase dotted I should match i");
+        assert_eq!(&corpus[map[pos]..map[pos] + "İ".len()], "İ");
     }
 
     fn write(path: &Path, contents: &[u8]) {
