@@ -10,18 +10,18 @@ use gpui::{
 
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_HEIGHT};
 use crate::PaneFlowApp;
-use crate::app::files_tree::{self, VisibleRow};
+use crate::app::files_tree::{self, VisibleRowRef};
 use crate::pane_drag::{MarkdownFileDrag, TabDragPreview};
 
 impl PaneFlowApp {
     pub(super) fn files_row(
         &self,
-        row: &VisibleRow,
+        row: VisibleRowRef<'_>,
         selected: bool,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let node = &row.node;
+        let node = row.node;
         let name: SharedString = files_tree::node_name(node).into();
         let is_md = !node.is_dir && files_tree::is_markdown(&node.path);
         let actionable = node.is_dir || is_md;
@@ -91,8 +91,7 @@ impl PaneFlowApp {
             if e.is_right_click()
                 && let Some(position) = e.mouse_position()
             {
-                this.workspace_menu_open = None;
-                this.profile_menu_open = None;
+                this.dismiss_transient_surfaces();
                 this.files_focus.focus(window, cx);
                 this.select_files_row(&menu_path);
                 this.files_menu_open = Some(crate::FilesContextMenu {

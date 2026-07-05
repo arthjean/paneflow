@@ -13,8 +13,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// One entry in a directory listing. `is_ignored`/`is_hidden` only drive
-/// styling (dimming) - the tree shows everything, never filters.
+/// One entry in a directory listing. Ignored and hidden entries are filtered
+/// before becoming nodes; the flags remain for callers that construct nodes in
+/// tests or future "show ignored" UI.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileNode {
     pub path: PathBuf,
@@ -26,9 +27,17 @@ pub(crate) struct FileNode {
 /// A flattened, render-ready row: the node, its indentation depth (component
 /// distance from the root's children), and whether it is an expanded directory
 /// (drives the chevron direction). Pure output of [`flatten_visible`].
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VisibleRow {
     pub node: FileNode,
+    pub depth: usize,
+    pub expanded: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct VisibleRowRef<'a> {
+    pub node: &'a FileNode,
     pub depth: usize,
     pub expanded: bool,
 }
@@ -47,8 +56,8 @@ impl FilesTreeState {
     /// US-018: a root-only shell - the root marked expanded but with no
     /// directory listings read yet. Shown synchronously the instant the sidebar
     /// opens so the panel renders without blocking, while
-    /// [`crate::PaneFlowApp::spawn_files_hydration`] fills the listings + installs
-    /// the recursive watcher on a background task.
+    /// [`crate::PaneFlowApp::spawn_files_hydration`] fills the listings and
+    /// installs the non-recursive watcher on a background task.
     pub(crate) fn root_shell(root: PathBuf) -> Self {
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
@@ -132,7 +141,7 @@ pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
     };
     let mut nodes: Vec<FileNode> = entries
         .filter_map(Result::ok)
-        .map(|entry| {
+        .filter_map(|entry| {
             let path = entry.path();
             let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
             let is_hidden = is_hidden_name(&path) || has_windows_hidden_attribute(&entry);
@@ -140,12 +149,15 @@ pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
                 .as_ref()
                 .map(|gi| gi.matched(&path, is_dir).is_ignore())
                 .unwrap_or(false);
-            FileNode {
+            if is_hidden || is_ignored {
+                return None;
+            }
+            Some(FileNode {
                 path,
                 is_dir,
                 is_ignored,
                 is_hidden,
-            }
+            })
         })
         .collect();
     nodes.sort_by(compare_nodes);
@@ -177,9 +189,9 @@ fn has_windows_hidden_attribute(_entry: &std::fs::DirEntry) -> bool {
 /// Build a gitignore matcher rooted at `root` that folds in every `.gitignore`
 /// from the root down to `dir`. Approximation: all globs are evaluated against
 /// `root` (a nested `.gitignore`'s dir-relative semantics aren't fully
-/// reproduced), which is sufficient for the dominant case - the repo-root
-/// `.gitignore` tinting `target/` / `node_modules/`. Styling-only; never
-/// filters.
+/// reproduced), which is sufficient for the dominant case: the repo-root
+/// `.gitignore` filtering `target/` / `node_modules/` before render and watch
+/// registration.
 fn build_gitignore(root: &Path, dir: &Path) -> Option<ignore::gitignore::Gitignore> {
     let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
     let mut cur = root.to_path_buf();
@@ -197,6 +209,7 @@ fn build_gitignore(root: &Path, dir: &Path) -> Option<ignore::gitignore::Gitigno
 /// visible rows, skipping collapsed (or uncached) subtrees. Pure - the root
 /// itself is rendered by the header, so this starts at the root's children at
 /// depth 0.
+#[cfg(test)]
 pub(crate) fn flatten_visible(
     root: &Path,
     expanded: &HashSet<PathBuf>,
@@ -236,6 +249,68 @@ pub(crate) fn coalesce_by_prefix(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     out
 }
 
+pub(crate) fn flatten_visible_refs<'a>(
+    root: &Path,
+    expanded: &HashSet<PathBuf>,
+    children: &'a HashMap<PathBuf, Vec<FileNode>>,
+) -> Vec<VisibleRowRef<'a>> {
+    let mut out = Vec::new();
+    push_children_refs(root, 0, expanded, children, &mut out);
+    out
+}
+
+pub(crate) fn visible_len(
+    root: &Path,
+    expanded: &HashSet<PathBuf>,
+    children: &HashMap<PathBuf, Vec<FileNode>>,
+) -> usize {
+    count_children(root, expanded, children)
+}
+
+fn push_children_refs<'a>(
+    dir: &Path,
+    depth: usize,
+    expanded: &HashSet<PathBuf>,
+    children: &'a HashMap<PathBuf, Vec<FileNode>>,
+    out: &mut Vec<VisibleRowRef<'a>>,
+) {
+    let Some(listing) = children.get(dir) else {
+        return;
+    };
+    for node in listing {
+        let is_expanded = node.is_dir && expanded.contains(&node.path);
+        out.push(VisibleRowRef {
+            node,
+            depth,
+            expanded: is_expanded,
+        });
+        if is_expanded {
+            push_children_refs(&node.path, depth + 1, expanded, children, out);
+        }
+    }
+}
+
+fn count_children(
+    dir: &Path,
+    expanded: &HashSet<PathBuf>,
+    children: &HashMap<PathBuf, Vec<FileNode>>,
+) -> usize {
+    let Some(listing) = children.get(dir) else {
+        return 0;
+    };
+    listing
+        .iter()
+        .map(|node| {
+            1 + if node.is_dir && expanded.contains(&node.path) {
+                count_children(&node.path, expanded, children)
+            } else {
+                0
+            }
+        })
+        .sum()
+}
+
+#[cfg(test)]
 fn push_children(
     dir: &Path,
     depth: usize,
@@ -356,6 +431,24 @@ mod tests {
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
         assert!(flatten_visible(&root, &expanded, &children).is_empty());
+    }
+
+    #[test]
+    fn read_dir_filters_gitignored_and_hidden_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        std::fs::write(root.join(".gitignore"), "target/\n").expect("gitignore");
+        std::fs::create_dir(root.join("target")).expect("target dir");
+        std::fs::write(root.join(".env"), "secret").expect("hidden file");
+        std::fs::create_dir(root.join("src")).expect("src dir");
+        std::fs::write(root.join("README.md"), "").expect("readme");
+
+        let names: Vec<String> = read_dir_sorted(root, root)
+            .into_iter()
+            .map(|node| node_name(&node))
+            .collect();
+
+        assert_eq!(names, vec!["src".to_string(), "README.md".to_string()]);
     }
 
     #[test]

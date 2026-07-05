@@ -140,7 +140,7 @@ impl PaneFlowApp {
             .overflow_y_scroll()
             .track_scroll(&self.files_tree_scroll);
         let selected = self.files_selected.min(rows.len().saturating_sub(1));
-        for (idx, row) in rows.iter().enumerate() {
+        for (idx, row) in rows.iter().copied().enumerate() {
             body = body.child(self.files_row(row, idx == selected, ui, cx));
         }
         body.into_any_element()

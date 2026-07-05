@@ -14,13 +14,14 @@
 use std::collections::HashSet;
 
 use gpui::{
-    AnyElement, ClickEvent, Context, Focusable as _, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, SharedString, Styled, Window, deferred, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, SharedString, Styled, Window, deferred, div, prelude::*, px,
 };
 
 use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::app::ipc_handler::find_pane_by_surface_id;
+use crate::app::workspace_ops::WorkspaceFocusTarget;
 
 /// One row of the queue, derived live from `agent_sessions`.
 pub(crate) struct QueueRow {
@@ -158,14 +159,15 @@ impl PaneFlowApp {
             cx.notify();
             return;
         };
-        self.active_idx = ws_idx;
-        pane.update(cx, |p, cx| {
-            if p.selected_idx != tab_idx {
-                p.selected_idx = tab_idx;
-            }
-            cx.notify();
-        });
-        pane.read(cx).focus_handle(cx).focus(window, cx);
+        self.activate_workspace_at(
+            ws_idx,
+            WorkspaceFocusTarget::PaneTab {
+                pane: pane.clone(),
+                tab_idx,
+            },
+            window,
+            cx,
+        );
         // Keep the jump cycle coherent: a queue teleport counts as visiting
         // that surface, so the next Ctrl+Shift+J continues from here.
         self.jump_cursor = Some(surface_id);

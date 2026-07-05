@@ -394,10 +394,8 @@ impl PaneFlowApp {
         }
 
         self.launch_pad = None;
-        self.active_idx = ws_idx;
         self.pending_pane_focus = Some(new_pane);
-        self.save_session(cx);
-        cx.notify();
+        self.activate_workspace_without_window(ws_idx, cx);
     }
 
     pub(crate) fn handle_launch_pad_key_down(

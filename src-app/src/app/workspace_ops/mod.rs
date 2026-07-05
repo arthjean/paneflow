@@ -33,6 +33,15 @@ use crate::{
     SelectWorkspace8, SelectWorkspace9, SplitHorizontally, SplitVertically, UndoClosePane,
 };
 
+#[derive(Clone)]
+pub(crate) enum WorkspaceFocusTarget {
+    FirstPane,
+    PaneTab {
+        pane: gpui::Entity<crate::pane::Pane>,
+        tab_idx: usize,
+    },
+}
+
 fn push_closed_pane_record(records: &mut Vec<ClosedPaneRecord>, mut record: ClosedPaneRecord) {
     for tab in &mut record.tabs {
         if let ClosedTabRecord::Terminal {
@@ -159,6 +168,18 @@ fn restore_closed_tab_record(
 }
 
 impl PaneFlowApp {
+    pub(crate) fn dismiss_transient_surfaces(&mut self) {
+        self.title_bar_files_menu_open = None;
+        self.title_bar_help_menu_open = None;
+        self.workspace_menu_open = None;
+        self.tab_menu_open = None;
+        self.profile_menu_open = None;
+        self.files_menu_open = None;
+        self.agents_view.agents_menu_open = None;
+        self.agents_view.sidebar_actions_menu_open = false;
+        self.agents_view.sidebar_mode_picker_open = false;
+    }
+
     pub(crate) fn active_workspace(&self) -> Option<&Workspace> {
         debug_assert!(
             self.workspaces.is_empty() || self.active_idx < self.workspaces.len(),
@@ -177,40 +198,81 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.workspace_menu_open = None;
-        self.profile_menu_open = None;
-        if idx < self.workspaces.len() && idx != self.active_idx {
-            self.active_idx = idx;
-            // Re-root the Files tree to the new workspace's folder if it's open
-            // (PRD files-tree US-002 workspace-switch). No-op when closed.
-            self.reroot_files_tree(cx);
-            self.workspaces[idx].focus_first(window, cx);
-            // An open sessions sidebar follows the active workspace: re-target
-            // it to the new workspace's first pane (rebinds the resume target
-            // + rescans for its cwd). Without this it kept showing - and
-            // resuming into - the PREVIOUS workspace. Closed only if the new
-            // workspace somehow has no pane.
-            if self.agent_sessions.sessions_sidebar_open {
-                let keep_sidebar_focus = self.agent_sessions.sessions_focus.is_focused(window);
-                match self.workspaces[idx]
-                    .root
-                    .as_ref()
-                    .and_then(|root| root.first_leaf())
-                {
-                    Some(pane) => self.open_sessions_sidebar_for_pane(
-                        &pane,
-                        keep_sidebar_focus.then_some(window),
-                        cx,
-                    ),
-                    None => self.close_sessions_sidebar(cx),
-                }
-            }
-            self.save_session(cx);
-            cx.notify();
-            // US-005 (prd-git-diff-mode-2026-Q3.md): in Diff mode the diff
-            // follows the active workspace's repo.
-            self.reconcile_diff_after_workspace_change(cx);
+        self.activate_workspace_at(idx, WorkspaceFocusTarget::FirstPane, window, cx);
+    }
+
+    pub(crate) fn activate_workspace_at(
+        &mut self,
+        idx: usize,
+        focus_target: WorkspaceFocusTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if idx >= self.workspaces.len() {
+            return false;
         }
+
+        let changed = idx != self.active_idx;
+        self.dismiss_transient_surfaces();
+        self.active_idx = idx;
+
+        match focus_target {
+            WorkspaceFocusTarget::FirstPane => {
+                self.workspaces[idx].focus_first(window, cx);
+            }
+            WorkspaceFocusTarget::PaneTab { pane, tab_idx } => {
+                pane.update(cx, |p, cx| {
+                    if p.selected_idx != tab_idx {
+                        p.selected_idx = tab_idx;
+                    }
+                    cx.notify();
+                });
+                pane.read(cx).focus_handle(cx).focus(window, cx);
+            }
+        }
+
+        self.reroot_files_tree(cx);
+        if self.agent_sessions.sessions_sidebar_open {
+            let keep_sidebar_focus = self.agent_sessions.sessions_focus.is_focused(window);
+            match self.workspaces[idx]
+                .root
+                .as_ref()
+                .and_then(|root| root.first_leaf())
+            {
+                Some(pane) => self.open_sessions_sidebar_for_pane(
+                    &pane,
+                    keep_sidebar_focus.then_some(window),
+                    cx,
+                ),
+                None => self.close_sessions_sidebar(cx),
+            }
+        }
+        self.save_session(cx);
+        self.reconcile_diff_after_workspace_change(cx);
+        cx.notify();
+        changed
+    }
+
+    pub(crate) fn activate_workspace_without_window(
+        &mut self,
+        idx: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if idx >= self.workspaces.len() {
+            return false;
+        }
+
+        let changed = idx != self.active_idx;
+        self.dismiss_transient_surfaces();
+        self.active_idx = idx;
+        self.reroot_files_tree(cx);
+        if self.agent_sessions.sessions_sidebar_open {
+            self.close_sessions_sidebar(cx);
+        }
+        self.save_session(cx);
+        self.reconcile_diff_after_workspace_change(cx);
+        cx.notify();
+        changed
     }
 
     /// US-009 (orchestration-v2): tear down the worktrees a closing workspace

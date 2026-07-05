@@ -5,6 +5,7 @@
 
 use gpui::{Context, Focusable, Window};
 
+use super::WorkspaceFocusTarget;
 use crate::PaneFlowApp;
 use crate::layout::{FocusDirection, FocusNav};
 use crate::{FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextWaiting, SWAP_MODE};
@@ -152,16 +153,16 @@ impl PaneFlowApp {
         else {
             return;
         };
-        self.active_idx = ws_idx;
-        pane.update(cx, |p, cx| {
-            if p.selected_idx != tab_idx {
-                p.selected_idx = tab_idx;
-            }
-            cx.notify();
-        });
-        pane.read(cx).focus_handle(cx).focus(window, cx);
+        self.activate_workspace_at(
+            ws_idx,
+            WorkspaceFocusTarget::PaneTab {
+                pane: pane.clone(),
+                tab_idx,
+            },
+            window,
+            cx,
+        );
         self.jump_cursor = Some(sid);
-        cx.notify();
     }
 }
 

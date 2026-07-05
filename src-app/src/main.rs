@@ -607,10 +607,9 @@ struct AgentSessionsState {
     /// scan results and as the compact wayfinding label inside the sidebar
     /// header.
     sessions_cwd: Option<String>,
-    /// Weak handle to the pane whose tab-bar button opened the sidebar. Routes
-    /// resume commands back to the *originating* pane's terminal even if focus
-    /// shifts. Weak so the sidebar never keeps a closed pane alive.
-    sessions_pane: Option<gpui::WeakEntity<crate::pane::Pane>>,
+    /// Surface id of the terminal whose tab-bar button opened the sidebar.
+    /// Resume commands are sent back only if that exact terminal still exists.
+    sessions_surface_id: Option<u64>,
     /// Scroll state for the sessions list. Re-created on every open so a fresh
     /// sidebar starts at offset 0.
     sessions_scroll: gpui::ScrollHandle,
@@ -1035,9 +1034,10 @@ struct PaneFlowApp {
     files_selected: usize,
     /// Focus target for keyboard navigation inside the docked Files sidebar.
     files_focus: FocusHandle,
-    /// Pane that opened the Files sidebar. Markdown rows open back into this
-    /// pane even while the sidebar owns keyboard focus.
-    files_pane: Option<Entity<Pane>>,
+    /// Surface id of the terminal that opened the Files sidebar. Markdown
+    /// rows open into the pane that still owns this surface, falling back to
+    /// the active focused pane if that surface is gone.
+    files_surface_id: Option<u64>,
     /// Recursive `notify` watcher on the Files tree root (EP-002 US-005).
     /// `None` when the sidebar is closed or the watch could not be installed
     /// (US-006 graceful degradation - the tree then refreshes on expand).

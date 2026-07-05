@@ -1877,7 +1877,7 @@ impl PaneFlowApp {
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
         self.workspaces.push(ws);
         let idx = self.workspaces.len() - 1;
-        self.active_idx = idx;
+        self.activate_workspace_without_window(idx, cx);
 
         // Phase 3: launch each agent (typed-ahead into the shell is fine) and
         // schedule the prompt prefill after a bounded readiness wait. The
@@ -2444,9 +2444,7 @@ impl PaneFlowApp {
             "workspace.select" => {
                 let idx = params.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
                 if idx < self.workspaces.len() {
-                    self.active_idx = idx;
-                    self.save_session(cx);
-                    cx.notify();
+                    self.activate_workspace_without_window(idx, cx);
                     serde_json::json!({"selected": idx})
                 } else {
                     serde_json::json!({"error": "Index out of bounds"})
@@ -2684,8 +2682,8 @@ impl PaneFlowApp {
                 else {
                     return serde_json::json!({"error": "Surface not found"});
                 };
-                // Switch workspace + activate the hosting tab synchronously…
-                self.active_idx = ws_idx;
+                // Switch workspace + activate the hosting tab synchronously.
+                self.activate_workspace_without_window(ws_idx, cx);
                 pane.update(cx, |p, cx| {
                     if p.selected_idx != tab_idx {
                         p.selected_idx = tab_idx;

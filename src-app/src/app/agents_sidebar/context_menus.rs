@@ -14,6 +14,7 @@ use gpui::{
 
 use super::state::{AgentsContextMenu, AgentsDeleteTarget};
 use crate::PaneFlowApp;
+use crate::app::sidebar::context_menu::{EDITOR_CONTEXT_MENU_ITEMS, clamped_context_menu_position};
 use crate::settings::components::{menu_divider_color, select_menu};
 
 impl PaneFlowApp {
@@ -30,33 +31,15 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Same editor list as the workspace context menu (AC #5 -- "Open
-        // in editor (reuses `resolve_editor_binary`)").
-        let editors: &[(&str, &str, &str, &str)] = &[
-            ("zed", "Open in Zed", "zed", "Open in Zed"),
-            ("cursor", "Open in Cursor", "cursor", "Open in Cursor"),
-            ("vscode", "Open in VS Code", "code", "Open in VS Code"),
-            (
-                "windsurf",
-                "Open in Windsurf",
-                "windsurf",
-                "Open in Windsurf",
-            ),
-        ];
         // ~9 items, ~28px tall, 2 separators ~9px, 8px padding => ~280px
         let menu_height = px(280.);
-        let win_h = window.window_bounds().get_bounds().size.height;
-        let menu_y = if position.y + menu_height > win_h {
-            (position.y - menu_height).max(px(0.))
-        } else {
-            position.y
-        };
+        let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
 
         let mut menu = select_menu("agents-project-context-menu", ui)
             .occlude()
             .absolute()
-            .left(position.x)
-            .top(menu_y)
+            .left(menu_pos.x)
+            .top(menu_pos.y)
             .w(px(248.))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.close_agents_menu(cx);
@@ -119,7 +102,7 @@ impl PaneFlowApp {
         );
 
         // Editor entries
-        for &(id, label, command, shortcut_desc) in editors {
+        for &(id, label, command, shortcut_desc) in EDITOR_CONTEXT_MENU_ITEMS {
             let shortcut = self
                 .shortcut_for_description(shortcut_desc)
                 .map(|s| SharedString::from(s.to_string()));
@@ -200,12 +183,7 @@ impl PaneFlowApp {
         // 6 items (Pin, Rename, Duplicate, Restart, Reveal, Delete) +
         // 1 separator + 8px padding => ~225px.
         let menu_height = px(228.);
-        let win_h = window.window_bounds().get_bounds().size.height;
-        let menu_y = if position.y + menu_height > win_h {
-            (position.y - menu_height).max(px(0.))
-        } else {
-            position.y
-        };
+        let menu_pos = clamped_context_menu_position(position, px(220.), menu_height, window);
         // The chat row labels its rename entry "Rename chat" so the verb
         // matches the section the user right-clicked in.
         let rename_label = match target {
@@ -227,8 +205,8 @@ impl PaneFlowApp {
         let mut menu = select_menu("agents-thread-context-menu", ui)
             .occlude()
             .absolute()
-            .left(position.x)
-            .top(menu_y)
+            .left(menu_pos.x)
+            .top(menu_pos.y)
             .w(px(220.))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.close_agents_menu(cx);

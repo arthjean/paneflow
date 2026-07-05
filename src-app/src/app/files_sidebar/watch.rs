@@ -1,9 +1,9 @@
 //! Files sidebar live filesystem watch + per-workspace expansion persistence
 //! (PRD `prd-files-tree-sidebar-2026-Q3`, EP-002).
 //!
-//! `spawn_files_hydration` reads the tree + registers the recursive `notify`
-//! watch OFF the render thread (US-018; US-005 wiring, degrading gracefully on
-//! failure per US-006); the background drain loop in `bootstrap` debounces +
+//! `spawn_files_hydration` reads the tree + registers non-recursive `notify`
+//! watches for the root and expanded dirs off the render thread (US-018; US-005
+//! wiring, degrading gracefully on failure per US-006); the background drain loop in `bootstrap` debounces +
 //! coalesces events and calls `refresh_files_dirs` for the targeted
 //! per-directory re-read. `sync_files_expansion` mirrors the live expansion into
 //! the active `Workspace` so it persists to `session.json` (US-007). Split out
@@ -35,17 +35,14 @@ impl PaneFlowApp {
         }
     }
 
-    /// US-018: hydrate the Files tree and install the recursive watcher OFF the
+    /// US-018: hydrate the Files tree and install non-recursive watches off the
     /// GPUI main thread.
     ///
     /// A recursive `notify` watch walks the entire subtree at registration
-    /// (inotify adds one watch per directory - ~23k for a repo carrying a
-    /// `target/`), which previously froze the render thread ("not responding"
-    /// on Wayland). Both the directory reads ([`FilesTreeState::hydrated`]) and
-    /// the watch registration now run on a background task; results are
-    /// re-injected only if the sidebar is still open on the SAME root (it may
-    /// close or re-root during the walk - EP-003 identity guard). A root shell
-    /// renders immediately so the panel never looks frozen.
+    /// (inotify adds one watch per directory), so large repos can freeze the UI
+    /// and exhaust OS watcher budgets. We instead watch only the root and
+    /// currently-expanded directories. Collapsed subtrees are read and watched
+    /// lazily on expand.
     pub(crate) fn spawn_files_hydration(
         &mut self,
         root: PathBuf,
@@ -60,14 +57,15 @@ impl PaneFlowApp {
 
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                // Stage 1 - directory reads (fast): inject the populated tree first
-                // so content appears before the (slower) recursive watch walk ends.
+                // Stage 1: directory reads. Inject the populated tree first so
+                // content appears before watch registration completes.
                 let tree = smol::unblock({
                     let root = root.clone();
                     let persisted = persisted.clone();
                     move || files_tree::FilesTreeState::hydrated(root, &persisted)
                 })
                 .await;
+                let watch_dirs = tree.expanded.iter().cloned().collect::<Vec<_>>();
                 let still_current = this
                     .update(cx, |app, cx| {
                         if app.files_sidebar_open && app.files_tree.root == root {
@@ -85,11 +83,12 @@ impl PaneFlowApp {
                     return;
                 }
 
-                // Stage 2 - recursive watch registration (the slow walk): inject the
-                // handles when ready so live updates start, still off the render thread.
+                // Stage 2: non-recursive watch registration for the visible
+                // tree frontier. The watcher is still built off-thread because
+                // some platforms do synchronous filesystem work at registration.
                 let built = smol::unblock({
                     let root = root.clone();
-                    move || build_files_watcher(&root)
+                    move || build_files_watcher(&root, &watch_dirs)
                 })
                 .await;
                 let _ = this.update(cx, |app, _cx| {
@@ -104,6 +103,36 @@ impl PaneFlowApp {
             },
         )
         .detach();
+    }
+
+    pub(super) fn watch_files_dir(&mut self, dir: &Path) {
+        let Some(watcher) = self.files_watcher.as_mut() else {
+            return;
+        };
+        use notify::Watcher;
+        if let Err(e) = watcher.watch(dir, notify::RecursiveMode::NonRecursive) {
+            log::warn!(
+                "files watcher: failed to watch expanded dir {} ({e}); falling back to on-expand reads for it",
+                dir.display()
+            );
+        }
+    }
+
+    pub(super) fn unwatch_files_dir(&mut self, dir: &Path) {
+        if dir == self.files_tree.root {
+            return;
+        }
+        let Some(watcher) = self.files_watcher.as_mut() else {
+            return;
+        };
+        use notify::Watcher;
+        if let Err(e) = watcher.unwatch(dir) {
+            tracing::debug!(
+                target: "paneflow_app::files_sidebar",
+                "files watcher: unwatch {} failed: {e}",
+                dir.display()
+            );
+        }
     }
 
     /// Apply a debounced, prefix-coalesced batch of changed directories
@@ -142,19 +171,15 @@ impl PaneFlowApp {
     }
 }
 
-/// US-018: build a recursive `notify` watch on `root`, returning the watcher +
-/// its event channel, or `None` (logged) on failure - notably Linux `ENOSPC`
-/// when a large repo exhausts `fs.inotify.max_user_watches` (default often
-/// 8192). The caller falls back to on-expand reads (US-006); raise the kernel
-/// limit with `sudo sysctl fs.inotify.max_user_watches=524288` (persist in
-/// `/etc/sysctl.d/`). macOS/Windows use FSEvents / ReadDirectoryChangesW and
-/// don't hit the limit.
+/// US-018: build non-recursive `notify` watches for the root and currently
+/// expanded directories, returning the watcher + its event channel, or `None`
+/// on failure. The caller falls back to on-expand reads (US-006).
 ///
-/// Runs on a background thread (the recursive registration walk is the freeze
-/// US-018 fixes); the caller re-injects the returned handles.
+/// Runs on a background thread; the caller re-injects the returned handles.
 #[allow(clippy::type_complexity)]
 fn build_files_watcher(
     root: &Path,
+    dirs: &[PathBuf],
 ) -> Option<(
     notify::RecommendedWatcher,
     std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
@@ -168,12 +193,18 @@ fn build_files_watcher(
             return None;
         }
     };
-    if let Err(e) = watcher.watch(root, notify::RecursiveMode::Recursive) {
-        log::warn!(
-            "files watcher: failed to watch {} ({e}); falling back to on-expand reads",
-            root.display()
-        );
-        return None;
+    let mut watched = std::collections::HashSet::new();
+    for dir in std::iter::once(root.to_path_buf()).chain(dirs.iter().cloned()) {
+        if !watched.insert(dir.clone()) {
+            continue;
+        }
+        if let Err(e) = watcher.watch(&dir, notify::RecursiveMode::NonRecursive) {
+            log::warn!(
+                "files watcher: failed to watch {} ({e}); falling back to on-expand reads",
+                dir.display()
+            );
+            return None;
+        }
     }
     Some((watcher, rx))
 }

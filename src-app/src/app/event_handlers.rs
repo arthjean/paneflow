@@ -415,26 +415,15 @@ impl PaneFlowApp {
             }
             title_bar::TitleBarEvent::ToggleSidebar => {
                 self.toggle_primary_sidebar(cx);
-                self.title_bar_files_menu_open = None;
-                self.title_bar_help_menu_open = None;
                 if !self.primary_sidebar_visible {
-                    self.workspace_menu_open = None;
-                    self.profile_menu_open = None;
-                    self.agents_view.agents_menu_open = None;
-                    self.agents_view.sidebar_actions_menu_open = false;
-                    self.agents_view.sidebar_mode_picker_open = false;
+                    self.dismiss_transient_surfaces();
+                } else {
+                    self.title_bar_files_menu_open = None;
+                    self.title_bar_help_menu_open = None;
                 }
             }
             title_bar::TitleBarEvent::ToggleRosettaSurface => {
-                self.title_bar_files_menu_open = None;
-                self.title_bar_help_menu_open = None;
-                self.workspace_menu_open = None;
-                self.tab_menu_open = None;
-                self.profile_menu_open = None;
-                self.files_menu_open = None;
-                self.agents_view.agents_menu_open = None;
-                self.agents_view.sidebar_actions_menu_open = false;
-                self.agents_view.sidebar_mode_picker_open = false;
+                self.dismiss_transient_surfaces();
 
                 if !self.rosetta_surface_allowed() {
                     self.reset_rosetta_surface_state();
@@ -462,27 +451,15 @@ impl PaneFlowApp {
                 cx.notify();
             }
             title_bar::TitleBarEvent::ToggleFilesMenu(anchor) => {
-                self.title_bar_files_menu_open =
-                    self.title_bar_files_menu_open.is_none().then_some(*anchor);
-                self.title_bar_help_menu_open = None;
-                self.workspace_menu_open = None;
-                self.tab_menu_open = None;
-                self.profile_menu_open = None;
-                self.agents_view.agents_menu_open = None;
-                self.agents_view.sidebar_actions_menu_open = false;
-                self.agents_view.sidebar_mode_picker_open = false;
+                let open = self.title_bar_files_menu_open.is_none();
+                self.dismiss_transient_surfaces();
+                self.title_bar_files_menu_open = open.then_some(*anchor);
                 cx.notify();
             }
             title_bar::TitleBarEvent::ToggleHelpMenu(anchor) => {
-                self.title_bar_help_menu_open =
-                    self.title_bar_help_menu_open.is_none().then_some(*anchor);
-                self.title_bar_files_menu_open = None;
-                self.workspace_menu_open = None;
-                self.tab_menu_open = None;
-                self.profile_menu_open = None;
-                self.agents_view.agents_menu_open = None;
-                self.agents_view.sidebar_actions_menu_open = false;
-                self.agents_view.sidebar_mode_picker_open = false;
+                let open = self.title_bar_help_menu_open.is_none();
+                self.dismiss_transient_surfaces();
+                self.title_bar_help_menu_open = open.then_some(*anchor);
                 cx.notify();
             }
         }
@@ -561,7 +538,10 @@ impl PaneFlowApp {
                 // folder. Mutual exclusion with the sessions sidebar is handled
                 // inside `toggle_files_sidebar`.
                 if !self.files_sidebar_open {
-                    self.files_pane = Some(pane.clone());
+                    self.files_surface_id = pane
+                        .read(cx)
+                        .active_terminal_opt()
+                        .map(|terminal| terminal.entity_id().as_u64());
                 }
                 self.toggle_files_sidebar(cx);
             }
@@ -593,8 +573,7 @@ impl PaneFlowApp {
                 // EP-002 US-006: open the "Move to pane…" menu for this tab.
                 // Mutually exclusive with the other popovers, matching the
                 // workspace/profile/sessions menu pattern.
-                self.workspace_menu_open = None;
-                self.profile_menu_open = None;
+                self.dismiss_transient_surfaces();
                 self.tab_menu_open = Some(crate::TabContextMenu {
                     source_pane: pane.clone(),
                     tab_id: *tab_id,

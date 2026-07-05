@@ -31,6 +31,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.cancel_agents_rename(cx);
+        self.dismiss_transient_surfaces();
         self.agents_view.agents_menu_open = Some(AgentsContextMenu::Project {
             project_idx,
             position,
@@ -47,6 +48,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.cancel_agents_rename(cx);
+        self.dismiss_transient_surfaces();
         self.agents_view.agents_menu_open = Some(AgentsContextMenu::Thread {
             project_idx,
             thread_idx,
@@ -63,6 +65,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.cancel_agents_rename(cx);
+        self.dismiss_transient_surfaces();
         self.agents_view.agents_menu_open = Some(AgentsContextMenu::Chat { chat_idx, position });
         cx.notify();
     }

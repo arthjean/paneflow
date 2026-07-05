@@ -15,12 +15,13 @@
 //! recomputes matches fresh - also how the US-017 rail lights up.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, Focusable as _, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseButton, ParentElement, SharedString, Styled, Window, deferred, div, prelude::*, px,
+    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
+    ParentElement, SharedString, Styled, Window, deferred, div, prelude::*, px,
 };
 
 use crate::PaneFlowApp;
 use crate::app::ipc_handler::find_pane_by_surface_id;
+use crate::app::workspace_ops::WorkspaceFocusTarget;
 
 /// How long the per-tab match-count badges linger after a fan-out
 /// (US-018: "auto-dismiss 4 s ou à la fermeture de la recherche").
@@ -260,13 +261,15 @@ impl PaneFlowApp {
             cx.notify();
             return;
         };
-        self.active_idx = ws_idx;
-        pane.update(cx, |p, cx| {
-            if p.selected_idx != tab_idx {
-                p.selected_idx = tab_idx;
-            }
-            cx.notify();
-        });
+        self.activate_workspace_at(
+            ws_idx,
+            WorkspaceFocusTarget::PaneTab {
+                pane: pane.clone(),
+                tab_idx,
+            },
+            window,
+            cx,
+        );
         if let Some(t) = pane
             .read(cx)
             .tabs
@@ -276,7 +279,6 @@ impl PaneFlowApp {
         {
             t.update(cx, |view, cx| view.arm_search(&query, regex, cx));
         }
-        pane.read(cx).focus_handle(cx).focus(window, cx);
         self.close_fleet_search(cx);
     }
 

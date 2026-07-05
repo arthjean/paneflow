@@ -7,7 +7,7 @@
 //! types (`WorkspaceContextMenu`, `WorkspaceDrag`, `WorkspaceDragPreview`)
 //! remain in `main.rs` because they cross module boundaries.
 
-mod context_menu;
+pub(crate) mod context_menu;
 
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
@@ -326,8 +326,7 @@ impl PaneFlowApp {
                     this.reorder_workspace(drag.id, idx, cx);
                 }))
                 .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
-                    this.workspace_menu_open = None;
-                    this.profile_menu_open = None;
+                    this.dismiss_transient_surfaces();
                     let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count == 2);
                     if is_double {
                         this.commit_rename(cx); // commit any previous rename
@@ -344,7 +343,7 @@ impl PaneFlowApp {
                         && let Some(position) = e.mouse_position()
                     {
                         this.commit_rename(cx);
-                        this.profile_menu_open = None;
+                        this.dismiss_transient_surfaces();
                         this.workspace_menu_open = Some(WorkspaceContextMenu { idx, position });
                         cx.stop_propagation();
                         cx.notify();

@@ -13,6 +13,7 @@ use gpui::{
 };
 
 use crate::app::files_tree;
+use crate::app::sidebar::context_menu::clamped_context_menu_position;
 use crate::{FilesContextMenu, PaneFlowApp};
 
 impl PaneFlowApp {
@@ -27,19 +28,8 @@ impl PaneFlowApp {
         // isn't room below (mirrors the workspace menu).
         let menu_height = px(66.);
         let menu_width = px(220.);
-        let win_size = window.window_bounds().get_bounds().size;
-        let win_h = win_size.height;
-        let win_w = win_size.width;
-        let menu_x = if menu.position.x + menu_width > win_w {
-            (menu.position.x - menu_width).max(px(0.))
-        } else {
-            menu.position.x
-        };
-        let menu_y = if menu.position.y + menu_height > win_h {
-            (menu.position.y - menu_height).max(px(0.))
-        } else {
-            menu.position.y
-        };
+        let menu_pos =
+            clamped_context_menu_position(menu.position, menu_width, menu_height, window);
 
         let abs_path = menu.path.clone();
         let rel_root = self.files_tree.root.clone();
@@ -49,8 +39,8 @@ impl PaneFlowApp {
             .id("files-context-menu")
             .occlude()
             .absolute()
-            .left(menu_x)
-            .top(menu_y)
+            .left(menu_pos.x)
+            .top(menu_pos.y)
             .w(menu_width)
             .bg(ui.overlay)
             .border_1()

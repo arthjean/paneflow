@@ -23,6 +23,7 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::agent_launcher::AgentCommandSpec;
 use crate::agent_sessions::{SessionAgent, SessionMeta, format_relative_time};
+use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::pane_drag::{SessionDrag, TabDragPreview};
 
 /// Fixed sidebar width - between the CLI (220) and Agents (280) left sidebars,
@@ -46,7 +47,9 @@ impl PaneFlowApp {
         // Resolve the active terminal's cwd: prefer the OSC 7 push
         // (`current_cwd`), fall back to the on-demand `cwd_now()` syscall for
         // shells that don't emit OSC 7.
-        let cwd_str = pane.read(cx).active_terminal_opt().and_then(|tv| {
+        let terminal = pane.read(cx).active_terminal_opt();
+        let surface_id = terminal.as_ref().map(|tv| tv.entity_id().as_u64());
+        let cwd_str = terminal.as_ref().and_then(|tv| {
             let view = tv.read(cx);
             view.terminal.current_cwd.clone().or_else(|| {
                 view.terminal
@@ -61,15 +64,13 @@ impl PaneFlowApp {
             self.close_files_sidebar(cx);
         }
 
-        // Close the floating dropdowns so they don't paint over the newly
-        // opened sidebar (the sidebar itself is docked, not an overlay, so it
-        // does not need mutual exclusion with itself).
-        self.workspace_menu_open = None;
-        self.profile_menu_open = None;
+        // Close floating dropdowns so they don't paint over the newly opened
+        // docked sidebar.
+        self.dismiss_transient_surfaces();
 
         self.set_sessions_sidebar_open(true, cx);
         self.agent_sessions.sessions_cwd = cwd_str.clone();
-        self.agent_sessions.sessions_pane = Some(pane.downgrade());
+        self.agent_sessions.sessions_surface_id = surface_id;
         for sessions in &mut self.agent_sessions.sessions_by_agent {
             sessions.clear();
         }
@@ -323,7 +324,7 @@ impl PaneFlowApp {
             scanning_any |= scanning;
             if scanning || !self.sessions_for(agent).is_empty() {
                 groups_rendered += 1;
-                body = body.child(self.sessions_group(agent, ui, selected.as_ref(), cx));
+                body = body.child(self.sessions_group(agent, ui, selected, cx));
             }
         }
         if groups_rendered == 0 {
@@ -347,7 +348,7 @@ impl PaneFlowApp {
         &self,
         agent: SessionAgent,
         ui: crate::theme::UiColors,
-        selected: Option<&SessionNavTarget>,
+        selected: Option<SessionNavTarget<'_>>,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let idx = agent_index(agent);
@@ -602,28 +603,61 @@ impl PaneFlowApp {
             self.show_toast("Could not resume session - invalid session id", cx);
             return;
         };
-        if !self.send_command_to_sessions_pane(&command, cx) {
-            self.show_toast("Could not resume session - target pane is gone", cx);
+        match self.send_command_to_sessions_surface(&command, cx) {
+            ResumeSendResult::Sent => {}
+            ResumeSendResult::Missing => {
+                self.show_toast("Could not resume session - target terminal is gone", cx);
+            }
+            ResumeSendResult::WrongCwd => {
+                self.show_toast(
+                    "Could not resume session - target terminal changed directory",
+                    cx,
+                );
+            }
         }
     }
 
-    /// Send a shell command to the pane that opened the sidebar. Returns false
-    /// when that pane was dropped (closed/replaced while the sidebar was open)
-    /// or no longer has a terminal tab.
-    fn send_command_to_sessions_pane(&self, command: &str, cx: &mut Context<Self>) -> bool {
-        let Some(pane_handle) = self.agent_sessions.sessions_pane.as_ref() else {
-            return false;
+    fn send_command_to_sessions_surface(
+        &self,
+        command: &str,
+        cx: &mut Context<Self>,
+    ) -> ResumeSendResult {
+        let Some(surface_id) = self.agent_sessions.sessions_surface_id else {
+            return ResumeSendResult::Missing;
         };
-        let Some(pane) = pane_handle.upgrade() else {
-            return false;
+        let Some(expected_cwd) = self.agent_sessions.sessions_cwd.as_deref() else {
+            return ResumeSendResult::Missing;
         };
-        let pane_ref = pane.read(cx);
-        if let Some(terminal) = pane_ref.active_terminal_opt() {
-            terminal.read(cx).send_command(command);
-            true
-        } else {
-            false
+        let Some((_ws_idx, pane, tab_idx)) =
+            find_pane_by_surface_id(&self.workspaces, surface_id, cx)
+        else {
+            return ResumeSendResult::Missing;
+        };
+        let Some(terminal) = pane
+            .read(cx)
+            .tabs
+            .get(tab_idx)
+            .and_then(|tab| tab.as_terminal())
+            .cloned()
+        else {
+            return ResumeSendResult::Missing;
+        };
+        let current_cwd = {
+            let view = terminal.read(cx);
+            view.terminal.current_cwd.clone().or_else(|| {
+                view.terminal
+                    .cwd_now()
+                    .map(|p| p.to_string_lossy().into_owned())
+            })
+        };
+        if !current_cwd
+            .as_deref()
+            .is_some_and(|cwd| crate::agent_sessions::cwd_matches(cwd, expected_cwd))
+        {
+            return ResumeSendResult::WrongCwd;
         }
+        terminal.read(cx).send_command(command);
+        ResumeSendResult::Sent
     }
 
     fn handle_sessions_sidebar_key_down(
@@ -632,14 +666,16 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let rows = self.sessions_nav_targets();
-        let len = rows.len();
+        let len = self.sessions_nav_len();
         match event.keystroke.key.as_str() {
             "escape" => self.close_sessions_sidebar(cx),
             "enter" | "space" if len > 0 => {
                 let selected = self.agent_sessions.sessions_selected.min(len - 1);
-                let target = rows[selected].clone();
-                self.resume_session_from_sidebar(target.agent, &target.session_id, cx);
+                if let Some(target) = self.sessions_nav_target_at(selected) {
+                    let agent = target.agent;
+                    let session_id = target.session_id.to_string();
+                    self.resume_session_from_sidebar(agent, &session_id, cx);
+                }
             }
             "up" if len > 0 => {
                 self.agent_sessions.sessions_selected = moved_session_selection(
@@ -677,8 +713,8 @@ impl PaneFlowApp {
         }
     }
 
-    fn sessions_nav_targets(&self) -> Vec<SessionNavTarget> {
-        let mut rows = Vec::new();
+    fn sessions_nav_len(&self) -> usize {
+        let mut len = 0;
         for agent in crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config)
         {
             let idx = agent_index(agent);
@@ -691,41 +727,72 @@ impl PaneFlowApp {
                 self.agent_sessions.sessions_group_show_all[idx],
                 CAP,
             );
-            rows.extend(
-                sessions
-                    .iter()
-                    .take(visible)
-                    .map(|session| SessionNavTarget {
-                        agent,
-                        session_id: session.session_id.clone(),
-                    }),
-            );
+            len += visible;
         }
-        rows
+        len
     }
 
-    fn selected_session_target(&self) -> Option<SessionNavTarget> {
-        let rows = self.sessions_nav_targets();
-        rows.get(
-            self.agent_sessions
-                .sessions_selected
-                .min(rows.len().saturating_sub(1)),
-        )
-        .cloned()
+    fn sessions_nav_target_at(&self, index: usize) -> Option<SessionNavTarget<'_>> {
+        let mut cursor = 0usize;
+        for agent in crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config)
+        {
+            let idx = agent_index(agent);
+            if self.agent_sessions.sessions_group_collapsed[idx] {
+                continue;
+            }
+            let sessions = self.sessions_for(agent);
+            let (visible, _) = visible_window(
+                sessions.len(),
+                self.agent_sessions.sessions_group_show_all[idx],
+                CAP,
+            );
+            if index < cursor + visible {
+                let session = &sessions[index - cursor];
+                return Some(SessionNavTarget {
+                    agent,
+                    session_id: &session.session_id,
+                });
+            }
+            cursor += visible;
+        }
+        None
+    }
+
+    fn selected_session_target(&self) -> Option<SessionNavTarget<'_>> {
+        let len = self.sessions_nav_len();
+        if len == 0 {
+            return None;
+        }
+        self.sessions_nav_target_at(self.agent_sessions.sessions_selected.min(len - 1))
     }
 
     fn select_session_row(&mut self, agent: SessionAgent, session_id: &str) {
-        if let Some(idx) = self
-            .sessions_nav_targets()
-            .iter()
-            .position(|target| target.agent == agent && target.session_id == session_id)
+        let mut cursor = 0usize;
+        for row_agent in
+            crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config)
         {
-            self.agent_sessions.sessions_selected = idx;
+            let idx = agent_index(row_agent);
+            if self.agent_sessions.sessions_group_collapsed[idx] {
+                continue;
+            }
+            let sessions = self.sessions_for(row_agent);
+            let (visible, _) = visible_window(
+                sessions.len(),
+                self.agent_sessions.sessions_group_show_all[idx],
+                CAP,
+            );
+            for session in sessions.iter().take(visible) {
+                if row_agent == agent && session.session_id == session_id {
+                    self.agent_sessions.sessions_selected = cursor;
+                    return;
+                }
+                cursor += 1;
+            }
         }
     }
 
     fn clamp_sessions_selection(&mut self) {
-        let len = self.sessions_nav_targets().len();
+        let len = self.sessions_nav_len();
         if len == 0 {
             self.agent_sessions.sessions_selected = 0;
         } else if self.agent_sessions.sessions_selected >= len {
@@ -792,7 +859,7 @@ impl PaneFlowApp {
         }
         self.agent_sessions.sessions_omitted = [0; crate::agent_sessions::SESSION_AGENT_COUNT];
         self.agent_sessions.sessions_cwd = None;
-        self.agent_sessions.sessions_pane = None;
+        self.agent_sessions.sessions_surface_id = None;
         self.agent_sessions.sessions_selected = 0;
         self.agent_sessions.sessions_group_collapsed =
             [false; crate::agent_sessions::SESSION_AGENT_COUNT];
@@ -823,10 +890,10 @@ impl PaneFlowApp {
 /// Default per-group row cap before "Show more" (US-005).
 const CAP: usize = 5;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct SessionNavTarget {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SessionNavTarget<'a> {
     agent: SessionAgent,
-    session_id: String,
+    session_id: &'a str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -835,6 +902,13 @@ enum SessionSelectionMove {
     Last,
     Previous,
     Next,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ResumeSendResult {
+    Sent,
+    Missing,
+    WrongCwd,
 }
 
 fn moved_session_selection(current: usize, len: usize, movement: SessionSelectionMove) -> usize {

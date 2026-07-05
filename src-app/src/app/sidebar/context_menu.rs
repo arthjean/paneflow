@@ -8,13 +8,46 @@ use std::path::PathBuf;
 
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, Entity, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, SharedString, Styled, Window, deferred, div, prelude::*, px, rgb,
+    MouseButton, ParentElement, Pixels, SharedString, Styled, Window, deferred, div, point,
+    prelude::*, px, rgb,
 };
 
 use crate::app::files_tree;
 use crate::pane::{Pane, TabContent};
 use crate::settings::components::{menu_divider_color, select_item, select_menu, with_alpha};
 use crate::{PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
+
+pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
+    ("zed", "Open in Zed", "zed", "Open in Zed"),
+    ("cursor", "Open in Cursor", "cursor", "Open in Cursor"),
+    ("vscode", "Open in VS Code", "code", "Open in VS Code"),
+    (
+        "windsurf",
+        "Open in Windsurf",
+        "windsurf",
+        "Open in Windsurf",
+    ),
+];
+
+pub(crate) fn clamped_context_menu_position(
+    position: gpui::Point<Pixels>,
+    width: Pixels,
+    height: Pixels,
+    window: &Window,
+) -> gpui::Point<Pixels> {
+    let win_size = window.window_bounds().get_bounds().size;
+    let x = if position.x + width > win_size.width {
+        (position.x - width).max(px(0.))
+    } else {
+        position.x
+    };
+    let y = if position.y + height > win_size.height {
+        (position.y - height).max(px(0.))
+    } else {
+        position.y
+    };
+    point(x, y)
+}
 
 impl PaneFlowApp {
     pub(crate) fn shortcut_for_description(&self, description: &str) -> Option<&str> {
@@ -161,36 +194,17 @@ impl PaneFlowApp {
         let can_delete = !self.workspaces.is_empty();
         let workflow_template = self.workspace_template_for_workspace(idx);
 
-        // Data-driven editor entries: (id, label, command, shortcut_description)
-        let editors: &[(&str, &str, &str, &str)] = &[
-            ("zed", "Open in Zed", "zed", "Open in Zed"),
-            ("cursor", "Open in Cursor", "cursor", "Open in Cursor"),
-            ("vscode", "Open in VS Code", "code", "Open in VS Code"),
-            (
-                "windsurf",
-                "Open in Windsurf",
-                "windsurf",
-                "Open in Windsurf",
-            ),
-        ];
-
         let workflow_rows = usize::from(workflow_template.is_some());
         let separator_rows = 2 + workflow_rows;
-        let menu_rows = editors.len() + 4 + workflow_rows;
+        let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows;
         let menu_height = px(8. + menu_rows as f32 * 28. + separator_rows as f32 * 9.);
-        let win_h = window.window_bounds().get_bounds().size.height;
-        // Flip: if not enough space below the click, show the menu above it
-        let menu_y = if menu.position.y + menu_height > win_h {
-            (menu.position.y - menu_height).max(px(0.))
-        } else {
-            menu.position.y
-        };
+        let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
         let mut context_menu = select_menu("workspace-context-menu", ui)
             .occlude()
             .absolute()
-            .left(menu.position.x)
-            .top(menu_y)
+            .left(menu_pos.x)
+            .top(menu_pos.y)
             .w(px(248.))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.workspace_menu_open = None;
@@ -218,7 +232,7 @@ impl PaneFlowApp {
             );
         }
 
-        for &(id, label, command, shortcut_desc) in editors {
+        for &(id, label, command, shortcut_desc) in EDITOR_CONTEXT_MENU_ITEMS {
             let shortcut = self
                 .shortcut_for_description(shortcut_desc)
                 .map(|s| SharedString::from(s.to_string()));
@@ -414,18 +428,13 @@ impl PaneFlowApp {
 
         let rows = 2 + others.len().max(1) + usize::from(pending_sid.is_some()) + 1;
         let menu_height = px(8. + rows as f32 * 29. + 18.);
-        let win_h = window.window_bounds().get_bounds().size.height;
-        let menu_y = if menu.position.y + menu_height > win_h {
-            (menu.position.y - menu_height).max(px(0.))
-        } else {
-            menu.position.y
-        };
+        let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
         let mut context_menu = select_menu("tab-context-menu", ui)
             .occlude()
             .absolute()
-            .left(menu.position.x)
-            .top(menu_y)
+            .left(menu_pos.x)
+            .top(menu_pos.y)
             .w(px(248.))
             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                 this.tab_menu_open = None;

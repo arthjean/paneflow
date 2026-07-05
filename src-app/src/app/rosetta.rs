@@ -14,6 +14,7 @@ use paneflow_config::schema::AppMode;
 use crate::agent_launcher::TerminalAgent;
 use crate::ai_types::{AgentSession, AgentState};
 use crate::app::ipc_handler::find_pane_by_surface_id;
+use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::project::{AgentsTarget, Project, Thread, ThreadStatus};
 use crate::settings::components::with_alpha;
 use crate::workspace::Workspace;
@@ -469,15 +470,7 @@ impl crate::PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.title_bar_files_menu_open = None;
-        self.title_bar_help_menu_open = None;
-        self.workspace_menu_open = None;
-        self.tab_menu_open = None;
-        self.profile_menu_open = None;
-        self.files_menu_open = None;
-        self.agents_view.agents_menu_open = None;
-        self.agents_view.sidebar_actions_menu_open = false;
-        self.agents_view.sidebar_mode_picker_open = false;
+        self.dismiss_transient_surfaces();
 
         if !self.rosetta_surface_allowed() {
             self.reset_rosetta_surface_state();
@@ -1084,15 +1077,16 @@ impl crate::PaneFlowApp {
                     cx.notify();
                     return false;
                 };
-                self.active_idx = ws_idx;
                 self.enter_cli_mode(window, cx);
-                pane.update(cx, |pane, cx| {
-                    if pane.selected_idx != tab_idx {
-                        pane.selected_idx = tab_idx;
-                    }
-                    cx.notify();
-                });
-                pane.read(cx).focus_handle(cx).focus(window, cx);
+                self.activate_workspace_at(
+                    ws_idx,
+                    WorkspaceFocusTarget::PaneTab {
+                        pane: pane.clone(),
+                        tab_idx,
+                    },
+                    window,
+                    cx,
+                );
                 self.jump_cursor = Some(surface_id);
                 self.rosetta_surface_expanded = false;
                 self.rosetta_surface_selected = 0;

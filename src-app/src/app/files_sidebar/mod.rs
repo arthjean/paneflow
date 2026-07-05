@@ -7,7 +7,7 @@
 //! folders-first tree of the active workspace's `cwd`. Markdown rows are
 //! full-color + click-to-open into the active pane (the WCAG 2.5.7
 //! single-pointer alternative to the EP-003 drag); every other file is greyed
-//! and inert; gitignored/hidden entries are dimmed further.
+//! and inert; gitignored/hidden entries are filtered out before rendering.
 //!
 //! This module holds the state mutations (open/close, re-root, expand/collapse,
 //! open-markdown) + the container render; the header/body/row rendering lives
@@ -27,6 +27,7 @@ use gpui::{
 };
 
 use crate::app::files_tree::{self, FilesTreeState};
+use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::{PaneFlowApp, ToggleFilesSidebar};
 
 /// Fixed sidebar width - matches the sessions sidebar (a resizable width is
@@ -50,11 +51,13 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         if !self.files_sidebar_open {
-            self.files_pane = self
+            self.files_surface_id = self
                 .workspaces
                 .get(self.active_idx)
                 .and_then(|ws| ws.root.as_ref())
-                .and_then(|root| root.focused_pane(window, cx));
+                .and_then(|root| root.focused_pane(window, cx))
+                .and_then(|pane| pane.read(cx).active_terminal_opt())
+                .map(|terminal| terminal.entity_id().as_u64());
         }
         self.toggle_files_sidebar(cx);
         if self.files_sidebar_open {
@@ -82,17 +85,15 @@ impl PaneFlowApp {
             self.close_sessions_sidebar_immediate(cx);
         }
         // Floating dropdowns would paint over the docked panel.
-        self.workspace_menu_open = None;
-        self.profile_menu_open = None;
+        self.dismiss_transient_surfaces();
 
         self.set_files_sidebar_open(true, cx);
         self.files_tree_scroll = gpui::ScrollHandle::new();
         self.files_selected = 0;
-        // US-018: hydrate the tree + install the recursive watcher OFF the
-        // render thread - a recursive `notify` walk over a repo carrying a
-        // `target/` (~23k dirs) otherwise froze Wayland. A root shell paints
-        // this frame; `sync_files_expansion` runs (and reconciles stale
-        // persisted paths back into `session.json`) once hydration lands.
+        // US-018: hydrate the tree + install non-recursive watches OFF the
+        // render thread. A root shell paints this frame; `sync_files_expansion`
+        // runs (and reconciles stale persisted paths back into `session.json`)
+        // once hydration lands.
         self.spawn_files_hydration(root, persisted, cx);
     }
 
@@ -100,7 +101,7 @@ impl PaneFlowApp {
     /// per-workspace expansion lives on the `Workspace`, so it is NOT reset
     /// here (US-007) - reopening restores it.
     pub(crate) fn close_files_sidebar(&mut self, cx: &mut Context<Self>) {
-        // US-005: drop the recursive watch + its channel while closed.
+        // US-005: drop the watch + its channel while closed.
         self.files_watcher = None;
         self.files_event_rx = None;
         // Close any open row context menu so it can't outlive the tree.
@@ -166,7 +167,7 @@ impl PaneFlowApp {
         self.files_watcher = None;
         self.files_event_rx = None;
         self.files_menu_open = None;
-        self.files_pane = None;
+        self.files_surface_id = None;
         self.files_selected = 0;
     }
 
@@ -186,7 +187,7 @@ impl PaneFlowApp {
             return;
         }
         let persisted = ws.files_expanded.clone();
-        // US-018: re-root off the render thread (the recursive watch walk).
+        // US-018: re-root off the render thread.
         self.spawn_files_hydration(root, persisted, cx);
     }
 
@@ -199,8 +200,10 @@ impl PaneFlowApp {
     fn toggle_dir(&mut self, path: &Path, cx: &mut Context<Self>) {
         if self.files_tree.expanded.contains(path) {
             self.files_tree.expanded.remove(path);
+            self.unwatch_files_dir(path);
         } else {
             self.files_tree.expanded.insert(path.to_path_buf());
+            self.watch_files_dir(path);
             let stale =
                 self.files_watcher.is_none() || !self.files_tree.children.contains_key(path);
             if stale {
@@ -231,10 +234,11 @@ impl PaneFlowApp {
             return;
         };
         let target = self
-            .files_pane
-            .as_ref()
-            .filter(|pane| root.contains_leaf(pane))
-            .cloned()
+            .files_surface_id
+            .and_then(|surface_id| find_pane_by_surface_id(&self.workspaces, surface_id, cx))
+            .and_then(|(ws_idx, pane, _tab_idx)| {
+                (ws_idx == self.active_idx && root.contains_leaf(&pane)).then_some(pane)
+            })
             .or_else(|| root.focused_pane(window, cx))
             .or_else(|| root.collect_leaves().into_iter().next());
         let Some(target) = target else {
