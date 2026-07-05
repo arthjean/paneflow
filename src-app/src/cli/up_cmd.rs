@@ -14,7 +14,7 @@
 //! GPUI render thread by construction (FR-09).
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use paneflow_config::schema::PaneFlowConfig;
@@ -51,7 +51,7 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     for (idx, pane) in spec.panes.iter().enumerate() {
         worktree_plans.push(plan_worktree(idx, pane)?);
     }
-    check_worktree_conflicts(&worktree_plans)?;
+    check_worktree_conflicts(&mut worktree_plans)?;
 
     // Phase 3: allocate a free port stride per referencing pane (bind-probe;
     // cross-platform - no /proc parsing, works on Windows too).
@@ -182,15 +182,17 @@ pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<Worktr
             "pane {idx}: cannot resolve the repository root from '{cwd}'"
         ))
     })?;
-    let path = worktree::worktree_dir(&repo_root, branch);
+    let legacy_path = worktree::worktree_dir(&repo_root, branch);
+    let hashed_path = worktree::worktree_dir_hashed(&repo_root, branch);
+    let mut path = legacy_path.clone();
 
     let entries = worktree::list_worktrees(&repo_root)
         .map_err(|e| CliError::runtime(format!("pane {idx}: {e}")))?;
     let mut create: Option<bool> = Some(!worktree::branch_exists(&repo_root, branch));
     for entry in &entries {
         if entry.branch.as_deref() == Some(branch) {
-            if entry.path == path {
-                // Idempotent reuse: our directory, right branch (US-006 AC4).
+            if worktree::is_paneflow_worktree_dir(&repo_root, branch, &entry.path) {
+                path = entry.path.clone();
                 create = None;
             } else {
                 // Locked: a branch can only be checked out in one worktree.
@@ -199,15 +201,16 @@ pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<Worktr
                     entry.path.display()
                 )));
             }
-        } else if entry.path == path {
-            return Err(CliError::runtime(format!(
-                "pane {idx}: {} exists but holds another branch ({}); \
-                 remove it or pick another worktree branch",
-                path.display(),
-                entry.branch.as_deref().unwrap_or("detached")
-            )));
         }
     }
+    if create.is_some()
+        && entries
+            .iter()
+            .any(|entry| entry.path == legacy_path && entry.branch.as_deref() != Some(branch))
+    {
+        path = hashed_path;
+    }
+    validate_worktree_target(idx, &mut path, &repo_root, branch, &entries, &mut create)?;
     if create.is_some() && path.exists() {
         return Err(CliError::runtime(format!(
             "pane {idx}: {} exists but is not a registered worktree; remove it first",
@@ -234,12 +237,108 @@ pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<Worktr
     }))
 }
 
-/// Two panes must not target the same worktree path (same branch, or two
-/// branch names slugging identically): the second `git worktree add` would
-/// fail mid-execution - AFTER the first already created - breaking the
-/// fail-atomic-at-validation contract (NFR Fiabilité). Statically detectable,
-/// so refused here, before any mutation (and therefore visible in --dry-run).
-pub(super) fn check_worktree_conflicts(plans: &[Option<WorktreePlan>]) -> Result<(), CliError> {
+fn validate_worktree_target(
+    idx: usize,
+    path: &mut PathBuf,
+    repo_root: &Path,
+    branch: &str,
+    entries: &[worktree::WorktreeEntry],
+    create: &mut Option<bool>,
+) -> Result<(), CliError> {
+    for entry in entries {
+        if entry.path != *path {
+            continue;
+        }
+        if entry.branch.as_deref() == Some(branch) {
+            *path = entry.path.clone();
+            *create = None;
+            return Ok(());
+        }
+        return Err(CliError::runtime(format!(
+            "pane {idx}: {} exists but holds another branch ({}); \
+             remove it or pick another worktree branch",
+            path.display(),
+            entry.branch.as_deref().unwrap_or("detached")
+        )));
+    }
+    if !worktree::is_paneflow_worktree_dir(repo_root, branch, path) {
+        return Err(CliError::runtime(format!(
+            "pane {idx}: planned worktree path {} is outside Paneflow's worktree dirs",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+/// Two panes must not target the same worktree path. Same-branch duplicates
+/// are refused; different branches that slug to the same path are moved to a
+/// hashed fallback before any mutation so `--dry-run` reports the final plan.
+pub(super) fn check_worktree_conflicts(plans: &mut [Option<WorktreePlan>]) -> Result<(), CliError> {
+    let mut groups: HashMap<PathBuf, Vec<usize>> = HashMap::new();
+    for (idx, plan) in plans.iter().enumerate() {
+        if let Some(plan) = plan {
+            groups.entry(plan.path.clone()).or_default().push(idx);
+        }
+    }
+
+    for indices in groups.values().filter(|indices| indices.len() > 1) {
+        let mut branches: HashMap<String, usize> = HashMap::new();
+        for &idx in indices {
+            let plan = plans[idx].as_ref().expect("group contains plan index");
+            if let Some(&first) = branches.get(&plan.branch) {
+                return Err(CliError::runtime(format!(
+                    "pane {} and pane {} both target worktree '{}' ({}) - \
+                     a branch can only be checked out in one worktree",
+                    first,
+                    plan.pane_idx,
+                    plan.branch,
+                    plan.path.display()
+                )));
+            }
+            branches.insert(plan.branch.clone(), plan.pane_idx);
+        }
+
+        let keep = indices
+            .iter()
+            .copied()
+            .find(|&idx| {
+                plans[idx]
+                    .as_ref()
+                    .is_some_and(|plan| plan.create.is_none())
+            })
+            .unwrap_or(indices[0]);
+        for &idx in indices {
+            if idx == keep {
+                continue;
+            }
+            let plan = plans[idx].as_mut().expect("group contains plan index");
+            let hashed = worktree::worktree_dir_hashed(&plan.repo_root, &plan.branch);
+            if plan.path == hashed {
+                continue;
+            }
+            plan.path = hashed;
+            let entries = worktree::list_worktrees(&plan.repo_root)
+                .map_err(|e| CliError::runtime(format!("pane {}: {e}", plan.pane_idx)))?;
+            let mut create = plan.create;
+            validate_worktree_target(
+                plan.pane_idx,
+                &mut plan.path,
+                &plan.repo_root,
+                &plan.branch,
+                &entries,
+                &mut create,
+            )?;
+            plan.create = create;
+            if plan.create.is_some() && plan.path.exists() {
+                return Err(CliError::runtime(format!(
+                    "pane {}: {} exists but is not a registered worktree; remove it first",
+                    plan.pane_idx,
+                    plan.path.display()
+                )));
+            }
+        }
+    }
+
     let mut seen: HashMap<&PathBuf, usize> = HashMap::new();
     for plan in plans.iter().flatten() {
         if let Some(&first) = seen.get(&plan.path) {
@@ -638,12 +737,12 @@ mod tests {
         // NFR fail-atomique: two panes on the same branch must be refused at
         // the plan stage (both panes cited), never discovered mid-execution
         // after the first worktree was already created.
-        let plans = vec![
+        let mut plans = vec![
             Some(dummy_plan(0, "/r.worktrees/feat-x", "feat/x")),
             None,
             Some(dummy_plan(2, "/r.worktrees/feat-x", "feat/x")),
         ];
-        let err = check_worktree_conflicts(&plans).unwrap_err();
+        let err = check_worktree_conflicts(&mut plans).unwrap_err();
         assert_eq!(err.code, crate::cli::EXIT_RUNTIME);
         assert!(
             err.message.contains("pane 0") && err.message.contains("pane 2"),
@@ -651,11 +750,56 @@ mod tests {
             err.message
         );
 
-        let distinct = vec![
+        let mut distinct = vec![
             Some(dummy_plan(0, "/r.worktrees/feat-x", "feat/x")),
             Some(dummy_plan(1, "/r.worktrees/feat-y", "feat/y")),
         ];
-        assert!(check_worktree_conflicts(&distinct).is_ok());
+        assert!(check_worktree_conflicts(&mut distinct).is_ok());
+    }
+
+    #[test]
+    fn slug_collision_branches_move_to_hashed_fallback() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        std::fs::create_dir(&repo_root).expect("repo dir");
+        if !test_git(&repo_root, &["init"]) {
+            return;
+        }
+
+        let branch_a = "feat/a b";
+        let branch_b = "feat/a-b";
+        let legacy = worktree::worktree_dir(&repo_root, branch_a);
+        assert_eq!(legacy, worktree::worktree_dir(&repo_root, branch_b));
+        let hashed_b = worktree::worktree_dir_hashed(&repo_root, branch_b);
+
+        let mut plans = vec![
+            Some(WorktreePlan {
+                pane_idx: 0,
+                repo_root: repo_root.clone(),
+                path: legacy.clone(),
+                branch: branch_a.to_string(),
+                create: Some(true),
+                copy_env: true,
+                setup: None,
+                setup_timeout: Duration::from_secs(1),
+                teardown: "auto".to_string(),
+            }),
+            Some(WorktreePlan {
+                pane_idx: 1,
+                repo_root: repo_root.clone(),
+                path: legacy.clone(),
+                branch: branch_b.to_string(),
+                create: Some(true),
+                copy_env: true,
+                setup: None,
+                setup_timeout: Duration::from_secs(1),
+                teardown: "auto".to_string(),
+            }),
+        ];
+
+        check_worktree_conflicts(&mut plans).expect("slug collision resolves");
+        assert_eq!(plans[0].as_ref().unwrap().path, legacy);
+        assert_eq!(plans[1].as_ref().unwrap().path, hashed_b);
     }
 
     #[test]
@@ -687,5 +831,15 @@ mod tests {
         let cfg = PaneFlowConfig::default();
         let resolved = resolve_command(0, &pane(None, Some("cargo watch")), &cfg).expect("ok");
         assert_eq!(resolved.as_deref(), Some("cargo watch"));
+    }
+
+    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
     }
 }

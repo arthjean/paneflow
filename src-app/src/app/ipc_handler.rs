@@ -858,7 +858,7 @@ fn surface_entry_for(entity: Entity<TerminalView>, scope: SurfaceScope, cx: &App
         let view = entity.read(cx);
         let ts = &view.terminal;
         (
-            ts.custom_name.clone(),
+            ts.custom_name.as_deref().and_then(sanitize_pane_name),
             ts.title.clone(),
             ts.current_cwd.clone(),
             ts.foreground_command(),
@@ -1016,7 +1016,9 @@ pub(crate) fn sanitize_pane_name(raw: &str) -> Option<String> {
         .filter(|c| !c.is_control())
         .take(MAX_NAME_LEN)
         .collect();
-    let cleaned = cleaned.trim().to_string();
+    let cleaned = crate::markdown::strip_bidi_zero_width(cleaned)
+        .trim()
+        .to_string();
     (!cleaned.is_empty()).then_some(cleaned)
 }
 
@@ -5454,6 +5456,8 @@ mod tests {
     fn parse_rename_name_strips_control_chars_and_caps_length() {
         let p = serde_json::json!({"new_name": "ab\ncd\u{7}ef"});
         assert_eq!(super::parse_rename_name(&p).as_deref(), Some("abcdef"));
+        let p = serde_json::json!({"new_name": "build\u{202E}codex\u{200D}"});
+        assert_eq!(super::parse_rename_name(&p).as_deref(), Some("buildcodex"));
         let long = "x".repeat(200);
         let p = serde_json::json!({ "new_name": long });
         assert_eq!(super::parse_rename_name(&p).map(|s| s.len()), Some(64));

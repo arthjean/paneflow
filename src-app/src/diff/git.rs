@@ -358,20 +358,26 @@ fn worktree_toplevel(dir: &Path) -> PathBuf {
     }
 }
 
-/// Untracked, non-ignored files in `dir` (`git ls-files --others
-/// --exclude-standard`). `git diff <merge_base>` only reports tracked changes,
-/// so brand-new files on a worktree branch (a new module, a new PRD) would be
-/// invisible without this - a correctness hole in the core "what this branch
-/// adds" semantic. NUL-delimited so paths with spaces/newlines are safe.
-fn list_untracked(dir: &Path) -> Vec<String> {
-    match run_git(dir, &["ls-files", "--others", "--exclude-standard", "-z"]) {
-        Ok(out) => String::from_utf8_lossy(&out)
-            .split('\u{0}')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect(),
-        Err(_) => Vec::new(),
+fn list_untracked_limited(dir: &Path, limit: usize) -> (Vec<String>, bool) {
+    if limit == 0 {
+        return (Vec::new(), false);
     }
+    let Ok(out) = run_git(dir, &["ls-files", "--others", "--exclude-standard", "-z"]) else {
+        return (Vec::new(), false);
+    };
+    let mut paths = Vec::new();
+    let mut truncated = false;
+    for path in String::from_utf8_lossy(&out)
+        .split('\u{0}')
+        .filter(|s| !s.is_empty())
+    {
+        if paths.len() >= limit {
+            truncated = true;
+            break;
+        }
+        paths.push(path.to_string());
+    }
+    (paths, truncated)
 }
 
 /// Resolve the merge-base SHA between `HEAD` and `base_ref` in `worktree_dir`.
@@ -407,6 +413,16 @@ fn classify(bytes: Vec<u8>) -> (String, bool) {
     }
 }
 
+fn base_path_exists(worktree_dir: &Path, merge_base: &str, rel_path: &str) -> Result<bool, String> {
+    let out = run_git(
+        worktree_dir,
+        &["ls-tree", "-z", "--name-only", merge_base, "--", rel_path],
+    )?;
+    Ok(out
+        .split(|&b| b == 0)
+        .any(|path| path == rel_path.as_bytes()))
+}
+
 /// Load the base-side text of `rel_path` at the merge-base commit. Returns
 /// `(text, is_binary)`; a path absent at the merge-base (file added since
 /// divergence) yields empty text, not an error.
@@ -414,7 +430,19 @@ fn load_base_text(worktree_dir: &Path, merge_base: &str, rel_path: &str) -> (Str
     let spec = format!("{merge_base}:{rel_path}");
     match run_git(worktree_dir, &["show", &spec]) {
         Ok(bytes) => classify(bytes),
-        Err(_) => (String::new(), false),
+        Err(show_err) => match base_path_exists(worktree_dir, merge_base, rel_path) {
+            Ok(false) => (String::new(), false),
+            Ok(true) => {
+                log::warn!("git: failed to load base-side file {rel_path}: {show_err}");
+                (String::new(), true)
+            }
+            Err(exists_err) => {
+                log::warn!(
+                    "git: failed to verify base-side file {rel_path}: {show_err}; {exists_err}"
+                );
+                (String::new(), true)
+            }
+        },
     }
 }
 
@@ -665,15 +693,23 @@ fn compute_diff_against(worktree_dir: &Path, base: &str) -> WorktreeDiff {
     };
 
     let mut changes = parse_name_status_z(&name_status);
+    let mut truncated = changes.len() > MAX_FILE_COUNT;
+    if changes.len() > MAX_FILE_COUNT + 1 {
+        changes.truncate(MAX_FILE_COUNT + 1);
+    }
     // Tracked changes (above) miss untracked new files; append them as Added so
     // a freshly-created file on the branch shows up (loaded from the working
     // tree, empty base → rendered as a pure addition).
-    for path in list_untracked(worktree_dir) {
-        changes.push((FileChange::Added, path, None));
+    if changes.len() <= MAX_FILE_COUNT {
+        let remaining = MAX_FILE_COUNT + 1 - changes.len();
+        let (untracked, untracked_truncated) = list_untracked_limited(worktree_dir, remaining);
+        truncated |= untracked_truncated;
+        for path in untracked {
+            changes.push((FileChange::Added, path, None));
+        }
     }
     log::debug!("git: {} changed files", changes.len());
     let mut files = Vec::new();
-    let mut truncated = false;
     for (change, path, old_path) in changes {
         if files.len() >= MAX_FILE_COUNT {
             truncated = true;
@@ -746,7 +782,26 @@ fn compute_file_stats_against(worktree_dir: &Path, base: &str) -> HashMap<String
     .map(|out| parse_numstat_z(&out))
     .unwrap_or_default();
 
-    for path in list_untracked(worktree_dir) {
+    let remaining = MAX_FILE_COUNT.saturating_sub(stats.len());
+    if remaining == 0 {
+        return stats;
+    }
+
+    let (untracked, truncated) = list_untracked_limited(worktree_dir, remaining);
+    if truncated {
+        log::debug!("git: untracked file stats truncated at {remaining}");
+    }
+    for path in untracked {
+        if is_skipped_name(&path) || is_too_large(worktree_dir, &path) {
+            stats.insert(
+                path,
+                FileDiffStat {
+                    added: 0,
+                    removed: 0,
+                },
+            );
+            continue;
+        }
         let (text, is_binary) = load_working_text(worktree_dir, &path);
         let added = if is_binary {
             0
@@ -888,6 +943,22 @@ mod tests {
                 removed: 0
             })
         );
+    }
+
+    #[test]
+    fn list_untracked_limited_reports_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init"]) {
+            return;
+        }
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        std::fs::write(root.join("b.txt"), "b\n").unwrap();
+        std::fs::write(root.join("c.txt"), "c\n").unwrap();
+
+        let (paths, truncated) = list_untracked_limited(root, 2);
+        assert_eq!(paths.len(), 2);
+        assert!(truncated);
     }
 
     #[test]

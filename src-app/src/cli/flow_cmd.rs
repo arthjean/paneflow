@@ -226,7 +226,7 @@ fn prepare_runs(
     }
     // Same static dedup as `up`: two units on one worktree path would fail
     // at the second `git worktree add` MID-FLOW otherwise (non-atomic).
-    up_cmd::check_worktree_conflicts(&worktree_plans)?;
+    up_cmd::check_worktree_conflicts(&mut worktree_plans)?;
     let port_offsets = up_cmd::allocate_port_offsets(&port_refs, plan.port_base, port_is_free);
 
     Ok(plan

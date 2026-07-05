@@ -1383,23 +1383,18 @@ impl PaneFlowApp {
         // the process walk per terminal subtree instead of flattening the
         // workspace into one pid pool.
         let roots: Vec<(u64, u32)> = ws
-            .root
-            .as_ref()
-            .map(|root| {
-                root.collect_leaves()
-                    .iter()
-                    .flat_map(|pane| {
-                        pane.read(cx)
-                            .terminals()
-                            .filter_map(|tv| {
-                                let child_pid = tv.read(cx).terminal.child_pid;
-                                (child_pid > 0).then_some((tv.entity_id().as_u64(), child_pid))
-                            })
-                            .collect::<Vec<_>>()
+            .collect_panes()
+            .iter()
+            .flat_map(|pane| {
+                pane.read(cx)
+                    .terminals()
+                    .filter_map(|tv| {
+                        let child_pid = tv.read(cx).terminal.child_pid;
+                        (child_pid > 0).then_some((tv.entity_id().as_u64(), child_pid))
                     })
-                    .collect()
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or_default();
+            .collect();
 
         if roots.is_empty() {
             return true;
@@ -1476,11 +1471,7 @@ impl PaneFlowApp {
             .filter_map(|(port, info)| info.url.clone().map(|u| (*port, u)))
             .collect();
 
-        let leaves: Vec<gpui::Entity<crate::pane::Pane>> = ws
-            .root
-            .as_ref()
-            .map(|root| root.collect_leaves())
-            .unwrap_or_default();
+        let leaves: Vec<gpui::Entity<crate::pane::Pane>> = ws.collect_panes();
 
         // US-014 collision pre-pass: port → owning terminal. A port
         // LISTENed by ≥ 2 subtrees is excluded - that is SO_REUSEPORT-style

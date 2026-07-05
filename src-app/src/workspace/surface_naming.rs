@@ -63,7 +63,8 @@ pub fn derive_surface_base_name(cmd: Option<&str>, title: Option<&str>) -> Strin
 /// `shell` (idle surface); anything else becomes `<prog>[-<subcommand>]`
 /// (`cargo run` → `cargo-run`, `node server.js` → `node-server.js`).
 fn name_from_command(cmd: &str) -> Option<String> {
-    let mut tokens = cmd.split_whitespace();
+    let tokens = command_tokens(cmd);
+    let mut tokens = tokens.iter().map(String::as_str);
     let prog = basename(tokens.next()?);
     if prog.is_empty() {
         return None;
@@ -80,6 +81,30 @@ fn name_from_command(cmd: &str) -> Option<String> {
     }
     let slug = slugify(&parts.join("-"));
     (!slug.is_empty()).then_some(slug)
+}
+
+fn command_tokens(cmd: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+
+    for ch in cmd.chars() {
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '"' || ch == '\'' => quote = Some(ch),
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 /// Build a base name from the OSC title - take its first whitespace token,
@@ -212,6 +237,17 @@ mod tests {
         assert_eq!(
             derive_surface_base_name(Some("/usr/bin/node server.js"), None),
             "node-server.js"
+        );
+    }
+
+    #[test]
+    fn command_quoted_windows_path_argv0() {
+        assert_eq!(
+            derive_surface_base_name(
+                Some(r#""C:\Program Files\nodejs\node.exe" "C:\repo\dev server.js""#),
+                None
+            ),
+            "node.exe-dev-server.js"
         );
     }
 

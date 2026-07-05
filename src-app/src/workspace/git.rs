@@ -24,6 +24,7 @@ const GIT_DIFF_STAT_STDOUT_CAP: u64 = 256 * 1024;
 
 const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const GIT_DIFF_STAT_UNTRACKED_FILE_CAP: usize = 200;
+const GIT_DIFF_STAT_UNTRACKED_PATH_CAP: usize = 1000;
 const GIT_DIFF_STAT_FILE_BYTES_CAP: u64 = 512 * 1024;
 
 impl GitDiffStats {
@@ -89,11 +90,19 @@ impl GitDiffStats {
             return;
         };
         let text = String::from_utf8_lossy(&out);
-        for (idx, path) in text.split('\0').filter(|p| !p.is_empty()).enumerate() {
+        let mut paths = text.split('\0').filter(|p| !p.is_empty());
+        for (idx, path) in paths
+            .by_ref()
+            .take(GIT_DIFF_STAT_UNTRACKED_PATH_CAP)
+            .enumerate()
+        {
             self.files_changed += 1;
             if idx < GIT_DIFF_STAT_UNTRACKED_FILE_CAP {
                 self.insertions += untracked_insertions(cwd, path);
             }
+        }
+        if paths.next().is_some() {
+            self.files_changed += 1;
         }
     }
 }

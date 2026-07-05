@@ -5,7 +5,8 @@
 //! branch, optionally write a prompt - confirm runs the existing
 //! orchestration-v2 worktree engine OFF the render thread
 //! (`smol::unblock` + `worktree::add_worktree`, 120 s deadline, sibling
-//! `<repo>.worktrees/<slug>`, then `copy_env_files` no-clobber), and only
+//! `<repo>.worktrees/<slug>` or hashed collision fallback, then
+//! `copy_env_files` no-clobber), and only
 //! on success splits the focused pane at the worktree path, launches the
 //! agent CLI (`TerminalAgent::launch_command`, honors the Claude bypass
 //! setting) and pre-fills the prompt through the existing settle-poll -
@@ -60,6 +61,43 @@ struct LaunchPlan {
     branch: String,
     agent: TerminalAgent,
     prompt: String,
+}
+
+fn launch_pad_worktree_plan(
+    repo_root: &std::path::Path,
+    branch: &str,
+) -> Result<(std::path::PathBuf, bool), String> {
+    let legacy_path = worktree::worktree_dir(repo_root, branch);
+    let hashed_path = worktree::worktree_dir_hashed(repo_root, branch);
+    let entries = worktree::list_worktrees(repo_root)?;
+    let mut path = legacy_path.clone();
+    for entry in &entries {
+        if entry.branch.as_deref() == Some(branch) {
+            return Err(format!(
+                "branch '{branch}' is already checked out at {}",
+                entry.path.display()
+            ));
+        }
+        if entry.path == legacy_path {
+            path = hashed_path.clone();
+        }
+    }
+    for entry in &entries {
+        if entry.path == path {
+            return Err(format!(
+                "{} exists but holds another branch ({})",
+                path.display(),
+                entry.branch.as_deref().unwrap_or("detached")
+            ));
+        }
+    }
+    if path.exists() {
+        return Err(format!(
+            "{} exists but is not a registered worktree; remove it first",
+            path.display()
+        ));
+    }
+    Ok((path, !worktree::branch_exists(repo_root, branch)))
 }
 
 impl PaneFlowApp {
@@ -219,11 +257,13 @@ impl PaneFlowApp {
                 // The engine is synchronous (git subprocess, 120 s deadline)
                 // - run it on the blocking pool, never the render thread.
                 let result = smol::unblock(move || {
-                    worktree::add_worktree(&repo_root, &worktree_path, &branch, true)?;
+                    let (worktree_path, create_branch) =
+                        launch_pad_worktree_plan(&repo_root, &branch)?;
+                    worktree::add_worktree(&repo_root, &worktree_path, &branch, create_branch)?;
                     // Best-effort by design (US-007 orchestration-v2): a
                     // partial copy is not a failure.
-                    let copied = worktree::copy_env_files(&repo_root, &worktree_path);
-                    Ok::<Vec<String>, String>(copied)
+                    let _ = worktree::copy_env_files(&repo_root, &worktree_path);
+                    Ok::<std::path::PathBuf, String>(worktree_path)
                 })
                 .await;
                 cx.update(|cx| {
@@ -241,18 +281,22 @@ impl PaneFlowApp {
     /// registration, then close.
     fn launch_pad_finish(
         &mut self,
-        result: Result<Vec<String>, String>,
-        plan: LaunchPlan,
+        result: Result<std::path::PathBuf, String>,
+        mut plan: LaunchPlan,
         cx: &mut Context<Self>,
     ) {
-        if let Err(e) = result {
-            if self.launch_pad.is_some() {
-                self.launch_pad_set_error(e, cx);
-            } else {
-                self.show_toast(format!("Launch Pad: {e}"), cx);
+        let worktree_path = match result {
+            Ok(path) => path,
+            Err(e) => {
+                if self.launch_pad.is_some() {
+                    self.launch_pad_set_error(e, cx);
+                } else {
+                    self.show_toast(format!("Launch Pad: {e}"), cx);
+                }
+                return;
             }
-            return;
-        }
+        };
+        plan.worktree_path = worktree_path;
 
         let Some(ws_idx) = self.workspaces.iter().position(|w| w.id == plan.ws_id) else {
             // Workspace closed during the run: the worktree exists on disk
@@ -598,5 +642,66 @@ impl PaneFlowApp {
         )
         .with_priority(8)
         .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launch_pad_plan_uses_hashed_path_when_slug_path_is_claimed() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        std::fs::create_dir(&repo_root).expect("repo dir");
+        if !test_git(&repo_root, &["init"]) {
+            return;
+        }
+        assert!(test_git(&repo_root, &["config", "core.autocrlf", "false"]));
+        std::fs::write(repo_root.join("README.md"), "init\n").expect("readme");
+        assert!(test_git(&repo_root, &["add", "README.md"]));
+        assert!(test_git(
+            &repo_root,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit",
+                "-m",
+                "init",
+            ],
+        ));
+
+        let branch_a = "feat/a b";
+        let branch_b = "feat/a-b";
+        let legacy = worktree::worktree_dir(&repo_root, branch_a);
+        std::fs::create_dir_all(legacy.parent().expect("worktree parent")).expect("parent dir");
+        if !test_git(
+            &repo_root,
+            &[
+                "worktree",
+                "add",
+                legacy.to_str().expect("utf8 path"),
+                "-b",
+                branch_a,
+            ],
+        ) {
+            return;
+        }
+
+        let (path, create_branch) = launch_pad_worktree_plan(&repo_root, branch_b).expect("plan");
+        assert_eq!(path, worktree::worktree_dir_hashed(&repo_root, branch_b));
+        assert!(create_branch);
+    }
+
+    fn test_git(cwd: &std::path::Path, args: &[&str]) -> bool {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
     }
 }

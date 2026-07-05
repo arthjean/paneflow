@@ -57,8 +57,10 @@ pub struct PaneScan {
     /// identity-pill agent (US-013); the union across panes feeds the
     /// workspace-level `detected_agents` aggregate.
     pub agents: Vec<String>,
-    /// Best-effort foreground command for surface naming, resolved by the same
-    /// off-thread process scan so IPC/UI callers never do process-table I/O.
+    /// Best-effort representative command for surface naming, resolved by the
+    /// same off-thread process scan so IPC/UI callers never do process-table
+    /// I/O. This is a child-selection heuristic, not a PTY foreground process
+    /// group query.
     pub foreground_command: Option<String>,
 }
 
@@ -103,7 +105,21 @@ fn command_from_nul_args(bytes: &[u8]) -> Option<String> {
         .filter(|s| !s.is_empty())
         .map(|s| String::from_utf8_lossy(s).into_owned())
         .collect();
-    (!parts.is_empty()).then(|| parts.join(" "))
+    (!parts.is_empty()).then(|| {
+        parts
+            .iter()
+            .map(|part| quote_command_arg(part))
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn quote_command_arg(arg: &str) -> String {
+    if !arg.chars().any(|c| c.is_whitespace() || c == '"') {
+        return arg.to_string();
+    }
+    format!("\"{}\"", arg.replace('"', "\\\""))
 }
 
 /// Parse one `/proc/net/tcp`-format line into `(port, socket_inode)` for a
@@ -328,7 +344,7 @@ fn linux_command_for_pid(pid: u32) -> Option<String> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_foreground_command(root_pid: u32, pids: &[u32]) -> Option<String> {
+fn linux_representative_command(root_pid: u32, pids: &[u32]) -> Option<String> {
     let children_path = format!("/proc/{root_pid}/task/{root_pid}/children");
     let target = match read_capped(std::path::Path::new(&children_path), 4096) {
         Ok(content) => content
@@ -400,7 +416,7 @@ pub fn scan_panes(
         let foreground_command = roots
             .iter()
             .find(|(root_key, _)| root_key == key)
-            .and_then(|(_, root_pid)| linux_foreground_command(*root_pid, pids));
+            .and_then(|(_, root_pid)| linux_representative_command(*root_pid, pids));
         let comms: Vec<String> = if agent_binaries.is_empty() {
             Vec::new()
         } else {
@@ -708,7 +724,7 @@ fn parse_procargs2(buf: &[u8]) -> Vec<String> {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_foreground_command(pids: &[u32]) -> Option<String> {
+fn macos_representative_command(pids: &[u32]) -> Option<String> {
     use libproc::libproc::proc_pid::name;
 
     let pid = pids.last().copied()?;
@@ -783,7 +799,7 @@ pub fn scan_panes(
             PaneScan {
                 ports,
                 agents,
-                foreground_command: macos_foreground_command(&pids),
+                foreground_command: macos_representative_command(&pids),
             },
         );
     }
@@ -884,7 +900,7 @@ fn bfs_descendants_windows(
 }
 
 #[cfg(windows)]
-fn windows_foreground_command(
+fn windows_representative_command(
     root_pid: u32,
     entries: &[WindowsProcessEntry],
     exe_by_pid: &std::collections::HashMap<u32, String>,
@@ -1218,7 +1234,7 @@ pub fn scan_panes(
             PaneScan {
                 ports,
                 agents,
-                foreground_command: windows_foreground_command(root_pid, &entries, &exe_by_pid),
+                foreground_command: windows_representative_command(root_pid, &entries, &exe_by_pid),
             },
         );
     }
@@ -1278,6 +1294,10 @@ mod tests {
         assert_eq!(
             command_from_nul_args(b"cargo\0run\0--release\0"),
             Some("cargo run --release".to_string())
+        );
+        assert_eq!(
+            command_from_nul_args(b"/opt/Program Files/node\0dev server.js\0"),
+            Some("\"/opt/Program Files/node\" \"dev server.js\"".to_string())
         );
         assert_eq!(
             command_from_nul_args(b"\0node\0\0server.js\0"),

@@ -2,10 +2,11 @@
 //!
 //! `paneflow up` panes can declare `worktree = "branch"`: the CLI process
 //! creates (or reuses) a git worktree in a SIBLING directory of the repo -
-//! `<repo>.worktrees/<branch-slug>` - copies the top-level gitignored `.env*`
-//! files, optionally runs a `setup` command, and the pane spawns with the
-//! worktree as its cwd. The app side records ownership ([`ManagedWorktree`])
-//! so closing the workspace tears the worktree down - IF it is clean.
+//! `<repo>.worktrees/<branch-slug>`, or `<branch-slug>-<hash>` on slug
+//! collision - copies the top-level gitignored `.env*` files, optionally runs
+//! a `setup` command, and the pane spawns with the worktree as its cwd. The
+//! app side records ownership ([`ManagedWorktree`]) so closing the workspace
+//! tears the worktree down - IF it is clean.
 //!
 //! Invariants (US-006/US-009):
 //! - a branch is NEVER deleted, only the worktree directory;
@@ -103,8 +104,7 @@ pub fn managed_worktree_from_record(
         log::warn!("managed worktree: dropping record with invalid branch");
         return None;
     }
-    let expected = worktree_dir(&repo_root, branch);
-    if path != expected {
+    if !is_paneflow_worktree_dir(&repo_root, branch, &path) {
         log::warn!(
             "managed worktree: dropping record outside Paneflow worktree dir: {}",
             path.display()
@@ -164,24 +164,52 @@ pub fn branch_slug(branch: &str) -> String {
         .to_string()
 }
 
+fn branch_slug_or_default(branch: &str) -> String {
+    let slug = branch_slug(branch);
+    if slug.is_empty() {
+        "branch".to_string()
+    } else {
+        slug
+    }
+}
+
+fn branch_hash_suffix(branch: &str) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in branch.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")[..8].to_string()
+}
+
+fn worktrees_parent(repo_root: &Path) -> PathBuf {
+    let repo_name = repo_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "repo".to_string());
+    let parent = repo_root.parent().unwrap_or(repo_root);
+    parent.join(format!("{repo_name}.worktrees"))
+}
+
 /// Sibling worktree directory for a branch: `<repo>.worktrees/<slug>`, next to
 /// the repo (NOT inside it - recursive watchers must not descend into it).
 /// Total function: a branch whose slug is empty (dot-only - rejected upstream
 /// by spec validation) maps to the constant `branch` so the result can never
 /// resolve outside `<repo>.worktrees/`.
 pub fn worktree_dir(repo_root: &Path, branch: &str) -> PathBuf {
-    let repo_name = repo_root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "repo".to_string());
-    let parent = repo_root.parent().unwrap_or(repo_root);
-    let slug = branch_slug(branch);
-    let slug = if slug.is_empty() {
-        "branch".to_string()
-    } else {
-        slug
-    };
-    parent.join(format!("{repo_name}.worktrees")).join(slug)
+    worktrees_parent(repo_root).join(branch_slug_or_default(branch))
+}
+
+/// Collision-resistant sibling directory for a branch. Kept separate from
+/// [`worktree_dir`] so existing readable paths remain valid; planners switch
+/// to this path only when the slug path is already claimed by another branch.
+pub fn worktree_dir_hashed(repo_root: &Path, branch: &str) -> PathBuf {
+    let slug = branch_slug_or_default(branch);
+    worktrees_parent(repo_root).join(format!("{slug}-{}", branch_hash_suffix(branch)))
+}
+
+pub fn is_paneflow_worktree_dir(repo_root: &Path, branch: &str, path: &Path) -> bool {
+    path == worktree_dir(repo_root, branch) || path == worktree_dir_hashed(repo_root, branch)
 }
 
 /// Run a git plumbing command and return trimmed stdout, mapping every
@@ -416,6 +444,22 @@ mod tests {
     }
 
     #[test]
+    fn hashed_worktree_dir_disambiguates_slug_collisions() {
+        let repo = Path::new("/home/a/dev/paneflow");
+        let a = "feat/a b";
+        let b = "feat/a-b";
+        assert_eq!(branch_slug(a), branch_slug(b));
+        assert_eq!(worktree_dir(repo, a), worktree_dir(repo, b));
+
+        let hashed_a = worktree_dir_hashed(repo, a);
+        let hashed_b = worktree_dir_hashed(repo, b);
+        assert_ne!(hashed_a, hashed_b);
+        assert!(is_paneflow_worktree_dir(repo, a, &hashed_a));
+        assert!(is_paneflow_worktree_dir(repo, b, &hashed_b));
+        assert!(!hashed_a.starts_with("/home/a/dev/paneflow/"));
+    }
+
+    #[test]
     fn parses_worktree_porcelain_with_detached_and_branches() {
         let out = "worktree /home/a/dev/repo\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/main\n\nworktree /home/a/dev/repo.worktrees/feat-x\nHEAD 2222222222222222222222222222222222222222\nbranch refs/heads/feat/x\n\nworktree /tmp/detached\nHEAD 3333333333333333333333333333333333333333\ndetached\n";
         let entries = parse_worktree_porcelain(out);
@@ -480,6 +524,27 @@ mod tests {
             .is_none(),
             "marker cannot bless a path outside the deterministic Paneflow dir"
         );
+    }
+
+    #[test]
+    fn managed_worktree_record_accepts_hashed_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        let branch = "feat/a-b";
+        let path = worktree_dir_hashed(&repo_root, branch);
+        std::fs::create_dir_all(&path).expect("worktree dir");
+        std::fs::write(owner_marker_path(&path), "owner=paneflow\n").expect("marker");
+
+        let restored = managed_worktree_from_record(
+            &path.to_string_lossy(),
+            &repo_root.to_string_lossy(),
+            branch,
+            "auto",
+        )
+        .expect("hashed path restores");
+
+        assert_eq!(restored.path, path);
+        assert_eq!(restored.branch, branch);
     }
 
     #[test]
