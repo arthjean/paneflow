@@ -33,8 +33,8 @@ use std::path::Path;
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, ScrollWheelEvent, StatefulInteractiveElement, Styled, Window,
-    div, px,
+    ParentElement, Pixels, Point, ScrollHandle, ScrollWheelEvent, StatefulInteractiveElement,
+    Styled, Window, div, px,
 };
 
 use self::git::build_agents_diff;
@@ -52,9 +52,9 @@ use crate::diff::{
 };
 
 impl PaneFlowApp {
-    /// Toggle the Codex-style diff dock. Opening (re)computes the diff for the
-    /// current thread's cwd off-thread on first load or cwd change; closing only
-    /// hides the dock so a same-cwd reopen can reuse the warm snapshot.
+    /// Toggle the Codex-style diff dock. Opening computes the diff for the
+    /// current thread's cwd off-thread; closing drops the retained snapshot so a
+    /// large hidden dock cannot keep old rows or stale content alive.
     pub(crate) fn toggle_agents_diff_panel(
         &mut self,
         _: &ClickEvent,
@@ -76,17 +76,15 @@ impl PaneFlowApp {
     pub(crate) fn open_agents_diff_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
         let split = self.agents_view.agents_diff_split;
-        let (_, _, current_stats) = self.agents_environment_git_for_cwd(&cwd);
-        let has_warm_snapshot = self.agents_view.agents_diff.as_ref().is_some_and(|data| {
+        let has_current_snapshot = self.agents_view.agents_diff.as_ref().is_some_and(|data| {
             data.cwd == cwd
                 && !data.loading
                 && data.error.is_none()
                 && data.has_mode(split)
                 && data.theme_generation == crate::theme::theme_generation()
-                && agents_diff_matches_stats(data, &current_stats)
         });
         self.agents_view.agents_diff_open = true;
-        if has_warm_snapshot {
+        if has_current_snapshot {
             cx.notify();
         } else {
             self.refresh_agents_diff(cwd, cx);
@@ -95,6 +93,8 @@ impl PaneFlowApp {
 
     pub(crate) fn close_agents_diff_panel(&mut self, cx: &mut Context<Self>) {
         self.agents_view.agents_diff_open = false;
+        self.agents_view.agents_diff = None;
+        self.clear_agents_diff_snapshot_state();
         self.agents_view.agents_diff_resize = None;
         self.agents_view.agents_diff_h_scroll_drag = None;
         cx.notify();
@@ -107,7 +107,23 @@ impl PaneFlowApp {
         let cwd = cwd.trim().to_string();
         let generation = self.agents_view.agents_diff_generation.wrapping_add(1);
         self.agents_view.agents_diff_generation = generation;
+        let previous_fingerprint = self
+            .agents_view
+            .agents_diff
+            .as_ref()
+            .filter(|data| data.cwd == cwd)
+            .map(|data| data.fingerprint)
+            .unwrap_or(0);
+        let cwd_changed = self
+            .agents_view
+            .agents_diff
+            .as_ref()
+            .is_some_and(|data| data.cwd != cwd);
+        if cwd_changed {
+            self.clear_agents_diff_snapshot_state();
+        }
         if cwd.is_empty() {
+            self.clear_agents_diff_snapshot_state();
             self.agents_view.agents_diff = Some(AgentsDiffData::message(
                 cwd,
                 "No folder is linked to this thread.".to_string(),
@@ -115,10 +131,19 @@ impl PaneFlowApp {
             cx.notify();
             return;
         }
-        self.agents_view.agents_diff = Some(AgentsDiffData::loading(cwd.clone()));
+        let mut loading = AgentsDiffData::loading(cwd.clone());
+        loading.fingerprint = previous_fingerprint;
+        self.agents_view.agents_diff = Some(loading);
         cx.notify();
 
         self.spawn_agents_diff_build(cwd, generation, cx);
+    }
+
+    fn clear_agents_diff_snapshot_state(&mut self) {
+        self.agents_view.agents_diff_collapsed.clear();
+        self.agents_view.agents_diff_expanded_folds.clear();
+        self.agents_view.agents_diff_scroll = ScrollHandle::new();
+        self.agents_view.agents_diff_h_offsets = std::rc::Rc::new(Vec::new());
     }
 
     pub(crate) fn refresh_agents_diff_if_open_for_cwd(
@@ -175,6 +200,27 @@ impl PaneFlowApp {
                                     deletions: built.removed as usize,
                                 };
                                 app.apply_git_stats_for_cwd(&cwd, stats);
+                                let reset_snapshot_state =
+                                    app.agents_view.agents_diff.as_ref().is_some_and(|data| {
+                                        data.fingerprint != 0
+                                            && data.fingerprint != built.fingerprint
+                                    });
+                                if reset_snapshot_state {
+                                    app.clear_agents_diff_snapshot_state();
+                                } else {
+                                    app.agents_view.agents_diff_h_offsets =
+                                        std::rc::Rc::new(Vec::new());
+                                }
+                                let collapsed = if reset_snapshot_state {
+                                    std::collections::HashSet::new()
+                                } else {
+                                    collapsed
+                                };
+                                let expanded = if reset_snapshot_state {
+                                    std::collections::HashSet::new()
+                                } else {
+                                    expanded
+                                };
                                 if let Some(data) = app.agents_view.agents_diff.as_mut() {
                                     data.apply_built(built, &collapsed, &expanded);
                                 }
@@ -789,13 +835,4 @@ impl PaneFlowApp {
         };
         self.toggle_diff_file_collapsed(path, cx);
     }
-}
-
-fn agents_diff_matches_stats(
-    data: &AgentsDiffData,
-    stats: &crate::workspace::GitDiffStats,
-) -> bool {
-    data.file_count == stats.files_changed
-        && data.added as usize == stats.insertions
-        && data.removed as usize == stats.deletions
 }

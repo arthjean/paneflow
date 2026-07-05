@@ -131,12 +131,13 @@ impl DiffView {
                 focus_target = Some(term.clone());
             }
             if first_prompt.is_none() {
-                first_prompt = Some(prompt);
+                first_prompt = Some(prompt.clone());
             }
             created.push(ReviewTerminal {
                 label: label.into(),
                 terminal: term,
-                prompt_ready: rank == 0,
+                prompt_ready: true,
+                prompt: Some(prompt),
             });
         }
 
@@ -196,6 +197,9 @@ impl DiffView {
         if let Some(term) = col.review_terminals.get(term_idx) {
             col.active_review_terminal = term_idx;
             term.terminal.read(cx).focus_handle(cx).focus(window, cx);
+            if let Some(prompt) = &term.prompt {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(prompt.clone()));
+            }
             cx.notify();
         }
     }
@@ -209,6 +213,24 @@ impl DiffView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some((existing_idx, existing_terminal)) = self.columns.get(col_idx).and_then(|col| {
+            col.review_terminals
+                .iter()
+                .enumerate()
+                .find(|(_, rt)| rt.prompt.is_none())
+                .map(|(idx, rt)| (idx, rt.terminal.clone()))
+        }) {
+            if let Some(col) = self.columns.get_mut(col_idx) {
+                col.active_review_terminal = existing_idx;
+            }
+            existing_terminal
+                .read(cx)
+                .focus_handle(cx)
+                .focus(window, cx);
+            cx.notify();
+            return;
+        }
+
         let Some(col) = self.columns.get(col_idx) else {
             return;
         };
@@ -230,6 +252,7 @@ impl DiffView {
                 label: "Terminal".into(),
                 terminal: term,
                 prompt_ready: false,
+                prompt: None,
             });
         }
         cx.notify();
@@ -257,10 +280,13 @@ impl DiffView {
         } else {
             "Ctrl+V"
         };
-        let show_prompt_hint = col.review_terminals.iter().any(|rt| rt.prompt_ready);
         let active_idx = col
             .active_review_terminal
             .min(col.review_terminals.len().saturating_sub(1));
+        let show_prompt_hint = col
+            .review_terminals
+            .get(active_idx)
+            .is_some_and(|rt| rt.prompt_ready);
         let mut tabs = div()
             .id(SharedString::from(format!(
                 "diff-review-tabs-scroll-{col_idx}"

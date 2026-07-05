@@ -37,7 +37,7 @@ pub struct Worktree {
 }
 
 /// How a file changed between the merge-base and the working tree.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FileChange {
     Added,
     Modified,
@@ -234,10 +234,23 @@ pub fn ref_exists(worktree_dir: &Path, ref_name: &str) -> bool {
     .is_ok()
 }
 
-/// Pick a sensible default base ref for `worktree_dir`: `develop`, else the
-/// repo's default branch (`main` / `master`). Returns `None` when none resolve.
+/// Pick a sensible default base ref for `worktree_dir`: local `develop`, then
+/// the remote default branch, then common local and remote defaults. Returns
+/// `None` when none resolve.
 pub fn default_base_ref(worktree_dir: &Path) -> Option<String> {
-    for candidate in ["develop", "main", "master"] {
+    if ref_exists(worktree_dir, "develop") {
+        return Some("develop".to_string());
+    }
+    if let Some(remote_head) = default_origin_head(worktree_dir) {
+        return Some(remote_head);
+    }
+    for candidate in [
+        "main",
+        "master",
+        "origin/develop",
+        "origin/main",
+        "origin/master",
+    ] {
         if ref_exists(worktree_dir, candidate) {
             return Some(candidate.to_string());
         }
@@ -245,36 +258,41 @@ pub fn default_base_ref(worktree_dir: &Path) -> Option<String> {
     None
 }
 
+fn default_origin_head(worktree_dir: &Path) -> Option<String> {
+    let out = run_git(
+        worktree_dir,
+        &["rev-parse", "--abbrev-ref", "refs/remotes/origin/HEAD"],
+    )
+    .ok()?;
+    let branch = String::from_utf8_lossy(&out).trim().to_string();
+    (!branch.is_empty() && branch != "origin/HEAD" && ref_exists(worktree_dir, &branch))
+        .then_some(branch)
+}
+
 /// Cheap content fingerprint of a worktree's diff inputs, used on diff-mode
 /// re-entry to decide whether a column's already-loaded rows are still valid or
-/// must be re-diffed (US-016 warm-resume). It captures the three things a
-/// `merge-base..working-tree` diff depends on: the worktree `HEAD`, the resolved
-/// `base_ref` commit, and a hash of `git status` (staged + unstaged + untracked)
-/// so a commit, a `git add`, a working-tree edit, an untracked file, or a
-/// base-ref advance an AI agent made from a CLI pane while the diff was hidden is
-/// all detected. One subprocess set, no per-file blob reads - orders of magnitude
-/// cheaper than the full pipeline it gates.
-#[derive(Clone, PartialEq, Eq)]
+/// must be re-diffed (US-016 warm-resume). It captures the worktree `HEAD`, the
+/// resolved `base_ref` commit, a bounded tracked-diff hash, and a bounded
+/// untracked-input hash, so content edits are detected even when `git status`
+/// would keep reporting the same path status.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ColumnFingerprint {
     head: String,
     base: String,
-    status_hash: u64,
+    diff_hash: u64,
+    untracked_hash: u64,
 }
 
 /// Compute a [`ColumnFingerprint`] for `worktree_dir` against `base_ref`. Runs
 /// git subprocesses, so callers invoke it off the GPUI main thread (inside the
-/// column build closure / a `smol::unblock`). A failed `rev-parse` yields an
-/// empty component and a failed `status` yields `0`, so an unborn/detached HEAD
-/// or a mid-rebase tree simply never matches a prior fingerprint - forcing a
-/// (correct) reload rather than showing stale rows.
+/// column build closure / a `smol::unblock`). Failed git reads yield empty or
+/// zero components, so unstable repo states fail closed by not matching a prior
+/// complete fingerprint.
 pub fn column_fingerprint(worktree_dir: &Path, base_ref: &str) -> ColumnFingerprint {
-    use std::hash::Hasher as _;
     // Resolve the worktree's own root first, exactly as `compute_worktree_diff`
     // does. The seed `worktree_dir` may be a SUBDIRECTORY (the workspace opened
-    // after a shell `cd`); running `git status` from there would report only that
-    // subtree's changes, so a change outside it would leave the fingerprint
-    // unchanged and `revalidate` would falsely keep stale rows. Keying off the
-    // toplevel makes the fingerprint cover the same scope the diff does.
+    // after a shell `cd`). Keying off the toplevel makes the fingerprint cover
+    // the same scope the diff does.
     let toplevel = worktree_toplevel(worktree_dir);
     let worktree_dir = toplevel.as_path();
     let rev = |r: &str| {
@@ -283,22 +301,76 @@ pub fn column_fingerprint(worktree_dir: &Path, base_ref: &str) -> ColumnFingerpr
             .map(|o| String::from_utf8_lossy(&o).trim().to_string())
             .unwrap_or_default()
     };
-    let status_hash = run_git(
-        worktree_dir,
-        &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
-    )
-    .ok()
-    .map(|o| {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        h.write(&o);
-        h.finish()
-    })
-    .unwrap_or(0);
+    let merge_base = merge_base(worktree_dir, base_ref).unwrap_or_default();
+    let diff_hash = if merge_base.is_empty() {
+        0
+    } else {
+        run_git(
+            worktree_dir,
+            &["diff", "--binary", "--no-color", &merge_base, "--"],
+        )
+        .ok()
+        .map(|out| hash_bytes(&out))
+        .unwrap_or(0)
+    };
     ColumnFingerprint {
         head: rev("HEAD"),
         base: rev(base_ref),
-        status_hash,
+        diff_hash,
+        untracked_hash: hash_untracked_inputs(worktree_dir),
     }
+}
+
+fn hash_bytes(bytes: &[u8]) -> u64 {
+    use std::hash::Hasher as _;
+
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    h.write(bytes);
+    h.finish()
+}
+
+fn hash_untracked_inputs(worktree_dir: &Path) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    use std::io::Read as _;
+
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let (paths, truncated) = list_untracked_limited(worktree_dir, MAX_FILE_COUNT + 1);
+    truncated.hash(&mut h);
+    for path in paths {
+        path.hash(&mut h);
+        if is_skipped_name(&path) || is_too_large(worktree_dir, &path) {
+            "stub".hash(&mut h);
+            continue;
+        }
+        let abs = worktree_dir.join(&path);
+        match std::fs::symlink_metadata(&abs) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                "symlink".hash(&mut h);
+                if let Ok(target) = std::fs::read_link(&abs) {
+                    target.to_string_lossy().hash(&mut h);
+                }
+            }
+            Ok(_) => match std::fs::File::open(&abs) {
+                Ok(file) => {
+                    let mut bytes = Vec::new();
+                    let read_ok = file
+                        .take(MAX_FILE_BYTES + 1)
+                        .read_to_end(&mut bytes)
+                        .is_ok();
+                    read_ok.hash(&mut h);
+                    (bytes.len() as u64 > MAX_FILE_BYTES).hash(&mut h);
+                    h.write(&bytes);
+                }
+                Err(err) => {
+                    err.kind().hash(&mut h);
+                }
+            },
+            Err(err) => {
+                err.kind().hash(&mut h);
+            }
+        }
+    }
+    h.finish()
 }
 
 /// Candidate base refs for the selector (US-013): local branches *and*
@@ -1044,6 +1116,37 @@ mod tests {
         let (paths, truncated) = list_untracked_limited(root, 2);
         assert_eq!(paths.len(), 2);
         assert!(truncated);
+    }
+
+    #[test]
+    fn column_fingerprint_changes_when_modified_file_content_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        if !test_git(root, &["init"]) {
+            return;
+        }
+        assert!(test_git(root, &["config", "core.autocrlf", "false"]));
+        std::fs::write(root.join("tracked.txt"), "one\n").unwrap();
+        assert!(test_git(root, &["add", "tracked.txt"]));
+        assert!(test_git(
+            root,
+            &[
+                "-c",
+                "user.email=paneflow@example.com",
+                "-c",
+                "user.name=Paneflow",
+                "commit",
+                "-m",
+                "init",
+            ],
+        ));
+
+        std::fs::write(root.join("tracked.txt"), "one\ntwo\n").unwrap();
+        let first = column_fingerprint(root, "HEAD");
+        std::fs::write(root.join("tracked.txt"), "one\nthree\n").unwrap();
+        let second = column_fingerprint(root, "HEAD");
+
+        assert_ne!(first, second);
     }
 
     #[test]

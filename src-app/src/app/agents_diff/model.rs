@@ -87,6 +87,7 @@ pub(crate) struct AgentsDiffData {
     pub(super) added: u32,
     pub(super) removed: u32,
     pub(super) theme_generation: u64,
+    pub(super) fingerprint: u64,
 }
 
 impl AgentsDiffData {
@@ -118,6 +119,7 @@ impl AgentsDiffData {
             added: 0,
             removed: 0,
             theme_generation: crate::theme::theme_generation(),
+            fingerprint: 0,
         }
     }
 
@@ -162,6 +164,7 @@ impl AgentsDiffData {
         self.added = built.added;
         self.removed = built.removed;
         self.theme_generation = built.theme_generation;
+        self.fingerprint = built.fingerprint;
         self.files_full = Rc::new(built.files_full);
         self.row_caches = Rc::new(built.row_caches);
 

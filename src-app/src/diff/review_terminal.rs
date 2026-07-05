@@ -15,6 +15,7 @@ pub(crate) struct ReviewTerminal {
     pub(crate) label: SharedString,
     pub(crate) terminal: Entity<crate::terminal::TerminalView>,
     pub(crate) prompt_ready: bool,
+    pub(crate) prompt: Option<String>,
 }
 
 /// A CLI coding agent Paneflow can launch in a terminal for a review. Unlike the

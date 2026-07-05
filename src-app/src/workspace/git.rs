@@ -291,6 +291,40 @@ pub fn resolve_repo_root(git_dir: &std::path::Path) -> (Option<std::path::PathBu
     (repo_root, is_worktree)
 }
 
+/// Resolve the concrete worktree root for a workspace at construction time.
+/// This lets UI code reuse stored metadata instead of reading `.git/worktrees`
+/// files while rebuilding Review columns.
+pub fn resolve_worktree_root(
+    cwd: &str,
+    git_dir: Option<&std::path::Path>,
+    repo_root: Option<&std::path::Path>,
+    is_worktree: bool,
+) -> std::path::PathBuf {
+    if !is_worktree {
+        return repo_root
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from(cwd));
+    }
+
+    let Some(git_dir) = git_dir else {
+        return std::path::PathBuf::from(cwd);
+    };
+    let content = read_capped(&git_dir.join("gitdir"), 512).ok();
+    let Some(raw) = content.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        return std::path::PathBuf::from(cwd);
+    };
+    let git_file = std::path::Path::new(raw);
+    let git_file = if git_file.is_absolute() {
+        git_file.to_path_buf()
+    } else {
+        normalize_lexically(&git_dir.join(git_file))
+    };
+    git_file
+        .parent()
+        .map(canonicalize_or)
+        .unwrap_or_else(|| std::path::PathBuf::from(cwd))
+}
+
 /// Parse branch name from a known `.git` directory's `HEAD` file.
 ///
 /// Returns `(branch_name, true)`. On read failure returns `("", true)` -
@@ -606,6 +640,31 @@ mod tests {
             repo_root,
             Some(std::fs::canonicalize(dir.path().join("main")).unwrap())
         );
+    }
+
+    #[test]
+    fn resolve_worktree_root_uses_stored_gitdir_pointer() {
+        let dir = tempfile::tempdir().unwrap();
+        let main_git = dir.path().join("main").join(".git");
+        let worktree_root = dir.path().join("repo.worktrees").join("feat");
+        let worktree_subdir = worktree_root.join("src");
+        let wt_git = main_git.join("worktrees").join("feat");
+        std::fs::create_dir_all(&worktree_subdir).unwrap();
+        std::fs::create_dir_all(&wt_git).unwrap();
+        std::fs::write(
+            wt_git.join("gitdir"),
+            format!("{}\n", worktree_root.join(".git").display()),
+        )
+        .unwrap();
+
+        let root = resolve_worktree_root(
+            worktree_subdir.to_str().unwrap(),
+            Some(&wt_git),
+            Some(&dir.path().join("main")),
+            true,
+        );
+
+        assert_eq!(root, std::fs::canonicalize(worktree_root).unwrap());
     }
 
     #[test]

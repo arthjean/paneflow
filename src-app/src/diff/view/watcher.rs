@@ -13,6 +13,8 @@ use futures::future::Either;
 use notify::event::ModifyKind;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
+use crate::agent_sessions::SessionMeta;
+
 use super::{DiffView, REFRESH_COOLDOWN, REFRESH_DEBOUNCE};
 
 const WATCH_IGNORE_DIRS: &[&str] = &[
@@ -30,6 +32,9 @@ const WATCH_IGNORE_DIRS: &[&str] = &[
     "venv",
     "vendor",
 ];
+
+type AttributionRefresh = (usize, u64, Vec<SessionMeta>);
+type RevalidationResult = (Vec<usize>, Vec<AttributionRefresh>);
 
 pub(super) fn event_relevant(res: &notify::Result<Event>) -> bool {
     let Ok(event) = res else {
@@ -313,6 +318,8 @@ impl DiffView {
             usize,
             PathBuf,
             String,
+            String,
+            u64,
             Option<super::super::git::ColumnFingerprint>,
         )> = self
             .columns
@@ -327,6 +334,8 @@ impl DiffView {
                         .base_override
                         .clone()
                         .unwrap_or_else(|| shared_base.clone()),
+                    column.branch.clone(),
+                    column.generation,
                     column.fingerprint.clone(),
                 )
             })
@@ -335,24 +344,48 @@ impl DiffView {
             return;
         }
         cx.spawn(async move |this, cx| {
-            let changed: Vec<usize> = smol::unblock(move || {
-                probes
-                    .into_iter()
-                    .filter(|(_, path, base, stored)| {
-                        stored.as_ref() != Some(&super::super::git::column_fingerprint(path, base))
-                    })
-                    .map(|(index, _, _, _)| index)
-                    .collect()
+            let (changed, attribution): RevalidationResult = smol::unblock(move || {
+                let mut changed = Vec::new();
+                let mut attribution = Vec::new();
+                for (index, path, base, branch, generation, stored) in probes {
+                    let fresh = super::super::git::column_fingerprint(&path, &base);
+                    if stored.as_ref() != Some(&fresh) {
+                        changed.push(index);
+                    } else {
+                        let cwd = path.to_string_lossy();
+                        attribution.push((
+                            index,
+                            generation,
+                            crate::agent_sessions::attribution_for_column(&cwd, &branch),
+                        ));
+                    }
+                }
+                (changed, attribution)
             })
             .await;
-            if changed.is_empty() {
-                log::debug!("diff: resume revalidate - no column changed, warm reuse");
+            if changed.is_empty() && attribution.is_empty() {
                 return;
             }
             let _ = cx.update(|cx| {
                 this.update(cx, |view: &mut Self, cx| {
-                    if !view.suspended {
+                    if view.suspended {
+                        return;
+                    }
+                    let mut attribution_refreshed = false;
+                    for (index, generation, sessions) in attribution {
+                        let Some(col) = view.columns.get_mut(index) else {
+                            continue;
+                        };
+                        if !col.visible || col.generation != generation {
+                            continue;
+                        }
+                        col.attribution = sessions;
+                        attribution_refreshed = true;
+                    }
+                    if !changed.is_empty() {
                         view.start_loading_columns(&changed, cx);
+                    } else if attribution_refreshed {
+                        cx.notify();
                     }
                 })
             });

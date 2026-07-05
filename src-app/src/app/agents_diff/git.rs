@@ -30,6 +30,7 @@ pub(super) struct AgentsDiffBuilt {
     pub(super) files_full: Vec<FileDiff>,
     pub(super) row_caches: Vec<FileRowCache>,
     pub(super) theme_generation: u64,
+    pub(super) fingerprint: u64,
 }
 
 /// Off-thread builder: shell the HEAD-relative diff and turn it into both shared
@@ -76,6 +77,7 @@ pub(super) fn build_agents_diff(
         )
         .collect();
     let paths: Vec<String> = diff.files.iter().map(|f| f.path.clone()).collect();
+    let fingerprint = agents_diff_snapshot_fingerprint(&diff.files);
     let (hunk_added, hunk_removed) = diff.files.iter().fold((0u32, 0u32), |(a, r), f| {
         let (fa, fr) = f.line_counts();
         (a + fa, r + fr)
@@ -102,5 +104,22 @@ pub(super) fn build_agents_diff(
         files_full: diff.files,
         row_caches,
         theme_generation,
+        fingerprint,
     })
+}
+
+fn agents_diff_snapshot_fingerprint(files: &[FileDiff]) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    files.len().hash(&mut h);
+    for file in files {
+        file.path.hash(&mut h);
+        file.change.hash(&mut h);
+        file.old_path.hash(&mut h);
+        file.base_text.hash(&mut h);
+        file.new_text.hash(&mut h);
+        file.is_binary.hash(&mut h);
+    }
+    h.finish()
 }

@@ -1000,6 +1000,7 @@ impl PaneFlowApp {
                 multi_diff_view_retained: None,
                 diff_collapsed_branches: std::collections::HashSet::new(),
                 diff_discovering: false,
+                diff_discovering_root: None,
                 diff_chosen_worktrees: std::collections::HashMap::new(),
                 diff_worktree_picker_open: false,
                 diff_available_worktrees: Vec::new(),

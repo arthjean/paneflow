@@ -2191,7 +2191,11 @@ fn assemble_pty_env(
     user_env: Option<std::collections::HashMap<String, String>>,
 ) -> std::collections::HashMap<String, String> {
     // PaneFlow identity vars (AI-hook + MCP bridge integration).
-    env.insert("PANEFLOW_WORKSPACE_ID".into(), workspace_id.to_string());
+    // `0` is reserved for detached terminals such as discovered worktree Review
+    // terminals. Do not advertise a fake workspace id to the IPC hook.
+    if workspace_id != 0 {
+        env.insert("PANEFLOW_WORKSPACE_ID".into(), workspace_id.to_string());
+    }
     env.insert("PANEFLOW_SURFACE_ID".into(), surface_id.to_string());
     if let Some(socket_path) = paneflow_socket_path() {
         env.insert("PANEFLOW_SOCKET_PATH".into(), socket_path);
@@ -3187,6 +3191,20 @@ mod tests {
             first,
             PathBuf::from(&bin_dir),
             "US-009 AC: PANEFLOW_BIN_DIR must be first on PATH"
+        );
+    }
+
+    #[test]
+    fn detached_terminal_does_not_advertise_fake_workspace_id() {
+        let env = assemble_pty_env(HashMap::new(), 0, 3, None);
+
+        assert!(
+            !env.contains_key("PANEFLOW_WORKSPACE_ID"),
+            "workspace id 0 is a detached sentinel and must not reach child hooks"
+        );
+        assert_eq!(
+            env.get("PANEFLOW_SURFACE_ID").map(String::as_str),
+            Some("3")
         );
     }
 

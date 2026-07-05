@@ -5,46 +5,6 @@ use gpui::{AppContext, Context, Window};
 
 use crate::PaneFlowApp;
 
-fn linked_worktree_root(git_dir: &std::path::Path) -> Option<std::path::PathBuf> {
-    let content = read_small_text(&git_dir.join("gitdir"), 512).ok()?;
-    let raw = content.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    let git_file = std::path::Path::new(raw);
-    let git_file = if git_file.is_absolute() {
-        git_file.to_path_buf()
-    } else {
-        git_dir.join(git_file)
-    };
-    git_file.parent().map(|p| p.to_path_buf())
-}
-
-fn read_small_text(path: &std::path::Path, limit: u64) -> std::io::Result<String> {
-    use std::io::Read;
-    let file = std::fs::File::open(path)?;
-    let mut content = String::new();
-    file.take(limit).read_to_string(&mut content)?;
-    Ok(content)
-}
-
-fn diff_worktree_path(
-    cwd: &str,
-    repo_root: Option<&std::path::Path>,
-    is_worktree: bool,
-    git_dir: Option<&std::path::Path>,
-) -> std::path::PathBuf {
-    if is_worktree {
-        git_dir
-            .and_then(linked_worktree_root)
-            .unwrap_or_else(|| std::path::PathBuf::from(cwd))
-    } else {
-        repo_root
-            .map(std::path::Path::to_path_buf)
-            .unwrap_or_else(|| std::path::PathBuf::from(cwd))
-    }
-}
-
 fn push_unique_worktree(
     out: &mut Vec<crate::diff::DiffWorktree>,
     seen: &mut std::collections::HashSet<String>,
@@ -91,8 +51,9 @@ impl PaneFlowApp {
     /// per open workspace whose `repo_root` matches. US-005 of
     /// prd-git-diff-mode-2026-Q3.md extracted this from `open_multi_diff_for_repo`
     /// so the dedicated Diff mode (`rebuild_diff_view`) and the legacy tab path
-    /// share one source of truth. Pure in-memory read - no git subprocess, safe
-    /// to call on the main thread.
+    /// share one source of truth. Pure in-memory read; git metadata was resolved
+    /// when the workspace was created, so this is safe to call on the main
+    /// thread.
     pub(crate) fn collect_diff_worktrees(
         &self,
         repo_root: &std::path::Path,
@@ -104,16 +65,10 @@ impl PaneFlowApp {
             .iter()
             .filter(|ws| ws.repo_root.as_deref() == Some(repo_root))
         {
-            let path = diff_worktree_path(
-                &ws.cwd,
-                ws.repo_root.as_deref(),
-                ws.is_worktree,
-                ws.git_dir.as_deref(),
-            );
             push_unique_worktree(
                 &mut worktrees,
                 &mut seen,
-                path,
+                ws.worktree_root.clone(),
                 ws.git_branch.clone(),
                 Some(ws.id),
             );
@@ -128,12 +83,7 @@ impl PaneFlowApp {
             .get(self.active_idx)
             .map(|ws| {
                 vec![crate::diff::DiffWorktree {
-                    path: diff_worktree_path(
-                        &ws.cwd,
-                        ws.repo_root.as_deref(),
-                        ws.is_worktree,
-                        ws.git_dir.as_deref(),
-                    ),
+                    path: ws.worktree_root.clone(),
                     branch: ws.git_branch.clone(),
                     workspace_id: Some(ws.id),
                 }]
@@ -158,12 +108,6 @@ impl PaneFlowApp {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| root.display().to_string());
-            let path = diff_worktree_path(
-                &ws.cwd,
-                ws.repo_root.as_deref(),
-                ws.is_worktree,
-                ws.git_dir.as_deref(),
-            );
             let (group, seen) = map.entry(root.clone()).or_insert_with(|| {
                 (
                     crate::diff::RepoGroup {
@@ -177,7 +121,7 @@ impl PaneFlowApp {
             push_unique_worktree(
                 &mut group.worktrees,
                 seen,
-                path,
+                ws.worktree_root.clone(),
                 ws.git_branch.clone(),
                 Some(ws.id),
             );
@@ -221,7 +165,7 @@ impl PaneFlowApp {
 /// US-013: normalize a worktree path for dedup so the same checkout only gets
 /// one diff column even when several workspaces/panes point at it.
 fn norm_path(p: &std::path::Path) -> String {
-    let resolved = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let resolved = normalize_lexically(p);
     let s = resolved.to_string_lossy().into_owned();
     if cfg!(target_os = "macos") || cfg!(target_os = "windows") {
         s.to_lowercase()
@@ -230,51 +174,25 @@ fn norm_path(p: &std::path::Path) -> String {
     }
 }
 
+fn normalize_lexically(path: &std::path::Path) -> std::path::PathBuf {
+    let mut out = std::path::PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !out.pop() {
+                    out.push(component.as_os_str());
+                }
+            }
+            _ => out.push(component.as_os_str()),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn normal_checkout_seeds_repo_root_not_subdir_cwd() {
-        let dir = tempfile::tempdir().unwrap();
-        let repo = dir.path().join("repo");
-        let subdir = repo.join("src");
-        std::fs::create_dir_all(&subdir).unwrap();
-
-        let root = diff_worktree_path(
-            subdir.to_str().unwrap(),
-            Some(&repo),
-            false,
-            Some(&repo.join(".git")),
-        );
-
-        assert_eq!(root, repo);
-    }
-
-    #[test]
-    fn linked_worktree_seed_uses_gitdir_back_pointer() {
-        let dir = tempfile::tempdir().unwrap();
-        let main_git = dir.path().join("main").join(".git");
-        let wt = dir.path().join("repo.worktrees").join("feat");
-        let wt_subdir = wt.join("src");
-        let wt_git_dir = main_git.join("worktrees").join("feat");
-        std::fs::create_dir_all(&wt_subdir).unwrap();
-        std::fs::create_dir_all(&wt_git_dir).unwrap();
-        std::fs::write(
-            wt_git_dir.join("gitdir"),
-            format!("{}\n", wt.join(".git").display()),
-        )
-        .unwrap();
-
-        let root = diff_worktree_path(
-            wt_subdir.to_str().unwrap(),
-            Some(&dir.path().join("main")),
-            true,
-            Some(&wt_git_dir),
-        );
-
-        assert_eq!(root, wt);
-    }
 
     #[test]
     fn push_unique_worktree_dedups_equivalent_paths() {

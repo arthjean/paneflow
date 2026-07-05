@@ -68,6 +68,9 @@ pub struct Workspace {
     // by EP-004 column labeling; stored at construction in EP-001 (US-001).
     #[allow(dead_code)]
     pub is_worktree: bool,
+    /// Concrete worktree checkout root resolved at workspace construction.
+    /// Review UI reads this directly so rebuilding columns stays in-memory.
+    pub worktree_root: std::path::PathBuf,
     /// Active TCP listening ports from workspace terminal processes.
     pub active_ports: Vec<u16>,
     /// Generation counter for event-driven port scans - the cancellation
@@ -135,6 +138,8 @@ impl Workspace {
             Some(dir) => resolve_repo_root(dir),
             None => (None, false),
         };
+        let worktree_root =
+            git::resolve_worktree_root(&cwd, git_dir.as_deref(), repo_root.as_deref(), is_worktree);
         Self {
             id,
             title,
@@ -147,6 +152,7 @@ impl Workspace {
             git_dir,
             repo_root,
             is_worktree,
+            worktree_root,
             active_ports: vec![],
             port_scan_generation: 0,
             port_scan_pending: false,

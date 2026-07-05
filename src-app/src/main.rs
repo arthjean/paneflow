@@ -678,6 +678,10 @@ struct DiffModeState {
     /// "Discovering worktrees…" note instead of looking like columns are missing
     /// during the brief cold-mount window.
     diff_discovering: bool,
+    /// Repo root for the active worktree-discovery task. Prevents a stale task
+    /// from clearing a newer repo's spinner while still letting its own spinner
+    /// clear after the user leaves Worktree scope.
+    diff_discovering_root: Option<std::path::PathBuf>,
     /// Worktree-scope branch curation: per repo, the set of worktree paths (raw
     /// path strings) the user explicitly chose to show as columns. NO entry for a
     /// repo ⇒ show ALL its worktrees (the default). An entry ⇒ build columns for

@@ -80,10 +80,21 @@ fn filter_chosen(
 /// host is reused only while the same projects are open (order-insensitive).
 fn multiproject_signature(groups: &[RepoGroup]) -> u64 {
     use std::hash::{Hash as _, Hasher as _};
-    let mut roots: Vec<String> = groups.iter().map(|g| norm_path(&g.repo_root)).collect();
-    roots.sort();
+    let mut entries: Vec<(String, Vec<String>)> = groups
+        .iter()
+        .map(|g| {
+            let mut worktrees: Vec<String> = g
+                .worktrees
+                .iter()
+                .map(|w| w.path.to_string_lossy().into_owned())
+                .collect();
+            worktrees.sort();
+            (norm_path(&g.repo_root), worktrees)
+        })
+        .collect();
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    roots.hash(&mut h);
+    entries.hash(&mut h);
     h.finish()
 }
 
@@ -321,8 +332,11 @@ impl PaneFlowApp {
         // "Discovering worktrees…" note instead of looking like columns are
         // missing during the brief cold-mount window.
         self.diff_mode.diff_discovering = true;
+        self.diff_mode.diff_discovering_root = Some(root.clone());
+        let requested_root = root.clone();
         cx.spawn(async move |this, cx| {
-            let discovered = smol::unblock(move || crate::diff::list_repo_worktrees(&root)).await;
+            let discovered =
+                smol::unblock(move || crate::diff::list_repo_worktrees(&requested_root)).await;
             let mut seen: std::collections::HashSet<String> =
                 open.iter().map(|w| norm_path(&w.path)).collect();
             let mut new_cols = Vec::new();
@@ -345,11 +359,21 @@ impl PaneFlowApp {
             }
             let _ = cx.update(|cx| {
                 this.update(cx, |app, cx| {
-                    app.diff_mode.diff_discovering = false;
+                    let owns_discovery =
+                        app.diff_mode.diff_discovering_root.as_deref() == Some(root.as_path());
+                    let still_current_worktree_view = app.mode == AppMode::Diff
+                        && app.diff_mode.diff_scope == crate::diff::DiffScope::Worktree
+                        && app.diff_mode.diff_view_key.as_ref().is_some_and(|key| {
+                            key.repo_root == root && key.scope == crate::diff::DiffScope::Worktree
+                        });
+                    if owns_discovery {
+                        app.diff_mode.diff_discovering = false;
+                        app.diff_mode.diff_discovering_root = None;
+                    }
                     // Apply only if still showing this repo's worktree scope.
                     if !new_cols.is_empty()
-                        && app.mode == AppMode::Diff
-                        && app.diff_mode.diff_scope == crate::diff::DiffScope::Worktree
+                        && still_current_worktree_view
+                        && owns_discovery
                         && let Some(dv) = app.diff_mode.diff_view.clone()
                     {
                         dv.update(cx, |v, cx| v.add_columns(new_cols, cx));
@@ -371,10 +395,15 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         self.diff_mode.diff_available_repo = Some(root.clone());
+        let requested_root = root.clone();
         cx.spawn(async move |this, cx| {
-            let wts = smol::unblock(move || crate::diff::list_repo_worktrees(&root)).await;
+            let wts =
+                smol::unblock(move || crate::diff::list_repo_worktrees(&requested_root)).await;
             let _ = cx.update(|cx| {
                 this.update(cx, |app, cx| {
+                    if app.diff_mode.diff_available_repo.as_deref() != Some(root.as_path()) {
+                        return;
+                    }
                     app.diff_mode.diff_available_worktrees = wts
                         .into_iter()
                         .map(|(path, branch)| crate::diff::DiffWorktree {

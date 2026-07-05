@@ -783,6 +783,7 @@ impl PaneFlowApp {
                     this.update(cx, |app, cx| match result {
                         Ok((branch_now, is_repo, stats)) => {
                             app.apply_git_state_for_cwd(&cwd, branch_now, is_repo, stats);
+                            app.refresh_agents_diff_if_open_for_cwd(&cwd, cx);
                             app.show_toast(format!("Switched to {branch}"), cx);
                             cx.notify();
                         }
@@ -964,7 +965,8 @@ impl PaneFlowApp {
                 let _ = cx.update(|cx| {
                     this.update(cx, |app, cx| {
                         let changed = app.apply_git_state_for_cwd(&cwd, branch, is_repo, stats);
-                        if changed {
+                        let refreshed = app.refresh_agents_diff_if_open_for_cwd(&cwd, cx);
+                        if changed || refreshed {
                             cx.notify();
                         }
                     })
