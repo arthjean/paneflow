@@ -71,9 +71,9 @@ struct DiffHScrollDrag {
 use super::rows::{
     DisplayRow, FileRowCache, FileSpan, RowKind, SplitRow, apply_collapse_split,
     apply_collapse_unified, apply_expanded_split_with_sources, apply_expanded_unified_with_sources,
-    build_display_rows_with_caches, build_file_row_caches, build_split_rows_with_caches, palette,
-    split_file_spans, split_hunk_tops, split_max_line_no, split_offsets, unified_file_spans,
-    unified_hunk_tops, unified_max_line_no, unified_offsets,
+    build_display_rows_with_caches, build_file_row_caches, build_split_rows_with_caches,
+    discard_expanded_folds_for_path, palette, split_file_spans, split_hunk_tops, split_max_line_no,
+    split_offsets, unified_file_spans, unified_hunk_tops, unified_max_line_no, unified_offsets,
 };
 
 /// When jumping to a hunk, leave this much room above its first changed line so
@@ -230,6 +230,9 @@ enum ColumnState {
         /// inactive-mode builds and fold expansion so those paths do not repeat
         /// the expensive highlighting work.
         row_caches: Arc<Vec<FileRowCache>>,
+        /// Theme generation used to produce `row_caches`. Syntax runs store
+        /// concrete colors, so a theme change requires rebuilding these rows.
+        theme_generation: u64,
     },
     Failed(String),
 }
@@ -248,6 +251,8 @@ enum Built {
         files_full: Vec<super::git::FileDiff>,
         /// Per-file syntax/word caches built once from the same `FileDiff`s.
         row_caches: Vec<FileRowCache>,
+        /// Theme generation used to build the syntax caches.
+        theme_generation: u64,
         /// US-016: captured in the same off-thread pass as the diff, so a later
         /// `revalidate` compares against it without re-shelling at harvest time.
         /// Boxed to keep this (transient, immediately-consumed) builder variant
@@ -331,6 +336,10 @@ struct Column {
     /// separate from `generation`: a mode build can be superseded by another
     /// mode toggle without forcing a fresh git diff.
     loading_mode: Option<ViewMode>,
+    /// Theme generation currently being rebuilt for this column. Prevents render
+    /// from spawning duplicate theme-refresh jobs while an old snapshot remains
+    /// visible until the new one lands.
+    loading_theme_generation: Option<u64>,
     /// Review CLIs launched on this column's branch, rendered as real terminals
     /// under the diff body (prd-ai-in-diff-2026-Q3.md). Empty until the user runs
     /// Review; replaced on a re-run; closed by explicit terminal-close actions.
@@ -379,6 +388,7 @@ impl Column {
             base_override: None,
             generation: 0,
             loading_mode: None,
+            loading_theme_generation: None,
             review_terminals: Vec::new(),
             active_review_terminal: 0,
             review_height: REVIEW_DEFAULT_HEIGHT,
@@ -417,6 +427,7 @@ impl Column {
     fn drop_loaded_data(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.loading_mode = None;
+        self.loading_theme_generation = None;
         self.state = ColumnState::Loading;
         self.collapsed.clear();
         self.expanded_folds.clear();
@@ -460,6 +471,15 @@ impl Column {
         match mode {
             ViewMode::Unified => !self.disp_unified.is_empty(),
             ViewMode::Split => !self.disp_split.is_empty(),
+        }
+    }
+
+    fn loaded_theme_generation(&self) -> Option<u64> {
+        match &self.state {
+            ColumnState::Loaded {
+                theme_generation, ..
+            } => Some(*theme_generation),
+            _ => None,
         }
     }
 
@@ -1054,6 +1074,25 @@ impl DiffView {
         }
     }
 
+    fn reload_visible_columns_if_theme_changed(&mut self, cx: &mut Context<Self>) {
+        let current_theme_generation = crate::theme::theme_generation();
+        let stale: Vec<usize> = self
+            .columns
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, col)| {
+                if !col.visible || col.loading_theme_generation == Some(current_theme_generation) {
+                    return None;
+                }
+                let loaded_generation = col.loaded_theme_generation()?;
+                (loaded_generation != current_theme_generation).then_some(idx)
+            })
+            .collect();
+        if !stale.is_empty() {
+            self.start_loading_columns(&stale, cx);
+        }
+    }
+
     /// True when every visible, loaded column has all of its files collapsed -
     /// the live source for the toolbar collapse/expand-all chip. Replaces a cached
     /// bool that drifted whenever per-file collapse (body click) or a live-refresh
@@ -1095,6 +1134,7 @@ impl DiffView {
                     _ => Vec::new(),
                 };
                 col.collapsed.extend(paths);
+                col.expanded_folds.clear();
             }
             col.recompute_display();
         }
@@ -1323,6 +1363,7 @@ mod tests {
             anchors_split: Some(Rc::new(anchors_split)),
             files_full: Arc::new(files),
             row_caches: Arc::new(row_caches),
+            theme_generation: crate::theme::theme_generation(),
         };
         col.collapsed.insert("src/lib.rs".into());
         col.h_offsets = Rc::new(vec![12.0]);

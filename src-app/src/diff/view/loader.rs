@@ -32,6 +32,7 @@ impl DiffView {
         // so each column's background task gets its own copy to derive syntax
         // colors from, without touching the theme cache off-thread.
         let theme = crate::theme::active_theme();
+        let theme_generation = crate::theme::theme_generation();
         log::debug!(
             "diff: start_loading base={shared_base:?} ({} of {} columns)",
             indices.len(),
@@ -47,6 +48,7 @@ impl DiffView {
                 Some(col) if col.visible => {
                     col.generation = col.generation.wrapping_add(1);
                     col.loading_mode = None;
+                    col.loading_theme_generation = Some(theme_generation);
                     let base = col
                         .base_override
                         .clone()
@@ -144,6 +146,7 @@ impl DiffView {
                         // every `&diff.files` consumer above has finished borrowing.
                         files_full: diff.files,
                         row_caches,
+                        theme_generation,
                         fingerprint: Box::new(fingerprint),
                         attribution,
                     }
@@ -172,6 +175,7 @@ impl DiffView {
                             Built::Failed(e) => {
                                 log::warn!("diff: col {i} ({branch}) FAILED: {e}");
                                 col.loading_mode = None;
+                                col.loading_theme_generation = None;
                                 ColumnState::Failed(e)
                             }
                             Built::Loaded {
@@ -180,6 +184,7 @@ impl DiffView {
                                 files,
                                 files_full,
                                 row_caches,
+                                theme_generation,
                                 fingerprint,
                                 attribution,
                             } => {
@@ -191,6 +196,7 @@ impl DiffView {
                                 // column (re-fetched only on re-diff).
                                 col.attribution = attribution;
                                 col.loading_mode = None;
+                                col.loading_theme_generation = None;
                                 match rows {
                                     BuiltModeRows::Unified { rows, anchors } => {
                                         ColumnState::Loaded {
@@ -202,6 +208,7 @@ impl DiffView {
                                             anchors_split: None,
                                             files_full: Arc::new(files_full),
                                             row_caches: Arc::new(row_caches),
+                                            theme_generation,
                                         }
                                     }
                                     BuiltModeRows::Split { rows, anchors } => ColumnState::Loaded {
@@ -213,6 +220,7 @@ impl DiffView {
                                         anchors_split: Some(Rc::new(anchors)),
                                         files_full: Arc::new(files_full),
                                         row_caches: Arc::new(row_caches),
+                                        theme_generation,
                                     },
                                 }
                             }

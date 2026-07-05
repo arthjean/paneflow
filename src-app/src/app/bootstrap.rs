@@ -1063,7 +1063,7 @@ impl PaneFlowApp {
                 agents_diff_width: crate::app::agents_diff::AGENTS_DIFF_PANEL_WIDTH,
                 agents_diff_resize: None,
                 agents_diff_h_scroll_drag: None,
-                agents_diff_h_offsets: Vec::new(),
+                agents_diff_h_offsets: std::rc::Rc::new(Vec::new()),
                 bottom_panel_open: false,
                 bottom_panel_height: crate::app::agents_bottom_panel::BOTTOM_PANEL_DEFAULT_HEIGHT,
                 bottom_panel_active: None,

@@ -835,7 +835,7 @@ struct AgentsViewState {
     /// (`apply_agents_diff_hwheel`) and applied per file by `DiffElement`; lazily
     /// resized to the file count at render (collapse/split never change the
     /// count, so offsets stay aligned).
-    pub(crate) agents_diff_h_offsets: Vec<f32>,
+    pub(crate) agents_diff_h_offsets: std::rc::Rc<Vec<f32>>,
     /// Whether the Codex-style full-width bottom terminal dock is open. Toggled
     /// by the `layout-bottombar` toolbar button (and its own × button).
     pub(crate) bottom_panel_open: bool,

@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -49,6 +49,7 @@ struct CachedTheme {
 }
 
 static THEME_CACHE: Mutex<Option<CachedTheme>> = Mutex::new(None);
+static THEME_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// US-006: set to `true` once a [`ThemeWatcher`] has installed an OS watcher
 /// successfully. While `true`, [`active_theme`] trusts the cache and skips
@@ -76,6 +77,12 @@ fn resolve_theme() -> TerminalTheme {
 /// Invalidate the theme cache so the next `active_theme()` call re-reads from disk.
 pub fn invalidate_theme_cache() {
     *THEME_CACHE.lock() = None;
+    THEME_GENERATION.fetch_add(1, Ordering::AcqRel);
+}
+
+/// Monotonic generation bumped whenever the active theme may have changed.
+pub fn theme_generation() -> u64 {
+    THEME_GENERATION.load(Ordering::Acquire)
 }
 
 /// Get the config file modification time for change detection.
@@ -124,12 +131,16 @@ pub fn active_theme() -> TerminalTheme {
     };
 
     if needs_reload {
+        let had_cached_theme = cache.is_some();
         let theme = resolve_theme();
         *cache = Some(CachedTheme {
             theme,
             mtime: current_mtime,
             last_check: Instant::now(),
         });
+        if had_cached_theme {
+            THEME_GENERATION.fetch_add(1, Ordering::AcqRel);
+        }
         theme
     } else {
         // mtime unchanged - update last_check and return cached theme.

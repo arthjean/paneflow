@@ -367,15 +367,15 @@ fn list_untracked_limited(dir: &Path, limit: usize) -> (Vec<String>, bool) {
     };
     let mut paths = Vec::new();
     let mut truncated = false;
-    for path in String::from_utf8_lossy(&out)
-        .split('\u{0}')
-        .filter(|s| !s.is_empty())
-    {
+    for raw_path in out.split(|&b| b == 0).filter(|s| !s.is_empty()) {
         if paths.len() >= limit {
             truncated = true;
             break;
         }
-        paths.push(path.to_string());
+        let Some(path) = decode_git_path(raw_path, "ls-files --others") else {
+            continue;
+        };
+        paths.push(path);
     }
     (paths, truncated)
 }
@@ -485,23 +485,33 @@ fn load_working_text(worktree_dir: &Path, rel_path: &str) -> (String, bool) {
 /// Each record is a status field followed by its path(s); renames/copies carry
 /// a source and a destination path - we key on the destination.
 fn parse_name_status_z(stdout: &[u8]) -> Vec<(FileChange, String, Option<String>)> {
-    let text = String::from_utf8_lossy(stdout);
-    let mut fields = text.split('\u{0}').filter(|f| !f.is_empty());
+    let mut fields = stdout.split(|&b| b == 0).filter(|f| !f.is_empty());
     let mut out = Vec::new();
     while let Some(status) = fields.next() {
-        let code = status.chars().next().unwrap_or('M');
+        let code = status.first().copied().unwrap_or(b'M') as char;
         // Rename/copy: status is followed by <src>\0<dst>; key on dst, keep src.
         let (path, old) = if matches!(code, 'R' | 'C') {
-            let src = fields.next().map(|s| s.to_string());
-            match fields.next() {
-                Some(dst) => (dst.to_string(), src),
-                None => break,
-            }
+            let Some(src) = fields.next() else {
+                break;
+            };
+            let Some(dst) = fields.next() else {
+                break;
+            };
+            let Some(src) = decode_git_path(src, "diff --name-status source") else {
+                continue;
+            };
+            let Some(dst) = decode_git_path(dst, "diff --name-status destination") else {
+                continue;
+            };
+            (dst, Some(src))
         } else {
-            match fields.next() {
-                Some(p) => (p.to_string(), None),
-                None => break,
-            }
+            let Some(path) = fields.next() else {
+                break;
+            };
+            let Some(path) = decode_git_path(path, "diff --name-status") else {
+                continue;
+            };
+            (path, None)
         };
         let change = match code {
             'A' => FileChange::Added,
@@ -515,27 +525,64 @@ fn parse_name_status_z(stdout: &[u8]) -> Vec<(FileChange, String, Option<String>
 }
 
 fn parse_numstat_z(stdout: &[u8]) -> HashMap<String, FileDiffStat> {
-    let text = String::from_utf8_lossy(stdout);
     let mut out = HashMap::new();
-    for record in text.split('\u{0}').filter(|f| !f.is_empty()) {
-        let mut parts = record.splitn(3, '\t');
-        let (Some(added), Some(removed), Some(path)) = (parts.next(), parts.next(), parts.next())
-        else {
+    let mut fields = stdout.split(|&b| b == 0).filter(|f| !f.is_empty());
+    while let Some(record) = fields.next() {
+        let Some((added, removed, path)) = split_numstat_record(record) else {
             continue;
         };
-        if path.is_empty() {
+        let path = if path.is_empty() {
+            let _old_path = fields.next();
+            let Some(new_path) = fields.next() else {
+                break;
+            };
+            new_path
+        } else {
+            path
+        };
+        let Some(path) = decode_git_path(path, "diff --numstat") else {
             continue;
-        }
-        let added = added.parse::<u32>().unwrap_or(0);
-        let removed = removed.parse::<u32>().unwrap_or(0);
-        let stat = out.entry(path.to_string()).or_insert(FileDiffStat {
+        };
+        let stat = out.entry(path).or_insert(FileDiffStat {
             added: 0,
             removed: 0,
         });
-        stat.added = stat.added.saturating_add(added);
-        stat.removed = stat.removed.saturating_add(removed);
+        stat.added = stat.added.saturating_add(parse_numstat_count(added));
+        stat.removed = stat.removed.saturating_add(parse_numstat_count(removed));
     }
     out
+}
+
+fn decode_git_path(path: &[u8], source: &str) -> Option<String> {
+    match std::str::from_utf8(path) {
+        Ok(path) if !path.is_empty() => Some(path.to_string()),
+        Ok(_) => None,
+        Err(_) => {
+            log::warn!("git: skipping non-UTF-8 path from {source}");
+            None
+        }
+    }
+}
+
+fn split_numstat_record(record: &[u8]) -> Option<(&[u8], &[u8], &[u8])> {
+    let first_tab = record.iter().position(|&b| b == b'\t')?;
+    let rest = &record[first_tab + 1..];
+    let second_tab = rest.iter().position(|&b| b == b'\t')?;
+    Some((
+        &record[..first_tab],
+        &rest[..second_tab],
+        &rest[second_tab + 1..],
+    ))
+}
+
+fn parse_numstat_count(raw: &[u8]) -> u32 {
+    if raw == b"-" {
+        return 0;
+    }
+    std::str::from_utf8(raw)
+        .ok()
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0)
 }
 
 /// Files above this size (either side, bytes) are shown as a stub instead of
@@ -869,6 +916,16 @@ mod tests {
     }
 
     #[test]
+    fn name_status_z_skips_non_utf8_paths() {
+        let raw = b"M\0src/\xff.rs\0A\0src/ok.rs\0";
+        let parsed = parse_name_status_z(raw);
+        assert_eq!(
+            parsed,
+            vec![(FileChange::Added, "src/ok.rs".to_string(), None)]
+        );
+    }
+
+    #[test]
     fn classify_binary_and_text() {
         assert_eq!(
             classify(b"hello\n".to_vec()),
@@ -900,6 +957,34 @@ mod tests {
                 removed: 0
             })
         );
+    }
+
+    #[test]
+    fn numstat_z_renames_key_on_destination() {
+        let raw = b"2\t1\t\0src/old.rs\0src/new.rs\0";
+        let parsed = parse_numstat_z(raw);
+        assert_eq!(
+            parsed.get("src/new.rs"),
+            Some(&FileDiffStat {
+                added: 2,
+                removed: 1
+            })
+        );
+        assert!(!parsed.contains_key("src/old.rs"));
+    }
+
+    #[test]
+    fn numstat_z_skips_non_utf8_paths() {
+        let raw = b"1\t0\tsrc/\xff.rs\02\t0\tsrc/ok.rs\0";
+        let parsed = parse_numstat_z(raw);
+        assert_eq!(
+            parsed.get("src/ok.rs"),
+            Some(&FileDiffStat {
+                added: 2,
+                removed: 0
+            })
+        );
+        assert_eq!(parsed.len(), 1);
     }
 
     #[test]

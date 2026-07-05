@@ -55,8 +55,8 @@ pub(crate) use hscroll::{
 pub(crate) use rows::{
     DisplayRow, FileRowCache, FileSpan, RowKind, SplitRow, apply_collapse_split,
     apply_collapse_unified, apply_expanded_split_with_sources, apply_expanded_unified_with_sources,
-    build_display_rows_with_caches, build_file_row_caches, build_split_rows_with_caches, palette,
-    split_file_spans, split_max_line_no, split_offsets, unified_file_spans, unified_max_line_no,
-    unified_offsets,
+    build_display_rows_with_caches, build_file_row_caches, build_split_rows_with_caches,
+    discard_expanded_folds_for_path, palette, split_file_spans, split_max_line_no, split_offsets,
+    unified_file_spans, unified_max_line_no, unified_offsets,
 };
 pub(crate) use syntax::DiffSyntax;

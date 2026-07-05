@@ -139,6 +139,7 @@ impl DiffView {
         };
         if let Some(col) = self.columns.get_mut(col_idx) {
             if !col.collapsed.remove(&path) {
+                discard_expanded_folds_for_path(&mut col.expanded_folds, &path);
                 col.collapsed.insert(path);
             }
             col.recompute_display();

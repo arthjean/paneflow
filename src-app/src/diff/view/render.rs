@@ -152,6 +152,7 @@ impl EventEmitter<DiffViewEvent> for DiffView {}
 impl Render for DiffView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
+        self.reload_visible_columns_if_theme_changed(cx);
         let root = div()
             .id(self.element_id.clone())
             .key_context("DiffView")

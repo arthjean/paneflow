@@ -35,15 +35,13 @@ fn build_word_maps(file: &FileDiff, base_lines: &[&str], new_lines: &[&str]) -> 
     for h in &file.hunks {
         let bcount = h.base_row_range.end - h.base_row_range.start;
         let ncount = h.new_row_range.end - h.new_row_range.start;
-        // Word diff only for in-place modifications of bounded size (Zed's
-        // MAX_WORD_DIFF_LINE_COUNT) - never on large or pure add/del hunks.
-        if h.status != DiffHunkStatus::Modified
-            || bcount != ncount
-            || bcount > MAX_WORD_DIFF_LINE_COUNT
-        {
+        // Word diff only for bounded modified hunks. When a modified block has
+        // unequal side lengths, pair the shared prefix and leave overflow rows at
+        // line-level highlighting.
+        if h.status != DiffHunkStatus::Modified || bcount.max(ncount) > MAX_WORD_DIFF_LINE_COUNT {
             continue;
         }
-        for k in 0..bcount {
+        for k in 0..bcount.min(ncount) {
             let bi = h.base_row_range.start + k;
             let ni = h.new_row_range.start + k;
             let (o, n) = word_diff_ranges(
@@ -437,6 +435,11 @@ fn fold_key(path: &str, base_start: u32, new_start: u32, count: u32) -> SharedSt
     format!("{path}:{base_start}:{new_start}:{count}").into()
 }
 
+pub fn discard_expanded_folds_for_path(expanded: &mut HashSet<String>, path: &str) {
+    let prefix = format!("{path}:");
+    expanded.retain(|key| !key.starts_with(&prefix));
+}
+
 fn folded_display_row(path: &str, base_start: u32, new_start: u32, count: u32) -> DisplayRow {
     DisplayRow {
         kind: RowKind::Fold,
@@ -463,6 +466,61 @@ fn folded_split_row(path: &str, base_start: u32, new_start: u32, count: u32) -> 
         count,
         rows: Vec::new(),
     })
+}
+
+fn truncated_display_row(dropped: usize) -> DisplayRow {
+    DisplayRow {
+        kind: RowKind::Truncated,
+        text: format!("diff truncated - {dropped} more lines not shown").into(),
+        old_no: None,
+        new_no: None,
+        word_ranges: Vec::new(),
+        syntax_runs: Vec::new(),
+        header: None,
+        fold_key: None,
+        fold_base_start: None,
+        fold_new_start: None,
+        fold_count: 0,
+        folded_rows: Vec::new(),
+    }
+}
+
+fn truncated_split_note(dropped: usize) -> SplitRow {
+    SplitRow::Note(format!("diff truncated - {dropped} more lines not shown").into())
+}
+
+fn push_display_capped(row: DisplayRow, rows: &mut Vec<DisplayRow>, dropped: &mut usize) {
+    if rows.len() >= MAX_DISPLAY_ROWS {
+        *dropped += 1;
+    } else {
+        rows.push(row);
+    }
+}
+
+fn push_split_capped(row: SplitRow, rows: &mut Vec<SplitRow>, dropped: &mut usize) {
+    if rows.len() >= MAX_DISPLAY_ROWS {
+        *dropped += 1;
+    } else {
+        rows.push(row);
+    }
+}
+
+fn extend_display_capped<I>(iter: I, rows: &mut Vec<DisplayRow>, dropped: &mut usize)
+where
+    I: IntoIterator<Item = DisplayRow>,
+{
+    for row in iter {
+        push_display_capped(row, rows, dropped);
+    }
+}
+
+fn extend_split_capped<I>(iter: I, rows: &mut Vec<SplitRow>, dropped: &mut usize)
+where
+    I: IntoIterator<Item = SplitRow>,
+{
+    for row in iter {
+        push_split_capped(row, rows, dropped);
+    }
 }
 
 /// File extension (lowercased) used to pick a `syntect` grammar.
@@ -749,20 +807,7 @@ pub fn build_display_rows_with_caches(
     }
 
     if dropped > 0 {
-        rows.push(DisplayRow {
-            kind: RowKind::Truncated,
-            text: format!("diff truncated - {dropped} more lines not shown").into(),
-            old_no: None,
-            new_no: None,
-            word_ranges: Vec::new(),
-            syntax_runs: Vec::new(),
-            header: None,
-            fold_key: None,
-            fold_base_start: None,
-            fold_new_start: None,
-            fold_count: 0,
-            folded_rows: Vec::new(),
-        });
+        rows.push(truncated_display_row(dropped));
     }
     (rows, dropped)
 }
@@ -903,67 +948,100 @@ fn build_split_rows_from_hunk_windows(
         }
     };
 
+    #[derive(Clone, Copy)]
+    struct Window {
+        first_hunk: usize,
+        last_hunk_exclusive: usize,
+        base_start: u32,
+        base_end: u32,
+        new_start: u32,
+        new_end: u32,
+    }
+
+    let mut windows: Vec<Window> = Vec::new();
+    for (hunk_index, h) in file.hunks.iter().enumerate() {
+        let base_start = h.base_row_range.start.saturating_sub(CONTEXT_LINES);
+        let base_end = (h.base_row_range.end + CONTEXT_LINES).min(base_lines.len() as u32);
+        let new_start = h.new_row_range.start.saturating_sub(CONTEXT_LINES);
+        let new_end = (h.new_row_range.end + CONTEXT_LINES).min(new_lines.len() as u32);
+        if let Some(last) = windows.last_mut()
+            && base_start <= last.base_end
+            && new_start <= last.new_end
+        {
+            last.last_hunk_exclusive = hunk_index + 1;
+            last.base_end = last.base_end.max(base_end);
+            last.new_end = last.new_end.max(new_end);
+        } else {
+            windows.push(Window {
+                first_hunk: hunk_index,
+                last_hunk_exclusive: hunk_index + 1,
+                base_start,
+                base_end,
+                new_start,
+                new_end,
+            });
+        }
+    }
+
     let mut bc = 0u32;
     let mut nc = 0u32;
-    for h in &file.hunks {
-        let pre_base = h.base_row_range.start.saturating_sub(CONTEXT_LINES);
-        let pre_new = h.new_row_range.start.saturating_sub(CONTEXT_LINES);
+    for window in windows {
         emit_fold(
             bc,
             nc,
-            pre_base.saturating_sub(bc).min(pre_new.saturating_sub(nc)),
+            window
+                .base_start
+                .saturating_sub(bc)
+                .min(window.new_start.saturating_sub(nc)),
             rows,
             dropped,
         );
-        emit_context_range(
-            pre_base.max(bc),
-            h.base_row_range.start,
-            pre_new.max(nc),
-            rows,
-            dropped,
-        );
+        let mut context_base = window.base_start.max(bc);
+        let mut context_new = window.new_start.max(nc);
+        for h in &file.hunks[window.first_hunk..window.last_hunk_exclusive] {
+            emit_context_range(
+                context_base,
+                h.base_row_range.start,
+                context_new,
+                rows,
+                dropped,
+            );
 
-        let rem_start = h.base_row_range.start;
-        let add_start = h.new_row_range.start;
-        let rem_len = h.base_row_range.end - rem_start;
-        let add_len = h.new_row_range.end - add_start;
-        for k in 0..rem_len.max(add_len) {
-            let left = if k < rem_len {
-                Cell {
-                    kind: CellKind::Removed,
-                    line: Some(rem_start + k),
-                }
-            } else {
-                Cell {
-                    kind: CellKind::Phantom,
-                    line: None,
-                }
-            };
-            let right = if k < add_len {
-                Cell {
-                    kind: CellKind::Added,
-                    line: Some(add_start + k),
-                }
-            } else {
-                Cell {
-                    kind: CellKind::Phantom,
-                    line: None,
-                }
-            };
-            emit_pair(left, right, rows, dropped);
+            let rem_start = h.base_row_range.start;
+            let add_start = h.new_row_range.start;
+            let rem_len = h.base_row_range.end - rem_start;
+            let add_len = h.new_row_range.end - add_start;
+            for k in 0..rem_len.max(add_len) {
+                let left = if k < rem_len {
+                    Cell {
+                        kind: CellKind::Removed,
+                        line: Some(rem_start + k),
+                    }
+                } else {
+                    Cell {
+                        kind: CellKind::Phantom,
+                        line: None,
+                    }
+                };
+                let right = if k < add_len {
+                    Cell {
+                        kind: CellKind::Added,
+                        line: Some(add_start + k),
+                    }
+                } else {
+                    Cell {
+                        kind: CellKind::Phantom,
+                        line: None,
+                    }
+                };
+                emit_pair(left, right, rows, dropped);
+            }
+            context_base = h.base_row_range.end;
+            context_new = h.new_row_range.end;
         }
-
-        let post_base = (h.base_row_range.end + CONTEXT_LINES).min(base_lines.len() as u32);
-        let post_new = (h.new_row_range.end + CONTEXT_LINES).min(new_lines.len() as u32);
-        emit_context_range(
-            h.base_row_range.end,
-            post_base,
-            h.new_row_range.end,
-            rows,
-            dropped,
-        );
-        bc = post_base;
-        nc = post_new;
+        emit_context_range(context_base, window.base_end, context_new, rows, dropped);
+        bc = window.base_end;
+        nc = window.new_end;
     }
 
     let remaining = (base_lines.len() as u32)
@@ -1125,9 +1203,7 @@ pub fn build_split_rows_with_caches(
     }
 
     if dropped > 0 {
-        rows.push(SplitRow::Note(
-            format!("diff truncated - {dropped} more lines not shown").into(),
-        ));
+        rows.push(truncated_split_note(dropped));
     }
     (rows, dropped)
 }
@@ -1259,10 +1335,11 @@ pub fn apply_expanded_unified_with_sources(
     files: &[FileDiff],
     caches: &[FileRowCache],
 ) -> (Vec<DisplayRow>, Vec<(String, usize)>) {
-    let mut out = Vec::with_capacity(rows.len());
+    let mut out = Vec::with_capacity(rows.len().min(MAX_DISPLAY_ROWS));
     let mut out_anchors = Vec::with_capacity(anchors.len());
     let mut next_anchor = 0usize;
     let mut current_file_idx = None;
+    let mut dropped = 0usize;
 
     for (i, row) in rows.iter().enumerate() {
         while anchors
@@ -1270,13 +1347,15 @@ pub fn apply_expanded_unified_with_sources(
             .is_some_and(|(_, header_row)| *header_row == i)
         {
             if let Some((path, _)) = anchors.get(next_anchor) {
-                out_anchors.push((path.clone(), out.len()));
+                if out.len() < MAX_DISPLAY_ROWS {
+                    out_anchors.push((path.clone(), out.len()));
+                }
                 current_file_idx = source_file_index(files, path);
             }
             next_anchor += 1;
         }
 
-        out.push(row.clone());
+        push_display_capped(row.clone(), &mut out, &mut dropped);
         if row.kind == RowKind::Fold
             && row
                 .fold_key
@@ -1284,7 +1363,7 @@ pub fn apply_expanded_unified_with_sources(
                 .is_some_and(|key| expanded.contains(key.as_ref()))
         {
             if !row.folded_rows.is_empty() {
-                out.extend(row.folded_rows.iter().cloned());
+                extend_display_capped(row.folded_rows.iter().cloned(), &mut out, &mut dropped);
             } else if let (Some(file_idx), Some(base_start), Some(new_start)) =
                 (current_file_idx, row.fold_base_start, row.fold_new_start)
                 && let Some(file) = files.get(file_idx)
@@ -1297,17 +1376,18 @@ pub fn apply_expanded_unified_with_sources(
                         &fallback_cache
                     }
                 };
-                out.extend(unified_fold_rows(
-                    file,
-                    cache,
-                    base_start,
-                    new_start,
-                    row.fold_count,
-                ));
+                extend_display_capped(
+                    unified_fold_rows(file, cache, base_start, new_start, row.fold_count),
+                    &mut out,
+                    &mut dropped,
+                );
             }
         }
     }
 
+    if dropped > 0 {
+        out.push(truncated_display_row(dropped));
+    }
     (out, out_anchors)
 }
 
@@ -1318,10 +1398,11 @@ pub fn apply_expanded_split_with_sources(
     files: &[FileDiff],
     caches: &[FileRowCache],
 ) -> (Vec<SplitRow>, Vec<(String, usize)>) {
-    let mut out = Vec::with_capacity(rows.len());
+    let mut out = Vec::with_capacity(rows.len().min(MAX_DISPLAY_ROWS));
     let mut out_anchors = Vec::with_capacity(anchors.len());
     let mut next_anchor = 0usize;
     let mut current_file_idx = None;
+    let mut dropped = 0usize;
 
     for (i, row) in rows.iter().enumerate() {
         while anchors
@@ -1329,18 +1410,20 @@ pub fn apply_expanded_split_with_sources(
             .is_some_and(|(_, header_row)| *header_row == i)
         {
             if let Some((path, _)) = anchors.get(next_anchor) {
-                out_anchors.push((path.clone(), out.len()));
+                if out.len() < MAX_DISPLAY_ROWS {
+                    out_anchors.push((path.clone(), out.len()));
+                }
                 current_file_idx = source_file_index(files, path);
             }
             next_anchor += 1;
         }
 
-        out.push(row.clone());
+        push_split_capped(row.clone(), &mut out, &mut dropped);
         if let SplitRow::Fold(fold) = row
             && expanded.contains(fold.key.as_ref())
         {
             if !fold.rows.is_empty() {
-                out.extend(fold.rows.iter().cloned());
+                extend_split_capped(fold.rows.iter().cloned(), &mut out, &mut dropped);
             } else if let Some(file_idx) = current_file_idx
                 && let Some(file) = files.get(file_idx)
             {
@@ -1352,17 +1435,18 @@ pub fn apply_expanded_split_with_sources(
                         &fallback_cache
                     }
                 };
-                out.extend(split_fold_rows(
-                    file,
-                    cache,
-                    fold.base_start,
-                    fold.new_start,
-                    fold.count,
-                ));
+                extend_split_capped(
+                    split_fold_rows(file, cache, fold.base_start, fold.new_start, fold.count),
+                    &mut out,
+                    &mut dropped,
+                );
             }
         }
     }
 
+    if dropped > 0 {
+        out.push(truncated_split_note(dropped));
+    }
     (out, out_anchors)
 }
 
@@ -1664,6 +1748,130 @@ mod tests {
     }
 
     #[test]
+    fn modified_hunks_with_unequal_line_counts_still_word_diff_shared_pairs() {
+        let base = "alpha old\nbeta old\n".to_string();
+        let new = "alpha new\nbeta new\ngamma extra\n".to_string();
+        let file = FileDiff {
+            path: "a.txt".into(),
+            change: FileChange::Modified,
+            old_path: None,
+            base_text: base,
+            new_text: new,
+            hunks: vec![crate::diff::engine::DiffHunk {
+                base_row_range: 0..2,
+                new_row_range: 0..3,
+                status: DiffHunkStatus::Modified,
+            }],
+            is_binary: false,
+        };
+
+        let (rows, dropped) = build_display_rows(std::slice::from_ref(&file), None);
+        assert_eq!(dropped, 0);
+
+        let first_removed = rows
+            .iter()
+            .find(|row| row.kind == RowKind::Removed && row.old_no == Some(1))
+            .expect("first removed row should be present");
+        let first_added = rows
+            .iter()
+            .find(|row| row.kind == RowKind::Added && row.new_no == Some(1))
+            .expect("first added row should be present");
+        let extra_added = rows
+            .iter()
+            .find(|row| row.kind == RowKind::Added && row.new_no == Some(3))
+            .expect("overflow added row should be present");
+
+        assert!(!first_removed.word_ranges.is_empty());
+        assert!(!first_added.word_ranges.is_empty());
+        assert!(extra_added.word_ranges.is_empty());
+    }
+
+    #[test]
+    fn unified_fold_expansion_respects_display_row_cap() {
+        let mut base = String::from("OLD\n");
+        let mut new = String::from("NEW\n");
+        for i in 1..(MAX_DISPLAY_ROWS + 100) {
+            base.push_str(&format!("ctx{i}\n"));
+            new.push_str(&format!("ctx{i}\n"));
+        }
+        let file = FileDiff {
+            path: "a.txt".into(),
+            change: FileChange::Modified,
+            old_path: None,
+            base_text: base.clone(),
+            new_text: new.clone(),
+            hunks: crate::diff::engine::compute_hunks(&base, &new),
+            is_binary: false,
+        };
+        let (rows, _) = build_display_rows(std::slice::from_ref(&file), None);
+        let key = rows
+            .iter()
+            .find(|row| row.kind == RowKind::Fold)
+            .and_then(|row| row.fold_key.as_ref())
+            .expect("fixture should contain a fold")
+            .to_string();
+        let mut expanded = HashSet::new();
+        expanded.insert(key);
+        let caches = build_file_row_caches(std::slice::from_ref(&file), None);
+
+        let (open_rows, _) = apply_expanded_unified_with_sources(
+            &rows,
+            &[("a.txt".into(), 0)],
+            &expanded,
+            std::slice::from_ref(&file),
+            &caches,
+        );
+
+        assert_eq!(open_rows.len(), MAX_DISPLAY_ROWS + 1);
+        assert!(
+            open_rows
+                .last()
+                .is_some_and(|row| row.kind == RowKind::Truncated)
+        );
+    }
+
+    #[test]
+    fn split_fold_expansion_respects_display_row_cap() {
+        let mut base = String::from("OLD\n");
+        let mut new = String::from("NEW\n");
+        for i in 1..(MAX_DISPLAY_ROWS + 100) {
+            base.push_str(&format!("ctx{i}\n"));
+            new.push_str(&format!("ctx{i}\n"));
+        }
+        let file = FileDiff {
+            path: "a.txt".into(),
+            change: FileChange::Modified,
+            old_path: None,
+            base_text: base.clone(),
+            new_text: new.clone(),
+            hunks: crate::diff::engine::compute_hunks(&base, &new),
+            is_binary: false,
+        };
+        let (rows, _) = build_split_rows(std::slice::from_ref(&file), None);
+        let key = rows
+            .iter()
+            .find_map(|row| match row {
+                SplitRow::Fold(fold) => Some(fold.key.to_string()),
+                _ => None,
+            })
+            .expect("fixture should contain a fold");
+        let mut expanded = HashSet::new();
+        expanded.insert(key);
+        let caches = build_file_row_caches(std::slice::from_ref(&file), None);
+
+        let (open_rows, _) = apply_expanded_split_with_sources(
+            &rows,
+            &[("a.txt".into(), 0)],
+            &expanded,
+            std::slice::from_ref(&file),
+            &caches,
+        );
+
+        assert_eq!(open_rows.len(), MAX_DISPLAY_ROWS + 1);
+        assert!(matches!(open_rows.last(), Some(SplitRow::Note(_))));
+    }
+
+    #[test]
     fn split_large_files_use_hunk_windows_instead_of_full_alignment() {
         // A side-by-side diff over a huge file should keep only the hunk window
         // and folds. This guards the fast path that avoids aligning every
@@ -1720,5 +1928,77 @@ mod tests {
             })
             .count();
         assert_eq!(changed_pairs, 1);
+    }
+
+    #[test]
+    fn split_large_file_hunk_windows_merge_overlapping_context() {
+        let line_count = (MAX_FULL_SPLIT_ALIGN_LINES / 2) + 50;
+        let first_changed = 100u32;
+        let second_changed = first_changed + 2;
+        let mut base = String::new();
+        let mut new = String::new();
+        for i in 0..line_count {
+            match i as u32 {
+                n if n == first_changed => {
+                    base.push_str("old-a\n");
+                    new.push_str("new-a\n");
+                }
+                n if n == second_changed => {
+                    base.push_str("old-b\n");
+                    new.push_str("new-b\n");
+                }
+                _ => {
+                    base.push_str(&format!("ctx{i}\n"));
+                    new.push_str(&format!("ctx{i}\n"));
+                }
+            }
+        }
+        let file = FileDiff {
+            path: "large.txt".into(),
+            change: FileChange::Modified,
+            old_path: None,
+            base_text: base,
+            new_text: new,
+            hunks: vec![
+                crate::diff::engine::DiffHunk {
+                    base_row_range: first_changed..first_changed + 1,
+                    new_row_range: first_changed..first_changed + 1,
+                    status: DiffHunkStatus::Modified,
+                },
+                crate::diff::engine::DiffHunk {
+                    base_row_range: second_changed..second_changed + 1,
+                    new_row_range: second_changed..second_changed + 1,
+                    status: DiffHunkStatus::Modified,
+                },
+            ],
+            is_binary: false,
+        };
+
+        let (rows, dropped) = build_split_rows(std::slice::from_ref(&file), None);
+        assert_eq!(dropped, 0);
+
+        let changed_pairs = rows
+            .iter()
+            .filter(|row| {
+                matches!(
+                    row,
+                    SplitRow::Pair { left, right }
+                        if left.kind == CellKind::Removed && right.kind == CellKind::Added
+                )
+            })
+            .count();
+        assert_eq!(changed_pairs, 2);
+
+        let duplicated_second_change_as_context = rows.iter().any(|row| {
+            matches!(
+                row,
+                SplitRow::Pair { left, right }
+                    if left.kind == CellKind::Context
+                        && right.kind == CellKind::Context
+                        && left.no == Some(second_changed + 1)
+                        && right.no == Some(second_changed + 1)
+            )
+        });
+        assert!(!duplicated_second_change_as_context);
     }
 }

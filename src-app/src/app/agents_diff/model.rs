@@ -86,6 +86,7 @@ pub(crate) struct AgentsDiffData {
     pub(super) file_count: usize,
     pub(super) added: u32,
     pub(super) removed: u32,
+    pub(super) theme_generation: u64,
 }
 
 impl AgentsDiffData {
@@ -116,6 +117,7 @@ impl AgentsDiffData {
             file_count: 0,
             added: 0,
             removed: 0,
+            theme_generation: crate::theme::theme_generation(),
         }
     }
 
@@ -159,6 +161,7 @@ impl AgentsDiffData {
         self.file_count = built.file_count;
         self.added = built.added;
         self.removed = built.removed;
+        self.theme_generation = built.theme_generation;
         self.files_full = Rc::new(built.files_full);
         self.row_caches = Rc::new(built.row_caches);
 

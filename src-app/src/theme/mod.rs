@@ -7,7 +7,9 @@ mod watcher;
 
 pub use builtin::{THEMES, ThemeEntry, one_dark, paneflow_light, theme_by_name};
 pub use model::{DiffColors, SyntaxPalette, TerminalTheme, UiColors, ui_colors, ui_colors_with};
-pub use watcher::{ThemeWatcher, active_theme, config_mtime, invalidate_theme_cache};
+pub use watcher::{
+    ThemeWatcher, active_theme, config_mtime, invalidate_theme_cache, theme_generation,
+};
 
 /// Keep the small subset of Zed's global theme used by the Markdown renderer
 /// aligned with PaneFlow's active palette. The renderer reads these slots for

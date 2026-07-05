@@ -16,7 +16,7 @@
 //! fork. Markdown runs TWO passes over the same text - the block grammar
 //! (`HIGHLIGHT_QUERY_BLOCK`: headings / fences / list markers) and the inline
 //! grammar (`HIGHLIGHT_QUERY_INLINE`: emphasis / links / inline code) - merged
-//! by `resolve_runs` first-wins dedup so emphasis no longer renders grey.
+//! by `resolve_runs` so nested inline captures keep their specific colors.
 
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -191,7 +191,8 @@ pub fn highlight_lines(
     apply_grammar(grammar, text, syntax, &line_ranges, &mut out);
 
     // US-004: Markdown gets a second inline pass merged into the same runs.
-    // `resolve_runs` (below) collapses any block/inline overlap first-wins.
+    // `resolve_runs` (below) collapses block/inline overlaps while preserving
+    // more specific nested ranges.
     if matches!(ext, "md" | "markdown" | "mdx")
         && let Some(inline) = markdown_inline_grammar()
     {
@@ -271,22 +272,61 @@ fn bucket_capture(
 }
 
 /// Sort + de-overlap one line's runs into the ascending, non-overlapping list
-/// `element.rs::text_runs` expects. On overlap the earlier-starting (and, on a
-/// tie, shorter / more-specific) run wins; later overlapping runs are dropped.
-/// This is also what merges the Markdown block + inline passes (US-004).
+/// `element.rs::text_runs` expects. Smaller ranges are treated as more specific:
+/// they keep their bytes, and wider overlapping captures keep only uncovered
+/// fragments. This is also what merges the Markdown block + inline passes.
 fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
     if runs.len() < 2 {
         return;
     }
-    runs.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
-    let mut kept: Vec<(Range<usize>, Hsla)> = Vec::with_capacity(runs.len());
-    let mut last_end = 0usize;
-    for (r, c) in runs.drain(..) {
-        if r.start >= last_end {
-            last_end = r.end;
-            kept.push((r, c));
+    let mut candidates: Vec<_> = runs
+        .drain(..)
+        .enumerate()
+        .map(|(order, (range, color))| (range, color, order))
+        .collect();
+    candidates.sort_by(|a, b| {
+        let a_len = a.0.end.saturating_sub(a.0.start);
+        let b_len = b.0.end.saturating_sub(b.0.start);
+        a_len
+            .cmp(&b_len)
+            .then(a.0.start.cmp(&b.0.start))
+            .then(a.0.end.cmp(&b.0.end))
+            .then(a.2.cmp(&b.2))
+    });
+
+    let mut kept: Vec<(Range<usize>, Hsla)> = Vec::with_capacity(candidates.len());
+    let mut covered: Vec<Range<usize>> = Vec::with_capacity(candidates.len());
+    for (range, color, _) in candidates {
+        if range.start >= range.end {
+            continue;
         }
+        let mut fragments = vec![range];
+        for cover in &covered {
+            let mut next = Vec::new();
+            for fragment in fragments {
+                if cover.end <= fragment.start || cover.start >= fragment.end {
+                    next.push(fragment);
+                    continue;
+                }
+                if fragment.start < cover.start {
+                    next.push(fragment.start..cover.start);
+                }
+                if cover.end < fragment.end {
+                    next.push(cover.end..fragment.end);
+                }
+            }
+            fragments = next;
+            if fragments.is_empty() {
+                break;
+            }
+        }
+        for fragment in fragments {
+            covered.push(fragment.clone());
+            kept.push((fragment, color));
+        }
+        covered.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
     }
+    kept.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
     *runs = kept;
 }
 
@@ -413,6 +453,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn resolve_runs_preserves_nested_specific_captures() {
+        let palette = one_dark().syntax;
+        let mut runs = vec![
+            (0..10, palette.text_literal),
+            (2..5, palette.emphasis_strong),
+            (7..9, palette.link_text),
+        ];
+
+        resolve_runs(&mut runs);
+
+        let ranges: Vec<Range<usize>> = runs.iter().map(|(range, _)| range.clone()).collect();
+        assert_eq!(ranges, vec![0..2, 2..5, 5..7, 7..9, 9..10]);
+        assert_eq!(runs[1].1, palette.emphasis_strong);
+        assert_eq!(runs[3].1, palette.link_text);
     }
 
     #[test]

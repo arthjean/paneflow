@@ -46,8 +46,9 @@ use self::render::{
 use crate::PaneFlowApp;
 use crate::diff::{
     DiffBody, DiffElement, H_SCROLLBAR_TRACK_HEIGHT, HScrollbarSegment, RowKind, SplitRow,
-    file_at_row, h_offset_index, h_offset_len, h_scrollbar_click_offset, h_scrollbar_segments,
-    palette, row_at_offset, set_file_side_offset, split_right_side_at_x,
+    discard_expanded_folds_for_path, file_at_row, h_offset_index, h_offset_len,
+    h_scrollbar_click_offset, h_scrollbar_segments, palette, row_at_offset, set_file_side_offset,
+    split_right_side_at_x,
 };
 
 impl PaneFlowApp {
@@ -81,6 +82,7 @@ impl PaneFlowApp {
                 && !data.loading
                 && data.error.is_none()
                 && data.has_mode(split)
+                && data.theme_generation == crate::theme::theme_generation()
                 && agents_diff_matches_stats(data, &current_stats)
         });
         self.agents_view.agents_diff_open = true;
@@ -140,11 +142,12 @@ impl PaneFlowApp {
         // Capture the theme on the main thread (the syntax pass needs it) and
         // move it into the worker, exactly as the Review view does.
         let theme = crate::theme::active_theme();
+        let theme_generation = crate::theme::theme_generation();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let result = smol::unblock({
                     let cwd = cwd.clone();
-                    move || build_agents_diff(&cwd, theme)
+                    move || build_agents_diff(&cwd, theme, theme_generation)
                 })
                 .await;
                 let _ = cx.update(|cx| {
@@ -199,9 +202,28 @@ impl PaneFlowApp {
         }
     }
 
+    fn refresh_agents_diff_if_theme_changed(&mut self, cx: &mut Context<Self>) {
+        let current_theme_generation = crate::theme::theme_generation();
+        let Some(data) = self.agents_view.agents_diff.as_ref() else {
+            return;
+        };
+        if data.loading
+            || data.error.is_some()
+            || data.theme_generation == current_theme_generation
+            || data.cwd.trim().is_empty()
+        {
+            return;
+        }
+        self.refresh_agents_diff(data.cwd.clone(), cx);
+    }
+
     /// Fold / unfold a single file in the diff dock (click on its header row).
     pub(crate) fn toggle_diff_file_collapsed(&mut self, path: String, cx: &mut Context<Self>) {
         if !self.agents_view.agents_diff_collapsed.remove(&path) {
+            discard_expanded_folds_for_path(
+                &mut self.agents_view.agents_diff_expanded_folds,
+                &path,
+            );
             self.agents_view.agents_diff_collapsed.insert(path);
         }
         self.recompute_agents_diff_display();
@@ -220,6 +242,7 @@ impl PaneFlowApp {
             self.agents_view
                 .agents_diff_collapsed
                 .extend(paths.iter().cloned());
+            self.agents_view.agents_diff_expanded_folds.clear();
         } else {
             self.agents_view.agents_diff_collapsed.clear();
         }
@@ -245,6 +268,7 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        self.refresh_agents_diff_if_theme_changed(cx);
         let data = self.agents_view.agents_diff.clone();
         let cwd = data.as_ref().map(|d| d.cwd.clone()).unwrap_or_default();
         let folder = Path::new(&cwd)
@@ -340,16 +364,14 @@ impl PaneFlowApp {
         let needed_offsets = h_offset_len(file_count, split);
         if split {
             if self.agents_view.agents_diff_h_offsets.len() != needed_offsets {
-                self.agents_view
-                    .agents_diff_h_offsets
+                std::rc::Rc::make_mut(&mut self.agents_view.agents_diff_h_offsets)
                     .resize(needed_offsets, 0.0);
             }
         } else if self.agents_view.agents_diff_h_offsets.len() < needed_offsets {
-            self.agents_view
-                .agents_diff_h_offsets
+            std::rc::Rc::make_mut(&mut self.agents_view.agents_diff_h_offsets)
                 .resize(needed_offsets, 0.0);
         }
-        let h_offsets = std::rc::Rc::new(self.agents_view.agents_diff_h_offsets.clone());
+        let h_offsets = self.agents_view.agents_diff_h_offsets.clone();
 
         // Collapse-filtered rows + cached layout inputs (recomputed only on a
         // collapse / split change), handed to the direct-paint element.
@@ -484,7 +506,7 @@ impl PaneFlowApp {
                 // GPUI scroll deltas go negative toward the end; subtract to grow
                 // our positive offset and reveal the right of the line.
                 set_file_side_offset(
-                    &mut self.agents_view.agents_diff_h_offsets,
+                    std::rc::Rc::make_mut(&mut self.agents_view.agents_diff_h_offsets),
                     &spans,
                     file_idx,
                     right,
@@ -519,7 +541,7 @@ impl PaneFlowApp {
         Some(h_scrollbar_segments(
             spans,
             offsets,
-            &self.agents_view.agents_diff_h_offsets,
+            self.agents_view.agents_diff_h_offsets.as_ref(),
             split,
             panel_width,
             visible_top,
@@ -625,12 +647,11 @@ impl PaneFlowApp {
     }
 
     fn set_agents_diff_h_offset(&mut self, offset_idx: usize, value: f32) {
-        if self.agents_view.agents_diff_h_offsets.len() <= offset_idx {
-            self.agents_view
-                .agents_diff_h_offsets
-                .resize(offset_idx + 1, 0.0);
+        let offsets = std::rc::Rc::make_mut(&mut self.agents_view.agents_diff_h_offsets);
+        if offsets.len() <= offset_idx {
+            offsets.resize(offset_idx + 1, 0.0);
         }
-        if let Some(slot) = self.agents_view.agents_diff_h_offsets.get_mut(offset_idx) {
+        if let Some(slot) = offsets.get_mut(offset_idx) {
             *slot = value;
         }
     }

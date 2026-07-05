@@ -29,6 +29,7 @@ pub(super) struct AgentsDiffBuilt {
     pub(super) removed: u32,
     pub(super) files_full: Vec<FileDiff>,
     pub(super) row_caches: Vec<FileRowCache>,
+    pub(super) theme_generation: u64,
 }
 
 /// Off-thread builder: shell the HEAD-relative diff and turn it into both shared
@@ -37,6 +38,7 @@ pub(super) struct AgentsDiffBuilt {
 pub(super) fn build_agents_diff(
     cwd: &str,
     theme: crate::theme::TerminalTheme,
+    theme_generation: u64,
 ) -> Result<AgentsDiffBuilt, String> {
     let diff = compute_head_diff(Path::new(cwd));
     if let Some(e) = diff.error {
@@ -99,5 +101,6 @@ pub(super) fn build_agents_diff(
         removed,
         files_full: diff.files,
         row_caches,
+        theme_generation,
     })
 }
