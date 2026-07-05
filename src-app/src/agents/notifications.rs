@@ -1,7 +1,7 @@
 //! Desktop notification routing for agent lifecycle events.
 //!
 //! This module owns both sides of the notification gate:
-//! - process-wide focus/Agents-panel visibility flags updated by the GPUI app;
+//! - the process-wide focus flag updated by the GPUI app;
 //! - a single cross-platform `notify-rust` firing path used by `ai.*` handlers.
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,10 +27,6 @@ const PANEFLOW_WINDOWS_NOTIFICATION_ICON_FILE: &str = "paneflow-notification.png
 /// `true` while the OS reports the Paneflow window as the focused one.
 static WINDOW_ACTIVE: AtomicBool = AtomicBool::new(true);
 
-/// Agents-panel gate updated by `app::agents_view_actions`. `true`
-/// while the user is in `AppMode::Agents`.
-static AGENTS_PANEL_VISIBLE: AtomicBool = AtomicBool::new(false);
-
 /// Update the window-active flag. Called from
 /// `cx.observe_window_activation` and from the initial activation
 /// tick that GPUI fires when the observer registers.
@@ -41,13 +37,6 @@ pub fn set_window_active(active: bool) {
 /// Is the Paneflow window currently the focused surface?
 pub fn window_active() -> bool {
     WINDOW_ACTIVE.load(Ordering::Relaxed)
-}
-
-/// Update the agents-panel-visible flag. Called from the mode toggle
-/// and from the bootstrap when the persisted session restores into
-/// agents mode.
-pub fn set_agents_panel_visible(visible: bool) {
-    AGENTS_PANEL_VISIBLE.store(visible, Ordering::Relaxed);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -113,14 +102,13 @@ impl DesktopNotification {
 pub(crate) fn fire_desktop_notification(
     notification: DesktopNotification,
     config: &PaneFlowConfig,
-    source_visible: bool,
     executor: BackgroundExecutor,
 ) {
     let gate = config.agent_panel.as_ref().map_or(
         NotifyWhenAgentWaiting::PrimaryScreen,
         AgentPanelConfig::resolved_notify_when_agent_waiting,
     );
-    if !should_fire_desktop_notification(gate, window_active(), source_visible) {
+    if !should_fire_desktop_notification(gate, window_active()) {
         return;
     }
 
@@ -134,7 +122,6 @@ pub(crate) fn fire_desktop_notification(
 pub(crate) fn should_fire_desktop_notification(
     gate: NotifyWhenAgentWaiting,
     window_active: bool,
-    _source_visible: bool,
 ) -> bool {
     match gate {
         NotifyWhenAgentWaiting::Never => false,
@@ -308,26 +295,19 @@ mod tests {
     fn notification_gate_honors_never_and_window_focus() {
         assert!(!should_fire_desktop_notification(
             NotifyWhenAgentWaiting::Never,
-            false,
             false
         ));
-        assert!(!should_fire_desktop_notification(
-            NotifyWhenAgentWaiting::PrimaryScreen,
-            true,
-            true
-        ));
         assert!(
-            !should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, true, false),
-            "active Paneflow window suppresses OS notifications even when the source is hidden"
+            !should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, true),
+            "active Paneflow window suppresses OS notifications"
         );
         assert!(
-            should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, false, true),
-            "inactive Paneflow window still notifies even if the source surface would be visible"
+            should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, false),
+            "inactive Paneflow window notifies"
         );
         assert!(should_fire_desktop_notification(
             NotifyWhenAgentWaiting::AllScreens,
-            false,
-            true
+            false
         ));
     }
 

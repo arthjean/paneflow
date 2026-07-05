@@ -775,11 +775,13 @@ struct AgentsViewState {
     /// Active tab on the Skills page. Persists across re-opens of
     /// the Skills view within the session; resets on app restart.
     pub(crate) agents_skills_tab: crate::agents_view::SkillsTab,
-    /// Name of the skill whose Copy button was just clicked. The
-    /// card flips its label to "Copied" while this matches; a 2 s
-    /// timer reverts the slot. Single-slot - only one "Copied"
-    /// indicator visible at a time, which is fine for a click-driven
-    /// affordance.
+    /// Cached skills snapshot. Discovery runs off the GPUI render path and
+    /// refreshes this vector when the page opens or the user clicks Refresh.
+    pub(crate) agents_skills: Vec<crate::agents_view::SkillEntry>,
+    /// True while the background skills discovery is running.
+    pub(crate) agents_skills_loading: bool,
+    /// Stable id of the skill whose Copy button was just clicked. The card
+    /// flips its label to "Copied" while this matches; a timer reverts it.
     pub(crate) agents_skills_copied: Option<String>,
     /// True while the bottom-of-sidebar "Settings" popover is open.
     /// Shared between CLI and Agents sidebars - only one popover is
@@ -875,8 +877,9 @@ pub(crate) struct AgentsBranchMenuState {
     pub(crate) branches: Vec<String>,
     pub(crate) loading: bool,
     pub(crate) error: Option<String>,
-    /// Codex branch picker: the live search query that filters the branch list.
-    pub(crate) query: String,
+    /// Codex branch picker search field. A real `TextInput` keeps cursor,
+    /// selection, paste and IME behavior consistent with the sidebar filter.
+    pub(crate) query_input: gpui::Entity<crate::widgets::text_input::TextInput>,
 }
 
 /// One shell terminal hosted as a tab in the Agents bottom dock. The `view`
@@ -1047,6 +1050,9 @@ struct PaneFlowApp {
     files_menu_open: Option<FilesContextMenu>,
     /// Ephemeral bottom-right toast.
     toast: Option<Toast>,
+    /// Pending toasts waiting for the active one to finish. Runtime bursts
+    /// should not overwrite user-visible messages.
+    toast_queue: std::collections::VecDeque<Toast>,
     /// Dismiss timer for the active toast - dropped on new toast to cancel the old timer.
     _toast_task: Option<gpui::Task<()>>,
     /// Last light/dark value applied to the Windows native backdrop.
@@ -1127,7 +1133,6 @@ struct PaneFlowApp {
     /// Keyboard focus for the Agents environment branch picker so its Codex-style
     /// search field captures typing (live filter + new-branch name). Focused on
     /// open; focus returns to the active thread terminal on close.
-    agents_branch_menu_focus: FocusHandle,
     /// EP-002 US-005 (cli-cockpit): Launch Pad modal state, `None` = closed.
     launch_pad: Option<app::launch_pad::LaunchPadState>,
     launch_pad_focus: FocusHandle,
@@ -1523,7 +1528,7 @@ impl Render for PaneFlowApp {
             // for which screen renders. The Agents view is terminal-only
             // - `render_agents_main` shows the selected thread's PTY, the
             // agent picker, or an empty state.
-            self.render_agents_main(cx)
+            self.render_agents_main(window, cx)
         } else if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
             // US-003 (prd-git-diff-mode-2026-Q3.md). NOTE: this site is
             // an `if matches!`, not a `match`, so the compiler does NOT

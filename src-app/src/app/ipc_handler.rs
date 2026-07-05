@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{App, AppContext, BackgroundExecutor, Context, Entity, Focusable};
-use paneflow_config::schema::{AppMode, LayoutNode, PaneFlowConfig, TerminalSurfaceProfile};
+use paneflow_config::schema::{LayoutNode, PaneFlowConfig, TerminalSurfaceProfile};
 
 use crate::agent_launcher::TerminalAgent;
 use crate::agents::notifications::{self as desktop_notifications, DesktopNotification};
@@ -61,7 +61,6 @@ struct TranscriptTurnEndNotification {
     agent: TerminalAgent,
     title: String,
     config: PaneFlowConfig,
-    source_visible: bool,
     executor: BackgroundExecutor,
 }
 
@@ -140,13 +139,11 @@ fn fire_turn_end_notification(
     workspace_title: &str,
     session_summary: Option<&str>,
     config: &paneflow_config::schema::PaneFlowConfig,
-    source_visible: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::turn_finished(agent, workspace_title, session_summary),
         config,
-        source_visible,
         executor,
     );
 }
@@ -156,13 +153,11 @@ fn fire_attention_notification(
     workspace_title: &str,
     message: Option<&str>,
     config: &paneflow_config::schema::PaneFlowConfig,
-    source_visible: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::needs_input(agent, workspace_title, message),
         config,
-        source_visible,
         executor,
     );
 }
@@ -465,13 +460,11 @@ fn fire_agent_exit_notification(
     workspace_title: &str,
     exit_code: i32,
     config: &paneflow_config::schema::PaneFlowConfig,
-    source_visible: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::agent_exited(agent, workspace_title, exit_code),
         config,
-        source_visible,
         executor,
     );
 }
@@ -486,13 +479,11 @@ pub(crate) fn fire_stalled_notification(
     workspace_title: &str,
     silent_secs: u64,
     config: &paneflow_config::schema::PaneFlowConfig,
-    source_visible: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::stalled(agent, workspace_title, silent_secs),
         config,
-        source_visible,
         executor,
     );
 }
@@ -2064,7 +2055,6 @@ impl PaneFlowApp {
                             extracted.as_deref(),
                         ),
                         &notification.config,
-                        notification.source_visible,
                         notification.executor,
                     );
                 }
@@ -3219,11 +3209,6 @@ impl PaneFlowApp {
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
                 let message = read_notification_message(params);
                 let notify_config = self.cached_config.clone();
-                let active_workspace_id = self.workspaces.get(self.active_idx).map(|ws| ws.id);
-                let workspace_source_visible =
-                    matches!(self.mode, AppMode::Cli) && active_workspace_id == Some(workspace_id);
-                let agents_source_visible = matches!(self.mode, AppMode::Agents);
-
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     let key = upsert_session_state(
                         &mut ws.agent_sessions,
@@ -3245,7 +3230,6 @@ impl PaneFlowApp {
                         &ws_title,
                         message.as_deref(),
                         &notify_config,
-                        workspace_source_visible,
                         cx.background_executor().clone(),
                     );
                     self.bind_or_resolve_session_surface(
@@ -3273,7 +3257,6 @@ impl PaneFlowApp {
                         &title,
                         message.as_deref(),
                         &notify_config,
-                        agents_source_visible,
                         cx.background_executor().clone(),
                     );
                     serde_json::json!({"status": "waiting"})
@@ -3294,11 +3277,6 @@ impl PaneFlowApp {
                 };
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
                 let notify_config = self.cached_config.clone();
-                let active_workspace_id = self.workspaces.get(self.active_idx).map(|ws| ws.id);
-                let workspace_source_visible =
-                    matches!(self.mode, AppMode::Cli) && active_workspace_id == Some(workspace_id);
-                let agents_source_visible = matches!(self.mode, AppMode::Agents);
-
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     // U-014: key the auto-clear on the RESOLVED session key, not
                     // the raw `pid`. A legacy no-pid frame is stored under a
@@ -3336,7 +3314,6 @@ impl PaneFlowApp {
                                 agent: tool,
                                 title: ws_title.clone(),
                                 config: notify_config.clone(),
-                                source_visible: workspace_source_visible,
                                 executor: cx.background_executor().clone(),
                             }),
                             cx,
@@ -3347,7 +3324,6 @@ impl PaneFlowApp {
                             &ws_title,
                             session_summary.as_deref(),
                             &notify_config,
-                            workspace_source_visible,
                             cx.background_executor().clone(),
                         );
                     }
@@ -3432,7 +3408,6 @@ impl PaneFlowApp {
                                 agent: tool,
                                 title: title.clone(),
                                 config: notify_config.clone(),
-                                source_visible: agents_source_visible,
                                 executor: cx.background_executor().clone(),
                             }),
                             cx,
@@ -3443,14 +3418,15 @@ impl PaneFlowApp {
                             &title,
                             session_summary.as_deref(),
                             &notify_config,
-                            agents_source_visible,
                             cx.background_executor().clone(),
                         );
                     }
                     // Parity with `/resume`: at turn end the session's LLM
                     // `ai-title` exists on disk - adopt it as the sidebar
                     // label, unless the user pinned the name via a rename.
-                    if !title_locked && let Some(agent) = session_agent {
+                    if !title_locked
+                        && let (Some(agent), Some(bound_session)) = (session_agent, bound_session)
+                    {
                         self.spawn_thread_title_backfill(thread_id, cwd, agent, bound_session, cx);
                     }
                     serde_json::json!({"status": "idle"})
@@ -3482,11 +3458,6 @@ impl PaneFlowApp {
                 };
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
                 let notify_config = self.cached_config.clone();
-                let active_workspace_id = self.workspaces.get(self.active_idx).map(|ws| ws.id);
-                let workspace_source_visible =
-                    matches!(self.mode, AppMode::Cli) && active_workspace_id == Some(workspace_id);
-                let agents_source_visible = matches!(self.mode, AppMode::Agents);
-
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     // 0 / SIGINT-and-friends → Finished (a human interrupt is
                     // NOT an error, FR-06); everything else → Errored. The
@@ -3517,7 +3488,6 @@ impl PaneFlowApp {
                             &ws_title,
                             exit_code,
                             &notify_config,
-                            workspace_source_visible,
                             cx.background_executor().clone(),
                         );
                         // A crash-on-launch session may have had no prior
@@ -3579,7 +3549,6 @@ impl PaneFlowApp {
                             &title,
                             exit_code,
                             &notify_config,
-                            agents_source_visible,
                             cx.background_executor().clone(),
                         );
                     }

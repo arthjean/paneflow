@@ -16,10 +16,9 @@
 
 use crate::{AgentsBranchMenuState, OpenAgentsView, PaneFlowApp};
 use gpui::{
-    AppContext, ClickEvent, Context, CursorStyle, FocusHandle, Focusable, FontWeight,
-    InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Window, deferred, div, prelude::FluentBuilder, px, rgb,
-    svg,
+    AppContext, ClickEvent, Context, CursorStyle, Focusable, FontWeight, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled,
+    Window, deferred, div, prelude::FluentBuilder, px, rgb, svg,
 };
 use paneflow_config::schema::{AppMode, TerminalSurfaceProfile};
 use serde_json::Value;
@@ -41,7 +40,7 @@ const AGENTS_ENVIRONMENT_PANEL_WIDTH: f32 = 300.0;
 const AGENTS_TOOLBAR_BAND_HEIGHT: f32 = 56.0;
 const AGENTS_BRANCH_GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 const AGENTS_BRANCH_GIT_OUTPUT_CAP: u64 = 512 * 1024;
-const AGENTS_TERMINAL_HOT_CACHE_LIMIT: usize = 8;
+const AGENTS_EXITED_TERMINAL_CACHE_LIMIT: usize = 8;
 const AGENTS_TERMINAL_CACHE_IDLE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 fn touch_lru(order: &mut Vec<u64>, id: u64) {
@@ -95,32 +94,47 @@ impl PaneFlowApp {
     /// Switch the main pane to the Skills browser (~/.claude/skills,
     /// ~/.codex/skills, ~/.agents/skills).
     ///
-    /// US-004 (prd-agents-ui-codex-redesign-2026-Q3.md): the rail's "Skills"
-    /// entry point was removed (Codex has no such rail item). The skills
-    /// page renderer and state stay intact - this entry point is kept as
-    /// managed dead code so re-surfacing Skills (e.g. from the bottom
-    /// Settings popover) is a one-line rewire, not a rebuild.
-    #[allow(dead_code)]
     pub(crate) fn show_agents_skills(&mut self, cx: &mut Context<Self>) {
         // US-003: clearing the unified target drops to the picker/home
         // state; the Skills page then takes precedence in the render branch.
         self.agents_target = None;
         self.agents_view.agents_skills_visible = true;
+        if self.agents_view.agents_skills.is_empty() {
+            self.refresh_agents_skills(cx);
+        }
         cx.notify();
     }
 
-    /// Mark a skill name as "just copied" so its card label flips to
-    /// "Copied" for 2 s. A scheduled task clears the slot iff it
-    /// still holds the same name - back-to-back copies of different
-    /// skills don't cancel each other's feedback.
-    pub(crate) fn mark_skill_copied(&mut self, name: String, cx: &mut Context<Self>) {
-        self.agents_view.agents_skills_copied = Some(name.clone());
+    pub(crate) fn refresh_agents_skills(&mut self, cx: &mut Context<Self>) {
+        if self.agents_view.agents_skills_loading {
+            return;
+        }
+        self.agents_view.agents_skills_loading = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let skills = smol::unblock(crate::agents_view::discover_skills).await;
+            let _ = cx.update(|cx| {
+                this.update(cx, |app, cx| {
+                    app.agents_view.agents_skills = skills;
+                    app.agents_view.agents_skills_loading = false;
+                    cx.notify();
+                })
+            });
+        })
+        .detach();
+    }
+
+    /// Mark a skill id as "just copied" so its card label flips to
+    /// "Copied". A scheduled task clears the slot iff it still holds the same
+    /// id, so duplicate skill names do not collide.
+    pub(crate) fn mark_skill_copied(&mut self, id: String, cx: &mut Context<Self>) {
+        self.agents_view.agents_skills_copied = Some(id.clone());
         cx.notify();
         cx.spawn(async move |this, cx| {
             smol::Timer::after(std::time::Duration::from_millis(1500)).await;
             let _ = cx.update(|cx| {
                 this.update(cx, |app, cx| {
-                    if app.agents_view.agents_skills_copied.as_deref() == Some(name.as_str()) {
+                    if app.agents_view.agents_skills_copied.as_deref() == Some(id.as_str()) {
                         app.agents_view.agents_skills_copied = None;
                         cx.notify();
                     }
@@ -138,17 +152,15 @@ impl PaneFlowApp {
         // parked). Keeps the non-CLI surfaces mutually exclusive (prd-git-diff
         // US-003/US-005) without throwing away the diff.
         self.park_displayed_diff(cx);
-        // US-116: panel is now front-and-center; the gate combines
-        // this with window-active to decide notification firing.
-        crate::agents::notifications::set_agents_panel_visible(true);
+        if let Some(target) = self.current_thread_view_target() {
+            self.mount_agents_terminal_for_target(target, cx);
+        }
         self.save_session(cx);
         cx.notify();
     }
 
     fn exit_agents_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.mode = AppMode::Cli;
-        // US-116: flip the gate so the next runtime event surfaces a toast.
-        crate::agents::notifications::set_agents_panel_visible(false);
         // Focus contract: restore focus to the active workspace's
         // first pane so the keyboard immediately targets the
         // terminal the user left, not a stray top-level handler.
@@ -171,8 +183,14 @@ impl PaneFlowApp {
     /// 3. A project open but no thread selected -> the agent picker for
     ///    that project (the home/empty state).
     /// 4. No project at all -> the "no project" empty state.
-    pub(crate) fn render_agents_main(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    pub(crate) fn render_agents_main(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let body: gpui::AnyElement = self.render_agents_main_body(cx);
+        let bottom_panel_max_height =
+            crate::app::agents_bottom_panel::bottom_panel_max_height(window);
         // The main area stacks vertically: the agent surface (terminal/picker)
         // fills the space, and the Codex-style bottom dock - when open - takes a
         // resizable, full-width slice below it.
@@ -184,27 +202,33 @@ impl PaneFlowApp {
             // left edge) are captured here, on the full-height main area, so a
             // drag keeps tracking even when the cursor outruns its handle and
             // crosses into the surface beside it.
-            .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _w, cx| {
-                if this.agents_view.bottom_panel_drag.is_some() {
-                    if event.pressed_button == Some(MouseButton::Left) {
-                        this.drag_bottom_panel_resize(f32::from(event.position.y), cx);
-                    } else {
-                        this.end_bottom_panel_resize(cx);
+            .on_mouse_move(
+                cx.listener(move |this, event: &gpui::MouseMoveEvent, _w, cx| {
+                    if this.agents_view.bottom_panel_drag.is_some() {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            this.drag_bottom_panel_resize(
+                                f32::from(event.position.y),
+                                bottom_panel_max_height,
+                                cx,
+                            );
+                        } else {
+                            this.end_bottom_panel_resize(cx);
+                        }
+                    } else if this.agents_view.agents_diff_h_scroll_drag.is_some() {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            this.drag_agents_diff_h_scrollbar(event.position.x, cx);
+                        } else {
+                            this.end_agents_diff_h_scrollbar_drag(cx);
+                        }
+                    } else if this.agents_view.agents_diff_resize.is_some() {
+                        if event.pressed_button == Some(MouseButton::Left) {
+                            this.drag_agents_diff_resize(f32::from(event.position.x), cx);
+                        } else {
+                            this.end_agents_diff_resize(cx);
+                        }
                     }
-                } else if this.agents_view.agents_diff_h_scroll_drag.is_some() {
-                    if event.pressed_button == Some(MouseButton::Left) {
-                        this.drag_agents_diff_h_scrollbar(event.position.x, cx);
-                    } else {
-                        this.end_agents_diff_h_scrollbar_drag(cx);
-                    }
-                } else if this.agents_view.agents_diff_resize.is_some() {
-                    if event.pressed_button == Some(MouseButton::Left) {
-                        this.drag_agents_diff_resize(f32::from(event.position.x), cx);
-                    } else {
-                        this.end_agents_diff_resize(cx);
-                    }
-                }
-            }))
+                }),
+            )
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _e: &gpui::MouseUpEvent, _w, cx| {
@@ -215,7 +239,7 @@ impl PaneFlowApp {
             )
             .child(div().flex_1().min_h(px(0.)).child(body));
         if self.agents_view.bottom_panel_open {
-            root = root.child(self.render_agents_bottom_panel(cx));
+            root = root.child(self.render_agents_bottom_panel(bottom_panel_max_height, cx));
         }
         root.into_any_element()
     }
@@ -230,15 +254,16 @@ impl PaneFlowApp {
             return crate::agents_view::render_skills_page(
                 self.agents_view.agents_skills_tab,
                 self.agents_view.agents_skills_copied.clone(),
+                self.agents_view.agents_skills.clone(),
+                self.agents_view.agents_skills_loading,
                 cx,
             );
         }
-        // A selected thread renders its terminal surface. Every thread
-        // is a terminal now (the in-app ACP chat was removed); legacy
-        // `ThreadKind::Agent` rows relaunch their original CLI agent in a
-        // PTY (see `ensure_terminal_view_mounted`).
+        // A selected thread renders its cached terminal surface. Creation is
+        // driven by selection/restore paths, not by render, so repainting this
+        // branch cannot spawn a PTY.
         if let Some(target) = self.current_thread_view_target()
-            && let Some(view) = self.ensure_terminal_view_mounted(target, cx)
+            && let Some(view) = self.cached_agents_terminal_view(target, cx)
         {
             let max_content_width = self.cached_config.agent_panel.as_ref().map_or(
                 paneflow_config::schema::AgentPanelConfig::DEFAULT_MAX_CONTENT_WIDTH,
@@ -259,7 +284,6 @@ impl PaneFlowApp {
                         .clone()
                         .unwrap_or_else(|| "auto".to_string()),
                     branch_menu: self.agents_view.agents_branch_menu.clone(),
-                    branch_menu_focus: self.agents_branch_menu_focus.clone(),
                     diff_open,
                     bottom_open: self.agents_view.bottom_panel_open,
                 },
@@ -278,6 +302,8 @@ impl PaneFlowApp {
                     .into_any_element();
             }
             return surface;
+        } else if self.current_thread_view_target().is_some() {
+            return render_agents_terminal_loading();
         }
         // No thread selected: the picker/home state. US-005 -- the picker
         // context decides what a launched agent is created into.
@@ -517,10 +543,12 @@ impl PaneFlowApp {
                 let Some(project) = self.projects.get(project_idx) else {
                     return AgentsEnvironmentSummary::default();
                 };
-                let (branch, git_stats) = self.agents_environment_git_for_cwd(&project.cwd);
+                let (branch, is_repo, git_stats) =
+                    self.agents_environment_git_for_cwd(&project.cwd);
                 AgentsEnvironmentSummary {
                     cwd: project.cwd.clone(),
                     branch,
+                    is_repo,
                     git_stats,
                 }
             }
@@ -529,10 +557,11 @@ impl PaneFlowApp {
                     .thread_for_target(target)
                     .map(|thread| thread.cwd.clone())
                     .unwrap_or_default();
-                let (branch, git_stats) = self.agents_environment_git_for_cwd(&cwd);
+                let (branch, is_repo, git_stats) = self.agents_environment_git_for_cwd(&cwd);
                 AgentsEnvironmentSummary {
                     cwd,
                     branch,
+                    is_repo,
                     git_stats,
                 }
             }
@@ -542,27 +571,31 @@ impl PaneFlowApp {
     pub(crate) fn agents_environment_git_for_cwd(
         &self,
         cwd: &str,
-    ) -> (String, crate::workspace::GitDiffStats) {
+    ) -> (String, bool, crate::workspace::GitDiffStats) {
         let cached = self.agents_view.agents_environment_git.get(cwd);
         let workspace = self
             .workspaces
             .iter()
             .find(|workspace| workspace.cwd.as_str() == cwd);
         let project = self.projects.iter().find(|project| project.cwd == cwd);
-        let branch = workspace
-            .map(|workspace| agents_environment_branch_label(&workspace.git_branch))
-            .or_else(|| {
-                cached
-                    .filter(|state| state.is_repo && !state.branch.trim().is_empty())
-                    .map(|state| agents_environment_branch_label(&state.branch))
-            })
-            .unwrap_or_else(|| "main".to_string());
+        let is_repo = workspace
+            .map(|workspace| workspace.is_git_repo)
+            .or_else(|| cached.map(|state| state.is_repo))
+            .unwrap_or(false);
+        let branch = if is_repo {
+            workspace
+                .and_then(|workspace| agents_environment_branch_label(&workspace.git_branch))
+                .or_else(|| cached.and_then(|state| agents_environment_branch_label(&state.branch)))
+                .unwrap_or_else(|| "Repository".to_string())
+        } else {
+            "No repository".to_string()
+        };
         let git_stats = cached
             .map(|state| state.stats.clone())
             .or_else(|| project.map(|project| project.git_stats.clone()))
             .or_else(|| workspace.map(|workspace| workspace.git_stats.clone()))
             .unwrap_or_default();
-        (branch, git_stats)
+        (branch, is_repo, git_stats)
     }
 
     fn toggle_agents_branch_menu(
@@ -588,17 +621,18 @@ impl PaneFlowApp {
         }
 
         self.agents_view.agents_editor_menu_open = false;
+        let query_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search branches", cx));
+        cx.observe(&query_input, |_, _, cx| cx.notify()).detach();
         self.agents_view.agents_branch_menu = Some(AgentsBranchMenuState {
             cwd: cwd.clone(),
             current: current.clone(),
             branches: Vec::new(),
             loading: true,
             error: None,
-            query: String::new(),
+            query_input: query_input.clone(),
         });
-        // Focus the picker so its search field captures typing immediately (the
-        // element with this handle renders next frame via `track_focus`).
-        self.agents_branch_menu_focus.focus(window, cx);
+        query_input.read(cx).focus_handle.clone().focus(window, cx);
         cx.notify();
 
         cx.spawn(
@@ -845,14 +879,15 @@ impl PaneFlowApp {
             self.remove_agents_terminal_cache_entry(thread_id);
         }
 
-        while self.agents_view.agents_terminal_view_cache.len() > AGENTS_TERMINAL_HOT_CACHE_LIMIT {
+        while self.agents_view.agents_terminal_view_cache.len() > AGENTS_EXITED_TERMINAL_CACHE_LIMIT
+        {
             let lru = self.agents_view.agents_terminal_cache_lru.clone();
             let cache_len = self.agents_view.agents_terminal_view_cache.len();
             let evict = oldest_evictable_terminal_id(
                 &lru,
                 active_thread_id,
                 cache_len,
-                AGENTS_TERMINAL_HOT_CACHE_LIMIT,
+                AGENTS_EXITED_TERMINAL_CACHE_LIMIT,
                 |id| {
                     self.agents_view
                         .agents_terminal_view_cache
@@ -870,9 +905,8 @@ impl PaneFlowApp {
         }
     }
 
-    /// Keyboard handling for the focused branch-picker search field: printable
-    /// keys extend the query (live filter), Backspace trims it, Enter switches to
-    /// an exact match, Escape dismisses.
+    /// Keyboard handling for branch-picker commands that bubble out of the
+    /// focused `TextInput`: Enter switches to an exact match, Escape dismisses.
     pub(crate) fn handle_agents_branch_menu_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -888,12 +922,6 @@ impl PaneFlowApp {
                 self.focus_current_agents_terminal(window, cx);
                 cx.notify();
             }
-            "backspace" => {
-                if let Some(menu) = self.agents_view.agents_branch_menu.as_mut() {
-                    menu.query.pop();
-                    cx.notify();
-                }
-            }
             "enter" => {
                 // With the create action removed, Enter only switches to an exact
                 // match; a non-matching query is a no-op (keep filtering / click).
@@ -901,7 +929,7 @@ impl PaneFlowApp {
                     let Some(menu) = self.agents_view.agents_branch_menu.as_ref() else {
                         return;
                     };
-                    let name = menu.query.trim().to_string();
+                    let name = menu.query_input.read(cx).value().trim().to_string();
                     if name.is_empty() || !menu.branches.contains(&name) {
                         return;
                     }
@@ -913,18 +941,7 @@ impl PaneFlowApp {
                 cx.notify();
                 self.spawn_switch_branch(cwd, name, cx);
             }
-            _ => {
-                if let Some(ch) = event.keystroke.key_char.as_ref()
-                    && !ch.is_empty()
-                    && !event.keystroke.modifiers.control
-                    && !event.keystroke.modifiers.alt
-                    && !event.keystroke.modifiers.platform
-                    && let Some(menu) = self.agents_view.agents_branch_menu.as_mut()
-                {
-                    menu.query.push_str(ch);
-                    cx.notify();
-                }
-            }
+            _ => {}
         }
     }
 
@@ -1048,6 +1065,22 @@ impl PaneFlowApp {
         }
     }
 
+    fn cached_agents_terminal_view(
+        &mut self,
+        target: crate::project::AgentsTarget,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<crate::terminal::view::TerminalView>> {
+        let thread_id = self.thread_for_target(target)?.id;
+        let cached = self
+            .agents_view
+            .agents_terminal_view_cache
+            .get(&thread_id)
+            .cloned()?;
+        self.touch_agents_terminal_cache(thread_id);
+        self.enforce_agents_terminal_cache_budget(Some(thread_id), cx);
+        Some(cached)
+    }
+
     /// Mount (or reuse from cache) the [`TerminalView`] entity that
     /// backs a Terminal Thread at `target`. Returns the entity ready
     /// to be wrapped by [`render_terminal_thread_surface`].
@@ -1063,7 +1096,7 @@ impl PaneFlowApp {
     /// `ai.*` hook frames emitted from inside this PTY route back to
     /// the thread (spinner / attention state) instead of colliding with
     /// a same-numbered CLI-mode workspace.
-    fn ensure_terminal_view_mounted(
+    pub(crate) fn mount_agents_terminal_for_target(
         &mut self,
         target: crate::project::AgentsTarget,
         cx: &mut Context<Self>,
@@ -1317,17 +1350,16 @@ impl PaneFlowApp {
 
     /// Adopt the live agent session's LLM `ai-title` as the thread's sidebar
     /// label at turn end - the same summary `/resume` surfaces. Reads the
-    /// on-disk session store off the main thread, picks the bound session
-    /// when the thread forced a `--session-id` (Claude, exact) or the newest
-    /// session for the cwd otherwise (Codex/OpenCode heuristic), then routes
-    /// the result through [`Self::handle_terminal_thread_title_changed`]
-    /// (which re-checks the manual-rename lock and skips a no-op write).
+    /// on-disk session store off the main thread, then picks only the bound
+    /// session created by the thread's forced session id. Agents without a
+    /// forced id intentionally skip this path: cwd-newest matching can rename
+    /// the wrong thread when several agents share a repository.
     pub(crate) fn spawn_thread_title_backfill(
         &self,
         thread_id: u64,
         cwd: String,
         agent: crate::agent_sessions::SessionAgent,
-        bound_session: Option<String>,
+        bound_session: String,
         cx: &mut Context<Self>,
     ) {
         if cwd.is_empty() {
@@ -1335,18 +1367,7 @@ impl PaneFlowApp {
         }
         cx.spawn(async move |this, cx| {
             let sessions = smol::unblock(move || read_sessions_for(agent, &cwd)).await;
-            let summary = match bound_session {
-                // Claude: exact match on the forced id - correct even when
-                // several threads share a cwd.
-                Some(id) => sessions
-                    .into_iter()
-                    .find(|s| s.session_id == id)
-                    .and_then(|s| s.summary),
-                // Heuristic: the list is sorted timestamp-desc, so the first
-                // entry is the most recently touched session for this cwd.
-                None => sessions.into_iter().next().and_then(|s| s.summary),
-            };
-            if let Some(summary) = summary.filter(|s| !s.is_empty()) {
+            if let Some(summary) = title_summary_for_bound_session(sessions, &bound_session) {
                 let _ = this.update(cx, |app, cx| {
                     app.handle_terminal_thread_title_changed(thread_id, summary, cx);
                 });
@@ -1367,6 +1388,17 @@ fn read_sessions_for(
     cwd: &str,
 ) -> Vec<crate::agent_sessions::SessionMeta> {
     crate::agent_sessions::read_sessions_for_cwd(agent, cwd)
+}
+
+fn title_summary_for_bound_session(
+    sessions: Vec<crate::agent_sessions::SessionMeta>,
+    bound_session: &str,
+) -> Option<String> {
+    sessions
+        .into_iter()
+        .find(|s| s.session_id == bound_session)
+        .and_then(|s| s.summary)
+        .filter(|summary| !summary.is_empty())
 }
 
 /// US-005: where the agent picker creates its launched agent. Drives the
@@ -1424,7 +1456,6 @@ pub(crate) struct AgentsEnvironmentOverlayState {
     editor_menu_open: bool,
     editor_value: String,
     branch_menu: Option<AgentsBranchMenuState>,
-    branch_menu_focus: FocusHandle,
     diff_open: bool,
     bottom_open: bool,
 }
@@ -1433,6 +1464,7 @@ pub(crate) struct AgentsEnvironmentOverlayState {
 pub(crate) struct AgentsEnvironmentSummary {
     cwd: String,
     branch: String,
+    is_repo: bool,
     git_stats: crate::workspace::GitDiffStats,
 }
 
@@ -1440,18 +1472,19 @@ impl Default for AgentsEnvironmentSummary {
     fn default() -> Self {
         Self {
             cwd: String::new(),
-            branch: "main".to_string(),
+            branch: "No repository".to_string(),
+            is_repo: false,
             git_stats: crate::workspace::GitDiffStats::default(),
         }
     }
 }
 
-fn agents_environment_branch_label(branch: &str) -> String {
+fn agents_environment_branch_label(branch: &str) -> Option<String> {
     let branch = branch.trim();
     if branch.is_empty() {
-        "main".to_string()
+        None
     } else {
-        branch.to_string()
+        Some(branch.to_string())
     }
 }
 
@@ -1485,7 +1518,6 @@ fn render_agents_environment_overlay(
             element.child(render_agents_environment_card(
                 summary,
                 overlay.branch_menu,
-                overlay.branch_menu_focus,
                 ui,
                 cx,
             ))
@@ -1734,7 +1766,6 @@ fn render_agents_environment_toggle_button(
 fn render_agents_environment_card(
     summary: AgentsEnvironmentSummary,
     branch_menu: Option<AgentsBranchMenuState>,
-    branch_menu_focus: FocusHandle,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> gpui::AnyElement {
@@ -1764,7 +1795,6 @@ fn render_agents_environment_card(
         .child(render_agents_environment_branch_row(
             summary,
             branch_menu,
-            branch_menu_focus,
             ui,
             cx,
         ))
@@ -1825,10 +1855,11 @@ fn render_agents_environment_changes_row(
     let cwd = summary.cwd.clone();
     let insertions = summary.git_stats.insertions;
     let deletions = summary.git_stats.deletions;
+    let is_repo = summary.is_repo;
     // Reuse the right diff panel's palette so the +/- counts match the washes
     // there (Codex green/red on dark themes, theme vc_* on light).
     let (added_color, deleted_color) = crate::app::agents_diff::agents_diff_count_colors(ui);
-    div()
+    let mut row = div()
         .id("agents-env-changes-row")
         .relative()
         .w(px(AGENTS_ENVIRONMENT_PANEL_WIDTH - 16.0))
@@ -1841,43 +1872,45 @@ fn render_agents_environment_changes_row(
         .px(px(8.))
         .py(px(6.))
         .rounded(px(8.))
-        .cursor(CursorStyle::PointingHand)
-        .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.spawn_agents_environment_git_refresh(cwd.clone(), cx);
-            this.open_agents_diff_panel(cwd.clone(), cx);
-        }))
-        .child(render_agents_environment_label(
-            "icons/file-text.svg",
-            "Changes",
-            ui,
-        ))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.))
-                .text_size(px(13.))
-                .child(
-                    div()
-                        .text_color(added_color)
-                        .child(format!("+{insertions}")),
-                )
-                .child(
-                    div()
-                        .text_color(deleted_color)
-                        .child(format!("-{deletions}")),
-                ),
-        )
-        .into_any_element()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    if is_repo {
+        row = row
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                this.spawn_agents_environment_git_refresh(cwd.clone(), cx);
+                this.open_agents_diff_panel(cwd.clone(), cx);
+            }));
+    }
+    row.child(render_agents_environment_label(
+        "icons/file-text.svg",
+        "Changes",
+        ui,
+    ))
+    .child(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.))
+            .text_size(px(13.))
+            .child(
+                div()
+                    .text_color(if is_repo { added_color } else { ui.muted })
+                    .child(format!("+{insertions}")),
+            )
+            .child(
+                div()
+                    .text_color(if is_repo { deleted_color } else { ui.muted })
+                    .child(format!("-{deletions}")),
+            ),
+    )
+    .into_any_element()
 }
 
 fn render_agents_environment_branch_row(
     summary: AgentsEnvironmentSummary,
     branch_menu: Option<AgentsBranchMenuState>,
-    branch_menu_focus: FocusHandle,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> gpui::AnyElement {
@@ -1887,7 +1920,7 @@ fn render_agents_environment_branch_row(
     let current = summary.branch.clone();
     let cwd = summary.cwd.clone();
     let files_changed = summary.git_stats.files_changed;
-    div()
+    let mut row = div()
         .id("agents-env-branch-row")
         .relative()
         .flex()
@@ -1901,55 +1934,48 @@ fn render_agents_environment_branch_row(
         .px(px(8.))
         .py(px(6.))
         .rounded(px(8.))
-        .cursor(CursorStyle::PointingHand)
-        .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
-        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-            this.toggle_agents_branch_menu(cwd.clone(), current.clone(), event, window, cx);
-        }))
         .child(render_agents_environment_label(
             "icons/git-branch.svg",
             summary.branch,
             ui,
-        ))
-        .child(
-            svg()
-                .size(px(12.))
-                .path("icons/chevron-down.svg")
-                .text_color(ui.muted),
-        )
-        .when(menu_open, |row| {
-            if let Some(menu) = branch_menu {
-                row.child(render_agents_branch_menu(
-                    menu,
-                    branch_menu_focus,
-                    files_changed,
-                    ui,
-                    cx,
-                ))
-            } else {
-                row
-            }
-        })
-        .into_any_element()
+        ));
+    if summary.is_repo {
+        row = row
+            .cursor(CursorStyle::PointingHand)
+            .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                this.toggle_agents_branch_menu(cwd.clone(), current.clone(), event, window, cx);
+            }))
+            .child(
+                svg()
+                    .size(px(12.))
+                    .path("icons/chevron-down.svg")
+                    .text_color(ui.muted),
+            );
+    }
+    row.when(menu_open && summary.is_repo, |row| {
+        if let Some(menu) = branch_menu {
+            row.child(render_agents_branch_menu(menu, files_changed, ui, cx))
+        } else {
+            row
+        }
+    })
+    .into_any_element()
 }
 
 fn render_agents_branch_menu(
     menu_state: AgentsBranchMenuState,
-    focus: FocusHandle,
     files_changed: usize,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> gpui::AnyElement {
     let cwd = menu_state.cwd.clone();
-    let query = menu_state.query.clone();
+    let query_input = menu_state.query_input.clone();
+    let query = query_input.read(cx).value();
     let query_lc = query.trim().to_lowercase();
 
-    // `track_focus` + `on_key_down` turn the surface into the search field: the
-    // picker is focused on open (toggle_agents_branch_menu), so keystrokes route
-    // here and `handle_agents_branch_menu_key_down` edits the query.
     let mut menu =
         crate::settings::components::menu_surface(div().id("agents-env-branch-menu"), ui)
-            .track_focus(&focus)
             .flex()
             .flex_col()
             .gap(px(2.))
@@ -1958,7 +1984,7 @@ fn render_agents_branch_menu(
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down_out(cx.listener(PaneFlowApp::close_agents_branch_menu))
             .on_key_down(cx.listener(PaneFlowApp::handle_agents_branch_menu_key_down))
-            .child(render_agents_branch_search_row(&query, ui));
+            .child(render_agents_branch_search_row(query_input, ui));
 
     if menu_state.loading {
         menu = menu.child(render_agents_branch_menu_status("Loading branches…", ui));
@@ -2020,11 +2046,12 @@ fn render_agents_branch_menu(
     .into_any_element()
 }
 
-/// The branch-picker search field: a magnifier glyph and the live query (or the
-/// muted placeholder while empty). Editing is driven by the focused surface's
-/// key handler, so this is a pure read-out of `AgentsBranchMenuState::query`.
-fn render_agents_branch_search_row(query: &str, ui: crate::theme::UiColors) -> gpui::AnyElement {
-    let empty = query.is_empty();
+/// Branch-picker search field. Editing is handled by `TextInput`, while the
+/// parent menu handles only Enter/Escape after those keys bubble.
+fn render_agents_branch_search_row(
+    query_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    ui: crate::theme::UiColors,
+) -> gpui::AnyElement {
     div()
         .flex()
         .flex_row()
@@ -2047,12 +2074,8 @@ fn render_agents_branch_search_row(query: &str, ui: crate::theme::UiColors) -> g
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_size(px(13.))
-                .text_color(if empty { ui.muted } else { ui.text })
-                .child(if empty {
-                    "Search branches".to_string()
-                } else {
-                    query.to_string()
-                }),
+                .text_color(ui.text)
+                .child(query_input.into_any_element()),
         )
         .into_any_element()
 }
@@ -2349,6 +2372,19 @@ fn render_agents_no_project() -> gpui::AnyElement {
         .into_any_element()
 }
 
+fn render_agents_terminal_loading() -> gpui::AnyElement {
+    let ui = crate::theme::ui_colors();
+    div()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .text_size(px(12.))
+        .text_color(ui.muted)
+        .child("Opening terminal")
+        .into_any_element()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2381,5 +2417,45 @@ mod tests {
 
         let evict = oldest_evictable_terminal_id(&order, None, 8, 8, |_| true);
         assert_eq!(evict, None, "cache at budget does not evict");
+    }
+
+    #[test]
+    fn title_summary_for_bound_session_requires_exact_id_match() {
+        let sessions = vec![
+            session_meta("newest", "wrong title"),
+            session_meta("bound", "right title"),
+        ];
+
+        assert_eq!(
+            title_summary_for_bound_session(sessions, "bound").as_deref(),
+            Some("right title"),
+            "title backfill must not choose the newest cwd session"
+        );
+    }
+
+    #[test]
+    fn title_summary_for_bound_session_drops_missing_or_empty_summary() {
+        let mut empty = session_meta("bound", "");
+        empty.summary = Some(String::new());
+        let missing = session_meta("other", "other title");
+
+        assert_eq!(
+            title_summary_for_bound_session(vec![missing], "bound"),
+            None
+        );
+        assert_eq!(title_summary_for_bound_session(vec![empty], "bound"), None);
+    }
+
+    fn session_meta(id: &str, summary: &str) -> crate::agent_sessions::SessionMeta {
+        crate::agent_sessions::SessionMeta {
+            agent: crate::agent_sessions::SessionAgent::Claude,
+            session_id: id.to_string(),
+            timestamp: "2026-07-05T12:00:00Z".to_string(),
+            cwd: "/repo".to_string(),
+            git_branch: "main".to_string(),
+            summary: Some(summary.to_string()),
+            model: None,
+            usage: None,
+        }
     }
 }

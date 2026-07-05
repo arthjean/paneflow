@@ -75,7 +75,7 @@ impl PaneFlowApp {
     pub(crate) fn open_agents_diff_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
         let split = self.agents_view.agents_diff_split;
-        let (_, current_stats) = self.agents_environment_git_for_cwd(&cwd);
+        let (_, _, current_stats) = self.agents_environment_git_for_cwd(&cwd);
         let has_warm_snapshot = self.agents_view.agents_diff.as_ref().is_some_and(|data| {
             data.cwd == cwd
                 && !data.loading

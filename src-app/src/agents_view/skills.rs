@@ -7,8 +7,8 @@
 
 use crate::PaneFlowApp;
 use gpui::{
-    AnyElement, ClickEvent, Context, FontWeight, IntoElement, ParentElement, SharedString, Styled,
-    div, prelude::*, px, svg,
+    AnyElement, ClickEvent, Context, CursorStyle, FontWeight, IntoElement, ParentElement,
+    SharedString, Styled, div, prelude::*, px, svg,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,13 +44,12 @@ impl SkillsTab {
 
 /// A single skill resolved from a `SKILL.md` frontmatter block.
 #[derive(Clone, Debug)]
-struct SkillEntry {
+pub(crate) struct SkillEntry {
+    id: String,
     name: String,
     description: String,
     /// Agent dir tag (e.g. ".claude") -- used to bucket entries per tab.
     source: String,
-    #[allow(dead_code)]
-    path: PathBuf,
 }
 
 const FRONTMATTER_SCAN_BYTES: usize = 16 * 1024;
@@ -72,17 +71,33 @@ const CARD_HEIGHT_PX: f32 = 122.0;
 
 pub(crate) fn render_skills_page(
     active_tab: SkillsTab,
-    copied_name: Option<String>,
+    copied_id: Option<String>,
+    skills: Vec<SkillEntry>,
+    loading: bool,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let ui = crate::theme::ui_colors();
-    let all = discover_skills();
-    let filtered: Vec<SkillEntry> = all
+    let filtered: Vec<SkillEntry> = skills
         .into_iter()
         .filter(|s| s.source == active_tab.source_tag())
         .collect();
 
-    let body: AnyElement = if filtered.is_empty() {
+    let body: AnyElement = if loading && filtered.is_empty() {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .py(px(48.))
+            .gap(px(6.))
+            .child(
+                div()
+                    .text_color(ui.text)
+                    .text_size(px(13.))
+                    .child("Loading skills"),
+            )
+            .into_any_element()
+    } else if filtered.is_empty() {
         div()
             .flex()
             .flex_col()
@@ -108,11 +123,11 @@ pub(crate) fn render_skills_page(
             )
             .into_any_element()
     } else {
-        let copied_for_cards = copied_name.clone();
+        let copied_for_cards = copied_id.clone();
         let cards = filtered.into_iter().map(|s| {
             let is_copied = copied_for_cards
                 .as_deref()
-                .is_some_and(|c| c == s.name.as_str());
+                .is_some_and(|c| c == s.id.as_str());
             render_skill_card(s, is_copied, ui, cx)
         });
         // `flex_wrap` packs as many ~`CARD_WIDTH_PX` cards per row as fit the
@@ -142,27 +157,67 @@ pub(crate) fn render_skills_page(
         .py(px(16.))
         .gap(px(14.))
         .child(
-            div()
-                .w_full()
-                .flex()
-                .flex_col()
-                .gap(px(4.))
-                .child(
-                    div()
-                        .text_size(px(14.))
-                        .font_weight(FontWeight::NORMAL)
-                        .text_color(ui.text)
-                        .child("Skills"),
-                )
-                .child(
-                    div()
-                        .text_size(px(12.))
-                        .text_color(ui.muted)
-                        .child("Skills discovered across your agent home directories."),
-                ),
+            div().w_full().flex().flex_col().gap(px(4.)).child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(10.))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(4.))
+                            .child(
+                                div()
+                                    .text_size(px(14.))
+                                    .font_weight(FontWeight::NORMAL)
+                                    .text_color(ui.text)
+                                    .child("Skills"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(ui.muted)
+                                    .child("Skills discovered across your agent home directories."),
+                            ),
+                    )
+                    .child(render_refresh_button(loading, ui, cx)),
+            ),
         )
         .child(div().w_full().child(render_tab_bar(active_tab, ui, cx)))
         .child(div().w_full().child(body))
+        .into_any_element()
+}
+
+fn render_refresh_button(
+    loading: bool,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    div()
+        .id("agents-skills-refresh")
+        .flex_none()
+        .size(px(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(7.))
+        .cursor(CursorStyle::PointingHand)
+        .text_color(ui.muted)
+        .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.08)))
+        .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
+            this.refresh_agents_skills(cx);
+        }))
+        .child(
+            svg()
+                .size(px(14.))
+                .flex_none()
+                .path("icons/refresh.svg")
+                .text_color(if loading { ui.accent } else { ui.muted }),
+        )
+        .tooltip(crate::ui_primitives::text_tooltip("Refresh skills"))
         .into_any_element()
 }
 
@@ -218,11 +273,12 @@ fn render_skill_card(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let skill_id = skill.id.clone();
     let name_for_copy = skill.name.clone();
-    let name_for_mark = skill.name.clone();
-    let copy_id: SharedString = format!("skill-copy-{}-{}", skill.source, skill.name).into();
-    let card_id: SharedString = format!("skill-card-{}-{}", skill.source, skill.name).into();
-    let group: SharedString = format!("skill-grp-{}-{}", skill.source, skill.name).into();
+    let id_for_mark = skill.id.clone();
+    let copy_id: SharedString = format!("skill-copy-{skill_id}").into();
+    let card_id: SharedString = format!("skill-card-{}", skill.id).into();
+    let group: SharedString = format!("skill-grp-{}", skill.id).into();
 
     // Copy affordance. Hidden until the card is hovered (40 always-on "Copy"
     // labels were the main source of visual noise), then brightens on its
@@ -242,7 +298,7 @@ fn render_skill_card(
         .cursor_pointer()
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(name_for_copy.clone()));
-            this.mark_skill_copied(name_for_mark.clone(), cx);
+            this.mark_skill_copied(id_for_mark.clone(), cx);
         }));
     if is_copied {
         copy_btn = copy_btn
@@ -328,7 +384,7 @@ fn render_skill_card(
         .into_any_element()
 }
 
-fn discover_skills() -> Vec<SkillEntry> {
+pub(crate) fn discover_skills() -> Vec<SkillEntry> {
     let home = match dirs::home_dir() {
         Some(h) => h,
         None => return Vec::new(),
@@ -369,15 +425,38 @@ fn discover_skills() -> Vec<SkillEntry> {
                 name
             };
             out.push(SkillEntry {
+                id: skill_identity(label, &path, out.len()),
                 name,
                 description: ellipsize(description, DESCRIPTION_MAX_CHARS),
                 source: label.to_string(),
-                path,
             });
         }
     }
     out.sort_by_key(|s| s.name.to_lowercase());
     out
+}
+
+fn skill_identity(source: &str, path: &Path, ordinal: usize) -> String {
+    let folder = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(sanitize_element_id)
+        .unwrap_or_else(|| format!("skill-{ordinal}"));
+    format!("{}-{}", sanitize_element_id(source), folder)
+}
+
+fn sanitize_element_id(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 fn read_frontmatter(path: &Path) -> Option<(String, String)> {
@@ -397,10 +476,19 @@ fn parse_frontmatter(raw: &str) -> Option<(String, String)> {
     // Collect the frontmatter block (up to the closing `---`) so a
     // multi-line block scalar (`description: >` / `|`) can consume its
     // indented continuation lines by index.
-    let fm: Vec<&str> = lines
-        .map(|l| l.trim_end_matches('\r'))
-        .take_while(|l| l.trim() != "---")
-        .collect();
+    let mut fm: Vec<&str> = Vec::new();
+    let mut closed = false;
+    for line in lines {
+        let line = line.trim_end_matches('\r');
+        if line.trim() == "---" {
+            closed = true;
+            break;
+        }
+        fm.push(line);
+    }
+    if !closed {
+        return None;
+    }
 
     let mut name = String::new();
     let mut description = String::new();
@@ -515,6 +603,11 @@ mod tests {
     #[test]
     fn missing_opening_fence_is_none() {
         assert!(parse_frontmatter("name: x\ndescription: y\n").is_none());
+    }
+
+    #[test]
+    fn missing_closing_fence_is_none() {
+        assert!(parse_frontmatter("---\nname: x\ndescription: y\nbody").is_none());
     }
 
     #[test]

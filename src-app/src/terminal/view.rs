@@ -847,16 +847,6 @@ impl TerminalView {
         self.terminal.write_to_pty(text.as_bytes().to_vec());
     }
 
-    /// Deliver text through the bracketed-paste path (EP-001 cli-cockpit):
-    /// when the application enabled bracketed paste, the payload is wrapped
-    /// in `ESC[200~ … ESC[201~` so embedded newlines stay literal inside a
-    /// TUI's input editor instead of acting as Enter. No CR is ever appended
-    /// here - submission stays a separate, explicit `send_text("\r")` write.
-    pub fn paste_text(&self, text: &str) {
-        let mode = *self.terminal.term.lock().mode();
-        self.write_paste_text(text, mode);
-    }
-
     /// True once the foreground terminal application has enabled DEC
     /// bracketed-paste mode (`ESC[?2004h`).
     pub fn bracketed_paste_enabled(&self) -> bool {

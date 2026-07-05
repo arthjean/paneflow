@@ -931,6 +931,7 @@ impl PaneFlowApp {
             files_event_rx: None,
             files_menu_open: None,
             toast: None,
+            toast_queue: std::collections::VecDeque::new(),
             _toast_task: None,
             #[cfg(target_os = "windows")]
             windows_backdrop_light: None,
@@ -973,7 +974,6 @@ impl PaneFlowApp {
             fleet_search_generation: 0,
             fleet_search_focus: cx.focus_handle(),
             fleet_search_pending_focus: false,
-            agents_branch_menu_focus: cx.focus_handle(),
             launch_pad: None,
             launch_pad_focus: cx.focus_handle(),
             self_update: crate::SelfUpdateState {
@@ -1044,6 +1044,8 @@ impl PaneFlowApp {
                 agents_filter_input,
                 agents_skills_visible: false,
                 agents_skills_tab: crate::agents_view::SkillsTab::default(),
+                agents_skills: Vec::new(),
+                agents_skills_loading: false,
                 agents_skills_copied: None,
                 sidebar_actions_menu_open: false,
                 sidebar_mode_picker_open: false,
@@ -1087,6 +1089,11 @@ impl PaneFlowApp {
         {
             app.spawn_agents_environment_git_refresh(cwd, cx);
         }
+        if matches!(app.mode, paneflow_config::schema::AppMode::Agents)
+            && let Some(target) = app.current_thread_view_target()
+        {
+            app.mount_agents_terminal_for_target(target, cx);
+        }
 
         // US-015 (prd-git-diff-mode-2026-Q3.md): restore Diff mode only when
         // it is reconstructable. The diff derives its repo from the restored
@@ -1110,16 +1117,6 @@ impl PaneFlowApp {
                 app.mode = paneflow_config::schema::AppMode::Cli;
             }
         }
-
-        // US-116 (prd-agent-ui-refactor-2026-Q3.md): seed the panel-
-        // visibility gate from the restored mode. Without this seed,
-        // a session that quit in Agents mode reopens with the gate's
-        // default `false`, so the first turn-end notification would
-        // fire even though the panel is on-screen.
-        crate::agents::notifications::set_agents_panel_visible(matches!(
-            app.mode,
-            paneflow_config::schema::AppMode::Agents
-        ));
 
         // US-013 AC #1 - fire `app_started` once per launch. `Null` clients
         // (opt-out / unanswered consent / env kill-switch) no-op; only a

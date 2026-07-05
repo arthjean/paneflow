@@ -9,8 +9,8 @@
 //! Each terminal is a real [`crate::terminal::view::TerminalView`] entity, so
 //! its PTY, scrollback, and I/O threads survive tab switches and panel
 //! close/reopen. Hidden exited tabs are released opportunistically; running tabs
-//! stay alive until the user closes them. PTY env ids come from a namespace
-//! disjoint from CLI workspaces and Agents threads so they can never collide.
+//! stay alive until the user closes them. PTY env ids stay below the Agents
+//! thread namespace so shell hooks cannot misroute bottom terminals as threads.
 
 use gpui::{
     AnyElement, AppContext, ClickEvent, Context, CursorStyle, Focusable, InteractiveElement,
@@ -31,13 +31,19 @@ const BOTTOM_PANEL_MIN_HEIGHT: f32 = 140.0;
 
 /// Ceiling for the resize drag: never let the dock fully eat the surface above.
 const BOTTOM_PANEL_MAX_HEIGHT: f32 = 760.0;
-const BOTTOM_TERMINAL_HOT_CACHE_LIMIT: usize = 8;
+const BOTTOM_EXITED_TERMINAL_CACHE_LIMIT: usize = 8;
 
-/// Env-id namespace for bottom-panel PTYs. CLI workspaces live in `0..2^32` and
-/// Agents threads in `(1<<32)..` (via [`crate::project::thread_env_id`]); `2<<32`
-/// gives every bottom terminal an id that can collide with neither, since the
-/// per-session terminal counter never approaches `2^32`.
-const BOTTOM_TERMINAL_ENV_ID_BASE: u64 = 2u64 << 32;
+pub(crate) fn bottom_panel_max_height(window: &Window) -> f32 {
+    let viewport_h = f32::from(window.viewport_size().height);
+    (viewport_h * 0.72).clamp(BOTTOM_PANEL_MIN_HEIGHT, BOTTOM_PANEL_MAX_HEIGHT)
+}
+
+/// Env-id namespace for bottom-panel PTYs. CLI workspaces are small monotonic
+/// ids (capped at 20 open workspaces) and Agents threads start at `1 << 32`;
+/// this high-but-sub-Agents base avoids both ranges. Bottom terminals are raw
+/// shell tabs, so hook frames from manually launched agents should fail closed
+/// as unknown workspaces rather than being decoded as unrelated Agents threads.
+const BOTTOM_TERMINAL_ENV_ID_BASE: u64 = 3u64 << 30;
 
 #[derive(Clone, Copy)]
 struct BottomTerminalCacheEntry {
@@ -131,9 +137,9 @@ impl PaneFlowApp {
     }
 
     /// Spawn a fresh shell terminal as a new tab in the active thread's cwd and
-    /// make it active. Mirrors `ensure_terminal_view_mounted`: the PTY opens on a
-    /// background thread, and an OSC-title subscription keeps the tab label in
-    /// sync with the running process.
+    /// make it active. Mirrors the Agents terminal mount path: the PTY opens on
+    /// a background thread, and an OSC-title subscription keeps the tab label
+    /// in sync with the running process.
     pub(crate) fn spawn_bottom_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.create_bottom_terminal(cx);
         let id = terminal.id;
@@ -162,7 +168,7 @@ impl PaneFlowApp {
                 env_id,
                 cwd_path,
                 None,
-                TerminalSurfaceProfile::Agent,
+                TerminalSurfaceProfile::Normal,
                 cx,
             )
         });
@@ -313,7 +319,9 @@ impl PaneFlowApp {
         let protected_active = panel_visible
             .then_some(self.agents_view.bottom_panel_active)
             .flatten();
-        self.prune_bottom_terminal_cache(protected_active, !panel_visible, cx);
+        if self.prune_bottom_terminal_cache(protected_active, !panel_visible, cx) {
+            cx.notify();
+        }
     }
 
     fn bottom_terminal_cache_entries(
@@ -335,19 +343,20 @@ impl PaneFlowApp {
         protected_active: Option<u64>,
         release_all_exited: bool,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
         let entries = self.bottom_terminal_cache_entries(cx);
         let positions = bottom_terminal_prune_positions(
             &entries,
             protected_active,
             release_all_exited,
-            BOTTOM_TERMINAL_HOT_CACHE_LIMIT,
+            BOTTOM_EXITED_TERMINAL_CACHE_LIMIT,
         );
+        let mut changed = !positions.is_empty();
         for pos in positions {
             self.agents_view.bottom_terminals.remove(pos);
         }
 
-        if self.agents_view.bottom_terminals.len() > BOTTOM_TERMINAL_HOT_CACHE_LIMIT {
+        if self.agents_view.bottom_terminals.len() > BOTTOM_EXITED_TERMINAL_CACHE_LIMIT {
             log::debug!(
                 "agents bottom terminal cache remains over budget; running terminals are protected"
             );
@@ -362,18 +371,25 @@ impl PaneFlowApp {
         }) {
             self.agents_view.bottom_panel_active =
                 self.agents_view.bottom_terminals.last().map(|term| term.id);
+            changed = true;
         }
+        changed
     }
 
     /// Apply a live resize drag: set the dock height so its top edge tracks the
     /// cursor. Driven by the Agents main area's `on_mouse_move` (a wide capture
     /// surface, so the drag survives the cursor leaving the dock). No-op when no
     /// drag is in progress.
-    pub(crate) fn drag_bottom_panel_resize(&mut self, cursor_y: f32, cx: &mut Context<Self>) {
+    pub(crate) fn drag_bottom_panel_resize(
+        &mut self,
+        cursor_y: f32,
+        max_height: f32,
+        cx: &mut Context<Self>,
+    ) {
         if let Some((anchor_y, anchor_h)) = self.agents_view.bottom_panel_drag {
             let delta = anchor_y - cursor_y;
             self.agents_view.bottom_panel_height =
-                (anchor_h + delta).clamp(BOTTOM_PANEL_MIN_HEIGHT, BOTTOM_PANEL_MAX_HEIGHT);
+                (anchor_h + delta).clamp(BOTTOM_PANEL_MIN_HEIGHT, max_height);
             cx.notify();
         }
     }
@@ -391,9 +407,16 @@ impl PaneFlowApp {
 
     /// Render the dock: a draggable top edge, the tab strip, and the active
     /// terminal's surface. Spans the full width of the Agents main area.
-    pub(crate) fn render_agents_bottom_panel(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn render_agents_bottom_panel(
+        &mut self,
+        max_height: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let ui = crate::theme::ui_colors();
-        let height = self.agents_view.bottom_panel_height;
+        let height = self
+            .agents_view
+            .bottom_panel_height
+            .clamp(BOTTOM_PANEL_MIN_HEIGHT, max_height);
         let active = self.agents_view.bottom_panel_active;
         let tabs: Vec<(u64, SharedString)> = self
             .agents_view
@@ -756,7 +779,12 @@ mod tests {
         ];
 
         assert_eq!(
-            bottom_terminal_prune_positions(&entries, None, true, BOTTOM_TERMINAL_HOT_CACHE_LIMIT),
+            bottom_terminal_prune_positions(
+                &entries,
+                None,
+                true,
+                BOTTOM_EXITED_TERMINAL_CACHE_LIMIT,
+            ),
             vec![2, 0]
         );
     }

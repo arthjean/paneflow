@@ -293,10 +293,11 @@ impl PaneFlowApp {
         }
         let cwd = project.cwd.clone();
         self.active_project_idx = project_idx;
-        self.agents_target = Some(AgentsTarget::Thread {
+        let target = AgentsTarget::Thread {
             project_idx,
             thread_idx,
-        });
+        };
+        self.agents_target = Some(target);
         // US-005: a concrete selection always returns the picker context to
         // the project default (so a later deselect doesn't reopen the chat
         // picker).
@@ -306,6 +307,7 @@ impl PaneFlowApp {
         // Selecting a row cancels any armed inline delete-confirm.
         self.agents_view.agents_delete_armed = None;
         self.spawn_agents_environment_git_refresh(cwd, cx);
+        self.mount_agents_terminal_for_target(target, cx);
         self.save_session(cx);
         cx.notify();
         Ok(())
@@ -324,13 +326,15 @@ impl PaneFlowApp {
             return Err(OpError::ThreadNotFound);
         }
         let cwd = self.chats[chat_idx].cwd.clone();
-        self.agents_target = Some(AgentsTarget::Chat { chat_idx });
+        let target = AgentsTarget::Chat { chat_idx };
+        self.agents_target = Some(target);
         // US-005: reset picker context on any concrete selection.
         self.agents_picker_context = crate::project::AgentsPickerContext::Project;
         self.agents_view.agents_skills_visible = false;
         // Selecting a row cancels any armed inline delete-confirm.
         self.agents_view.agents_delete_armed = None;
         self.spawn_agents_environment_git_refresh(cwd, cx);
+        self.mount_agents_terminal_for_target(target, cx);
         self.save_session(cx);
         cx.notify();
         Ok(())

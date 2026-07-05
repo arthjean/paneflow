@@ -114,7 +114,6 @@ impl PaneFlowApp {
     /// active workspace's repo. Keeps the two non-CLI surfaces mutually
     /// exclusive.
     pub(crate) fn enter_diff_mode(&mut self, cx: &mut Context<Self>) {
-        crate::agents::notifications::set_agents_panel_visible(false);
         self.mode = AppMode::Diff;
         // `rebuild_diff_view` mounts the entity and calls `cx.notify()`.
         self.rebuild_diff_view(cx);
@@ -500,7 +499,6 @@ impl PaneFlowApp {
         // rows, so a return to Diff mode shows the diff in one frame instead of
         // recomputing it. Also closes the prior `multi_diff_view` watcher leak.
         self.park_displayed_diff(cx);
-        crate::agents::notifications::set_agents_panel_visible(false);
         self.mode = AppMode::Cli;
         // Focus contract: hand the keyboard back to the terminal the
         // user left. PTYs are detached, so the process is still alive.

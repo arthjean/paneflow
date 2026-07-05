@@ -13,7 +13,8 @@
 //! `claude_code_bypass_permissions` exactly as the tab bar does.
 
 use std::collections::HashSet;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use paneflow_config::schema::PaneFlowConfig;
 
@@ -290,14 +291,11 @@ impl TerminalAgent {
     /// Whether this agent's CLI binary is found on `PATH`. Drives the
     /// default visibility in [`Self::is_visible`].
     ///
-    /// Probed once per process and cached: `which` walks `PATH` for every
-    /// agent, too costly to repeat on the render thread each frame. The
-    /// cache is filled lazily on first call (after `main.rs` patches `PATH`
-    /// for GUI launches), so installing an agent while Paneflow runs needs a
-    /// restart to flip the default - the user can toggle it on immediately
-    /// in Settings meanwhile.
+    /// Probed through a short-lived process cache: `which` walks `PATH` for
+    /// every agent, too costly to repeat on the render thread each frame, but
+    /// a process-lifetime cache would hide agents installed after startup.
     pub fn is_installed(self) -> bool {
-        installed_binaries().contains(self.binary())
+        installed_binaries_contains(self.binary())
     }
 
     /// Static arguments appended after [`Self::binary`] for interactive agents
@@ -310,23 +308,22 @@ impl TerminalAgent {
         }
     }
 
-    fn command_parts(self, config: &PaneFlowConfig) -> Vec<String> {
-        let mut parts = Vec::with_capacity(4);
-        parts.push(self.binary().to_string());
-        parts.extend(self.command_args().iter().map(|arg| (*arg).to_string()));
+    fn launch_spec(self, config: &PaneFlowConfig) -> AgentCommandSpec {
+        let mut spec = AgentCommandSpec::new(self.binary());
+        spec.extend_args(self.command_args().iter().copied());
         if self == TerminalAgent::ClaudeCode
             && config.claude_code_bypass_permissions.unwrap_or(false)
         {
-            parts.push("--permission-mode".to_string());
-            parts.push("bypassPermissions".to_string());
+            spec.push_arg("--permission-mode");
+            spec.push_arg("bypassPermissions");
         }
-        parts
+        spec
     }
 
     /// Bare command that starts the agent. Honors
     /// `claude_code_bypass_permissions` for Claude Code.
     fn command(self, config: &PaneFlowConfig) -> String {
-        render_command_parts(&self.command_parts(config))
+        self.launch_spec(config).render_shell_command()
     }
 
     /// Whether the CLI accepts a caller-forced session UUID via
@@ -371,10 +368,10 @@ impl TerminalAgent {
         else {
             return self.command(config);
         };
-        let mut parts = self.command_parts(config);
-        parts.insert(1, "--session-id".to_string());
-        parts.insert(2, id.to_string());
-        render_command_parts(&parts)
+        let mut spec = self.launch_spec(config);
+        spec.insert_arg(0, "--session-id");
+        spec.insert_arg(1, id);
+        spec.render_shell_command()
     }
 
     /// Shell-aware launch command. The clear prefix is selected for the
@@ -416,21 +413,102 @@ impl TerminalAgent {
     }
 }
 
-fn render_command_parts(parts: &[String]) -> String {
-    parts.join(" ")
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentCommandSpec {
+    program: &'static str,
+    args: Vec<String>,
 }
 
-/// Agent binaries found on `PATH`, probed once and cached for the process
-/// lifetime. Backing store for [`TerminalAgent::is_installed`].
-fn installed_binaries() -> &'static HashSet<&'static str> {
-    static CACHE: OnceLock<HashSet<&'static str>> = OnceLock::new();
-    CACHE.get_or_init(|| {
-        TerminalAgent::ALL
+impl AgentCommandSpec {
+    pub(crate) fn new(program: &'static str) -> Self {
+        Self {
+            program,
+            args: Vec::new(),
+        }
+    }
+
+    pub(crate) fn push_arg(&mut self, arg: impl Into<String>) {
+        self.args.push(arg.into());
+    }
+
+    fn insert_arg(&mut self, index: usize, arg: impl Into<String>) {
+        self.args.insert(index, arg.into());
+    }
+
+    fn extend_args(&mut self, args: impl IntoIterator<Item = &'static str>) {
+        self.args.extend(args.into_iter().map(str::to_string));
+    }
+
+    pub(crate) fn render_shell_command(&self) -> String {
+        debug_assert!(is_plain_shell_token(self.program));
+        let mut command = self.program.to_string();
+        for arg in &self.args {
+            debug_assert!(is_plain_shell_token(arg));
+            command.push(' ');
+            command.push_str(arg);
+        }
+        command
+    }
+}
+
+pub(crate) fn is_plain_shell_token(token: &str) -> bool {
+    !token.is_empty()
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'='))
+}
+
+struct InstalledBinaryCache {
+    checked_at: Option<Instant>,
+    found: HashSet<&'static str>,
+}
+
+impl InstalledBinaryCache {
+    fn refresh(&mut self) {
+        self.found = TerminalAgent::ALL
             .into_iter()
             .map(TerminalAgent::binary)
             .filter(|bin| which::which(bin).is_ok())
-            .collect()
+            .collect();
+        self.checked_at = Some(Instant::now());
+    }
+
+    fn is_stale(&self) -> bool {
+        self.checked_at
+            .is_none_or(|checked_at| checked_at.elapsed() >= INSTALLED_BINARIES_TTL)
+    }
+}
+
+const INSTALLED_BINARIES_TTL: Duration = Duration::from_secs(2);
+
+fn installed_binary_cache() -> &'static Mutex<InstalledBinaryCache> {
+    static CACHE: OnceLock<Mutex<InstalledBinaryCache>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Mutex::new(InstalledBinaryCache {
+            checked_at: None,
+            found: HashSet::new(),
+        })
     })
+}
+
+/// Agent binaries found on `PATH`. The cache is short-lived rather than
+/// process-lifetime so agents installed while Paneflow is open can appear
+/// without a restart, while render paths avoid re-walking `PATH` every frame.
+fn installed_binaries_contains(binary: &'static str) -> bool {
+    let mut cache = match installed_binary_cache().lock() {
+        Ok(cache) => cache,
+        Err(poisoned) => {
+            tracing::warn!(
+                target: "paneflow_app::agent_launcher",
+                "installed binary cache mutex poisoned; refreshing recovered state"
+            );
+            poisoned.into_inner()
+        }
+    };
+    if cache.is_stale() {
+        cache.refresh();
+    }
+    cache.found.contains(binary)
 }
 
 #[cfg(test)]
@@ -547,6 +625,44 @@ mod tests {
         assert_eq!(TerminalAgent::Codex.command(&config), "codex");
         assert_eq!(TerminalAgent::Pi.command(&config), "pi");
         assert_eq!(TerminalAgent::Hermes.command(&config), "hermes");
+    }
+
+    #[test]
+    fn launch_spec_keeps_program_and_args_structured_until_render() {
+        let cfg = PaneFlowConfig {
+            claude_code_bypass_permissions: Some(true),
+            ..Default::default()
+        };
+
+        let spec = TerminalAgent::ClaudeCode.launch_spec(&cfg);
+
+        assert_eq!(spec.program, "claude");
+        assert_eq!(spec.args, vec!["--permission-mode", "bypassPermissions"]);
+        assert_eq!(
+            spec.render_shell_command(),
+            "claude --permission-mode bypassPermissions"
+        );
+    }
+
+    #[test]
+    fn launch_spec_plain_token_guard_matches_agent_command_surface() {
+        for agent in TerminalAgent::ALL {
+            assert!(
+                is_plain_shell_token(agent.binary()),
+                "{} binary must stay a plain shell token",
+                agent.display_name()
+            );
+            for arg in agent.command_args() {
+                assert!(
+                    is_plain_shell_token(arg),
+                    "{} arg `{arg}` must stay a plain shell token",
+                    agent.display_name()
+                );
+            }
+        }
+        assert!(is_plain_shell_token(SAMPLE_UUID));
+        assert!(!is_plain_shell_token("two words"));
+        assert!(!is_plain_shell_token("$(reboot)"));
     }
 
     const SAMPLE_UUID: &str = "550e8400-e29b-41d4-a716-446655440000";

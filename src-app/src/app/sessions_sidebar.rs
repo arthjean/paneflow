@@ -21,6 +21,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
+use crate::agent_launcher::AgentCommandSpec;
 use crate::agent_sessions::{SessionAgent, SessionMeta, format_relative_time};
 use crate::pane_drag::{SessionDrag, TabDragPreview};
 
@@ -966,27 +967,72 @@ pub(crate) fn resume_command(
     session_id: &str,
     config: &paneflow_config::schema::PaneFlowConfig,
 ) -> Option<String> {
+    resume_command_spec(agent, session_id, config).map(|spec| spec.render_shell_command())
+}
+
+fn resume_command_spec(
+    agent: SessionAgent,
+    session_id: &str,
+    config: &paneflow_config::schema::PaneFlowConfig,
+) -> Option<AgentCommandSpec> {
     if !crate::agent_sessions::is_valid_session_id(session_id) {
         log::warn!("resume_command: refused invalid session id, not sending to PTY");
         return None;
     }
-    Some(match agent {
+    let spec = match agent {
         SessionAgent::Claude => {
+            let mut spec = AgentCommandSpec::new("claude");
+            spec.push_arg("--resume");
+            spec.push_arg(session_id);
             if claude_bypass_enabled(config) {
-                format!("claude --resume {session_id} --permission-mode bypassPermissions")
-            } else {
-                format!("claude --resume {session_id}")
+                spec.push_arg("--permission-mode");
+                spec.push_arg("bypassPermissions");
             }
+            spec
         }
-        SessionAgent::Codex => format!("codex resume {session_id}"),
-        SessionAgent::OpenCode => format!("opencode --session {session_id}"),
-        SessionAgent::Pi => format!("pi --session {session_id}"),
-        SessionAgent::Hermes => format!("hermes --resume {session_id}"),
-        SessionAgent::Grok => format!("grok --resume {session_id}"),
-        SessionAgent::Cursor => format!("cursor-agent --resume={session_id}"),
-        SessionAgent::Gemini => format!("gemini --resume {session_id}"),
-        SessionAgent::Kiro => format!("kiro-cli chat --resume-id {session_id}"),
-    })
+        SessionAgent::Codex => {
+            let mut spec = AgentCommandSpec::new("codex");
+            spec.push_arg("resume");
+            spec.push_arg(session_id);
+            spec
+        }
+        SessionAgent::OpenCode => {
+            let mut spec = AgentCommandSpec::new("opencode");
+            spec.push_arg("--session");
+            spec.push_arg(session_id);
+            spec
+        }
+        SessionAgent::Pi => {
+            let mut spec = AgentCommandSpec::new("pi");
+            spec.push_arg("--session");
+            spec.push_arg(session_id);
+            spec
+        }
+        SessionAgent::Hermes => resume_flag_spec("hermes", session_id),
+        SessionAgent::Grok => resume_flag_spec("grok", session_id),
+        SessionAgent::Cursor => {
+            let mut spec = AgentCommandSpec::new("cursor-agent");
+            spec.push_arg(format!("--resume={session_id}"));
+            spec
+        }
+        SessionAgent::Gemini => resume_flag_spec("gemini", session_id),
+        SessionAgent::Kiro => {
+            let mut spec = AgentCommandSpec::new("kiro-cli");
+            spec.push_arg("chat");
+            spec.push_arg("--resume-id");
+            spec.push_arg(session_id);
+            spec
+        }
+    };
+    debug_assert!(crate::agent_launcher::is_plain_shell_token(session_id));
+    Some(spec)
+}
+
+fn resume_flag_spec(program: &'static str, session_id: &str) -> AgentCommandSpec {
+    let mut spec = AgentCommandSpec::new(program);
+    spec.push_arg("--resume");
+    spec.push_arg(session_id);
+    spec
 }
 
 #[cfg(test)]
@@ -1025,6 +1071,47 @@ mod tests {
         for agent in SessionAgent::ALL {
             assert!(resume_command(agent, valid, &cfg).is_some());
         }
+    }
+
+    #[test]
+    fn resume_command_renders_expected_agent_commands() {
+        let cfg = paneflow_config::schema::PaneFlowConfig::default();
+        let id = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
+
+        let cases = [
+            (SessionAgent::Claude, format!("claude --resume {id}")),
+            (SessionAgent::Codex, format!("codex resume {id}")),
+            (SessionAgent::OpenCode, format!("opencode --session {id}")),
+            (SessionAgent::Pi, format!("pi --session {id}")),
+            (SessionAgent::Hermes, format!("hermes --resume {id}")),
+            (SessionAgent::Grok, format!("grok --resume {id}")),
+            (SessionAgent::Cursor, format!("cursor-agent --resume={id}")),
+            (SessionAgent::Gemini, format!("gemini --resume {id}")),
+            (
+                SessionAgent::Kiro,
+                format!("kiro-cli chat --resume-id {id}"),
+            ),
+        ];
+
+        for (agent, expected) in cases {
+            assert_eq!(resume_command(agent, id, &cfg), Some(expected));
+        }
+    }
+
+    #[test]
+    fn resume_command_composes_claude_bypass_as_structured_args() {
+        let cfg = paneflow_config::schema::PaneFlowConfig {
+            claude_code_bypass_permissions: Some(true),
+            ..Default::default()
+        };
+        let id = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
+
+        assert_eq!(
+            resume_command(SessionAgent::Claude, id, &cfg),
+            Some(format!(
+                "claude --resume {id} --permission-mode bypassPermissions"
+            ))
+        );
     }
 
     #[test]

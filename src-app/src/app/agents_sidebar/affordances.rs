@@ -9,9 +9,7 @@
 //! been written to `threads.db` -- cascades the SQL DELETE so the
 //! durable store does not accumulate orphan rows (AC #9).
 
-use gpui::{
-    AppContext, ClickEvent, Context, MouseButton, PathPromptOptions, Pixels, Point, Window,
-};
+use gpui::{AppContext, Context, PathPromptOptions, Pixels, Point, Window};
 
 use super::state::{AgentsContextMenu, AgentsDeleteTarget, AgentsRenameTarget};
 use crate::PaneFlowApp;
@@ -369,8 +367,8 @@ impl PaneFlowApp {
 
     /// Picker selection: create a Terminal Thread bound to `agent` in
     /// `project_idx` and select it. The agent CLI is auto-launched on
-    /// the first PTY mount in
-    /// [`PaneFlowApp::ensure_terminal_view_mounted`] (which reads the
+    /// the explicit PTY mount in
+    /// [`PaneFlowApp::mount_agents_terminal_for_target`] (which reads the
     /// thread's `terminal_agent` and honors the bypass-permission flag).
     pub(crate) fn create_agent_terminal_thread_in(
         &mut self,
@@ -669,7 +667,7 @@ impl PaneFlowApp {
 
     /// Picker selection in new-chat context: create a free chat bound to
     /// `agent` (cwd = home) and select it. The CLI auto-launches on the
-    /// first PTY mount in [`PaneFlowApp::ensure_terminal_view_mounted`]
+    /// explicit PTY mount in [`PaneFlowApp::mount_agents_terminal_for_target`]
     /// (which resolves the chat target and honors the bypass flag),
     /// preserving the human-in-loop invariant (only the launch command is
     /// sent; no user prompt is auto-submitted).
@@ -801,36 +799,5 @@ impl PaneFlowApp {
         }
         self.agents_view.agents_menu_open = None;
         cx.notify();
-    }
-}
-
-/// Convenience for the sidebar `on_aux_click` listener: a single line
-/// that opens the right context menu given the right-click hit. Lives
-/// here (not inline at the call site) so the sidebar render stays
-/// readable and the menu dispatch logic has one home.
-pub(crate) fn handle_right_click_for_project(
-    this: &mut PaneFlowApp,
-    project_idx: usize,
-    e: &ClickEvent,
-    cx: &mut Context<PaneFlowApp>,
-) {
-    if let Some(position) = e.mouse_position()
-        && matches!(e, ClickEvent::Mouse(m) if m.down.button == MouseButton::Right)
-    {
-        this.open_agents_project_menu(project_idx, position, cx);
-    }
-}
-
-pub(crate) fn handle_right_click_for_thread(
-    this: &mut PaneFlowApp,
-    project_idx: usize,
-    thread_idx: usize,
-    e: &ClickEvent,
-    cx: &mut Context<PaneFlowApp>,
-) {
-    if let Some(position) = e.mouse_position()
-        && matches!(e, ClickEvent::Mouse(m) if m.down.button == MouseButton::Right)
-    {
-        this.open_agents_thread_menu(project_idx, thread_idx, position, cx);
     }
 }

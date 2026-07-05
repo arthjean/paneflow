@@ -7,7 +7,7 @@
 //! render path imports these helpers and only deals with element
 //! emission.
 
-use crate::project::{Project, Thread};
+use crate::project::{AgentsTarget, Project, Thread};
 
 /// Case-insensitive substring match. `lowered_needle` MUST already be
 /// `to_lowercase()`-ed by the caller -- on a workspace with N projects
@@ -73,20 +73,48 @@ pub(crate) fn chat_visible(chat: &Thread, lowered_needle: &str) -> bool {
     matches(&chat.title, lowered_needle)
 }
 
-/// First (project_idx, thread_idx) pair whose thread matches. Used by
-/// the Down-arrow key handler to jump straight to the first hit.
-pub(crate) fn first_matching_thread(
+/// First target whose row matches, in the same order the sidebar renders:
+/// pinned rows, project rows, then free chats. Used by Enter in the search
+/// field to jump to the first visible hit.
+pub(crate) fn first_matching_target(
     projects: &[Project],
+    chats: &[Thread],
     lowered_needle: &str,
-) -> Option<(usize, usize)> {
+) -> Option<AgentsTarget> {
     if lowered_needle.is_empty() {
         return None;
     }
-    for (p_idx, project) in projects.iter().enumerate() {
-        for (t_idx, thread) in project.threads.iter().enumerate() {
-            if thread_visible_in_project(thread, project, lowered_needle) {
-                return Some((p_idx, t_idx));
+    for (project_idx, project) in projects.iter().enumerate() {
+        for thread_idx in (0..project.threads.len()).rev() {
+            let thread = &project.threads[thread_idx];
+            if thread.pinned && thread_visible_in_project(thread, project, lowered_needle) {
+                return Some(AgentsTarget::Thread {
+                    project_idx,
+                    thread_idx,
+                });
             }
+        }
+    }
+    for chat_idx in (0..chats.len()).rev() {
+        let chat = &chats[chat_idx];
+        if chat.pinned && chat_visible(chat, lowered_needle) {
+            return Some(AgentsTarget::Chat { chat_idx });
+        }
+    }
+    for (p_idx, project) in projects.iter().enumerate() {
+        for t_idx in (0..project.threads.len()).rev() {
+            let thread = &project.threads[t_idx];
+            if thread_visible_in_project(thread, project, lowered_needle) {
+                return Some(AgentsTarget::Thread {
+                    project_idx: p_idx,
+                    thread_idx: t_idx,
+                });
+            }
+        }
+    }
+    for chat_idx in (0..chats.len()).rev() {
+        if chat_visible(&chats[chat_idx], lowered_needle) {
+            return Some(AgentsTarget::Chat { chat_idx });
         }
     }
     None
@@ -218,13 +246,33 @@ mod tests {
     }
 
     #[test]
-    fn first_matching_thread_returns_the_first_hit_in_walk_order() {
+    fn first_matching_target_returns_the_first_visible_hit() {
         let projects = vec![
             project_with_threads("Alpha", &["nope", "nope"]),
             project_with_threads("Beta", &["nope", "MATCH", "MATCH"]),
             project_with_threads("Gamma", &["MATCH"]),
         ];
-        assert_eq!(first_matching_thread(&projects, "match"), Some((1, 1)));
+        assert_eq!(
+            first_matching_target(&projects, &[], "match"),
+            Some(AgentsTarget::Thread {
+                project_idx: 1,
+                thread_idx: 2
+            })
+        );
+    }
+
+    #[test]
+    fn first_matching_target_considers_chats() {
+        let projects = vec![project_with_threads("Alpha", &["one", "two"])];
+        let chats = vec![crate::project::Thread::new_terminal(
+            "scratch session",
+            "/home/me",
+            None,
+        )];
+        assert_eq!(
+            first_matching_target(&projects, &chats, "scratch"),
+            Some(AgentsTarget::Chat { chat_idx: 0 })
+        );
     }
 
     #[test]
@@ -319,24 +367,24 @@ mod tests {
 
     #[test]
     fn filter_completes_in_under_50ms_at_50_projects_x_100_threads() {
-        // PRD AC #5: "Filter results render in under 50ms for 500
+        // PRD AC #5: "Filter results render in under 50ms for 5 000
         // total threads across 50 projects". The matcher itself runs
         // way under that budget -- this test asserts the algorithmic
         // bound holds, not the GPUI render time (which would be
         // verified manually with dev tools).
         let projects: Vec<Project> = (0..50)
             .map(|p| {
-                let titles: Vec<String> = (0..10).map(|t| format!("Thread {p}-{t}")).collect();
+                let titles: Vec<String> = (0..100).map(|t| format!("Thread {p}-{t}")).collect();
                 let titles_ref: Vec<&str> = titles.iter().map(String::as_str).collect();
                 project_with_threads(&format!("Project {p}"), &titles_ref)
             })
             .collect();
         let total_threads: usize = projects.iter().map(|p| p.threads.len()).sum();
-        assert_eq!(total_threads, 500);
+        assert_eq!(total_threads, 5_000);
 
         let start = std::time::Instant::now();
         let _ = nothing_matches(&projects, &[], "10");
-        let _ = first_matching_thread(&projects, "10");
+        let _ = first_matching_target(&projects, &[], "10");
         let elapsed = start.elapsed();
         // Generous bound -- the substring matcher should hit
         // sub-millisecond in practice. CI noise & debug builds can

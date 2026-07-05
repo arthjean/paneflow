@@ -19,6 +19,7 @@ use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
 use crate::{PaneFlowApp, StartSelfUpdate, update};
 
+#[derive(Clone)]
 pub(crate) struct Toast {
     pub(crate) message: String,
     /// Optional action buttons shown inside the toast. Empty for the
@@ -71,23 +72,40 @@ impl PaneFlowApp {
         hold_ms: u64,
         cx: &mut Context<Self>,
     ) {
-        self.toast = Some(Toast {
+        let toast = Toast {
             message,
             actions,
             hold_ms,
+        };
+        if self.toast.is_some() {
+            self.toast_queue.push_back(toast);
+            cx.notify();
+            return;
+        }
+        self.show_next_toast(toast, cx);
+    }
+
+    fn show_next_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        let total = TOAST_ENTER_MS + toast.hold_ms + TOAST_EXIT_MS;
+        self.toast = Some(Toast {
+            message: toast.message,
+            actions: toast.actions,
+            hold_ms: toast.hold_ms,
         });
         cx.notify();
 
-        // Dropping the previous task cancels its timer automatically.
-        let total = TOAST_ENTER_MS + hold_ms + TOAST_EXIT_MS;
         self._toast_task = Some(cx.spawn(
             async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
                 smol::Timer::after(std::time::Duration::from_millis(total)).await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        app.toast = None;
-                        app._toast_task = None;
-                        cx.notify();
+                        if let Some(next) = app.toast_queue.pop_front() {
+                            app.show_next_toast(next, cx);
+                        } else {
+                            app.toast = None;
+                            app._toast_task = None;
+                            cx.notify();
+                        }
                     })
                 });
             },

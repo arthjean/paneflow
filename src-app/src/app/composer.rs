@@ -1,8 +1,8 @@
 //! Prompt Composer (EP-001, prd-cli-cockpit-ergonomics-2026-Q3.md).
 //!
 //! US-001: a multi-line prompt bar anchored to the bottom edge of the
-//! focused pane. Delivery goes through the bracketed-paste path
-//! (`TerminalView::paste_text`) so embedded newlines stay literal - the
+//! focused pane. Delivery goes through the hardened text injection path
+//! (`TerminalView::inject_text`) so embedded newlines stay literal - the
 //! prompt lands PRE-FILLED in the agent's input box and is NEVER submitted
 //! by default (FR-01). `secondary-enter` is the explicit, documented
 //! deliver-then-submit gesture (a separate `\r` write), unavailable in
@@ -223,7 +223,7 @@ impl PaneFlowApp {
                     self.broadcast.pending.insert(sid, text.clone());
                     queued += 1;
                 } else {
-                    term.read(cx).paste_text(&text);
+                    term.read(cx).inject_text(&text);
                     delivered += 1;
                 }
             }
@@ -256,11 +256,15 @@ impl PaneFlowApp {
                     cx,
                 );
             } else {
-                term.read(cx).paste_text(&text);
+                term.read(cx).inject_text(&text);
                 if submit {
-                    // US-001 AC4: deliver THEN submit - the CR is a separate
-                    // PTY write, mirroring the IPC `submit: true` convention.
-                    term.read(cx).send_text("\r");
+                    // US-001 AC4: deliver THEN submit. Reuse the IPC's
+                    // deferred-CR path so an agent that treats a fresh paste
+                    // burst specially cannot swallow the submit.
+                    let floor = std::time::Duration::from_millis(
+                        self.cached_config.resolved_submit_paste_delay_ms(),
+                    );
+                    Self::schedule_deferred_submit(&term, floor, cx);
                 }
             }
         }
@@ -390,7 +394,7 @@ impl PaneFlowApp {
                 continue;
             }
             if let Some(text) = self.broadcast.pending.remove(&sid) {
-                term.read(cx).paste_text(&text);
+                term.read(cx).inject_text(&text);
                 changed = true;
             }
         }

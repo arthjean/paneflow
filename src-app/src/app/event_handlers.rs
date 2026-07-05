@@ -1202,12 +1202,7 @@ impl PaneFlowApp {
         let stall_threshold = std::time::Duration::from_secs(
             self.cached_config.resolved_agent_stall_threshold_secs(),
         );
-        let active_workspace_id = if matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
-            self.workspaces.get(self.active_idx).map(|ws| ws.id)
-        } else {
-            None
-        };
-        let mut stalled_notifs: Vec<(crate::agent_launcher::TerminalAgent, String, u64, bool)> =
+        let mut stalled_notifs: Vec<(crate::agent_launcher::TerminalAgent, String, u64)> =
             Vec::new();
         for ws in &mut self.workspaces {
             if ws.agent_sessions.is_empty() {
@@ -1249,7 +1244,6 @@ impl PaneFlowApp {
                             session.tool,
                             ws.title.clone(),
                             session.last_activity.elapsed().as_secs(),
-                            active_workspace_id == Some(ws.id),
                         ));
                         changed = true;
                     }
@@ -1290,13 +1284,12 @@ impl PaneFlowApp {
         // EP-004 US-011: fire AFTER the state writes so the notification and
         // the UI agree. One entry per Thinking→Stalled transition == one
         // notification per stall episode (PRD dedup AC).
-        for (agent, title, silent_secs, source_visible) in stalled_notifs {
+        for (agent, title, silent_secs) in stalled_notifs {
             super::ipc_handler::fire_stalled_notification(
                 agent,
                 &title,
                 silent_secs,
                 &self.cached_config,
-                source_visible,
                 cx.background_executor().clone(),
             );
         }

@@ -8,4 +8,4 @@
 
 mod skills;
 
-pub(crate) use skills::{SkillsTab, render_skills_page};
+pub(crate) use skills::{SkillEntry, SkillsTab, discover_skills, render_skills_page};

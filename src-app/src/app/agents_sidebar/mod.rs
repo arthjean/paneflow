@@ -1,11 +1,3 @@
-// US-010 (prd-agents-view.md): the Agents-view sidebar paints from
-// `self.projects` directly. Many helpers here are wired for events
-// that US-011 (create / rename / delete affordances + context menus)
-// and US-012 (search filter) will attach -- the foundation lives in
-// US-010, the actions land in US-011/US-012. The module-scoped allow
-// keeps that staging visible in one line.
-#![allow(dead_code)]
-
 //! Agents-mode sidebar: project headers + thread rows.
 //!
 //! This module owns the [`AppMode::Agents`] arm of the sidebar render.
@@ -420,6 +412,14 @@ impl PaneFlowApp {
     fn agents_menu_items(&self) -> Vec<crate::app::sidebar_actions_menu::SidebarMenuItem> {
         use crate::app::sidebar_actions_menu::SidebarMenuItem;
         vec![
+            SidebarMenuItem {
+                id: "agents-menu-skills".into(),
+                icon: "icons/tool.svg",
+                label: "Skills".into(),
+                on_click: Box::new(|app, _w, cx| {
+                    app.show_agents_skills(cx);
+                }),
+            },
             SidebarMenuItem {
                 id: "agents-menu-themes".into(),
                 icon: "icons/palette.svg",
@@ -886,8 +886,10 @@ impl PaneFlowApp {
                         .read(cx)
                         .value()
                         .to_lowercase();
-                    if let Some((p, t)) = filter::first_matching_thread(&this.projects, &q) {
-                        let _ = this.select_thread(p, t, cx);
+                    if let Some(target) =
+                        filter::first_matching_target(&this.projects, &this.chats, &q)
+                    {
+                        this.select_agents_target(target, cx);
                     }
                     cx.stop_propagation();
                 }
