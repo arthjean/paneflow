@@ -251,14 +251,13 @@ impl PaneFlowApp {
         // primitive with the Agents sidebar filter.
         let filter_field = crate::ui_primitives::filter_pill(
             "diff-files-filter",
+            "diff-files-filter-clear",
             ui,
             self.diff_mode.diff_file_filter.clone(),
             filtering,
             cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.diff_mode.diff_file_filter.update(cx, |inp, cx| {
-                    inp.content = SharedString::default();
-                    inp.selected_range = 0..0;
-                    cx.notify();
+                    inp.clear(cx);
                 });
             }),
         )
@@ -267,9 +266,7 @@ impl PaneFlowApp {
         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
             if ev.keystroke.key.as_str() == "escape" {
                 this.diff_mode.diff_file_filter.update(cx, |inp, cx| {
-                    inp.content = SharedString::default();
-                    inp.selected_range = 0..0;
-                    cx.notify();
+                    inp.clear(cx);
                 });
                 cx.stop_propagation();
             }

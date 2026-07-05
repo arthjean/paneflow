@@ -81,14 +81,14 @@ pub fn register_keybindings(cx: &mut App) {
 
 pub struct TextInput {
     pub focus_handle: FocusHandle,
-    pub content: SharedString,
-    pub placeholder: SharedString,
-    pub selected_range: Range<usize>,
-    pub selection_reversed: bool,
-    pub marked_range: Option<Range<usize>>,
-    pub last_layout: Option<ShapedLine>,
-    pub last_bounds: Option<Bounds<Pixels>>,
-    pub is_selecting: bool,
+    content: SharedString,
+    placeholder: SharedString,
+    selected_range: Range<usize>,
+    selection_reversed: bool,
+    marked_range: Option<Range<usize>>,
+    last_layout: Option<ShapedLine>,
+    last_bounds: Option<Bounds<Pixels>>,
+    is_selecting: bool,
 }
 
 impl TextInput {
@@ -116,6 +116,25 @@ impl TextInput {
     /// Current content as an owned `String`.
     pub fn value(&self) -> String {
         self.content.to_string()
+    }
+
+    /// Replace the entire input value from app code and move the cursor to
+    /// the end. Clears IME composition state because the marked bytes no
+    /// longer describe the new content.
+    pub fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.content = value.into();
+        let cursor = self.content.len();
+        self.selected_range = cursor..cursor;
+        self.selection_reversed = false;
+        self.marked_range = None;
+        self.is_selecting = false;
+        self.last_layout = None;
+        self.last_bounds = None;
+        cx.notify();
+    }
+
+    pub fn clear(&mut self, cx: &mut Context<Self>) {
+        self.set_value(SharedString::default(), cx);
     }
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
@@ -317,6 +336,37 @@ impl TextInput {
         self.offset_from_utf16(range_utf16.start)..self.offset_from_utf16(range_utf16.end)
     }
 
+    fn byte_offset_from_utf16_in_text(text: &str, offset: usize) -> usize {
+        let mut utf8_offset = 0;
+        let mut utf16_count = 0;
+        for ch in text.chars() {
+            if utf16_count >= offset {
+                break;
+            }
+            utf16_count += ch.len_utf16();
+            utf8_offset += ch.len_utf8();
+        }
+        utf8_offset
+    }
+
+    fn byte_range_from_utf16_in_text(text: &str, range_utf16: &Range<usize>) -> Range<usize> {
+        Self::byte_offset_from_utf16_in_text(text, range_utf16.start)
+            ..Self::byte_offset_from_utf16_in_text(text, range_utf16.end)
+    }
+
+    fn replacement_range_from_utf16(&self, range_utf16: Option<&Range<usize>>) -> Range<usize> {
+        match (self.marked_range.as_ref(), range_utf16) {
+            (Some(marked_range), Some(range_utf16)) => {
+                let marked_text = &self.content[marked_range.clone()];
+                let relative = Self::byte_range_from_utf16_in_text(marked_text, range_utf16);
+                marked_range.start + relative.start..marked_range.start + relative.end
+            }
+            (_, Some(range_utf16)) => self.range_from_utf16(range_utf16),
+            (Some(marked_range), None) => marked_range.clone(),
+            (None, None) => self.selected_range.clone(),
+        }
+    }
+
     fn previous_boundary(&self, offset: usize) -> usize {
         self.content
             .grapheme_indices(true)
@@ -379,17 +429,14 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
+        let range = self.replacement_range_from_utf16(range_utf16.as_ref());
 
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
-        self.marked_range.take();
+        self.selection_reversed = false;
+        self.marked_range = None;
         cx.notify();
     }
 
@@ -401,11 +448,7 @@ impl EntityInputHandler for TextInput {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let range = range_utf16
-            .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .or(self.marked_range.clone())
-            .unwrap_or(self.selected_range.clone());
+        let range = self.replacement_range_from_utf16(range_utf16.as_ref());
 
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
@@ -417,9 +460,10 @@ impl EntityInputHandler for TextInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.end)
+            .map(|range_utf16| Self::byte_range_from_utf16_in_text(new_text, range_utf16))
+            .map(|new_range| range.start + new_range.start..range.start + new_range.end)
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+        self.selection_reversed = false;
 
         cx.notify();
     }
@@ -708,5 +752,30 @@ impl Render for TextInput {
 impl Focusable for TextInput {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus_handle.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TextInput;
+
+    #[test]
+    fn utf16_range_conversion_handles_surrogate_pairs() {
+        let text = "a😀b";
+
+        assert_eq!(
+            TextInput::byte_range_from_utf16_in_text(text, &(1..3)),
+            1..5
+        );
+    }
+
+    #[test]
+    fn utf16_range_conversion_clamps_to_text_end() {
+        let text = "é";
+
+        assert_eq!(
+            TextInput::byte_range_from_utf16_in_text(text, &(0..99)),
+            0..2
+        );
     }
 }

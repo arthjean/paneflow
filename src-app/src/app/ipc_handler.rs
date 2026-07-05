@@ -75,20 +75,20 @@ const SUBMIT_ECHO_EXTRA: Duration = Duration::from_millis(500);
 
 /// A validated pane plan for `workspace.up`: the cwd is already canonicalized,
 /// so the spawn phase is infallible with respect to directories (US-012).
-struct PlannedPane {
-    cwd: Option<PathBuf>,
-    command: Option<String>,
-    prompt: Option<String>,
-    env: Option<HashMap<String, String>>,
-    profile: TerminalSurfaceProfile,
-    focus: bool,
+pub(crate) struct PlannedPane {
+    pub(crate) cwd: Option<PathBuf>,
+    pub(crate) command: Option<String>,
+    pub(crate) prompt: Option<String>,
+    pub(crate) env: Option<HashMap<String, String>>,
+    pub(crate) profile: TerminalSurfaceProfile,
+    pub(crate) focus: bool,
     /// EP-004 US-012: stable label posed atomically as `custom_name` at spawn
     /// (sanitized; de-duplicated within the batch). `None` keeps the
     /// auto-derived name.
-    label: Option<String>,
+    pub(crate) label: Option<String>,
     /// EP-004 US-015: optional context blob staged to a temp file and passed to
     /// the spawned agent via `PANEFLOW_CONTEXT_FILE` (no inline 64 KiB cap).
-    context: Option<String>,
+    pub(crate) context: Option<String>,
 }
 
 /// Parse a JSON `{ "K": "V", … }` object into an env map, dropping non-string
@@ -109,6 +109,54 @@ fn parse_terminal_profile(value: Option<&serde_json::Value>) -> TerminalSurfaceP
         Some("review") => TerminalSurfaceProfile::Review,
         Some("cached") => TerminalSurfaceProfile::Cached,
         _ => TerminalSurfaceProfile::Normal,
+    }
+}
+
+pub(crate) fn parse_workspace_pane_plan(
+    spec: &serde_json::Value,
+) -> Result<PlannedPane, JsonRpcError> {
+    let cwd = match spec.get("cwd").and_then(|c| c.as_str()) {
+        Some(raw) => match canonicalize_workspace_cwd(raw) {
+            Ok(p) => Some(p),
+            Err(e) => return Err(e),
+        },
+        None => None,
+    };
+    Ok(PlannedPane {
+        cwd,
+        command: spec
+            .get("command")
+            .and_then(|c| c.as_str())
+            .map(str::to_string),
+        prompt: spec
+            .get("prompt")
+            .and_then(|c| c.as_str())
+            .map(str::to_string),
+        env: parse_env_object(spec.get("env")),
+        profile: parse_terminal_profile(spec.get("profile")),
+        focus: spec.get("focus").and_then(|f| f.as_bool()).unwrap_or(false),
+        label: spec
+            .get("label")
+            .or_else(|| spec.get("name"))
+            .and_then(|v| v.as_str())
+            .and_then(sanitize_pane_name),
+        context: spec
+            .get("context")
+            .and_then(|c| c.as_str())
+            .map(str::to_string),
+    })
+}
+
+pub(crate) fn dedupe_planned_pane_labels(planned: &mut [PlannedPane]) {
+    let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for pp in planned {
+        if let Some(label) = pp.label.take() {
+            let unique = crate::workspace::surface_naming::claim_unique(&mut taken, &label);
+            if unique != label {
+                log::warn!("workspace.up: duplicate label '{label}' in batch, using '{unique}'");
+            }
+            pp.label = Some(unique);
+        }
     }
 }
 
@@ -453,6 +501,13 @@ fn stage_context_file(
             .insert("PANEFLOW_CONTEXT_FILE".to_string(), path_str);
     }
     env
+}
+
+pub(crate) fn stage_planned_pane_env(
+    pane: &PlannedPane,
+    cx: &mut gpui::Context<crate::PaneFlowApp>,
+) -> Option<HashMap<String, String>> {
+    stage_context_file(pane.context.as_deref(), pane.env.clone(), cx)
 }
 
 fn fire_agent_exit_notification(
@@ -1758,64 +1813,20 @@ impl PaneFlowApp {
             if let Some(mw) = parse_managed_worktree(spec.get("managed_worktree")) {
                 managed_worktrees.push(mw);
             }
-            let cwd = match spec.get("cwd").and_then(|c| c.as_str()) {
-                Some(raw) => match canonicalize_workspace_cwd(raw) {
-                    Ok(canonical) => Some(canonical),
-                    Err(_) => {
-                        return JsonRpcError::invalid_params(format!(
-                            "pane {i}: cwd '{raw}' does not exist or is not a directory"
-                        ))
+            match parse_workspace_pane_plan(spec) {
+                Ok(plan) => planned.push(plan),
+                Err(err) => {
+                    return JsonRpcError::invalid_params(format!("pane {i}: {}", err.message))
                         .into_value();
-                    }
-                },
-                None => None,
-            };
-            planned.push(PlannedPane {
-                cwd,
-                command: spec
-                    .get("command")
-                    .and_then(|c| c.as_str())
-                    .map(str::to_string),
-                prompt: spec
-                    .get("prompt")
-                    .and_then(|c| c.as_str())
-                    .map(str::to_string),
-                env: parse_env_object(spec.get("env")),
-                profile: parse_terminal_profile(spec.get("profile")),
-                focus: spec.get("focus").and_then(|f| f.as_bool()).unwrap_or(false),
-                // EP-004 US-012: per-pane label (accept `label`, fall back to
-                // `name`), sanitized like a `surface.rename`.
-                label: spec
-                    .get("label")
-                    .or_else(|| spec.get("name"))
-                    .and_then(|v| v.as_str())
-                    .and_then(sanitize_pane_name),
-                // EP-004 US-015: per-pane context blob (staged to a file).
-                context: spec
-                    .get("context")
-                    .and_then(|c| c.as_str())
-                    .map(str::to_string),
-            });
+                }
+            }
         }
 
         // EP-004 US-012 AC3: disambiguate duplicate labels WITHIN this batch
         // (the second "logs" becomes "logs-2") and warn, reusing the same
         // suffix algorithm the query-time surface-name resolver uses, so a
         // conductor's labels stay stable and distinct instead of colliding.
-        {
-            let mut taken: std::collections::HashSet<String> = std::collections::HashSet::new();
-            for pp in &mut planned {
-                if let Some(label) = pp.label.take() {
-                    let unique = crate::workspace::surface_naming::claim_unique(&mut taken, &label);
-                    if unique != label {
-                        log::warn!(
-                            "workspace.up: duplicate label '{label}' in batch, using '{unique}'"
-                        );
-                    }
-                    pp.label = Some(unique);
-                }
-            }
-        }
+        dedupe_planned_pane_labels(&mut planned);
 
         // EP-004 US-012: capture the final (de-duplicated) labels in pane order
         // so the response associates each returned `surface_id` with its stable
@@ -1838,7 +1849,7 @@ impl PaneFlowApp {
         for pp in &planned {
             // EP-004 US-015: stage any per-pane context blob to a file and pass
             // its path via PANEFLOW_CONTEXT_FILE (merged into the pane's env).
-            let env = stage_context_file(pp.context.as_deref(), pp.env.clone(), cx);
+            let env = stage_planned_pane_env(pp, cx);
             let terminal = cx.new(|cx| {
                 TerminalView::with_cwd_env_and_profile(
                     ws_id,

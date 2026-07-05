@@ -26,7 +26,7 @@ use gpui::{
 };
 
 pub(crate) const SETTINGS_CONTROL_CORNER_RADIUS: Pixels = px(8.);
-const SETTINGS_CARD_CORNER_RADIUS: Pixels = px(18.);
+const SETTINGS_CARD_CORNER_RADIUS: Pixels = px(8.);
 
 /// Apply an alpha override to an `Hsla` color. GPUI's `Hsla` has no
 /// dedicated builder method for alpha, so we update the field manually.

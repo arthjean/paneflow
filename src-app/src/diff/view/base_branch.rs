@@ -1,6 +1,6 @@
 //! Search model for the base-branch picker.
 
-use gpui::{Context, SharedString, Window};
+use gpui::{Context, Window};
 
 use super::DiffView;
 
@@ -49,9 +49,7 @@ impl DiffView {
         self.base_picker_open = !self.base_picker_open;
         if self.base_picker_open {
             self.base_filter.update(cx, |input, cx| {
-                input.content = SharedString::default();
-                input.selected_range = 0..0;
-                cx.notify();
+                input.clear(cx);
             });
             let focus_handle = self.base_filter.read(cx).focus_handle.clone();
             window.focus(&focus_handle, cx);

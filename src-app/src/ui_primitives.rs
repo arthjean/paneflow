@@ -163,11 +163,13 @@ pub(crate) fn toolbar_pill(id: impl Into<ElementId>, ui: UiColors, active: bool)
 /// (Escape/Enter) and `.on_mouse_down_out` (blur) handlers.
 pub(crate) fn filter_pill(
     id: impl Into<ElementId>,
+    clear_id: impl Into<ElementId>,
     ui: UiColors,
     input: impl IntoElement,
     show_clear: bool,
     on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
+    let clear_id = clear_id.into();
     let mut field = div()
         .id(id.into())
         .flex()
@@ -197,7 +199,7 @@ pub(crate) fn filter_pill(
     if show_clear {
         field = field.child(
             div()
-                .id("filter-clear")
+                .id(clear_id)
                 .flex_none()
                 .w(px(16.))
                 .h(px(16.))

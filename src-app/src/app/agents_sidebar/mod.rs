@@ -858,14 +858,13 @@ impl PaneFlowApp {
         // own keybindings; the unbound Escape/Enter bubble up to this container.
         crate::ui_primitives::filter_pill(
             "agents-sidebar-filter",
+            "agents-sidebar-filter-clear",
             ui,
             self.agents_view.agents_filter_input.clone(),
             !is_empty,
             cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.agents_view.agents_filter_input.update(cx, |inp, cx| {
-                    inp.content = SharedString::default();
-                    inp.selected_range = 0..0;
-                    cx.notify();
+                    inp.clear(cx);
                 });
             }),
         )
@@ -873,9 +872,7 @@ impl PaneFlowApp {
             |this, ev: &KeyDownEvent, _w, cx| match ev.keystroke.key.as_str() {
                 "escape" => {
                     this.agents_view.agents_filter_input.update(cx, |inp, cx| {
-                        inp.content = SharedString::default();
-                        inp.selected_range = 0..0;
-                        cx.notify();
+                        inp.clear(cx);
                     });
                     cx.stop_propagation();
                 }

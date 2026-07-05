@@ -441,37 +441,35 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Copy hunk as diff",
     },
     // EP-003 US-009 (prd-review-redesign-2026-Q3.md): keyboard-first review loop.
-    // `DiffView && !Terminal && !TextInput` keeps these off an embedded
-    // review/shell terminal AND the base-branch filter input (both children of
-    // the DiffView focus subtree) so typing in either is untouched.
+    // Keep these off embedded terminals and text widgets inside DiffView.
     ActionMeta {
         name: "diff_next_hunk",
         factory: || Box::new(crate::DiffNextHunk),
-        context: "DiffView && !Terminal && !TextInput",
+        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
         description: "Diff: next hunk",
     },
     ActionMeta {
         name: "diff_prev_hunk",
         factory: || Box::new(crate::DiffPrevHunk),
-        context: "DiffView && !Terminal && !TextInput",
+        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
         description: "Diff: previous hunk",
     },
     ActionMeta {
         name: "diff_toggle_view",
         factory: || Box::new(crate::DiffToggleView),
-        context: "DiffView && !Terminal && !TextInput",
+        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
         description: "Diff: toggle unified / split",
     },
     ActionMeta {
         name: "diff_toggle_sync",
         factory: || Box::new(crate::DiffToggleSync),
-        context: "DiffView && !Terminal && !TextInput",
+        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
         description: "Diff: toggle scroll sync",
     },
     ActionMeta {
         name: "diff_dismiss",
         factory: || Box::new(crate::DiffDismiss),
-        context: "DiffView && !Terminal && !TextInput",
+        context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
         description: "Diff: close popover / refocus body",
     },
     // EP-001 (prd-cli-cockpit-ergonomics-2026-Q3.md): Cli-cockpit steering.

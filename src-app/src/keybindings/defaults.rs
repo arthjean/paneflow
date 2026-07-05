@@ -342,36 +342,32 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("DiffView"),
     },
     // EP-003 US-009 (prd-review-redesign-2026-Q3.md): keyboard-first review loop.
-    // Bare keys, scoped to `DiffView && !Terminal && !TextInput` so neither an
-    // embedded review/shell terminal NOR the base-branch filter input (both focus
-    // children of the DiffView) loses a keystroke - the `!` clauses are what make
-    // bare letters safe here. Chosen scheme: `[`/`]` step hunks (the Open-Question
-    // pick over `J`/`K`), `u` unified/split, `s` sync, `Esc` dismiss. All
-    // remappable like every entry in this table.
+    // Bare keys, scoped away from terminals and text widgets so focus children
+    // of the DiffView do not lose a keystroke.
     DefaultBinding {
         key: "]",
         action_name: "diff_next_hunk",
-        context: Some("DiffView && !Terminal && !TextInput"),
+        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
     DefaultBinding {
         key: "[",
         action_name: "diff_prev_hunk",
-        context: Some("DiffView && !Terminal && !TextInput"),
+        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
     DefaultBinding {
         key: "u",
         action_name: "diff_toggle_view",
-        context: Some("DiffView && !Terminal && !TextInput"),
+        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
     DefaultBinding {
         key: "s",
         action_name: "diff_toggle_sync",
-        context: Some("DiffView && !Terminal && !TextInput"),
+        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
     DefaultBinding {
         key: "escape",
         action_name: "diff_dismiss",
-        context: Some("DiffView && !Terminal && !TextInput"),
+        context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
     // EP-001 (prd-cli-cockpit-ergonomics-2026-Q3.md): Composer + broadcast
     // groups. All three are unclaimed `secondary-shift-…` slots (taken set

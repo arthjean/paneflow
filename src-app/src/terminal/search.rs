@@ -125,9 +125,7 @@ impl TerminalView {
         self.search_current = 0;
         self.search_regex_error = None;
         self.search_input.update(cx, |input, cx| {
-            input.content = "".into();
-            input.selected_range = 0..0;
-            cx.notify();
+            input.clear(cx);
         });
 
         if self.search_active {

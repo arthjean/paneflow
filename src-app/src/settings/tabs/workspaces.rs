@@ -11,12 +11,15 @@ use gpui::{
     div, img, prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::{
-    CommandDefinition, LayoutNode, SurfaceDefinition, TerminalSurfaceProfile, WorkspaceDefinition,
+    CommandDefinition, LayoutNode, SurfaceDefinition, WorkspaceDefinition,
 };
 use serde_json::{Value, json};
 
 use crate::agent_launcher::TerminalAgent;
-use crate::app::ipc_handler::{build_up_layout, canonicalize_workspace_cwd, sanitize_pane_name};
+use crate::app::ipc_handler::{
+    build_up_layout, canonicalize_workspace_cwd, dedupe_planned_pane_labels,
+    parse_workspace_pane_plan, stage_planned_pane_env,
+};
 use crate::layout::MAX_PANES;
 use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, card_colors, deferred_select_menu, hairline,
@@ -38,16 +41,6 @@ enum PaneKind {
     Empty,
     Agent,
     Command,
-}
-
-struct ExistingWorkspacePanePlan {
-    cwd: Option<std::path::PathBuf>,
-    command: Option<String>,
-    prompt: Option<String>,
-    env: Option<std::collections::HashMap<String, String>>,
-    profile: TerminalSurfaceProfile,
-    focus: bool,
-    label: Option<String>,
 }
 
 impl PaneFlowApp {
@@ -381,20 +374,29 @@ impl PaneFlowApp {
 
         let panes_card = self.render_workspace_panes_card(idx, &panes, selected_pane, ui, cx);
         let inspector = self.render_workspace_pane_inspector(idx, panes.get(selected_pane), ui, cx);
-        let status = self
-            .workspace_template_status
-            .as_ref()
-            .filter(|message| message.starts_with("Error:"))
-            .map(|message| {
-                div()
-                    .px(px(12.))
-                    .py(px(8.))
-                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .bg(with_alpha(apple_red(), 0.12))
-                    .text_size(px(12.))
-                    .text_color(apple_red())
-                    .child(message.clone())
-            });
+        let status = self.workspace_template_status.as_ref().map(|message| {
+            let is_error = message.starts_with("Error:");
+            let color = if is_error {
+                apple_red()
+            } else if message.starts_with("Saving") {
+                ui.muted
+            } else {
+                switch_blue()
+            };
+            let bg = if is_error {
+                with_alpha(apple_red(), 0.12)
+            } else {
+                with_alpha(color, 0.12)
+            };
+            div()
+                .px(px(12.))
+                .py(px(8.))
+                .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+                .bg(bg)
+                .text_size(px(12.))
+                .text_color(color)
+                .child(message.clone())
+        });
 
         div()
             .flex()
@@ -480,6 +482,7 @@ impl PaneFlowApp {
         div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .gap(px(16.))
             .px(px(12.))
@@ -768,6 +771,7 @@ impl PaneFlowApp {
         div()
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .gap(px(16.))
             .px(px(12.))
@@ -1303,46 +1307,28 @@ impl PaneFlowApp {
             return Err(format!("maximum pane count reached ({MAX_PANES})"));
         }
 
-        let mut planned = Vec::with_capacity(pane_specs.len());
-        for spec in pane_specs {
-            let cwd = match spec.get("cwd").and_then(Value::as_str) {
-                Some(raw) => Some(canonicalize_workspace_cwd(raw).map_err(|err| err.message)?),
-                None => None,
-            };
-            planned.push(ExistingWorkspacePanePlan {
-                cwd,
-                command: spec
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .filter(|command| !command.is_empty())
-                    .map(str::to_string),
-                prompt: spec
-                    .get("prompt")
-                    .and_then(Value::as_str)
-                    .filter(|prompt| !prompt.is_empty())
-                    .map(str::to_string),
-                env: launch_env_from_value(spec.get("env")),
-                profile: launch_profile_from_value(spec.get("profile")),
-                focus: spec.get("focus").and_then(Value::as_bool).unwrap_or(false),
-                label: spec
-                    .get("label")
-                    .or_else(|| spec.get("name"))
-                    .and_then(Value::as_str)
-                    .and_then(sanitize_pane_name),
-            });
-        }
+        let mut planned = pane_specs
+            .iter()
+            .enumerate()
+            .map(|(idx, spec)| {
+                parse_workspace_pane_plan(spec)
+                    .map_err(|err| format!("pane {idx}: {}", err.message))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        dedupe_planned_pane_labels(&mut planned);
 
         let ws_id = self.workspaces[target_idx].id;
         let focus_idx = planned.iter().position(|plan| plan.focus).unwrap_or(0);
         let mut launches = Vec::with_capacity(planned.len());
         let mut panes = Vec::with_capacity(planned.len());
         for plan in planned {
+            let env = stage_planned_pane_env(&plan, cx);
             let terminal = cx.new(|cx| {
                 TerminalView::with_cwd_env_and_profile(
                     ws_id,
                     plan.cwd.clone(),
                     None,
-                    plan.env.clone(),
+                    env,
                     plan.profile,
                     cx,
                 )
@@ -1353,7 +1339,11 @@ impl PaneFlowApp {
                 });
             }
             let new_pane = self.create_pane(terminal.clone(), ws_id, cx);
-            launches.push((terminal, plan.command, plan.prompt));
+            launches.push((
+                terminal,
+                plan.command.filter(|command| !command.is_empty()),
+                plan.prompt.filter(|prompt| !prompt.is_empty()),
+            ));
             panes.push(new_pane);
         }
         let focus_pane = panes.get(focus_idx).cloned();
@@ -1396,14 +1386,30 @@ impl PaneFlowApp {
     ) {
         self.cached_config =
             crate::config_writer::with_commands(&self.cached_config, commands.clone());
+        let saved_message = self
+            .workspace_template_status
+            .as_deref()
+            .filter(|message| !message.starts_with("Error:"))
+            .map(|message| format!("Saved: {}", message.trim_end_matches('.')))
+            .unwrap_or_else(|| "Saved workspace templates".to_string());
+        self.workspace_template_status = Some("Saving workspace templates...".to_string());
         cx.notify();
-        cx.background_spawn(async move {
-            smol::unblock(move || {
-                if !crate::config_writer::save_commands_checked(commands) {
+        cx.spawn(async move |this, cx| {
+            let ok =
+                smol::unblock(move || crate::config_writer::save_commands_checked(commands)).await;
+            let _ = this.update(cx, |this, cx| {
+                if ok {
+                    this.workspace_template_status = Some(saved_message);
+                } else {
                     log::warn!("settings: failed to persist workspace templates");
+                    this.workspace_template_status = Some(
+                        "Error: workspace templates changed in memory but could not be saved"
+                            .to_string(),
+                    );
+                    this.show_toast("Workspace templates could not be saved", cx);
                 }
-            })
-            .await;
+                cx.notify();
+            });
         })
         .detach();
     }
@@ -1691,26 +1697,6 @@ fn paths_equal(left: &std::path::Path, right: &std::path::Path) -> bool {
     }
 }
 
-fn launch_env_from_value(
-    value: Option<&Value>,
-) -> Option<std::collections::HashMap<String, String>> {
-    let object = value?.as_object()?;
-    let env = object
-        .iter()
-        .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_string())))
-        .collect::<std::collections::HashMap<_, _>>();
-    (!env.is_empty()).then_some(env)
-}
-
-fn launch_profile_from_value(value: Option<&Value>) -> TerminalSurfaceProfile {
-    match value.and_then(Value::as_str) {
-        Some("agent") => TerminalSurfaceProfile::Agent,
-        Some("review") => TerminalSurfaceProfile::Review,
-        Some("cached") => TerminalSurfaceProfile::Cached,
-        _ => TerminalSurfaceProfile::Normal,
-    }
-}
-
 fn switch_blue() -> Hsla {
     Hsla::from(rgb(0x339cff))
 }
@@ -1725,7 +1711,7 @@ fn quiet_card() -> gpui::Div {
         .flex()
         .flex_col()
         .bg(bg)
-        .rounded(px(16.))
+        .rounded(px(8.))
         .overflow_hidden()
 }
 
@@ -1734,8 +1720,9 @@ fn text_field(
     ui: crate::theme::UiColors,
 ) -> impl IntoElement {
     div()
-        .flex_shrink_0()
-        .w(px(260.))
+        .flex_1()
+        .min_w(px(180.))
+        .max_w(px(320.))
         .px(px(10.))
         .py(px(6.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
@@ -1764,8 +1751,9 @@ fn project_path_picker(
 
     div()
         .id("workspace-project-path-picker")
-        .flex_shrink_0()
-        .w(px(260.))
+        .flex_1()
+        .min_w(px(180.))
+        .max_w(px(320.))
         .px(px(10.))
         .py(px(6.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
@@ -2122,10 +2110,7 @@ fn set_input(
     cx: &mut Context<PaneFlowApp>,
 ) {
     input.update(cx, |input, cx| {
-        input.content = SharedString::from(value.to_string());
-        let len = input.content.len();
-        input.selected_range = len..len;
-        cx.notify();
+        input.set_value(SharedString::from(value.to_string()), cx);
     });
 }
 

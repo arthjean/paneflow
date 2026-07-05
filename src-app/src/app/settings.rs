@@ -11,7 +11,7 @@
 //!   [`PaneFlowApp::handle_shortcut_recording`] - key routing for the font-picker
 //!   typeahead, Escape handling, and shortcut capture.
 
-use gpui::{Context, KeyDownEvent, ScrollHandle, Window, prelude::*};
+use gpui::{Context, KeyDownEvent, ScrollHandle, Window};
 
 use crate::{PaneFlowApp, SettingsSection, config_writer, keybindings};
 
@@ -74,9 +74,7 @@ impl PaneFlowApp {
     /// page always shows the full, unfiltered section list.
     fn clear_settings_search(&mut self, cx: &mut Context<Self>) {
         self.settings_search_input.update(cx, |inp, cx| {
-            inp.content = gpui::SharedString::default();
-            inp.selected_range = 0..0;
-            cx.notify();
+            inp.clear(cx);
         });
     }
 
@@ -114,20 +112,23 @@ impl PaneFlowApp {
             self.handle_default_shell_changed(cx);
         }
         cx.notify();
-        cx.background_spawn(async move {
-            smol::unblock(move || {
-                let ok = if nested {
+        cx.spawn(async move |this, cx| {
+            let ok = smol::unblock(move || {
+                if nested {
                     config_writer::save_terminal_field_checked(key, value)
                 } else {
                     config_writer::save_config_value_checked(key, value)
-                };
-                if !ok {
-                    log::warn!(
-                        "settings: failed to persist {key}; choice is in-memory only this session"
-                    );
                 }
             })
             .await;
+            if !ok {
+                log::warn!(
+                    "settings: failed to persist {key}; choice is in-memory only this session"
+                );
+                let _ = this.update(cx, |this, cx| {
+                    this.show_toast(format!("Could not save setting: {key}"), cx);
+                });
+            }
         })
         .detach();
     }
@@ -209,16 +210,18 @@ impl PaneFlowApp {
         self.cached_config =
             config_writer::with_agent_panel_field(&self.cached_config, key, value.clone());
         cx.notify();
-        cx.background_spawn(async move {
-            smol::unblock(move || {
-                let ok = config_writer::save_agent_panel_field_checked(key, value);
-                if !ok {
-                    log::warn!(
-                        "settings: failed to persist agent_panel.{key}; choice is in-memory only this session"
-                    );
-                }
-            })
-            .await;
+        cx.spawn(async move |this, cx| {
+            let ok =
+                smol::unblock(move || config_writer::save_agent_panel_field_checked(key, value))
+                    .await;
+            if !ok {
+                log::warn!(
+                    "settings: failed to persist agent_panel.{key}; choice is in-memory only this session"
+                );
+                let _ = this.update(cx, |this, cx| {
+                    this.show_toast(format!("Could not save agent panel setting: {key}"), cx);
+                });
+            }
         })
         .detach();
     }

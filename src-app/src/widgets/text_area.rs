@@ -2,33 +2,19 @@
 //! the Agents Composer.
 //!
 //! Design constraint: the existing single-line [`crate::widgets::text_input::TextInput`]
-//! is a faithful port of GPUI's `examples/input.rs` -- shaped lines,
-//! per-pixel mouse hit testing, IME composition, the works. Recreating
-//! all of that for multi-line is a large story on its own (the AC #2
-//! list of "Enter to send, Shift-Enter to newline, Ctrl+A, arrow keys,
-//! normal text editing" is a *subset* of TextInput's surface, not a
-//! superset). So this module ships a *smaller* widget purpose-built
-//! for the chat composer:
+//! is a faithful port of GPUI's `examples/input.rs` with full native text
+//! input. This module keeps the textarea smaller, but it still supports the
+//! production editing surface the composer needs:
 //!
 //! - Stores `content: String` with `\n` separators.
 //! - Stores cursor + selection anchor as byte offsets (UTF-8 safe via
 //!   grapheme-aware navigation through `unicode-segmentation`).
-//! - Renders one `div()` per logical line in a `flex_col`, with the
-//!   cursor as a 1 px-wide div inserted between the prefix and suffix
-//!   on the current line. Selection segments paint with
-//!   `bg(ui.subtle)`.
-//! - Click anywhere inside the area just focuses it (cursor position
-//!   does not shift to the click target). The PRD AC only names
-//!   keyboard navigation; click-to-position is a follow-up.
-//!
-//! What this widget intentionally does NOT do:
-//! - IME composition (CJK / dead keys): out of scope for v1 chat input.
-//! - Per-pixel mouse selection: out of scope; users navigate with
-//!   arrow keys + Shift.
-//! - Word-wrap of long single lines: GPUI's flex layout handles it
-//!   automatically inside the line `div()`, but the cursor/selection
-//!   logic treats wrapped text as a single line for cursor movement
-//!   (Up/Down move between `\n`-separated lines, not visual rows).
+//! - Shapes logical lines through GPUI, with soft-wrap aware hit testing.
+//! - Supports native text input and IME composition through
+//!   [`gpui::EntityInputHandler`].
+//! - Supports click-to-position, drag selection, double-click word selection
+//!   and triple-click line selection.
+//! - Up/Down movement remains logical-line based, not visual-row based.
 //!
 //! The widget exposes `pub` callbacks for Enter (parent decides --
 //! Composer maps Enter to send and Shift+Enter to insert `\n`) so the
@@ -51,11 +37,11 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, AvailableSpace, Bounds, ClipboardItem, Context, DispatchPhase, Element, ElementId,
-    FocusHandle, Focusable, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
-    IntoElement, KeyBinding, LayoutId, Length, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement, Pixels, Point, Render, SharedString, Size, Style, Styled,
-    TextAlign, TextRun, WeakEntity, Window, WrappedLine, actions, div, fill, point, prelude::*, px,
-    relative, size,
+    ElementInputHandler, EntityInputHandler, FocusHandle, Focusable, Font, GlobalElementId, Hitbox,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, KeyBinding, LayoutId, Length,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, SharedString, Size, Style, Styled, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
+    WeakEntity, Window, WrappedLine, actions, div, fill, point, prelude::*, px, relative, size,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -225,6 +211,7 @@ pub struct TextArea {
     /// `true` when the selection grew leftward, so further
     /// shift-left extends the start; otherwise extends the end.
     selection_reversed: bool,
+    marked_range: Option<Range<usize>>,
     /// Byte offset where the current mouse drag (or shift-click)
     /// anchor lives. `Some` while the mouse is held down after a
     /// click; `None` between drags. Used by `extend_selection_to` so
@@ -239,6 +226,7 @@ pub struct TextArea {
     on_change: Option<ChangeFn>,
     on_escape: Option<EscapeFn>,
     on_submit_immediate: Option<SubmitImmediateFn>,
+    last_bounds: Option<Bounds<Pixels>>,
     /// EP-002 (Launch Pad): when `true`, Enter fires `on_submit` even on an
     /// empty buffer (optional field in a form whose Enter confirms the whole
     /// form). Default `false` - every other consumer keeps the empty no-op.
@@ -259,6 +247,7 @@ impl TextArea {
             content: String::new(),
             selected_range: 0..0,
             selection_reversed: false,
+            marked_range: None,
             drag_anchor: None,
             last_click: None,
             placeholder: placeholder.into(),
@@ -266,6 +255,7 @@ impl TextArea {
             on_change: None,
             on_escape: None,
             on_submit_immediate: None,
+            last_bounds: None,
             submit_on_empty: false,
             decorations: Vec::new(),
         }
@@ -320,6 +310,7 @@ impl TextArea {
         let clamped = clamp_to_grapheme(&self.content, offset);
         self.selected_range = clamped..clamped;
         self.selection_reversed = false;
+        self.marked_range = None;
         self.drag_anchor = Some(clamped);
         cx.notify();
         self.fire_change(cx);
@@ -346,6 +337,7 @@ impl TextArea {
             self.selected_range = clamped..anchor;
             self.selection_reversed = true;
         }
+        self.marked_range = None;
         cx.notify();
         self.fire_change(cx);
     }
@@ -358,6 +350,7 @@ impl TextArea {
         let (start, end) = word_bounds(&self.content, offset);
         self.selected_range = start..end;
         self.selection_reversed = false;
+        self.marked_range = None;
         self.drag_anchor = Some(start);
         cx.notify();
         self.fire_change(cx);
@@ -370,6 +363,7 @@ impl TextArea {
         let end = line_end(&self.content, offset);
         self.selected_range = start..end;
         self.selection_reversed = false;
+        self.marked_range = None;
         self.drag_anchor = Some(start);
         cx.notify();
         self.fire_change(cx);
@@ -462,6 +456,7 @@ impl TextArea {
         let end = clamp_to_grapheme(&self.content, range.end.max(start));
         self.selected_range = start..end;
         self.selection_reversed = false;
+        self.marked_range = None;
         // US-032: `replace_selection` already ends with `fire_change` (the two
         // calls were sequential, not nested, so `try_borrow_mut` didn't guard
         // them). The duplicate re-fired `on_change`, re-triggering the Composer
@@ -481,6 +476,7 @@ impl TextArea {
         self.content.clear();
         self.selected_range = 0..0;
         self.selection_reversed = false;
+        self.marked_range = None;
         self.decorations.clear();
         cx.notify();
         self.fire_change(cx);
@@ -491,6 +487,7 @@ impl TextArea {
         let end = self.content.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
+        self.marked_range = None;
         self.decorations.clear();
         cx.notify();
         self.fire_change(cx);
@@ -502,6 +499,7 @@ impl TextArea {
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
         self.selected_range = 0..self.content.len();
         self.selection_reversed = false;
+        self.marked_range = None;
         cx.notify();
     }
 
@@ -513,10 +511,93 @@ impl TextArea {
         }
     }
 
+    fn offset_from_utf16(&self, offset: usize) -> usize {
+        Self::byte_offset_from_utf16_in_text(&self.content, offset)
+    }
+
+    fn offset_to_utf16(&self, offset: usize) -> usize {
+        let mut utf16_offset = 0;
+        let mut utf8_count = 0;
+        for ch in self.content.chars() {
+            if utf8_count >= offset {
+                break;
+            }
+            utf8_count += ch.len_utf8();
+            utf16_offset += ch.len_utf16();
+        }
+        utf16_offset
+    }
+
+    fn range_to_utf16(&self, range: &Range<usize>) -> Range<usize> {
+        self.offset_to_utf16(range.start)..self.offset_to_utf16(range.end)
+    }
+
+    fn range_from_utf16(&self, range_utf16: &Range<usize>) -> Range<usize> {
+        let start = clamp_to_grapheme(&self.content, self.offset_from_utf16(range_utf16.start));
+        let end = clamp_to_grapheme(&self.content, self.offset_from_utf16(range_utf16.end));
+        start.min(end)..end.max(start)
+    }
+
+    fn byte_offset_from_utf16_in_text(text: &str, offset: usize) -> usize {
+        let mut utf8_offset = 0;
+        let mut utf16_count = 0;
+        for ch in text.chars() {
+            if utf16_count >= offset {
+                break;
+            }
+            utf16_count += ch.len_utf16();
+            utf8_offset += ch.len_utf8();
+        }
+        utf8_offset
+    }
+
+    fn byte_range_from_utf16_in_text(text: &str, range_utf16: &Range<usize>) -> Range<usize> {
+        Self::byte_offset_from_utf16_in_text(text, range_utf16.start)
+            ..Self::byte_offset_from_utf16_in_text(text, range_utf16.end)
+    }
+
+    fn replacement_range_from_utf16(&self, range_utf16: Option<&Range<usize>>) -> Range<usize> {
+        match (self.marked_range.as_ref(), range_utf16) {
+            (Some(marked_range), Some(range_utf16)) => {
+                let marked_text = &self.content[marked_range.clone()];
+                let relative = Self::byte_range_from_utf16_in_text(marked_text, range_utf16);
+                marked_range.start + relative.start..marked_range.start + relative.end
+            }
+            (_, Some(range_utf16)) => self.range_from_utf16(range_utf16),
+            (Some(marked_range), None) => marked_range.clone(),
+            (None, None) => self.selected_range.clone(),
+        }
+    }
+
+    fn replace_range_inner(
+        &mut self,
+        range: Range<usize>,
+        replacement: &str,
+        mark_inserted: bool,
+        selected_range: Option<Range<usize>>,
+        cx: &mut Context<Self>,
+    ) {
+        let start = clamp_to_grapheme(&self.content, range.start);
+        let end = clamp_to_grapheme(&self.content, range.end.max(start));
+        let range = start..end;
+        self.invalidate_decorations_after_edit(&range, replacement.len());
+        self.content.replace_range(range.clone(), replacement);
+        let inserted = range.start..range.start + replacement.len();
+        self.marked_range = (mark_inserted && !replacement.is_empty()).then_some(inserted.clone());
+        let selected_range = selected_range.unwrap_or(inserted.end..inserted.end);
+        let selected_start = clamp_to_grapheme(&self.content, selected_range.start);
+        let selected_end = clamp_to_grapheme(&self.content, selected_range.end.max(selected_start));
+        self.selected_range = selected_start..selected_end;
+        self.selection_reversed = false;
+        cx.notify();
+        self.fire_change(cx);
+    }
+
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         let clamped = clamp_to_grapheme(&self.content, offset);
         self.selected_range = clamped..clamped;
         self.selection_reversed = false;
+        self.marked_range = None;
         cx.notify();
         self.fire_change(cx);
     }
@@ -533,6 +614,7 @@ impl TextArea {
             let new = self.selected_range.end..self.selected_range.start;
             self.selected_range = new;
         }
+        self.marked_range = None;
         cx.notify();
         self.fire_change(cx);
     }
@@ -547,6 +629,7 @@ impl TextArea {
         let new_cursor = range.start + replacement.len();
         self.selected_range = new_cursor..new_cursor;
         self.selection_reversed = false;
+        self.marked_range = None;
         cx.notify();
         self.fire_change(cx);
     }
@@ -828,6 +911,121 @@ impl TextArea {
     }
 }
 
+impl EntityInputHandler for TextArea {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        actual_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let range = self.range_from_utf16(&range_utf16);
+        actual_range.replace(self.range_to_utf16(&range));
+        Some(self.content[range].to_string())
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        Some(UTF16Selection {
+            range: self.range_to_utf16(&self.selected_range),
+            reversed: self.selection_reversed,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        self.marked_range
+            .as_ref()
+            .map(|range| self.range_to_utf16(range))
+    }
+
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.marked_range = None;
+        cx.notify();
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = self.replacement_range_from_utf16(range_utf16.as_ref());
+        self.replace_range_inner(range, new_text, false, None, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = self.replacement_range_from_utf16(range_utf16.as_ref());
+        let selected_range = new_selected_range_utf16.as_ref().map(|range_utf16| {
+            let relative = Self::byte_range_from_utf16_in_text(new_text, range_utf16);
+            range.start + relative.start..range.start + relative.end
+        });
+        self.replace_range_inner(range, new_text, true, selected_range, cx);
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let range = self.range_from_utf16(&range_utf16);
+        let offset = range.start.min(self.content.len());
+        let row = self.content[..offset]
+            .chars()
+            .filter(|ch| *ch == '\n')
+            .count();
+        let line_start = line_start(&self.content, offset);
+        let col = self.content[line_start..offset].chars().count();
+        let x = element_bounds.left() + px(col as f32 * 7.0);
+        let y = element_bounds.top() + px(row as f32 * 20.0);
+        Some(Bounds::new(point(x, y), size(px(1.0), px(20.0))))
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let local = self
+            .last_bounds
+            .and_then(|bounds| bounds.localize(&point))
+            .unwrap_or(point);
+        let row = (local.y.as_f32() / 20.0).max(0.0).floor() as usize;
+        let col = (local.x.as_f32() / 7.0).max(0.0).floor() as usize;
+        let mut byte_offset = 0;
+        for (idx, line) in self.content.split('\n').enumerate() {
+            if idx == row {
+                let local = line
+                    .char_indices()
+                    .nth(col)
+                    .map(|(offset, _)| offset)
+                    .unwrap_or(line.len());
+                return Some(self.offset_to_utf16(byte_offset + local));
+            }
+            byte_offset += line.len() + 1;
+        }
+        Some(self.offset_to_utf16(self.content.len()))
+    }
+}
+
 impl Focusable for TextArea {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -841,6 +1039,7 @@ impl Render for TextArea {
         let content: SharedString = self.content.clone().into();
         let cursor = self.cursor();
         let sel = self.selected_range.clone();
+        let marked_range = self.marked_range.clone();
 
         // Custom Element does the heavy lifting: shapes each line in
         // `prepaint`, paints text + cursor + selection, and registers
@@ -853,6 +1052,7 @@ impl Render for TextArea {
             content,
             cursor,
             selected_range: sel,
+            marked_range,
             focused,
             placeholder: self.placeholder.clone(),
             font_size: px(13.),
@@ -898,20 +1098,6 @@ impl Render for TextArea {
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::submit_immediate))
             .on_action(cx.listener(Self::escape))
-            .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, _w, cx| {
-                // Bound keys are routed via on_action; un-bound
-                // printable chars land here. We accept any keystroke
-                // whose `key_char` is non-empty -- that filters out
-                // modifier-only keys, function keys, etc.
-                if let Some(ch) = event.keystroke.key_char.as_ref()
-                    && !ch.is_empty()
-                    && !event.keystroke.modifiers.platform
-                    && !event.keystroke.modifiers.control
-                    && !event.keystroke.modifiers.alt
-                {
-                    this.insert_char(ch, cx);
-                }
-            }))
             .text_size(px(13.))
             .text_color(ui.text)
             .min_h(px(20.))
@@ -933,6 +1119,7 @@ struct TextAreaContent {
     content: SharedString,
     cursor: usize,
     selected_range: Range<usize>,
+    marked_range: Option<Range<usize>>,
     focused: bool,
     placeholder: SharedString,
     font_size: Pixels,
@@ -995,6 +1182,56 @@ struct ShapedLineInfo {
     /// `closest_index_for_position` for cursor placement and
     /// hit-testing across wrap boundaries.
     wrapped: Arc<WrappedLine>,
+}
+
+fn text_runs_for_segment(
+    len: usize,
+    byte_start: usize,
+    marked_range: Option<&Range<usize>>,
+    font: Font,
+    color: Hsla,
+) -> Vec<TextRun> {
+    let base = TextRun {
+        len,
+        font,
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let Some(marked_range) = marked_range else {
+        return vec![base];
+    };
+    let start = marked_range.start.saturating_sub(byte_start).min(len);
+    let end = marked_range.end.saturating_sub(byte_start).min(len);
+    if start >= end {
+        return vec![base];
+    }
+
+    let underline = UnderlineStyle {
+        color: Some(color),
+        thickness: px(1.0),
+        wavy: false,
+    };
+    let mut runs = Vec::with_capacity(3);
+    if start > 0 {
+        runs.push(TextRun {
+            len: start,
+            ..base.clone()
+        });
+    }
+    runs.push(TextRun {
+        len: end - start,
+        underline: Some(underline),
+        ..base.clone()
+    });
+    if end < len {
+        runs.push(TextRun {
+            len: len - end,
+            ..base
+        });
+    }
+    runs
 }
 
 impl Element for TextAreaContent {
@@ -1104,15 +1341,13 @@ impl Element for TextAreaContent {
         for (i, segment) in segments.iter().enumerate() {
             let len = segment.len();
             let byte_end = byte_offset + len;
-            let run = TextRun {
+            let runs = text_runs_for_segment(
                 len,
-                font: font.clone(),
-                color: self.text_color,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            let runs = [run];
+                byte_offset,
+                self.marked_range.as_ref(),
+                font.clone(),
+                self.text_color,
+            );
             let text: SharedString = (*segment).to_string().into();
             let mut wrapped_lines = window
                 .text_system()
@@ -1164,6 +1399,18 @@ impl Element for TextAreaContent {
         window: &mut Window,
         cx: &mut App,
     ) {
+        if let Some(entity) = self.entity.upgrade() {
+            let focus_handle = entity.read(cx).focus_handle.clone();
+            window.handle_input(
+                &focus_handle,
+                ElementInputHandler::new(bounds, entity.clone()),
+                cx,
+            );
+            entity.update(cx, |this, _cx| {
+                this.last_bounds = Some(bounds);
+            });
+        }
+
         let content_empty = self.content.is_empty();
 
         // 1. Selection highlight - paint first so the glyphs draw on
@@ -1669,8 +1916,8 @@ fn clamp_to_grapheme(s: &str, offset: usize) -> usize {
     s.grapheme_indices(true)
         .map(|(i, g)| (i, i + g.len()))
         .find_map(|(start, end)| {
-            if start <= off && off <= end {
-                Some(off.min(end))
+            if start <= off && off < end {
+                Some(start)
             } else {
                 None
             }
@@ -1796,6 +2043,28 @@ mod tests {
     #[test]
     fn next_grapheme_past_end_returns_end() {
         assert_eq!(next_grapheme("hi", 100), 2);
+    }
+
+    #[test]
+    fn clamp_to_grapheme_snaps_inside_multibyte_codepoint_to_start() {
+        let s = "éa";
+
+        assert_eq!(clamp_to_grapheme(s, 0), 0);
+        assert_eq!(clamp_to_grapheme(s, 1), 0);
+        assert_eq!(clamp_to_grapheme(s, 2), 2);
+        assert_eq!(clamp_to_grapheme(s, 3), 3);
+    }
+
+    #[test]
+    fn clamp_to_grapheme_snaps_inside_zwj_cluster_to_start() {
+        let s = "a👨‍👩‍👧‍👦b";
+        let cluster_start = "a".len();
+        let cluster_end = s.len() - "b".len();
+
+        for offset in cluster_start + 1..cluster_end {
+            assert_eq!(clamp_to_grapheme(s, offset), cluster_start);
+        }
+        assert_eq!(clamp_to_grapheme(s, cluster_end), cluster_end);
     }
 
     #[test]

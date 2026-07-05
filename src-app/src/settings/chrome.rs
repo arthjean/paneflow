@@ -366,9 +366,7 @@ impl PaneFlowApp {
                         this.close_settings(cx);
                     } else {
                         this.settings_search_input.update(cx, |inp, cx| {
-                            inp.content = SharedString::default();
-                            inp.selected_range = 0..0;
-                            cx.notify();
+                            inp.clear(cx);
                         });
                     }
                     cx.notify();
