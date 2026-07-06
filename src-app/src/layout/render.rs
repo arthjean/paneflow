@@ -33,6 +33,11 @@ fn available_main_axis_px(container_px: f32, child_count: usize) -> f32 {
     (container_px - divider_px).max(0.0)
 }
 
+#[cfg(test)]
+fn with_debug_selector_for_test(div: gpui::Div, selector: String) -> gpui::Div {
+    div.debug_selector(move || selector.clone().into())
+}
+
 impl LayoutTree {
     /// Render the layout tree recursively as nested GPUI flex divs.
     #[allow(clippy::only_used_in_recursion)]
@@ -206,6 +211,12 @@ impl LayoutTree {
                                 ),
                         };
 
+                        #[cfg(test)]
+                        let divider = with_debug_selector_for_test(
+                            divider,
+                            format!("layout-divider-{divider_idx}"),
+                        );
+
                         let divider =
                             divider.on_mouse_down(MouseButton::Left, move |e, _window, _cx| {
                                 let pos = match dir {
@@ -224,17 +235,18 @@ impl LayoutTree {
                     }
 
                     let elem = child.node.render(window, cx, on_resize_end.clone());
-                    container = container.child(
-                        div()
-                            .flex_basis(gpui::relative(child.ratio.get()))
-                            .flex_grow()
-                            .flex_shrink()
-                            .size_full()
-                            .min_w(px(80.))
-                            .min_h(px(80.))
-                            .overflow_hidden()
-                            .child(elem),
-                    );
+                    let child_wrapper = div()
+                        .flex_basis(gpui::relative(child.ratio.get()))
+                        .flex_grow()
+                        .flex_shrink()
+                        .size_full()
+                        .min_w(px(80.))
+                        .min_h(px(80.))
+                        .overflow_hidden();
+                    #[cfg(test)]
+                    let child_wrapper =
+                        with_debug_selector_for_test(child_wrapper, format!("layout-child-{i}"));
+                    container = container.child(child_wrapper.child(elem));
                 }
 
                 container.into_any_element()
@@ -245,7 +257,108 @@ impl LayoutTree {
 
 #[cfg(test)]
 mod tests {
-    use super::available_main_axis_px;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use gpui::{AppContext, Entity, Render, TestAppContext, px, size};
+
+    use super::super::tree::LayoutChild;
+    use crate::pane::Pane;
+    use crate::terminal::TerminalView;
+
+    use super::*;
+
+    const TOLERANCE: f32 = 2.0;
+
+    fn test_pane(cx: &mut impl AppContext, workspace_id: u64) -> Entity<Pane> {
+        let terminal = cx.new(|cx| TerminalView::display_only_for_test(workspace_id, cx));
+        cx.new(|cx| Pane::new(terminal, workspace_id, cx))
+    }
+
+    fn assert_px_eq(actual: gpui::Pixels, expected: f32, label: &str) {
+        let diff = (actual.as_f32() - expected).abs();
+        assert!(
+            diff < TOLERANCE,
+            "{label}: expected ~{expected:.1}px, got {:.1}px (diff {diff:.1}px)",
+            actual.as_f32()
+        );
+    }
+
+    struct RenderHarness {
+        tree: LayoutTree,
+    }
+
+    impl Render for RenderHarness {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            self.tree.render(window, cx, None)
+        }
+    }
+
+    #[gpui::test]
+    fn render_three_child_tree_uses_production_dividers(cx: &mut TestAppContext) {
+        let container_w = 900.0_f32;
+        let container_h = 600.0_f32;
+        let captured_container_size = Rc::new(Cell::new(0.0));
+        let captured_for_tree = captured_container_size.clone();
+        let (_view, cx) = cx.add_window_view(move |_, cx| {
+            let panes = vec![test_pane(cx, 1), test_pane(cx, 1), test_pane(cx, 1)];
+            let ratio = 1.0 / panes.len() as f32;
+            let children = panes
+                .into_iter()
+                .map(|pane| LayoutChild {
+                    node: LayoutTree::Leaf(pane),
+                    ratio: Rc::new(Cell::new(ratio)),
+                })
+                .collect();
+
+            RenderHarness {
+                tree: LayoutTree::Container {
+                    direction: SplitDirection::Vertical,
+                    children,
+                    drag: Rc::new(Cell::new(None)),
+                    container_size: captured_for_tree,
+                },
+            }
+        });
+        cx.simulate_resize(size(px(container_w), px(container_h)));
+        cx.run_until_parked();
+
+        let b0 = cx
+            .debug_bounds("layout-child-0")
+            .expect("child-0 not painted");
+        let b1 = cx
+            .debug_bounds("layout-child-1")
+            .expect("child-1 not painted");
+        let b2 = cx
+            .debug_bounds("layout-child-2")
+            .expect("child-2 not painted");
+        let divider0 = cx
+            .debug_bounds("layout-divider-0")
+            .expect("divider-0 not painted");
+        let divider1 = cx
+            .debug_bounds("layout-divider-1")
+            .expect("divider-1 not painted");
+
+        assert!(b0.size.width > px(80.), "child-0 below visible minimum");
+        assert!(b1.size.width > px(80.), "child-1 below visible minimum");
+        assert!(b2.size.width > px(80.), "child-2 below visible minimum");
+        assert_px_eq(divider0.size.width, DIVIDER_HIT_PX, "divider-0 hit width");
+        assert_px_eq(divider1.size.width, DIVIDER_HIT_PX, "divider-1 hit width");
+        assert_px_eq(
+            b0.size.width + b1.size.width + b2.size.width,
+            container_w - 2.0 * DIVIDER_PX,
+            "total pane width",
+        );
+        assert_px_eq(
+            px(captured_container_size.get()),
+            container_w,
+            "captured main-axis container size",
+        );
+    }
 
     #[test]
     fn available_main_axis_excludes_fixed_dividers() {

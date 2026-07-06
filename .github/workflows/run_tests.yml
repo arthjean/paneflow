@@ -58,16 +58,18 @@ jobs:
   # most of CI wall-clock. The path filter short-circuits them on
   # docs-only / non-workflow .github/** PRs.
   #
-  # Filter scope: the workflow file itself is included in `rust` and
-  # `rendering` - a PR that edits run_tests.yml to tune a gate MUST
-  # also exercise that gate, otherwise "fix the CI" PRs self-skip and
-  # ship broken.
+  # Filter scope: CI, release, security, and packaging files get their
+  # own signals so workflow-gate changes cannot self-skip into a false
+  # green. Rust jobs still skip for docs-only changes.
   orchestrate:
     name: Detect changed paths
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       rendering: ${{ steps.filter.outputs.rendering }}
+      ci: ${{ steps.filter.outputs.ci }}
+      security: ${{ steps.filter.outputs.security }}
+      release_packaging: ${{ steps.filter.outputs.release_packaging }}
       changed_packages: ${{ steps.detect_packages.outputs.changed_packages }}
     steps:
       # fetch-depth tuned for the `detect_packages` git diff below: on a
@@ -89,7 +91,25 @@ jobs:
               - '**/Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              - 'clippy.toml'
+            ci:
+              - '.github/workflows/**'
+              - 'scripts/**'
+            security:
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+              - 'deny.toml'
+              - '.github/workflows/audit.yml'
               - '.github/workflows/run_tests.yml'
+            release_packaging:
+              - '.github/workflows/release.yml'
+              - '.github/workflows/repo_publish.yml'
+              - '.github/workflows/update_cask.yml'
+              - 'packaging/**'
+              - 'assets/**'
+              - 'scripts/**'
+              - 'docs/release-runbook.md'
+              - 'docs/release/**'
             rendering:
               # GPUI Element + paint pipeline (where c3e2331 lived)
               - 'src-app/src/terminal/element/**'
@@ -109,13 +129,11 @@ jobs:
               # frames that no-op the paint pass without crashing.
               - 'src-app/src/pane.rs'
               - 'src-app/src/layout/render.rs'
-              # The workflow itself - a PR editing the smoke jobs must
-              # exercise them.
-              - '.github/workflows/run_tests.yml'
+              - 'src-app/tests/flex_nchild.rs'
 
       # Per-package detector. Adapted from Zed's orchestrate step. The
-      # output isn't consumed yet (PaneFlow has 2 crates and `cargo
-      # test --workspace` already runs cheap), but exposing it now lets
+      # output isn't consumed yet (`cargo test --workspace` still runs
+      # cheaply enough), but exposing it now lets
       # future jobs gate per-crate (e.g. when crate count grows or
       # nextest is adopted). Empty `changed_packages` means "treat as
       # full rebuild" - fail-safe default.
@@ -225,7 +243,10 @@ jobs:
   check_style:
     name: Style (fmt + clippy)
     needs: orchestrate
-    if: needs.orchestrate.outputs.rust == 'true'
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -265,7 +286,10 @@ jobs:
   run_tests_linux:
     name: Tests (Linux x86_64)
     needs: orchestrate
-    if: needs.orchestrate.outputs.rust == 'true'
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -301,7 +325,10 @@ jobs:
   release_build_linux:
     name: Release build + binary-size budget (Linux x86_64)
     needs: orchestrate
-    if: needs.orchestrate.outputs.rust == 'true'
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -334,7 +361,8 @@ jobs:
       # US-012 (prd-ai-hooks-cross-platform.md) - the 6-triple matrix
       # requires each job to run `cargo build --workspace --release`.
       # On Linux x86_64 this also triggers `src-app/build.rs` to stage
-      # the embedded `paneflow-shim` + `paneflow-ai-hook` binaries into
+      # the embedded `paneflow-shim` + `paneflow-ai-hook` + `paneflow-mcp`
+      # binaries into
       # `target/embed-build/<triple>/release-min/`, which the size-budget
       # step below measures. Without this step, the nested binaries
       # would never be built on CI (build.rs only fires for paneflow-app
@@ -342,10 +370,11 @@ jobs:
       - name: Release build (workspace)
         run: cargo build --workspace --release --locked
 
-      # US-012 AC-4 - enforce the per-binary size caps from the PRD
-      # Goals table, measured on the `release-min` profile (workspace
-      # Cargo.toml) which applies `opt-level = "z"`, `lto = "fat"`,
-      # `strip = "symbols"`, `panic = "abort"`.
+      # US-012 AC-4 - enforce the helper size caps from the PRD Goals
+      # table and the aggregate embed cap from src-app/build.rs, measured
+      # on the `release-min` profile (workspace Cargo.toml) which applies
+      # `opt-level = "z"`, `lto = "fat"`, `strip = "symbols"`,
+      # `panic = "abort"`.
       #
       # Two-tier check:
       #   * HARD cap → fails the build. Set to "current-measured-size +
@@ -376,13 +405,16 @@ jobs:
           TARGET_DIR="target/embed-build/x86_64-unknown-linux-gnu/release-min"
           SHIM_BIN="$TARGET_DIR/paneflow-shim"
           HOOK_BIN="$TARGET_DIR/paneflow-ai-hook"
-          if [ ! -f "$SHIM_BIN" ] || [ ! -f "$HOOK_BIN" ]; then
+          MCP_BIN="$TARGET_DIR/paneflow-mcp"
+          if [ ! -f "$SHIM_BIN" ] || [ ! -f "$HOOK_BIN" ] || [ ! -f "$MCP_BIN" ]; then
             echo "::error::US-012: expected nested binaries under $TARGET_DIR - did src-app/build.rs run?"
             ls -la "$TARGET_DIR" 2>&1 || true
             exit 1
           fi
           SHIM_SIZE=$(stat -c%s "$SHIM_BIN")
           HOOK_SIZE=$(stat -c%s "$HOOK_BIN")
+          MCP_SIZE=$(stat -c%s "$MCP_BIN")
+          TOTAL_SIZE=$((SHIM_SIZE + HOOK_SIZE + MCP_SIZE))
           # Hard caps (regression gate). Tighten as binaries shrink.
           # Re-baselined 2026-06-23: GitHub's ubuntu-22.04 image/toolchain
           # now measures the shim at 493,712 B on main (ae0d9f2), tripping the
@@ -390,12 +422,16 @@ jobs:
           # "measured + small slack" regression gate under the 600 KB soft cap.
           SHIM_HARD=524288   # 512 KiB  (measured 482 KiB + ~6 % slack)
           HOOK_HARD=384000   # ~375 KB  (measured 351 KB + 6 % slack)
+          MCP_HARD=524288    # 512 KiB
+          TOTAL_HARD=1835008 # Keep in sync with src-app/build.rs
           # Soft caps (PRD launch targets). Warn-only until met.
           SHIM_SOFT=614400   # 600 KB
           HOOK_SOFT=307200   # 300 KB
 
           echo "paneflow-shim     = ${SHIM_SIZE} B  (hard ${SHIM_HARD} / soft ${SHIM_SOFT})"
           echo "paneflow-ai-hook  = ${HOOK_SIZE} B  (hard ${HOOK_HARD} / soft ${HOOK_SOFT})"
+          echo "paneflow-mcp      = ${MCP_SIZE} B  (hard ${MCP_HARD})"
+          echo "embedded helpers  = ${TOTAL_SIZE} B  (hard ${TOTAL_HARD})"
 
           fail=0
           if [ "$SHIM_SIZE" -gt "$SHIM_HARD" ]; then
@@ -409,6 +445,14 @@ jobs:
             fail=1
           elif [ "$HOOK_SIZE" -gt "$HOOK_SOFT" ]; then
             echo "::warning::paneflow-ai-hook ${HOOK_SIZE} B is over the PRD soft cap ${HOOK_SOFT} B (300 KB). Non-blocking; tighten before v0.3.0."
+          fi
+          if [ "$MCP_SIZE" -gt "$MCP_HARD" ]; then
+            echo "::error::paneflow-mcp size ${MCP_SIZE} exceeds HARD cap ${MCP_HARD}. Shrink via smaller deps or tighter release-min profile."
+            fail=1
+          fi
+          if [ "$TOTAL_SIZE" -gt "$TOTAL_HARD" ]; then
+            echo "::error::embedded helper total ${TOTAL_SIZE} exceeds HARD cap ${TOTAL_HARD}. Keep this in sync with src-app/build.rs."
+            fail=1
           fi
           exit $fail
 
@@ -435,13 +479,15 @@ jobs:
   # a noisy false positive. Following Bevy's reference pattern
   # (bevyengine/bevy/.github/workflows/dependencies.yml).
   #
-  # Gate on `orchestrate.rust` for consistency with the `check_*` jobs above -
-  # Cargo.toml/Cargo.lock edits are in that filter, so any change that
-  # could affect the advisory result triggers the scan.
+  # Gate on dependency/security inputs plus CI changes, so deny.toml and
+  # audit workflow edits cannot land with the audit job skipped.
   security_audit:
     name: Security Audit (cargo-deny)
     needs: orchestrate
-    if: needs.orchestrate.outputs.rust == 'true'
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.security == 'true' ||
+      needs.orchestrate.outputs.ci == 'true'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v5
@@ -502,7 +548,10 @@ jobs:
     # short-circuits the 14× pricier macos-14 runner on docs-only /
     # non-workflow .github/** PRs.
     needs: orchestrate
-    if: needs.orchestrate.outputs.rust == 'true'
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -651,7 +700,10 @@ jobs:
     # job. A pure config-file or non-render Rust PR cannot regress
     # macOS Core Text empty-text rendering, so spending 10-15 min on a
     # macos-14 runner on every such PR is wasted spend.
-    if: needs.orchestrate.outputs.rendering == 'true'
+    if: >-
+      needs.orchestrate.outputs.rendering == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: macos-14
     timeout-minutes: 15
     steps:
@@ -782,18 +834,13 @@ jobs:
   # install. `timeout-minutes: 30` is a runaway guard, not the SLA.
   windows_check:
     name: Windows x86_64 smoke check
-    # DISABLED until Azure Trusted Signing is provisioned. The compile
-    # gate itself does NOT sign anything (signing happens in release.yml
-    # only) but it's pointless to spend Windows runner minutes catching
-    # MSVC regressions while we cannot ship a signed Windows binary
-    # anyway - re-enabling once signing is live also re-introduces this
-    # gate naturally. Memory: project_windows_signing.md tracks the
-    # Azure $9.99/mo Basic onboarding path under the Strivex
-    # subscription. Re-enable by flipping `if: false` back to the
-    # `needs.orchestrate.outputs.rust == 'true'` expression preserved
-    # in the next line as a comment.
+    # Runs for Rust, CI, and release-packaging changes so Windows MSVC
+    # regressions are caught before a tag cut.
     needs: orchestrate
-    if: needs.orchestrate.outputs.rust == 'true'
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: windows-2022
     # cargo steps must run under pwsh, NOT the workflow-default bash: Git
     # Bash prepends C:\Program Files\Git\usr\bin to PATH, whose coreutils
@@ -995,13 +1042,12 @@ jobs:
   windows_render_smoke:
     name: Windows x86_64 render smoke (visual)
     needs: [orchestrate, windows_check]
-    # DISABLED - depends on windows_check (also disabled until Azure
-    # Trusted Signing is provisioned). The artifact this smoke loads
-    # is produced by windows_check, so the job would skip anyway via
-    # the `needs:` chain; this explicit `if: false` makes the
-    # disabled state self-documenting and survives re-enabling
-    # windows_check (re-enable both together).
-    if: needs.orchestrate.outputs.rendering == 'true'
+    # Depends on windows_check because the smoke job loads the artifact
+    # produced by that job.
+    if: >-
+      needs.orchestrate.outputs.rendering == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: windows-2022
     timeout-minutes: 15
     steps:
@@ -1103,14 +1149,17 @@ jobs:
   #   * windows_aarch64_check - aarch64-pc-windows-msvc (check-only; no
   #                              native Windows-arm64 hosted runner as of
   #                              2026-04. Deferred per US-012 AC.)
-  # All three are gated on `needs.orchestrate.outputs.rust == 'true'` so
+  # The active legs are gated on Rust, CI, and release-packaging paths so
   # docs-only PRs don't burn minutes on the extended matrix.
   # ───────────────────────────────────────────────────────────────────────
 
   linux_aarch64_check:
     name: Linux aarch64 (aarch64-unknown-linux-gnu)
     needs: orchestrate
-    if: needs.orchestrate.outputs.rust == 'true'
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     # Native ARM runner (GitHub public preview since late 2024, used
     # by release.yml on the same pattern - see the comment at
     # release.yml:34-37). Same image basis as ubuntu-22.04 so the
@@ -1216,10 +1265,12 @@ jobs:
   windows_aarch64_check:
     name: Windows aarch64 (aarch64-pc-windows-msvc, check-only)
     needs: orchestrate
-    # DISABLED until Azure Trusted Signing is provisioned (same posture
-    # as windows_check / windows_render_smoke). Re-enable by flipping
-    # `if: false` back to the original expression preserved below.
-    if: needs.orchestrate.outputs.rust == 'true'
+    # Runs for Rust, CI, and release-packaging changes. This remains
+    # check-only until native Windows-arm64 hosted runners are available.
+    if: >-
+      needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.ci == 'true' ||
+      needs.orchestrate.outputs.release_packaging == 'true'
     # US-012 AC explicitly defers integration tests on Windows aarch64
     # because no native Windows-arm64 hosted runner is available on
     # GitHub-hosted Actions as of 2026-04. This leg cross-compiles from

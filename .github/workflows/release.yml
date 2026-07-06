@@ -72,8 +72,45 @@ env:
   RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'dry-run' || 'release' }}
 
 jobs:
+  verify_workspace_tests:
+    name: Release test gate (Linux x86_64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libvulkan-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libx11-dev \
+            libxcb1-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxkbcommon-x11-dev \
+            libfontconfig1-dev \
+            libfreetype6-dev
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.96.1"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust"
+          key: release-test-linux
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --locked
+
   build:
     name: Build ${{ matrix.target }}
+    needs: verify_workspace_tests
     runs-on: ${{ matrix.runs-on }}
     # Every matrix leg is hard-required. A failed Linux, macOS, or
     # Windows build must fail the whole release workflow and block
@@ -298,12 +335,9 @@ jobs:
           cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # cargo test is intentionally NOT run here. run_tests.yml is the required
-      # test gate on every PR; by the time release.yml runs (tag-push from main,
-      # or a dry-run) the code has already passed it. Re-running the suite on the
-      # release path added no signal and turned timing-sensitive PTY/IO tests
-      # into flaky release failures on loaded Windows runners. release.yml builds,
-      # packages and signs already-tested code.
+      # cargo test runs once in the `verify_workspace_tests` job before this
+      # matrix starts. The per-target legs keep fmt, clippy, build, packaging,
+      # signing, and smoke coverage focused on their platform.
 
       # Regenerate every icon asset (.png hicolor set, .icns, .ico,
       # rust-embed runtime icon) from the master PNGs under
@@ -873,13 +907,12 @@ jobs:
       #                                     Apple ID password itself)
       #   APPLE_TEAM_ID                   - 10-char team ID
       #
-      # US-023 AC7: when ANY Apple secret is missing the leg degrades to
-      # an unsigned build instead of hard-failing. The "Detect macOS
-      # signing secrets" step exposes a single boolean output
-      # (`signing_available`) consumed by the sign + notarize step
-      # guards below; the unsigned-warning step writes a visible banner
-      # to $GITHUB_STEP_SUMMARY so reviewers immediately see that a
-      # given release was shipped without a notarization ticket.
+      # US-023 AC7: dry-runs can degrade to an unsigned build when Apple
+      # secrets are missing. Tag-push releases fail hard instead, because
+      # shipping a public macOS artifact without signing and notarization
+      # breaks the release contract. The "Detect macOS signing secrets"
+      # step exposes a boolean output consumed by the sign + notarize
+      # step guards below.
       #
       # The `.app` input comes from `scripts/bundle-macos.sh`, run earlier
       # in this leg. Sign → notarize → staple is the mandatory order:
@@ -908,6 +941,10 @@ jobs:
               echo "All 5 Apple signing secrets are present - will sign + notarize."
               echo "signing_available=true" >> "$GITHUB_OUTPUT"
           else
+              if [ "${RELEASE_MODE}" = "release" ]; then
+                  echo "::error title=macOS signing required::One or more APPLE_* secrets are missing. Tag-push releases must sign and notarize the macOS artifact."
+                  exit 1
+              fi
               echo "::warning title=macOS signing skipped::One or more APPLE_* secrets are missing - emitting an UNSIGNED .app. See docs/release/macos-signing.md."
               echo "signing_available=false" >> "$GITHUB_OUTPUT"
           fi
@@ -1521,6 +1558,18 @@ jobs:
       # Upload artifacts so the smoke-test jobs below can install them
       # in clean Ubuntu / Fedora containers. `compression-level: 0`
       # - artifacts are already compressed (.deb/.rpm/.tar.gz/.AppImage).
+      - name: Verify release artifacts staged
+        run: |
+          set -euo pipefail
+          if [ ! -d release-assets ] || ! find release-assets -maxdepth 1 -type f | grep -q .; then
+            if [ "${RELEASE_MODE}" = "dry-run" ]; then
+              echo "::warning::No release artifacts were staged for ${RUNNER_OS}. Dry-run upload will be empty."
+              exit 0
+            fi
+            echo "::error::No release artifacts were staged for ${RUNNER_OS} in release mode."
+            exit 1
+          fi
+
       - name: Upload release artifacts (for smoke-test jobs)
         uses: actions/upload-artifact@v4
         with:
@@ -1611,6 +1660,14 @@ jobs:
           path: release-assets
           pattern: release-assets-*
           merge-multiple: true
+
+      - name: Verify merged release artifacts
+        run: |
+          set -euo pipefail
+          if [ ! -d release-assets ] || ! find release-assets -maxdepth 1 -type f | grep -q .; then
+            echo "::error::No release artifacts were downloaded. Refusing to create an empty GitHub Release."
+            exit 1
+          fi
 
       # US-002: sign every shipped artifact with the project minisign key so
       # clients can verify downloads against the public key baked into their

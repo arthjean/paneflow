@@ -62,40 +62,17 @@ jobs:
     #   (a) workflow_dispatch: operator-driven - always allow. No filter
     #       on prerelease markers, the maintainer chose this tag
     #       intentionally (e.g., staging validation of an -rc.N tag).
-    #   (b) workflow_run (chained from release.yml): allow `success` OR
-    #       `failure` parent conclusions. The earlier v0.2.1 retry #3
-    #       surface: the `Publish GitHub Release` job SUCCEEDED and
-    #       created the tag's GitHub Release with all 18 artifacts, but
-    #       a downstream `smoke-test-ubuntu` step failed (dash
-    #       pipefail, fixed in this same commit) AND best-effort
-    #       Windows + macOS legs failed (continue-on-error at the
-    #       matrix level). The workflow's OVERALL conclusion was
-    #       `failure` because best-effort + smoke failures bubble up
-    #       to the run level even when the release WAS published - so
-    #       a strict `conclusion == 'success'` guard would block
-    #       repo-publish forever on any release that has a single
-    #       flaky best-effort leg, requiring manual `workflow_dispatch`
-    #       every time.
-    #
-    #       Relaxed semantic: allow `success` AND `failure` through,
-    #       then the "Verify GitHub Release exists" step below acts as
-    #       the real ground-truth gate. If the release was not
-    #       actually created (Publish job failed), `gh release view`
-    #       returns non-zero and we abort before touching R2. This is
-    #       race-free - the release either exists at chain-fire time
-    #       or it does not.
-    #
-    #       `cancelled` and `skipped` conclusions are still filtered
-    #       out: a cancelled parent ran partially so the release state
-    #       is undefined; a skipped parent never ran.
+    #   (b) workflow_run (chained from release.yml): require a successful
+    #       parent run. A failed parent means at least one required build,
+    #       package, smoke, signing, or publish gate failed. Manual
+    #       `workflow_dispatch` remains the explicit recovery path.
     #   (c) workflow_run with a prerelease tag (rc/alpha/beta): SKIP.
     #       Preserves v0.2.0 behavior that only stable tags hit the
     #       stable apt/rpm repo. An operator who wants to push a
     #       prerelease can still do so via `workflow_dispatch`.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      ((github.event.workflow_run.conclusion == 'success'
-         || github.event.workflow_run.conclusion == 'failure')
+      (github.event.workflow_run.conclusion == 'success'
         && github.event.workflow_run.event == 'push'
         && !contains(github.event.workflow_run.head_branch, 'rc')
         && !contains(github.event.workflow_run.head_branch, 'alpha')
@@ -156,14 +133,9 @@ jobs:
 
       - uses: actions/checkout@v5
 
-      # Ground-truth gate paired with the relaxed `if:` condition above.
-      # If the parent release.yml workflow reached a `failure`
-      # conclusion (e.g., best-effort Windows leg or smoke-test-ubuntu
-      # failed AFTER the release was already published), the job is
-      # still allowed to proceed - but only if the GitHub Release for
-      # this tag actually exists. Missing release = Publish job never
-      # succeeded = nothing for repo-publish to index, abort cleanly.
-      # `gh` is preinstalled on ubuntu-22.04 runners.
+      # Ground-truth gate after the strict parent-success guard. Missing
+      # release means the parent publish job did not create the artifact
+      # set we are about to index.
       - name: Verify GitHub Release exists for tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

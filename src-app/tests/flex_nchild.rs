@@ -15,8 +15,9 @@
 //! US-001: Proves GPUI's Taffy-backed flexbox distributes space correctly
 //! across N > 2 children using `flex_basis(relative(ratio))`.
 //!
-//! US-003: Validates the exact div structure that `LayoutTree::render()` produces,
-//! including 4px dividers between children and deeply nested trees.
+//! US-003: Validates the GPUI flexbox proxy used by `LayoutTree::render()`,
+//! including divider sizing and deeply nested trees. The production render
+//! method has module-level tests in `src-app/src/layout/render.rs`.
 
 use gpui::{
     AvailableSpace, InteractiveElement, ParentElement, Styled, TestAppContext, div, point, px,
@@ -245,13 +246,13 @@ fn test_imprecise_sum(cx: &mut TestAppContext) {
 // ===========================================================================
 // US-003: Render N-ary tree via GPUI flexbox
 //
-// These tests replicate the exact div structure LayoutTree::render() produces,
-// including 4px dividers between children and deeply nested containers.
+// These tests replicate the GPUI layout shape used by LayoutTree::render(),
+// including dividers between children and deeply nested containers.
 // ===========================================================================
 
 const DIVIDER_PX: f32 = 4.0;
 
-/// Helper: build a child pane div matching what LayoutTree::render() emits per child.
+/// Helper: build a child pane div matching the render wrapper's layout inputs.
 fn pane_div(ratio: f32, selector: &'static str) -> gpui::Div {
     div()
         .flex_basis(relative(ratio))
@@ -264,19 +265,19 @@ fn pane_div(ratio: f32, selector: &'static str) -> gpui::Div {
         .debug_selector(|| selector.into())
 }
 
-/// Helper: build a vertical divider (4px) matching LayoutTree::render().
+/// Helper: build a vertical divider with the same visible width as render.rs.
 fn v_divider() -> gpui::Div {
     div().w(px(DIVIDER_PX)).h_full().flex_shrink_0()
 }
 
-/// Helper: build a horizontal divider (4px) matching LayoutTree::render().
+/// Helper: build a horizontal divider with the same visible width as render.rs.
 fn h_divider() -> gpui::Div {
     div().h(px(DIVIDER_PX)).w_full().flex_shrink_0()
 }
 
 /// AC-4: A 3-child container with ratios [0.33, 0.33, 0.34] and 4px dividers
 /// between each pair - all three panes visible with roughly equal size.
-/// This replicates the exact div structure LayoutTree::render() produces.
+/// This replicates the render.rs flex shape with test-only debug selectors.
 #[gpui::test]
 fn test_three_children_with_dividers(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
@@ -336,7 +337,7 @@ fn test_three_children_with_dividers(cx: &mut TestAppContext) {
 
 /// AC-5: A 4-level deep nested tree renders without stack overflow or visual glitch.
 /// Structure: Vertical[Horizontal[Vertical[A, B], C], D]
-/// This matches what LayoutTree::render() would produce for a deeply nested split tree.
+/// This matches the layout shape used for a deeply nested split tree.
 #[gpui::test]
 fn test_deeply_nested_four_levels(cx: &mut TestAppContext) {
     let cx = cx.add_empty_window();
