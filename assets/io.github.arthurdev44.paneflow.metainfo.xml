@@ -63,6 +63,16 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.7.7" date="2026-07-06">
+      <description>
+        <p>Major control-plane, terminal, and release-hardening update.</p>
+        <ul>
+          <li>Agent orchestration, MCP bridge scoping, and workspace automation hardened</li>
+          <li>Session restore, tabbed panes, terminal rendering, search, and diff workflows stabilized</li>
+          <li>Signed self-updates, Windows MSI, macOS DMG, Debian, RPM, AppImage, Homebrew, and Winget release gates tightened</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.6" date="2026-07-06">
       <description>
         <p>Release and distribution hardening.</p>

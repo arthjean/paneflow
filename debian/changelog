@@ -1,3 +1,9 @@
+paneflow (0.7.7-1) stable; urgency=medium
+
+  * Release v0.7.7. See GitHub release notes for the full diff.
+
+ -- Arthur Jean <arthur.jean@strivex.fr>  Mon, 06 Jul 2026 14:49:14 +0200
+
 paneflow (0.7.6-1) stable; urgency=medium
 
   * Release v0.7.6. See GitHub release notes for the full diff.
