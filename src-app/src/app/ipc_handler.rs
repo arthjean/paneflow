@@ -297,6 +297,18 @@ fn read_stop_summary(params: &serde_json::Value) -> (Option<String>, Option<std:
     (inline, transcript_path)
 }
 
+fn lifecycle_event_source(params: &serde_json::Value) -> Option<&str> {
+    let hook = params.get("hook_payload");
+    params
+        .get("event_source")
+        .or_else(|| hook.and_then(|h| h.get("event_source")))
+        .and_then(|v| v.as_str())
+}
+
+fn is_interrupt_lifecycle_event(params: &serde_json::Value) -> bool {
+    lifecycle_event_source(params) == Some("interrupt")
+}
+
 /// Inner with an explicit cap so the oversize-skip branch is unit-testable
 /// without writing a multi-megabyte fixture.
 fn extract_last_result_capped(path: &std::path::Path, cap: u64) -> Option<String> {
@@ -3298,6 +3310,7 @@ impl PaneFlowApp {
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
                 let notify_config = self.cached_config.clone();
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
+                    let interrupt_stop = is_interrupt_lifecycle_event(params);
                     // U-014: key the auto-clear on the RESOLVED session key, not
                     // the raw `pid`. A legacy no-pid frame is stored under a
                     // fallback/synthetic key by `upsert_session_state`; the old
@@ -3313,7 +3326,11 @@ impl PaneFlowApp {
                     );
                     // US-016: the turn ended - the question is answered, no
                     // ghost message may survive into the next state.
-                    let (session_summary, transcript_to_read) = read_stop_summary(params);
+                    let (session_summary, transcript_to_read) = if interrupt_stop {
+                        (None, None)
+                    } else {
+                        read_stop_summary(params)
+                    };
                     if let Some(s) = ws.agent_sessions.get_mut(&session_key) {
                         s.message = None;
                         // EP-004 US-015: capture a best-effort summary of the
@@ -3322,30 +3339,32 @@ impl PaneFlowApp {
                         // None when the hook provides nothing (the common case).
                         s.last_result = session_summary.clone();
                     }
-                    // EP-004 US-020: notify the user the turn ended if they're
-                    // looking elsewhere. Read the title before the borrow ends.
+                    // EP-004 US-020: natural turn ends notify when the user is
+                    // looking elsewhere. Ctrl+C stops only clear local state.
                     let ws_title = ws.title.clone();
                     cx.notify();
-                    if let Some(path) = transcript_to_read {
-                        Self::schedule_transcript_turn_end(
-                            Some((workspace_id, session_key)),
-                            path,
-                            Some(TranscriptTurnEndNotification {
-                                agent: tool,
-                                title: ws_title.clone(),
-                                config: notify_config.clone(),
-                                executor: cx.background_executor().clone(),
-                            }),
-                            cx,
-                        );
-                    } else {
-                        fire_turn_end_notification(
-                            tool,
-                            &ws_title,
-                            session_summary.as_deref(),
-                            &notify_config,
-                            cx.background_executor().clone(),
-                        );
+                    if !interrupt_stop {
+                        if let Some(path) = transcript_to_read {
+                            Self::schedule_transcript_turn_end(
+                                Some((workspace_id, session_key)),
+                                path,
+                                Some(TranscriptTurnEndNotification {
+                                    agent: tool,
+                                    title: ws_title.clone(),
+                                    config: notify_config.clone(),
+                                    executor: cx.background_executor().clone(),
+                                }),
+                                cx,
+                            );
+                        } else {
+                            fire_turn_end_notification(
+                                tool,
+                                &ws_title,
+                                session_summary.as_deref(),
+                                &notify_config,
+                                cx.background_executor().clone(),
+                            );
+                        }
                     }
                     self.bind_or_resolve_session_surface(
                         workspace_id,
@@ -3353,12 +3372,14 @@ impl PaneFlowApp {
                         explicit_surface_id,
                         cx,
                     );
-                    self.record_workspace_rosetta_event(
-                        workspace_id,
-                        session_key,
-                        crate::app::rosetta::RosettaRowState::Finished,
-                        std::time::Instant::now(),
-                    );
+                    if !interrupt_stop {
+                        self.record_workspace_rosetta_event(
+                            workspace_id,
+                            session_key,
+                            crate::app::rosetta::RosettaRowState::Finished,
+                            std::time::Instant::now(),
+                        );
+                    }
                     self.sync_attention(cx);
                     // EP-001 US-003 (cli-cockpit): the turn ended - flush any
                     // queued prompt for this pane (prefill only).
@@ -3394,6 +3415,7 @@ impl PaneFlowApp {
 
                     serde_json::json!({"status": "idle"})
                 } else if let Some(target) = self.agents_thread_target_by_env_id(workspace_id) {
+                    let interrupt_stop = is_interrupt_lifecycle_event(params);
                     // Codex-style: the spinner drops the moment the turn
                     // ends and the relative timestamp returns. No Finished
                     // hold state - `ThreadStatus` has no such variant and
@@ -3410,37 +3432,45 @@ impl PaneFlowApp {
                     let session_agent = thread.terminal_agent.and_then(|a| a.session_agent());
                     let bound_session = thread.session_id.clone();
                     let title_locked = thread.title_user_set;
-                    let (session_summary, transcript_to_read) = read_stop_summary(params);
+                    let (session_summary, transcript_to_read) = if interrupt_stop {
+                        (None, None)
+                    } else {
+                        read_stop_summary(params)
+                    };
                     if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
                         t.last_result = session_summary.clone();
                         apply_agents_thread_state(t, ai_types::AgentState::Finished, pid, None);
                     }
-                    self.record_agents_thread_rosetta_event(
-                        target,
-                        crate::app::rosetta::RosettaRowState::Finished,
-                        std::time::Instant::now(),
-                    );
+                    if !interrupt_stop {
+                        self.record_agents_thread_rosetta_event(
+                            target,
+                            crate::app::rosetta::RosettaRowState::Finished,
+                            std::time::Instant::now(),
+                        );
+                    }
                     cx.notify();
-                    if let Some(path) = transcript_to_read {
-                        Self::schedule_transcript_turn_end(
-                            None,
-                            path,
-                            Some(TranscriptTurnEndNotification {
-                                agent: tool,
-                                title: title.clone(),
-                                config: notify_config.clone(),
-                                executor: cx.background_executor().clone(),
-                            }),
-                            cx,
-                        );
-                    } else {
-                        fire_turn_end_notification(
-                            tool,
-                            &title,
-                            session_summary.as_deref(),
-                            &notify_config,
-                            cx.background_executor().clone(),
-                        );
+                    if !interrupt_stop {
+                        if let Some(path) = transcript_to_read {
+                            Self::schedule_transcript_turn_end(
+                                None,
+                                path,
+                                Some(TranscriptTurnEndNotification {
+                                    agent: tool,
+                                    title: title.clone(),
+                                    config: notify_config.clone(),
+                                    executor: cx.background_executor().clone(),
+                                }),
+                                cx,
+                            );
+                        } else {
+                            fire_turn_end_notification(
+                                tool,
+                                &title,
+                                session_summary.as_deref(),
+                                &notify_config,
+                                cx.background_executor().clone(),
+                            );
+                        }
                     }
                     // Parity with `/resume`: at turn end the session's LLM
                     // `ai-title` exists on disk - adopt it as the sidebar
@@ -3485,6 +3515,8 @@ impl PaneFlowApp {
                     // classifier is pure and unit-tested in `ai_types`.
                     let state = ai_types::state_for_exit(exit_code);
                     let errored = state == ai_types::AgentState::Errored;
+                    let interrupt_exit = is_interrupt_lifecycle_event(params)
+                        || ai_types::is_human_interruption_exit(exit_code);
                     let key = upsert_session_state(&mut ws.agent_sessions, pid, tool, state, None);
                     // The binary is gone - whatever question it was asking is
                     // moot (same ghost-message rationale as `ai.stop`).
@@ -3524,17 +3556,19 @@ impl PaneFlowApp {
                             explicit_surface_id,
                             cx,
                         );
-                        self.record_workspace_rosetta_event(
-                            workspace_id,
-                            key,
-                            crate::app::rosetta::RosettaRowState::Finished,
-                            std::time::Instant::now(),
-                        );
+                        if !interrupt_exit {
+                            self.record_workspace_rosetta_event(
+                                workspace_id,
+                                key,
+                                crate::app::rosetta::RosettaRowState::Finished,
+                                std::time::Instant::now(),
+                            );
+                        }
                     }
-                    // Finished (exit 0 / interrupt) intentionally fires no
-                    // notification - `ai.stop` already announced the turn
-                    // end, and the shim's `ai.session_end` lands right after
-                    // this frame to clear the row.
+                    // Clean exits intentionally fire no notification here.
+                    // Interrupt exits also skip Rosetta history; the shim's
+                    // `ai.session_end` lands right after this frame to clear
+                    // the row.
                     self.sync_attention(cx);
                     self.agent_sessions_changed(cx);
                     serde_json::json!({"status": if errored { "errored" } else { "finished" }})
@@ -3544,6 +3578,8 @@ impl PaneFlowApp {
                     // crashes become a red indicator (no status text).
                     let state = ai_types::state_for_exit(exit_code);
                     let errored = state == ai_types::AgentState::Errored;
+                    let interrupt_exit = is_interrupt_lifecycle_event(params)
+                        || ai_types::is_human_interruption_exit(exit_code);
                     let Some(thread) = self.thread_for_target(target) else {
                         return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
                     };
@@ -3553,15 +3589,17 @@ impl PaneFlowApp {
                     if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
                         apply_agents_thread_state(t, state, pid, None);
                     }
-                    self.record_agents_thread_rosetta_event(
-                        target,
-                        if errored {
-                            crate::app::rosetta::RosettaRowState::Errored
-                        } else {
-                            crate::app::rosetta::RosettaRowState::Finished
-                        },
-                        std::time::Instant::now(),
-                    );
+                    if errored || !interrupt_exit {
+                        self.record_agents_thread_rosetta_event(
+                            target,
+                            if errored {
+                                crate::app::rosetta::RosettaRowState::Errored
+                            } else {
+                                crate::app::rosetta::RosettaRowState::Finished
+                            },
+                            std::time::Instant::now(),
+                        );
+                    }
                     if errored {
                         fire_agent_exit_notification(
                             tool,
@@ -3599,6 +3637,7 @@ impl PaneFlowApp {
                 // still works, only the tool-name fallback is skipped.
                 let tool = crate::agent_launcher::TerminalAgent::from_binary(tool_str);
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
+                let interrupt_session_end = is_interrupt_lifecycle_event(params);
 
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     // Prefer exact PID removal. Legacy no-PID frames are only
@@ -3621,14 +3660,16 @@ impl PaneFlowApp {
                         && let Some(session) = ws.agent_sessions.get(&p)
                         && !is_errored(session)
                     {
-                        recent_event = Some(workspace_recent_event_with_surface_fallback(
-                            ws.id,
-                            &ws.title,
-                            session,
-                            crate::app::rosetta::RosettaRowState::Finished,
-                            std::time::Instant::now(),
-                            explicit_surface_id,
-                        ));
+                        if !interrupt_session_end {
+                            recent_event = Some(workspace_recent_event_with_surface_fallback(
+                                ws.id,
+                                &ws.title,
+                                session,
+                                crate::app::rosetta::RosettaRowState::Finished,
+                                std::time::Instant::now(),
+                                explicit_surface_id,
+                            ));
+                        }
                         ws.agent_sessions.remove(&p).is_some()
                     } else if pid.is_some_and(|p| ws.agent_sessions.contains_key(&p)) {
                         // Exact-PID match exists but is Errored: keep it, and
@@ -3642,7 +3683,9 @@ impl PaneFlowApp {
                             explicit_surface_id,
                         );
                         if let Some(k) = pid_to_remove {
-                            if let Some(session) = ws.agent_sessions.get(&k) {
+                            if !interrupt_session_end
+                                && let Some(session) = ws.agent_sessions.get(&k)
+                            {
                                 recent_event = Some(workspace_recent_event_with_surface_fallback(
                                     ws.id,
                                     &ws.title,
@@ -3676,7 +3719,8 @@ impl PaneFlowApp {
                     let thread_id = thread.id;
                     let should_record_finished = thread.status
                         != crate::project::ThreadStatus::Idle
-                        && thread.status != crate::project::ThreadStatus::Failed;
+                        && thread.status != crate::project::ThreadStatus::Failed
+                        && !interrupt_session_end;
                     if should_record_finished {
                         self.record_agents_thread_rosetta_event(
                             target,
@@ -5324,6 +5368,18 @@ mod tests {
         let (summary, path) = super::read_stop_summary(&p);
         assert!(summary.is_none());
         assert_eq!(path.as_deref(), Some(std::path::Path::new(abs)));
+    }
+
+    #[test]
+    fn interrupt_lifecycle_event_can_be_top_level_or_hook_payload() {
+        let p = serde_json::json!({"event_source": "interrupt"});
+        assert!(super::is_interrupt_lifecycle_event(&p));
+
+        let p = serde_json::json!({"hook_payload": {"event_source": "interrupt"}});
+        assert!(super::is_interrupt_lifecycle_event(&p));
+
+        let p = serde_json::json!({"event_source": "natural"});
+        assert!(!super::is_interrupt_lifecycle_event(&p));
     }
 
     #[test]

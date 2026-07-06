@@ -37,6 +37,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+const PANEFLOW_AI_EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
+const PANEFLOW_AI_EVENT_SOURCE_INTERRUPT: &str = "interrupt";
+
 mod detect;
 mod exec;
 mod hooks;
@@ -149,8 +152,9 @@ fn main() -> ExitCode {
     // `ai.exit` (which may set `Errored`) before `ai.session_end` (which
     // spares an `Errored` session instead of removing it). `None` (spawn or
     // wait failure) emits nothing - the server keeps today's behavior.
+    let interrupted_exit = agent_exit.is_some_and(is_interrupt_exit_code);
     if let Some(exit_code) = agent_exit {
-        notify_exit(tool, exit_code);
+        notify_exit(tool, exit_code, interrupted_exit);
     }
 
     // The real AI binary has exited. Neither claude nor codex fires a
@@ -161,7 +165,7 @@ fn main() -> ExitCode {
     // IPC frame; the server clears `ai_state` to `Inactive`. Any failure
     // here is silent - the worst case is a stale loader, not a broken
     // shell.
-    notify_session_end(tool);
+    notify_session_end(tool, interrupted_exit);
 
     code
 }
@@ -270,19 +274,30 @@ fn install_hook_guard(tool: &str) -> Option<ToolHookGuard> {
 /// hook binary, blocking `.status()` wait, silent failure); the raw code
 /// rides in `PANEFLOW_AI_EXIT_CODE` since the hook's stdin is null on
 /// shim-synthesized events.
-fn notify_exit(tool: &str, exit_code: i32) {
+fn is_interrupt_exit_code(exit_code: i32) -> bool {
+    const STATUS_CONTROL_C_EXIT: i32 = 0xC000_013Au32 as i32;
+    matches!(exit_code, 129 | 130 | 137 | 143 | STATUS_CONTROL_C_EXIT)
+}
+
+fn notify_exit(tool: &str, exit_code: i32, interrupted: bool) {
     let Some(hook_path) = locate_sibling_hook_binary() else {
         return;
     };
-    let _ = std::process::Command::new(&hook_path)
-        .arg("Exit")
+    let mut cmd = std::process::Command::new(&hook_path);
+    cmd.arg("Exit")
         .env("PANEFLOW_AI_TOOL", tool)
         .env("PANEFLOW_AI_PID", std::process::id().to_string())
         .env("PANEFLOW_AI_EXIT_CODE", exit_code.to_string())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+    if interrupted {
+        cmd.env(
+            PANEFLOW_AI_EVENT_SOURCE_ENV,
+            PANEFLOW_AI_EVENT_SOURCE_INTERRUPT,
+        );
+    }
+    let _ = cmd.status();
 }
 
 /// Best-effort notify of `ai.session_end` after the real AI binary exits.
@@ -301,18 +316,24 @@ fn notify_exit(tool: &str, exit_code: i32) {
 /// even adding this - a Unix-socket connect+write is well under that
 /// alone, and we're outside the spawn-to-exec critical path here (the
 /// user's command has already returned its exit code).
-fn notify_session_end(tool: &str) {
+fn notify_session_end(tool: &str, interrupted: bool) {
     let Some(hook_path) = locate_sibling_hook_binary() else {
         return;
     };
-    let _ = std::process::Command::new(&hook_path)
-        .arg("SessionEnd")
+    let mut cmd = std::process::Command::new(&hook_path);
+    cmd.arg("SessionEnd")
         .env("PANEFLOW_AI_TOOL", tool)
         .env("PANEFLOW_AI_PID", std::process::id().to_string())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
+        .stderr(std::process::Stdio::null());
+    if interrupted {
+        cmd.env(
+            PANEFLOW_AI_EVENT_SOURCE_ENV,
+            PANEFLOW_AI_EVENT_SOURCE_INTERRUPT,
+        );
+    }
+    let _ = cmd.status();
 }
 
 /// Resolve `paneflow-ai-hook` (or `.exe` on Windows) sitting in the same

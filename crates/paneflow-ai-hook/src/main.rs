@@ -61,6 +61,9 @@ const METHOD_TOOL_USE: &str = "ai.tool_use";
 /// EP-004 US-010: shim-synthesized frame carrying the wrapped agent
 /// binary's REAL exit status (the shell's ChildExit never sees it).
 const METHOD_EXIT: &str = "ai.exit";
+const LIFECYCLE_EVENT_SOURCE_ENV: &str = "PANEFLOW_AI_EVENT_SOURCE";
+const LIFECYCLE_EVENT_SOURCE_INTERRUPT: &str = "interrupt";
+const PARAM_EVENT_SOURCE: &str = "event_source";
 
 // Tool identity: the agent's BINARY name (`claude`, `codex`, `gemini`,
 // `cursor-agent`, …), set by the shim from its own argv[0] stem and
@@ -238,6 +241,7 @@ fn write_all_with_deadline(
 ///     `notification_type: "permission_prompt"`. The server currently
 ///     ignores `notification_type` (`ipc_handler.rs:441-478` does not read
 ///     it), so this is forward-looking metadata that doesn't break today.
+#[cfg(test)]
 fn build_frame(
     event: &str,
     workspace_id: u64,
@@ -245,6 +249,26 @@ fn build_frame(
     hook_payload: serde_json::Value,
     pid: Option<u32>,
     surface_id: Option<u64>,
+) -> Option<serde_json::Value> {
+    build_frame_with_event_source(
+        event,
+        workspace_id,
+        tool,
+        hook_payload,
+        pid,
+        surface_id,
+        None,
+    )
+}
+
+fn build_frame_with_event_source(
+    event: &str,
+    workspace_id: u64,
+    tool: &str,
+    hook_payload: serde_json::Value,
+    pid: Option<u32>,
+    surface_id: Option<u64>,
+    event_source: Option<&str>,
 ) -> Option<serde_json::Value> {
     let mut params = serde_json::Map::new();
     params.insert("workspace_id".into(), serde_json::Value::from(workspace_id));
@@ -362,6 +386,15 @@ fn build_frame(
         }
         _ => return None,
     };
+
+    if matches!(event, "Stop" | "Exit" | "SessionEnd")
+        && event_source == Some(LIFECYCLE_EVENT_SOURCE_INTERRUPT)
+    {
+        params.insert(
+            PARAM_EVENT_SOURCE.into(),
+            serde_json::Value::String(LIFECYCLE_EVENT_SOURCE_INTERRUPT.to_owned()),
+        );
+    }
 
     params.insert(
         "hook_payload".into(),
@@ -517,6 +550,17 @@ fn read_exit_code_from(raw: Option<&str>) -> Option<i32> {
     raw?.parse::<i32>().ok()
 }
 
+fn read_lifecycle_event_source() -> Option<String> {
+    read_lifecycle_event_source_from(env::var(LIFECYCLE_EVENT_SOURCE_ENV).ok().as_deref())
+}
+
+fn read_lifecycle_event_source_from(raw: Option<&str>) -> Option<String> {
+    match raw {
+        Some(LIFECYCLE_EVENT_SOURCE_INTERRUPT) => Some(LIFECYCLE_EVENT_SOURCE_INTERRUPT.to_owned()),
+        _ => None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Diagnostic logging (opt-in)
 // ---------------------------------------------------------------------------
@@ -606,11 +650,20 @@ fn dispatch() {
     let tool = detect_tool();
     let tool = tool.as_str();
     let pid = read_ai_pid();
+    let event_source = read_lifecycle_event_source();
     // US-016 - best-effort: a missing or malformed surface_id leaves the
     // server falling back to workspace-only routing.
     let surface_id = read_surface_id();
 
-    let Some(frame) = build_frame(&event, workspace_id, tool, hook_payload, pid, surface_id) else {
+    let Some(frame) = build_frame_with_event_source(
+        &event,
+        workspace_id,
+        tool,
+        hook_payload,
+        pid,
+        surface_id,
+        event_source.as_deref(),
+    ) else {
         // `build_frame` returns `None` in exactly two cases: an unknown event
         // name, or `SessionStart` with no PID resolvable. Distinguish them
         // so a developer reading `$PANEFLOW_HOOK_LOG` knows whether to fix
@@ -869,6 +922,36 @@ mod tests {
     }
 
     #[test]
+    fn interrupt_source_is_lifted_for_synthetic_lifecycle_events() {
+        let payload = json!({ "session_id": "s1" });
+        let frame = build_frame_with_event_source(
+            "Stop",
+            1,
+            "claude",
+            payload.clone(),
+            None,
+            None,
+            Some("interrupt"),
+        )
+        .unwrap();
+        let params = assert_envelope(&frame, "ai.stop");
+        assert_eq!(params["event_source"], "interrupt");
+
+        let frame = build_frame_with_event_source(
+            "UserPromptSubmit",
+            1,
+            "claude",
+            payload,
+            None,
+            None,
+            Some("interrupt"),
+        )
+        .unwrap();
+        let params = assert_envelope(&frame, "ai.prompt_submit");
+        assert!(params.get("event_source").is_none());
+    }
+
+    #[test]
     fn subagent_stop_maps_to_ai_stop() {
         let payload = json!({ "session_id": "sub" });
         let frame = build_frame("SubagentStop", 1, "claude", payload.clone(), None, None).unwrap();
@@ -921,6 +1004,17 @@ mod tests {
         assert_eq!(read_exit_code_from(Some("abc")), None);
         assert_eq!(read_exit_code_from(Some("")), None);
         assert_eq!(read_exit_code_from(None), None);
+    }
+
+    #[test]
+    fn lifecycle_event_source_only_accepts_interrupt_marker() {
+        assert_eq!(
+            read_lifecycle_event_source_from(Some("interrupt")).as_deref(),
+            Some("interrupt")
+        );
+        assert!(read_lifecycle_event_source_from(Some("")).is_none());
+        assert!(read_lifecycle_event_source_from(Some("other")).is_none());
+        assert!(read_lifecycle_event_source_from(None).is_none());
     }
 
     #[test]

@@ -78,6 +78,12 @@ impl AgentState {
     }
 }
 
+const STATUS_CONTROL_C_EXIT: i32 = 0xC000_013Au32 as i32;
+
+pub fn is_human_interruption_exit(exit_code: i32) -> bool {
+    matches!(exit_code, 129 | 130 | 137 | 143 | STATUS_CONTROL_C_EXIT)
+}
+
 /// EP-004 US-010: classify the agent binary's raw exit code into the
 /// session state it produces. Exit codes are reported by the shim with the
 /// shell convention `128 + signum` for signal terminations (see
@@ -96,12 +102,9 @@ impl AgentState {
 /// Genuine crash signals (SIGSEGV → 139, SIGABRT → 134, …) and every
 /// other non-zero code classify as `Errored`.
 pub fn state_for_exit(exit_code: i32) -> AgentState {
-    /// `{Application Exit by CTRL+C}` - 0xC000013A as i32.
-    const STATUS_CONTROL_C_EXIT: i32 = 0xC000_013Au32 as i32;
     match exit_code {
         0 => AgentState::Finished,
-        129 | 130 | 137 | 143 => AgentState::Finished,
-        STATUS_CONTROL_C_EXIT => AgentState::Finished,
+        code if is_human_interruption_exit(code) => AgentState::Finished,
         _ => AgentState::Errored,
     }
 }
@@ -507,6 +510,15 @@ mod tests {
         assert_eq!(state_for_exit(139), Errored, "128+SIGSEGV is a crash");
         assert_eq!(state_for_exit(134), Errored, "128+SIGABRT is a crash");
         assert_eq!(state_for_exit(-1), Errored, "negative non-Ctrl+C code");
+    }
+
+    #[test]
+    fn human_interruption_exit_excludes_clean_exit_and_crashes() {
+        assert!(!is_human_interruption_exit(0));
+        assert!(is_human_interruption_exit(130));
+        assert!(is_human_interruption_exit(0xC000_013Au32 as i32));
+        assert!(!is_human_interruption_exit(1));
+        assert!(!is_human_interruption_exit(139));
     }
 
     #[test]

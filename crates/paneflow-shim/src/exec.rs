@@ -9,7 +9,9 @@ use std::process::ExitCode;
 // unix+windows so a hypothetical bare target without either doesn't flag them
 // unused; the shim only ships on unix + windows.
 #[cfg(any(unix, windows))]
-use crate::locate_sibling_hook_binary;
+use crate::{
+    locate_sibling_hook_binary, PANEFLOW_AI_EVENT_SOURCE_ENV, PANEFLOW_AI_EVENT_SOURCE_INTERRUPT,
+};
 #[cfg(any(unix, windows))]
 use std::io::Write;
 
@@ -369,6 +371,10 @@ pub(crate) fn send_interrupt_stop(hook_path: &Path, tool: &str) {
         .arg("Stop")
         .env("PANEFLOW_AI_TOOL", tool)
         .env("PANEFLOW_AI_PID", std::process::id().to_string())
+        .env(
+            PANEFLOW_AI_EVENT_SOURCE_ENV,
+            PANEFLOW_AI_EVENT_SOURCE_INTERRUPT,
+        )
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
