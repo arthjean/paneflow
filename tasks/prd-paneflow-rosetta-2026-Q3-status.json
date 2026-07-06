@@ -45,11 +45,11 @@
       "id": "US-001",
       "title": "Projection des sessions workspace",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": "2026-06-27"
     },
@@ -57,13 +57,13 @@
       "id": "US-002",
       "title": "Projection des threads Agents mode",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": "2026-06-27"
     },
@@ -71,13 +71,13 @@
       "id": "US-003",
       "title": "Recent event history volatile",
       "epic": "EP-001",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P1",
       "size": "S",
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": "2026-06-27"
     },
@@ -91,7 +91,7 @@
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -105,7 +105,7 @@
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -119,7 +119,7 @@
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -133,7 +133,7 @@
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -148,7 +148,7 @@
         "US-001",
         "US-005"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -162,7 +162,7 @@
       "blocked_by": [
         "US-008"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -176,7 +176,7 @@
       "blocked_by": [
         "US-009"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -190,7 +190,7 @@
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -204,7 +204,7 @@
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -218,7 +218,7 @@
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     },
@@ -234,7 +234,7 @@
         "US-008",
         "US-012"
       ],
-      "started_at": null,
+      "started_at": "2026-06-27",
       "completed_at": "2026-06-27",
       "reviewed_at": null
     }

@@ -124,11 +124,11 @@ Extraire le client IPC en crate partagée, introduire `clap` sans casser le dém
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given le transport actuel (`crates/paneflow-mcp/src/ipc_client.rs:36-196` : `IpcClient`, `IpcTransport::call`, `resolve_socket_path`, framing JSON-RPC), when on extrait une crate `crates/paneflow-ipc-client`, then `paneflow-mcp` la consomme et compile sans changement de comportement (golden : les tests existants de `ipc_client` passent depuis la nouvelle crate).
-- [ ] La nouvelle crate ne dépend ni de GPUI ni d'aucune crate `src-app` (uniquement `interprocess` + `serde_json`), vérifié par `cargo tree -p paneflow-ipc-client`.
-- [ ] `resolve_socket_path` honore `PANEFLOW_SOCKET_PATH` absolu d'abord, puis le fallback XDG/TMPDIR (Unix) / named-pipe (Windows), identique à l'actuel (`ipc_client.rs:159-196`).
-- [ ] Given le socket absent, when `call` est invoqué, then l'erreur contient `unreachable` et mentionne "is Paneflow running?" (parité `ipc_client.rs:61-66`), couvert par un test.
-- [ ] `cargo clippy` ne montre aucun nouveau warning `unwrap`/`expect` issu de l'extraction.
+- [x] Given le transport extrait (`crates/paneflow-ipc-client/src/lib.rs` : `IpcClient`, `IpcTransport::call`, `resolve_socket_path`, framing JSON-RPC), when on extrait une crate `crates/paneflow-ipc-client`, then `paneflow-mcp` la consomme et compile sans changement de comportement.
+- [x] La nouvelle crate ne dépend ni de GPUI ni d'aucune crate `src-app` (uniquement `interprocess` + `serde_json`), vérifié par `cargo tree -p paneflow-ipc-client`.
+- [x] `resolve_socket_path` honore `PANEFLOW_SOCKET_PATH` absolu d'abord, puis le fallback XDG/TMPDIR (Unix) / named-pipe (Windows), identique à l'actuel (`ipc_client.rs:159-196`).
+- [x] Given le socket absent, when `call` est invoqué, then l'erreur contient `unreachable` et mentionne "is Paneflow running?" (parité `ipc_client.rs:61-66`), couvert par un test.
+- [x] `cargo clippy` ne montre aucun nouveau warning `unwrap`/`expect` issu de l'extraction.
 
 #### US-002: Intégration `clap` 4.5 avec fallthrough GUI
 **Description:** As a maintainer, I want un parseur d'arguments structuré qui coexiste avec l'intercept `mcp` et le démarrage GUI so that on peut ajouter 11+ sous-commandes sans parsing manuel fragile.
@@ -138,12 +138,12 @@ Extraire le client IPC en crate partagée, introduire `clap` sans casser le dém
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `clap = { version = "4.5", features = ["derive"] }` ajouté à `src-app/Cargo.toml` ; le `Cli` racine utilise `command: Option<Commands>` (pas `Commands` nu).
-- [ ] Given `paneflow` sans argument, when le binaire démarre, then il tombe dans le bras `None` et lance la GUI exactement comme le fallthrough actuel (`main.rs:1332`) — aucun help/erreur affiché.
-- [ ] Given `paneflow mcp install` (et autres `mcp …`), when le binaire démarre, then l'intercept positionnel manuel existant (`main.rs:1206,1301-1313`) s'exécute AVANT clap et `mcp` n'est jamais routé par clap.
-- [ ] Given `--help`/`--version`/`--update-and-exit`, when invoqués, then ils conservent leur comportement et leurs codes de sortie actuels (`--update-and-exit` garde 0-5) — pas de double-parse ni de capture par un scan global.
-- [ ] Given une sous-commande inconnue ou un mauvais usage, when parsée, then `try_parse()` est utilisé et le code de sortie est géré explicitement (les sous-commandes métier retournent leur propre `i32`, pas le 2 réservé de clap).
-- [ ] Les sous-commandes CLI ne touchent jamais `ipc::start_server` ni le singleton guard (`ipc.rs:225`) — elles ouvrent un client et sortent avant init GPUI.
+- [x] `clap = { version = "4.5", features = ["derive"] }` ajouté à `src-app/Cargo.toml` ; le `Cli` racine utilise `command: Option<Commands>` (pas `Commands` nu).
+- [x] Given `paneflow` sans argument, when le binaire démarre, then il tombe dans le bras `None` et lance la GUI exactement comme le fallthrough actuel (`main.rs:1332`) — aucun help/erreur affiché.
+- [x] Given `paneflow mcp install` (et autres `mcp …`), when le binaire démarre, then l'intercept positionnel manuel existant (`main.rs:1206,1301-1313`) s'exécute AVANT clap et `mcp` n'est jamais routé par clap.
+- [x] Given `--help`/`--version`/`--update-and-exit`, when invoqués, then ils conservent leur comportement et leurs codes de sortie actuels (`--update-and-exit` garde 0-5) — pas de double-parse ni de capture par un scan global.
+- [x] Given une sous-commande inconnue ou un mauvais usage, when parsée, then `try_parse()` est utilisé et le code de sortie est géré explicitement (les sous-commandes métier retournent leur propre `i32`, pas le 2 réservé de clap).
+- [x] Les sous-commandes CLI ne touchent jamais `ipc::start_server` ni le singleton guard (`ipc.rs:225`) — elles ouvrent un client et sortent avant init GPUI.
 
 #### US-003: Sélecteur de cible transverse (`id` | `name` | `cmdline:` | `cwd:`)
 **Description:** As a CLI user, I want cibler un pane par son process ou son répertoire plutôt que par un id numérique so that je peux viser "le pane où tourne claude" quand j'orchestre N agents.
@@ -153,11 +153,11 @@ Extraire le client IPC en crate partagée, introduire `clap` sans casser le dém
 **Dependencies:** US-001
 
 **Acceptance Criteria:**
-- [ ] Un parseur de sélecteur accepte : `<u64>` (surface_id), une chaîne nue (name exact puis préfixe désambiguïsé), `cmdline:<substr>` (match sur le champ `cmd` de `surface.list`), `cwd:<path>` (match sur le `cwd`).
-- [ ] La résolution interroge `surface.list` (`ipc_handler.rs:621-645`) puis filtre côté client ; le champ `cmd` provient de `foreground_command()` (`pty_session.rs:1169`).
-- [ ] Given un sélecteur qui matche plusieurs panes, when résolu sans flag explicite, then la commande échoue avec un message listant les candidats (id + name + cmd) et un code de sortie non-zéro dédié (pas de choix silencieux).
-- [ ] Given un sélecteur qui ne matche aucun pane, when résolu, then échec avec message clair et code non-zéro.
-- [ ] Tests unitaires : exact/préfixe/cmdline/cwd, ambiguïté, no-match.
+- [x] Un parseur de sélecteur accepte : `<u64>` (surface_id), une chaîne nue (name exact puis préfixe désambiguïsé), `cmdline:<substr>` (match sur le champ `cmd` de `surface.list`), `cwd:<path>` (match sur le `cwd`).
+- [x] La résolution interroge `surface.list` (`ipc_handler.rs:621-645`) puis filtre côté client ; le champ `cmd` provient de `foreground_command()` (`pty_session.rs:1169`).
+- [x] Given un sélecteur qui matche plusieurs panes, when résolu sans flag explicite, then la commande échoue avec un message listant les candidats (id + name + cmd) et un code de sortie non-zéro dédié (pas de choix silencieux).
+- [x] Given un sélecteur qui ne matche aucun pane, when résolu, then échec avec message clair et code non-zéro.
+- [x] Tests unitaires : exact/préfixe/cmdline/cwd, ambiguïté, no-match.
 
 #### US-004: Commandes de lecture `ls` / `read` / `search`
 **Description:** As a script author, I want introspection machine-readable des panes so that mes scripts branchent sans parser de texte tabulaire.
@@ -167,11 +167,11 @@ Extraire le client IPC en crate partagée, introduire `clap` sans casser le dém
 **Dependencies:** US-001, US-002, US-003
 
 **Acceptance Criteria:**
-- [ ] `paneflow ls` appelle `surface.list` et émet du JSON par défaut (tous les champs : `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`) ; `--human` produit une table alignée.
-- [ ] `paneflow read <target> [--lines N] [--offset N]` appelle `surface.read` (`ipc_handler.rs:646-688`) et émet le texte brut du scrollback par défaut ; `--json` enveloppe `{text, lines, total_lines, eof}`.
-- [ ] `paneflow search <target> <pattern> [--max N]` appelle `surface.search` et émet `{matches:[{line,text}], truncated}` en JSON par défaut.
-- [ ] Given un `--lines`/`--max` hors bornes, when envoyé, then la commande relaie le clamp serveur (1..4000 / 1..1000) sans erreur, et `--offset` > total renvoie l'erreur serveur `-32602` mappée en message clair + code non-zéro.
-- [ ] Given une instance non lancée, when n'importe laquelle est invoquée, then échec avec "is Paneflow running?" et code non-zéro (réutilise US-001).
+- [x] `paneflow ls` appelle `surface.list` et émet du JSON par défaut (tous les champs : `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`) ; `--human` produit une table alignée.
+- [x] `paneflow read <target> [--lines N] [--offset N]` appelle `surface.read` (`ipc_handler.rs:646-688`) et émet le texte brut du scrollback par défaut ; `--json` enveloppe `{text, lines, total_lines, eof}`.
+- [x] `paneflow search <target> <pattern> [--max N]` appelle `surface.search` et émet `{matches:[{line,text}], truncated}` en JSON par défaut.
+- [x] Given un `--lines`/`--max` hors bornes, when envoyé, then la commande relaie le clamp serveur (1..4000 / 1..1000) sans erreur, et `--offset` > total renvoie l'erreur serveur `-32602` mappée en message clair + code non-zéro.
+- [x] Given une instance non lancée, when n'importe laquelle est invoquée, then échec avec "is Paneflow running?" et code non-zéro (réutilise US-001).
 
 #### US-005: Commandes de contrôle `new` / `select` / `split`
 **Description:** As a CLI user, I want créer/sélectionner/splitter des workspaces depuis le shell so that je prépare mon espace sans la souris.
@@ -181,10 +181,10 @@ Extraire le client IPC en crate partagée, introduire `clap` sans casser le dém
 **Dependencies:** US-001, US-002
 
 **Acceptance Criteria:**
-- [ ] `paneflow new [--name N] [--cwd DIR]` appelle `workspace.create` (`ipc_handler.rs:505-583`) et imprime `{index, title, panes}` en JSON.
-- [ ] `paneflow select <index>` appelle `workspace.select` ; `paneflow split <h|v>` appelle `surface.split` (`value_enum` avec alias `h`/`horizontal`, `v`/`vertical`).
-- [ ] Given un `--cwd` inexistant, when `new` est appelé, then l'erreur serveur `-32602` (canonicalize/must-be-dir, `ipc_handler.rs:1296-1310`) est mappée en message clair + code non-zéro.
-- [ ] Given `split` quand le cap `MAX_PANES` est atteint, when appelé, then l'erreur serveur est relayée proprement (pas de panic, code non-zéro).
+- [x] `paneflow new [--name N] [--cwd DIR]` appelle `workspace.create` (`ipc_handler.rs:505-583`) et imprime `{index, title, panes}` en JSON.
+- [x] `paneflow select <index>` appelle `workspace.select` ; `paneflow split <h|v>` appelle `surface.split` (`value_enum` avec alias `h`/`horizontal`, `v`/`vertical`).
+- [x] Given un `--cwd` inexistant, when `new` est appelé, then l'erreur serveur `-32602` (canonicalize/must-be-dir, `ipc_handler.rs:1296-1310`) est mappée en message clair + code non-zéro.
+- [x] Given `split` quand le cap `MAX_PANES` est atteint, when appelé, then l'erreur serveur est relayée proprement (pas de panic, code non-zéro).
 
 #### US-006: Commande `send` (gated) + échec propre hors instance
 **Description:** As a power user with scripting enabled, I want injecter du texte dans un pane sans le soumettre so that je pré-remplis sans violer le human-in-loop.
@@ -194,10 +194,10 @@ Extraire le client IPC en crate partagée, introduire `clap` sans casser le dém
 **Dependencies:** US-001, US-002, US-003
 
 **Acceptance Criteria:**
-- [ ] `paneflow send <target> <text>` appelle `surface.send_text` (`ipc_handler.rs:742-781`) ; le texte est injecté sans `\r` (jamais auto-soumis).
-- [ ] Given `PANEFLOW_IPC_SCRIPTING` non égal à `"1"`, when `send` est appelé, then l'erreur serveur `-32601` est mappée en message explicite indiquant d'activer le gate, avec code non-zéro (le gate est lu côté serveur à chaque appel, `ipc_handler.rs:41-51`).
-- [ ] Given un texte > 64 KiB, when envoyé, then l'erreur serveur est relayée proprement.
-- [ ] La commande documente explicitement (help text) qu'elle ne soumet jamais — l'utilisateur/agent doit valider.
+- [x] `paneflow send <target> <text>` appelle `surface.send_text` (`ipc_handler.rs:742-781`) ; le texte est injecté sans `\r` (jamais auto-soumis).
+- [x] Given `PANEFLOW_IPC_SCRIPTING` non égal à `"1"`, when `send` est appelé, then l'erreur serveur `-32601` est mappée en message explicite indiquant d'activer le gate, avec code non-zéro (le gate est lu côté serveur à chaque appel, `ipc_handler.rs:41-51`).
+- [x] Given un texte > 64 KiB, when envoyé, then l'erreur serveur est relayée proprement.
+- [x] La commande documente explicitement (help text) qu'elle ne soumet jamais — l'utilisateur/agent doit valider.
 
 ---
 
@@ -215,11 +215,11 @@ Un fichier TOML décrit un workspace complet (layout + cwd/repo + agent + prompt
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Un module de schéma serde (dans `src-app` ou une crate dédiée, réutilisant `toml = "0.8"` + serde déjà présents, `src-app/Cargo.toml:106,120`) décrit : `name?`, `layout` (preset `even_h`/`even_v`/`main_vertical`/`tiled` OU split explicite direction+ratios+children), et une liste de panes `{cwd?, agent?, prompt?, command?, name?}`.
-- [ ] L'enum `agent` couvre l'ensemble des variantes `TerminalAgent` supportées (16, `agent_launcher.rs:49-66`) + `shell` ; un agent inconnu est une erreur de désérialisation.
-- [ ] `#[serde(deny_unknown_fields)]` est posé : une clé mal orthographiée (`agnt`, `prmpt`) produit une erreur explicite, pas un champ silencieusement ignoré.
-- [ ] Une étape de validation post-désérialisation borne le nombre de panes à `MAX_PANES`, vérifie que `agent` et `command` ne sont pas tous deux fournis sur un même pane, et que les ratios de split sont dans les bornes.
-- [ ] Given un TOML malformé ou hors-bornes, when chargé, then erreur avec ligne/champ fautif et code non-zéro ; test unitaire par cas (clé inconnue, agent inconnu, > MAX_PANES, ratio invalide).
+- [x] Un module de schéma serde (dans `src-app` ou une crate dédiée, réutilisant `toml = "0.8"` + serde déjà présents, `src-app/Cargo.toml:106,120`) décrit : `name?`, `layout` (preset `even_h`/`even_v`/`main_vertical`/`tiled` OU split explicite direction+ratios+children), et une liste de panes `{cwd?, agent?, prompt?, command?, name?}`.
+- [x] L'enum `agent` couvre l'ensemble des variantes `TerminalAgent` supportées (16, `agent_launcher.rs:49-66`) + `shell` ; un agent inconnu est une erreur de désérialisation.
+- [x] `#[serde(deny_unknown_fields)]` est posé : une clé mal orthographiée (`agnt`, `prmpt`) produit une erreur explicite, pas un champ silencieusement ignoré.
+- [x] Une étape de validation post-désérialisation borne le nombre de panes à `MAX_PANES`, vérifie que `agent` et `command` ne sont pas tous deux fournis sur un même pane, et que les ratios de split sont dans les bornes.
+- [x] Given un TOML malformé ou hors-bornes, when chargé, then erreur avec ligne/champ fautif et code non-zéro ; test unitaire par cas (clé inconnue, agent inconnu, > MAX_PANES, ratio invalide).
 
 #### US-008: Méthode IPC de matérialisation multi-pane honorant cwd/command par surface
 **Description:** As a maintainer, I want une méthode IPC qui crée un workspace multi-pane en respectant le cwd et la commande de chaque surface so that `up` peut placer chaque agent dans son repo.
@@ -229,11 +229,11 @@ Un fichier TOML décrit un workspace complet (layout + cwd/repo + agent + prompt
 **Dependencies:** US-001
 
 **Acceptance Criteria:**
-- [ ] Une nouvelle méthode IPC (ex. `workspace.up` / `surface.launch_agent`) accepte un layout + des `SurfaceDefinition` par leaf (`cwd`/`command`/`env`/`name`, `schema.rs:988-1009`) et matérialise chaque pane via le chemin qui honore ces champs (`spawn_pane_from_surfaces`, `session.rs:386-442`), PAS `apply_layout_from_json` qui les ignore (`layout.rs:149-152`).
-- [ ] Given un layout 2x1 avec deux cwd distincts, when la méthode est appelée, then les deux panes démarrent chacun dans son cwd (et non le cwd par défaut), vérifié par un test d'intégration IPC.
-- [ ] La méthode reste same-UID (auth peer-cred inchangée) ; elle n'émet jamais de `\r` (le launch passe par le chemin commande, le prompt par `send_text`).
-- [ ] Given un échec de matérialisation d'un leaf (cwd invalide), when la méthode s'exécute, then le workspace est rollback (pas de pane orphelin, parité `ipc_handler.rs:560-579`) et une erreur structurée nomme le leaf.
-- [ ] Cap `MAX_WORKSPACES`/`MAX_PANES` appliqué ; un dépassement renvoie une erreur, pas un panic.
+- [x] Une nouvelle méthode IPC (ex. `workspace.up` / `surface.launch_agent`) accepte un layout + des `SurfaceDefinition` par leaf (`cwd`/`command`/`env`/`name`, `schema.rs:988-1009`) et matérialise chaque pane via le chemin qui honore ces champs (`spawn_pane_from_surfaces`, `session.rs:386-442`), PAS `apply_layout_from_json` qui les ignore (`layout.rs:149-152`).
+- [x] Given un layout 2x1 avec deux cwd distincts, when la méthode est appelée, then les deux panes démarrent chacun dans son cwd (et non le cwd par défaut), vérifié par un test d'intégration IPC.
+- [x] La méthode reste same-UID (auth peer-cred inchangée) ; elle n'émet jamais de `\r` (le launch passe par le chemin commande, le prompt par `send_text`).
+- [x] Given un échec de matérialisation d'un leaf (cwd invalide), when la méthode s'exécute, then le workspace est rollback (pas de pane orphelin, parité `ipc_handler.rs:560-579`) et une erreur structurée nomme le leaf.
+- [x] Cap `MAX_WORKSPACES`/`MAX_PANES` appliqué ; un dépassement renvoie une erreur, pas un panic.
 
 #### US-009: Résolution `agent: <kind>` → commande de lancement
 **Description:** As a CLI user, I want déclarer `agent: claude` plutôt qu'une commande brute so that le bon CLI est lancé avec le bypass honoré.
@@ -243,10 +243,10 @@ Un fichier TOML décrit un workspace complet (layout + cwd/repo + agent + prompt
 **Dependencies:** US-007, US-008
 
 **Acceptance Criteria:**
-- [ ] Le champ `agent` de la spec est résolu vers `launch_command` via `TerminalAgent` (`agent_launcher.rs:284-332`), réutilisant la source de vérité unique (binaire + arguments + préfixe clear).
-- [ ] Given `agent: claude` avec bypass demandé dans la config, when résolu, then la commande inclut `--permission-mode bypassPermissions` (seul Claude Code honore le bypass, `agent_launcher.rs:287-292`).
-- [ ] Given un pane avec `command` brut au lieu d'`agent`, when résolu, then la commande brute est utilisée telle quelle.
-- [ ] Given un `agent` dont le binaire est absent du PATH, when `up` tente le lancement, then échec nommant le pane et l'agent + code non-zéro (réutilise `cli_on_path`, `support.rs:72`).
+- [x] Le champ `agent` de la spec est résolu vers `launch_command` via `TerminalAgent` (`agent_launcher.rs:284-332`), réutilisant la source de vérité unique (binaire + arguments + préfixe clear).
+- [x] Given `agent: claude` avec bypass demandé dans la config, when résolu, then la commande inclut `--permission-mode bypassPermissions` (seul Claude Code honore le bypass, `agent_launcher.rs:287-292`).
+- [x] Given un pane avec `command` brut au lieu d'`agent`, when résolu, then la commande brute est utilisée telle quelle.
+- [x] Given un `agent` dont le binaire est absent du PATH, when `up` tente le lancement, then échec nommant le pane et l'agent + code non-zéro (réutilise `cli_on_path`, `support.rs:72`).
 
 #### US-010: Prompt pré-rempli non-soumis + disponibilité bornée
 **Description:** As a CLI user, I want que mon prompt apparaisse dans l'input de l'agent sans être envoyé so that je relis avant de valider (human-in-loop).
@@ -256,11 +256,11 @@ Un fichier TOML décrit un workspace complet (layout + cwd/repo + agent + prompt
 **Dependencies:** US-008
 
 **Acceptance Criteria:**
-- [ ] Après le lancement de l'agent, le prompt déclaré est injecté via `send_text` (sans `\r`, sans wrap bracketed-paste, `view.rs:626`) — jamais soumis (invariant human-in-loop).
-- [ ] Le prefill attend une disponibilité bornée (readiness-poll, ex. via `surface.search` sur un marqueur, OU un délai par-agent borné en repli du timer fixe 1800 ms de `diff/view.rs:100`) avant d'écrire, pour éviter la perte de texte dans un buffer pas prêt.
-- [ ] Given N panes prefillés (N jusqu'à MAX_PANES), when `up` s'exécute, then aucun prompt n'est perdu (test : vérifier que chaque pane contient son prompt non-soumis) — la perte silencieuse documentée à `diff/view.rs:100` ne se reproduit pas.
-- [ ] Given un readiness-poll qui expire, when le marqueur n'apparaît pas, then le prompt est tout de même injecté (best-effort) et un avertissement est émis, plutôt qu'un échec dur.
-- [ ] Aucun chemin n'injecte `\r`/`\n` pour soumettre — vérifié par un test sur les octets écrits.
+- [x] Après le lancement de l'agent, le prompt déclaré est injecté via `send_text` (sans `\r`, sans wrap bracketed-paste, `view.rs:626`) — jamais soumis (invariant human-in-loop).
+- [x] Le prefill attend une disponibilité bornée (readiness-poll, ex. via `surface.search` sur un marqueur, OU un délai par-agent borné en repli du timer fixe 1800 ms de `diff/view.rs:100`) avant d'écrire, pour éviter la perte de texte dans un buffer pas prêt.
+- [x] Given N panes prefillés (N jusqu'à MAX_PANES), when `up` s'exécute, then aucun prompt n'est perdu (test : vérifier que chaque pane contient son prompt non-soumis) — la perte silencieuse documentée à `diff/view.rs:100` ne se reproduit pas.
+- [x] Given un readiness-poll qui expire, when le marqueur n'apparaît pas, then le prompt est tout de même injecté (best-effort) et un avertissement est émis, plutôt qu'un échec dur.
+- [x] Aucun chemin n'injecte `\r`/`\n` pour soumettre — vérifié par un test sur les octets écrits.
 
 #### US-011: Sous-commande `up` + `--dry-run`
 **Description:** As a CLI user, I want `paneflow up dev.toml` so that mon cockpit se reconstruit en une commande.
@@ -270,10 +270,10 @@ Un fichier TOML décrit un workspace complet (layout + cwd/repo + agent + prompt
 **Dependencies:** US-007, US-008, US-009, US-010
 
 **Acceptance Criteria:**
-- [ ] `paneflow up <file>` charge le TOML (US-007), construit le `LayoutNode` + les `SurfaceDefinition` (tag serde `type` snake_case `pane`/`split`, `schema.rs:696-721`) et appelle la méthode IPC (US-008), puis imprime ce qui a été créé (index workspace + panes + agents) en JSON.
-- [ ] `paneflow up <file> --dry-run` valide et imprime le plan (layout résolu + commandes par pane) SANS toucher l'instance.
-- [ ] Given un fichier absent ou illisible, when `up` est appelé, then erreur claire + code non-zéro.
-- [ ] Given une instance non lancée, when `up` est appelé (hors dry-run), then échec "is Paneflow running?" + code non-zéro.
+- [x] `paneflow up <file>` charge le TOML (US-007), construit le `LayoutNode` + les `SurfaceDefinition` (tag serde `type` snake_case `pane`/`split`, `schema.rs:696-721`) et appelle la méthode IPC (US-008), puis imprime ce qui a été créé (index workspace + panes + agents) en JSON.
+- [x] `paneflow up <file> --dry-run` valide et imprime le plan (layout résolu + commandes par pane) SANS toucher l'instance.
+- [x] Given un fichier absent ou illisible, when `up` est appelé, then erreur claire + code non-zéro.
+- [x] Given une instance non lancée, when `up` est appelé (hors dry-run), then échec "is Paneflow running?" + code non-zéro.
 
 #### US-012: Validation cwd/repo par surface + rollback + agent absent
 **Description:** As a CLI user, I want un échec atomique et explicite quand un repo manque so that je ne me retrouve pas avec un workspace à moitié monté dans le mauvais dossier.
@@ -283,10 +283,10 @@ Un fichier TOML décrit un workspace complet (layout + cwd/repo + agent + prompt
 **Dependencies:** US-008, US-011
 
 **Acceptance Criteria:**
-- [ ] Chaque `cwd` de surface est validé (canonicalize + exists + is-dir) en réutilisant `canonicalize_workspace_cwd` (`ipc_handler.rs:1296-1310`) appliqué par-surface, pas seulement au workspace.
-- [ ] Given un `cwd` de pane inexistant, when `up` s'exécute, then aucun pane n'est créé (rollback complet) et l'erreur nomme le pane + le chemin fautif.
-- [ ] Given un agent absent du PATH sur un pane, when `up` s'exécute, then échec atomique nommant le pane (réutilise la détection US-009), pas un workspace partiel.
-- [ ] Le message d'erreur distingue "cwd invalide" de "agent introuvable" de "instance non lancée".
+- [x] Chaque `cwd` de surface est validé (canonicalize + exists + is-dir) en réutilisant `canonicalize_workspace_cwd` (`ipc_handler.rs:1296-1310`) appliqué par-surface, pas seulement au workspace.
+- [x] Given un `cwd` de pane inexistant, when `up` s'exécute, then aucun pane n'est créé (rollback complet) et l'erreur nomme le pane + le chemin fautif.
+- [x] Given un agent absent du PATH sur un pane, when `up` s'exécute, then échec atomique nommant le pane (réutilise la détection US-009), pas un workspace partiel.
+- [x] Le message d'erreur distingue "cwd invalide" de "agent introuvable" de "instance non lancée".
 
 ---
 
@@ -304,11 +304,11 @@ La primitive "Playwright-for-terminals" qui rend les pipelines multi-agents scri
 **Dependencies:** US-001, US-003
 
 **Acceptance Criteria:**
-- [ ] `paneflow wait --match <sel> --pattern <regex> [--timeout <s>]` résout la cible (US-003) puis poll `surface.search` (`ipc_handler.rs:689-724`) à intervalle ≥ 500 ms, 1 connexion à la fois.
-- [ ] Given le pattern apparaît, when détecté, then la commande sort avec code 0 et (optionnel `--json`) imprime la/les ligne(s) matchée(s).
-- [ ] Given le timeout est atteint sans match, when expiré, then la commande sort avec un code non-zéro DÉDIÉ au timeout (distinct de "instance non lancée" et de "no-match-target").
-- [ ] Given aucun `--timeout`, when fourni, then un défaut borné raisonnable s'applique (pas d'attente infinie par défaut) — valeur documentée dans le help.
-- [ ] Le poll respecte le cap serveur 16 connexions (`ipc.rs:143-150`) — chaque itération ouvre/ferme une connexion ; test vérifiant qu'un `wait` long ne laisse pas de connexion ouverte entre les polls.
+- [x] `paneflow wait --match <sel> --pattern <regex> [--timeout <s>]` résout la cible (US-003) puis poll `surface.search` (`ipc_handler.rs:689-724`) à intervalle ≥ 500 ms, 1 connexion à la fois.
+- [x] Given le pattern apparaît, when détecté, then la commande sort avec code 0 et (optionnel `--json`) imprime la/les ligne(s) matchée(s).
+- [x] Given le timeout est atteint sans match, when expiré, then la commande sort avec un code non-zéro DÉDIÉ au timeout (distinct de "instance non lancée" et de "no-match-target").
+- [x] Given aucun `--timeout`, when fourni, then un défaut borné raisonnable s'applique (pas d'attente infinie par défaut) — valeur documentée dans le help.
+- [x] Le poll respecte le cap serveur 16 connexions (`ipc.rs:143-150`) — chaque itération ouvre/ferme une connexion ; test vérifiant qu'un `wait` long ne laisse pas de connexion ouverte entre les polls.
 
 #### US-014: Sémantique multi-match / no-match (`--any` / `--all`)
 **Description:** As a script author, I want contrôler ce qui se passe quand plusieurs panes matchent le sélecteur so that mes pipelines sont déterministes.
@@ -318,9 +318,9 @@ La primitive "Playwright-for-terminals" qui rend les pipelines multi-agents scri
 **Dependencies:** US-013
 
 **Acceptance Criteria:**
-- [ ] Given un sélecteur matchant plusieurs panes, when `--any` est passé, then `wait` réussit dès qu'UN pane matche le pattern ; `--all` exige que tous matchent.
-- [ ] Given un sélecteur multi-pane sans `--any`/`--all`, when invoqué, then échec demandant de désambiguïser (cohérent avec US-003) + code non-zéro.
-- [ ] Given la cible disparaît pendant l'attente (pane fermé), when le poll suivant tourne, then comportement défini (échec avec code dédié) plutôt qu'attente infinie.
+- [x] Given un sélecteur matchant plusieurs panes, when `--any` est passé, then `wait` réussit dès qu'UN pane matche le pattern ; `--all` exige que tous matchent.
+- [x] Given un sélecteur multi-pane sans `--any`/`--all`, when invoqué, then échec demandant de désambiguïser (cohérent avec US-003) + code non-zéro.
+- [x] Given la cible disparaît pendant l'attente (pane fermé), when le poll suivant tourne, then comportement défini (échec avec code dédié) plutôt qu'attente infinie.
 
 #### US-015: Matching cross-platform `cmdline:` documenté
 **Description:** As a CLI user on macOS/Windows, I want savoir comment cibler un agent quand l'argv complet n'est pas disponible so that mes sélecteurs marchent partout.
@@ -330,9 +330,9 @@ La primitive "Playwright-for-terminals" qui rend les pipelines multi-agents scri
 **Dependencies:** US-003, US-013
 
 **Acceptance Criteria:**
-- [ ] Le help et la doc indiquent que `cmdline:` matche l'argv complet sur Linux (`pty_session.rs:1169`) mais seulement le basename de l'exécutable sur macOS/Windows (`pty_session.rs:1196`).
-- [ ] Given macOS/Windows où `cmd` est un basename, when un sélecteur `cmdline:claude` est utilisé, then il matche le basename `claude` (pas les arguments) — comportement testé/documenté, pas un faux négatif silencieux.
-- [ ] La doc recommande `cwd:` ou `name` comme sélecteurs portables quand l'argv n'est pas requis.
+- [x] Le help et la doc indiquent que `cmdline:` matche l'argv complet sur Linux (`pty_session.rs:1169`) mais seulement le basename de l'exécutable sur macOS/Windows (`pty_session.rs:1196`).
+- [x] Given macOS/Windows où `cmd` est un basename, when un sélecteur `cmdline:claude` est utilisé, then il matche le basename `claude` (pas les arguments) — comportement testé/documenté, pas un faux négatif silencieux.
+- [x] La doc recommande `cwd:` ou `name` comme sélecteurs portables quand l'argv n'est pas requis.
 
 ---
 
@@ -350,11 +350,11 @@ Installer des hooks de notification d'agents **persistants user-scope** en une c
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Un `HookConfigWriter` (calqué sur le trait `AgentConfigWriter`, `paneflow-mcp-install/src/agents/mod.rs`) réutilise `write_if_changed`/`backup`/`write_atomic` (`io.rs:23-76`) et `read_json_or_default`/`merge_json_entry`/`remove_json_entry` (`merge.rs:27-99`).
-- [ ] Les hooks référencent le binaire `paneflow-ai-hook` à un **path stable non-versionné** (style `runtime_paths::bridge_binary_path`), PAS le cache versionné `PANEFLOW_BIN_DIR` du shim (qui change à chaque update, `hooks.rs:359`).
-- [ ] Given une config agent déjà installée, when `hooks setup` est ré-exécuté, then le diff est de 0 octet (idempotence), vérifié par test.
-- [ ] Given une config agent présente mais JSON invalide, when on tente l'install, then erreur explicite (pas de clobber, parité `read_json_or_default`).
-- [ ] Un backup est créé avant toute écriture.
+- [x] Un `HookConfigWriter` (calqué sur le trait `AgentConfigWriter`, `paneflow-mcp-install/src/agents/mod.rs`) réutilise `write_if_changed`/`backup`/`write_atomic` (`io.rs:23-76`) et `read_json_or_default`/`merge_json_entry`/`remove_json_entry` (`merge.rs:27-99`).
+- [x] Les hooks référencent le binaire `paneflow-ai-hook` à un **path stable non-versionné** (style `runtime_paths::bridge_binary_path`), PAS le cache versionné `PANEFLOW_BIN_DIR` du shim (qui change à chaque update, `hooks.rs:359`).
+- [x] Given une config agent déjà installée, when `hooks setup` est ré-exécuté, then le diff est de 0 octet (idempotence), vérifié par test.
+- [x] Given une config agent présente mais JSON invalide, when on tente l'install, then erreur explicite (pas de clobber, parité `read_json_or_default`).
+- [x] Un backup est créé avant toute écriture.
 
 #### US-017: Shapes de hooks par agent (claude/codex/gemini/opencode), cross-platform
 **Description:** As a CLI user, I want que `hooks setup` écrive le bon format au bon endroit pour chaque agent so that les notifications fonctionnent réellement.
@@ -364,11 +364,11 @@ Installer des hooks de notification d'agents **persistants user-scope** en une c
 **Dependencies:** US-016
 
 **Acceptance Criteria:**
-- [ ] Claude : hooks écrits dans `~/.claude/settings.json` sous `hooks.{UserPromptSubmit,Notification,Stop,PreToolUse,PostToolUse}` (PAS `~/.claude.json` qui est pour les `mcpServers` de `mcp install`, `support.rs:27`) — un nouveau resolver de path est introduit.
-- [ ] Codex/Gemini/opencode : hooks écrits dans leur emplacement attendu respectif, avec la shape correcte par agent (réutilise les events de `hooks.rs:28-34` et `hooks.rs:540-548`).
-- [ ] Chaque hook pointe `paneflow-ai-hook <Event>` avec timeout, format identique à celui que le shim produit (`hooks.rs:322-328`) mais au path stable.
-- [ ] Cross-platform : Windows (où Codex utilise un tee JSONL plutôt que des hooks fichier, `paneflow-shim/src/main.rs:82-84`) a un chemin défini ou un stub documenté ; aucun `cfg` Unix-only sans contrepartie.
-- [ ] Test par agent : la config écrite est relue et valide.
+- [x] Claude : hooks écrits dans `~/.claude/settings.json` sous `hooks.{UserPromptSubmit,Notification,Stop,PreToolUse,PostToolUse}` (PAS `~/.claude.json` qui est pour les `mcpServers` de `mcp install`, `support.rs:27`) — un nouveau resolver de path est introduit.
+- [x] Codex/Gemini/opencode : hooks écrits dans leur emplacement attendu respectif, avec la shape correcte par agent (réutilise les events de `hooks.rs:28-34` et `hooks.rs:540-548`).
+- [x] Chaque hook pointe `paneflow-ai-hook <Event>` avec timeout, format identique à celui que le shim produit (`hooks.rs:322-328`) mais au path stable.
+- [x] Cross-platform : Windows (où Codex utilise un tee JSONL plutôt que des hooks fichier, `paneflow-shim/src/main.rs:82-84`) a un chemin défini ou un stub documenté ; aucun `cfg` Unix-only sans contrepartie.
+- [x] Test par agent : la config écrite est relue et valide.
 
 #### US-018: Règle d'autorité anti double-firing (persistant vs éphémère shim)
 **Description:** As a CLI user, I want éviter que mes agents émettent deux fois chaque événement so that la sidebar n'est pas bruitée.
@@ -378,10 +378,10 @@ Installer des hooks de notification d'agents **persistants user-scope** en une c
 **Dependencies:** US-016, US-017
 
 **Acceptance Criteria:**
-- [ ] Une règle d'autorité tranche le conflit : les hooks persistants user-scope (US-016, `settings.json`) et les hooks éphémères du shim (`settings.local.json` projet, `hooks.rs:285-346`) pointent tous deux `paneflow-ai-hook` — la règle empêche le double-firing (ex. le shim ne réécrit plus quand un hook persistant managé est détecté, OU dédup par marqueur `_paneflow_managed`).
-- [ ] Given les deux jeux de hooks présents, when un agent émet un événement, then une seule frame `ai.*` atteint la socket (test d'intégration ou test de la logique de dédup).
-- [ ] La logique de fusion/détection (`merge_paneflow_hooks`/`is_paneflow_hook_command`, `hooks.rs:388,376`) est partagée (crate extraite) ou dupliquée de façon documentée entre shim et setup.
-- [ ] La règle est documentée dans `docs/` (quel jeu fait autorité, comment désinstaller proprement).
+- [x] Une règle d'autorité tranche le conflit : les hooks persistants user-scope (US-016, `settings.json`) et les hooks éphémères du shim (`settings.local.json` projet, `hooks.rs:285-346`) pointent tous deux `paneflow-ai-hook` — la règle empêche le double-firing (ex. le shim ne réécrit plus quand un hook persistant managé est détecté, OU dédup par marqueur `_paneflow_managed`).
+- [x] Given les deux jeux de hooks présents, when un agent émet un événement, then une seule frame `ai.*` atteint la socket (test d'intégration ou test de la logique de dédup).
+- [x] La logique de fusion/détection (`merge_paneflow_hooks`/`is_paneflow_hook_command`, `hooks.rs:388,376`) est partagée (crate extraite) ou dupliquée de façon documentée entre shim et setup.
+- [x] La règle est documentée dans `docs/` (quel jeu fait autorité, comment désinstaller proprement).
 
 #### US-019: Sous-commandes `hooks setup` / `status` / `uninstall`
 **Description:** As a CLI user, I want gérer les hooks comme je gère le MCP so that l'expérience est cohérente.
@@ -391,11 +391,11 @@ Installer des hooks de notification d'agents **persistants user-scope** en une c
 **Dependencies:** US-002, US-016, US-017
 
 **Acceptance Criteria:**
-- [ ] `paneflow hooks setup [agent…]` installe (tous les agents détectés si aucun argument, comme `mcp install`) ; sortie ligne par ligne `<agent>: <message>`.
-- [ ] `paneflow hooks status` rapporte par agent : NotDetected / Installed{path} / Stale{found,expected} / NotInstalled (parité `mcp status`, `cli.rs:171-207`).
-- [ ] `paneflow hooks uninstall [agent…]` retire uniquement les hooks managés (no-clobber des hooks voisins, réutilise `remove_json_entry`).
-- [ ] Codes de sortie alignés sur `mcp` (0 succès/aucun agent, 1 erreur agent, 2 usage) ; l'intercept se place avant clap ou comme sous-commande clap selon US-002.
-- [ ] Given un agent non détecté, when `hooks setup <agent>` est appelé, then message clair, pas un échec dur.
+- [x] `paneflow hooks setup [agent…]` installe (tous les agents détectés si aucun argument, comme `mcp install`) ; sortie ligne par ligne `<agent>: <message>`.
+- [x] `paneflow hooks status` rapporte par agent : NotDetected / Installed{path} / Stale{found,expected} / NotInstalled (parité `mcp status`, `cli.rs:171-207`).
+- [x] `paneflow hooks uninstall [agent…]` retire uniquement les hooks managés (no-clobber des hooks voisins, réutilise `remove_json_entry`).
+- [x] Codes de sortie alignés sur `mcp` (0 succès/aucun agent, 1 erreur agent, 2 usage) ; l'intercept se place avant clap ou comme sous-commande clap selon US-002.
+- [x] Given un agent non détecté, when `hooks setup <agent>` est appelé, then message clair, pas un échec dur.
 
 #### US-020: Re-câblage de la notification desktop de fin de tour
 **Description:** As an agent orchestrator, I want une notif OS quand un agent finit/attend so that je sais quand revenir sans surveiller l'écran.
@@ -405,11 +405,11 @@ Installer des hooks de notification d'agents **persistants user-scope** en une c
 **Dependencies:** US-017
 
 **Acceptance Criteria:**
-- [ ] **Bloqué tant que l'Open Question Q1 n'est pas tranchée** (la notif turn-end a été retirée avec le chat ACP, `agents/notifications.rs:5-10` — confirmer qu'on la veut côté terminal avant de re-câbler).
-- [ ] Un firing path OS est introduit : sur `ai.stop`/`ai.notification` (`ipc_handler.rs:1009-1057`), une notification desktop est émise via un crate de toast cross-platform (à choisir), respectant l'état `WINDOW_ACTIVE`/`AGENTS_PANEL_VISIBLE` (`agents/notifications.rs:25-34`).
-- [ ] Given la fenêtre Paneflow active et au premier plan, when un agent finit, then pas de notification (anti-bruit) ; given la fenêtre en arrière-plan, then notification émise.
-- [ ] Cross-platform : Linux (notify-send/zbus), macOS, Windows — chacun a un chemin fonctionnel ou un stub documenté.
-- [ ] La notif ne se déclenche que sur transition d'état réelle (pas sur chaque `tool_use`).
+- [x] **Bloqué tant que l'Open Question Q1 n'est pas tranchée** (la notif turn-end a été retirée avec le chat ACP, `agents/notifications.rs:5-10` — confirmer qu'on la veut côté terminal avant de re-câbler).
+- [x] Un firing path OS est introduit : sur `ai.stop`/`ai.notification` (`ipc_handler.rs:1009-1057`), une notification desktop est émise via un crate de toast cross-platform (à choisir), respectant l'état `WINDOW_ACTIVE`/`AGENTS_PANEL_VISIBLE` (`agents/notifications.rs:25-34`).
+- [x] Given la fenêtre Paneflow active et au premier plan, when un agent finit, then pas de notification (anti-bruit) ; given la fenêtre en arrière-plan, then notification émise.
+- [x] Cross-platform : Linux (notify-send/zbus), macOS, Windows — chacun a un chemin fonctionnel ou un stub documenté.
+- [x] La notif ne se déclenche que sur transition d'état réelle (pas sur chaque `tool_use`).
 
 ## Functional Requirements
 

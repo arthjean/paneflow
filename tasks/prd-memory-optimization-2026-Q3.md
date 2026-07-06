@@ -127,11 +127,11 @@ Les plus gros quick wins sont des etats UI caches qui ne devraient pas survivre 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given une colonne Review chargee, when l'utilisateur la cache, then `state`, `disp_unified`, `disp_split`, offsets, spans, hunk tops, `h_offsets`, attribution et raw file references sont clears.
-- [ ] Given la colonne avait des `review_terminals`, when elle est cachee, then ils sont droppes proprement ou explicitement fermes selon le comportement existant de close terminal.
-- [ ] Given une colonne cachee puis reouverte, when le loader reconstruit, then le diff affiche les memes fichiers sans stale rows ni panic.
-- [ ] Given une colonne cachee pendant qu'un load async obsolete revient, when le generation guard detecte l'obsolescence, then aucune donnee n'est reinjectee.
-- [ ] Tests: unit/helper test ou integration ciblée prouvant qu'apres hide, les vectors/Options de display sont vides.
+- [x] Given une colonne Review chargee, when l'utilisateur la cache, then `state`, `disp_unified`, `disp_split`, offsets, spans, hunk tops, `h_offsets`, attribution et raw file references sont clears.
+- [x] Given la colonne avait des `review_terminals`, when elle est cachee, then ils sont droppes proprement ou explicitement fermes selon le comportement existant de close terminal.
+- [x] Given une colonne cachee puis reouverte, when le loader reconstruit, then le diff affiche les memes fichiers sans stale rows ni panic.
+- [x] Given une colonne cachee pendant qu'un load async obsolete revient, when le generation guard detecte l'obsolescence, then aucune donnee n'est reinjectee.
+- [x] Tests: unit/helper test ou integration ciblée prouvant qu'apres hide, les vectors/Options de display sont vides.
 
 #### US-002: Agents diff libere son cache au close ou apres TTL
 **Description:** As an agent user, I want que fermer le dock Agents diff libere la memoire du modele diff so that ouvrir un gros diff ne penalise pas une session agents longue.
@@ -141,11 +141,11 @@ Les plus gros quick wins sont des etats UI caches qui ne devraient pas survivre 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given le dock Agents diff charge, when l'utilisateur le ferme, then `agents_diff` devient `None` ou passe par un cache TTL explicitement borne.
-- [ ] Given un reopen apres close, when le cwd/git state n'a pas change, then la vue se recharge correctement meme si elle n'est plus immediate.
-- [ ] Given un load async arrive apres close, when la cible n'est plus active, then le resultat est ignore sans recreer le cache.
-- [ ] Given un gros diff ferme, when l'utilisateur continue a travailler dans Agents, then les rows unified/split ne restent pas retenues par le state global.
-- [ ] Tests: close/reopen et late async result.
+- [x] Given le dock Agents diff charge, when l'utilisateur le ferme, then `agents_diff` devient `None` ou passe par un cache TTL explicitement borne.
+- [x] Given un reopen apres close, when le cwd/git state n'a pas change, then la vue se recharge correctement meme si elle n'est plus immediate.
+- [x] Given un load async arrive apres close, when la cible n'est plus active, then le resultat est ignore sans recreer le cache.
+- [x] Given un gros diff ferme, when l'utilisateur continue a travailler dans Agents, then les rows unified/split ne restent pas retenues par le state global.
+- [x] Tests: close/reopen et late async result.
 
 #### US-003: Diff rows construites a la demande par mode actif
 **Description:** As a user, I want que Paneflow ne garde pas unified et split complets pour chaque colonne si je n'utilise qu'un mode so that Review reste sobre sur gros diffs.
@@ -155,11 +155,11 @@ Les plus gros quick wins sont des etats UI caches qui ne devraient pas survivre 
 **Dependencies:** US-001
 
 **Acceptance Criteria:**
-- [ ] Given une colonne Review ouverte en unified, when elle charge, then le split n'est construit qu'au premier toggle split ou est droppe quand unified redevient le seul mode actif.
-- [ ] Given un toggle unified/split, when la representation manquante est reconstruite, then les scroll offsets restent coherents ou sont remis a un debut de hunk explicite.
-- [ ] Given une erreur de reconstruction, when le toggle est demande, then l'UI affiche l'etat d'erreur existant plutot que de paniquer.
-- [ ] Given syntax highlighting active, when seule une representation est visible, then les syntax runs non necessaires ne sont pas dupliques.
-- [ ] Tests: loader construit seulement le mode attendu; toggle reconstruit sans stale rows.
+- [x] Given une colonne Review ouverte en unified, when elle charge, then le split n'est construit qu'au premier toggle split ou est droppe quand unified redevient le seul mode actif.
+- [x] Given un toggle unified/split, when la representation manquante est reconstruite, then les scroll offsets restent coherents ou sont remis a un debut de hunk explicite.
+- [x] Given une erreur de reconstruction, when le toggle est demande, then l'UI affiche l'etat d'erreur existant plutot que de paniquer.
+- [x] Given syntax highlighting active, when seule une representation est visible, then les syntax runs non necessaires ne sont pas dupliques.
+- [x] Tests: loader construit seulement le mode attendu; toggle reconstruit sans stale rows.
 
 ### EP-002: Budgets terminaux, scrollback et cache agents
 
@@ -175,11 +175,11 @@ Le multiplicateur RAM principal reste le terminal live. Cet epic introduit des p
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un terminal manuel normal, when il est cree, then le default historique 10 000 lignes reste conserve sauf config utilisateur.
-- [ ] Given un terminal Agent ou Review, when il est cree, then il utilise un profil sobre documente (target initial: 4 000 lignes agent, 2 000 lignes review) sauf override explicite.
-- [ ] Given une valeur config > profil cap, when appliquee a un profil agent/review, then elle est clampée a une limite documentee ou exige un opt-in explicite.
-- [ ] Given un OS Linux/macOS/Windows, when le profil est applique, then aucun chemin ou shell OS-specific n'est introduit.
-- [ ] Tests: resolution de scrollback par profil, clamp, compat default normal.
+- [x] Given un terminal manuel normal, when il est cree, then le default historique 10 000 lignes reste conserve sauf config utilisateur.
+- [x] Given un terminal Agent ou Review, when il est cree, then il utilise un profil sobre documente (target initial: 4 000 lignes agent, 2 000 lignes review) sauf override explicite.
+- [x] Given une valeur config > profil cap, when appliquee a un profil agent/review, then elle est clampée a une limite documentee ou exige un opt-in explicite.
+- [x] Given un OS Linux/macOS/Windows, when le profil est applique, then aucun chemin ou shell OS-specific n'est introduit.
+- [x] Tests: resolution de scrollback par profil, clamp, compat default normal.
 
 #### US-005: Trim de scrollback des terminaux caches/inactifs
 **Description:** As a laptop user, I want que les terminaux caches reduisent leur scrollback apres idle so that Paneflow rend de la RAM sans perdre les agents actifs.
@@ -189,11 +189,11 @@ Le multiplicateur RAM principal reste le terminal live. Cet epic introduit des p
 **Dependencies:** US-004
 
 **Acceptance Criteria:**
-- [ ] Given un terminal agent cache et actif, when il devient cache pendant plus de 10 minutes, then son scrollback live est trimme vers le profil cache cible si l'API terminal le permet.
-- [ ] Given le backend ne permet pas un trim non destructif, when la story est implementee, then le fallback est documente et la story limite son action aux terminaux exit/inactifs.
-- [ ] Given un agent produit encore de la sortie, when le trim timer arrive, then aucun process/PTY n'est tue et aucune sortie active n'est perdue hors scrollback ancien.
-- [ ] Given un terminal redevient visible, when l'utilisateur scroll, then l'UI indique clairement si l'ancien scrollback a ete trimme ou montre seulement la fenetre restante.
-- [ ] Tests/manual: un terminal actif reste vivant; un terminal cache sortant reste lisible apres trim.
+- [x] Given un terminal agent cache et actif, when il devient cache pendant plus de 10 minutes, then son scrollback live est trimme vers le profil cache cible si l'API terminal le permet.
+- [x] Given le backend ne permet pas un trim non destructif, when la story est implementee, then le fallback est documente et la story limite son action aux terminaux exit/inactifs.
+- [x] Given un agent produit encore de la sortie, when le trim timer arrive, then aucun process/PTY n'est tue et aucune sortie active n'est perdue hors scrollback ancien.
+- [x] Given un terminal redevient visible, when l'utilisateur scroll, then l'UI indique clairement si l'ancien scrollback a ete trimme ou montre seulement la fenetre restante.
+- [x] Tests/manual: un terminal actif reste vivant; un terminal cache sortant reste lisible apres trim.
 
 #### US-006: LRU/TTL pour `agents_terminal_view_cache` et bottom terminals
 **Description:** As a mainteneur, I want une politique explicite pour les terminaux agents caches so that une longue session n'accumule pas tous les threads ouverts depuis le lancement.
@@ -203,11 +203,11 @@ Le multiplicateur RAM principal reste le terminal live. Cet epic introduit des p
 **Dependencies:** US-004
 
 **Acceptance Criteria:**
-- [ ] Given plus de 8 terminaux agents caches chauds, when un nouveau terminal est ajoute, then les plus anciens terminaux inactifs/exited sont droppes selon LRU.
-- [ ] Given un terminal cache est actif/running, when il depasse la limite LRU, then il n'est pas tue; il peut seulement passer en profil cache/trim.
-- [ ] Given un bottom terminal cache, when le panel est ferme, then la retention suit la meme politique que le cache Agents ou une limite plus stricte documentee.
-- [ ] Given un terminal evince puis reouvert, when son thread existe encore, then Paneflow recree une surface propre ou affiche un etat "terminal was released" actionnable.
-- [ ] Tests: LRU evince uniquement exited/inactive; active terminals proteges; bottom terminals respectent la limite.
+- [x] Given plus de 8 terminaux agents caches chauds, when un nouveau terminal est ajoute, then les plus anciens terminaux inactifs/exited sont droppes selon LRU.
+- [x] Given un terminal cache est actif/running, when il depasse la limite LRU, then il n'est pas tue; il peut seulement passer en profil cache/trim.
+- [x] Given un bottom terminal cache, when le panel est ferme, then la retention suit la meme politique que le cache Agents ou une limite plus stricte documentee.
+- [x] Given un terminal evince puis reouvert, when son thread existe encore, then Paneflow recree une surface propre ou affiche un etat "terminal was released" actionnable.
+- [x] Tests: LRU evince uniquement exited/inactive; active terminals proteges; bottom terminals respectent la limite.
 
 #### US-007: Review terminals sous profil sobre et cleanup au hide
 **Description:** As a reviewer, I want que les terminaux de review ne restent pas en memoire quand la colonne disparait so that lancer des reviewers ne cree pas de retention cachee.
@@ -217,11 +217,11 @@ Le multiplicateur RAM principal reste le terminal live. Cet epic introduit des p
 **Dependencies:** US-001, US-004
 
 **Acceptance Criteria:**
-- [ ] Given un review terminal cree, when il demarre, then il utilise le profil Review.
-- [ ] Given une colonne Review cachee, when elle contient des review terminals, then ils sont droppes/fermes selon la semantique de close existante.
-- [ ] Given un review terminal encore actif, when l'utilisateur cache la colonne, then l'action ne tue pas silencieusement sans comportement documente; si fermeture active est requise, elle passe par le meme chemin explicite que close terminal.
-- [ ] Given une nouvelle review lancee dans la meme colonne, when elle remplace l'ancienne, then les anciens PTYs sont droppes comme aujourd'hui et ne restent pas references.
-- [ ] Tests/manual: cacher une colonne review libere les terminaux et la colonne se recharge proprement.
+- [x] Given un review terminal cree, when il demarre, then il utilise le profil Review.
+- [x] Given une colonne Review cachee, when elle contient des review terminals, then ils sont droppes/fermes selon la semantique de close existante.
+- [x] Given un review terminal encore actif, when l'utilisateur cache la colonne, then l'action ne tue pas silencieusement sans comportement documente; si fermeture active est requise, elle passe par le meme chemin explicite que close terminal.
+- [x] Given une nouvelle review lancee dans la meme colonne, when elle remplace l'ancienne, then les anciens PTYs sont droppes comme aujourd'hui et ne restent pas references.
+- [x] Tests/manual: cacher une colonne review libere les terminaux et la colonne se recharge proprement.
 
 ### EP-003: Borner sessions, attribution et undo scrollback
 
@@ -237,11 +237,11 @@ Les historiques de sessions et les copies de scrollback sont moins critiques que
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given plus de 100 sessions Claude/Codex/OpenCode pour un cwd, when la sidebar charge, then seules les 100 plus recentes par source sont retenues en memoire UI.
-- [ ] Given des sessions omises, when l'UI rend, then un compteur discret indique combien d'anciennes sessions ne sont pas affichees.
-- [ ] Given l'attribution diff cherche des sessions, when plus de 50 matchs par colonne existent, then les resultats sont bornes et tries par recence/pertinence.
-- [ ] Given une erreur de scan d'une source, when deux autres sources repondent, then les resultats partiels restent affiches et la source en erreur ne laisse pas de Vec stale.
-- [ ] Tests: cap par source, compteur omitted, attribution cap.
+- [x] Given plus de 100 sessions Claude/Codex/OpenCode pour un cwd, when la sidebar charge, then seules les 100 plus recentes par source sont retenues en memoire UI.
+- [x] Given des sessions omises, when l'UI rend, then un compteur discret indique combien d'anciennes sessions ne sont pas affichees.
+- [x] Given l'attribution diff cherche des sessions, when plus de 50 matchs par colonne existent, then les resultats sont bornes et tries par recence/pertinence.
+- [x] Given une erreur de scan d'une source, when deux autres sources repondent, then les resultats partiels restent affiches et la source en erreur ne laisse pas de Vec stale.
+- [x] Tests: cap par source, compteur omitted, attribution cap.
 
 #### US-009: Budget memoire pour undo de panes fermees
 **Description:** As a terminal user, I want pouvoir restaurer une pane fermee sans que l'undo stack garde trop de scrollback so that les fermetures repetees ne consomment pas une RAM disproportionnee.
@@ -251,11 +251,11 @@ Les historiques de sessions et les copies de scrollback sont moins critiques que
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given plusieurs panes fermees, when `closed_panes` atteint sa limite, then les plus anciennes restent evincees comme aujourd'hui.
-- [ ] Given un scrollback capture depasse 400k chars, when stocke dans `ClosedPaneRecord`, then il est tronque par le cap existant ou un cap plus strict documente.
-- [ ] Given la memoire cumulee de `closed_panes` depasse un budget documente (target initial: 2 MiB text), when une nouvelle pane est fermee, then les plus anciennes captures sont droppees avant d'ajouter la nouvelle.
-- [ ] Given l'utilisateur undo une pane dont le scrollback a ete droppe, when restauree, then la pane revient sans scrollback ancien plutot que d'echouer.
-- [ ] Tests: budget cumule et undo avec scrollback absent.
+- [x] Given plusieurs panes fermees, when `closed_panes` atteint sa limite, then les plus anciennes restent evincees comme aujourd'hui.
+- [x] Given un scrollback capture depasse 400k chars, when stocke dans `ClosedPaneRecord`, then il est tronque par le cap existant ou un cap plus strict documente.
+- [x] Given la memoire cumulee de `closed_panes` depasse un budget documente (target initial: 2 MiB text), when une nouvelle pane est fermee, then les plus anciennes captures sont droppees avant d'ajouter la nouvelle.
+- [x] Given l'utilisateur undo une pane dont le scrollback a ete droppe, when restauree, then la pane revient sans scrollback ancien plutot que d'echouer.
+- [x] Tests: budget cumule et undo avec scrollback absent.
 
 ### EP-004: Backpressure IPC et queues d'evenements
 
@@ -271,11 +271,11 @@ Les requetes sont cappees en taille, mais la queue vers GPUI doit aussi etre bor
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `std::sync::mpsc::channel()` dans `ipc.rs`, when remplace, then la queue a une capacite documentee (target initial: 256 pending requests).
-- [ ] Given la queue est pleine, when une nouvelle requete arrive, then Paneflow retourne une erreur overload actionnable au client sans bloquer indefiniment.
-- [ ] Given 16 connexions concurrentes, when elles envoient vite des requetes cappees, then la memoire de pending requests reste bornee par la capacite choisie.
-- [ ] Given un receiver GPUI ferme, when une requete arrive, then le serveur retourne l'erreur existante/propre sans panic.
-- [ ] Tests: queue pleine, response overload, receiver dropped.
+- [x] Given `std::sync::mpsc::channel()` dans `ipc.rs`, when remplace, then la queue a une capacite documentee (target initial: 256 pending requests).
+- [x] Given la queue est pleine, when une nouvelle requete arrive, then Paneflow retourne une erreur overload actionnable au client sans bloquer indefiniment.
+- [x] Given 16 connexions concurrentes, when elles envoient vite des requetes cappees, then la memoire de pending requests reste bornee par la capacite choisie.
+- [x] Given un receiver GPUI ferme, when une requete arrive, then le serveur retourne l'erreur existante/propre sans panic.
+- [x] Tests: queue pleine, response overload, receiver dropped.
 
 #### US-011: Drain IPC par tick avec budget
 **Description:** As a user, I want que Paneflow reste responsive meme sous rafale IPC so that une queue importante ne monopolise pas le frame loop.
@@ -285,11 +285,11 @@ Les requetes sont cappees en taille, mais la queue vers GPUI doit aussi etre bor
 **Dependencies:** US-010
 
 **Acceptance Criteria:**
-- [ ] Given plusieurs requetes sont pending, when `process_ipc_requests` tourne, then il traite au plus un nombre documente par tick (target initial: 64) ou jusqu'a un budget temps court.
-- [ ] Given des requetes restent apres le budget, when le tick finit, then elles restent pending pour le prochain tick sans perte.
-- [ ] Given des requetes annulees, when elles sont drainees, then elles ne consomment pas de budget inutile au-dela d'un seuil raisonnable.
-- [ ] Given une rafale de `surface.read`, when la queue est sous charge, then l'UI ne se bloque pas sur un drain complet non borne.
-- [ ] Tests: drain cap, requests remaining, cancelled skipped.
+- [x] Given plusieurs requetes sont pending, when `process_ipc_requests` tourne, then il traite au plus un nombre documente par tick (target initial: 64) ou jusqu'a un budget temps court.
+- [x] Given des requetes restent apres le budget, when le tick finit, then elles restent pending pour le prochain tick sans perte.
+- [x] Given des requetes annulees, when elles sont drainees, then elles ne consomment pas de budget inutile au-dela d'un seuil raisonnable.
+- [x] Given une rafale de `surface.read`, when la queue est sous charge, then l'UI ne se bloque pas sur un drain complet non borne.
+- [x] Tests: drain cap, requests remaining, cancelled skipped.
 
 ### EP-005: Validation locale minimale et preparation PR
 
@@ -305,11 +305,11 @@ Cet epic prouve que la passe fonctionne localement sans transformer le travail e
 **Dependencies:** US-001, US-002, US-004, US-006, US-010
 
 **Acceptance Criteria:**
-- [ ] Given une build locale, when 6-8 agents/shells generent de la sortie pendant 30 minutes, then Paneflow reste responsive et les caps structurels sont observables via logs/debug assertions ou inspection.
-- [ ] Given Agents diff et Review sont ouverts puis fermes, when la smoke continue, then les caches correspondants sont liberes dans les 30 secondes ou au prochain tick documente.
-- [ ] Given un agent actif, when le scenario depasse les limites cache, then aucun agent actif n'est tue silencieusement.
-- [ ] Given le scenario ne peut pas etre execute sur un OS dans l'environnement local, when la story est livree, then la PR note explicitement "not verified on {OS}" au lieu de supposer.
-- [ ] PR note: resume l'impact utilisateur, les limites structurelles ajoutees, les checks locaux, et lie l'issue #11.
+- [x] Given une build locale, when 6-8 agents/shells generent de la sortie pendant 30 minutes, then Paneflow reste responsive et les caps structurels sont observables via logs/debug assertions ou inspection.
+- [x] Given Agents diff et Review sont ouverts puis fermes, when la smoke continue, then les caches correspondants sont liberes dans les 30 secondes ou au prochain tick documente.
+- [x] Given un agent actif, when le scenario depasse les limites cache, then aucun agent actif n'est tue silencieusement.
+- [x] Given le scenario ne peut pas etre execute sur un OS dans l'environnement local, when la story est livree, then la PR note explicitement "not verified on {OS}" au lieu de supposer.
+- [x] PR note: resume l'impact utilisateur, les limites structurelles ajoutees, les checks locaux, et lie l'issue #11.
 
 ## Functional Requirements
 

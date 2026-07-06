@@ -56,7 +56,7 @@
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -68,7 +68,7 @@
       "priority": "P0",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -82,7 +82,7 @@
       "blocked_by": [
         "US-001"
       ],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -94,7 +94,7 @@
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -108,7 +108,7 @@
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -122,7 +122,7 @@
       "blocked_by": [
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -137,7 +137,7 @@
         "US-001",
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -149,7 +149,7 @@
       "priority": "P1",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -161,7 +161,7 @@
       "priority": "P2",
       "size": "S",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -173,7 +173,7 @@
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -187,7 +187,7 @@
       "blocked_by": [
         "US-010"
       ],
-      "started_at": null,
+      "started_at": "2026-06-23",
       "completed_at": "2026-06-23",
       "reviewed_at": "2026-06-24"
     },
@@ -205,7 +205,7 @@
         "US-006",
         "US-010"
       ],
-      "started_at": null,
+      "started_at": "2026-06-24",
       "completed_at": "2026-06-24",
       "reviewed_at": "2026-06-24",
       "notes": "Added docs/memory-smoke-test.md with the 6-8 agent smoke procedure, structural cap inspection commands, targeted cap tests, PR note template, and explicit OS verification gap language. Live 30-minute desktop smoke remains a manual PR step. | REVIEW 2026-06-24: PASS_WITH_FIXES. Tightened docs/memory-smoke-test.md after review: Review hide now documents the running-terminal guard; Cargo validation uses --locked with trusted-checkout guidance; optional IPC scripting and debug-log handling are guarded. Gates: git diff --check, cargo fmt --check, cargo clippy --workspace --locked -- -D warnings, targeted cap tests --locked, cargo test --workspace --locked. Live 30-minute smoke remains a manual PR step."

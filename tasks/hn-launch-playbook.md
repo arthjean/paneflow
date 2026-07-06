@@ -25,12 +25,12 @@ avant de poster est dans §1 — le GIF démo est le seul vrai bloquant.
 
 ## 1. Bloquants avant de poster
 
-> **MAJ 2026-06-12 (round 4) — hero = vidéo finale d'Arthur :**
-> Le hero du README est désormais `assets/images/demo.gif` (7,9 Mo, 1024px, accéléré 2,8×)
+> **MAJ 2026-06-12 (round 4) - hero = vidéo finale d'Arthur :**
+> Le hero du README est désormais `assets/images/demo.gif` (8,39 MiB, 960x540, accéléré 2,8x)
 > dérivé de la vraie démo d'Arthur (`tasks/demo-source-2026-06-12.mp4`, 105s 1080p+audio).
 > Social preview remplacée par l'export Figma d'Arthur (`assets/images/social-preview.png`,
-> redéployée sur GitHub settings). **TYPO NON CORRIGÉE : le pill dit "Open soucre" au lieu
-> de "Open source"** — Arthur doit ré-exporter depuis Figma (ne pas bricoler l'asset de marque).
+> redéployée sur GitHub settings). Avant publication, vérifier visuellement que le pill
+> de l'asset dit bien "Open source" (ne pas bricoler l'asset de marque à la main).
 > **Lecteur vidéo natif (son + contrôles) :** GitHub n'embarque une vraie balise `<video>`
 > que via une URL `user-attachments/assets/...`, générée uniquement par drag-drop dans
 > l'UI web (éditeur d'issue/README), authentifiée par cookie de session — donc PAS faisable
@@ -39,8 +39,9 @@ avant de poster est dans §1 — le GIF démo est le seul vrai bloquant.
 > récupérer l'URL générée, et la mettre dans `<video src=... controls muted width="100%">`.
 > Un essai a marché (URL ec5a7789) mais portait l'ancienne mauvaise vidéo, donc remplacé par le GIF.
 >
-> **MAJ 2026-06-12 (round 3) — les bloquants sont levés :**
-> - **GIF démo : FAIT et déployé** (`assets/images/demo.gif`, 3,3 Mo, 1280px, 34s à 2,5×,
+> **MAJ 2026-06-12 (round 3 historique, remplacé par round 4) :**
+> - **GIF démo : ancienne itération remplacée** (`assets/images/demo.gif` pointe maintenant
+>   vers le GIF round 4 décrit ci-dessus ; l'ancien GIF n'est plus le fichier courant,
 >   commit 788819b). Tourné via un harnais headless : sway+pixman dans un conteneur podman
 >   (XDG_RUNTIME_DIR partagé), Paneflow 0.4.4 hôte en lavapipe, chorégraphie IPC
 >   (surface.split command+env, soumission par `\r` séparé — le submit:true est avalé par
@@ -74,9 +75,9 @@ Un PNG dense ne convertit pas ; un GIF de 20s qui raconte une histoire, oui.
 - Outils Fedora/Wayland : Kooha ou `wl-screenrec` → `gifski --fps 12 --quality 80` (meilleur ratio qualité/poids que ffmpeg palettegen).
 - Garde aussi le MP4 source : site, X, LinkedIn.
 
-**Intégration :** remplacer `assets/images/hero-paneflow.png` par le GIF dans le
-README (garder le PNG pour la social preview). Idéalement héberger le GIF dans
-le repo (`assets/images/demo.gif`) pour qu'il survive aux forks/mirrors.
+**Intégration :** le README pointe déjà vers `assets/images/demo.gif` (garder
+`assets/images/hero-paneflow.png` comme image statique / fallback social preview).
+Le GIF reste dans le repo pour survivre aux forks/mirrors.
 
 ### 1.2 Vérifs 24 h avant
 
@@ -131,8 +132,8 @@ grosse actu (keynote Apple, release OpenAI…).
 > in real PTY panes, and a human presses Enter. Paneflow pre-fills prompts
 > (composer, broadcast groups, launch pad) but never submits on your behalf.
 >
-> Honest limitations: Linux and macOS (Apple Silicon) today; the Windows port
-> is in progress and Intel macOS is currently out of the build matrix. GPL-3.0.
+> Honest limitations: Linux, macOS Apple Silicon, and Windows x64 today; Windows
+> ARM64 and Intel macOS are currently out of the build matrix. GPL-3.0.
 >
 > I'd especially like feedback from people running 3+ agents in parallel: what
 > does your attention routing look like, and what's missing here?
@@ -181,9 +182,9 @@ poster sous ton compte) :
    family in terminal land; adding it is a contained, well-documented change."
 2. **`help wanted` — Cursor shape escape sequences (DECSCUSR)** — "Underline /
    bar cursor shapes requested by vim/neovim users."
-3. **`help wanted, windows` — Windows testers wanted** — "The Windows port
-   compiles; we need people running Windows 10/11 to smoke-test PTY, fonts,
-   and the named-pipe IPC before the first signed MSI ships."
+3. **`help wanted, windows` - Windows runtime reports wanted** - "The signed
+   MSI ships for Windows 10/11 x64; we still want real-world reports around
+   PTY behavior, fonts, IME, and named-pipe IPC."
 
 Réponds à toute issue entrante en < 24 h pendant le mois post-lancement.
 

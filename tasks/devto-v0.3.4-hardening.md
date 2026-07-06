@@ -5,6 +5,10 @@ tags: rust, ai, performance, opensource
 cover_image:
 ---
 
+> Historical v0.3.4 draft. Several code paths cited below were later moved or
+> deleted during the Agents mode and workspace refactors; do not use this as a
+> current source map without re-checking paths against the present tree.
+
 Paneflow is a terminal multiplexer and AI agents IDE written in pure Rust on top of Zed's GPUI. The pitch is one line: a Rust native host for your CLI agents (Claude Code, Codex, OpenCode) is leaner than the Electron app running the same agents.
 
 That claim only holds if the thing survives an all day session, not a 5 minute demo. v0.3.4 is the release where I went and made it hold. Two audits back to back across four axes (memory, security, performance, robustness) on the agent subsystem, roughly 49 fixes.

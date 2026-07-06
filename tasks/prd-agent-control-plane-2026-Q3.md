@@ -124,11 +124,11 @@ Exposer l'état déjà collecté par les hooks pour qu'un conducteur énumère l
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given 3 agents en cours, when `fleet.list`, then la réponse liste pour chacun `{pid, tool, state, surface_id, surface_name, workspace, waiting_since, last_activity, active_tool_name}` lus depuis `agent_sessions`
-- [ ] Given un agent dont la surface n'est pas encore résolue (`surface_id = None`), when `fleet.list`, then il est listé avec `surface_id: null`, pas omis
-- [ ] Given aucun agent en cours, when `fleet.list`, then `{agents: []}` et exit 0 (pas une erreur)
-- [ ] Given un agent détecté sans hooks (parmi les 6), when `fleet.list`, then il apparaît avec `state: "unknown_running"` et un flag `hooked: false`
-- [ ] `paneflow ps` rend la table en humain et `paneflow ps --json` en JSON; pas de gate scripting (lecture)
+- [x] Given 3 agents en cours, when `fleet.list`, then la réponse liste pour chacun `{pid, tool, state, surface_id, surface_name, workspace, waiting_since, last_activity, active_tool_name}` lus depuis `agent_sessions`
+- [x] Given un agent dont la surface n'est pas encore résolue (`surface_id = None`), when `fleet.list`, then il est listé avec `surface_id: null`, pas omis
+- [x] Given aucun agent en cours, when `fleet.list`, then `{agents: []}` et exit 0 (pas une erreur)
+- [x] Given un agent détecté sans hooks (parmi les 6), when `fleet.list`, then il apparaît avec `state: "unknown_running"` et un flag `hooked: false`
+- [x] `paneflow ps` rend la table en humain et `paneflow ps --json` en JSON; pas de gate scripting (lecture)
 
 #### US-002: `surface.status` IPC + `paneflow status <target>`
 **Description:** As a conducteur, I want lire l'état d'une pane ciblée so that je sais si l'agent réfléchit, attend une réponse (et laquelle) ou a fini.
@@ -138,11 +138,11 @@ Exposer l'état déjà collecté par les hooks pour qu'un conducteur énumère l
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given une pane avec agent `WaitingForInput`, when `surface.status backend`, then la réponse contient `{state: "waiting_for_input", message: "<question>", active_tool_name, output_generation}`
-- [ ] Given une pane sans agent (shell nu), when `surface.status`, then `{state: "idle"}` (pas une erreur)
-- [ ] Given un selector ambigu, when `surface.status ba`, then exit 3 + liste des candidats (parité `resolve_target`)
-- [ ] Given un selector sans match, when `surface.status zzz`, then exit 3
-- [ ] La question retournée est déjà sanitizée (bidi-strip + cap 512, parité `sanitize_notification_message`)
+- [x] Given une pane avec agent `WaitingForInput`, when `surface.status backend`, then la réponse contient `{state: "waiting_for_input", message: "<question>", active_tool_name, output_generation}`
+- [x] Given une pane sans agent (shell nu), when `surface.status`, then `{state: "idle"}` (pas une erreur)
+- [x] Given un selector ambigu, when `surface.status ba`, then exit 3 + liste des candidats (parité `resolve_target`)
+- [x] Given un selector sans match, when `surface.status zzz`, then exit 3
+- [x] La question retournée est déjà sanitizée (bidi-strip + cap 512, parité `sanitize_notification_message`)
 
 #### US-003: Exposer `output_generation` dans `surface.read`
 **Description:** As a conducteur, I want connaître le compteur de génération de sortie d'une pane so that je détecte la stabilité sans heuristique à base de timers.
@@ -152,10 +152,10 @@ Exposer l'état déjà collecté par les hooks pour qu'un conducteur énumère l
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un `surface.read`, when la réponse est formée, then elle inclut `output_generation: u64` (le compteur interne `ipc_handler.rs:896`)
-- [ ] Given deux `surface.read` consécutifs sans nouvelle sortie, when comparés, then `output_generation` est identique (signal de stabilité)
-- [ ] Given une pane fermée entre deux reads, when `surface.read`, then l'erreur sentinelle existante est retournée (comportement inchangé, pas de panic)
-- [ ] Le champ est purement additif: les clients existants qui ignorent `output_generation` ne cassent pas
+- [x] Given un `surface.read`, when la réponse est formée, then elle inclut `output_generation: u64` (le compteur interne `ipc_handler.rs:896`)
+- [x] Given deux `surface.read` consécutifs sans nouvelle sortie, when comparés, then `output_generation` est identique (signal de stabilité)
+- [x] Given une pane fermée entre deux reads, when `surface.read`, then l'erreur sentinelle existante est retournée (comportement inchangé, pas de panic)
+- [x] Le champ est purement additif: les clients existants qui ignorent `output_generation` ne cassent pas
 
 ### EP-002: Bus d'événements sortant
 
@@ -171,11 +171,11 @@ Construire la voie efférente: une fois l'état lisible, le pousser en temps ré
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un client abonné, when le serveur a un event, then il l'écrit sur la connexion ouverte (newline-delimited JSON) sans attendre de requête
-- [ ] Given un client lent qui ne draine pas, when la file d'envoi dépasse un cap borné (ex. 1024 events ou 8 MiB), then les events les plus anciens sont droppés avec un marqueur `{"dropped": N}`, le render-thread n'est JAMAIS bloqué
-- [ ] Given un client qui se déconnecte, when le serveur tente d'écrire, then l'abonnement est évincé proprement (pas de panic, pas de fuite de compteur de connexions)
-- [ ] Given Windows (contrainte one-request-per-connection `ipc.rs:835-836`), when un client s'abonne, then un design par-OS documenté est utilisé (pipe-instance dédié ou endpoint séparé) et un stub cohérent existe si non implémentable sur le host
-- [ ] Le peer-UID + 0600 s'appliquent à la connexion d'abonnement comme aux autres
+- [x] Given un client abonné, when le serveur a un event, then il l'écrit sur la connexion ouverte (newline-delimited JSON) sans attendre de requête
+- [x] Given un client lent qui ne draine pas, when la file d'envoi dépasse un cap borné (ex. 1024 events ou 8 MiB), then les events les plus anciens sont droppés avec un marqueur `{"dropped": N}`, le render-thread n'est JAMAIS bloqué
+- [x] Given un client qui se déconnecte, when le serveur tente d'écrire, then l'abonnement est évincé proprement (pas de panic, pas de fuite de compteur de connexions)
+- [x] Given Windows (contrainte one-request-per-connection `ipc.rs:835-836`), when un client s'abonne, then un design par-OS documenté est utilisé (pipe-instance dédié ou endpoint séparé) et un stub cohérent existe si non implémentable sur le host
+- [x] Le peer-UID + 0600 s'appliquent à la connexion d'abonnement comme aux autres
 
 #### US-005: Méthode `events.subscribe` + wire format
 **Description:** As a conducteur, I want déclarer à quels events je m'abonne so that je ne reçois que ce qui m'intéresse.
@@ -185,11 +185,11 @@ Construire la voie efférente: une fois l'état lisible, le pousser en temps ré
 **Dependencies:** Blocked by US-004
 
 **Acceptance Criteria:**
-- [ ] Given `events.subscribe {surfaces?: [...], types?: ["ai.stop", "ai.notification", ...]}`, when un event matche, then il est poussé avec `{type, surface_id, workspace_id, tool, pid, ts, ...payload}`
-- [ ] Given `types` omis, when subscribe, then tous les types d'events sont poussés
-- [ ] Given un filtre `types` invalide (type inconnu), when subscribe, then erreur JSON-RPC immédiate, connexion fermée
-- [ ] Given un event `surface_changed` (output_generation incrémenté), when un abonné filtre cette surface, then il le reçoit (permet de remplacer le settling poll)
-- [ ] Pas de gate scripting (lecture seule); le wire format est documenté dans `docs/`
+- [x] Given `events.subscribe {surfaces?: [...], types?: ["ai.stop", "ai.notification", ...]}`, when un event matche, then il est poussé avec `{type, surface_id, workspace_id, tool, pid, ts, ...payload}`
+- [x] Given `types` omis, when subscribe, then tous les types d'events sont poussés
+- [x] Given un filtre `types` invalide (type inconnu), when subscribe, then erreur JSON-RPC immédiate, connexion fermée
+- [x] Given un event `surface_changed` (output_generation incrémenté), when un abonné filtre cette surface, then il le reçoit (permet de remplacer le settling poll)
+- [x] Pas de gate scripting (lecture seule); le wire format est documenté dans `docs/`
 
 #### US-006: Pont GPUI -> abonnés (rediffusion)
 **Description:** As a conducteur, I want que les changements d'état internes soient rediffusés aux abonnés so that je réagis à `ai.stop`/`ai.notification` sans poll.
@@ -199,11 +199,11 @@ Construire la voie efférente: une fois l'état lisible, le pousser en temps ré
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given un `upsert_session_state` (transition d'état), when il s'applique, then l'event correspondant est diffusé à tous les abonnés matchants
-- [ ] Given un changement d'`output_generation` sur une pane, when il survient, then un `surface_changed` est diffusé (debounce <= 50ms pour éviter le flood)
-- [ ] Given 0 abonné, when un event survient, then no-op (pas de coût)
-- [ ] Given un event diffusé, when mesure de la source (transition GPUI) à l'écriture socket, then latence < 100 ms P95
-- [ ] Given un abonné dont l'écriture échoue, when diffusion, then il est évincé sans interrompre la diffusion aux autres
+- [x] Given un `upsert_session_state` (transition d'état), when il s'applique, then l'event correspondant est diffusé à tous les abonnés matchants
+- [x] Given un changement d'`output_generation` sur une pane, when il survient, then un `surface_changed` est diffusé (debounce <= 50ms pour éviter le flood)
+- [x] Given 0 abonné, when un event survient, then no-op (pas de coût)
+- [x] Given un event diffusé, when mesure de la source (transition GPUI) à l'écriture socket, then latence < 100 ms P95
+- [x] Given un abonné dont l'écriture échoue, when diffusion, then il est évincé sans interrompre la diffusion aux autres
 
 #### US-007: `paneflow watch [--surface <sel>] [--type <t>]`
 **Description:** As a conducteur, I want streamer les events en JSONL depuis la CLI so that un agent in-pane consomme le même push qu'un orchestrateur externe.
@@ -213,11 +213,11 @@ Construire la voie efférente: une fois l'état lisible, le pousser en temps ré
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given une instance live, when `paneflow watch`, then chaque event est écrit sur stdout en une ligne JSON, en flux continu
-- [ ] Given `--surface backend --type ai.stop`, when watch, then seuls les `ai.stop` de la pane `backend` sont émis
-- [ ] Given aucune instance Paneflow, when watch, then exit code 3 + message actionnable (pas de hang)
-- [ ] Given un SIGINT (Ctrl-C), when watch tourne, then sortie propre exit 0, abonnement libéré côté serveur
-- [ ] Given aucun event pendant N secondes, when watch, then un heartbeat `{"type":"heartbeat"}` est émis toutes les 30s (détecte une connexion morte)
+- [x] Given une instance live, when `paneflow watch`, then chaque event est écrit sur stdout en une ligne JSON, en flux continu
+- [x] Given `--surface backend --type ai.stop`, when watch, then seuls les `ai.stop` de la pane `backend` sont émis
+- [x] Given aucune instance Paneflow, when watch, then exit code 3 + message actionnable (pas de hang)
+- [x] Given un SIGINT (Ctrl-C), when watch tourne, then sortie propre exit 0, abonnement libéré côté serveur
+- [x] Given aucun event pendant N secondes, when watch, then un heartbeat `{"type":"heartbeat"}` est émis toutes les 30s (détecte une connexion morte)
 
 ### EP-003: Mode "accès libre IA" (unrestricted)
 
@@ -233,11 +233,11 @@ Débrayer les garde-fous bridants pour le power-user IA, défaut sûr, opt-in ex
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `paneflow.json` sans la clé, when lu, then `ai_unrestricted` vaut `false` (défaut sûr)
-- [ ] Given `ai_unrestricted: true`, when l'app démarre, then un warn log unique est émis (parité warn boot du gate scripting `ipc.rs:206-210`)
-- [ ] Given une valeur invalide (non-booléenne), when lu, then fallback `false` + warn, jamais un état ouvert par accident
-- [ ] Given le toggle change à chaud, when appliqué, then l'effet est immédiat sans restart (le gate effectif est ré-évalué par appel)
-- [ ] Le sous-champ `ai_injection_fence` existe, défaut `true`
+- [x] Given `paneflow.json` sans la clé, when lu, then `ai_unrestricted` vaut `false` (défaut sûr)
+- [x] Given `ai_unrestricted: true`, when l'app démarre, then un warn log unique est émis (parité warn boot du gate scripting `ipc.rs:206-210`)
+- [x] Given une valeur invalide (non-booléenne), when lu, then fallback `false` + warn, jamais un état ouvert par accident
+- [x] Given le toggle change à chaud, when appliqué, then l'effet est immédiat sans restart (le gate effectif est ré-évalué par appel)
+- [x] Le sous-champ `ai_injection_fence` existe, défaut `true`
 
 #### US-009: Settings -> AI Agent: toggles unrestricted + fence
 **Description:** As a power-user, I want activer le mode libre et voir l'état du fence dans les settings so that le compromis est explicite et visible.
@@ -247,11 +247,11 @@ Débrayer les garde-fous bridants pour le power-user IA, défaut sûr, opt-in ex
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given Settings -> AI Agent, when ouvert, then un toggle "Accès libre IA (unrestricted)" reflète `ai_unrestricted`, OFF par défaut
-- [ ] Given le toggle unrestricted ON, when affiché, then un sous-toggle "Fence anti-injection" apparaît, ON par défaut, avec un texte expliquant qu'il protège le conducteur sans le brider
-- [ ] Given l'utilisateur désactive le fence, when il clique, then un avertissement explicite s'affiche (le risque: une pane malveillante peut détourner le conducteur, non rattrapé par la reprise humaine) avant d'appliquer
-- [ ] Given un toggle change, when appliqué, then `paneflow.json` est écrit en read-modify-write atomique (parité `config_writer`)
-- [ ] UI: vérification visuelle manuelle (GPUI headless)
+- [x] Given Settings -> AI Agent, when ouvert, then un toggle "Accès libre IA (unrestricted)" reflète `ai_unrestricted`, OFF par défaut
+- [x] Given le toggle unrestricted ON, when affiché, then un sous-toggle "Fence anti-injection" apparaît, ON par défaut, avec un texte expliquant qu'il protège le conducteur sans le brider
+- [x] Given l'utilisateur désactive le fence, when il clique, then un avertissement explicite s'affiche (le risque: une pane malveillante peut détourner le conducteur, non rattrapé par la reprise humaine) avant d'appliquer
+- [x] Given un toggle change, when appliqué, then `paneflow.json` est écrit en read-modify-write atomique (parité `config_writer`)
+- [x] UI: vérification visuelle manuelle (GPUI headless)
 
 #### US-010: Auto-submit + capability d'écriture en mode unrestricted
 **Description:** As a conducteur, I want soumettre des prompts à d'autres panes quand le mode libre est actif so that je pilote la flotte sans friction de gate.
@@ -261,11 +261,11 @@ Débrayer les garde-fous bridants pour le power-user IA, défaut sûr, opt-in ex
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given `ai_unrestricted: false`, when un conducteur tente `surface.send_text submit:true`, then comportement actuel: refus sauf `PANEFLOW_IPC_SCRIPTING=1` (strictement inchangé)
-- [ ] Given `ai_unrestricted: true`, when `surface.send_text submit:true`, then la soumission est autorisée sans exiger la var d'env, et un log structuré `{method, surface_id, caller_pid, length, submit}` est émis
-- [ ] Given mode unrestricted, when un conducteur cible une pane, then la capability d'écriture lui est accordée par pane (pas un open global silencieux); l'octroi est tracé
-- [ ] Given le mode repasse OFF à chaud, when un envoi suit, then il est de nouveau gaté (pas de capability résiduelle)
-- [ ] Given un envoi en mode unrestricted, when la pane n'existe plus, then exit 3, aucun envoi partiel
+- [x] Given `ai_unrestricted: false`, when un conducteur tente `surface.send_text submit:true`, then comportement actuel: refus sauf `PANEFLOW_IPC_SCRIPTING=1` (strictement inchangé)
+- [x] Given `ai_unrestricted: true`, when `surface.send_text submit:true`, then la soumission est autorisée sans exiger la var d'env, et un log structuré `{method, surface_id, caller_pid, length, submit}` est émis
+- [x] Given mode unrestricted, when un conducteur cible une pane, then la capability d'écriture lui est accordée par pane (pas un open global silencieux); l'octroi est tracé
+- [x] Given le mode repasse OFF à chaud, when un envoi suit, then il est de nouveau gaté (pas de capability résiduelle)
+- [x] Given un envoi en mode unrestricted, when la pane n'existe plus, then exit 3, aucun envoi partiel
 
 #### US-011: Fence anti-injection sur le chemin read -> forward
 **Description:** As a power-user, I want que l'output d'une pane reste fence même en mode libre so that un repo malveillant ne détourne pas mon conducteur.
@@ -275,11 +275,11 @@ Débrayer les garde-fous bridants pour le power-user IA, défaut sûr, opt-in ex
 **Dependencies:** Blocked by US-008
 
 **Acceptance Criteria:**
-- [ ] Given `ai_injection_fence: true`, when `surface.read` (CLI/IPC) retourne du texte, then il est wrappé `<untrusted_terminal_output id="...">` avec sentinelle neutralisée (parité `neutralize_sentinel`, `tools.rs`)
-- [ ] Given `ai_injection_fence: true`, when le body contient un faux tag de fermeture, then il est défangé (zero-width space inséré)
-- [ ] Given `ai_injection_fence: false`, when `surface.read`, then texte brut (comportement historique), et ce choix est documenté comme risque assumé
-- [ ] Given le fence actif, when mesure de l'overhead sur un read de 64 KiB, then surcoût < 5 ms (négligeable)
-- [ ] Le PRD et `docs/` documentent: désactiver le fence ne donne aucun pouvoir supplémentaire à l'IA, il ouvre seulement un vecteur de détournement
+- [x] Given `ai_injection_fence: true`, when `surface.read` (CLI/IPC) retourne du texte, then il est wrappé `<untrusted_terminal_output id="...">` avec sentinelle neutralisée (parité `neutralize_sentinel`, `tools.rs`)
+- [x] Given `ai_injection_fence: true`, when le body contient un faux tag de fermeture, then il est défangé (zero-width space inséré)
+- [x] Given `ai_injection_fence: false`, when `surface.read`, then texte brut (comportement historique), et ce choix est documenté comme risque assumé
+- [x] Given le fence actif, when mesure de l'overhead sur un read de 64 KiB, then surcoût < 5 ms (négligeable)
+- [x] Le PRD et `docs/` documentent: désactiver le fence ne donne aucun pouvoir supplémentaire à l'IA, il ouvre seulement un vecteur de détournement
 
 ### EP-004: Fiabilité, adressage durable, contexte structuré
 
@@ -295,10 +295,10 @@ Combler les dettes qui rendent l'orchestration fragile: adressage qui dérive, �
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `surface.split {label: "reviewer", ...}`, when la pane est créée, then `custom_name = "reviewer"` est posé atomiquement (pas de fenêtre de race avec l'auto-name)
-- [ ] Given `workspace.up` avec un `label` par pane spec, when créé, then chaque `surface_id` retourné porte déjà son label stable
-- [ ] Given deux labels identiques dans un même up, when créé, then le second est désambiguïsé (suffixe) et un warn est émis
-- [ ] Given `label` omis, when créé, then l'auto-name actuel s'applique (rétrocompatible)
+- [x] Given `surface.split {label: "reviewer", ...}`, when la pane est créée, then `custom_name = "reviewer"` est posé atomiquement (pas de fenêtre de race avec l'auto-name)
+- [x] Given `workspace.up` avec un `label` par pane spec, when créé, then chaque `surface_id` retourné porte déjà son label stable
+- [x] Given deux labels identiques dans un même up, when créé, then le second est désambiguïsé (suffixe) et un warn est émis
+- [x] Given `label` omis, when créé, then l'auto-name actuel s'applique (rétrocompatible)
 
 #### US-013: Watchdog resserré sur le Thinking-bloqué
 **Description:** As a conducteur, I want qu'un agent dont le `ai.stop` est perdu soit détecté vite so that je ne crois pas qu'il réfléchit pendant 5 minutes.
@@ -308,10 +308,10 @@ Combler les dettes qui rendent l'orchestration fragile: adressage qui dérive, �
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un `ai.stop` perdu (shim tué, shell vivant), when le watchdog tourne, then la session passe `Stalled` en temps borné configurable (défaut <= 60s, vs ~330s aujourd'hui)
-- [ ] Given un agent qui réfléchit réellement et émet des `ai.tool_use`, when le watchdog tourne, then il NE passe PAS `Stalled` (l'activité hook resette le timer)
-- [ ] Given le seuil configurable dans `paneflow.json`, when absent, then défaut documenté appliqué
-- [ ] Given une session passée `Stalled` puis un nouveau hook arrive, when reçu, then elle revient à l'état live (non collante)
+- [x] Given un `ai.stop` perdu (shim tué, shell vivant), when le watchdog tourne, then la session passe `Stalled` en temps borné configurable (défaut <= 60s, vs ~330s aujourd'hui)
+- [x] Given un agent qui réfléchit réellement et émet des `ai.tool_use`, when le watchdog tourne, then il NE passe PAS `Stalled` (l'activité hook resette le timer)
+- [x] Given le seuil configurable dans `paneflow.json`, when absent, then défaut documenté appliqué
+- [x] Given une session passée `Stalled` puis un nouveau hook arrive, when reçu, then elle revient à l'état live (non collante)
 
 #### US-014: Tests de la fondation (surface.read, settling, ai.notification)
 **Description:** As a mainteneur, I want couvrir les chemins critiques non testés so that la fondation de l'orchestration ne casse pas silencieusement.
@@ -321,10 +321,10 @@ Combler les dettes qui rendent l'orchestration fragile: adressage qui dérive, �
 **Dependencies:** Blocked by US-003
 
 **Acceptance Criteria:**
-- [ ] Given un handler `surface.read`, when testé, then offset hors borne (clamp), pagination, pane fermée (sentinelle), et `output_generation` sont couverts
-- [ ] Given le chemin settling/bailout du flow engine, when testé, then le cas "output jamais stable -> bailout 8s" est exercé (aujourd'hui non testé)
-- [ ] Given une frame `ai.notification`, when injectée dans un harness de test, then la transition vers `WaitingForInput` + stockage du message est vérifiée end-to-end
-- [ ] Given un `ai.stop` perdu simulé, when le watchdog tourne, then la transition `Stalled` est testée (lié à US-013)
+- [x] Given un handler `surface.read`, when testé, then offset hors borne (clamp), pagination, pane fermée (sentinelle), et `output_generation` sont couverts
+- [x] Given le chemin settling/bailout du flow engine, when testé, then le cas "output jamais stable -> bailout 8s" est exercé (aujourd'hui non testé)
+- [x] Given une frame `ai.notification`, when injectée dans un harness de test, then la transition vers `WaitingForInput` + stockage du message est vérifiée end-to-end
+- [x] Given un `ai.stop` perdu simulé, when le watchdog tourne, then la transition `Stalled` est testée (lié à US-013)
 
 #### US-015: Contexte structuré inter-agents (last_result + bascule fichier)
 **Description:** As a conducteur, I want récupérer le dernier résultat d'un agent de façon structurée so that je ne scrape pas le scrollback et ne suis pas plafonné à 64 KiB.
@@ -334,10 +334,10 @@ Combler les dettes qui rendent l'orchestration fragile: adressage qui dérive, �
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given un agent qui termine un tour, when `fleet.list`/`surface.status`, then un champ `last_result` optionnel porte le résumé du dernier tour (si disponible via hook/transcript)
-- [ ] Given un contexte à passer > 64 KiB, when un canal de contexte est utilisé, then il est écrit dans un fichier temp et le chemin est passé en variable (pas de troncature silencieuse)
-- [ ] Given aucun résultat disponible, when lu, then `last_result: null` (pas une erreur)
-- [ ] Given le fichier temp, when le tour est fini, then il est nettoyé (pas de fuite disque)
+- [x] Given un agent qui termine un tour, when `fleet.list`/`surface.status`, then un champ `last_result` optionnel porte le résumé du dernier tour (si disponible via hook/transcript)
+- [x] Given un contexte à passer > 64 KiB, when un canal de contexte est utilisé, then il est écrit dans un fichier temp et le chemin est passé en variable (pas de troncature silencieuse)
+- [x] Given aucun résultat disponible, when lu, then `last_result: null` (pas une erreur)
+- [x] Given le fichier temp, when le tour est fini, then il est nettoyé (pas de fuite disque)
 
 ### EP-005: Conducteur, hardening cross-platform, dogfood
 
@@ -353,10 +353,10 @@ Livrer le manuel (le skill), durcir les trous OS qui minent la fiabilité, et co
 **Dependencies:** Blocked by US-001, US-007
 
 **Acceptance Criteria:**
-- [ ] Given le SKILL.md, when lu par un harness, then il documente: découvrir (`paneflow ps`), lire l'état (`status`/`watch`), dispatcher (`send`), attendre un event (`watch`), et la discipline de reprise humaine
-- [ ] Given une action destructrice ou ambiguë, when le skill guide, then il prescrit de rendre la main à l'humain (sauf mode unrestricted explicitement assumé par l'utilisateur)
-- [ ] Given aucune instance Paneflow détectée, when le skill s'exécute, then il l'indique et s'arrête (pas de boucle)
-- [ ] Given le skill, when testé manuellement sur Claude + Codex + OpenCode, then il pilote les 3 sans modification (harness-agnostic)
+- [x] Given le SKILL.md, when lu par un harness, then il documente: découvrir (`paneflow ps`), lire l'état (`status`/`watch`), dispatcher (`send`), attendre un event (`watch`), et la discipline de reprise humaine
+- [x] Given une action destructrice ou ambiguë, when le skill guide, then il prescrit de rendre la main à l'humain (sauf mode unrestricted explicitement assumé par l'utilisateur)
+- [x] Given aucune instance Paneflow détectée, when le skill s'exécute, then il l'indique et s'arrête (pas de boucle)
+- [x] Given le skill, when testé manuellement sur Claude + Codex + OpenCode, then il pilote les 3 sans modification (harness-agnostic)
 
 #### US-017: Hardening cross-platform (macOS orphan guard, Windows ai.stop)
 **Description:** As a mainteneur, I want fermer les trous OS du shim so that les agents ne survivent pas à un crash et l'état ne reste pas bloqué.
@@ -366,10 +366,10 @@ Livrer le manuel (le skill), durcir les trous OS qui minent la fiabilité, et co
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given macOS, when Paneflow est tué, then le shim/agent ne survit pas (kqueue NOTE_EXIT ou équivalent), comblant le stub `exec.rs:115`
-- [ ] Given Windows, when l'utilisateur fait Ctrl+C sur un agent, then `ai.stop` est émis (watcher SIGINT/console handler), évitant le spinner collé
-- [ ] Given un host Linux ou un cfg non compilable (Windows paneflow-app), when la story est livrée, then les branches sont inspection-only et documentées comme telles
-- [ ] Given le hardening, when testé sur l'OS cible, then un agent orphelin n'apparaît pas après `kill -9` de Paneflow (smoke documenté)
+- [x] Given macOS, when Paneflow est tué, then le shim/agent ne survit pas (kqueue NOTE_EXIT ou équivalent), comblant le stub `exec.rs:115`
+- [x] Given Windows, when l'utilisateur fait Ctrl+C sur un agent, then `ai.stop` est émis (watcher SIGINT/console handler), évitant le spinner collé
+- [x] Given un host Linux ou un cfg non compilable (Windows paneflow-app), when la story est livrée, then les branches sont inspection-only et documentées comme telles
+- [x] Given le hardening, when testé sur l'OS cible, then un agent orphelin n'apparaît pas après `kill -9` de Paneflow (smoke documenté)
 
 #### US-018: `flow.toml` de démo commité + consommé
 **Description:** As a dev orchestrateur, I want un flow réel dans le repo so that il sert de référence et de dogfood (Goal 2 de la v2, jamais atteint).
@@ -379,10 +379,10 @@ Livrer le manuel (le skill), durcir les trous OS qui minent la fiabilité, et co
 **Dependencies:** Blocked by US-016
 
 **Acceptance Criteria:**
-- [ ] Given le repo, when on cherche un flow, then un `flow.toml` de démo (review-pipeline: impl -> review) existe, commité
-- [ ] Given `paneflow flow run --dry-run <demo>`, when exécuté, then le plan est validé sans muter (parité dry-run)
-- [ ] Given le gate scripting OFF et un step `submit=true`, when run, then refus clair (parité comportement existant)
-- [ ] Given le SKILL.md, when il référence un exemple, then il pointe ce flow.toml
+- [x] Given le repo, when on cherche un flow, then un `flow.toml` de démo (review-pipeline: impl -> review) existe, commité
+- [x] Given `paneflow flow run --dry-run <demo>`, when exécuté, then le plan est validé sans muter (parité dry-run)
+- [x] Given le gate scripting OFF et un step `submit=true`, when run, then refus clair (parité comportement existant)
+- [x] Given le SKILL.md, when il référence un exemple, then il pointe ce flow.toml
 
 ## Functional Requirements
 

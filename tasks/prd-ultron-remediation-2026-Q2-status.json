@@ -479,7 +479,7 @@
     ]
   },
   "audit_source": {
-    "file": "ULTRON/AUDIT.json",
+    "external": "/ultron audit output, not checked in",
     "audited_at": "2026-06-08T14:49:32Z",
     "confirmed": 39,
     "by_severity": {

@@ -134,11 +134,11 @@ Construire une projection unique et peu couteuse qui transforme les sources exis
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given multiple workspaces with `agent_sessions`, when Rosetta builds its projection, then each visible session includes `{tool, state, workspace_title, surface_id, message, waiting_secs, last_activity_secs, active_tool_name, last_result}` when available.
-- [ ] Given no active sessions, when projection runs, then it returns an empty list without rendering a stale card.
-- [ ] Given multiple states, when rows are ranked, then priority order is `Errored > WaitingForInput > Stalled > Thinking > Finished`.
-- [ ] Given a session with `surface_id = None`, when rendered later, then it is visible but not navigable.
-- [ ] Given projection runs during render, when measured with 32 sessions, then it performs no filesystem, process, network or IPC work.
+- [x] Given multiple workspaces with `agent_sessions`, when Rosetta builds its projection, then each visible session includes `{tool, state, workspace_title, surface_id, message, waiting_secs, last_activity_secs, active_tool_name, last_result}` when available.
+- [x] Given no active sessions, when projection runs, then it returns an empty list without rendering a stale card.
+- [x] Given multiple states, when rows are ranked, then priority order is `Errored > WaitingForInput > Stalled > Thinking > Finished`.
+- [x] Given a session with `surface_id = None`, when rendered later, then it is visible but not navigable.
+- [x] Given projection runs during render, when measured with 32 sessions, then it performs no filesystem, process, network or IPC work.
 
 #### US-002: Projection des threads Agents mode
 **Description:** As an Agents mode user, I want Rosetta to include active agent threads so that the card covers both CLI panes and Agents threads.
@@ -148,11 +148,11 @@ Construire une projection unique et peu couteuse qui transforme les sources exis
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given an Agents thread with `ThreadStatus::WaitingForInput`, when Rosetta builds rows, then the row includes thread title, project/chat context and a focus target.
-- [ ] Given an Agents thread with `ThreadStatus::Failed`, when Rosetta builds rows, then it ranks above waiting/thinking rows.
-- [ ] Given `ThreadStatus::Idle`, when no recent completion event exists, then Rosetta omits the row from the active card.
-- [ ] Given a thread lacks a terminal view target, when clicked later, then Rosetta shows an unavailable target state instead of focusing a wrong pane.
-- [ ] Given `Stalled` is collapsed to `Thinking` in `ThreadStatus`, when Rosetta needs stalled precision, then it uses session-level data where available and never fabricates stalled state from idle threads.
+- [x] Given an Agents thread with `ThreadStatus::WaitingForInput`, when Rosetta builds rows, then the row includes thread title, project/chat context and a focus target.
+- [x] Given an Agents thread with `ThreadStatus::Failed`, when Rosetta builds rows, then it ranks above waiting/thinking rows.
+- [x] Given `ThreadStatus::Idle`, when no recent completion event exists, then Rosetta omits the row from the active card.
+- [x] Given a thread lacks a terminal view target, when clicked later, then Rosetta shows an unavailable target state instead of focusing a wrong pane.
+- [x] Given `Stalled` is collapsed to `Thinking` in `ThreadStatus`, when Rosetta needs stalled precision, then it uses session-level data where available and never fabricates stalled state from idle threads.
 
 #### US-003: Recent event history volatile
 **Description:** As a user, I want recent done/error/wait transitions retained briefly so that short-lived agent changes are not missed.
@@ -162,10 +162,10 @@ Construire une projection unique et peu couteuse qui transforme les sources exis
 **Dependencies:** Blocked by US-001
 
 **Acceptance Criteria:**
-- [ ] Given a session transitions to `Finished`, when the active row auto-clears, then Rosetta retains a recent event row for 5 minutes or until a cap of 25 events is reached.
-- [ ] Given more than 25 recent events, when a new event is added, then the oldest event is dropped.
-- [ ] Given the app restarts, when Rosetta initializes, then recent history starts empty and no stale disk-backed event is shown.
-- [ ] Given an event contains agent text, when stored in history, then the text is capped at 512 chars and rendered inert.
+- [x] Given a session transitions to `Finished`, when the active row auto-clears, then Rosetta retains a recent event row for 5 minutes or until a cap of 25 events is reached.
+- [x] Given more than 25 recent events, when a new event is added, then the oldest event is dropped.
+- [x] Given the app restarts, when Rosetta initializes, then recent history starts empty and no stale disk-backed event is shown.
+- [x] Given an event contains agent text, when stored in history, then the text is capped at 512 chars and rendered inert.
 
 ---
 

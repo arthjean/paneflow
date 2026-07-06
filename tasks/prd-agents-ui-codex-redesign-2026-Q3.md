@@ -126,10 +126,10 @@ Ajouter le data-model minimal que la nav Codex exige, et refondre la sélection 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `Thread` (`project/mod.rs:116`), when on ajoute `pub pinned: bool`, then `Thread::new`/`new_terminal` (`:141,162`) l'initialisent à `false` et tous les call sites compilent.
-- [ ] Given `ThreadSession` (`paneflow-config/src/schema.rs`), when on ajoute `pinned` avec `#[serde(default)]`, then `thread_to_session`/`thread_from_session` (`project/mod.rs:228,272`) round-trippent le flag.
-- [ ] Given une `session.json` écrite avant ce champ (sans clé `pinned`), when rechargée, then chaque thread restaure `pinned = false` sans erreur — couvert par un test de round-trip.
-- [ ] `cargo clippy` ne montre aucun nouveau warning issu de l'ajout.
+- [x] Given `Thread` (`project/mod.rs:116`), when on ajoute `pub pinned: bool`, then `Thread::new`/`new_terminal` (`:141,162`) l'initialisent à `false` et tous les call sites compilent.
+- [x] Given `ThreadSession` (`paneflow-config/src/schema.rs`), when on ajoute `pinned` avec `#[serde(default)]`, then `thread_to_session`/`thread_from_session` (`project/mod.rs:228,272`) round-trippent le flag.
+- [x] Given une `session.json` écrite avant ce champ (sans clé `pinned`), when rechargée, then chaque thread restaure `pinned = false` sans erreur — couvert par un test de round-trip.
+- [x] `cargo clippy` ne montre aucun nouveau warning issu de l'ajout.
 
 #### US-002: Liste `chats: Vec<Thread>` séparée, ancrée home, persistée
 **Description:** As an orchestrator, I want des conversations libres hors projet so that je lance une session jetable dans mon home sans créer de faux projet.
@@ -139,11 +139,11 @@ Ajouter le data-model minimal que la nav Codex exige, et refondre la sélection 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `PaneFlowApp` (`main.rs:362`), when on ajoute `chats: Vec<Thread>`, then les chats sont des `Thread` à part entière (ID via `next_thread_id`, `project/mod.rs:49`) non rattachés à un `Project`.
-- [ ] Given `SessionState` (`schema.rs:834`), when on ajoute `chats: Vec<ThreadSession>` avec `#[serde(default, skip_serializing_if = "Vec::is_empty")]` (cohérent avec le champ `projects`, `schema.rs:843`), then `save_session`/`restore` round-trippent les chats sans toucher la sérialisation des projets ; une session pré-refonte recharge `chats = []`.
-- [ ] Given un chat créé, when son cwd est résolu, then il vaut `dirs::home_dir()` (le crate `dirs = "5.0"` est déjà une dép de `src-app`, `Cargo.toml:131` ; `home_dir()` renvoie `Option<PathBuf>` → fallback documenté si `None`), jamais `$HOME` brut ni un chemin POSIX hardcodé.
-- [ ] `bump_id_counters_to` (`project/mod.rs:56`, signature actuelle `(projects: &[Project])` qui n'itère QUE `projects[*].threads`) DOIT être étendue pour couvrir aussi les chats (ex. `(projects: &[Project], chats: &[Thread])` ou un itérateur combiné) — sinon le compteur n'est pas avancé au-delà des IDs de chats restaurés → collision d'ID. Test : une session projets+chats restaurée, le prochain ID == max(tous les IDs)+1.
-- [ ] Test : round-trip d'une session avec ≥ 1 projet (≥ 1 thread) + ≥ 1 chat ; IDs uniques garantis.
+- [x] Given `PaneFlowApp` (`main.rs:362`), when on ajoute `chats: Vec<Thread>`, then les chats sont des `Thread` à part entière (ID via `next_thread_id`, `project/mod.rs:49`) non rattachés à un `Project`.
+- [x] Given `SessionState` (`schema.rs:834`), when on ajoute `chats: Vec<ThreadSession>` avec `#[serde(default, skip_serializing_if = "Vec::is_empty")]` (cohérent avec le champ `projects`, `schema.rs:843`), then `save_session`/`restore` round-trippent les chats sans toucher la sérialisation des projets ; une session pré-refonte recharge `chats = []`.
+- [x] Given un chat créé, when son cwd est résolu, then il vaut `dirs::home_dir()` (le crate `dirs = "5.0"` est déjà une dép de `src-app`, `Cargo.toml:131` ; `home_dir()` renvoie `Option<PathBuf>` → fallback documenté si `None`), jamais `$HOME` brut ni un chemin POSIX hardcodé.
+- [x] `bump_id_counters_to` (`project/mod.rs:56`, signature actuelle `(projects: &[Project])` qui n'itère QUE `projects[*].threads`) DOIT être étendue pour couvrir aussi les chats (ex. `(projects: &[Project], chats: &[Thread])` ou un itérateur combiné) — sinon le compteur n'est pas avancé au-delà des IDs de chats restaurés → collision d'ID. Test : une session projets+chats restaurée, le prochain ID == max(tous les IDs)+1.
+- [x] Test : round-trip d'une session avec ≥ 1 projet (≥ 1 thread) + ≥ 1 chat ; IDs uniques garantis.
 
 #### US-003: Modèle de sélection unifié (thread-projet | chat | picker)
 **Description:** As a maintainer, I want une cible de sélection explicite so that le centre adresse un thread de projet OU un chat libre sans index positionnel ambigu.
@@ -153,13 +153,13 @@ Ajouter le data-model minimal que la nav Codex exige, et refondre la sélection 
 **Dependencies:** US-002
 
 **Acceptance Criteria:**
-- [ ] Un type de cible explicite (ex. enum `AgentsTarget { Thread { project_idx, thread_idx }, Chat { chat_idx } }`, forme exacte laissée à l'engineering) remplace l'usage isolé de `active_thread_idx: Option<usize>` pour la résolution du centre.
-- [ ] `current_thread_view_target` (`agents_view_actions.rs:313`) et `ensure_terminal_view_mounted` (`:337`) résolvent la cible vers le bon `Thread` (projet ou chat) ; le cache PTY reste keyé par `Thread::id` (`agents_terminal_view_cache`, champ de `AgentsViewState` `main.rs:304`, accédé via `self.agents_view.agents_terminal_view_cache`, `:358`) — un chat et un thread de projet ne peuvent pas collisionner (IDs via `next_thread_id`).
-- [ ] Le sort des champs positionnels existants `active_project_idx`/`active_thread_idx` (`main.rs:518,522`) est tranché explicitement (supprimés OU conservés comme intermédiaires) et tous les write sites sont mis à jour — au minimum `select_thread` (`project_ops/mod.rs:261`) qui écrit les deux champs (`:274-275`) et `remove_thread` (`:285`).
-- [ ] Given un thread de projet ouvert puis un chat libre ouvert puis retour au thread, when on navigue, then le PTY du premier thread survit (warm-resume préservé) — test de navigation.
-- [ ] Given `select_thread`/`remove_thread`/`handle_terminal_thread_title_changed` (`project_ops`, `agents_view_actions.rs:417`), when invoqués sur un chat, then ils opèrent sur `chats` ; sur un thread de projet, sur `projects[p].threads` — pas de duplication de logique non paramétrée.
-- [ ] L'état « picker / home » (aucune cible sélectionnée) reste distinct et porte son contexte de création (dans quel projet, ou « nouveau chat dans le home »).
-- [ ] Test : sélection chat ↔ thread projet, suppression d'un chat sélectionné (la sélection retombe proprement sur un état valide, pas un index stale).
+- [x] Un type de cible explicite (ex. enum `AgentsTarget { Thread { project_idx, thread_idx }, Chat { chat_idx } }`, forme exacte laissée à l'engineering) remplace l'usage isolé de `active_thread_idx: Option<usize>` pour la résolution du centre.
+- [x] `current_thread_view_target` (`agents_view_actions.rs:313`) et `ensure_terminal_view_mounted` (`:337`) résolvent la cible vers le bon `Thread` (projet ou chat) ; le cache PTY reste keyé par `Thread::id` (`agents_terminal_view_cache`, champ de `AgentsViewState` `main.rs:304`, accédé via `self.agents_view.agents_terminal_view_cache`, `:358`) — un chat et un thread de projet ne peuvent pas collisionner (IDs via `next_thread_id`).
+- [x] Le sort des champs positionnels existants `active_project_idx`/`active_thread_idx` (`main.rs:518,522`) est tranché explicitement (supprimés OU conservés comme intermédiaires) et tous les write sites sont mis à jour — au minimum `select_thread` (`project_ops/mod.rs:261`) qui écrit les deux champs (`:274-275`) et `remove_thread` (`:285`).
+- [x] Given un thread de projet ouvert puis un chat libre ouvert puis retour au thread, when on navigue, then le PTY du premier thread survit (warm-resume préservé) — test de navigation.
+- [x] Given `select_thread`/`remove_thread`/`handle_terminal_thread_title_changed` (`project_ops`, `agents_view_actions.rs:417`), when invoqués sur un chat, then ils opèrent sur `chats` ; sur un thread de projet, sur `projects[p].threads` — pas de duplication de logique non paramétrée.
+- [x] L'état « picker / home » (aucune cible sélectionnée) reste distinct et porte son contexte de création (dans quel projet, ou « nouveau chat dans le home »).
+- [x] Test : sélection chat ↔ thread projet, suppression d'un chat sélectionné (la sélection retombe proprement sur un état valide, pas un index stale).
 
 ---
 
@@ -177,12 +177,12 @@ Restructurer `render_agents_sidebar` en sections Codex et câbler New chat / Sea
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `render_agents_sidebar` (`agents_sidebar/mod.rs:102`) émet, dans l'ordre : ligne `New chat`, ligne/affordance `Search`, eyebrow `PINNED` + ses rows, eyebrow `PROJECTS` (+ bouton `+`) + ses rows, eyebrow `CHATS` + ses rows, puis `render_sidebar_settings_footer` + `render_mode_toggle` (inchangés, `:293-294`).
-- [ ] La ligne `skills_row` (définie `:381`, **appelée `:153`** dans `render_agents_sidebar`) est retirée du rail (supprimer l'appel `:153`) ; `show_agents_skills` (`agents_view_actions.rs:58`) peut rester en code mort géré ou être nettoyé, mais aucun point d'entrée dans le rail.
-- [ ] Les eyebrows sont des labels en petites MAJUSCULES, `ui.muted` : on suit le pattern *structurel* de `threads_section_header` (`:421` — couleur muted `:437`, top margin, px padding) mais en **ajoutant l'uppercase** que cette fonction n'a pas (elle rend `"Threads"` en `FontWeight::NORMAL` non-capitalisé, `:436`).
-- [ ] Given une section vide (0 pinned, 0 chats), when le rail rend, then la section se masque ou affiche un hint discret (pas d'eyebrow orphelin au-dessus du vide).
-- [ ] Le `RenderTimeCanary` (`:64`) ne fire pas en usage normal (≤ ~30 projets/threads visibles).
-- [ ] Aucune régression sur les modes Cli/Diff (ils n'appellent pas `render_agents_sidebar`).
+- [x] `render_agents_sidebar` (`agents_sidebar/mod.rs:102`) émet, dans l'ordre : ligne `New chat`, ligne/affordance `Search`, eyebrow `PINNED` + ses rows, eyebrow `PROJECTS` (+ bouton `+`) + ses rows, eyebrow `CHATS` + ses rows, puis `render_sidebar_settings_footer` + `render_mode_toggle` (inchangés, `:293-294`).
+- [x] La ligne `skills_row` (définie `:381`, **appelée `:153`** dans `render_agents_sidebar`) est retirée du rail (supprimer l'appel `:153`) ; `show_agents_skills` (`agents_view_actions.rs:58`) peut rester en code mort géré ou être nettoyé, mais aucun point d'entrée dans le rail.
+- [x] Les eyebrows sont des labels en petites MAJUSCULES, `ui.muted` : on suit le pattern *structurel* de `threads_section_header` (`:421` — couleur muted `:437`, top margin, px padding) mais en **ajoutant l'uppercase** que cette fonction n'a pas (elle rend `"Threads"` en `FontWeight::NORMAL` non-capitalisé, `:436`).
+- [x] Given une section vide (0 pinned, 0 chats), when le rail rend, then la section se masque ou affiche un hint discret (pas d'eyebrow orphelin au-dessus du vide).
+- [x] Le `RenderTimeCanary` (`:64`) ne fire pas en usage normal (≤ ~30 projets/threads visibles).
+- [x] Aucune régression sur les modes Cli/Diff (ils n'appellent pas `render_agents_sidebar`).
 
 #### US-005: `New chat` → chat libre dans le home + picker
 **Description:** As an orchestrator, I want lancer une session libre dans mon home so that je ne crée pas un faux projet pour un test rapide.
@@ -192,11 +192,11 @@ Restructurer `render_agents_sidebar` en sections Codex et câbler New chat / Sea
 **Dependencies:** US-002, US-003
 
 **Acceptance Criteria:**
-- [ ] La ligne `New chat` (remplace `new_project_row` « New threads » en tête de rail, `agents_sidebar/mod.rs:335`) met la sélection en état « picker pour nouveau chat » (cwd cible = `home_dir()`) et affiche le picker d'agents (`render_agents_launcher`, généralisé pour une cible chat — pas seulement `project_idx`).
-- [ ] Given le clic sur un agent dans le picker en contexte chat, when sélectionné, then un `Thread` est créé dans `chats` (cwd = home), bound au `terminal_agent`, sélectionné, et son PTY auto-lance la commande (réutilise `create_agent_terminal_thread_in`, `affordances.rs:341`, qui appelle `add_terminal_thread`, `project_ops/mod.rs:235` — les deux généralisés à une cible chat).
-- [ ] Given le chat créé, when il apparaît, then il est rendu dans la section `CHATS`, pas dans `PROJECTS`.
-- [ ] L'invariant human-in-loop est préservé : seul le launch command est envoyé (`send_command`), aucun prompt utilisateur auto-soumis ([[feedback_human_in_loop_no_headless]]).
-- [ ] Le picker en contexte chat affiche un titre adapté (« Start a new chat » plutôt que « Start a new thread »).
+- [x] La ligne `New chat` (remplace `new_project_row` « New threads » en tête de rail, `agents_sidebar/mod.rs:335`) met la sélection en état « picker pour nouveau chat » (cwd cible = `home_dir()`) et affiche le picker d'agents (`render_agents_launcher`, généralisé pour une cible chat — pas seulement `project_idx`).
+- [x] Given le clic sur un agent dans le picker en contexte chat, when sélectionné, then un `Thread` est créé dans `chats` (cwd = home), bound au `terminal_agent`, sélectionné, et son PTY auto-lance la commande (réutilise `create_agent_terminal_thread_in`, `affordances.rs:341`, qui appelle `add_terminal_thread`, `project_ops/mod.rs:235` — les deux généralisés à une cible chat).
+- [x] Given le chat créé, when il apparaît, then il est rendu dans la section `CHATS`, pas dans `PROJECTS`.
+- [x] L'invariant human-in-loop est préservé : seul le launch command est envoyé (`send_command`), aucun prompt utilisateur auto-soumis ([[feedback_human_in_loop_no_headless]]).
+- [x] Le picker en contexte chat affiche un titre adapté (« Start a new chat » plutôt que « Start a new thread »).
 
 #### US-006: Section Pinned (cross-source, ★)
 **Description:** As an orchestrator, I want voir mes threads épinglés en haut so that j'y reviens sans scroller.
@@ -206,11 +206,11 @@ Restructurer `render_agents_sidebar` en sections Codex et câbler New chat / Sea
 **Dependencies:** US-001, US-004
 
 **Acceptance Criteria:**
-- [ ] La section `PINNED` agrège tous les threads `pinned == true` à travers `projects[*].threads` ET `chats`, rendus avec le widget `thread_row` (`:567`) restylé.
-- [ ] Given un thread épinglé, when on clique son row dans Pinned, then il devient la cible sélectionnée (même résolution que sa source d'origine) — pas de doublon de cache PTY.
-- [ ] Une action pin/unpin existe : ★ au hover (cluster `hover_actions_cluster`, `:1103`, étendu) ET dans le context-menu (US-014). Toggle `thread.pinned` + `save_session`.
-- [ ] Given 0 thread épinglé, when le rail rend, then la section Pinned est masquée (pas d'eyebrow vide).
-- [ ] Test : pin d'un chat + d'un thread de projet, les deux apparaissent dans Pinned ; unpin retire de la section ; persistance vérifiée.
+- [x] La section `PINNED` agrège tous les threads `pinned == true` à travers `projects[*].threads` ET `chats`, rendus avec le widget `thread_row` (`:567`) restylé.
+- [x] Given un thread épinglé, when on clique son row dans Pinned, then il devient la cible sélectionnée (même résolution que sa source d'origine) — pas de doublon de cache PTY.
+- [x] Une action pin/unpin existe : ★ au hover (cluster `hover_actions_cluster`, `:1103`, étendu) ET dans le context-menu (US-014). Toggle `thread.pinned` + `save_session`.
+- [x] Given 0 thread épinglé, when le rail rend, then la section Pinned est masquée (pas d'eyebrow vide).
+- [x] Test : pin d'un chat + d'un thread de projet, les deux apparaissent dans Pinned ; unpin retire de la section ; persistance vérifiée.
 
 #### US-007: Section Projects + bouton `+` (folder picker)
 **Description:** As an orchestrator, I want ajouter un projet explicitement so that l'action de création de projet n'est plus cachée derrière « New threads ».
@@ -220,10 +220,10 @@ Restructurer `render_agents_sidebar` en sections Codex et câbler New chat / Sea
 **Dependencies:** US-004
 
 **Acceptance Criteria:**
-- [ ] L'eyebrow `PROJECTS` porte un bouton `+` (trailing) qui appelle `create_agents_project_with_picker` (`affordances.rs:272`) — l'ancien chemin du « New threads ».
-- [ ] Les projets sont rendus par `project_header_row` (`:443`) inchangé fonctionnellement (collapse, rename inline, badge `+N/-N` git, context-menu) ; seul le style est aligné Codex.
-- [ ] Les threads d'un projet expand restent rendus par `thread_row` (`:567`), newest-first (ordre actuel préservé, `:235`).
-- [ ] Given 0 projet, when le rail rend, then un empty-state sous l'eyebrow Projects invite à en créer un (réutilise `empty_state`, `:958`).
+- [x] L'eyebrow `PROJECTS` porte un bouton `+` (trailing) qui appelle `create_agents_project_with_picker` (`affordances.rs:272`) — l'ancien chemin du « New threads ».
+- [x] Les projets sont rendus par `project_header_row` (`:443`) inchangé fonctionnellement (collapse, rename inline, badge `+N/-N` git, context-menu) ; seul le style est aligné Codex.
+- [x] Les threads d'un projet expand restent rendus par `thread_row` (`:567`), newest-first (ordre actuel préservé, `:235`).
+- [x] Given 0 projet, when le rail rend, then un empty-state sous l'eyebrow Projects invite à en créer un (réutilise `empty_state`, `:958`).
 
 #### US-008: Section Chats (rendu des threads libres)
 **Description:** As an orchestrator, I want voir mes chats libres groupés so that je distingue les sessions hors-projet.
@@ -233,11 +233,11 @@ Restructurer `render_agents_sidebar` en sections Codex et câbler New chat / Sea
 **Dependencies:** US-002, US-003, US-004
 
 **Acceptance Criteria:**
-- [ ] La section `CHATS` rend `chats` (newest-first) avec `thread_row`, rename inline et context-menu (réutilise les handlers, paramétrés par cible chat).
-- [ ] Given un chat sélectionné, when on clique son row, then le centre monte son PTY (cwd = home) via la sélection unifiée (US-003).
-- [ ] Suppression d'un chat : `remove_thread`-équivalent sur `chats` + `save_session` ; la sélection retombe proprement si le chat supprimé était actif.
-- [ ] Given 0 chat, when le rail rend, then la section Chats est masquée ou affiche un hint discret (« No chats »).
-- [ ] Le titre OSC d'un chat met à jour son label via `handle_terminal_thread_title_changed` (généralisé aux chats).
+- [x] La section `CHATS` rend `chats` (newest-first) avec `thread_row`, rename inline et context-menu (réutilise les handlers, paramétrés par cible chat).
+- [x] Given un chat sélectionné, when on clique son row, then le centre monte son PTY (cwd = home) via la sélection unifiée (US-003).
+- [x] Suppression d'un chat : `remove_thread`-équivalent sur `chats` + `save_session` ; la sélection retombe proprement si le chat supprimé était actif.
+- [x] Given 0 chat, when le rail rend, then la section Chats est masquée ou affiche un hint discret (« No chats »).
+- [x] Le titre OSC d'un chat met à jour son label via `handle_terminal_thread_title_changed` (généralisé aux chats).
 
 #### US-009: Search dans le rail (migration + extension multi-source)
 **Description:** As an orchestrator, I want une recherche de premier niveau dans le rail so that je retrouve un thread instantanément.
@@ -247,12 +247,12 @@ Restructurer `render_agents_sidebar` en sections Codex et câbler New chat / Sea
 **Dependencies:** US-004, US-008
 
 **Acceptance Criteria:**
-- [ ] L'input de recherche (`render_agents_filter_input`, `:750` ; wrapper `render_agents_filter_row`, `:725` — aujourd'hui **dead code sans appelant**) est **câblé** dans le rail, sous `New chat` (nouvel appel depuis `render_agents_sidebar`). Aucun emplacement existant à retirer (il n'y en a pas).
-- [ ] Le filtre est étendu pour matcher aussi les `chats` : `filter::project_visible`/`thread_visible_in_project` (`agents_sidebar/filter.rs`) prennent `&Project` (inapplicable à un chat sans wrapper), donc une nouvelle fonction `chat_visible(thread: &Thread, lowered_needle: &str) -> bool` est ajoutée dans `filter.rs` ; `match_positions` est réutilisable tel quel. Les hits se reflètent dans Pinned/Projects/Chats.
-- [ ] Given un filtre actif, when il matche des chats, then la section Chats ne montre que les chats correspondants ; un filtre matchant des projets force-expand comme aujourd'hui (`:204`).
-- [ ] Given un filtre sans aucun match (toutes sources), when actif, then le hint `no_matches_hint` (`:999`) s'affiche.
-- [ ] Le lowercase-once de la needle (`:177`) est préservé (pas de régression perf) ; le canary 16 ms ne fire pas.
-- [ ] Escape efface le filtre et rend le focus (parité `handle_filter_key`, `:912`).
+- [x] L'input de recherche (`render_agents_filter_input`, `:750` ; wrapper `render_agents_filter_row`, `:725` — aujourd'hui **dead code sans appelant**) est **câblé** dans le rail, sous `New chat` (nouvel appel depuis `render_agents_sidebar`). Aucun emplacement existant à retirer (il n'y en a pas).
+- [x] Le filtre est étendu pour matcher aussi les `chats` : `filter::project_visible`/`thread_visible_in_project` (`agents_sidebar/filter.rs`) prennent `&Project` (inapplicable à un chat sans wrapper), donc une nouvelle fonction `chat_visible(thread: &Thread, lowered_needle: &str) -> bool` est ajoutée dans `filter.rs` ; `match_positions` est réutilisable tel quel. Les hits se reflètent dans Pinned/Projects/Chats.
+- [x] Given un filtre actif, when il matche des chats, then la section Chats ne montre que les chats correspondants ; un filtre matchant des projets force-expand comme aujourd'hui (`:204`).
+- [x] Given un filtre sans aucun match (toutes sources), when actif, then le hint `no_matches_hint` (`:999`) s'affiche.
+- [x] Le lowercase-once de la needle (`:177`) est préservé (pas de régression perf) ; le canary 16 ms ne fire pas.
+- [x] Escape efface le filtre et rend le focus (parité `handle_filter_key`, `:912`).
 
 ---
 
@@ -270,11 +270,11 @@ Rendre le brand slot mode-conditionnel et ajouter le menu overflow du thread cou
 **Dependencies:** EP-001
 
 **Acceptance Criteria:**
-- [ ] `TitleBar` (`title_bar.rs:11`, champs `workspace_name`/`sidebar_width` `:13,14`) gagne deux champs poussés (`agents_thread_title: Option<String>`, `agents_context_label: Option<String>` pour le projet ou « Chat »), écrits via la closure `title_bar.update()` de `PaneFlowApp::render` (parité `workspace_name`, push `main.rs:791-795`) — `TitleBar` n'importe PAS `AppMode` et ne lit jamais l'état global.
-- [ ] Given `agents_thread_title.is_some()` (poussé uniquement quand `self.mode == AppMode::Agents`, côté `PaneFlowApp::render`), when la top-bar rend, then le brand slot affiche `titre · contexte` au lieu de `"PaneFlow"` (`:164`) ; le titre passe par `clean_sidebar_title`. La branche teste la **présence du champ poussé**, pas `self.mode` dans `TitleBar` (pattern push-only).
-- [ ] Given `agents_thread_title == None` (modes Cli/Diff — `PaneFlowApp::render` ne pousse les champs Agents que sur le bras Agents), when la top-bar rend, then elle est IDENTIQUE à aujourd'hui (brand `"PaneFlow"` + breadcrumb workspace) — diff visuel nul sur Cli/Diff.
-- [ ] Given aucune cible sélectionnée en Agents (état picker), when la top-bar rend, then un label neutre s'affiche (ex. nom du projet actif, ou « Agents ») sans casser l'alignement `sidebar_width`.
-- [ ] `WindowControlArea::Drag` reste sur la racine ; aucun nouvel élément interactif n'avale le drag.
+- [x] `TitleBar` (`title_bar.rs:11`, champs `workspace_name`/`sidebar_width` `:13,14`) gagne deux champs poussés (`agents_thread_title: Option<String>`, `agents_context_label: Option<String>` pour le projet ou « Chat »), écrits via la closure `title_bar.update()` de `PaneFlowApp::render` (parité `workspace_name`, push `main.rs:791-795`) — `TitleBar` n'importe PAS `AppMode` et ne lit jamais l'état global.
+- [x] Given `agents_thread_title.is_some()` (poussé uniquement quand `self.mode == AppMode::Agents`, côté `PaneFlowApp::render`), when la top-bar rend, then le brand slot affiche `titre · contexte` au lieu de `"PaneFlow"` (`:164`) ; le titre passe par `clean_sidebar_title`. La branche teste la **présence du champ poussé**, pas `self.mode` dans `TitleBar` (pattern push-only).
+- [x] Given `agents_thread_title == None` (modes Cli/Diff — `PaneFlowApp::render` ne pousse les champs Agents que sur le bras Agents), when la top-bar rend, then elle est IDENTIQUE à aujourd'hui (brand `"PaneFlow"` + breadcrumb workspace) — diff visuel nul sur Cli/Diff.
+- [x] Given aucune cible sélectionnée en Agents (état picker), when la top-bar rend, then un label neutre s'affiche (ex. nom du projet actif, ou « Agents ») sans casser l'alignement `sidebar_width`.
+- [x] `WindowControlArea::Drag` reste sur la racine ; aucun nouvel élément interactif n'avale le drag.
 
 #### US-011: Menu overflow `⋯` du thread courant
 **Description:** As an orchestrator, I want les actions du thread courant dans la top-bar so that je renomme/supprime sans aller dans le rail.
@@ -284,11 +284,11 @@ Rendre le brand slot mode-conditionnel et ajouter le menu overflow du thread cou
 **Dependencies:** US-010
 
 **Acceptance Criteria:**
-- [ ] Un bouton `⋯` dans la top-bar (rendu seulement quand `agents_thread_title.is_some()`) **dispatche une action GPUI typée** (ex. `OpenThreadOverflowMenu`) plutôt que d'appeler directement les méthodes agents : `TitleBar` est une `Entity` distincte sans accès à l'état agents de `PaneFlowApp`. Le pattern suit l'update pill qui dispatche `StartSelfUpdate` (`title_bar.rs`). Pousser un `WeakEntity<PaneFlowApp>` dans `TitleBar` est l'anti-pattern à éviter (dépendance inverse).
-- [ ] `PaneFlowApp` gère l'action, résout le thread courant, puis ouvre un menu déféré réexposant rename/duplicate/reveal/delete via les handlers de `affordances.rs` (`begin_agents_rename` `:95`, `duplicate_agents_thread` `:386`, `reveal_agents_project_in_file_manager` `:454`, `request_agents_confirm_delete` `:68`, `open_agents_thread_menu` `:44`).
-- [ ] Le bouton utilise `on_mouse_down` + `stop_propagation` (pas `on_click`), sinon perte Wayland / drag (documenté `title_bar.rs:354-367`).
-- [ ] Given un chat libre comme cible, when le menu s'ouvre, then les actions non pertinentes (reveal projet) sont masquées ou adaptées au cwd home.
-- [ ] Le menu se ferme au clic extérieur (parité des autres menus déférés, `affordances.rs:60`).
+- [x] Un bouton `⋯` dans la top-bar (rendu seulement quand `agents_thread_title.is_some()`) **dispatche une action GPUI typée** (ex. `OpenThreadOverflowMenu`) plutôt que d'appeler directement les méthodes agents : `TitleBar` est une `Entity` distincte sans accès à l'état agents de `PaneFlowApp`. Le pattern suit l'update pill qui dispatche `StartSelfUpdate` (`title_bar.rs`). Pousser un `WeakEntity<PaneFlowApp>` dans `TitleBar` est l'anti-pattern à éviter (dépendance inverse).
+- [x] `PaneFlowApp` gère l'action, résout le thread courant, puis ouvre un menu déféré réexposant rename/duplicate/reveal/delete via les handlers de `affordances.rs` (`begin_agents_rename` `:95`, `duplicate_agents_thread` `:386`, `reveal_agents_project_in_file_manager` `:454`, `request_agents_confirm_delete` `:68`, `open_agents_thread_menu` `:44`).
+- [x] Le bouton utilise `on_mouse_down` + `stop_propagation` (pas `on_click`), sinon perte Wayland / drag (documenté `title_bar.rs:354-367`).
+- [x] Given un chat libre comme cible, when le menu s'ouvre, then les actions non pertinentes (reveal projet) sont masquées ou adaptées au cwd home.
+- [x] Le menu se ferme au clic extérieur (parité des autres menus déférés, `affordances.rs:60`).
 
 ---
 
@@ -306,10 +306,10 @@ Aligner finition et états sur Codex via les tokens existants.
 **Dependencies:** US-004
 
 **Acceptance Criteria:**
-- [ ] Rows plus aérées (padding/gap alignés Codex), eyebrows en petites majuscules `ui.muted` avec espacement de section cohérent, badges temps (`format_relative_ts` « 1w/2w/1mo » déjà en place, `:1016`) lisibles.
-- [ ] Hover states cohérents sur toutes les rows (Pinned/Projects/Chats) via `ui.subtle`/`ui.surface` (pattern existant) ; le row actif via `ui.surface`.
-- [ ] Aucun nouveau hex hors `UiColors` et les accents de marque déjà présents (`:554,559`) ; le thème clair (`paneflow_light`) reste cohérent (les accents Catppuccin hardcodés sont une dette connue, pas aggravée).
-- [ ] `prefers-reduced-motion` respecté si une transition est ajoutée (a11y).
+- [x] Rows plus aérées (padding/gap alignés Codex), eyebrows en petites majuscules `ui.muted` avec espacement de section cohérent, badges temps (`format_relative_ts` « 1w/2w/1mo » déjà en place, `:1016`) lisibles.
+- [x] Hover states cohérents sur toutes les rows (Pinned/Projects/Chats) via `ui.subtle`/`ui.surface` (pattern existant) ; le row actif via `ui.surface`.
+- [x] Aucun nouveau hex hors `UiColors` et les accents de marque déjà présents (`:554,559`) ; le thème clair (`paneflow_light`) reste cohérent (les accents Catppuccin hardcodés sont une dette connue, pas aggravée).
+- [x] `prefers-reduced-motion` respecté si une transition est ajoutée (a11y).
 
 #### US-013: Picker home-state + empty-states affinés
 **Description:** As an orchestrator, I want un état d'accueil net so that créer un thread/chat est évident.
@@ -319,9 +319,9 @@ Aligner finition et états sur Codex via les tokens existants.
 **Dependencies:** US-005, US-007
 
 **Acceptance Criteria:**
-- [ ] `render_agents_launcher` (`agents_view_actions.rs:173`) est affiné (espacement, titre contextuel chat vs projet) et reste centré, cap 640px.
-- [ ] Les empty-states (`render_agents_no_project`, `agents_view_actions.rs:472` ; `empty_state`, `agents_sidebar/mod.rs:958` ; `empty_project_hint`, `agents_sidebar/mod.rs:986`) sont alignés visuellement et cohérents avec le nouveau rail.
-- [ ] Given aucun projet ET aucun chat, when le centre rend, then un empty-state d'accueil unique invite à `New chat` ou `+` Projects.
+- [x] `render_agents_launcher` (`agents_view_actions.rs:173`) est affiné (espacement, titre contextuel chat vs projet) et reste centré, cap 640px.
+- [x] Les empty-states (`render_agents_no_project`, `agents_view_actions.rs:472` ; `empty_state`, `agents_sidebar/mod.rs:958` ; `empty_project_hint`, `agents_sidebar/mod.rs:986`) sont alignés visuellement et cohérents avec le nouveau rail.
+- [x] Given aucun projet ET aucun chat, when le centre rend, then un empty-state d'accueil unique invite à `New chat` ou `+` Projects.
 
 #### US-014: Context-menu pin/unpin + cohérence des actions
 **Description:** As an orchestrator, I want pin/unpin dans le menu contextuel so that l'épinglage est découvrable au-delà du hover.
@@ -331,10 +331,10 @@ Aligner finition et états sur Codex via les tokens existants.
 **Dependencies:** US-006
 
 **Acceptance Criteria:**
-- [ ] Le context-menu de thread (`open_agents_thread_menu`, `affordances.rs:44` ; rendu `render_agents_thread_context_menu`, `context_menus.rs:182`, items rename/duplicate/delete `:222-270`) gagne une entrée Pin/Unpin (label dynamique selon `thread.pinned`).
-- [ ] L'entrée toggle `thread.pinned` + `save_session` + `cx.notify`, cohérente avec le ★ hover (US-006).
-- [ ] Le menu de thread-projet (`render_agents_thread_context_menu`, `context_menus.rs:182`) et le futur menu de chat partagent un helper interne paramétré par cible — ce qui exige d'extraire un `render_agents_thread_context_menu_inner(target, …)` commun (le menu projet `render_agents_project_context_menu` `:24` reste distinct). Pas trois fonctions dupliquées divergentes.
-- [ ] Given un chat, when son context-menu s'ouvre, then les entrées non pertinentes sont masquées/adaptées.
+- [x] Le context-menu de thread (`open_agents_thread_menu`, `affordances.rs:44` ; rendu `render_agents_thread_context_menu`, `context_menus.rs:182`, items rename/duplicate/delete `:222-270`) gagne une entrée Pin/Unpin (label dynamique selon `thread.pinned`).
+- [x] L'entrée toggle `thread.pinned` + `save_session` + `cx.notify`, cohérente avec le ★ hover (US-006).
+- [x] Le menu de thread-projet (`render_agents_thread_context_menu`, `context_menus.rs:182`) et le futur menu de chat partagent un helper interne paramétré par cible — ce qui exige d'extraire un `render_agents_thread_context_menu_inner(target, …)` commun (le menu projet `render_agents_project_context_menu` `:24` reste distinct). Pas trois fonctions dupliquées divergentes.
+- [x] Given un chat, when son context-menu s'ouvre, then les entrées non pertinentes sont masquées/adaptées.
 
 ## Functional Requirements
 

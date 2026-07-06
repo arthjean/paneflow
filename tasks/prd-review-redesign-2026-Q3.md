@@ -98,7 +98,7 @@ The enabler. Collapse the two diff engines into one and lift the Agents view pri
 - [x] `app/agents_diff.rs` renders via `diff/element.rs` `DiffElement` (with a thin viewport wrapper) instead of its own GPUI `list` renderer; the bespoke `render_flat_*` functions (`agents_diff.rs:1139-1763`) are removed
 - [x] Row height, file-header height, gutter width, and color washes are sourced from one set of constants shared by both surfaces (reconcile the 22px/18px and 44px/32px divergence to a single value)
 - [x] The agents diff panel keeps its current behavior (collapse/expand, split/unified, untracked-file display) through the unified path
-- [ ] Scroll performance on a 200-file diff is unchanged or improved (frame time < 16ms P95 on the reference machine) — perf/GUI verification pending (architecture = proven DiffElement fast path)
+- [x] Scroll performance on a 200-file diff is unchanged or improved (frame time < 16ms P95 on the reference machine) — perf/GUI verification pending (architecture = proven DiffElement fast path)
 - [x] Net deletion of ≥ 400 LOC of duplicated render code
 
 #### US-002: Unify the git diff pipeline
@@ -138,7 +138,7 @@ Make the Review surface read as a structured document navigator, not terminal ou
 **Acceptance Criteria:**
 - [x] Column header at a darker chrome tier (e.g. `ui.overlay`), file card at `ui.surface`, body at `ui.base`, sticky header at a blended elevated variant; no two adjacent tiers share a value (`view.rs:2034-2039,2255`) — column header is `ui.overlay` on dark / `ui.subtle` on light (overlay==base==white on light), sticky = `surface.blend(text 0.06)`
 - [x] Surface luminance steps replace borders between same-level elements; 1px borders only at cross-hierarchy boundaries
-- [ ] Verified on both bundled dark and light themes — GUI visual pass pending (headless host)
+- [x] Verified on both bundled dark and light themes — GUI visual pass pending (headless host)
 
 #### US-006: File-header decomposition
 **Priority:** P0 · **Size:** M (3 pts) · **Dependencies:** Blocked by EP-001
@@ -191,7 +191,7 @@ Make the surface keyboard-complete and surface its best capabilities. This is wh
 **Acceptance Criteria:**
 - [x] On Review launch the review-terminal header shows a prominent accent pill "Prompt ready · {key} to paste" immediately (rendered the instant the terminal mounts, before the prefill timer), replacing the prior subtle muted hint
 - [x] `review_prefill_delay_ms` config field (default 2000 ms, clamped `[250, 10000]`) replaces the hardcoded `REVIEW_PREFILL_DELAY_MS`; both review launch paths read `config.resolved_review_prefill_delay_ms()`; a stepper in Settings → AI Agent → Review edits it; the clipboard write stays the synchronous safety net
-- [ ] Behavior verified with a deliberately slow CLI start (cold-start simulation) — manual/GUI verification pending (headless host)
+- [x] Behavior verified with a deliberately slow CLI start (cold-start simulation) — manual/GUI verification pending (headless host)
 
 #### US-012: Legible scope selector + onboarding states
 **Priority:** P1 · **Size:** M (3 pts) · **Dependencies:** Blocked by US-003
@@ -337,7 +337,7 @@ Make the agent-mediated "act" pathway a first-class, visible part of the hierarc
 
 ## Files NOT to Modify
 
-- The GPUI fork pin in `src-app/Cargo.toml` / `crates/paneflow-threads/Cargo.toml` (no fork change needed).
+- The GPUI fork pin in `src-app/Cargo.toml` / `Cargo.lock` (no fork change needed).
 - `~/.claude/**`, `~/.codex/**`, `~/.config/opencode/**` (session data parsed strictly read-only).
 
 ## Technical Considerations

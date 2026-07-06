@@ -9,7 +9,7 @@
 
 ## Problem Statement
 
-The 2026-06-08 `/ultron` deep audit (`ULTRON/AUDIT.json`, `ULTRON/AUDIT.md`) ran 150 subagents across 8 dimensions with N-vote adversarial verification. It produced:
+The 2026-06-08 `/ultron` deep audit output (external run, not checked into this repo) ran 150 subagents across 8 dimensions with N-vote adversarial verification. It produced:
 
 1. **Zero CRITICAL, zero HIGH** findings survived verification — the security-critical paths hold (minisign fail-closed updates, flag-gated IPC scripting, OSC52 Load sanitization, shell-metachar neutralization).
 2. **3 MEDIUM crash/availability defects reachable on valid input**: `extract_scrollback_from` panics on a UTF-8 boundary when truncating multibyte scrollback (U-001); the AppImage zsync subprocess has no timeout so a stalled mirror hangs the update worker forever (U-002); `walk_jsonl_files` follows directory symlinks with no depth bound and can stack-overflow (U-003).
@@ -17,7 +17,7 @@ The 2026-06-08 `/ultron` deep audit (`ULTRON/AUDIT.json`, `ULTRON/AUDIT.md`) ran
 4. One approach defect worth fixing now: the diff review-ref allowlist drops `~` and `^`, silently corrupting the `HEAD~1` / `main^` revspecs the app generates itself, so reviews run against the wrong base (U-006).
 5. **Coverage confidence is only `medium`.** Several substantial units returned zero or thin findings in a way that signals under-reading, not cleanliness — most notably the self-update pipeline (RCE-class threat profile, zero security findings), the AI shim + `agent_launcher` + `*_sessions.rs` command-construction surface (zero security findings despite a prior CWE-88 fix), the MCP-install config-file RMW surface, and `ai_hooks/extract.rs` (the untrusted-JSONL parse entry point). These warrant a focused second pass before silence is trusted as safe.
 
-**Why now:** the audit is fresh and the finding line:numbers are still valid against `main`. The 3 MEDIUM crashes are reachable from ordinary agent output (multibyte scrollback, symlinked session dirs) and from a single stalled network mirror — they degrade availability of a tool whose whole value proposition is babysitting long-running agents. Fixing the two systemic patterns with shared helpers retires a whole class of LOW findings at once, cheaply, before the codebase grows further across the in-flight macOS/Windows port.
+**Why now:** the audit is fresh and the finding line:numbers are still valid against `main`. The 3 MEDIUM crashes are reachable from ordinary agent output (multibyte scrollback, symlinked session dirs) and from a single stalled network mirror; they degrade availability of a tool whose whole value proposition is babysitting long-running agents. Fixing the two systemic patterns with shared helpers retires a whole class of LOW findings at once, cheaply, before the codebase grows further across cross-platform work.
 
 ## Overview
 
@@ -113,10 +113,10 @@ Eliminate every panic and integer-overflow path reachable from valid or untruste
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given a scrollback whose byte index `MAX_CHARS` (400_000) falls mid-codepoint (CJK/emoji/box-drawing), when `extract_scrollback_from` (`src-app/src/terminal/pty_session.rs:1093`) truncates, then it cuts at `floor_char_boundary(MAX_CHARS)` and does not panic.
-- [ ] Given the same input on the synchronous quit path (`save_session_blocking` on the GPUI main thread), when the app exits, then it saves a truncated-but-valid session instead of unwinding the process.
-- [ ] A unit test builds a `String` with a multibyte char straddling `MAX_CHARS` and asserts the truncation returns a valid `&str` of length ≤ `MAX_CHARS`.
-- [ ] `cargo clippy` shows no new `unwrap`/`expect` warning from the change.
+- [x] Given a scrollback whose byte index `MAX_CHARS` (400_000) falls mid-codepoint (CJK/emoji/box-drawing), when `extract_scrollback_from` (`src-app/src/terminal/pty_session.rs:1093`) truncates, then it cuts at `floor_char_boundary(MAX_CHARS)` and does not panic.
+- [x] Given the same input on the synchronous quit path (`save_session_blocking` on the GPUI main thread), when the app exits, then it saves a truncated-but-valid session instead of unwinding the process.
+- [x] A unit test builds a `String` with a multibyte char straddling `MAX_CHARS` and asserts the truncation returns a valid `&str` of length ≤ `MAX_CHARS`.
+- [x] `cargo clippy` shows no new `unwrap`/`expect` warning from the change.
 
 #### US-002: Symlink-safe, depth-bounded JSONL directory walk (U-003)
 **Description:** As a user whose agent session directory contains symlinks, I want `walk_jsonl_files` to not descend into symlinked dirs and to bound recursion depth so that a symlink cycle can't stack-overflow the app.
@@ -126,10 +126,10 @@ Eliminate every panic and integer-overflow path reachable from valid or untruste
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given a directory tree with a symlink that points to an ancestor (cycle), when `walk_jsonl_files` (`src-app/src/codex_sessions.rs:81`) runs, then it terminates without stack overflow and without descending the symlink.
-- [ ] Traversal uses `DirEntry::file_type()` (not `Path::is_dir()`) so symlinked directories are not followed, and enforces a hard `max_depth` (≥ 8 for `YYYY/MM/DD` plus slack).
-- [ ] Given a legitimate deep-but-acyclic tree within the depth bound, when the walk runs, then all real `.jsonl` files are still discovered (no false truncation of valid sessions).
-- [ ] Behavior is identical on Windows where NTFS junctions report as symlinks (verified via CI matrix or documented as inspection-only).
+- [x] Given a directory tree with a symlink that points to an ancestor (cycle), when `walk_jsonl_files` (`src-app/src/codex_sessions.rs:81`) runs, then it terminates without stack overflow and without descending the symlink.
+- [x] Traversal uses `DirEntry::file_type()` (not `Path::is_dir()`) so symlinked directories are not followed, and enforces a hard `max_depth` (≥ 8 for `YYYY/MM/DD` plus slack).
+- [x] Given a legitimate deep-but-acyclic tree within the depth bound, when the walk runs, then all real `.jsonl` files are still discovered (no false truncation of valid sessions).
+- [x] Behavior is identical on Windows where NTFS junctions report as symlinks (verified via CI matrix or documented as inspection-only).
 
 #### US-003: Overflow-safe parsers for agent-written and markdown content (U-011, U-050)
 **Description:** As a user whose agent writes arbitrary JSONL and markdown, I want date and table parsing to be overflow-safe so that an absurd year or pathological column count degrades gracefully instead of panicking or truncating wrongly.
@@ -139,9 +139,9 @@ Eliminate every panic and integer-overflow path reachable from valid or untruste
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given a parseable-but-absurd year in agent JSONL, when `parse_iso8601_to_unix_secs` (`src-app/src/agent_sessions.rs:551`) runs, then it uses `checked_mul`/`checked_add` and returns `None` on overflow, falling through to `iso8601_safe_fallback` (the date-prefix render) instead of overflowing `i64`.
-- [ ] Given a markdown table with > `u16::MAX` columns, when column count is computed (`src-app/src/markdown/view.rs:1209`), then it saturates via `u16::try_from(..).unwrap_or(u16::MAX)` instead of silently truncating, and the `cols == 0` bail still holds.
-- [ ] Unit tests cover the overflowing year and the pathological column count.
+- [x] Given a parseable-but-absurd year in agent JSONL, when `parse_iso8601_to_unix_secs` (`src-app/src/agent_sessions.rs:551`) runs, then it uses `checked_mul`/`checked_add` and returns `None` on overflow, falling through to `iso8601_safe_fallback` (the date-prefix render) instead of overflowing `i64`.
+- [x] Given a markdown table with > `u16::MAX` columns, when column count is computed (`src-app/src/markdown/view.rs:1209`), then it saturates via `u16::try_from(..).unwrap_or(u16::MAX)` instead of silently truncating, and the `cols == 0` bail still holds.
+- [x] Unit tests cover the overflowing year and the pathological column count.
 
 #### US-004: Documented invariants & symmetric clamps in the paint path (U-036, U-046, U-047)
 **Description:** As a maintainer, I want the production `unwrap()` documented and the geometry clamps made symmetric so that the paint path follows project convention and future edits don't introduce off-by-one panics.
@@ -151,10 +151,10 @@ Eliminate every panic and integer-overflow path reachable from valid or untruste
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] The bare `.unwrap()` in `merge_background_regions` (`src-app/src/terminal/element/mod.rs:149`) becomes `.expect("merge_background_regions: rects.len() >= 2 guaranteed by the len() <= 1 early return")`.
-- [ ] `desired_rows` (`element/mod.rs:491`) gains the `.max(1.0)` clamp that `desired_cols` already has.
-- [ ] The multi-line selection last-line rect (`element/mod.rs:1048`) uses the same saturating clamp as its sibling rects.
-- [ ] No behavioral change is observable; existing terminal-render tests still pass (golden unchanged).
+- [x] The bare `.unwrap()` in `merge_background_regions` (`src-app/src/terminal/element/mod.rs:149`) becomes `.expect("merge_background_regions: rects.len() >= 2 guaranteed by the len() <= 1 early return")`.
+- [x] `desired_rows` (`element/mod.rs:491`) gains the `.max(1.0)` clamp that `desired_cols` already has.
+- [x] The multi-line selection last-line rect (`element/mod.rs:1048`) uses the same saturating clamp as its sibling rects.
+- [x] No behavioral change is observable; existing terminal-render tests still pass (golden unchanged).
 
 ---
 
@@ -172,11 +172,11 @@ Introduce one reviewed `run_with_timeout` primitive and adopt it at every extern
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] A new workspace crate `paneflow-process` (zero external deps, `std` only) exposes `run_with_timeout(cmd, deadline, stdout_cap) -> Result<Output, ProcError>` that spawns, polls `try_wait()` with a short sleep, and on deadline calls `kill()` then `wait()` (reaps the zombie) and returns `ProcError::Timeout`.
-- [ ] The helper reads stdout through `Read::take(stdout_cap)` so a chatty child cannot exhaust memory, and sets `Stdio::null()` on stdin so the child can never block on a prompt.
-- [ ] On Windows, an already-exited child's `kill()` returning `Err(InvalidInput)` is treated as success (not propagated) — guarded behind `#[cfg(windows)]` with a unit test or documented inspection note.
-- [ ] Unit tests cover: normal completion under deadline, a sleeping child killed at the deadline, and a child exceeding the stdout cap (output truncated, no OOM, no hang).
-- [ ] Crate added to `[workspace.dependencies]`; binary-size delta to the embedded shim measured and recorded as ≤ a stated ceiling.
+- [x] A new workspace crate `paneflow-process` (zero external deps, `std` only) exposes `run_with_timeout(cmd, deadline, stdout_cap) -> Result<Output, ProcError>` that spawns, polls `try_wait()` with a short sleep, and on deadline calls `kill()` then `wait()` (reaps the zombie) and returns `ProcError::Timeout`.
+- [x] The helper reads stdout through `Read::take(stdout_cap)` so a chatty child cannot exhaust memory, and sets `Stdio::null()` on stdin so the child can never block on a prompt.
+- [x] On Windows, an already-exited child's `kill()` returning `Err(InvalidInput)` is treated as success (not propagated) — guarded behind `#[cfg(windows)]` with a unit test or documented inspection note.
+- [x] Unit tests cover: normal completion under deadline, a sleeping child killed at the deadline, and a child exceeding the stdout cap (output truncated, no OOM, no hang).
+- [x] Crate added to `[workspace.dependencies]`; binary-size delta to the embedded shim measured and recorded as ≤ a stated ceiling.
 
 #### US-006: Bound the self-update subprocess + add update-worker watchdog (U-002, U-015)
 **Description:** As a user, I want the AppImage/installer update step to time out and recover so that a stalled mirror or hung tool returns the updater to Idle instead of freezing it forever.
@@ -186,10 +186,10 @@ Introduce one reviewed `run_with_timeout` primitive and adopt it at every extern
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] Given a stalled `appimageupdatetool` zsync download, when the deadline (a generous multiple of `UPDATE_HTTP_TIMEOUT`, e.g. 5–10 min) elapses (`src-app/src/update/linux/appimage.rs:419`), then the child is killed and the call returns a structured `UpdateError::Timeout`.
-- [ ] The macOS `.dmg` and Windows `.msi` install subprocess paths are migrated to `run_with_timeout` (or documented as not spawning a blocking external tool).
-- [ ] Given a `Downloading` state that hangs, when the watchdog deadline elapses (`src-app/src/app/self_update_flow.rs:318`), then status is reset to `Idle`, the retry counter is bumped, and the failure is routed through `record_update_failure` — the `EnvironmentBroken` pkexec fallback becomes reachable.
-- [ ] CI green on all 4 matrix legs.
+- [x] Given a stalled `appimageupdatetool` zsync download, when the deadline (a generous multiple of `UPDATE_HTTP_TIMEOUT`, e.g. 5–10 min) elapses (`src-app/src/update/linux/appimage.rs:419`), then the child is killed and the call returns a structured `UpdateError::Timeout`.
+- [x] The macOS `.dmg` and Windows `.msi` install subprocess paths are migrated to `run_with_timeout` (or documented as not spawning a blocking external tool).
+- [x] Given a `Downloading` state that hangs, when the watchdog deadline elapses (`src-app/src/app/self_update_flow.rs:318`), then status is reset to `Idle`, the retry counter is bumped, and the failure is routed through `record_update_failure` — the `EnvironmentBroken` pkexec fallback becomes reachable.
+- [x] CI green on all 4 matrix legs.
 
 #### US-007: Bound the git subprocess layer (U-035)
 **Description:** As a user on a slow or broken filesystem, I want git invocations to time out and never prompt so that a hung `git` can't block workspace badges or the diff viewer.
@@ -199,9 +199,9 @@ Introduce one reviewed `run_with_timeout` primitive and adopt it at every extern
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] `git diff --shortstat` (`src-app/src/workspace/git.rs:17`) and the diff viewer's `run_git` (`src-app/src/diff/git.rs`) run through `run_with_timeout`.
-- [ ] Both set `Stdio::null()` on stdin and `GIT_TERMINAL_PROMPT=0` in the environment so git can never block on a credential/helper prompt.
-- [ ] Given a `git` that hangs (simulated), when the deadline elapses, then the call returns an error and the caller renders a "stats unavailable" state instead of blocking.
+- [x] `git diff --shortstat` (`src-app/src/workspace/git.rs:17`) and the diff viewer's `run_git` (`src-app/src/diff/git.rs`) run through `run_with_timeout`.
+- [x] Both set `Stdio::null()` on stdin and `GIT_TERMINAL_PROMPT=0` in the environment so git can never block on a credential/helper prompt.
+- [x] Given a `git` that hangs (simulated), when the deadline elapses, then the call returns an error and the caller renders a "stats unavailable" state instead of blocking.
 
 #### US-008: Bound agent enumerators, installer CLIs, and shim reapers (U-032, U-025)
 **Description:** As a user, I want `opencode` enumeration, MCP-install CLIs, and shim Ctrl+C reapers to be bounded so that a stuck child can't hang session discovery or accumulate threads.
@@ -211,10 +211,10 @@ Introduce one reviewed `run_with_timeout` primitive and adopt it at every extern
 **Dependencies:** Blocked by US-005
 
 **Acceptance Criteria:**
-- [ ] `opencode session list` (`src-app/src/opencode_sessions.rs:70`) runs through `run_with_timeout` with a bounded stdout cap (4–8 MB).
-- [ ] The `run_cli` helper in `crates/paneflow-mcp-install/src/agents/support.rs:81` (used for `claude mcp add` / `codex mcp add`) is bounded by a deadline.
-- [ ] Per-Ctrl+C detached reaper threads in `crates/paneflow-shim/src/exec.rs:298` are bounded (single draining reaper, or an in-flight cap that drops new SIGINT-driven stops past a ceiling) so hung hooks cannot accumulate threads unboundedly.
-- [ ] Given a hung child, when the deadline elapses, then the enumerator returns an empty/partial result without blocking the caller.
+- [x] `opencode session list` (`src-app/src/opencode_sessions.rs:70`) runs through `run_with_timeout` with a bounded stdout cap (4–8 MB).
+- [x] The `run_cli` helper in `crates/paneflow-mcp-install/src/agents/support.rs:81` (used for `claude mcp add` / `codex mcp add`) is bounded by a deadline.
+- [x] Per-Ctrl+C detached reaper threads in `crates/paneflow-shim/src/exec.rs:298` are bounded (single draining reaper, or an in-flight cap that drops new SIGINT-driven stops past a ceiling) so hung hooks cannot accumulate threads unboundedly.
+- [x] Given a hung child, when the deadline elapses, then the enumerator returns an empty/partial result without blocking the caller.
 
 ---
 
@@ -232,9 +232,9 @@ Mirror every write-side cap onto its read side and centralize the scattered `MAX
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `load_session_at` (`src-app/src/app/session.rs:244`) stats the file and rejects/falls-back over a `MAX_SESSION_SIZE_BYTES` cap before `read_to_string`, mirroring `read_config_string` (`crates/paneflow-config/src/loader.rs:91`).
-- [ ] `restore_workspaces` truncates iteration to `MAX_WORKSPACES` (20) and rejects/trims any layout whose `leaf_count()` exceeds `MAX_PANES` (32), mirroring the `workspace_ops/layout.rs` guard.
-- [ ] Given an oversized session.json, when the app starts, then it logs a warning and starts with a safe fallback session instead of OOM/hang.
+- [x] `load_session_at` (`src-app/src/app/session.rs:244`) stats the file and rejects/falls-back over a `MAX_SESSION_SIZE_BYTES` cap before `read_to_string`, mirroring `read_config_string` (`crates/paneflow-config/src/loader.rs:91`).
+- [x] `restore_workspaces` truncates iteration to `MAX_WORKSPACES` (20) and rejects/trims any layout whose `leaf_count()` exceeds `MAX_PANES` (32), mirroring the `workspace_ops/layout.rs` guard.
+- [x] Given an oversized session.json, when the app starts, then it logs a warning and starts with a safe fallback session instead of OOM/hang.
 
 #### US-010: IPC socket boundary hardening — bounded client reads, timeouts, fail-closed perms (U-029, U-027, U-028, U-031)
 **Description:** As a user, I want the local socket and config boundaries to bound reads, time out connects/writes, reject non-regular files, and fail closed on a chmod error so that a stalled or hostile same-UID peer can't hang or downgrade the IPC surface.
@@ -244,10 +244,10 @@ Mirror every write-side cap onto its read side and centralize the scattered `MAX
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] The MCP client `read_line` on the IPC socket (`crates/paneflow-mcp/src/ipc_client.rs:120`) is wrapped with `.by_ref().take(MAX_REQUEST_LEN)` (256 KiB ceiling); hitting the cap is treated as a framing error, not a partial parse.
-- [ ] The ai-hook IPC connect/write (`crates/paneflow-ai-hook/src/main.rs:94`) gets a write/connect deadline (250–500 ms) so a stalled peer can't block the hook or its caller.
-- [ ] `read_config_string` (`loader.rs:91`) rejects non-regular files (`!meta.file_type().is_file()`) before reading, closing the FIFO/device TOCTOU variant.
-- [ ] On Unix, if the socket `set_permissions(0600)` fails (`src-app/src/ipc.rs:452`), the server logs an error, removes the socket file, and refuses to serve (fail-closed) instead of discarding the result.
+- [x] The shared IPC client `read_line` on the IPC socket (`crates/paneflow-ipc-client/src/lib.rs`) is wrapped with `.by_ref().take(MAX_REQUEST_LEN)` (256 KiB ceiling); hitting the cap is treated as a framing error, not a partial parse.
+- [x] The ai-hook IPC connect/write (`crates/paneflow-ai-hook/src/main.rs:94`) gets a write/connect deadline (250–500 ms) so a stalled peer can't block the hook or its caller.
+- [x] `read_config_string` (`loader.rs:91`) rejects non-regular files (`!meta.file_type().is_file()`) before reading, closing the FIFO/device TOCTOU variant.
+- [x] On Unix, if the socket `set_permissions(0600)` fails (`src-app/src/ipc.rs:452`), the server logs an error, removes the socket file, and refuses to serve (fail-closed) instead of discarding the result.
 
 #### US-011: Schema-boundary breadth caps + legacy ratio handling (U-008 schema side, U-007)
 **Description:** As a maintainer, I want the layout deserializer to cap breadth and handle the legacy single `ratio` explicitly so that a malformed layout can't allocate unbounded children or silently lose ratio data.
@@ -257,9 +257,9 @@ Mirror every write-side cap onto its read side and centralize the scattered `MAX
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `validate_layout` (`crates/paneflow-config/src/loader.rs`) caps total leaf count to 32 panes per workspace and bounds children/surfaces vector length at the schema boundary (`crates/paneflow-config/src/schema.rs:988`).
-- [ ] Given a Split with `ratio: Some` but `ratios: None` and `children.len() != 2`, when validated (`schema.rs:755`), then a 2-child case converts to `ratios=[r, 1-r]` and an N-ary case logs a `warn!("legacy ratio ignored on N-ary split")` instead of silently discarding.
-- [ ] Given an over-broad layout, when loaded, then it is trimmed/rejected with a logged warning, not expanded.
+- [x] `validate_layout` (`crates/paneflow-config/src/loader.rs`) caps total leaf count to 32 panes per workspace and bounds children/surfaces vector length at the schema boundary (`crates/paneflow-config/src/schema.rs:988`).
+- [x] Given a Split with `ratio: Some` but `ratios: None` and `children.len() != 2`, when validated (`schema.rs:755`), then a 2-child case converts to `ratios=[r, 1-r]` and an N-ary case logs a `warn!("legacy ratio ignored on N-ary split")` instead of silently discarding.
+- [x] Given an over-broad layout, when loaded, then it is trimmed/rejected with a logged warning, not expanded.
 
 #### US-012: Restore-time path-traversal re-validation (U-030, U-041)
 **Description:** As a user restoring a session, I want expanded-path rehydration and diff working-text reads to re-assert containment so that an absolute or `..` path in session.json or a git-reported symlink can't escape the workspace root.
@@ -269,9 +269,9 @@ Mirror every write-side cap onto its read side and centralize the scattered `MAX
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `expanded_paths` rehydration (`src-app/src/app/session.rs:338`) rejects any `rel` containing `Component::ParentDir`/`RootDir`/`Prefix`, or re-asserts `abs.starts_with(base)` after `join`, so an absolute `rel` no longer silently replaces the `cwd` base.
-- [ ] `load_working_text` (`src-app/src/diff/git.rs:384`) `lstat`s the resolved path and renders a stub/link-target for symlinks instead of dereferencing outside the worktree.
-- [ ] Given a session.json with `expanded_paths: ["/etc/passwd"]`, when restored, then the entry is dropped (not opened as an absolute path).
+- [x] `expanded_paths` rehydration (`src-app/src/app/session.rs:338`) rejects any `rel` containing `Component::ParentDir`/`RootDir`/`Prefix`, or re-asserts `abs.starts_with(base)` after `join`, so an absolute `rel` no longer silently replaces the `cwd` base.
+- [x] `load_working_text` (`src-app/src/diff/git.rs:384`) `lstat`s the resolved path and renders a stub/link-target for symlinks instead of dereferencing outside the worktree.
+- [x] Given a session.json with `expanded_paths: ["/etc/passwd"]`, when restored, then the entry is dropped (not opened as an absolute path).
 
 #### US-013: Centralize the scattered `MAX_*` caps (architectural cleanup)
 **Description:** As a maintainer, I want the duplicated/scattered size constants in one module so that read and write caps stay in sync and the asymmetry pattern can't silently return.
@@ -281,9 +281,9 @@ Mirror every write-side cap onto its read side and centralize the scattered `MAX
 **Dependencies:** Blocked by US-009, US-010, US-011
 
 **Acceptance Criteria:**
-- [ ] The duplicated `MAX_LINE_BYTES` (`claude_sessions.rs:39`, `codex_sessions.rs:34`) and `MAX_OSC52_BYTES` (`pty_session.rs:808`, `view.rs:336`) are deduplicated to a single source.
-- [ ] A documented `limits` module (or equivalent) centralizes `MAX_REQUEST_LEN`, `MAX_LINE_BYTES`, `MAX_CHARS`, `MAX_OSC52_BYTES`, `MAX_WORKSPACES`, `MAX_PANES`, `MAX_CONFIG_SIZE_BYTES`, `MAX_SESSION_SIZE_BYTES` with comments tying each read cap to its write cap.
-- [ ] No behavioral change; all existing tests pass (pure refactor verified by golden/test parity).
+- [x] The duplicated `MAX_LINE_BYTES` (`claude_sessions.rs:39`, `codex_sessions.rs:34`) and `MAX_OSC52_BYTES` (`pty_session.rs:808`, `view.rs:336`) are deduplicated to a single source.
+- [x] A documented `limits` module (or equivalent) centralizes `MAX_REQUEST_LEN`, `MAX_LINE_BYTES`, `MAX_CHARS`, `MAX_OSC52_BYTES`, `MAX_WORKSPACES`, `MAX_PANES`, `MAX_CONFIG_SIZE_BYTES`, `MAX_SESSION_SIZE_BYTES` with comments tying each read cap to its write cap.
+- [x] No behavioral change; all existing tests pass (pure refactor verified by golden/test parity).
 
 ---
 
@@ -301,10 +301,10 @@ Harden the paths that ingest untrusted terminal output and markdown, and fix the
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `sanitize_ref_for_prompt` (`src-app/src/diff/review_terminal.rs:72`) preserves `~` and `^` (and other valid revspec chars) — either by adding them to the allowlist or by switching to a denylist of shell-active chars (`` ` $ ; | & ( ) < > ' " \ * ? [ ] { } `` + whitespace/newline).
-- [ ] Given the app-generated refs `HEAD~1` and `main^`, when sanitized, then they pass through unchanged.
-- [ ] Given a ref containing `$(...)`, a backtick, or a newline, when sanitized, then the metacharacters are neutralized.
-- [ ] A unit test asserts both the pass-through and the neutralization cases.
+- [x] `sanitize_ref_for_prompt` (`src-app/src/diff/review_terminal.rs:72`) preserves `~` and `^` (and other valid revspec chars) — either by adding them to the allowlist or by switching to a denylist of shell-active chars (`` ` $ ; | & ( ) < > ' " \ * ? [ ] { } `` + whitespace/newline).
+- [x] Given the app-generated refs `HEAD~1` and `main^`, when sanitized, then they pass through unchanged.
+- [x] Given a ref containing `$(...)`, a backtick, or a newline, when sanitized, then the metacharacters are neutralized.
+- [x] A unit test asserts both the pass-through and the neutralization cases.
 
 #### US-015: Symmetric OSC52 Store sanitization (U-023)
 **Description:** As a user, I want untrusted terminal output written to the system clipboard via OSC52 Store to be control-char sanitized so that a rogue program can't plant a paste-injection payload.
@@ -314,9 +314,9 @@ Harden the paths that ingest untrusted terminal output and markdown, and fix the
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] The OSC52 Store path (`src-app/src/terminal/pty_session.rs:806` → `view.rs:327`) applies the same control-char filter the Load path already uses (`view.rs:330-359`): strip `\r` (0x0d), ESC (0x1b), C0 controls except `\t`/`\n`, DEL (0x7f), and the C1 range (U+0080–U+009F) before `cx.write_to_clipboard`.
-- [ ] Given terminal output containing `\r` and ESC sequences, when OSC52 Store fires, then the clipboard receives the stripped payload.
-- [ ] The existing 100 KiB size cap is preserved; printable multibyte content is unaffected.
+- [x] The OSC52 Store path (`src-app/src/terminal/pty_session.rs:806` → `view.rs:327`) applies the same control-char filter the Load path already uses (`view.rs:330-359`): strip `\r` (0x0d), ESC (0x1b), C0 controls except `\t`/`\n`, DEL (0x7f), and the C1 range (U+0080–U+009F) before `cx.write_to_clipboard`.
+- [x] Given terminal output containing `\r` and ESC sequences, when OSC52 Store fires, then the clipboard receives the stripped payload.
+- [x] The existing 100 KiB size cap is preserved; printable multibyte content is unaffected.
 
 #### US-016: Markdown bidi/zero-width stripping in body spans (U-019)
 **Description:** As a user viewing untrusted markdown, I want bidi/zero-width control chars stripped from all rendered text, not just `[image:]` placeholders, so that disguised content can't render.
@@ -326,9 +326,9 @@ Harden the paths that ingest untrusted terminal output and markdown, and fix the
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] The bidi/zero-width filter is moved into the shared text ingress (`src-app/src/markdown/parser.rs:448` `push_text`, or `build_styled_text`) so every rendered span is sanitized, not only the image placeholder (`parser.rs:218`).
-- [ ] The filter covers the bidi override range (U+202A–U+202E, U+2066–U+2069, U+200F, U+061C) and zero-width chars, without the placeholder-only length cap.
-- [ ] Given a markdown body containing a bidi override, when rendered, then the override char is removed from the displayed span.
+- [x] The bidi/zero-width filter is moved into the shared text ingress (`src-app/src/markdown/parser.rs:448` `push_text`, or `build_styled_text`) so every rendered span is sanitized, not only the image placeholder (`parser.rs:218`).
+- [x] The filter covers the bidi override range (U+202A–U+202E, U+2066–U+2069, U+200F, U+061C) and zero-width chars, without the placeholder-only length cap.
+- [x] Given a markdown body containing a bidi override, when rendered, then the override char is removed from the displayed span.
 
 #### US-017: Correct exactly-MAX final-line classification (U-017)
 **Description:** As a user with a session whose final JSONL line is exactly `MAX_LINE_BYTES` with no trailing newline, I want it parsed instead of dropped so that a valid final record isn't lost as "oversized."
@@ -338,9 +338,9 @@ Harden the paths that ingest untrusted terminal output and markdown, and fix the
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given a final line of exactly `MAX_LINE_BYTES` and no trailing `\n` (`src-app/src/claude_sessions.rs:165`), when read, then `fill_buf()` is peeked once; on EOF the line is treated as a complete final record and parsed, not discarded.
-- [ ] Given a genuinely truncated oversized line (more bytes follow), when read, then it is still classified as oversized and skipped.
-- [ ] A unit test covers both the exactly-MAX-at-EOF and the truncated-oversized cases.
+- [x] Given a final line of exactly `MAX_LINE_BYTES` and no trailing `\n` (`src-app/src/claude_sessions.rs:165`), when read, then `fill_buf()` is peeked once; on EOF the line is treated as a complete final record and parsed, not discarded.
+- [x] Given a genuinely truncated oversized line (more bytes follow), when read, then it is still classified as oversized and skipped.
+- [x] A unit test covers both the exactly-MAX-at-EOF and the truncated-oversized cases.
 
 ---
 
@@ -358,10 +358,10 @@ Close the audit's coverage gaps on the four under-read units. These are spike-th
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `/ultron --focus security` (or `/security-review`) is run scoped to `src-app/src/update/**` + `self_update_flow.rs`; findings are written to `ULTRON/` (new run) and triaged.
-- [ ] The deferred defense-in-depth gaps from the EP-001 self-update review are landed: macOS Team ID pinned in the install/verify path, and Windows publisher pinned (platform-gated; verified via CI matrix).
-- [ ] Any HIGH+ finding from the re-run is filed as a new P0 story appended to this PRD (scope is not silently absorbed).
-- [ ] If the re-run surfaces no real finding, the spike closes with a "verified clean — coverage raised to high" note recorded in the status file.
+- [x] `/ultron --focus security` (or `/security-review`) is run scoped to `src-app/src/update/**` + `self_update_flow.rs`; findings are written to `ULTRON/` (new run) and triaged.
+- [x] The deferred defense-in-depth gaps from the EP-001 self-update review are landed: macOS Team ID pinned in the install/verify path, and Windows publisher pinned (platform-gated; verified via CI matrix).
+- [x] Any HIGH+ finding from the re-run is filed as a new P0 story appended to this PRD (scope is not silently absorbed).
+- [x] If the re-run surfaces no real finding, the spike closes with a "verified clean — coverage raised to high" note recorded in the status file.
 
 #### US-019: AI shim + agent_launcher + session-resume argument-injection pass
 **Description:** As a maintainer, I want the command-construction surface audited for argument injection so that no agent-written value (session id, prompt, resume arg) can inject a CLI flag like `--dangerously-skip-permissions`.
@@ -371,10 +371,10 @@ Close the audit's coverage gaps on the four under-read units. These are spike-th
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] The resume-command builders in `agent_launcher.rs`, `claude_sessions.rs`, `codex_sessions.rs`, `opencode_sessions.rs` are reviewed for argument injection (building on the EP-007 CWE-88 `is_valid_session_id` fix).
-- [ ] Given an agent-written session id or resume value beginning with `-`/`--`, when a resume command is constructed, then it cannot be interpreted as a flag (argument separator `--` used, or value validated to start alphanumeric/`_`).
-- [ ] A regression test asserts a flag-shaped value is rejected or neutralized.
-- [ ] Findings (if any) are filed; clean result recorded as a verdict.
+- [x] The resume-command builders in `agent_launcher.rs`, `claude_sessions.rs`, `codex_sessions.rs`, `opencode_sessions.rs` are reviewed for argument injection (building on the EP-007 CWE-88 `is_valid_session_id` fix).
+- [x] Given an agent-written session id or resume value beginning with `-`/`--`, when a resume command is constructed, then it cannot be interpreted as a flag (argument separator `--` used, or value validated to start alphanumeric/`_`).
+- [x] A regression test asserts a flag-shaped value is rejected or neutralized.
+- [x] Findings (if any) are filed; clean result recorded as a verdict.
 
 #### US-020: Harden `ai_hooks/extract.rs` untrusted-JSONL parsing
 **Description:** As a user, I want the AI-hook JSONL parser to be bounds-guarded so that a corrupted or adversarial hook-output file can't exhaust memory or mis-parse.
@@ -384,9 +384,9 @@ Close the audit's coverage gaps on the four under-read units. These are spike-th
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] `crates/...ai_hooks/extract.rs` (the 634-LOC JSONL parser reading `~/.claude/hooks/` output) gains a per-file size guard and a per-line byte cap consistent with the other session parsers.
-- [ ] Given an oversized or malformed hook-output file, when parsed, then it is rejected/truncated with a logged warning, not loaded unbounded.
-- [ ] Note in the PRD record: the "ACP message parsing" coverage gap is **dropped** — `crates/paneflow-acp` is now 3 trivial files (the protocol parser was deleted with the in-app chat), so `ai_hooks/extract.rs` is the real remaining untrusted-parse surface.
+- [x] `src-app/src/ai_hooks/extract.rs` (the JSONL parser reading `~/.claude/hooks/` output) gains a per-file size guard and a per-line byte cap consistent with the other session parsers.
+- [x] Given an oversized or malformed hook-output file, when parsed, then it is rejected/truncated with a logged warning, not loaded unbounded.
+- [x] Note in the PRD record: the "ACP message parsing" coverage gap is **dropped** — `crates/paneflow-acp` is now 3 trivial files (the protocol parser was deleted with the in-app chat), so `ai_hooks/extract.rs` is the real remaining untrusted-parse surface.
 
 #### US-021: MCP-install config-file RMW/TOCTOU pass (U-009, U-010)
 **Description:** As a user, I want the MCP-install read-modify-write on agent config files to be TOCTOU-safe and to report malformed-present configs correctly so that install/uninstall is idempotent and honest.
@@ -396,9 +396,9 @@ Close the audit's coverage gaps on the four under-read units. These are spike-th
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] The RMW on `~/.claude.json` / `~/.codex/config.toml` / `~/.gemini/settings.json` is reviewed for TOCTOU (the existing backup + atomic-write contract is confirmed or hardened).
-- [ ] Uninstall distinguishes "absent" from "present-but-malformed" (`crates/paneflow-mcp-install/src/agents/claude_code.rs:126`): a malformed-but-present config surfaces a loud error instead of `NothingToRemove`.
-- [ ] `resolve_target` (`crates/paneflow-mcp/src/tools.rs:170`) accepts integral floats (e.g. `42.0`) as the `number`-typed `target`, honoring the schema.
+- [x] The RMW on `~/.claude.json` / `~/.codex/config.toml` / `~/.gemini/settings.json` is reviewed for TOCTOU (the existing backup + atomic-write contract is confirmed or hardened).
+- [x] Uninstall distinguishes "absent" from "present-but-malformed" (`crates/paneflow-mcp-install/src/agents/claude_code.rs:126`): a malformed-but-present config surfaces a loud error instead of `NothingToRemove`.
+- [x] `resolve_target` (`crates/paneflow-mcp/src/tools.rs:170`) accepts integral floats (e.g. `42.0`) as the `number`-typed `target`, honoring the schema.
 
 #### US-022: Telemetry PII-absence guard test
 **Description:** As a maintainer, I want a test asserting telemetry carries no PII so that a future free-form property can't silently leak user data.
@@ -408,8 +408,8 @@ Close the audit's coverage gaps on the four under-read units. These are spike-th
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] A test asserts the telemetry event-property surface is typed-enum-only (no free-form string fields carrying paths/usernames/hostnames), and `distinct_id` remains a UUID v4 unrelated to identity.
-- [ ] Note in the record: this is **verify-not-fix** — PII is excluded by construction (`crates/paneflow-telemetry/src/`), so the deliverable is a regression guard, not a scrubber.
+- [x] A test asserts the telemetry event-property surface is typed-enum-only (no free-form string fields carrying paths/usernames/hostnames), and `distinct_id` remains a UUID v4 unrelated to identity.
+- [x] Note in the record: this is **verify-not-fix** — PII is excluded by construction (`crates/paneflow-telemetry/src/`), so the deliverable is a regression guard, not a scrubber.
 
 ---
 
@@ -427,9 +427,9 @@ Batch the remaining LOW efficiency, dedup, and minor-correctness findings. The a
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] APCA per-cell contrast is memoized on `(fg, bg)` (and theme generation) so contiguous same-color runs short-circuit (`element/color.rs:123`); cursor blink no longer forces a full-grid relayout incl. the contrast pass (`terminal/blink.rs:31`).
-- [ ] `scan_output` lowercases each line once instead of joining + lowercasing the whole blob every tick (`pty_session.rs:985`); `merge_background_regions` avoids the per-frame full sort (`element/mod.rs:136`); `reported_ports` uses a bounded structure (bitset/HashSet) instead of an unbounded Vec (`pty_session.rs:280`).
-- [ ] Terminal-render golden tests pass unchanged (no visual regression); a micro-benchmark or before/after note records the idle-CPU reduction.
+- [x] APCA per-cell contrast is memoized on `(fg, bg)` (and theme generation) so contiguous same-color runs short-circuit (`element/color.rs:123`); cursor blink no longer forces a full-grid relayout incl. the contrast pass (`terminal/blink.rs:31`).
+- [x] `scan_output` lowercases each line once instead of joining + lowercasing the whole blob every tick (`pty_session.rs:985`); `merge_background_regions` avoids the per-frame full sort (`element/mod.rs:136`); `reported_ports` uses a bounded structure (bitset/HashSet) instead of an unbounded Vec (`pty_session.rs:280`).
+- [x] Terminal-render golden tests pass unchanged (no visual regression); a micro-benchmark or before/after note records the idle-CPU reduction.
 
 #### US-024: Dedup / over-generality batch (U-004, U-005, U-013, U-039, U-040, U-042)
 **Description:** As a maintainer, I want the duplicated handler bodies and redundant work consolidated so that the code is easier to maintain, without churning working behavior.
@@ -439,9 +439,9 @@ Batch the remaining LOW efficiency, dedup, and minor-correctness findings. The a
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] The three `detect_*_at_hover` methods (`terminal/view.rs:660`) share one extraction helper; the `TerminalView` constructor reads/parses `paneflow.json` once instead of 4× (`view.rs:557`).
-- [ ] `workspace_idx_for_terminal` uses the zero-alloc `any_leaf` helper (`event_handlers.rs:779`); the four PaneEvent drop-split handlers share a resolve+cap helper (`event_handlers.rs:554`); the nine `Ctrl+1-9` handlers collapse to one indexed action (`workspace_ops/mod.rs:649`); `DiffScope` persists via serde directly instead of three manual mappings (`diff/scope.rs:47`).
-- [ ] All existing tests pass; no behavioral change (verified by golden/test parity). Skip any item whose refactor is riskier than its payoff and record the skip.
+- [x] The three `detect_*_at_hover` methods (`terminal/view.rs:660`) share one extraction helper; the `TerminalView` constructor reads/parses `paneflow.json` once instead of 4× (`view.rs:557`).
+- [x] `workspace_idx_for_terminal` uses the zero-alloc `any_leaf` helper (`event_handlers.rs:779`); the four PaneEvent drop-split handlers share a resolve+cap helper (`event_handlers.rs:554`); the nine `Ctrl+1-9` handlers collapse to one indexed action (`workspace_ops/mod.rs:649`); `DiffScope` persists via serde directly instead of three manual mappings (`diff/scope.rs:47`).
+- [x] All existing tests pass; no behavioral change (verified by golden/test parity). Skip any item whose refactor is riskier than its payoff and record the skip.
 
 #### US-025: Minor correctness / robustness batch (U-012, U-014, U-018, U-020, U-022, U-026, U-053)
 **Description:** As a maintainer, I want the small correctness LOWs fixed so that edge cases (non-ASCII highlight offsets, legacy-shim PID, code-block id collisions, cwd fallback) behave correctly.
@@ -451,10 +451,10 @@ Batch the remaining LOW efficiency, dedup, and minor-correctness findings. The a
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Highlight run lengths map back to original-string byte offsets for non-ASCII titles (`agents_sidebar/mod.rs:1094`); `ai.stop` auto-clear uses the resolved session key so legacy no-pid shims don't leak (`ipc_handler.rs:1015`); the git-watch refcount only increments on a successful `watch()` (`main.rs:545`).
-- [ ] Code-block element id mixes in positional index so identical blocks don't collide (`markdown/view.rs:1133`); rc-file write errors abort shell-integration activation instead of being ignored (`terminal/shell.rs:297`); `cwd` falls back to the user's home dir (not `/`) on `current_dir()` failure with a logged warning (`pty_session.rs:469`).
-- [ ] The IPC 5s dispatch timeout no longer lets a non-idempotent mutation execute after the client got an error (`ipc.rs:765`) — request marked cancelled on `recv_timeout` so duplicate workspaces/panes can't be created on retry.
-- [ ] Each fixed item has a unit test or a documented manual-verification note; any item skipped as too risky is recorded.
+- [x] Highlight run lengths map back to original-string byte offsets for non-ASCII titles (`agents_sidebar/mod.rs:1094`); `ai.stop` auto-clear uses the resolved session key so legacy no-pid shims don't leak (`ipc_handler.rs:1015`); the git-watch refcount only increments on a successful `watch()` (`main.rs:545`).
+- [x] Code-block element id mixes in positional index so identical blocks don't collide (`markdown/view.rs:1133`); rc-file write errors abort shell-integration activation instead of being ignored (`terminal/shell.rs:297`); `cwd` falls back to the user's home dir (not `/`) on `current_dir()` failure with a logged warning (`pty_session.rs:469`).
+- [x] The IPC 5s dispatch timeout no longer lets a non-idempotent mutation execute after the client got an error (`ipc.rs:765`) — request marked cancelled on `recv_timeout` so duplicate workspaces/panes can't be created on retry.
+- [x] Each fixed item has a unit test or a documented manual-verification note; any item skipped as too risky is recorded.
 
 ---
 
@@ -518,8 +518,8 @@ Batch the remaining LOW efficiency, dedup, and minor-correctness findings. The a
 
 ## Files NOT to Modify
 
-- `src-app/Cargo.toml` / `crates/paneflow-threads/Cargo.toml` GPUI git-dep pins — the Zed fork branch is managed by a separate runbook; do not touch it here.
-- `ULTRON/AUDIT.json` / `ULTRON/AUDIT.md` — audit output, read-only inputs to this PRD.
+- `src-app/Cargo.toml` / `Cargo.lock` GPUI git-dep pins: the Zed fork branch is managed by a separate runbook; do not touch it here.
+- External `/ultron` audit output from 2026-06-08: read-only input to this PRD, not a checked-in repo artifact.
 - The `alacritty_terminal` neutral-types allowlist (`terminal/types.rs` 8-file guard test) — changes there are governed by EP-003 of the terminal-neutral-types work, not this PRD.
 - Theme/builtin color tables — unrelated to remediation.
 

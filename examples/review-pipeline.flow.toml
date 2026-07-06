@@ -7,6 +7,9 @@
 #   review - once `impl` is done, a second-vendor agent reviews it, seeded with
 #            the captured summary.
 #
+# This file is runnable from the repository root as-is. The task lives next to
+# this file at `examples/TASK.md`, and each pane runs with `cwd = "examples"`.
+#
 # Validate it without touching any pane (parity dry-run):
 #
 #   paneflow flow run --dry-run examples/review-pipeline.flow.toml
@@ -29,7 +32,7 @@ on_failure = "fail_fast"
 id = "impl"
 
 [step.pane]
-cwd = "."
+cwd = "examples"
 agent = "claude"
 prompt = """
 Implement the task described in TASK.md. When you are finished, print a single \
@@ -54,7 +57,7 @@ needs = ["impl"]
 submit = true
 
 [step.pane]
-cwd = "."
+cwd = "examples"
 agent = "codex"
 prompt = """
 Review the implementation just completed in this repository. The implementer \

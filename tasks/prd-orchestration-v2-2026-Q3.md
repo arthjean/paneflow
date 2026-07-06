@@ -116,11 +116,11 @@ Compléter les méthodes IPC et sous-commandes manquantes pour piloter finement 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given une instance avec 3 panes, when `paneflow focus backend`, then la pane nommée `backend` reçoit le focus GPUI (`focus_handle.focus()`) et son workspace devient actif si nécessaire
-- [ ] Given un selector ambigu (préfixe matchant 2 panes), when `paneflow focus ba`, then exit code 3 avec la liste des candidats (parité `resolve_target` existant, `selector.rs:33`)
-- [ ] Given un selector sans match, when `paneflow focus zzz`, then exit code 3
-- [ ] La méthode `surface.focus` est dispatchée sur le main thread GPUI comme les autres méthodes stateful (`ipc_handler.rs`)
-- [ ] Pas de gate scripting requis (lecture/navigation, pas d'injection)
+- [x] Given une instance avec 3 panes, when `paneflow focus backend`, then la pane nommée `backend` reçoit le focus GPUI (`focus_handle.focus()`) et son workspace devient actif si nécessaire
+- [x] Given un selector ambigu (préfixe matchant 2 panes), when `paneflow focus ba`, then exit code 3 avec la liste des candidats (parité `resolve_target` existant, `selector.rs:33`)
+- [x] Given un selector sans match, when `paneflow focus zzz`, then exit code 3
+- [x] La méthode `surface.focus` est dispatchée sur le main thread GPUI comme les autres méthodes stateful (`ipc_handler.rs`)
+- [x] Pas de gate scripting requis (lecture/navigation, pas d'injection)
 
 #### US-002: `surface.split` ciblé + `paneflow split <h|v> [--target <sel>]`
 **Description:** As a dev orchestrateur, I want splitter une pane désignée (pas seulement la first leaf) so that je construis un layout précis depuis la CLI et que `flow` place les panes où il faut.
@@ -130,11 +130,11 @@ Compléter les méthodes IPC et sous-commandes manquantes pour piloter finement 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given 3 panes, when `paneflow split v --target backend`, then la pane `backend` est splittée verticalement (nouvelle leaf adjacente dans le layout tree), pas la first leaf
-- [ ] Given `--target` omis, when `paneflow split h`, then comportement actuel inchangé (first leaf — rétrocompatibilité)
-- [ ] Given `MAX_PANES` (32) atteint, when split, then exit code 1 avec message explicite (parité comportement existant `control_cmds.rs:49`)
-- [ ] Given un target ambigu ou sans match, when split, then exit code 3
-- [ ] Le param `surface_id` de `surface.split` est optionnel côté IPC (absent = first leaf, rétrocompatible pour les clients existants)
+- [x] Given 3 panes, when `paneflow split v --target backend`, then la pane `backend` est splittée verticalement (nouvelle leaf adjacente dans le layout tree), pas la first leaf
+- [x] Given `--target` omis, when `paneflow split h`, then comportement actuel inchangé (first leaf — rétrocompatibilité)
+- [x] Given `MAX_PANES` (32) atteint, when split, then exit code 1 avec message explicite (parité comportement existant `control_cmds.rs:49`)
+- [x] Given un target ambigu ou sans match, when split, then exit code 3
+- [x] Le param `surface_id` de `surface.split` est optionnel côté IPC (absent = first leaf, rétrocompatible pour les clients existants)
 
 #### US-003: `paneflow send --broadcast <selector> <text>`
 **Description:** As a dev orchestrateur, I want envoyer un même texte à toutes les panes matchant un selector so that je pré-remplis un ordre commun (« commitez votre travail ») sur N agents en une commande.
@@ -144,11 +144,11 @@ Compléter les méthodes IPC et sous-commandes manquantes pour piloter finement 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given 3 panes `shard-api`, `shard-ui`, `shard-db`, when `paneflow send --broadcast shard <text>`, then le texte est injecté (sans `\r`) dans les 3 panes via `resolve_all` (`selector.rs:73`) + N appels `surface.send_text`
-- [ ] Given le gate `PANEFLOW_IPC_SCRIPTING` absent, when broadcast, then exit code 1 avec le message actionnable existant (traduction `-32601`, parité `send_cmd.rs`)
-- [ ] Given un selector sans match, when broadcast, then exit code 3, aucun envoi partiel
-- [ ] Given un envoi qui échoue au milieu (pane fermée entre resolve et send), when broadcast, then les panes restantes sont quand même servies et le rapport JSON liste `{sent: [...], failed: [...]}` avec exit code 1
-- [ ] Sans `--broadcast`, un selector multi-match reste une erreur (comportement single inchangé)
+- [x] Given 3 panes `shard-api`, `shard-ui`, `shard-db`, when `paneflow send --broadcast shard <text>`, then le texte est injecté (sans `\r`) dans les 3 panes via `resolve_all` (`selector.rs:73`) + N appels `surface.send_text`
+- [x] Given le gate `PANEFLOW_IPC_SCRIPTING` absent, when broadcast, then exit code 1 avec le message actionnable existant (traduction `-32601`, parité `send_cmd.rs`)
+- [x] Given un selector sans match, when broadcast, then exit code 3, aucun envoi partiel
+- [x] Given un envoi qui échoue au milieu (pane fermée entre resolve et send), when broadcast, then les panes restantes sont quand même servies et le rapport JSON liste `{sent: [...], failed: [...]}` avec exit code 1
+- [x] Sans `--broadcast`, un selector multi-match reste une erreur (comportement single inchangé)
 
 #### US-004: `paneflow key <target> <keystroke>` (CLI pour `surface.send_keystroke`)
 **Description:** As a dev orchestrateur, I want envoyer une keystroke nommée (ex. `escape`, `ctrl-c`, `tab`) à une pane so that je débloque un agent TUI coincé sans toucher la souris.
@@ -158,10 +158,10 @@ Compléter les méthodes IPC et sous-commandes manquantes pour piloter finement 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given une pane `backend`, when `paneflow key backend escape`, then la keystroke est envoyée via `surface.send_keystroke` existant (`ipc_handler.rs:1087`)
-- [ ] Given le gate scripting absent, when `key`, then exit code 1 avec message actionnable
-- [ ] Given une keystroke `enter`/`return`, when `key`, then refus côté serveur conservé (rejet `\r`/`\n` existant) et exit code 1 expliquant le chemin `--submit` (US-005)
-- [ ] Given un target invalide, when `key`, then exit code 3
+- [x] Given une pane `backend`, when `paneflow key backend escape`, then la keystroke est envoyée via `surface.send_keystroke` existant (`ipc_handler.rs:1087`)
+- [x] Given le gate scripting absent, when `key`, then exit code 1 avec message actionnable
+- [x] Given une keystroke `enter`/`return`, when `key`, then refus côté serveur conservé (rejet `\r`/`\n` existant) et exit code 1 expliquant le chemin `--submit` (US-005)
+- [x] Given un target invalide, when `key`, then exit code 3
 
 #### US-005: Soumission explicite double-gatée (`send --submit` / param `submit` IPC)
 **Description:** As a dev orchestrateur, I want pouvoir soumettre un prompt (texte + retour chariot) sous double gate explicite so that un flow user-authored peut enchaîner des agents sans intervention, sans jamais ouvrir la porte à une soumission implicite.
@@ -171,12 +171,12 @@ Compléter les méthodes IPC et sous-commandes manquantes pour piloter finement 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given `PANEFLOW_IPC_SCRIPTING=1` actif, when `paneflow send --submit backend "run tests"`, then le texte est injecté puis soumis (`\r`) dans la pane
-- [ ] Given le gate scripting absent, when `send --submit`, then exit code 1, rien n'est injecté (ni texte ni `\r`)
-- [ ] Given `--submit` absent, when `send`, then comportement actuel strict (injection sans `\r`) — le défaut ne change jamais
-- [ ] Le param IPC `submit: true` sur `surface.send_text` est rejeté avec une erreur dédiée si le gate scripting est off (jamais de soumission silencieuse)
-- [ ] `surface.send_keystroke` continue de rejeter `\r`/`\n` inconditionnellement — l'unique chemin de soumission est `send_text` + `submit`
-- [ ] Un test couvre le cas « texte 64 KiB + submit » (limite existante respectée, `\r` envoyé après le dernier chunk)
+- [x] Given `PANEFLOW_IPC_SCRIPTING=1` actif, when `paneflow send --submit backend "run tests"`, then le texte est injecté puis soumis (`\r`) dans la pane
+- [x] Given le gate scripting absent, when `send --submit`, then exit code 1, rien n'est injecté (ni texte ni `\r`)
+- [x] Given `--submit` absent, when `send`, then comportement actuel strict (injection sans `\r`) — le défaut ne change jamais
+- [x] Le param IPC `submit: true` sur `surface.send_text` est rejeté avec une erreur dédiée si le gate scripting est off (jamais de soumission silencieuse)
+- [x] `surface.send_keystroke` continue de rejeter `\r`/`\n` inconditionnellement — l'unique chemin de soumission est `send_text` + `submit`
+- [x] Un test couvre le cas « texte 64 KiB + submit » (limite existante respectée, `\r` envoyé après le dernier chunk)
 
 ---
 
@@ -194,12 +194,12 @@ Une ligne de TOML pour isoler chaque agent sur son worktree git, avec environnem
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given une pane avec `cwd` dans un repo git et `worktree = "feat/x"`, when `paneflow up`, then `git worktree add <repo>.worktrees/feat-x -b feat/x` (branche créée si absente, slug filesystem-safe pour le path) est exécuté via `paneflow_process::run_with_timeout` hors render-thread, et la pane démarre avec `cwd` = le worktree
-- [ ] Given la branche existe déjà sans worktree, when up, then `git worktree add <path> feat/x` (sans `-b`) réutilise la branche
-- [ ] Given la branche est déjà checked-out dans un autre worktree (verrou git), when up, then le spawn de CETTE pane échoue avec un message explicite citant le path du worktree existant, et `--dry-run` le détecte sans rien créer (vérif `git worktree list` au plan)
-- [ ] Given le worktree path existe déjà et pointe sur la bonne branche, when up, then réutilisation idempotente (pas d'erreur, pas de doublon)
-- [ ] Given `cwd` hors d'un repo git, when up avec `worktree`, then erreur de validation au parse du spec (exit 1, atomique — aucune pane spawnée, parité fail-atomique existant `up_cmd.rs`)
-- [ ] `worktree` + `cwd` relatif/`~` : résolution via les helpers existants `find_git_dir`/`resolve_repo_root` (`git.rs:101`, `git.rs:211`) — chemins `PathBuf`, jamais de séparateur hardcodé (Windows OK)
+- [x] Given une pane avec `cwd` dans un repo git et `worktree = "feat/x"`, when `paneflow up`, then `git worktree add <repo>.worktrees/feat-x -b feat/x` (branche créée si absente, slug filesystem-safe pour le path) est exécuté via `paneflow_process::run_with_timeout` hors render-thread, et la pane démarre avec `cwd` = le worktree
+- [x] Given la branche existe déjà sans worktree, when up, then `git worktree add <path> feat/x` (sans `-b`) réutilise la branche
+- [x] Given la branche est déjà checked-out dans un autre worktree (verrou git), when up, then le spawn de CETTE pane échoue avec un message explicite citant le path du worktree existant, et `--dry-run` le détecte sans rien créer (vérif `git worktree list` au plan)
+- [x] Given le worktree path existe déjà et pointe sur la bonne branche, when up, then réutilisation idempotente (pas d'erreur, pas de doublon)
+- [x] Given `cwd` hors d'un repo git, when up avec `worktree`, then erreur de validation au parse du spec (exit 1, atomique — aucune pane spawnée, parité fail-atomique existant `up_cmd.rs`)
+- [x] `worktree` + `cwd` relatif/`~` : résolution via les helpers existants `find_git_dir`/`resolve_repo_root` (`git.rs:101`, `git.rs:211`) — chemins `PathBuf`, jamais de séparateur hardcodé (Windows OK)
 
 #### US-007: Environnement reproductible — copie `.env*` + commande `setup`
 **Description:** As a dev orchestrateur, I want que le worktree reçoive mes fichiers d'env gitignorés et exécute ma commande d'install so that l'agent démarre dans un environnement fonctionnel, pas un squelette.
@@ -209,12 +209,12 @@ Une ligne de TOML pour isoler chaque agent sur son worktree git, avec environnem
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given un repo avec `.env` et `.env.local` gitignorés à la racine, when le worktree est créé, then ces fichiers sont copiés à la racine du worktree (top-level uniquement, pas de récursion — pas de copie de `node_modules`)
-- [ ] Given `copy_env = false` sur la pane, when up, then aucune copie (opt-out explicite ; défaut = true)
-- [ ] Given `setup = "bun install"` sur la pane, when le worktree est créé, then la commande s'exécute dans le worktree (cwd) AVANT le spawn de l'agent, avec timeout configurable (`setup_timeout_secs`, défaut 300) via `run_with_timeout`
-- [ ] Given `setup` échoue (exit ≠ 0 ou timeout), when up, then la pane démarre quand même MAIS un warning best-effort est émis (stdout CLI + log) — l'échec d'install ne doit pas bloquer l'humain qui peut corriger dans la pane
-- [ ] Given un fichier `.env` absent, when up, then aucune erreur (copie best-effort, silencieuse si rien à copier)
-- [ ] Paneflow ne devine jamais le gestionnaire de paquets — sans `setup`, aucune install n'est tentée
+- [x] Given un repo avec `.env` et `.env.local` gitignorés à la racine, when le worktree est créé, then ces fichiers sont copiés à la racine du worktree (top-level uniquement, pas de récursion — pas de copie de `node_modules`)
+- [x] Given `copy_env = false` sur la pane, when up, then aucune copie (opt-out explicite ; défaut = true)
+- [x] Given `setup = "bun install"` sur la pane, when le worktree est créé, then la commande s'exécute dans le worktree (cwd) AVANT le spawn de l'agent, avec timeout configurable (`setup_timeout_secs`, défaut 300) via `run_with_timeout`
+- [x] Given `setup` échoue (exit ≠ 0 ou timeout), when up, then la pane démarre quand même MAIS un warning best-effort est émis (stdout CLI + log) — l'échec d'install ne doit pas bloquer l'humain qui peut corriger dans la pane
+- [x] Given un fichier `.env` absent, when up, then aucune erreur (copie best-effort, silencieuse si rien à copier)
+- [x] Paneflow ne devine jamais le gestionnaire de paquets — sans `setup`, aucune install n'est tentée
 
 #### US-008: Variable `${port_offset}` dans `env`
 **Description:** As a dev orchestrateur, I want une variable `${port_offset}` substituée dans les valeurs `env` de la pane so that chaque agent worktree reçoive une plage de ports distincte sans arithmétique manuelle.
@@ -224,11 +224,11 @@ Une ligne de TOML pour isoler chaque agent sur son worktree git, avec environnem
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given 3 panes worktree avec `env = { PORT = "${port_offset}" }` et `port_base = 3000` au niveau workspace (défaut 3000), when up, then les panes reçoivent PORT=3000, 3010, 3020 (stride 10, indexé par ordre de déclaration)
-- [ ] Given un port de la plage déjà occupé sur la machine, when up, then l'offset saute à la plage libre suivante (réutilise la détection de ports existante : Linux `/proc/net/tcp`, macOS `libproc`, `ports.rs`) ; sur Windows (stub ports existant), allocation arithmétique pure sans vérification, documentée
-- [ ] Given `${port_offset}` utilisé sans `worktree`, when up, then la substitution fonctionne aussi (utile hors worktree) — la variable est par-pane, pas par-worktree
-- [ ] Given une valeur env sans `${port_offset}`, when up, then aucune substitution ni altération (passthrough exact)
-- [ ] La substitution n'introduit aucune autre variable magique (`${...}` inconnu = erreur de validation au parse, message citant les variables supportées)
+- [x] Given 3 panes worktree avec `env = { PORT = "${port_offset}" }` et `port_base = 3000` au niveau workspace (défaut 3000), when up, then les panes reçoivent PORT=3000, 3010, 3020 (stride 10, indexé par ordre de déclaration)
+- [x] Given un port de la plage déjà occupé sur la machine, when up, then l'offset saute à la plage libre suivante (réutilise la détection de ports existante : Linux `/proc/net/tcp`, macOS `libproc`, `ports.rs`) ; sur Windows (stub ports existant), allocation arithmétique pure sans vérification, documentée
+- [x] Given `${port_offset}` utilisé sans `worktree`, when up, then la substitution fonctionne aussi (utile hors worktree) — la variable est par-pane, pas par-worktree
+- [x] Given une valeur env sans `${port_offset}`, when up, then aucune substitution ni altération (passthrough exact)
+- [x] La substitution n'introduit aucune autre variable magique (`${...}` inconnu = erreur de validation au parse, message citant les variables supportées)
 
 #### US-009: Teardown propre + prune des orphelins
 **Description:** As a dev orchestrateur, I want que la fermeture du workspace retire les worktrees créés par Paneflow s'ils sont propres so that je n'accumule ni gigaoctets ni références git mortes — sans jamais perdre du travail non commité.
@@ -238,12 +238,12 @@ Une ligne de TOML pour isoler chaque agent sur son worktree git, avec environnem
 **Dependencies:** Blocked by US-006
 
 **Acceptance Criteria:**
-- [ ] Given un worktree créé par Paneflow (marqué dans l'état du workspace) SANS changements non commités (`git status --porcelain` vide), when le workspace est fermé, then `git worktree remove <path>` est exécuté hors render-thread — la branche n'est JAMAIS supprimée
-- [ ] Given des changements non commités dans le worktree, when close, then le worktree est conservé et un toast/log signale « worktree conservé : changements non commités » (jamais de perte de données)
-- [ ] Given `worktree_teardown = "keep"` sur la pane, when close, then aucun teardown (opt-out ; défaut = "auto" = remove si propre)
-- [ ] Given un worktree dont le répertoire a été supprimé manuellement (référence orpheline), when Paneflow démarre, then `git worktree prune` est exécuté sur les repos des workspaces restaurés (best-effort, hors render-thread, timeout 10 s)
-- [ ] Given Paneflow crash avec un agent actif dans un worktree, when relance, then le prune au démarrage ne touche PAS un worktree dont le répertoire existe encore (prune ne nettoie que les références mortes — comportement git natif, testé)
-- [ ] Un worktree NON créé par Paneflow (préexistant, pointé par `cwd`) n'est jamais tear down
+- [x] Given un worktree créé par Paneflow (marqué dans l'état du workspace) SANS changements non commités (`git status --porcelain` vide), when le workspace est fermé, then `git worktree remove <path>` est exécuté hors render-thread — la branche n'est JAMAIS supprimée
+- [x] Given des changements non commités dans le worktree, when close, then le worktree est conservé et un toast/log signale « worktree conservé : changements non commités » (jamais de perte de données)
+- [x] Given `worktree_teardown = "keep"` sur la pane, when close, then aucun teardown (opt-out ; défaut = "auto" = remove si propre)
+- [x] Given un worktree dont le répertoire a été supprimé manuellement (référence orpheline), when Paneflow démarre, then `git worktree prune` est exécuté sur les repos des workspaces restaurés (best-effort, hors render-thread, timeout 10 s)
+- [x] Given Paneflow crash avec un agent actif dans un worktree, when relance, then le prune au démarrage ne touche PAS un worktree dont le répertoire existe encore (prune ne nettoie que les références mortes — comportement git natif, testé)
+- [x] Un worktree NON créé par Paneflow (préexistant, pointé par `cwd`) n'est jamais tear down
 
 ---
 
@@ -261,13 +261,13 @@ Le DAG déclaratif local-first : décrire un pipeline d'agents en TOML, l'exécu
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un fichier valide, when `paneflow flow run <file> --dry-run`, then le plan résolu est imprimé (steps topologiquement triés, panes, barriers, variables) sans aucun appel IPC mutateur — parité `up --dry-run`
-- [ ] Le schéma supporte : `[[step]]` avec `id` (unique), `needs = ["id", ...]`, `pane = { ...PaneSpec... }` (réutilise `workspace_spec.rs:67` — agent XOR command, cwd, env, name, worktree d'EP-002), `ready = { pattern, timeout_secs }`, `send = { target, text, submit }`, `foreach`, `capture` ; `[defaults]` avec `timeout_secs`, `on_failure = "fail_fast" | "continue"`
-- [ ] Given un cycle dans `needs` (A→B→A), when parse, then erreur au parse citant le cycle (détection statique, pattern process-compose) — exit 1
-- [ ] Given un `needs` référençant un id inexistant, when parse, then erreur listant les ids connus — exit 1
-- [ ] Given un flow dont les steps statiques + `foreach` dépassent `MAX_PANES` (32) pour un même workspace, when parse, then erreur explicite avant exécution — exit 1
-- [ ] `deny_unknown_fields` actif (parité `workspace_spec.rs`) — un champ inconnu est une erreur citant le champ
-- [ ] Un step avec `ready` sans `timeout_secs` ni défaut global est une erreur de validation (timeout obligatoire — un barrier sans timeout bloque indéfiniment)
+- [x] Given un fichier valide, when `paneflow flow run <file> --dry-run`, then le plan résolu est imprimé (steps topologiquement triés, panes, barriers, variables) sans aucun appel IPC mutateur — parité `up --dry-run`
+- [x] Le schéma supporte : `[[step]]` avec `id` (unique), `needs = ["id", ...]`, `pane = { ...PaneSpec... }` (réutilise `workspace_spec.rs:67` — agent XOR command, cwd, env, name, worktree d'EP-002), `ready = { pattern, timeout_secs }`, `send = { target, text, submit }`, `foreach`, `capture` ; `[defaults]` avec `timeout_secs`, `on_failure = "fail_fast" | "continue"`
+- [x] Given un cycle dans `needs` (A→B→A), when parse, then erreur au parse citant le cycle (détection statique, pattern process-compose) — exit 1
+- [x] Given un `needs` référençant un id inexistant, when parse, then erreur listant les ids connus — exit 1
+- [x] Given un flow dont les steps statiques + `foreach` dépassent `MAX_PANES` (32) pour un même workspace, when parse, then erreur explicite avant exécution — exit 1
+- [x] `deny_unknown_fields` actif (parité `workspace_spec.rs`) — un champ inconnu est une erreur citant le champ
+- [x] Un step avec `ready` sans `timeout_secs` ni défaut global est une erreur de validation (timeout obligatoire — un barrier sans timeout bloque indéfiniment)
 
 #### US-011: Exécuteur — spawn + barriers `ready.pattern`
 **Description:** As a dev orchestrateur, I want que le moteur lance les steps dont les dépendances sont satisfaites et attende leurs patterns de complétion so that le pipeline avance seul, au rythme réel des agents.
@@ -277,13 +277,13 @@ Le DAG déclaratif local-first : décrire un pipeline d'agents en TOML, l'exécu
 **Dependencies:** Blocked by US-010
 
 **Acceptance Criteria:**
-- [ ] Given `step B` avec `needs = ["A"]` et `A.ready.pattern = "tests passed"`, when `flow run`, then B ne démarre qu'après que le scrollback de la pane de A matche le regex (réutilise la machinerie poll de `wait_cmd.rs:53` — fenêtre 500 lignes, 500 ms)
-- [ ] Given deux steps sans dépendance mutuelle, when run, then ils démarrent concurremment (spawn parallèle, parité `workspace.up` multi-panes)
-- [ ] Given `ready.timeout_secs` dépassé sans match, when run, then le step est marqué FAILED ; en `fail_fast` (défaut) le flow s'arrête (steps en cours laissés vivants — jamais de kill de pane), exit 4 ; en `continue`, les steps ne dépendant pas du failed continuent et les dépendants sont SKIPPED
-- [ ] Given une pane d'un step fermée par l'humain pendant le barrier, when run, then le step est FAILED immédiatement (parité fail-fast de `wait` quand les panes cibles se ferment) — pas de poll fantôme
-- [ ] Given un step sans `ready`, when run, then il est considéré satisfait dès le spawn + prefill réussis (équivalent `process_started`)
-- [ ] Le moteur tourne côté CLI (process `paneflow flow`), pilote l'instance via IPC public uniquement — Ctrl-C sur le process flow arrête l'orchestration sans tuer les panes (les agents restent vivants, état imprimé)
-- [ ] Cross-platform : aucun chemin POSIX-only ; le poll IPC est identique sur les 3 OS
+- [x] Given `step B` avec `needs = ["A"]` et `A.ready.pattern = "tests passed"`, when `flow run`, then B ne démarre qu'après que le scrollback de la pane de A matche le regex (réutilise la machinerie poll de `wait_cmd.rs:53` — fenêtre 500 lignes, 500 ms)
+- [x] Given deux steps sans dépendance mutuelle, when run, then ils démarrent concurremment (spawn parallèle, parité `workspace.up` multi-panes)
+- [x] Given `ready.timeout_secs` dépassé sans match, when run, then le step est marqué FAILED ; en `fail_fast` (défaut) le flow s'arrête (steps en cours laissés vivants — jamais de kill de pane), exit 4 ; en `continue`, les steps ne dépendant pas du failed continuent et les dépendants sont SKIPPED
+- [x] Given une pane d'un step fermée par l'humain pendant le barrier, when run, then le step est FAILED immédiatement (parité fail-fast de `wait` quand les panes cibles se ferment) — pas de poll fantôme
+- [x] Given un step sans `ready`, when run, then il est considéré satisfait dès le spawn + prefill réussis (équivalent `process_started`)
+- [x] Le moteur tourne côté CLI (process `paneflow flow`), pilote l'instance via IPC public uniquement — Ctrl-C sur le process flow arrête l'orchestration sans tuer les panes (les agents restent vivants, état imprimé)
+- [x] Cross-platform : aucun chemin POSIX-only ; le poll IPC est identique sur les 3 OS
 
 #### US-012: Steps `send` — feed et soumission gatée
 **Description:** As a dev orchestrateur, I want des steps qui injectent un texte (avec variables) dans une pane existante, soumis seulement si je l'ai explicitement écrit so that le pipeline enchaîne les agents en respectant le contrat human-in-loop.
@@ -293,11 +293,11 @@ Le DAG déclaratif local-first : décrire un pipeline d'agents en TOML, l'exécu
 **Dependencies:** Blocked by US-011, US-005
 
 **Acceptance Criteria:**
-- [ ] Given un step `send = { target = "review", text = "...", submit = true }` et le gate scripting actif, when le step s'exécute, then le texte est injecté et soumis dans la pane `review` (via US-005)
-- [ ] Given `submit` absent ou false, when le step s'exécute, then injection SANS soumission (pré-rempli, l'humain valide) — le défaut du format est non-soumis
-- [ ] Given le gate `PANEFLOW_IPC_SCRIPTING` absent et un flow contenant ≥ 1 step `submit = true`, when `flow run` (et `--dry-run`), then erreur AVANT toute exécution, message expliquant le gate — jamais de dégradation silencieuse en non-soumis
-- [ ] Given `target` référençant le `name` d'une pane d'un step précédent, when run, then résolution via le selector existant ; cible fermée = step FAILED
-- [ ] Le prefill attend l'inactivité de la pane cible (réutilise le mécanisme `output_generation`, `ipc_handler.rs:707`) avant d'injecter — pas d'injection au milieu d'un output
+- [x] Given un step `send = { target = "review", text = "...", submit = true }` et le gate scripting actif, when le step s'exécute, then le texte est injecté et soumis dans la pane `review` (via US-005)
+- [x] Given `submit` absent ou false, when le step s'exécute, then injection SANS soumission (pré-rempli, l'humain valide) — le défaut du format est non-soumis
+- [x] Given le gate `PANEFLOW_IPC_SCRIPTING` absent et un flow contenant ≥ 1 step `submit = true`, when `flow run` (et `--dry-run`), then erreur AVANT toute exécution, message expliquant le gate — jamais de dégradation silencieuse en non-soumis
+- [x] Given `target` référençant le `name` d'une pane d'un step précédent, when run, then résolution via le selector existant ; cible fermée = step FAILED
+- [x] Le prefill attend l'inactivité de la pane cible (réutilise le mécanisme `output_generation`, `ipc_handler.rs:707`) avant d'injecter — pas d'injection au milieu d'un output
 
 #### US-013: Fan-out `foreach` + fan-in
 **Description:** As a dev orchestrateur, I want déclarer un step template instancié N fois (`foreach`) et des steps aval qui attendent toutes les instances so that je shard une tâche sur N agents et j'agrège en une barrier.
@@ -307,12 +307,12 @@ Le DAG déclaratif local-first : décrire un pipeline d'agents en TOML, l'exécu
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given `foreach = ["api", "ui", "db"]` sur un step `shard`, when run, then 3 panes sont spawnées avec `${item}` substitué dans `prompt`, `name`, `cwd`, `worktree` et valeurs `env` (ex. `name = "shard-${item}"`)
-- [ ] Given un step `merge` avec `needs = ["shard"]`, when run, then il attend que TOUTES les instances aient satisfait leur `ready` (fan-in barrier ; sémantique « groupe » de process-compose)
-- [ ] Given une instance FAILED en mode `continue`, when run, then le fan-in et ses steps aval sont SKIPPED avec une erreur citant la dépendance morte (un fan-in exige toutes ses instances ; sémantique unifiée avec US-011 AC3 — un step qui n'a jamais tourné est SKIPPED, pas FAILED) ; les autres instances continuent jusqu'à leur ready
-- [ ] Given `foreach` vide, when parse, then erreur de validation — exit 1
-- [ ] Given `${item}` utilisé hors d'un step `foreach`, when parse, then erreur de validation
-- [ ] Le dépassement dynamique de `MAX_PANES` à l'exécution (workspace déjà peuplé) échoue le step avec message explicite, pas de spawn partiel silencieux
+- [x] Given `foreach = ["api", "ui", "db"]` sur un step `shard`, when run, then 3 panes sont spawnées avec `${item}` substitué dans `prompt`, `name`, `cwd`, `worktree` et valeurs `env` (ex. `name = "shard-${item}"`)
+- [x] Given un step `merge` avec `needs = ["shard"]`, when run, then il attend que TOUTES les instances aient satisfait leur `ready` (fan-in barrier ; sémantique « groupe » de process-compose)
+- [x] Given une instance FAILED en mode `continue`, when run, then le fan-in et ses steps aval sont SKIPPED avec une erreur citant la dépendance morte (un fan-in exige toutes ses instances ; sémantique unifiée avec US-011 AC3 — un step qui n'a jamais tourné est SKIPPED, pas FAILED) ; les autres instances continuent jusqu'à leur ready
+- [x] Given `foreach` vide, when parse, then erreur de validation — exit 1
+- [x] Given `${item}` utilisé hors d'un step `foreach`, when parse, then erreur de validation
+- [x] Le dépassement dynamique de `MAX_PANES` à l'exécution (workspace déjà peuplé) échoue le step avec message explicite, pas de spawn partiel silencieux
 
 #### US-014: `capture` — passage de données entre steps
 **Description:** As a dev orchestrateur, I want capturer les dernières lignes du scrollback d'un step au moment du match `ready` dans une variable so that le step suivant reçoive le résumé de l'agent précédent dans son prompt.
@@ -322,12 +322,12 @@ Le DAG déclaratif local-first : décrire un pipeline d'agents en TOML, l'exécu
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given `capture = { var = "summary", lines = 20 }` sur le step A, when le `ready` de A matche, then les 20 dernières lignes du scrollback (fenêtre `surface.read` existante) sont stockées dans `${summary}`
-- [ ] Given un step aval avec `text = "Review ceci : ${summary}"`, when il s'exécute, then la variable est substituée (et la limite 64 KiB de `send_text` respectée — troncature head avec marqueur `[truncated]` si dépassement)
-- [ ] Given `${var}` non défini (step capture non exécuté/skipped), when le step consommateur démarre, then le step est FAILED avec un message citant la variable manquante — jamais de substitution vide silencieuse
-- [ ] Given un step `foreach` avec capture, when fan-in, then les captures sont exposées en `${var.api}`, `${var.ui}`… (suffixe = item) et `${var}` seul est une erreur de validation au parse
-- [ ] `lines` est clampé à la fenêtre max de lecture existante (500) ; valeur 0 ou absente = erreur de validation
-- [ ] Le contenu capturé est du texte terminal UNTRUSTED : il est substitué verbatim, jamais interprété/exécuté par le moteur
+- [x] Given `capture = { var = "summary", lines = 20 }` sur le step A, when le `ready` de A matche, then les 20 dernières lignes du scrollback (fenêtre `surface.read` existante) sont stockées dans `${summary}`
+- [x] Given un step aval avec `text = "Review ceci : ${summary}"`, when il s'exécute, then la variable est substituée (et la limite 64 KiB de `send_text` respectée — troncature head avec marqueur `[truncated]` si dépassement)
+- [x] Given `${var}` non défini (step capture non exécuté/skipped), when le step consommateur démarre, then le step est FAILED avec un message citant la variable manquante — jamais de substitution vide silencieuse
+- [x] Given un step `foreach` avec capture, when fan-in, then les captures sont exposées en `${var.api}`, `${var.ui}`… (suffixe = item) et `${var}` seul est une erreur de validation au parse
+- [x] `lines` est clampé à la fenêtre max de lecture existante (500) ; valeur 0 ou absente = erreur de validation
+- [x] Le contenu capturé est du texte terminal UNTRUSTED : il est substitué verbatim, jamais interprété/exécuté par le moteur
 
 #### US-015: Reporting, exit codes et reprise d'état
 **Description:** As a dev orchestrateur, I want un état lisible du flow (live + final JSON) et des exit codes cohérents so that je scripte par-dessus et je diagnostique un échec en 10 secondes.
@@ -337,11 +337,11 @@ Le DAG déclaratif local-first : décrire un pipeline d'agents en TOML, l'exécu
 **Dependencies:** Blocked by US-011
 
 **Acceptance Criteria:**
-- [ ] Given un flow en cours, when run (mode humain, défaut TTY), then une ligne de statut par step est affichée et mise à jour : `PENDING | RUNNING | READY | FAILED | SKIPPED` avec durée
-- [ ] Given `--json`, when le flow se termine, then un rapport JSON final : `{flow, status, steps: [{id, status, duration_ms, pane_ids, error?}]}` sur stdout, statuts lisibles machine
-- [ ] Exit codes : 0 = tous READY ; 4 = ≥ 1 timeout de barrier ; 1 = échec runtime (spawn, IPC, validation runtime) ; 3 = erreur de target (selector) — réutilise la grille existante
-- [ ] Given Ctrl-C pendant le run, when interruption, then le rapport partiel est imprimé (steps et leur état au moment de l'arrêt), exit 1, panes laissées vivantes
-- [ ] Given l'instance Paneflow tuée pendant le flow, when le poll IPC échoue, then le moteur abandonne proprement avec le rapport partiel et un message « instance unreachable » — pas de retry infini
+- [x] Given un flow en cours, when run (mode humain, défaut TTY), then une ligne de statut par step est affichée et mise à jour : `PENDING | RUNNING | READY | FAILED | SKIPPED` avec durée
+- [x] Given `--json`, when le flow se termine, then un rapport JSON final : `{flow, status, steps: [{id, status, duration_ms, pane_ids, error?}]}` sur stdout, statuts lisibles machine
+- [x] Exit codes : 0 = tous READY ; 4 = ≥ 1 timeout de barrier ; 1 = échec runtime (spawn, IPC, validation runtime) ; 3 = erreur de target (selector) — réutilise la grille existante
+- [x] Given Ctrl-C pendant le run, when interruption, then le rapport partiel est imprimé (steps et leur état au moment de l'arrêt), exit 1, panes laissées vivantes
+- [x] Given l'instance Paneflow tuée pendant le flow, when le poll IPC échoue, then le moteur abandonne proprement avec le rapport partiel et un message « instance unreachable » — pas de retry infini
 
 ---
 
@@ -359,12 +359,12 @@ Matérialiser « quel agent attend quoi » directement dans la grille terminale 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un event `ai.notification` avec message, when traité, then le message (déjà tronqué 512 chars, `ipc_handler.rs:1296`) est stocké dans `AgentSession` (nouveau champ `message: Option<String>`) au lieu d'être ignoré (`let _ = message;` supprimé)
-- [ ] Given une transition `WaitingForInput` fenêtre inactive, when la notif desktop part, then le body contient le titre du workspace + le message de l'agent (ex. « backend : Allow `cargo test` ? ») — extension de `fire_turn_end_notification` (`ipc_handler.rs:94`) en fonction partagée
-- [ ] Given un message vide/absent, when notif, then fallback au comportement actuel (« needs input ») — jamais de body vide
-- [ ] Le message est sanitizé par le chemin existant (`sanitize_applescript_body` macOS, terminateur `--` Linux) ; Windows reste le stub existant (cohérence plateforme documentée)
-- [ ] Given `ai.stop` ou `ai.prompt_submit` sur la même session, when transition, then le message stocké est cleared (pas de question fantôme)
-- [ ] Le message vient de texte terminal untrusted : jamais interprété, uniquement affiché
+- [x] Given un event `ai.notification` avec message, when traité, then le message (déjà tronqué 512 chars, `ipc_handler.rs:1296`) est stocké dans `AgentSession` (nouveau champ `message: Option<String>`) au lieu d'être ignoré (`let _ = message;` supprimé)
+- [x] Given une transition `WaitingForInput` fenêtre inactive, when la notif desktop part, then le body contient le titre du workspace + le message de l'agent (ex. « backend : Allow `cargo test` ? ») — extension de `fire_turn_end_notification` (`ipc_handler.rs:94`) en fonction partagée
+- [x] Given un message vide/absent, when notif, then fallback au comportement actuel (« needs input ») — jamais de body vide
+- [x] Le message est sanitizé par le chemin existant (`sanitize_applescript_body` macOS, terminateur `--` Linux) ; Windows reste le stub existant (cohérence plateforme documentée)
+- [x] Given `ai.stop` ou `ai.prompt_submit` sur la même session, when transition, then le message stocké est cleared (pas de question fantôme)
+- [x] Le message vient de texte terminal untrusted : jamais interprété, uniquement affiché
 
 #### US-017: Mapping PID agent → surface (socle du Tier 2)
 **Description:** As a dev orchestrateur, I want que Paneflow sache dans quelle pane tourne chaque session agent so that l'état `WaitingForInput` soit attribuable à une pane précise (glow, jump, peek en dépendent).
@@ -374,12 +374,12 @@ Matérialiser « quel agent attend quoi » directement dans la grille terminale 
 **Dependencies:** None
 
 **Acceptance Criteria:**
-- [ ] Given un event `ai.*` portant un `pid`, when traité, then le PID est résolu vers un `surface_id` par remontée de la chaîne parent-PID jusqu'à un `terminal.child_pid` connu (`pty_session.rs:239`) — Linux via `/proc/<pid>/stat` (ppid), macOS via `libproc` (pattern `ports.rs`), Windows via Toolhelp32 snapshot
-- [ ] Given un agent lancé directement par `up` (PID = child_pid), when résolution, then mapping direct sans marche (fast path)
-- [ ] Given un PID non résoluble (process mort entre l'event et la résolution, ou ancêtre hors Paneflow), when résolution, then la session reste au niveau workspace (comportement actuel) — dégradation gracieuse, jamais d'erreur visible
-- [ ] Le mapping est caché dans `AgentSession` (nouveau champ `surface_id: Option<u64>`) et invalidé par le stale-PID sweep existant (`workspace/mod.rs:797`)
-- [ ] La résolution s'exécute hors render-thread (la marche `/proc` est de l'I/O) et son résultat est déposé sur le main thread (pattern event-driven existant)
-- [ ] Un test unitaire couvre la marche d'ancêtres avec une chaîne simulée (pid→ppid mockée) ; le test de la plateforme réelle est `#[cfg]`-gated par OS
+- [x] Given un event `ai.*` portant un `pid`, when traité, then le PID est résolu vers un `surface_id` par remontée de la chaîne parent-PID jusqu'à un `terminal.child_pid` connu (`pty_session.rs:239`) — Linux via `/proc/<pid>/stat` (ppid), macOS via `libproc` (pattern `ports.rs`), Windows via Toolhelp32 snapshot
+- [x] Given un agent lancé directement par `up` (PID = child_pid), when résolution, then mapping direct sans marche (fast path)
+- [x] Given un PID non résoluble (process mort entre l'event et la résolution, ou ancêtre hors Paneflow), when résolution, then la session reste au niveau workspace (comportement actuel) — dégradation gracieuse, jamais d'erreur visible
+- [x] Le mapping est caché dans `AgentSession` (nouveau champ `surface_id: Option<u64>`) et invalidé par le stale-PID sweep existant (`workspace/mod.rs:797`)
+- [x] La résolution s'exécute hors render-thread (la marche `/proc` est de l'I/O) et son résultat est déposé sur le main thread (pattern event-driven existant)
+- [x] Un test unitaire couvre la marche d'ancêtres avec une chaîne simulée (pid→ppid mockée) ; le test de la plateforme réelle est `#[cfg]`-gated par OS
 
 #### US-018: Glow `WaitingForInput` sur la pane + indicateur tab
 **Description:** As a dev orchestrateur, I want que les panes dont l'agent attend une réponse attirent l'œil dans la grille so that je repère en < 2 s qui me sollicite, sans scanner 8 scrollbacks.
@@ -389,12 +389,12 @@ Matérialiser « quel agent attend quoi » directement dans la grille terminale 
 **Dependencies:** Blocked by US-017
 
 **Acceptance Criteria:**
-- [ ] Given une pane dont une session mappée est `WaitingForInput`, when rendu, then sa bordure passe à une couleur d'attention thémée (slot `UiColors`, pas de hex hardcodé) — mécanisme : le `border_color` conditionnel existant du ring actif (`pane.rs:1617`), étendu d'un état ; AUCUNE altération des panes inactives (règle : amplifier, jamais dégrader)
-- [ ] Given la pane est à la fois active (focus) et waiting, when rendu, then l'état focus prime visuellement (le ring actif reste lisible) — priorité documentée dans le code
-- [ ] Given la transition vers `Thinking`/`Finished`, when rendu, then le glow disparaît au prochain frame (piloté par l'état, pas par timer)
-- [ ] Given une session NON mappée à une surface (fallback workspace d'US-017), when rendu, then aucun glow erroné sur une pane arbitraire — le glow exige un mapping résolu
-- [ ] L'onglet de la pane dans la tab bar porte un point d'attention de même slot couleur (parité info quand la pane est cachée derrière un tab inactif)
-- [ ] Vérification visuelle manuelle sur les thèmes One Dark et PaneFlow Light (contraste suffisant sur les deux)
+- [x] Given une pane dont une session mappée est `WaitingForInput`, when rendu, then sa bordure passe à une couleur d'attention thémée (slot `UiColors`, pas de hex hardcodé) — mécanisme : le `border_color` conditionnel existant du ring actif (`pane.rs:1617`), étendu d'un état ; AUCUNE altération des panes inactives (règle : amplifier, jamais dégrader)
+- [x] Given la pane est à la fois active (focus) et waiting, when rendu, then l'état focus prime visuellement (le ring actif reste lisible) — priorité documentée dans le code
+- [x] Given la transition vers `Thinking`/`Finished`, when rendu, then le glow disparaît au prochain frame (piloté par l'état, pas par timer)
+- [x] Given une session NON mappée à une surface (fallback workspace d'US-017), when rendu, then aucun glow erroné sur une pane arbitraire — le glow exige un mapping résolu
+- [x] L'onglet de la pane dans la tab bar porte un point d'attention de même slot couleur (parité info quand la pane est cachée derrière un tab inactif)
+- [x] Vérification visuelle manuelle sur les thèmes One Dark et PaneFlow Light (contraste suffisant sur les deux)
 
 #### US-019: Action « jump to next waiting agent »
 **Description:** As a dev orchestrateur, I want un raccourci qui me téléporte vers la prochaine pane en attente d'input (cross-workspace) so that je traite la file des agents bloqués sans chercher.
@@ -404,11 +404,11 @@ Matérialiser « quel agent attend quoi » directement dans la grille terminale 
 **Dependencies:** Blocked by US-017
 
 **Acceptance Criteria:**
-- [ ] Given 2 panes waiting dans 2 workspaces différents, when je déclenche `JumpNextWaiting`, then le focus va à la première (ordre stable : workspace index puis ordre layout), et le workspace est switché si nécessaire ; un second déclenchement va à la suivante (cycle)
-- [ ] L'action est enregistrée selon le triptyque existant : `actions!` (`app/actions.rs:9`), `ActionMeta` (`registry.rs:40`), `DefaultBinding` (`defaults.rs:11`) avec `key = "secondary-shift-j"` (`secondary` = convention cross-platform existante), `context: None` (global), remappable via `shortcuts` config
-- [ ] Given aucune pane waiting, when déclenché, then no-op silencieux (pas de toast d'erreur — l'absence de file est la bonne nouvelle)
-- [ ] Given la pane waiting est dans un tab non visible d'une pane multi-tabs, when jump, then le tab est activé (pas seulement la pane)
-- [ ] Le cycle ignore les sessions non mappées à une surface (cohérence US-018)
+- [x] Given 2 panes waiting dans 2 workspaces différents, when je déclenche `JumpNextWaiting`, then le focus va à la première (ordre stable : workspace index puis ordre layout), et le workspace est switché si nécessaire ; un second déclenchement va à la suivante (cycle)
+- [x] L'action est enregistrée selon le triptyque existant : `actions!` (`app/actions.rs:9`), `ActionMeta` (`registry.rs:40`), `DefaultBinding` (`defaults.rs:11`) avec `key = "secondary-shift-j"` (`secondary` = convention cross-platform existante), `context: None` (global), remappable via `shortcuts` config
+- [x] Given aucune pane waiting, when déclenché, then no-op silencieux (pas de toast d'erreur — l'absence de file est la bonne nouvelle)
+- [x] Given la pane waiting est dans un tab non visible d'une pane multi-tabs, when jump, then le tab est activé (pas seulement la pane)
+- [x] Le cycle ignore les sessions non mappées à une surface (cohérence US-018)
 
 #### US-020: Peek overlay — lire la question sans focus
 **Description:** As a dev orchestrateur, I want voir la question posée par l'agent en overlay sur sa pane so that je décide (urgent ou pas) sans quitter ma pane courante.
@@ -418,12 +418,12 @@ Matérialiser « quel agent attend quoi » directement dans la grille terminale 
 **Dependencies:** Blocked by US-016, US-017
 
 **Acceptance Criteria:**
-- [ ] Given une pane `WaitingForInput` avec message stocké, when rendu, then un badge overlay compact apparaît sur la pane (pattern `absolute().top_1().right_1()` du search overlay, `terminal/view.rs:936`) affichant la première ligne du message (tronquée ~80 chars, ellipsis)
-- [ ] Given un hover (ou focus clavier) sur le badge, when interaction, then le message complet (≤ 512 chars) s'affiche dans un panneau étendu — fond `ui.overlay` (pattern theme_picker), `whitespace_nowrap`/`overflow_hidden` respectés (gotcha uniform_list documenté)
-- [ ] Given la transition hors `WaitingForInput`, when rendu, then l'overlay disparaît (même cycle de vie que le glow US-018)
-- [ ] Given un message absent (session waiting sans message), when rendu, then badge générique « waiting for input » — pas d'overlay vide
-- [ ] Le texte affiché est inerte : pas de liens cliquables, pas d'interprétation ANSI — texte brut sanitizé (untrusted)
-- [ ] Vérification visuelle manuelle : l'overlay ne masque pas la dernière ligne du prompt de l'agent (placement top-right, pane ≥ 80 px)
+- [x] Given une pane `WaitingForInput` avec message stocké, when rendu, then un badge overlay compact apparaît sur la pane (pattern `absolute().top_1().right_1()` du search overlay, `terminal/view.rs:936`) affichant la première ligne du message (tronquée ~80 chars, ellipsis)
+- [x] Given un hover (ou focus clavier) sur le badge, when interaction, then le message complet (≤ 512 chars) s'affiche dans un panneau étendu — fond `ui.overlay` (pattern theme_picker), `whitespace_nowrap`/`overflow_hidden` respectés (gotcha uniform_list documenté)
+- [x] Given la transition hors `WaitingForInput`, when rendu, then l'overlay disparaît (même cycle de vie que le glow US-018)
+- [x] Given un message absent (session waiting sans message), when rendu, then badge générique « waiting for input » — pas d'overlay vide
+- [x] Le texte affiché est inerte : pas de liens cliquables, pas d'interprétation ANSI — texte brut sanitizé (untrusted)
+- [x] Vérification visuelle manuelle : l'overlay ne masque pas la dernière ligne du prompt de l'agent (placement top-right, pane ≥ 80 px)
 
 ## Functional Requirements
 
@@ -513,7 +513,7 @@ Matérialiser « quel agent attend quoi » directement dans la grille terminale 
 
 ## Open Questions
 
-- **Patterns `ready` recommandés par agent CLI** : quels marqueurs stables ancrer pour Claude Code / Codex / OpenCode (fin de tour, prompt d'input) ? À documenter en EP-003 via dogfooding — porteur : Arthur, avant la rédaction de `docs/flow.md` (US-015).
+- **Patterns `ready` recommandés par agent CLI** : quels marqueurs stables ancrer pour Claude Code / Codex / OpenCode (fin de tour, prompt d'input) ? À documenter en EP-003 via dogfooding dans `docs/user/scripting.md` et `docs/user/scripting/reference.md` (US-015).
 - **`UiColors::attention`** : réutiliser un slot existant du thème ou ajouter un slot aux 6 thèmes bundlés ? Décision au moment d'US-018 (impact : fichiers thème + hot-reload).
 - **Raccourci `JumpNextWaiting`** : `secondary-shift-j` proposé — vérifier la collision avec les 57 actions existantes au moment de l'implémentation (US-019).
 - **Flow ciblant un workspace existant** (vs toujours créer le sien) : différé v2 — réévaluer après le premier dogfooding réel d'EP-003.

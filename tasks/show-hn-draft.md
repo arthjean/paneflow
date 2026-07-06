@@ -182,7 +182,7 @@ Raison : voix off anglaise non-native = risque downside élevé sur HN (lecture 
 - **Montage** : kdenlive ou DaVinci Resolve (gratuits). Couper les temps morts pour tenir 60-90s, commencer direct dans l'action (pas d'intro), poser 4-5 annotations texte courtes en anglais : "Claude Code + Codex, same repo", "sidebar shows who's waiting on you", "one agent reads another's pane (MCP)", "review every worktree side by side".
 - **Hébergement** : YouTube en **public/répertorié** (PAS unlisted). On veut la découverte YouTube gratuite (recherche + recommandations) et le compteur de vues comme preuve sociale. Référence : la vidéo cmux/Manaflow "terminal built for multitasking" est à 30k vues, en partie grâce au public. Coller l'URL dans le `[lien vidéo]` du post ET en haut du repo.
 - **Packaging YouTube** (compte car public) : titre orienté recherche ("Paneflow: run Claude Code, Codex and any coding agent in parallel"), description avec liens repo + site + download + 2-3 lignes de pitch, thumbnail lisible et annotée. Chaîne : envisager une chaîne "créateur" unique (Paneflow + Distill + Rust Doctor) plutôt qu'une chaîne par produit, comme Manaflow regroupe ses produits sous @ManaflowAI.
-- **Bonus** : régénérer `assets/images/demo.gif` à partir de la nouvelle vidéo (le GIF actuel date du 12/06 et peut montrer une UI périmée).
+- **Bonus** : régénérer `assets/images/demo.gif` à partir de la nouvelle vidéo si l'UI a bougé. Le GIF actuel est `960x540`, 8,39 MiB, et date du 12/06.
 
 ### Déroulé de soumission
 
