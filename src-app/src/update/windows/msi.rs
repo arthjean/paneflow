@@ -48,7 +48,9 @@
 #[cfg(target_os = "windows")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
