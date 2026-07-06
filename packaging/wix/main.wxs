@@ -145,12 +145,10 @@
                         <RemoveFolder Id='CleanUpShortCut'
                                       Directory='ApplicationProgramsFolder'
                                       On='uninstall'/>
-                        <!-- Machine registry key gives the Start Menu
-                             shortcut component a KeyPath; required by
-                             WiX 3 because Shortcut elements can't be
-                             KeyPaths directly. Keep this in HKLM because
-                             the package is InstallScope='perMachine'. -->
-                        <RegistryValue Root='HKLM'
+                        <!-- WiX ICE38/ICE43 require HKCU as the KeyPath
+                             for non-advertised Start Menu shortcuts. The
+                             binaries and PATH component stay machine-wide. -->
+                        <RegistryValue Root='HKCU'
                                        Key='Software\Strivex\PaneFlow'
                                        Name='installed'
                                        Type='integer'

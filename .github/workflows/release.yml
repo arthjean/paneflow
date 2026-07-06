@@ -1180,10 +1180,17 @@ jobs:
               throw "WiX Package element not found."
           }
           if ($package.GetAttribute('InstallScope') -eq 'perMachine') {
-              $hkcuKeyPaths = $xml.SelectNodes("//w:Component[.//w:RegistryValue[@Root='HKCU' and @KeyPath='yes']]", $ns)
-              if ($hkcuKeyPaths.Count -gt 0) {
-                  $ids = @($hkcuKeyPaths | ForEach-Object { $_.Id }) -join ', '
-                  throw "perMachine MSI must not use HKCU registry values as component KeyPath. Offending component(s): $ids"
+              $hkcuKeyPaths = @($xml.SelectNodes("//w:Component[.//w:RegistryValue[@Root='HKCU' and @KeyPath='yes']]", $ns))
+              $invalid = @($hkcuKeyPaths | Where-Object {
+                  $hasShortcut = $_.SelectNodes(".//w:Shortcut", $ns).Count -gt 0
+                  $hasMachineFile = $_.SelectNodes(".//w:File", $ns).Count -gt 0
+                  $hasMachineEnvironment = $_.SelectNodes(".//w:Environment", $ns).Count -gt 0
+                  $hasMachineRegistry = $_.SelectNodes(".//w:RegistryValue[@Root='HKLM']", $ns).Count -gt 0
+                  -not ($hasShortcut -and -not ($hasMachineFile -or $hasMachineEnvironment -or $hasMachineRegistry))
+              })
+              if ($invalid.Count -gt 0) {
+                  $ids = @($invalid | ForEach-Object { $_.Id }) -join ', '
+                  throw "perMachine MSI may use HKCU KeyPath only for shortcut-only components. Offending component(s): $ids"
               }
           }
 
