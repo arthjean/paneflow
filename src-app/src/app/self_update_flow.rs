@@ -106,11 +106,12 @@ impl PaneFlowApp {
                 let kind = match &self.self_update.install_method {
                     update::install_method::InstallMethod::SystemPackage { manager } => {
                         match manager {
-                            // Dnf / Apt: in-app pkexec install. Pill follows
+                            // Dnf / Apt / Zypper: in-app pkexec install. Pill follows
                             // the install state machine like every other
                             // in-app installer.
                             update::install_method::PackageManager::Dnf
-                            | update::install_method::PackageManager::Apt => {
+                            | update::install_method::PackageManager::Apt
+                            | update::install_method::PackageManager::Zypper => {
                                 title_bar::UpdatePillKind::InApp(in_app_state)
                             }
                             // Clipboard-only paths: kickoff_self_update_install
@@ -275,7 +276,7 @@ impl PaneFlowApp {
 
         // System-package installs (.deb/.rpm). Fedora / RHEL / Rocky and
         // Ubuntu / Debian users on the signed pkg.paneflow.dev repo get an
-        // in-app pkexec-elevated `dnf|apt-get install` (US-002). openSUSE,
+        // in-app pkexec-elevated `dnf|apt-get|zypper install` (US-002).
         // Solus, Void, NixOS et al. fall back to the clipboard-copy flow so
         // they at least see a package-manager hint. `return`s
         // BEFORE reading `asset_url` below - the pkexec flow pulls its
@@ -356,6 +357,7 @@ impl PaneFlowApp {
                 manager,
                 update::install_method::PackageManager::Dnf
                     | update::install_method::PackageManager::Apt
+                    | update::install_method::PackageManager::Zypper
             );
 
             if !run_pkexec {
@@ -365,7 +367,7 @@ impl PaneFlowApp {
                 return;
             }
 
-            // Dnf / Apt on Linux: full pkexec flow, matching the
+            // Dnf / Apt / Zypper on Linux: full pkexec flow, matching the
             // AppImage / TarGz one-click UX. Status transitions:
             // Idle → Downloading → (on Ok) Installing → save_session →
             // set_restart_path → restart.
@@ -375,6 +377,7 @@ impl PaneFlowApp {
                 let manager_label: &'static str = match manager_owned {
                     update::install_method::PackageManager::Dnf => "dnf",
                     update::install_method::PackageManager::Apt => "apt",
+                    update::install_method::PackageManager::Zypper => "zypper",
                     // Other / RpmOstree are short-circuited above via
                     // the rpm-ostree informational arm and the
                     // `run_pkexec` gate; these arms exist purely for

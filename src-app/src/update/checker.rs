@@ -295,6 +295,9 @@ impl AssetFormat {
             } => AssetFormat::Deb,
             InstallMethod::SystemPackage {
                 manager: PackageManager::Dnf,
+            }
+            | InstallMethod::SystemPackage {
+                manager: PackageManager::Zypper,
             } => AssetFormat::Rpm,
             // A system install on a non-apt/dnf distro is effectively a dead
             // end for the in-app updater (the click handler short-circuits to
@@ -632,6 +635,12 @@ mod tests {
             manager: PackageManager::Dnf,
         }
     }
+
+    fn zypper() -> InstallMethod {
+        InstallMethod::SystemPackage {
+            manager: PackageManager::Zypper,
+        }
+    }
     fn tar_gz() -> InstallMethod {
         InstallMethod::TarGz {
             app_dir: PathBuf::from("/home/u/.local/paneflow.app"),
@@ -787,6 +796,20 @@ mod tests {
             make_asset("paneflow-v0.2.0-x86_64.tar.gz"),
         ];
         let r = pick_asset(&assets, "x86_64", dnf());
+        assert_eq!(
+            r.map(|a| a.name.as_str()),
+            Some("paneflow-v0.2.0-x86_64.rpm")
+        );
+    }
+
+    #[test]
+    fn zypper_picks_rpm() {
+        let assets = vec![
+            make_asset("paneflow-v0.2.0-x86_64.rpm"),
+            make_asset("paneflow-v0.2.0-x86_64.deb"),
+            make_asset("paneflow-v0.2.0-x86_64.tar.gz"),
+        ];
+        let r = pick_asset(&assets, "x86_64", zypper());
         assert_eq!(
             r.map(|a| a.name.as_str()),
             Some("paneflow-v0.2.0-x86_64.rpm")
@@ -956,6 +979,10 @@ mod tests {
     fn format_from_install_method_mapping() {
         assert_eq!(AssetFormat::from_install_method(&apt()), AssetFormat::Deb);
         assert_eq!(AssetFormat::from_install_method(&dnf()), AssetFormat::Rpm);
+        assert_eq!(
+            AssetFormat::from_install_method(&zypper()),
+            AssetFormat::Rpm
+        );
         assert_eq!(
             AssetFormat::from_install_method(&tar_gz()),
             AssetFormat::TarGz

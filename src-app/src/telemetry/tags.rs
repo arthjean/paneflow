@@ -30,7 +30,7 @@ pub fn install_method_tag(method: &InstallMethod) -> &'static str {
     match method {
         InstallMethod::SystemPackage { manager } => match manager {
             PackageManager::Apt => "deb",
-            PackageManager::Dnf => "rpm",
+            PackageManager::Dnf | PackageManager::Zypper => "rpm",
             PackageManager::RpmOstree => "rpm-ostree",
             PackageManager::Other => "other",
         },
@@ -88,6 +88,12 @@ mod tests {
                 "rpm",
                 InstallMethod::SystemPackage {
                     manager: PackageManager::Dnf,
+                },
+            ),
+            (
+                "rpm",
+                InstallMethod::SystemPackage {
+                    manager: PackageManager::Zypper,
                 },
             ),
             (

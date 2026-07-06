@@ -436,7 +436,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-cli
 # Windows MSI packaging (US-013 - prd-windows-port.md). Source WXS +
 # License.rtf + paneflow.ico live under `packaging/wix/` (kept alongside
 # `packaging/{apt,rpm,homebrew,debian}/` per project convention).
-# Build: cargo wix build --package paneflow-app --target x86_64-pc-windows-msvc
+# Build: cargo wix --package paneflow-app --target x86_64-pc-windows-msvc --include packaging/wix/main.wxs
 #
 # GUIDs below were generated once by `cargo wix init` and MUST remain
 # stable for the lifetime of this product line:
@@ -478,7 +478,7 @@ maintainer-scripts = "../packaging/debian"
 # `fontconfig` (not just `libfontconfig1`) provides the `fc-list` BINARY the
 # settings font picker shells out to (`fonts.rs`); without it the picker is
 # empty on slim images.
-depends = "libc6, libwayland-client0, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libvulkan1, libfontconfig1, libfreetype6, fontconfig"
+depends = "libc6, libwayland-client0, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libvulkan1, libfontconfig1, libfreetype6, fontconfig, ca-certificates"
 extended-description = """\
 PaneFlow is a native Rust terminal workspace for running coding agents in
 parallel. Launch Claude Code, Codex, opencode, Pi, and other CLI agents in real
@@ -499,6 +499,7 @@ assets = [
     ["../assets/icons/paneflow-256.png", "usr/share/icons/hicolor/256x256/apps/paneflow.png",   "644"],
     ["../assets/icons/paneflow-512.png", "usr/share/icons/hicolor/512x512/apps/paneflow.png",   "644"],
     ["../assets/io.github.arthurdev44.paneflow.metainfo.xml", "usr/share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml", "644"],
+    ["../packaging/paneflow-release.asc", "usr/share/keyrings/paneflow-archive.asc", "644"],
 ]
 
 # RPM packaging (US-014) - mirrors the Debian asset list plus an explicit

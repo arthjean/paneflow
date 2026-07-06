@@ -46,8 +46,8 @@ local-only and must never be sent to notarytool.**
 
 | File | When to use | Notable keys |
 |---|---|---|
-| `paneflow.entitlements` | Tagged `v*` releases (default for `sign-macos.sh`). | `app-sandbox=false`, `automation.apple-events`, `cs.allow-jit`, `cs.allow-unsigned-executable-memory`, `cs.disable-library-validation`, `cs.allow-dyld-environment-variables`. |
-| `paneflow.nightly.entitlements` | Nightly builds shipped under `io.github.arthurdev44.paneflow.nightly`. | Same key set as release; forked file so nightly-only entitlements can be added without touching the production file. |
+| `paneflow.entitlements` | Tagged `v*` releases (default for `sign-macos.sh`). | `app-sandbox=false`, `automation.apple-events`, `cs.allow-jit`, `cs.allow-unsigned-executable-memory`. |
+| `paneflow.nightly.entitlements` | Nightly builds shipped under `io.github.arthurdev44.paneflow.nightly`. | Same strict key set as release; forked file so nightly-only entitlements can be added without touching the production file. |
 | `paneflow.dev.entitlements` | **Local only.** Use when you need to attach `lldb` to a signed build on your own machine. | Adds `com.apple.security.get-task-allow=true`. **Notarization rejects any bundle carrying this entitlement** - never use for distribution. |
 
 The `cs.*` block is required for any GPUI / wgpu app under the hardened

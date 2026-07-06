@@ -239,7 +239,7 @@ secrets. Keep both key pairs available during the transition window.
 
 ### 5b. APT - publish new key via a keyring update
 
-The `signed-by=/usr/share/keyrings/paneflow-archive.gpg` file pins the
+The `signed-by=/usr/share/keyrings/paneflow-archive.asc` file pins the
 repo to a specific keyring. Any key **in that file** is trusted, so
 the transition is a matter of appending the new key to the keyring
 without removing the old one.
@@ -252,13 +252,13 @@ git commit -am "chore(packaging): add 2028 release key to transition keyring"
 ```
 
 Next release: `repo-publish.yml` publishes the updated multi-key
-ASCII-armor at `/gpg`. Users who re-run the postinst curl (manually or
-via future package upgrade) pick up both keys; users with the old
+ASCII-armor at `/gpg`. Users who refresh the packaged keyring manually or
+via future package upgrade pick up both keys; users with the old
 single-key keyring continue to trust the old key until they refresh.
 
 For the cleanest client migration, ship a dedicated
 `paneflow-archive-keyring` package (future story) that owns
-`/usr/share/keyrings/paneflow-archive.gpg` - an `apt upgrade` then
+`/usr/share/keyrings/paneflow-archive.asc` - an `apt upgrade` then
 atomically delivers the multi-key keyring. This is the pattern Debian
 (`debian-archive-keyring`), GitHub CLI (`gh-cli-keyring`), and
 DataDog (`datadog-keyring`) use.

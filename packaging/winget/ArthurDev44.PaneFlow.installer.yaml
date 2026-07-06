@@ -1,12 +1,10 @@
 # PaneFlow winget installer manifest (template).
 #
-# US-019. Source of truth for the installer half of a winget-pkgs PR.
-# `.github/workflows/update-winget.yml` renders this file per release by
-# substituting the three `__PLACEHOLDER__` tokens below and committing
-# the result to `manifests/a/ArthurDev44/PaneFlow/<version>/` on a fork
-# of microsoft/winget-pkgs.
+# Source of truth for the installer half of a winget-pkgs PR. There is no
+# automatic winget publish workflow today; render these placeholders manually
+# before opening a PR to microsoft/winget-pkgs.
 #
-# Placeholders (resolved by sed in update-winget.yml):
+# Placeholders:
 #   __VERSION__  - bare semver, e.g. `0.1.7`
 #   __URL__      - full GitHub release asset URL for the signed MSI
 #   __SHA256__   - uppercase hex SHA-256 of the MSI (winget convention)

@@ -2,7 +2,7 @@ name: update_cask
 
 # US-017 AC4. Chained off the `release` workflow's completion (via
 # workflow_run): grabs the freshly-attached .dmg assets, computes their
-# SHA-256s, renders Casks/paneflow.rb from the canonical template at
+# SHA-256, renders Casks/paneflow.rb from the canonical template at
 # packaging/homebrew/paneflow.rb, and pushes the result into the external
 # tap repo https://github.com/ArthurDEV44/homebrew-paneflow.
 #
@@ -61,18 +61,14 @@ jobs:
   update-cask:
     runs-on: ubuntu-22.04
     # Run on: (a) manual workflow_dispatch (always); (b) workflow_run
-    # chained from release.yml -- allow `success` OR `failure` conclusion
-    # (a non-publish job like the auto-update e2e smoke can fail without
-    # invalidating the already-published release), require event == 'push'
-    # (the tag-push that cut the release; a dry-run release.yml is
-    # 'workflow_dispatch' and is filtered out), and skip prerelease tags
-    # (rc/alpha/beta) which are not distributed via Homebrew. Mirrors
-    # repo_publish.yml's gate.
+    # chained from release.yml, require event == 'push' (the tag-push that
+    # cut the release; a dry-run release.yml is 'workflow_dispatch' and is
+    # filtered out), and skip prerelease tags (rc/alpha/beta) which are not
+    # distributed via Homebrew.
     if: >-
       github.event_name == 'workflow_dispatch'
       || (
-        (github.event.workflow_run.conclusion == 'success'
-           || github.event.workflow_run.conclusion == 'failure')
+        github.event.workflow_run.conclusion == 'success'
         && github.event.workflow_run.event == 'push'
         && !contains(github.event.workflow_run.head_branch, 'rc')
         && !contains(github.event.workflow_run.head_branch, 'alpha')
@@ -121,8 +117,9 @@ jobs:
 
       - name: Download .dmg assets from the release
         # `gh release download --pattern` globs by filename; our naming
-        # convention is paneflow-<version>-{aarch64,x86_64}-apple-darwin.dmg
-        # (US-016). Download to a scratch dir so we don't pollute cwd.
+        # convention is paneflow-<version>-aarch64-apple-darwin.dmg
+        # while Homebrew is ARM-only. Download to a scratch dir so we don't
+        # pollute cwd.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.tag.outputs.tag }}
@@ -130,47 +127,31 @@ jobs:
           set -euo pipefail
           mkdir -p dmg-staging
           cd dmg-staging
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null
           gh release download "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
-            --pattern 'paneflow-*-apple-darwin.dmg'
+            --pattern 'paneflow-*-aarch64-apple-darwin.dmg'
           ls -la
 
-      - name: Compute SHA-256s
+      - name: Compute SHA-256
         id: sha
         env:
           VERSION: ${{ steps.tag.outputs.version }}
         run: |
           set -euo pipefail
           arm_dmg="dmg-staging/paneflow-${VERSION}-aarch64-apple-darwin.dmg"
-          intel_dmg="dmg-staging/paneflow-${VERSION}-x86_64-apple-darwin.dmg"
-          # Apple Silicon is P0 (required). x86_64 is currently absent -
-          # the Intel Mac matrix leg in release.yml is a CLOSED target
-          # (removed entirely until Apple Dev secret provisioning +
-          # macos-13 queue SLA improvement, see release.yml comment).
-          # The fallback below stays in place so the moment Intel is
-          # re-added the cask updates pick it up automatically; until
-          # then Intel users get a 404 on the .dmg URL rather than a
-          # checksum error, which is a cleaner failure mode.
           if [ ! -f "$arm_dmg" ]; then
             echo "::error::missing aarch64 .dmg - Apple Silicon is a P0 artifact and must be present for a cask update"
             ls -la dmg-staging/ >&2
             exit 1
           fi
           arm_sha="$(shasum -a 256 "$arm_dmg" | awk '{print $1}')"
-          if [ -f "$intel_dmg" ]; then
-            intel_sha="$(shasum -a 256 "$intel_dmg" | awk '{print $1}')"
-          else
-            echo "::warning::x86_64 .dmg absent for v${VERSION} - falling back to aarch64 SHA for the intel slot (Intel users will hit a 404 until the next release that ships x86_64)"
-            intel_sha="$arm_sha"
-          fi
           echo "arm=$arm_sha"   | tee -a "$GITHUB_OUTPUT"
-          echo "intel=$intel_sha" | tee -a "$GITHUB_OUTPUT"
 
       - name: Render updated Casks/paneflow.rb
         env:
           VERSION: ${{ steps.tag.outputs.version }}
           ARM_SHA: ${{ steps.sha.outputs.arm }}
-          INTEL_SHA: ${{ steps.sha.outputs.intel }}
         run: |
           set -euo pipefail
           # sed is deliberately pinned to the three version/sha lines
@@ -183,8 +164,7 @@ jobs:
           # never contain `|`.
           sed \
             -e "s|^  version \".*\"|  version \"${VERSION}\"|" \
-            -e "s|^  sha256 arm:   \".*\",|  sha256 arm:   \"${ARM_SHA}\",|" \
-            -e "s|^         intel: \".*\"|         intel: \"${INTEL_SHA}\"|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"${ARM_SHA}\"|" \
             packaging/homebrew/paneflow.rb > /tmp/paneflow.rb
           echo "--- rendered Casks/paneflow.rb ---"
           cat /tmp/paneflow.rb

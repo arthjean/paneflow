@@ -4,27 +4,34 @@
 # so subsequent `apt upgrade paneflow` pulls new releases automatically
 # (US-016).
 #
-# Guardrails (learned from the Cursor .deb `apt update` breakage -
-# https://forum.cursor.com/t/installing-cursor-via-apt-deb-package-breaks-apt-update/132008):
+# Guardrails (learned from the Cursor .deb `apt update` breakage):
 #
 #  - Idempotent: a pre-existing `paneflow.list` is left alone. Users who
 #    point at a private mirror must keep their edits across reinstalls.
-#  - Graceful GPG fetch: a failed network call at install time does NOT
-#    abort the install. `apt update` will later complain about the
-#    missing signature, and the printed message tells the user exactly
-#    how to recover with `curl | gpg --dearmor`.
+#  - No network key fetch in maintainer scripts: the ASCII-armored
+#    release key is shipped in the package payload and referenced through
+#    signed-by. If the key is missing, the package is malformed and we fail
+#    before writing a broken apt source.
 #  - Pure /bin/sh (no bashisms) - Debian Policy §4.9 and Ubuntu `dash`
 #    compatibility.
 
 set -e
 
-KEYRING=/usr/share/keyrings/paneflow-archive.gpg
+KEYRING=/usr/share/keyrings/paneflow-archive.asc
 SOURCES=/etc/apt/sources.list.d/paneflow.list
-KEY_URL=https://pkg.paneflow.dev/gpg
-REPO_LINE='deb [signed-by=/usr/share/keyrings/paneflow-archive.gpg] https://pkg.paneflow.dev/apt stable main'
+REPO_LINE='deb [signed-by=/usr/share/keyrings/paneflow-archive.asc] https://pkg.paneflow.dev/apt stable main'
 
 case "$1" in
 configure)
+    # --- GPG keyring ---------------------------------------------------
+    # The keyring is a package asset, installed before this script runs.
+    # APT supports ASCII-armored keyrings in signed-by paths on Debian 11+
+    # and Ubuntu 22.04+, which are the supported package floors here.
+    if [ ! -s "$KEYRING" ]; then
+        echo "PaneFlow: package keyring missing at $KEYRING; refusing to write apt source" >&2
+        exit 1
+    fi
+
     # --- Sources file --------------------------------------------------
     # Note on upgrade paths: a future release that moves `pkg.paneflow.dev`
     # to a new URL cannot repoint existing installs through this script -
@@ -40,63 +47,6 @@ configure)
         # require this; systems as old as Debian 11 also accept it.
         echo "$REPO_LINE" > "$SOURCES"
         chmod 644 "$SOURCES"
-    fi
-
-    # --- GPG keyring ---------------------------------------------------
-    if [ ! -f "$KEYRING" ]; then
-        fetch=""
-        if command -v curl >/dev/null 2>&1; then
-            fetch="curl -fsSL --max-time 30"
-        elif command -v wget >/dev/null 2>&1; then
-            fetch="wget -qO- --timeout=30"
-        fi
-
-        if [ -z "$fetch" ]; then
-            cat >&2 <<EOF
-PaneFlow: neither 'curl' nor 'wget' is installed, so the release signing
-key at $KEY_URL was not fetched. The package is installed and usable.
-To enable 'apt upgrade paneflow' later:
-
-    sudo apt install -y curl
-    sudo curl -fsSL $KEY_URL | sudo gpg --dearmor -o $KEYRING
-    sudo apt update
-
-EOF
-        else
-            # Stream the armored key through `gpg --dearmor` into a tmp
-            # file, then validate it's a real OpenPGP keyring before
-            # renaming to the live path. The validation matters because:
-            # - A truncated fetch (network drop mid-stream) can produce a
-            #   non-empty `$tmp` that `gpg --dearmor` wrote partial bytes
-            #   to before failing. `[ -s … ]` alone would accept that.
-            # - Cloudflare R2 behind the CDN could return an HTML error
-            #   page with HTTP 200 (misconfiguration), which curl happily
-            #   streams. Without validation we'd write garbage to the
-            #   keyring and `apt update` would error cryptically.
-            # `gpg --list-packets` parses the binary OpenPGP format and
-            # exits non-zero on malformed input.
-            tmp="$KEYRING.tmp.$$"
-            if $fetch "$KEY_URL" 2>/dev/null | gpg --dearmor >"$tmp" 2>/dev/null \
-               && [ -s "$tmp" ] \
-               && gpg --list-packets "$tmp" >/dev/null 2>&1; then
-                mv "$tmp" "$KEYRING"
-                chmod 644 "$KEYRING"
-            else
-                rm -f "$tmp"
-                cat >&2 <<EOF
-PaneFlow: could not fetch the release signing key from $KEY_URL
-(network unavailable at install time). The package is installed.
-To enable 'apt upgrade paneflow' later:
-
-    sudo curl -fsSL $KEY_URL | sudo gpg --dearmor -o $KEYRING
-    sudo apt update
-
-Without the key, 'apt update' will report a signature error on the
-paneflow source, but all other apt operations keep working.
-
-EOF
-            fi
-        fi
     fi
 
     # --- Icon + desktop cache refresh ----------------------------------

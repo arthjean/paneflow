@@ -1,7 +1,7 @@
 # PaneFlow winget default-locale manifest (template).
 #
-# US-019. See ArthurDev44.PaneFlow.installer.yaml for the rendering
-# pipeline overview. Only __VERSION__ is substituted in this file; all
+# See ArthurDev44.PaneFlow.installer.yaml for the manual rendering
+# workflow. Only __VERSION__ is substituted in this file; all
 # other fields (Publisher, PackageName, License, ShortDescription, etc.)
 # are static and edited here when they need to change.
 #

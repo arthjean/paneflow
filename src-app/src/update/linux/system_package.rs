@@ -4,8 +4,9 @@
 //! This is the Linux-only counterpart to [`super::appimage`] /
 //! [`super::targz`] for users on the signed rpm/deb repo
 //! (`pkg.paneflow.dev`). It spawns a polkit-elevated
-//! `dnf install paneflow-<ver>` (Fedora/RHEL/Rocky) or
-//! `apt-get install paneflow=<ver>-1` (Ubuntu/Debian) subprocess and
+//! `dnf install paneflow-<ver>` (Fedora/RHEL/Rocky),
+//! `apt-get install paneflow=<ver>-1` (Ubuntu/Debian), or
+//! `zypper install paneflow=<ver>` (openSUSE) subprocess and
 //! routes the outcome through the existing `UpdateError` taxonomy so
 //! the existing toast/pill renderer needs no new variants.
 //!
@@ -36,7 +37,7 @@
 //!
 //! The public entry point is [`run_update`]; the dispatcher in
 //! `app/self_update_flow.rs` (US-002) routes `InstallMethod::SystemPackage
-//! { Dnf | Apt }` here via `smol::unblock`. `PackageManager::Other`
+//! { Dnf | Apt | Zypper }` here via `smol::unblock`. `PackageManager::Other`
 //! continues to use the clipboard-copy fallback upstream.
 
 use std::io::{BufRead, BufReader};
@@ -146,7 +147,7 @@ fn run_update_impl(
 ) -> Result<()> {
     if matches!(manager, PackageManager::Other | PackageManager::RpmOstree) {
         return Err(anyhow::Error::new(UpdateError::Other(
-            "pkexec branch reached with non-dnf/apt PackageManager".into(),
+            "pkexec branch reached with non-dnf/apt/zypper PackageManager".into(),
         )));
     }
 
@@ -174,6 +175,10 @@ fn run_update_impl(
             .then(|| format!("dnf lock held during pre-flight ({DNF_LOCK_PATH} present)")),
         PackageManager::Apt => apt_lock_owner_from_proc(Path::new("/proc"))
             .map(|pid| format!("apt/dpkg transaction in flight during pre-flight (pid {pid})")),
+        // zypper exposes locks through libzypp rather than a stable,
+        // distro-wide tmpfs lock file. Let zypper perform its own
+        // non-interactive lock handling instead of guessing.
+        PackageManager::Zypper => None,
         // Other / RpmOstree already rejected at the top of the fn.
         PackageManager::Other | PackageManager::RpmOstree => None,
     };
@@ -303,6 +308,7 @@ fn manager_label(manager: &PackageManager) -> &'static str {
     match manager {
         PackageManager::Dnf => "dnf",
         PackageManager::Apt => "apt",
+        PackageManager::Zypper => "zypper",
         PackageManager::Other => "other",
         // US-004: guarded-out in `run_update` before reaching this
         // helper; label is only kept for exhaustiveness.
@@ -416,6 +422,19 @@ fn build_argv(manager: &PackageManager, version_stripped: &str) -> Vec<String> {
                 .into(),
             "_".into(),
             format!("{version_stripped}-1"),
+        ],
+        // zypper supports exact-version selection through `name=version`.
+        // As with apt, metadata refresh and install are separate commands,
+        // so wrap both in one `pkexec sh -c` and pass the version as `$1`
+        // instead of interpolating it into the shell body.
+        PackageManager::Zypper => vec![
+            "pkexec".into(),
+            "sh".into(),
+            "-c".into(),
+            "zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive install --no-recommends --force \"paneflow=$1\""
+                .into(),
+            "_".into(),
+            version_stripped.into(),
         ],
         // Defensive sentinels - `run_update` guards Other / RpmOstree
         // up-front, so an empty argv is never actually spawned; if a
@@ -994,6 +1013,50 @@ mod tests {
             script_body,
             "apt-get update -q && apt-get install -y --no-install-recommends \"paneflow=$1\"",
             "script body must be the canonical constant string"
+        );
+    }
+
+    // ─── build_argv: zypper ──────────────────────────────────────
+
+    #[test]
+    fn build_zypper_argv_wraps_refresh_and_install_in_one_pkexec_prompt() {
+        let argv = build_argv(&PackageManager::Zypper, "0.2.3");
+        let expected = vec![
+            "pkexec".to_string(),
+            "sh".to_string(),
+            "-c".to_string(),
+            "zypper --non-interactive --gpg-auto-import-keys refresh && zypper --non-interactive install --no-recommends --force \"paneflow=$1\""
+                .to_string(),
+            "_".to_string(),
+            "0.2.3".to_string(),
+        ];
+        assert_eq!(
+            argv, expected,
+            "zypper argv shape drifted from the single-prompt install spec"
+        );
+    }
+
+    #[test]
+    fn build_zypper_argv_passes_version_as_positional_not_interpolated() {
+        let malicious = "0.2.3\"; echo pwned; #";
+        let argv = build_argv(&PackageManager::Zypper, malicious);
+
+        assert_eq!(
+            argv.get(5).map(String::as_str),
+            Some("0.2.3\"; echo pwned; #"),
+            "version must be argv[5] verbatim: {argv:?}"
+        );
+        let script_body = argv
+            .get(3)
+            .cloned()
+            .unwrap_or_else(|| panic!("argv too short: {argv:?}"));
+        assert!(
+            !script_body.contains("echo") && !script_body.contains("pwned"),
+            "script body was poisoned with version content: {script_body:?}"
+        );
+        assert!(
+            script_body.contains("\"paneflow=$1\""),
+            "script body missing quoted positional pin: {script_body:?}"
         );
     }
 

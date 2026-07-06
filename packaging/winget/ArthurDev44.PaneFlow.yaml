@@ -1,9 +1,8 @@
 # PaneFlow winget version manifest (template).
 #
-# US-019. The root manifest that ties the installer + locale manifests
-# to a specific version entry under
-# manifests/a/ArthurDev44/PaneFlow/<version>/. See the installer
-# template for the rendering pipeline overview.
+# Root manifest that ties the installer + locale manifests to a specific
+# version entry under manifests/a/ArthurDev44/PaneFlow/<version>/. See the
+# installer template for the manual rendering workflow.
 PackageIdentifier: ArthurDev44.PaneFlow
 PackageVersion: __VERSION__
 DefaultLocale: en-US

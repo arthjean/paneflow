@@ -5,8 +5,8 @@
 
     Used for nightly builds that ship under a separate bundle identifier
     (`io.github.arthurdev44.paneflow.nightly` - set in the nightly
-    Info.plist, not here). The entitlements themselves match the release
-    file 1:1 today; the file is split so future nightly-only tweaks
+    Info.plist, not here). The entitlements intentionally stay as strict as
+    release today; the file is split so future nightly-only tweaks
     (extra debug-channel entitlements, broader IPC scope, etc.) can land
     without touching the production entitlements that get notarized for
     end users.
@@ -23,8 +23,6 @@
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
 </dict>
 </plist>

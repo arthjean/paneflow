@@ -137,6 +137,14 @@ if ! codesign --verify --deep --strict "$VERIFY_PT/$BUNDLE_NAME"; then
     hdiutil detach "$VERIFY_DEV" -force 2>/dev/null || true
     die "codesign verification failed on enclosed bundle"
 fi
+if ! xcrun stapler validate "$VERIFY_PT/$BUNDLE_NAME"; then
+    hdiutil detach "$VERIFY_DEV" -force 2>/dev/null || true
+    die "stapled notarization ticket validation failed on enclosed bundle"
+fi
+if ! spctl --assess --type exec --verbose "$VERIFY_PT/$BUNDLE_NAME"; then
+    hdiutil detach "$VERIFY_DEV" -force 2>/dev/null || true
+    die "Gatekeeper assessment failed on enclosed bundle"
+fi
 hdiutil detach "$VERIFY_DEV" -quiet 2>/dev/null \
     || hdiutil detach "$VERIFY_DEV" -force 2>/dev/null \
     || true

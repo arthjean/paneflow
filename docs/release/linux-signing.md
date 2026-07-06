@@ -92,13 +92,12 @@ equivalent (same key, same fingerprint).
 ### APT (Debian / Ubuntu)
 
 ```bash
-sudo apt-get install -y curl gnupg
+sudo apt-get install -y curl
 curl -fsSL https://raw.githubusercontent.com/ArthurDEV44/paneflow/main/keys/paneflow-release.asc \
-  | gpg --dearmor \
-  | sudo tee /usr/share/keyrings/paneflow-archive.gpg >/dev/null
+  | sudo tee /usr/share/keyrings/paneflow-archive.asc >/dev/null
 ```
 
-The dearmored keyring at `/usr/share/keyrings/paneflow-archive.gpg` is
+The ASCII-armored keyring at `/usr/share/keyrings/paneflow-archive.asc` is
 what the apt source-list line references via `signed-by=`. APT pins
 trust to that single keyring, so installing untrusted third-party keys
 into the global trust store is unnecessary and a known foot-gun (the

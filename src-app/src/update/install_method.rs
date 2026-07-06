@@ -28,6 +28,7 @@ use std::path::{Component, Path, PathBuf};
 pub enum PackageManager {
     Apt,
     Dnf,
+    Zypper,
     /// Immutable Fedora variants (Silverblue, Kinoite, Bazzite). Detected
     /// via `/run/ostree-booted` - these systems have `/etc/fedora-release`
     /// too, so the ostree probe MUST run before the Dnf probe. `dnf`
@@ -36,9 +37,9 @@ pub enum PackageManager {
     /// US-004 only surfaces an informational toast + clipboard copy; a
     /// full in-place `pkexec rpm-ostree install …` flow is deferred.
     RpmOstree,
-    /// `/usr/bin/paneflow` exists but neither `/etc/debian_version` nor
-    /// `/etc/fedora-release` are present (e.g., `eopkg` on Solus, `xbps` on
-    /// Void). The UI falls back to a generic "via your package manager" hint.
+    /// `/usr/bin/paneflow` exists but no supported package-manager marker is
+    /// present (e.g., `eopkg` on Solus, `xbps` on Void). The UI falls back to
+    /// a generic "via your package manager" hint.
     Other,
 }
 
@@ -111,6 +112,11 @@ pub fn detect() -> InstallMethod {
             "apt" => {
                 return InstallMethod::SystemPackage {
                     manager: PackageManager::Apt,
+                };
+            }
+            "zypper" | "opensuse" => {
+                return InstallMethod::SystemPackage {
+                    manager: PackageManager::Zypper,
                 };
             }
             "rpm-ostree" | "ostree" => {
@@ -391,8 +397,29 @@ fn detect_package_manager() -> PackageManager {
     detect_package_manager_with_probes(
         Path::new("/etc/debian_version").exists(),
         Path::new("/etc/fedora-release").exists(),
+        Path::new("/etc/SuSE-release").exists()
+            || Path::new("/etc/zypp").exists()
+            || os_release_id_like_suse(Path::new("/etc/os-release")),
         Path::new("/run/ostree-booted").exists(),
     )
+}
+
+fn os_release_id_like_suse(path: &Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    contents.lines().any(|line| {
+        let Some((key, value)) = line.split_once('=') else {
+            return false;
+        };
+        if key != "ID" && key != "ID_LIKE" {
+            return false;
+        }
+        value
+            .trim_matches('"')
+            .split_whitespace()
+            .any(|token| matches!(token, "opensuse" | "suse" | "sles"))
+    })
 }
 
 /// Pure, parameter-driven version of [`detect_package_manager`] so the
@@ -401,6 +428,7 @@ fn detect_package_manager() -> PackageManager {
 fn detect_package_manager_with_probes(
     debian_marker: bool,
     fedora_marker: bool,
+    suse_marker: bool,
     ostree_booted: bool,
 ) -> PackageManager {
     // Endless OS is Debian-based but boots ostree (immutable rootfs), so it
@@ -421,6 +449,9 @@ fn detect_package_manager_with_probes(
     }
     if fedora_marker {
         return PackageManager::Dnf;
+    }
+    if suse_marker {
+        return PackageManager::Zypper;
     }
     PackageManager::Other
 }
@@ -863,7 +894,7 @@ mod tests {
         // they did, Apt still wins because apt is the one ground truth
         // for package routing on those hosts.
         assert_eq!(
-            detect_package_manager_with_probes(true, false, false),
+            detect_package_manager_with_probes(true, false, false, false),
             PackageManager::Apt
         );
     }
@@ -871,9 +902,25 @@ mod tests {
     #[test]
     fn detect_package_manager_fedora_marker_returns_dnf() {
         assert_eq!(
-            detect_package_manager_with_probes(false, true, false),
+            detect_package_manager_with_probes(false, true, false, false),
             PackageManager::Dnf
         );
+    }
+
+    #[test]
+    fn detect_package_manager_suse_marker_returns_zypper() {
+        assert_eq!(
+            detect_package_manager_with_probes(false, false, true, false),
+            PackageManager::Zypper
+        );
+    }
+
+    #[test]
+    fn os_release_id_like_suse_matches_id_and_id_like() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let file = tmp.path().join("os-release");
+        std::fs::write(&file, "ID=opensuse-tumbleweed\nID_LIKE=\"suse rhel\"\n").unwrap();
+        assert!(os_release_id_like_suse(&file));
     }
 
     #[test]
@@ -884,7 +931,7 @@ mod tests {
         // instead of a broken `dnf install` that would fail on the
         // read-only /usr.
         assert_eq!(
-            detect_package_manager_with_probes(false, true, true),
+            detect_package_manager_with_probes(false, true, false, true),
             PackageManager::RpmOstree
         );
     }
@@ -894,7 +941,7 @@ mod tests {
         // Bazzite / custom ostree spins that don't ship /etc/fedora-release
         // should still be detected correctly.
         assert_eq!(
-            detect_package_manager_with_probes(false, false, true),
+            detect_package_manager_with_probes(false, false, false, true),
             PackageManager::RpmOstree
         );
     }
@@ -902,7 +949,7 @@ mod tests {
     #[test]
     fn detect_package_manager_no_markers_returns_other() {
         assert_eq!(
-            detect_package_manager_with_probes(false, false, false),
+            detect_package_manager_with_probes(false, false, false, false),
             PackageManager::Other
         );
     }
@@ -916,17 +963,17 @@ mod tests {
         // externally-managed `Other` hint, checked BEFORE the plain-Debian
         // `Apt` arm.
         assert_eq!(
-            detect_package_manager_with_probes(true, false, true),
+            detect_package_manager_with_probes(true, false, false, true),
             PackageManager::Other
         );
         // Plain Debian (no ostree) still uses apt …
         assert_eq!(
-            detect_package_manager_with_probes(true, false, false),
+            detect_package_manager_with_probes(true, false, false, false),
             PackageManager::Apt
         );
         // … and Fedora Silverblue (ostree, no debian) is still rpm-ostree.
         assert_eq!(
-            detect_package_manager_with_probes(false, true, true),
+            detect_package_manager_with_probes(false, true, false, true),
             PackageManager::RpmOstree
         );
     }

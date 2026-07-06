@@ -111,9 +111,9 @@ From a clean machine:
 
 ```bash
 # APT
-curl -fsSL https://pkg.paneflow.dev/gpg | sudo gpg --dearmor -o \
-  /usr/share/keyrings/paneflow-archive.gpg
-echo "deb [signed-by=/usr/share/keyrings/paneflow-archive.gpg] https://pkg.paneflow.dev/apt stable main" \
+curl -fsSL https://pkg.paneflow.dev/gpg \
+  | sudo tee /usr/share/keyrings/paneflow-archive.asc >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/paneflow-archive.asc] https://pkg.paneflow.dev/apt stable main" \
   | sudo tee /etc/apt/sources.list.d/paneflow.list
 sudo apt update
 sudo apt-cache policy paneflow   # should show pkg.paneflow.dev as a source

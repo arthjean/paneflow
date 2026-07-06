@@ -22,6 +22,11 @@
     Microsoft.ArtifactSigning.Client into a temp directory and resolves the
     x64 dll inside it.
 
+.PARAMETER ExpectedDlibSha256
+    Expected SHA-256 for Azure.CodeSigning.Dlib.dll. Defaults to the pinned
+    Microsoft.ArtifactSigning.Client 1.0.128 x64 DLL hash. Required for
+    intentional custom -DlibPath upgrades.
+
 .PARAMETER TimestampRetryDelaySec
     Seconds to wait between timestamp-server retries. Default 5.
 
@@ -51,6 +56,9 @@ param(
 
     [Parameter(Mandatory = $false)]
     [string]$DlibPath,
+
+    [Parameter(Mandatory = $false)]
+    [string]$ExpectedDlibSha256 = '2D4C1BBC87467B3AC25BBC49DF58CC8B36A0F92B3E21AA98BBBAD08A4D7C98BA',
 
     [Parameter(Mandatory = $false)]
     [int]$TimestampRetryDelaySec = 5
@@ -120,6 +128,11 @@ try {
     # inside. The package was renamed from Microsoft.Trusted.Signing.Client
     # in early 2026 -- the old name is deprecated.
 
+    $ExpectedDlibSha256 = $ExpectedDlibSha256.ToUpperInvariant()
+    if ($ExpectedDlibSha256 -notmatch '^[0-9A-F]{64}$') {
+        throw "ExpectedDlibSha256 must be a 64-character SHA-256 hex string."
+    }
+
     if ([string]::IsNullOrEmpty($DlibPath)) {
         $nuget = Get-Command -Name nuget.exe -ErrorAction SilentlyContinue
         if ($null -eq $nuget) {
@@ -137,7 +150,6 @@ try {
         # Artifact Signing Client and we've verified the delta. Last pinned:
         # 1.0.128 (2026-Q1 latest per NuGet.org).
         $ArtifactSigningClientVersion = '1.0.128'
-        $ArtifactSigningDlibSha256 = '2D4C1BBC87467B3AC25BBC49DF58CC8B36A0F92B3E21AA98BBBAD08A4D7C98BA'
 
         Write-Host "Fetching Microsoft.ArtifactSigning.Client $ArtifactSigningClientVersion to $packagesDir"
         & $nuget install 'Microsoft.ArtifactSigning.Client' `
@@ -164,8 +176,8 @@ try {
             throw "Could not locate Azure.CodeSigning.Dlib.dll after NuGet install. Check the package layout."
         }
         $dlibHash = (Get-FileHash -LiteralPath $dlibCandidate -Algorithm SHA256).Hash.ToUpperInvariant()
-        if ($dlibHash -ne $ArtifactSigningDlibSha256) {
-            throw "Azure.CodeSigning.Dlib.dll SHA-256 mismatch. Expected $ArtifactSigningDlibSha256, got $dlibHash."
+        if ($dlibHash -ne $ExpectedDlibSha256) {
+            throw "Azure.CodeSigning.Dlib.dll SHA-256 mismatch. Expected $ExpectedDlibSha256, got $dlibHash."
         }
         $DlibPath = $dlibCandidate
     } else {
@@ -173,6 +185,10 @@ try {
             throw "DlibPath not found: $DlibPath"
         }
         $DlibPath = (Resolve-Path -LiteralPath $DlibPath).Path
+        $dlibHash = (Get-FileHash -LiteralPath $DlibPath -Algorithm SHA256).Hash.ToUpperInvariant()
+        if ($dlibHash -ne $ExpectedDlibSha256) {
+            throw "DlibPath SHA-256 mismatch. Expected $ExpectedDlibSha256, got $dlibHash."
+        }
     }
 
     Write-Host "Using dlib: $DlibPath"

@@ -46,14 +46,10 @@
         where libFontParser and libCoreText live. Re-add this key
         when EP-004 ships.
 
-    com.apple.security.cs.allow-dyld-environment-variables = true
-        Allows PaneFlow's own process to honour DYLD_LIBRARY_PATH /
-        DYLD_FRAMEWORK_PATH for plugins it loads via dlopen (see the
-        disable-library-validation note above). Hardened runtime
-        strips DYLD_* by default; enabling this entitlement is the
-        canonical way to opt back in. Like disable-library-validation,
-        this affects only the PaneFlow process - child shells set
-        DYLD_* on their own subprocess environments independently.
+    com.apple.security.cs.allow-dyld-environment-variables
+        ABSENT in release builds. This was reserved for a future plugin
+        host, but that host has not shipped and production builds should
+        not opt PaneFlow's own process back into DYLD_* handling.
 
     NOTE: com.apple.security.get-task-allow is INTENTIONALLY ABSENT here.
     A distribution build with get-task-allow=true is rejected by
@@ -70,8 +66,6 @@
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-    <true/>
-    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
     <true/>
 </dict>
 </plist>

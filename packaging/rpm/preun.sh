@@ -1,6 +1,6 @@
 #!/bin/sh
 # RPM `%preun` scriptlet - runs before a package is removed.
-# Cleans up /etc/yum.repos.d/paneflow.repo on FULL uninstall only
+# Cleans up package-manager repo files on FULL uninstall only
 # (US-016 hygiene follow-up).
 #
 # Scriptlet argument conventions:
@@ -18,6 +18,7 @@ set -e
 
 if [ "$1" = "0" ]; then
     rm -f /etc/yum.repos.d/paneflow.repo
+    rm -f /etc/zypp/repos.d/paneflow.repo
 fi
 
 exit 0

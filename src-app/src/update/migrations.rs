@@ -59,7 +59,7 @@ pub fn run_startup_migrations(method: &InstallMethod) {
     let should_run = matches!(
         method,
         InstallMethod::SystemPackage {
-            manager: PackageManager::Dnf | PackageManager::Apt,
+            manager: PackageManager::Dnf | PackageManager::Apt | PackageManager::Zypper,
         }
     );
     if !should_run {
@@ -351,7 +351,7 @@ pub struct CoexistenceReport {
 /// running from one well-known location AND the other well-known location
 /// also contains a PaneFlow binary:
 ///
-/// - `SystemPackage { Dnf | Apt }` running + `$HOME/.local/paneflow.app/bin/paneflow` present
+/// - `SystemPackage { Dnf | Apt | Zypper }` running + `$HOME/.local/paneflow.app/bin/paneflow` present
 /// - `TarGz` running + `/usr/bin/paneflow` present
 ///
 /// All other variants - AppImage, AppBundle, WindowsMsi, Unknown, and the
@@ -379,7 +379,7 @@ fn detect_coexistent_install_with_probes<F: FnOnce(&Path) -> bool>(
 ) -> Option<CoexistenceReport> {
     match current {
         InstallMethod::SystemPackage {
-            manager: PackageManager::Dnf | PackageManager::Apt,
+            manager: PackageManager::Dnf | PackageManager::Apt | PackageManager::Zypper,
         } => {
             let home = home?;
             let other = home

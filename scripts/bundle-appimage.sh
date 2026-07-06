@@ -24,8 +24,48 @@ case "$ARCH" in
     x86_64|aarch64) ;;
     *) echo "error: unsupported ARCH='$ARCH' (expected x86_64 or aarch64)" >&2; exit 1 ;;
 esac
-LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
-APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${ARCH}.AppImage"
+LINUXDEPLOY_VERSION="1-alpha-20251107-1"
+APPIMAGETOOL_VERSION="1.9.1"
+LINUXDEPLOY_URL="https://github.com/linuxdeploy/linuxdeploy/releases/download/${LINUXDEPLOY_VERSION}/linuxdeploy-${ARCH}.AppImage"
+APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/${APPIMAGETOOL_VERSION}/appimagetool-${ARCH}.AppImage"
+case "$ARCH" in
+    x86_64)
+        LINUXDEPLOY_SHA256="c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d"
+        APPIMAGETOOL_SHA256="ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
+        ;;
+    aarch64)
+        LINUXDEPLOY_SHA256="620095110d693282b8ebeb244a95b5e911cf8f65f76c88b4b47d16ae6346fcff"
+        APPIMAGETOOL_SHA256="f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"
+        ;;
+esac
+
+verify_sha256() {
+    file="$1"
+    expected="$2"
+    echo "${expected}  ${file}" | sha256sum -c - >/dev/null
+}
+
+download_verified_tool() {
+    dst="$1"
+    url="$2"
+    expected="$3"
+    label="$4"
+
+    if [ -x "$dst" ]; then
+        if verify_sha256 "$dst" "$expected"; then
+            return 0
+        fi
+        echo "warning: cached ${label} failed SHA-256 verification; re-downloading" >&2
+        rm -f "$dst"
+    fi
+
+    tmp="${dst}.tmp.$$"
+    rm -f "$tmp"
+    curl --fail --location --silent --show-error -o "$tmp" "$url"
+    verify_sha256 "$tmp" "$expected"
+    mv "$tmp" "$dst"
+    chmod +x "$dst"
+}
 
 # --- version -------------------------------------------------------------
 if [ "$#" -ge 1 ]; then
@@ -62,10 +102,8 @@ if [ -z "$LD_BIN" ]; then
     mkdir -p "$TOOLS_DIR"
     if [ ! -x "$LD_BIN" ]; then
         echo "info: downloading linuxdeploy..." >&2
-        curl --fail --location --silent --show-error \
-             -o "$LD_BIN" "$LINUXDEPLOY_URL"
-        chmod +x "$LD_BIN"
     fi
+    download_verified_tool "$LD_BIN" "$LINUXDEPLOY_URL" "$LINUXDEPLOY_SHA256" "linuxdeploy"
 fi
 
 # --- stage AppDir -------------------------------------------------------
@@ -179,9 +217,8 @@ if [ -z "$AT_BIN" ]; then
     mkdir -p "$(dirname "$AT_BIN")"
     if [ ! -x "$AT_BIN" ]; then
         echo "info: downloading appimagetool..." >&2
-        curl --fail --location --silent --show-error -o "$AT_BIN" "$APPIMAGETOOL_URL"
-        chmod +x "$AT_BIN"
     fi
+    download_verified_tool "$AT_BIN" "$APPIMAGETOOL_URL" "$APPIMAGETOOL_SHA256" "appimagetool"
 fi
 
 # appimagetool reads UPDATE_INFORMATION via -u flag (env var is ignored).

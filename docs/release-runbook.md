@@ -43,9 +43,9 @@ ship to. Cross-reference `.github/workflows/release.yml`'s matrix.
 |---|---|---|---|---|
 | `x86_64-unknown-linux-gnu` | **Active** | .deb, .rpm, AppImage, .tar.gz | Hard-required (gates the whole release) | - |
 | `aarch64-unknown-linux-gnu` | **Active** | .deb, .rpm, AppImage, .tar.gz | Hard-required (gates the whole release) | - |
-| `aarch64-apple-darwin` | **Best-effort** | (none today - leg fails at codesign) | `continue-on-error: true` (in matrix, does not block release) | Apple Dev secrets provisioning (see `memory/project_macos_signing.md`) → flip `continue-on-error: false` |
-| `x86_64-apple-darwin` | **Closed - pending v0.3.0** | - | Removed from matrix entirely | (a) Apple Dev secrets + (b) macos-13 queue-SLA improvement OR matrix `needs:` refactor so `Publish` doesn't block on best-effort legs |
-| `x86_64-pc-windows-msvc` | **Best-effort** | .msi (unsigned until Azure Trusted Signing lands) | `continue-on-error: true` | Azure Trusted Signing secrets (see `memory/project_windows_signing.md`) → flip `continue-on-error: false` |
+| `aarch64-apple-darwin` | **Active** | .dmg | Hard-required (gates the whole release) | - |
+| `x86_64-apple-darwin` | **Closed** | - | Removed from matrix entirely | Reopen only when Intel DMG signing is provisioned and the Homebrew cask is widened back to Intel |
+| `x86_64-pc-windows-msvc` | **Active** | signed .msi | Hard-required (gates the whole release) | - |
 | `aarch64-pc-windows-msvc` | **Closed - pending v0.3.0** | - | Not in matrix | Scope decision at v0.3.0 cut (Windows on ARM - real hardware is rare; evaluate demand before committing runner hours) |
 
 **Interpretation:**
@@ -59,10 +59,10 @@ ship to. Cross-reference `.github/workflows/release.yml`'s matrix.
   not silently re-add a closed target - adding back requires the
   listed prerequisites AND a status update to this table.
 
-**v0.3.0 commitment:** both macOS legs (`aarch64-apple-darwin`
-restored to hard-required, `x86_64-apple-darwin` re-added to matrix)
-land together in the first signed macOS release cut, alongside Apple
-Dev secrets provisioning. Tracked in `tasks/prd-macos-port.md`.
+**Closed target rule:** do not re-add `x86_64-apple-darwin` or
+`aarch64-pc-windows-msvc` as best-effort release legs. Reopening either
+target requires a committed artifact path, signing path, docs update, and
+release-gate decision in the same change.
 
 ---
 
@@ -208,26 +208,25 @@ fingerprint guard" near-miss.
 gh release view vX.Y.Z --json assets --jq '.assets[].name' | sort
 ```
 
-Expected asset count: **12** (two arches × six files each):
+Expected primary artifacts:
 
 ```
-paneflow-vX.Y.Z-aarch64.AppImage
-paneflow-vX.Y.Z-aarch64.AppImage.zsync
-paneflow-vX.Y.Z-aarch64.deb
-paneflow-vX.Y.Z-aarch64.rpm
-paneflow-vX.Y.Z-aarch64.tar.gz
-paneflow-vX.Y.Z-aarch64.tar.gz.sha256
-paneflow-vX.Y.Z-x86_64.AppImage
-paneflow-vX.Y.Z-x86_64.AppImage.zsync
-paneflow-vX.Y.Z-x86_64.deb
-paneflow-vX.Y.Z-x86_64.rpm
-paneflow-vX.Y.Z-x86_64.tar.gz
-paneflow-vX.Y.Z-x86_64.tar.gz.sha256
+paneflow-X.Y.Z-aarch64.AppImage
+paneflow-X.Y.Z-aarch64.deb
+paneflow-X.Y.Z-aarch64.rpm
+paneflow-X.Y.Z-aarch64.tar.gz
+paneflow-X.Y.Z-x86_64.AppImage
+paneflow-X.Y.Z-x86_64.deb
+paneflow-X.Y.Z-x86_64.rpm
+paneflow-X.Y.Z-x86_64.tar.gz
+paneflow-X.Y.Z-aarch64-apple-darwin.dmg
+paneflow-X.Y.Z-x86_64-pc-windows-msvc.msi
 ```
 
-A missing or renamed asset breaks the in-app updater's asset matcher
-(it looks up by `-<arch>.<format>` suffix, see
-`src-app/src/update/checker.rs`).
+Each primary artifact must have a `.sha256` sidecar and a `.minisig`
+signature. Each AppImage must also have an `.AppImage.zsync` sidecar. A
+missing or renamed asset breaks the in-app updater's asset matcher (it
+looks up by `-<arch>.<format>` suffix, see `src-app/src/update/checker.rs`).
 
 ### Troubleshooting - Step 4
 
@@ -296,10 +295,10 @@ release from a user's perspective - "does a fresh `apt install` off
 docker run --rm -it ubuntu:22.04 bash -c '
   set -euo pipefail
   apt-get update -qq
-  apt-get install -y --no-install-recommends ca-certificates curl gnupg
+  apt-get install -y --no-install-recommends ca-certificates curl
   curl -fsSL https://pkg.paneflow.dev/gpg \
-    | gpg --dearmor -o /usr/share/keyrings/paneflow-archive.gpg
-  echo "deb [signed-by=/usr/share/keyrings/paneflow-archive.gpg] https://pkg.paneflow.dev/apt stable main" \
+    > /usr/share/keyrings/paneflow-archive.asc
+  echo "deb [signed-by=/usr/share/keyrings/paneflow-archive.asc] https://pkg.paneflow.dev/apt stable main" \
     > /etc/apt/sources.list.d/paneflow.list
   apt-get update
   apt-get install -y paneflow

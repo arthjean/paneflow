@@ -190,6 +190,33 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install --quiet imagemagick
 
+      - name: Setup MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Verify Windows compiler and signing tools
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          where.exe cl.exe
+          where.exe link.exe
+
+          $signtool = Get-Command -Name signtool.exe -ErrorAction SilentlyContinue
+          if ($null -eq $signtool) {
+              $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
+              if (Test-Path -LiteralPath $sdkRoot) {
+                  $signtool = Get-ChildItem -Path $sdkRoot -Recurse -Filter 'signtool.exe' -ErrorAction SilentlyContinue |
+                      Where-Object { $_.FullName -match '\\x64\\' } |
+                      Sort-Object { try { [version]$_.Directory.Parent.Name } catch { [version]'0.0.0.0' } } -Descending |
+                      Select-Object -First 1
+              }
+          }
+          if ($null -eq $signtool) {
+              throw "signtool.exe not found on PATH or under the Windows SDK."
+          }
+          $signtoolPath = if ($signtool.PSObject.Properties.Name -contains 'Source') { $signtool.Source } else { $signtool.FullName }
+          Write-Output "Using signtool: $signtoolPath"
+
       # US-002 AC3 - validate the AppStream metainfo XML before any packaging
       # step touches it. Invalid metainfo would (a) make `.deb`/`.rpm` install
       # a broken `/usr/share/metainfo/*.xml` that GNOME Software / KDE Discover
@@ -203,6 +230,20 @@ jobs:
             --no-net \
             --pedantic \
             assets/io.github.arthurdev44.paneflow.metainfo.xml
+
+      - name: Verify AppStream release version freshness
+        if: runner.os == 'Linux'
+        run: |
+          workspace_version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          appstream_version="$(awk -F'"' '/<release version=/ { print $2; exit }' assets/io.github.arthurdev44.paneflow.metainfo.xml)"
+          if [ -z "$workspace_version" ] || [ -z "$appstream_version" ]; then
+            echo "::error::could not resolve Cargo.toml or AppStream release version"
+            exit 1
+          fi
+          if [ "$workspace_version" != "$appstream_version" ]; then
+            echo "::error::AppStream top release version ($appstream_version) must match workspace version ($workspace_version)"
+            exit 1
+          fi
 
       # Pinned via repo-level `rust-toolchain.toml` (US-001). Use the
       # `@master` ref + explicit `toolchain` input so the action reads the
@@ -236,10 +277,26 @@ jobs:
 
       # --- Quality gates (defense-in-depth against shipping broken builds) ---
       - name: cargo fmt --check
+        if: runner.os != 'Windows'
         run: cargo fmt --check
 
+      - name: cargo fmt --check (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo fmt --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: cargo clippy
+        if: runner.os != 'Windows'
         run: cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
+
+      - name: cargo clippy (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # cargo test is intentionally NOT run here. run_tests.yml is the required
       # test gate on every PR; by the time release.yml runs (tag-push from main,
@@ -348,6 +405,37 @@ jobs:
 
           "helpers_prepared=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Validate Windows helper packaging set
+        if: runner.os == 'Windows' && steps.windows_helpers.outputs.helpers_prepared == 'true'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          $helperDir = Join-Path (Join-Path 'target' $env:TARGET) 'release/paneflow-helpers'
+          if (-not (Test-Path -LiteralPath $helperDir -PathType Container)) {
+              throw "Expected helper directory missing: $helperDir"
+          }
+
+          $ns = New-Object System.Xml.XmlNamespaceManager((New-Object System.Xml.NameTable))
+          $ns.AddNamespace('w', 'http://schemas.microsoft.com/wix/2006/wi')
+          $xml = New-Object System.Xml.XmlDocument
+          $xml.Load((Resolve-Path -LiteralPath 'packaging/wix/main.wxs').Path)
+          $wixHelpers = @(
+              $xml.SelectNodes("//w:Component[@Id='HelperBinaries']/w:File", $ns) |
+                  ForEach-Object { $_.GetAttribute('Name') } |
+                  Sort-Object
+          )
+          $diskHelpers = @(
+              Get-ChildItem -LiteralPath $helperDir -Filter '*.exe' -File |
+                  ForEach-Object { $_.Name } |
+                  Sort-Object
+          )
+          $diff = Compare-Object -ReferenceObject $wixHelpers -DifferenceObject $diskHelpers
+          if ($null -ne $diff) {
+              $diff | Format-Table | Out-String | Write-Output
+              throw "WiX HelperBinaries entries do not match prepared paneflow-helpers files."
+          }
+
       # --- Release build ---
       # `POSTHOG_API_KEY` is resolved by `option_env!` at compile time
       # (see `src-app/src/app/bootstrap.rs`); embedding it here at the
@@ -370,11 +458,28 @@ jobs:
           PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
           TARGET: ${{ matrix.target }}
           WINDOWS_HELPERS_PREPARED: ${{ steps.windows_helpers.outputs.helpers_prepared }}
+        if: runner.os != 'Windows'
         run: |
           if [ "${WINDOWS_HELPERS_PREPARED:-}" = "true" ]; then
             export PANEFLOW_SKIP_EMBED_BUILD=1
           fi
           cargo build --release -p paneflow-app --locked --target "$TARGET"
+
+      - name: Build release binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
+          PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
+          TARGET: ${{ matrix.target }}
+          WINDOWS_HELPERS_PREPARED: ${{ steps.windows_helpers.outputs.helpers_prepared }}
+        run: |
+          if ($env:WINDOWS_HELPERS_PREPARED -eq 'true') {
+              $env:PANEFLOW_SKIP_EMBED_BUILD = '1'
+          }
+          cargo build --release -p paneflow-app --locked --target $env:TARGET
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # --- Phase 1 artifacts ---
       - name: Produce tar.gz
@@ -1020,7 +1125,30 @@ jobs:
       # ~2 min cold / ~10 s cached.
       - name: Install cargo-wix (pinned)
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        run: cargo install cargo-wix --version 0.3.9 --locked
+        shell: pwsh
+        run: |
+          cargo install cargo-wix --version 0.3.9 --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Validate WiX per-machine invariants
+        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        run: |
+          $ns = New-Object System.Xml.XmlNamespaceManager((New-Object System.Xml.NameTable))
+          $ns.AddNamespace('w', 'http://schemas.microsoft.com/wix/2006/wi')
+          $xml = New-Object System.Xml.XmlDocument
+          $xml.Load((Resolve-Path -LiteralPath 'packaging/wix/main.wxs').Path)
+          $package = $xml.SelectSingleNode('//w:Package', $ns)
+          if ($null -eq $package) {
+              throw "WiX Package element not found."
+          }
+          if ($package.GetAttribute('InstallScope') -eq 'perMachine') {
+              $hkcuKeyPaths = $xml.SelectNodes("//w:Component[.//w:RegistryValue[@Root='HKCU' and @KeyPath='yes']]", $ns)
+              if ($hkcuKeyPaths.Count -gt 0) {
+                  $ids = @($hkcuKeyPaths | ForEach-Object { $_.Id }) -join ', '
+                  throw "perMachine MSI must not use HKCU registry values as component KeyPath. Offending component(s): $ids"
+              }
+          }
 
       # ─── Windows Authenticode: sign the installed executable first ───────
       # Smart App Control evaluates the installed application binary, not just
@@ -1058,12 +1186,11 @@ jobs:
       # do NOT assume the triple folder.
       - name: Produce MSI
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
-        shell: bash
+        shell: pwsh
         env:
           TAG: ${{ env.RELEASE_TAG }}
         run: |
-          set -euo pipefail
-          version="${TAG#v}"
+          $version = $env:TAG -replace '^v', ''
           # --no-build: the "Build release binary" step above already
           # produced target/x86_64-pc-windows-msvc/release/paneflow.exe.
           # Without this flag cargo-wix 0.3.9 internally re-runs
@@ -1089,14 +1216,15 @@ jobs:
           # swallows LGHT/CNDL errors). The .wxs references License.rtf and
           # paneflow.ico, which light resolves from the CWD (repo root), so
           # they carry the packaging/wix/ prefix in main.wxs.
-          cargo wix \
-            --nocapture \
-            --no-build \
-            --package paneflow-app \
-            --target x86_64-pc-windows-msvc \
-            --install-version "$version" \
+          cargo wix `
+            --nocapture `
+            --no-build `
+            --package paneflow-app `
+            --target x86_64-pc-windows-msvc `
+            --install-version $version `
             --include packaging/wix/main.wxs
-          ls -la target/wix/
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem -LiteralPath target/wix
 
       # ─── US-016 AC-2 / US-024 AC-1+AC-3: Sign MSI via Azure Trusted Signing ───
       # Invokes the US-015 script, which fetches the
@@ -1422,11 +1550,11 @@ jobs:
   release:
     name: Publish GitHub Release
     # US-003: skip the entire publish chain in dry-run mode. The
-    # the downstream `update_cask.yml` workflow is triggered by
-    # `release: published`, so skipping this job transitively skips it.
-    # (`update_winget.yml` was removed 2026-05-28 while Windows is out of
-    # scope until Azure signing.) `repo_publish.yml` is triggered by
-    # `workflow_run` of this workflow but already filters on
+    # the downstream `update_cask.yml` workflow is triggered by workflow_run
+    # and now requires a successful release workflow, so skipping/failing this
+    # job transitively skips it. Winget manifests are manual templates until
+    # a dedicated winget-pkgs PR workflow is restored. `repo_publish.yml` is
+    # triggered by `workflow_run` of this workflow but already filters on
     # `workflow_run.event == 'push'` (line ~94 of repo_publish.yml),
     # so a workflow_dispatch run never touches pkg.paneflow.dev.
     # NOTE: GitHub Actions does NOT expose the `env` context in job-level
@@ -1602,15 +1730,14 @@ jobs:
     steps:
       - name: Install baseline tools
         # `apt-get install` inside the container - not the host runner.
-        # `ca-certificates` + `curl` are required by our postinst's
-        # GPG-fetch path.
+        # `ca-certificates` is required by APT for the https repo smoke.
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
           apt-get update -qq
           apt-get install -y --no-install-recommends \
-            ca-certificates curl gnupg
+            ca-certificates
 
       - name: Download built .deb
         uses: actions/download-artifact@v4
@@ -1634,7 +1761,8 @@ jobs:
         run: |
           set -euo pipefail
           test -f /etc/apt/sources.list.d/paneflow.list
-          grep -Fxq 'deb [signed-by=/usr/share/keyrings/paneflow-archive.gpg] https://pkg.paneflow.dev/apt stable main' \
+          test -s /usr/share/keyrings/paneflow-archive.asc
+          grep -Fxq 'deb [signed-by=/usr/share/keyrings/paneflow-archive.asc] https://pkg.paneflow.dev/apt stable main' \
             /etc/apt/sources.list.d/paneflow.list
 
       - name: Assert `apt update` completes without error (Cursor regression)
@@ -1776,15 +1904,14 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         # `bookworm-slim` ships dash as /bin/sh and a stripped APT
         # cache, so a fresh `apt-get update` is mandatory before the
-        # .deb install can resolve `ca-certificates` / `curl` /
-        # `gnupg` (required by our postinst's GPG-fetch path). Wrap
+        # .deb install can resolve `ca-certificates` and runtime deps. Wrap
         # in a 3-attempt loop because deb.debian.org occasionally
         # returns 503 on the first hit from a fresh container IP.
         run: |
           set -euo pipefail
           for attempt in 1 2 3; do
             if apt-get update -qq && apt-get install -y --no-install-recommends \
-                 ca-certificates curl gnupg; then
+                 ca-certificates; then
               break
             fi
             echo "::warning::apt-get baseline install failed, retry ${attempt}/3"

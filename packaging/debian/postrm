@@ -20,6 +20,7 @@ set -e
 case "$1" in
 purge)
     rm -f /etc/apt/sources.list.d/paneflow.list
+    rm -f /usr/share/keyrings/paneflow-archive.asc
     rm -f /usr/share/keyrings/paneflow-archive.gpg
     ;;
 

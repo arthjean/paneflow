@@ -9,9 +9,9 @@ Canonical: https://paneflow.dev/docs/installation/macos
      scripts/sync-public-docs.ts in the site repo. -->
 
 Install Paneflow on macOS in two minutes. Homebrew is the recommended
-path; use the signed Apple Silicon `.dmg` if you prefer a manual
-install. Paneflow needs macOS 13 Ventura or later and ships for Apple
-Silicon today. Intel Mac builds are not shipped yet.
+path on Apple Silicon; use the signed Apple Silicon `.dmg` if you prefer
+a manual install. Paneflow needs macOS 13 Ventura or later and ships for
+Apple Silicon today. Intel Mac builds are not shipped yet.
 
 The macOS release asset is a signed and notarized `.dmg`. The bundle
   inside it is `PaneFlow.app`, and the executable is
@@ -28,6 +28,8 @@ brew install --cask arthurdev44/paneflow/paneflow
 Homebrew mounts the DMG, copies `PaneFlow.app` into Applications, and
 unmounts the image. If the cask lags a fresh release, use the DMG path
 below.
+
+The cask is Apple Silicon only until the Intel DMG release leg reopens.
 
 ## How do I install Paneflow from a DMG? [#how-do-i-install-paneflow-from-a-dmg]
 

@@ -94,7 +94,7 @@ pub enum SystemPackageKind {
     /// detected via `/run/ostree-booted`. The pill surfaces a
     /// `rpm-ostree upgrade` hint rather than the usual `dnf`/`apt` copy.
     RpmOstree,
-    /// `SystemPackage` was detected but neither apt nor dnf nor ostree
+    /// `SystemPackage` was detected but neither apt, dnf, zypper, nor ostree
     /// markers were present (e.g., `eopkg` on Solus, `xbps` on Void).
     /// Apt/Dnf are intentionally absent: they route through the in-app
     /// pkexec installer (UpdatePillKind::InApp), not SystemManaged.

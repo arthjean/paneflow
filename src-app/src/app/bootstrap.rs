@@ -1200,6 +1200,7 @@ impl PaneFlowApp {
 ///   debian revision by default, so `paneflow=<v>-1` targets the exact tag.
 /// - dnf accepts `name-upstream` as a NEVR prefix match. The `<v>` we pass is
 ///   already the raw upstream version from GitHub Releases.
+/// - zypper accepts `name=upstream` for exact version selection.
 /// - `PackageManager::Other` gets a plain-English hint rather than a command,
 ///   because we don't know the syntax (eopkg/xbps/apk all differ).
 pub(crate) fn system_package_update_command(
@@ -1217,6 +1218,11 @@ pub(crate) fn system_package_update_command(
             // `--refresh install` forces a metadata sync and installs the exact
             // version (dnf treats install of a higher version as an upgrade).
             format!("sudo dnf --refresh install paneflow-{version}")
+        }
+        Some(update::install_method::PackageManager::Zypper) => {
+            format!(
+                "sudo zypper --non-interactive --gpg-auto-import-keys refresh && sudo zypper --non-interactive install --no-recommends --force paneflow={version}"
+            )
         }
         // US-004: `rpm-ostree upgrade` takes no package argument - it
         // rebases the whole deployment. Version string is intentionally
