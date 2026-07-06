@@ -68,14 +68,9 @@ pub enum InstallMethod {
     /// (US-008) to download a matching `.dmg`.
     AppBundle { bundle_path: PathBuf },
 
-    /// Windows MSI install (US-010 - prd-windows-port.md). The running
-    /// `paneflow.exe` lives under one of two canonical PaneFlow install
-    /// directories:
-    ///
-    /// - `%ProgramFiles%\PaneFlow\paneflow.exe` - machine-wide MSI install
-    ///   (the default target of `msiexec /i` with admin rights).
-    /// - `%LocalAppData%\Programs\PaneFlow\paneflow.exe` - per-user MSI
-    ///   install (non-admin / ALLUSERS="" deployment).
+    /// Windows MSI install (US-010 - prd-windows-port.md). The shipping WiX
+    /// installer is machine-wide, so the running `paneflow.exe` must live under
+    /// `%ProgramFiles%\PaneFlow\paneflow.exe`.
     ///
     /// `install_path` is the containing PaneFlow directory (not the exe).
     /// The updater pairs this with `AssetFormat::Msi` (US-011) to match
@@ -156,28 +151,24 @@ pub fn detect() -> InstallMethod {
     //
     // On Windows, `canonicalize` returns the extended-length `\\?\C:\…` form
     // (rust-lang/rust#42869). `windows_msi_install_path` compares this against
-    // the non-verbatim `%ProgramFiles%` / `%LOCALAPPDATA%` env values, and
+    // the non-verbatim `%ProgramFiles%` env value, and
     // `Path::starts_with`'s leading component (`Prefix(VerbatimDisk)` vs
     // `Prefix(Disk)`) never matches - so every MSI install would fall through
     // to `Unknown` and the updater would wrongly take the Linux `$HOME` tar.gz
     // path. Strip the verbatim prefix so the comparison lines up.
     let canonical = strip_verbatim_prefix(std::fs::canonicalize(&exe).unwrap_or(exe));
 
-    // US-039 - Windows MSI install detection. The env var is `LOCALAPPDATA`
-    // (canonical uppercase); reading `LocalAppData` returned `None` on real
-    // Windows hosts, silently disabling in-app updates for every per-user
-    // (non-admin) install at `%LOCALAPPDATA%\Programs\PaneFlow`.
+    // US-039 - Windows MSI install detection. `ProgramFiles` is the only
+    // supported root because the shipping WiX package is machine-wide.
     //
     // B.2 - type-gate the WindowsMsi arm to the Windows target: on non-Windows
-    // we feed `None` regardless of any leaked `ProgramFiles`/`LOCALAPPDATA`
+    // we feed `None` regardless of any leaked `ProgramFiles`
     // (Wine, cross-build, CI), so a Linux binary can never be misclassified as
     // WindowsMsi. The pure `classify` keeps its logic so its tests still run on
     // Linux CI.
     #[cfg(target_os = "windows")]
-    let (program_files, local_app_data) = (
-        std::env::var_os("ProgramFiles"),
-        std::env::var_os("LOCALAPPDATA"),
-    );
+    let (program_files, local_app_data): (Option<OsString>, Option<OsString>) =
+        (std::env::var_os("ProgramFiles"), None);
     #[cfg(not(target_os = "windows"))]
     let (program_files, local_app_data): (Option<OsString>, Option<OsString>) = (None, None);
 
@@ -291,8 +282,8 @@ fn classify(
     }
 
     // 0.5. Windows MSI install (US-010). Same no-false-positive reasoning
-    //      as AppBundle: Linux/macOS never set `ProgramFiles` or
-    //      `LocalAppData`, so the helper returns None and this branch
+    //      as AppBundle: Linux/macOS never set `ProgramFiles`, so the helper
+    //      returns None and this branch
     //      short-circuits on non-Windows. Cheap to keep ungated.
     if let Some(install_path) = windows_msi_install_path(
         canonical,
@@ -346,25 +337,19 @@ fn classify(
 }
 
 /// Return the PaneFlow MSI install directory if `canonical` points at a binary
-/// under one of the two standard Windows locations:
-/// `%ProgramFiles%\PaneFlow\` or `%LocalAppData%\Programs\PaneFlow\`
-/// (US-010 - prd-windows-port.md).
+/// under the standard machine-wide Windows location:
+/// `%ProgramFiles%\PaneFlow\` (US-010 - prd-windows-port.md).
 ///
-/// Pure path manipulation - no FS access, no env-var reads. The two env
-/// var values come in as parameters so tests can mock `ProgramFiles` and
-/// `LocalAppData` on any host (this file's tests run on Linux CI).
+/// Pure path manipulation - no FS access, no env-var reads. `ProgramFiles`
+/// comes in as a parameter so tests can mock it on any host.
 fn windows_msi_install_path(
     canonical: &Path,
     program_files: Option<&std::ffi::OsStr>,
-    local_app_data: Option<&std::ffi::OsStr>,
+    _local_app_data: Option<&std::ffi::OsStr>,
 ) -> Option<PathBuf> {
-    [
-        program_files.map(|p| PathBuf::from(p).join("PaneFlow")),
-        local_app_data.map(|p| PathBuf::from(p).join("Programs").join("PaneFlow")),
-    ]
-    .into_iter()
-    .flatten()
-    .find(|candidate| canonical.starts_with(candidate))
+    program_files
+        .map(|p| PathBuf::from(p).join("PaneFlow"))
+        .filter(|candidate| canonical.starts_with(candidate))
 }
 
 /// Drop the Windows extended-length (`\\?\` or `\\?\UNC\`) prefix that
@@ -749,8 +734,8 @@ mod tests {
 
     // ---- US-010 tests - Windows MSI install detection. ----
     //
-    // Pure string/path manipulation; mocked env-var values (ProgramFiles,
-    // LocalAppData) fed directly to `classify`. No Windows-only types, so
+    // Pure string/path manipulation; mocked env-var values fed directly to
+    // `classify`. No Windows-only types, so
     // these run on Linux CI and prove the detection logic without having
     // to stand up a Windows runner for a unit test.
     //
@@ -780,7 +765,7 @@ mod tests {
     }
 
     #[test]
-    fn windows_msi_per_user_local_app_data() {
+    fn windows_local_app_data_is_unknown_until_per_user_msi_ships() {
         let r = classify(
             Path::new("C:/Users/alice/AppData/Local/Programs/PaneFlow/paneflow.exe"),
             None,
@@ -788,21 +773,13 @@ mod tests {
             Some(OsString::from("C:/Program Files")),
             Some(OsString::from("C:/Users/alice/AppData/Local")),
         );
-        match r {
-            InstallMethod::WindowsMsi { install_path } => {
-                assert_eq!(
-                    install_path,
-                    PathBuf::from("C:/Users/alice/AppData/Local/Programs/PaneFlow")
-                );
-            }
-            other => panic!("expected WindowsMsi, got {other:?}"),
-        }
+        assert_eq!(r, InstallMethod::Unknown);
     }
 
     #[test]
     fn windows_binary_outside_standard_paths_is_unknown() {
         // A dev build running from `target/release/paneflow.exe` - not
-        // inside %ProgramFiles%\PaneFlow\ nor %LocalAppData%\Programs\PaneFlow\.
+        // inside %ProgramFiles%\PaneFlow\.
         let r = classify(
             Path::new("C:/dev/paneflow/target/release/paneflow.exe"),
             None,
@@ -864,8 +841,8 @@ mod tests {
 
     #[test]
     fn windows_msi_detection_ignored_when_env_vars_missing() {
-        // Linux / macOS call site - `ProgramFiles` and `LocalAppData` are
-        // None. Even if someone crafts a path that looks like a Windows
+        // Linux / macOS call site - `ProgramFiles` is None. Even if someone
+        // crafts a path that looks like a Windows
         // install, the detection short-circuits (no candidate dirs to
         // test against).
         let r = classify(

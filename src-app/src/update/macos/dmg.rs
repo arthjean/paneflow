@@ -1,7 +1,8 @@
 //! macOS DMG self-update pipeline (US-009).
 //!
 //! Flow:
-//!   1. Download the `.dmg` to `$HOME/.cache/paneflow/update-<pid>.dmg`
+//!   1. Download the `.dmg` to the native user cache dir
+//!      (`~/Library/Caches/paneflow` on macOS) as `update-<pid>.dmg`
 //!      via ureq with the 30-second per-call timeout (US-001).
 //!   2. Verify the asset's detached **minisign** signature (`.minisig`
 //!      sibling) against a key baked into this binary (US-001) **before
@@ -41,9 +42,8 @@
 //! in `error::UpdateError::classify`. Mount failures surface as `Other`
 //! with the raw `hdiutil` stderr preserved in logs.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -53,9 +53,18 @@ use super::super::error::UpdateError;
 /// Upper bound on any single HTTP call (US-001).
 const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Upper bound for native macOS installer tools that can otherwise block the
+/// update worker indefinitely (`hdiutil`, `cp`, `codesign`, `spctl`).
+const NATIVE_INSTALLER_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
+/// Detach is best-effort cleanup, but it still must not wedge Drop forever.
+const NATIVE_DETACH_TIMEOUT: Duration = Duration::from_secs(60);
+
+const NATIVE_STDOUT_CAP: u64 = 64 * 1024;
+
 /// 500 MB ceiling on the DMG download. Real releases are ~60-100 MB; a
 /// malicious mirror returning an unbounded stream would otherwise fill
-/// `$HOME/.cache`.
+/// the user's cache directory.
 const MAX_DMG_BYTES: u64 = 500 * 1024 * 1024;
 
 /// Run the DMG self-update end-to-end. Replaces the bundle **at its detected
@@ -87,7 +96,7 @@ pub fn install(asset_url: &str, bundle_path: &Path) -> Result<PathBuf> {
         return Err(anyhow::Error::new(UpdateError::InstallDeclined { message }));
     }
 
-    let cache_dir = home.join(".cache").join("paneflow");
+    let cache_dir = dmg_cache_dir(&home);
     install_in(asset_url, bundle_path, &cache_dir, &HdiutilProcessRunner)?;
     // Return the `.app` bundle itself, NOT the inner Mach-O. GPUI's macOS
     // `restart()` does `open "<path>"`; `open` relaunches a bundle but treats a
@@ -118,6 +127,12 @@ fn is_expected_bundle_location(bundle_path: &Path, home: &Path) -> bool {
 fn is_translocated_path(path: &Path) -> bool {
     let s = path.to_string_lossy();
     s.contains("/AppTranslocation/") || s.contains("/var/folders/")
+}
+
+fn dmg_cache_dir(home: &Path) -> PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| home.join("Library").join("Caches"))
+        .join(crate::runtime_paths::APP_SUBDIR)
 }
 
 /// Paneflow's Apple Developer **Team ID** (project_macos_signing, populated
@@ -190,14 +205,13 @@ fn verify_macos_bundle(bundle: &Path) -> Result<()> {
 /// map a nonzero exit to a fail-closed `IntegrityMismatch`.
 #[cfg(target_os = "macos")]
 fn run_gatekeeper_tool(tool: &str, args: &[&str], bundle: &Path) -> Result<()> {
-    let out = Command::new(tool)
-        .args(args)
-        .arg(bundle)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| format!("spawn {tool} for bundle verification"))?;
+    let mut cmd = Command::new(tool);
+    cmd.args(args).arg(bundle);
+    let out = run_native_command(
+        cmd,
+        &format!("{tool} bundle verification"),
+        NATIVE_INSTALLER_TIMEOUT,
+    )?;
     if out.status.success() {
         return Ok(());
     }
@@ -283,70 +297,13 @@ fn install_in(
 /// 500 MB cap, RO body stream). The signature, not a same-host `.sha256`,
 /// is the trust anchor and is checked **before** the DMG is ever mounted.
 fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
-    log::info!("self-update/dmg: downloading {asset_url}");
-
-    // 1. Stream the DMG to `.partial` so a crashed download doesn't
-    // poison the cache. Same scope-for-handle-close discipline as
-    // `targz.rs` / `appimage.rs` (Windows `DeleteFile` sharing violation).
-    let partial = append_suffix(dest, ".partial")?;
-    let mut response = ureq::get(asset_url)
-        .config()
-        .timeout_global(Some(UPDATE_HTTP_TIMEOUT))
-        .build()
-        .header(
-            "User-Agent",
-            &format!("paneflow/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .call()
-        .with_context(|| "Could not download update. Try again when online.".to_string())?;
-    if !response.status().is_success() {
-        bail!(
-            "Update download returned HTTP {}. Try again later.",
-            response.status()
-        );
-    }
-
-    let stream_result = {
-        let reader = response.body_mut().as_reader();
-        let mut reader = Read::take(reader, MAX_DMG_BYTES + 1);
-        let mut file = std::fs::File::create(&partial)
-            .with_context(|| format!("create {}", partial.display()))?;
-        std::io::copy(&mut reader, &mut file)
-            .context("stream DMG to disk")
-            .and_then(|written| {
-                // US-010: propagate a flush failure (ENOSPC) so the
-                // classifier renders DiskFull, not a downstream mismatch.
-                file.sync_all().context("flush DMG to disk")?;
-                Ok(written)
-            })
-    };
-    let written = match stream_result {
-        Ok(n) => n,
-        Err(e) => {
-            let _ = std::fs::remove_file(&partial);
-            return Err(e);
-        }
-    };
-    if written > MAX_DMG_BYTES {
-        let _ = std::fs::remove_file(&partial);
-        bail!(
-            "Update download exceeded {} MiB - aborting.",
-            MAX_DMG_BYTES / 1024 / 1024
-        );
-    }
-
-    // 2. Verify the detached minisign signature BEFORE mounting. Fail-closed:
-    // a missing/invalid signature deletes the partial and bails with the
-    // typed `IntegrityMismatch` tag so the UX toast is specific. This is the
-    // US-001 root-of-trust check that replaces the old same-host `.sha256`.
-    if let Err(e) = super::super::signature::fetch_and_verify(&partial, asset_url) {
-        let _ = std::fs::remove_file(&partial);
-        return Err(e);
-    }
-
-    std::fs::rename(&partial, dest)
-        .with_context(|| format!("rename {} → {}", partial.display(), dest.display()))?;
-    Ok(())
+    super::super::verified_download::download_verified_asset(
+        asset_url,
+        dest,
+        MAX_DMG_BYTES,
+        UPDATE_HTTP_TIMEOUT,
+        "DMG",
+    )
 }
 
 /// Mount the DMG and perform the atomic swap into `install_dir`.
@@ -365,16 +322,8 @@ fn copy_and_swap(mounted_volume: &Path, install_dir: &Path) -> Result<()> {
 
     let (old_dir, new_dir) = staging_dirs(install_dir)?;
 
-    // Crashed prior update left `.old` around? Hard abort - silently
-    // overwriting could destroy the user's recovery copy.
-    if old_dir.exists() {
-        return Err(anyhow::Error::new(UpdateError::InstallDeclined {
-            message: format!(
-                "Previous update did not clean up. Delete `{}` and retry.",
-                old_dir.display()
-            ),
-        }));
-    }
+    recover_and_clean_staging(install_dir, &old_dir)?;
+
     // `.new` from a crashed prior flow is pure scratch - safe to remove
     // before the fresh copy. Log a warning on failure so a downstream
     // copy error isn't misdiagnosed as a DMG problem.
@@ -486,20 +435,13 @@ fn copy_and_swap(mounted_volume: &Path, install_dir: &Path) -> Result<()> {
 /// sufficient to exercise the swap/rollback logic.
 #[cfg(any(not(test), target_os = "macos"))]
 fn copy_bundle_to_staging(source_bundle: &Path, new_dir: &Path) -> Result<()> {
-    let cp_out = Command::new("cp")
-        .arg("-R")
-        .arg(source_bundle)
-        .arg(new_dir)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .with_context(|| {
-            format!(
-                "spawn cp -R {} {}",
-                source_bundle.display(),
-                new_dir.display()
-            )
-        })?;
+    let mut cmd = Command::new("cp");
+    cmd.arg("-R").arg(source_bundle).arg(new_dir);
+    let cp_out = run_native_command(
+        cmd,
+        &format!("cp -R {} {}", source_bundle.display(), new_dir.display()),
+        NATIVE_INSTALLER_TIMEOUT,
+    )?;
 
     if !cp_out.status.success() {
         let stderr = String::from_utf8_lossy(&cp_out.stderr);
@@ -507,6 +449,39 @@ fn copy_bundle_to_staging(source_bundle: &Path, new_dir: &Path) -> Result<()> {
             &stderr,
             &format!("copy {} → {}", source_bundle.display(), new_dir.display()),
         ));
+    }
+    Ok(())
+}
+
+/// Recover a prior crash around the two-rename swap.
+///
+/// - `.old` present and live bundle missing: restore `.old` so the install
+///   location is usable before this update attempt continues.
+/// - `.old` present and live bundle intact: treat `.old` as stale
+///   housekeeping debris and remove it before staging a new swap.
+fn recover_and_clean_staging(install_dir: &Path, old_dir: &Path) -> Result<()> {
+    if !old_dir.exists() {
+        return Ok(());
+    }
+    if !install_dir.exists() {
+        std::fs::rename(old_dir, install_dir).with_context(|| {
+            format!(
+                "recover live bundle {} from {}",
+                install_dir.display(),
+                old_dir.display()
+            )
+        })?;
+        log::warn!(
+            "self-update/dmg: recovered live bundle from a crashed prior update ({})",
+            install_dir.display()
+        );
+        return Ok(());
+    }
+    if let Err(e) = std::fs::remove_dir_all(old_dir) {
+        log::warn!(
+            "self-update/dmg: could not remove stale {}: {e}",
+            old_dir.display()
+        );
     }
     Ok(())
 }
@@ -565,23 +540,14 @@ fn bundle_file_name(install_dir: &Path) -> Result<&std::ffi::OsStr> {
 /// the ignored result.
 #[cfg(target_os = "macos")]
 fn strip_quarantine(bundle: &Path) {
-    let _ = Command::new("xattr")
-        .arg("-dr")
-        .arg("com.apple.quarantine")
-        .arg(bundle)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
-}
-
-fn append_suffix(path: &Path, suffix: &str) -> Result<PathBuf> {
-    let name = path
-        .file_name()
-        .with_context(|| format!("path has no file name: {}", path.display()))?;
-    let mut name = name.to_os_string();
-    name.push(suffix);
-    Ok(path.with_file_name(name))
+    let mut cmd = Command::new("xattr");
+    cmd.arg("-dr").arg("com.apple.quarantine").arg(bundle);
+    if let Err(e) = run_native_command(cmd, "xattr strip quarantine", NATIVE_DETACH_TIMEOUT) {
+        log::warn!(
+            "self-update/dmg: xattr quarantine cleanup for {} failed: {e:#}",
+            bundle.display()
+        );
+    }
 }
 
 /// Map a filesystem error message (from either an `io::Error` or a
@@ -596,13 +562,30 @@ fn classify_filesystem_error(raw: &str, context: &str) -> anyhow::Error {
         || lower.contains("read-only file system")
     {
         return anyhow::Error::new(UpdateError::InstallDeclined {
-            message:
-                "Unable to replace /Applications/PaneFlow.app - reinstall manually from the DMG."
-                    .to_string(),
+            message: "Unable to replace PaneFlow.app in its install location - reinstall manually from the DMG."
+                .to_string(),
         })
         .context(format!("{context}: {}", raw.trim()));
     }
     anyhow::Error::msg(format!("{context} - {}", raw.trim()))
+}
+
+fn run_native_command(
+    cmd: Command,
+    label: &str,
+    deadline: Duration,
+) -> Result<paneflow_process::BoundedOutput> {
+    paneflow_process::run_with_timeout(cmd, deadline, NATIVE_STDOUT_CAP).map_err(|err| match err {
+        paneflow_process::ProcError::Timeout => {
+            anyhow::Error::new(UpdateError::Timeout).context(format!("{label} timed out"))
+        }
+        paneflow_process::ProcError::Spawn(e) => {
+            anyhow::Error::new(e).context(format!("spawn {label}"))
+        }
+        paneflow_process::ProcError::Wait(e) => {
+            anyhow::Error::new(e).context(format!("wait for {label}"))
+        }
+    })
 }
 
 /// Abstraction over `hdiutil attach/detach` so tests can inject a fake
@@ -619,18 +602,18 @@ struct HdiutilProcessRunner;
 
 impl Hdiutil for HdiutilProcessRunner {
     fn attach(&self, dmg: &Path, target: &Path) -> Result<PathBuf> {
-        let out = Command::new("hdiutil")
-            .arg("attach")
+        let mut cmd = Command::new("hdiutil");
+        cmd.arg("attach")
             .arg("-nobrowse")
             .arg("-readonly")
             .arg("-mountpoint")
             .arg(target)
-            .arg(dmg)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .with_context(|| format!("spawn hdiutil attach {}", dmg.display()))?;
+            .arg(dmg);
+        let out = run_native_command(
+            cmd,
+            &format!("hdiutil attach {}", dmg.display()),
+            NATIVE_INSTALLER_TIMEOUT,
+        )?;
 
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
@@ -656,19 +639,29 @@ impl Hdiutil for HdiutilProcessRunner {
         // `cp` we just ran briefly held one), matching Zed - without it a busy
         // volume lingers and the next update's `attach` to the same mountpoint
         // fails.
-        let status = Command::new("hdiutil")
-            .arg("detach")
-            .arg("-force")
-            .arg(mount)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        if let Err(e) = status {
-            log::warn!(
-                "self-update/dmg: hdiutil detach {} failed: {e}",
-                mount.display()
-            );
+        let mut cmd = Command::new("hdiutil");
+        cmd.arg("detach").arg("-force").arg(mount);
+        match run_native_command(
+            cmd,
+            &format!("hdiutil detach {}", mount.display()),
+            NATIVE_DETACH_TIMEOUT,
+        ) {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => {
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                log::warn!(
+                    "self-update/dmg: hdiutil detach {} exited {}: {}",
+                    mount.display(),
+                    out.status,
+                    stderr.trim()
+                );
+            }
+            Err(e) => {
+                log::warn!(
+                    "self-update/dmg: hdiutil detach {} failed: {e:#}",
+                    mount.display()
+                );
+            }
         }
     }
 }
@@ -947,7 +940,39 @@ mod tests {
     }
 
     #[test]
-    fn copy_and_swap_refuses_if_old_dir_exists() {
+    fn recover_restores_live_bundle_when_install_dir_missing() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let install_parent = tmp.path().join("Applications");
+        std::fs::create_dir_all(&install_parent).unwrap();
+        let install_dir = install_parent.join("PaneFlow.app");
+        let old_dir = install_parent.join("PaneFlow.app.old");
+        std::fs::create_dir_all(old_dir.join("Contents/MacOS")).unwrap();
+        std::fs::write(old_dir.join("Contents/MacOS/paneflow"), b"prev").unwrap();
+
+        recover_and_clean_staging(&install_dir, &old_dir).unwrap();
+
+        assert!(install_dir.join("Contents/MacOS/paneflow").exists());
+        assert!(!old_dir.exists(), ".old must be consumed by recovery");
+    }
+
+    #[test]
+    fn recover_removes_stale_old_when_live_bundle_exists() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let install_parent = tmp.path().join("Applications");
+        std::fs::create_dir_all(&install_parent).unwrap();
+        let install_dir = install_parent.join("PaneFlow.app");
+        std::fs::create_dir_all(install_dir.join("Contents/MacOS")).unwrap();
+        let old_dir = install_parent.join("PaneFlow.app.old");
+        std::fs::create_dir_all(&old_dir).unwrap();
+
+        recover_and_clean_staging(&install_dir, &old_dir).unwrap();
+
+        assert!(install_dir.exists(), "live bundle must remain untouched");
+        assert!(!old_dir.exists(), "stale .old must be removed");
+    }
+
+    #[test]
+    fn copy_and_swap_cleans_stale_old_when_live_bundle_exists() {
         let tmp = tempfile::TempDir::new().unwrap();
         let mount = tmp.path().join("mount");
         std::fs::create_dir_all(&mount).unwrap();
@@ -960,11 +985,10 @@ mod tests {
         // Stale `.old` from a crashed prior update.
         std::fs::create_dir_all(install_parent.join("PaneFlow.app.old")).unwrap();
 
-        let err = copy_and_swap(&mount, &install_dir).unwrap_err();
-        assert!(matches!(
-            UpdateError::classify(&err),
-            UpdateError::InstallDeclined { .. }
-        ));
+        copy_and_swap(&mount, &install_dir).unwrap();
+
+        assert!(install_dir.join("Contents/MacOS/paneflow").exists());
+        assert!(!install_parent.join("PaneFlow.app.old").exists());
     }
 
     /// AC7: hdiutil attach failure must surface to the caller (no
@@ -1021,17 +1045,5 @@ mod tests {
         let calls = stub.detach_calls.borrow();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0], PathBuf::from("/some/mount"));
-    }
-
-    // Sanity: `append_suffix` preserves the `.AppImage`/`.dmg` tail the
-    // same way targz's equivalent does - keeps a dedicated regression
-    // check here so a refactor in either module can't silently drift.
-    #[test]
-    fn append_suffix_preserves_full_name() {
-        let p = PathBuf::from("/tmp/update-12345.dmg");
-        assert_eq!(
-            append_suffix(&p, ".partial").unwrap(),
-            PathBuf::from("/tmp/update-12345.dmg.partial")
-        );
     }
 }

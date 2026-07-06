@@ -4,8 +4,9 @@ One-time setup, secret rotation, and ACME auto-renewal tracking for the
 PaneFlow Windows release pipeline. When the six `AZURE_*` GitHub Secrets are
 populated, `release.yml` signs the `x86_64-pc-windows-msvc` `paneflow.exe`
 before WiX packages it, then signs the final `.msi` produced by `cargo wix`.
-If any secret is missing the leg degrades to an **unsigned** build with a
-banner in the job summary - by design (US-024 AC-5).
+If any secret is missing, the Windows leg still builds and tests the app but
+skips MSI packaging, signing, staging, and release publication. We do not ship
+unsigned Windows installers.
 
 This document is operator-only. Application code never reads from any of
 the secrets described here.
@@ -29,9 +30,11 @@ target/wix/paneflow-<version>-x86_64.msi
 
 `scripts/sign-windows.ps1` is used for both the `.exe` and the `.msi`. It:
 
-1. **Fetches the Microsoft.ArtifactSigning.Client NuGet** (pinned to
-   `1.0.128`) into a per-invocation temp directory and resolves
-   `bin/x64/Azure.CodeSigning.Dlib.dll`.
+1. **Fetches the Microsoft.ArtifactSigning.Client NuGet** from
+   `https://api.nuget.org/v3/index.json` (pinned to `1.0.128`) into a
+   per-invocation temp directory, resolves
+   `bin/x64/Azure.CodeSigning.Dlib.dll`, and validates its SHA-256 before
+   executing it.
 2. **Writes a `metadata.json`** with `Endpoint`, `CodeSigningAccountName`,
    `CertificateProfileName`, and an `ExcludeCredentials` list narrowing
    `DefaultAzureCredential` to `EnvironmentCredential` only - without this
@@ -163,10 +166,10 @@ This is the principal reason Azure Trusted Signing was chosen over a
 
 | Failure | Symptom | Recovery |
 |---|---|---|
-| **Timestamp server outage (Azure)** | `signtool sign` exits non-zero against `acs.microsoft.com`. | `sign-windows.ps1` automatically retries against `digicert.com` then `sectigo.com` (5 s backoff between attempts). If all 3 fail the leg fails; the Windows matrix entry is `continue-on-error: true` so Linux + macOS still ship. Manual re-sign + asset upload from a developer machine is the recovery path. |
+| **Timestamp server outage (Azure)** | `signtool sign` exits non-zero against `acs.microsoft.com`. | `sign-windows.ps1` automatically retries against `digicert.com` then `sectigo.com` (5 s backoff between attempts). If all 3 fail, the Windows leg fails and the release blocks before a Windows installer is published. Re-run via `workflow_dispatch` after the outage clears. |
 | **Service principal secret expired** | `AADSTS7000215 Invalid client secret`. | Rotate per §4 above; re-run the workflow via `workflow_dispatch`. |
 | **Cert profile deleted** | `CertificateProfile not found`. | Recreate the profile with the same name (`PaneFlow-Release`) in Azure Portal → Trusted Signing. The next sign picks up a fresh leaf via ACME. |
-| **Azure subscription suspended / billing issue** | Sign step fails immediately (`continue-on-error` absorbs it). Linux + macOS ship without a Windows asset. | Resolve billing in Azure Portal → Cost Management. Re-run via `workflow_dispatch`. |
+| **Azure subscription suspended / billing issue** | Sign step fails before the MSI is staged as a release asset. | Resolve billing in Azure Portal -> Cost Management. Re-run via `workflow_dispatch`. |
 | **SmartScreen still flags "Unknown Publisher" after onboarding** | Users report SmartScreen warning even on signed builds. | Reputation builds over time. Per Microsoft, trust propagates after ~3,000 unique verified downloads OR within 6-8 weeks of consistent signing. **No action needed** - expected for the first month of a new publisher identity. |
 | **Smart App Control blocks `%ProgramFiles%\PaneFlow\paneflow.exe` with "publisher could not be verified"** | The MSI may be signed, but the installed EXE is unsigned or was signed after WiX packaged it. | Check the `Sign Windows executable` step ran before `Produce MSI`. Re-run the release workflow and verify `Get-AuthenticodeSignature 'C:\Program Files\PaneFlow\paneflow.exe'` returns `Valid` on a clean VM. |
 | **Runner image dropped Windows SDK** | `signtool.exe not found`. | Add an explicit `microsoft/setup-msbuild@v2` or Windows 11 SDK install step to the Windows leg, mirroring the `Preflight WiX v3 toolchain` pattern. Pin the SDK version. |
@@ -246,36 +249,25 @@ Get-AuthenticodeSignature 'C:\Program Files\PaneFlow\paneflow.exe',
 
 `Status` must be `Valid`, and the signer subject must anchor to `O=Strivex`.
 
-## 8. Hardening backlog (post-US-024 follow-ups)
+## 8. Completed hardening
 
-The US-024 security audit (2026-05-01) flagged three defense-in-depth
-items that are deferred to future stories rather than wedged into this
-PRD's scope. They are not blockers for the first signed release but
-should be addressed before the pipeline is treated as production-grade
-for high-value targets:
+The US-024 security audit (2026-05-01) defense-in-depth follow-ups are now
+implemented:
 
-1. **Pin the SHA-256 of `Azure.CodeSigning.Dlib.dll`** after the NuGet
-   fetch in `sign-windows.ps1`. The dlib intercepts the signing
-   credential flow; a compromised `1.0.128` re-publish on nuget.org
-   would silently land malicious signing code in CI. Mitigation: embed
-   a pinned hash constant and `throw` on mismatch.
-2. **Pin `nuget install -Source https://api.nuget.org/v3/index.json`**
-   in `sign-windows.ps1` so a runner-level `nuget.config` change cannot
-   redirect the resolution to a private feed.
-3. **Add a `workflow_dispatch:` trigger to `release.yml`** so a
-   transient timestamp-server outage that hits all 3 servers
-   simultaneously can be retried without a new tag push.
-
-Items 1 and 2 are low-frequency hardening (nuget.org SLA + NuGet
-sub-supply-chain are both well-maintained). Item 3 is a 2-line
-ergonomic change that affects every release target, so it lives outside
-US-024's Windows-only scope.
+1. `sign-windows.ps1` pins `Microsoft.ArtifactSigning.Client` to `1.0.128`
+   and verifies `Azure.CodeSigning.Dlib.dll` against a checked-in SHA-256
+   before executing it.
+2. `nuget install` is pinned to `https://api.nuget.org/v3/index.json`, so a
+   runner-level `nuget.config` cannot redirect package resolution to a private
+   feed.
+3. `release.yml` supports `workflow_dispatch`, so transient timestamp-server
+   failures can be retried without creating a new tag.
 
 ## 9. References
 
 - `scripts/sign-windows.ps1` - primary signing implementation.
 - `scripts/sign-windows-ov.ps1` - local OV-cert fallback (not in CI).
-- `.github/workflows/release.yml` Windows section (lines ~790-980) - CI
+- `.github/workflows/release.yml` Windows section (lines ~930-1260) - CI
   orchestration.
 - `memory/project_windows_signing.md` - Strivex-specific metadata
   (account names, expiration dates, rotation reminders).

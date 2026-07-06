@@ -1,14 +1,18 @@
 //! In-app self-update flow + install-method detection + GitHub release polling.
 //!
-//! Two on-the-wire update strategies coexist:
+//! Current on-the-wire update strategies:
 //!
 //! - **AppImage** - handed off to `appimageupdatetool` for a zsync delta
 //!   update in place (see [`linux::appimage::run_update`]). Preferred on any
 //!   `InstallMethod::AppImage` install.
-//! - **Legacy `.run` installer** - download + spawn + relaunch. Still used
-//!   for `InstallMethod::Unknown` (dev builds, legacy `.run` migrations)
-//!   until EP-002 retires that path entirely. The functions in this file
-//!   implement the `.run` flow.
+//! - **Linux tar.gz** - downloaded, minisign-verified, hardened-extracted,
+//!   and atomically swapped under `$HOME/.local/paneflow.app/`.
+//! - **Linux system packages** - delegated to the native package manager
+//!   through `pkexec`.
+//! - **macOS DMG** - minisign-verified, Gatekeeper-checked, copied and swapped
+//!   in place inside `/Applications` or `~/Applications`.
+//! - **Windows MSI** - minisign-verified, Authenticode-checked, staged, then
+//!   installed by a detached relay after the GUI exits.
 //!
 //! Both strategies eventually call GPUI's `cx.set_restart_path(path) +
 //! cx.restart()` - the "launcher pattern" where GPUI spawns a detached
@@ -26,8 +30,8 @@
 //! - [`checker`] - GitHub release polling + asset picking
 //! - [`install_method`] - install source detection (AppImage / TarGz / SystemPackage / Unknown)
 //! - [`linux`] - platform-specific update runners (AppImage zsync, tar.gz atomic swap)
-//! - [`macos`] - DMG updater stub (not yet implemented)
-//! - [`windows`] - MSI updater stub (not yet implemented)
+//! - [`macos`] - DMG update runner
+//! - [`windows`] - MSI update runner
 
 pub mod checker;
 pub mod error;
@@ -37,6 +41,7 @@ pub mod macos;
 // US-001 (prd-audit-remediation): minisign detached-signature verification -
 // the independent root of trust shared by every installer path.
 pub mod signature;
+pub(crate) mod verified_download;
 pub mod windows;
 
 // US-008 - install-method hygiene migrations. Linux-only by construction
@@ -51,25 +56,9 @@ pub mod migrations;
 // `update/linux/targz.rs`, not re-exported to avoid a dead `pub use`).
 pub use error::UpdateError;
 
-// US-005 - Linux-only legacy `.run`; the `set_mode` callsite in
-// `download_installer` is cfg-guarded symmetrically. Windows self-update
-// takes the MSI path and macOS takes the DMG path, so neither compiles this.
-#[cfg(target_os = "linux")]
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
-// US-008 - timeout constant is only referenced from the Linux-only legacy
-// `.run` downloader. Gate it symmetrically so other targets don't carry a
-// dead const (clippy `dead_code` is `-D warnings` in release.yml).
-#[cfg(target_os = "linux")]
-use std::time::Duration;
 
-/// Upper bound on the legacy `.run` installer download (US-001). Kept in
-/// sync with the constant of the same name in `checker.rs`, `linux/targz.rs`,
-/// and `linux/appimage.rs`; a bump here should bump those too.
-#[cfg(target_os = "linux")]
-const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "windows", all(unix, not(target_os = "macos"))))]
 use anyhow::Context;
 use anyhow::Result;
 
@@ -80,12 +69,8 @@ pub enum SelfUpdateStatus {
     #[default]
     Idle,
     Downloading,
-    /// Intermediate "installer is running" state. Only constructed on Unix
-    /// by the legacy `.run` flow's `#[cfg(unix)]` branch; on Windows this
-    /// is compiled out and the variant is dead. The `cfg_attr` keeps
-    /// clippy `-D warnings` happy on the Windows targets without losing
-    /// the variant on Unix where it still surfaces in the title bar.
-    #[cfg_attr(not(unix), allow(dead_code))]
+    /// Intermediate "installer is running" state for native package-manager
+    /// or MSI relay handoff paths.
     Installing,
     /// The new binary has been downloaded, verified and swapped into place;
     /// `cx.set_restart_path()` has already been called. The pill switches
@@ -110,106 +95,14 @@ impl SelfUpdateStatus {
     }
 }
 
-/// Download the `.run` asset to a temp path and return it.
-///
-/// Streamed straight to disk (no full-file buffering) so large installers
-/// don't spike memory. Blocking ureq is fine here - the caller runs us in
-/// `smol::unblock` / `cx.background_spawn`.
-///
-/// US-008: Linux-only. The `.run` installer is a bash self-extracting script
-/// that never runs on Windows/macOS - those platforms take the MSI (EP-W4 /
-/// US-010) and DMG (EP-M / US-009) paths respectively. Gating at compile
-/// time makes the invariant enforceable by the compiler and prevents a
-/// future dispatch regression from silently reaching this code elsewhere.
-#[cfg(target_os = "linux")]
-pub fn download_installer(asset_url: &str) -> Result<PathBuf> {
-    let target = std::env::temp_dir().join(format!("paneflow-update-{}.run", std::process::id()));
-
-    let mut response = ureq::get(asset_url)
-        .config()
-        .timeout_global(Some(UPDATE_HTTP_TIMEOUT))
-        .build()
-        .header(
-            "User-Agent",
-            &format!("paneflow/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .call()
-        .with_context(|| format!("HTTP request failed for {asset_url}"))?;
-
-    if !response.status().is_success() {
-        anyhow::bail!("download returned HTTP {}", response.status());
-    }
-
-    // Stream the body in an inner scope so `file` drops before any
-    // cleanup - required for `remove_file` to actually unlink on Windows,
-    // where `DeleteFile` fails while a handle is open. US-001 AC7.
-    let stream_result = {
-        let mut reader = response.body_mut().as_reader();
-        let mut file = std::fs::File::create(&target)
-            .with_context(|| format!("create {}", target.display()))?;
-        let r = std::io::copy(&mut reader, &mut file).context("stream body to disk");
-        file.sync_all().ok();
-        r.map(|_| ())
-    };
-    if let Err(e) = stream_result {
-        let _ = std::fs::remove_file(&target);
-        return Err(e);
-    }
-
-    // chmod +x - the installer is a bash self-extracting script, it needs
-    // execute permission to run. Windows never takes this path (the .run
-    // flow is Linux-only; Windows uses the MSI flow from EP-W4).
-    #[cfg(target_os = "linux")]
-    {
-        let mut perms = std::fs::metadata(&target)?.permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&target, perms)?;
-    }
-
-    log::info!("self-update: downloaded {}", target.display());
-    Ok(target)
-}
-
-/// Run the `.run` installer and wait for it to finish.
-///
-/// The installer is non-interactive: it extracts its payload and copies the
-/// new binary to `~/.local/bin/paneflow`, then exits. No stdin is forwarded.
-///
-/// US-008: Linux-only - see [`download_installer`] for rationale.
-#[cfg(target_os = "linux")]
-pub fn run_installer(path: &std::path::Path) -> Result<()> {
-    let output = std::process::Command::new(path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
-        .with_context(|| format!("spawn {}", path.display()))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "installer exited with {} - stderr: {}",
-            output.status,
-            stderr.trim()
-        );
-    }
-
-    // Best-effort cleanup of the downloaded file.
-    let _ = std::fs::remove_file(path);
-
-    log::info!("self-update: installer completed successfully");
-    Ok(())
-}
-
 /// Resolve the expected install location of the paneflow binary. The
-/// installer writes here; we pass this path to `cx.set_restart_path()` so
+/// installer writes here; callers pass this path to `cx.set_restart_path()` so
 /// GPUI's relaunch script execs the freshly installed binary.
 ///
 /// Per-OS semantics:
 ///
-/// - **Linux / BSD** (US-008): `~/.local/bin/paneflow` - the legacy
-///   `.run` installer target. Reached only by the (runtime-dead on a
-///   clean Linux install) fall-through in the dispatcher.
+/// - **Linux / BSD**: `~/.local/bin/paneflow`, retained for legacy callers.
+///   The active tar.gz updater returns its own restart path instead.
 /// - **macOS** (US-009 AC3): unused by the DMG updater. The dispatcher passes
 ///   `InstallMethod::AppBundle { bundle_path }` directly to the macOS install
 ///   flow, which returns the promoted `.app` bundle path for GPUI's `open`
@@ -217,10 +110,8 @@ pub fn run_installer(path: &std::path::Path) -> Result<()> {
 /// - **Windows** (US-010 AC3): `%ProgramFiles%\PaneFlow\paneflow.exe`.
 ///   Extension comes from `std::env::consts::EXE_EXTENSION` rather than
 ///   a literal `"exe"` so the helper is cross-target clean; the MSI
-///   installer targets `%ProgramFiles%\PaneFlow\` by default (non-admin
-///   per-user installs under `%LocalAppData%\Programs\PaneFlow\` are
-///   covered by `InstallMethod::WindowsMsi { install_path }` directly,
-///   not by this helper).
+///   installer targets `%ProgramFiles%\PaneFlow\`; the shipping WiX package is
+///   machine-wide.
 #[allow(dead_code)]
 pub fn installed_binary_path() -> Result<PathBuf> {
     #[cfg(target_os = "macos")]

@@ -84,9 +84,10 @@ Wiring already in `release.yml`:
   `.sha256`/`.minisig`/`.zsync` siblings) → `<artifact>.minisig`, which
   `files: release-assets/*` then uploads.
 
-If `MINISIGN_SECRET_KEY` is unset the signing step emits a CI **warning** and
-ships **unsigned** - clients with an embedded key will refuse those updates.
-Provision the key before the first release that is meant to be self-updatable.
+If `MINISIGN_SECRET_KEY` is unset the signing step fails the release job.
+Clients with an embedded key refuse unsigned update assets, so publishing a
+release without detached `.minisig` siblings would ship a broken self-update
+path.
 
 ---
 

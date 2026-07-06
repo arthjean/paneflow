@@ -213,6 +213,9 @@ impl UpdateError {
                 got: String::new(),
             };
         }
+        if lower.contains("exceeded its deadline") {
+            return UpdateError::Timeout;
+        }
         if lower.contains("could not fetch integrity checksum")
             || lower.contains("could not download update")
             || lower.contains("could not download update tool")
@@ -227,13 +230,6 @@ impl UpdateError {
             // the chain no longer carries the original ureq::Error.
             || lower.contains("timed out")
             || lower.contains("timeout")
-            // EP-002 safety net: a `paneflow_process::ProcError::Timeout`
-            // wrapped untyped (its Display is "process exceeded its deadline
-            // and was killed") buckets with the network timeouts rather than
-            // the `Other` catch-all. Typed callers (`bail!(UpdateError::Timeout)`)
-            // are already recovered by the downcast above; this only covers a
-            // future caller that forgets to convert.
-            || lower.contains("exceeded its deadline")
         {
             return UpdateError::Network(full);
         }
@@ -472,6 +468,12 @@ mod tests {
             UpdateError::classify(&err),
             UpdateError::Network(_)
         ));
+    }
+
+    #[test]
+    fn classify_process_deadline_as_timeout() {
+        let err = anyhow::anyhow!("process exceeded its deadline and was killed");
+        assert!(matches!(UpdateError::classify(&err), UpdateError::Timeout));
     }
 
     #[test]

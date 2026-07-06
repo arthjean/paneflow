@@ -344,8 +344,12 @@ windows-sys = { version = "0.59", features = [
     # downloaded MSI before msiexec (defense-in-depth over minisign). The
     # WINTRUST_DATA struct is gated on _Cryptography, so both features are
     # required; WINTRUST_FILE_INFO + the WTD_* consts live under _WinTrust.
+    # Publisher pinning reads the leaf signer cert from WinTrust provider
+    # state, which gates WTHelper* helpers behind Catalog + Sip.
     "Win32_Security_WinTrust",
     "Win32_Security_Cryptography",
+    "Win32_Security_Cryptography_Catalog",
+    "Win32_Security_Cryptography_Sip",
     # Console-subsystem launch handling: GetConsoleProcessList + FreeConsole
     # in `main()` keep scriptable CLI calls blocking/visible in PowerShell
     # while hiding the one-process console Windows creates for Explorer /

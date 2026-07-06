@@ -137,10 +137,12 @@ try {
         # Artifact Signing Client and we've verified the delta. Last pinned:
         # 1.0.128 (2026-Q1 latest per NuGet.org).
         $ArtifactSigningClientVersion = '1.0.128'
+        $ArtifactSigningDlibSha256 = '2D4C1BBC87467B3AC25BBC49DF58CC8B36A0F92B3E21AA98BBBAD08A4D7C98BA'
 
         Write-Host "Fetching Microsoft.ArtifactSigning.Client $ArtifactSigningClientVersion to $packagesDir"
         & $nuget install 'Microsoft.ArtifactSigning.Client' `
             -Version $ArtifactSigningClientVersion `
+            -Source 'https://api.nuget.org/v3/index.json' `
             -OutputDirectory $packagesDir `
             -ExcludeVersion `
             -NonInteractive
@@ -160,6 +162,10 @@ try {
 
         if ([string]::IsNullOrEmpty($dlibCandidate) -or -not (Test-Path -LiteralPath $dlibCandidate -PathType Leaf)) {
             throw "Could not locate Azure.CodeSigning.Dlib.dll after NuGet install. Check the package layout."
+        }
+        $dlibHash = (Get-FileHash -LiteralPath $dlibCandidate -Algorithm SHA256).Hash.ToUpperInvariant()
+        if ($dlibHash -ne $ArtifactSigningDlibSha256) {
+            throw "Azure.CodeSigning.Dlib.dll SHA-256 mismatch. Expected $ArtifactSigningDlibSha256, got $dlibHash."
         }
         $DlibPath = $dlibCandidate
     } else {

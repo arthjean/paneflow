@@ -747,104 +747,15 @@ impl PaneFlowApp {
             return;
         }
 
-        // US-008: the legacy `.run` fall-through is Linux-only. On Linux,
-        // this branch is runtime-dead for the already-handled install
-        // methods above (AppImage / TarGz / SystemPackage) plus Unknown,
-        // and reachable only for older dev builds that slipped past the
-        // `TarGz | Unknown` match. On Windows/macOS the branch is cfg-eliminated
-        // at compile time - those platforms route via `InstallMethod::WindowsMsi`
-        // (US-010) and `AppBundle` (US-009) respectively, and the fall-through
-        // below must never be reached.
-        //
-        // If US-009/US-010 land before those dispatch arms are fully
-        // wired, the sibling below records a
-        // deliberate error-toast rather than bubbling up a mysterious
-        // "no updater wired" runtime failure.
-        #[cfg(target_os = "linux")]
-        {
-            self.enter_downloading("legacy", cx);
-
-            cx.spawn(async move |this, cx| {
-                // Download off the GPUI main thread so the UI stays responsive.
-                let download_result = smol::unblock({
-                    let url = asset_url.clone();
-                    move || update::download_installer(&url)
-                })
-                .await;
-
-                let installer_path = match download_result {
-                    Ok(path) => path,
-                    Err(err) => {
-                        let _ = this.update(cx, |app, cx| {
-                            app.record_update_failure("legacy-download", &err, cx);
-                        });
-                        return;
-                    }
-                };
-
-                let _ = this.update(cx, |app, cx| {
-                    app.self_update.self_update_status = update::SelfUpdateStatus::Installing;
-                    cx.notify();
-                });
-
-                let install_result = smol::unblock({
-                    let path = installer_path.clone();
-                    move || update::run_installer(&path)
-                })
-                .await;
-
-                if let Err(err) = install_result {
-                    let _ = this.update(cx, |app, cx| {
-                        app.record_update_failure("legacy-install", &err, cx);
-                    });
-                    return;
-                }
-
-                // Persist session and pre-wire the relauncher with the new
-                // binary path. The actual `cx.restart()` happens on the
-                // user's next click (now reduced to a one-call no-I/O
-                // operation) - see the ReadyToRestart short-circuit at
-                // the top of `handle_start_self_update`.
-                match update::installed_binary_path() {
-                    Ok(path) => {
-                        let _ = this.update(cx, |app, cx| {
-                            app.on_preinstall_success(cx);
-                        });
-                        cx.update(|cx| {
-                            log::info!(
-                                "self-update/legacy: pre-installed - restart pending at {}",
-                                path.display()
-                            );
-                            cx.set_restart_path(path);
-                        });
-                    }
-                    Err(e) => {
-                        log::error!("self-update: cannot resolve install path: {e}");
-                        let _ = this.update(cx, |app, cx| {
-                            app.record_update_failure("legacy-dispatch", &e, cx);
-                        });
-                    }
-                }
-            })
-            .detach();
-        }
-
-        // US-008: non-legacy fall-through. Reached only when the caller is
-        // running on macOS (`InstallMethod::Unknown`) or Windows
-        // (`InstallMethod::WindowsMsi`) AND the platform-specific updater
-        // branch did not handle the install method. Surfaces a toast instead
-        // of silently attempting the legacy `.run` flow, which on these
-        // platforms would download an MSI/DMG and attempt to `chmod +x`/execve
-        // it. The `asset_url` binding is consumed here via the error message so
-        // it's not flagged as unused.
-        #[cfg(any(not(unix), target_os = "macos"))]
-        {
-            let msg = anyhow::anyhow!(
-                "Self-update for this platform is not yet available. Download the new \
-                 release manually from {asset_url}"
-            );
-            self.record_update_failure("legacy-dispatch", &msg, cx);
-        }
+        // All supported install methods must have returned above. Do not fall
+        // back to the retired `.run` executor: current releases do not ship it,
+        // and keeping a downloader plus chmod plus exec path around would be an
+        // avoidable update-chain risk.
+        let msg = anyhow::anyhow!(
+            "Self-update dispatch did not handle install method {:?}. Download the new release manually from {asset_url}",
+            method
+        );
+        self.record_update_failure("unsupported-dispatch", &msg, cx);
     }
 
     /// Best-effort background pre-install. Called once per polling cycle

@@ -18,6 +18,7 @@ fi
 LOCAL="$HOME/.local"
 APP="$LOCAL/paneflow.app"
 APP_OLD="$LOCAL/paneflow.app.old"
+APP_NEW="$LOCAL/paneflow.app.new.$$"
 BIN="$LOCAL/bin"
 APPS="$LOCAL/share/applications"
 ICONS="$LOCAL/share/icons/hicolor"
@@ -25,44 +26,61 @@ ICONS="$LOCAL/share/icons/hicolor"
 mkdir -p "$LOCAL" "$BIN" "$APPS"
 
 # --- atomic swap ---------------------------------------------------------
-# 1. If a previous install exists, rename it to .app.old (atomic).
-# 2. Copy new tree into $APP.
-# 3. On copy failure: .app.old is preserved. The user can recover with:
-#        rm -rf ~/.local/paneflow.app && mv ~/.local/paneflow.app.old ~/.local/paneflow.app
-# 4. On success: remove .app.old.
+# 1. Copy new tree into a sibling staging dir.
+# 2. Validate the staged binary exists and is executable.
+# 3. If a previous install exists, rename it to .app.old.
+# 4. Rename staging to $APP.
+# 5. On failure after step 3, restore .app.old to $APP.
+# 6. On success, remove .app.old.
 # ------------------------------------------------------------------------
 
-# If a stale .app.old exists from a prior failed install, refuse to clobber
-# it - the user should inspect/remove it manually.
+# If a prior install died after moving live to .old, restore it before doing
+# any new work. If both live and .old exist, refuse to guess which tree should
+# win.
 if [ -e "$APP_OLD" ]; then
-    echo "error: $APP_OLD already exists (from a prior failed install)." >&2
-    echo "       Inspect it, then run: rm -rf '$APP_OLD'" >&2
-    exit 1
+    if [ ! -e "$APP" ]; then
+        mv "$APP_OLD" "$APP"
+        echo "Recovered previous install from $APP_OLD" >&2
+    else
+        echo "error: $APP_OLD already exists next to a live install." >&2
+        echo "       Inspect it, then run: rm -rf '$APP_OLD'" >&2
+        exit 1
+    fi
 fi
 
 HAD_PREVIOUS=0
-if [ -e "$APP" ]; then
-    mv "$APP" "$APP_OLD"
-    HAD_PREVIOUS=1
-fi
 
 cleanup_on_failure() {
     status=$?
     if [ $status -ne 0 ]; then
+        rm -rf "$APP_NEW" || true
+        if [ "$HAD_PREVIOUS" -eq 1 ] && [ ! -e "$APP" ] && [ -e "$APP_OLD" ]; then
+            mv "$APP_OLD" "$APP" || true
+        fi
         echo "" >&2
-        echo "error: install failed mid-extraction." >&2
-        echo "       Incomplete files staged at: $APP" >&2
+        echo "error: install failed before promotion completed." >&2
         if [ "$HAD_PREVIOUS" -eq 1 ]; then
-            echo "       Previous install preserved at: $APP_OLD" >&2
-            echo "       Recover with:" >&2
-            echo "         rm -rf '$APP' && mv '$APP_OLD' '$APP'" >&2
+            echo "       Previous install was restored at: $APP" >&2
         fi
     fi
 }
 trap cleanup_on_failure EXIT
 
-mkdir -p "$APP"
-cp -R "$SCRIPT_DIR"/. "$APP"/
+rm -rf "$APP_NEW"
+mkdir -p "$APP_NEW"
+cp -R "$SCRIPT_DIR"/. "$APP_NEW"/
+
+if [ ! -x "$APP_NEW/bin/paneflow" ]; then
+    echo "error: staged install is missing executable $APP_NEW/bin/paneflow" >&2
+    exit 1
+fi
+
+if [ -e "$APP" ]; then
+    mv "$APP" "$APP_OLD"
+    HAD_PREVIOUS=1
+fi
+
+mv "$APP_NEW" "$APP"
 
 # Staging succeeded - clear the failure trap and remove the old backup.
 trap - EXIT

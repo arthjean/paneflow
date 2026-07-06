@@ -83,12 +83,17 @@ fn is_allowed_update_url(url: &str) -> bool {
 ///   `allow_insecure_http` (i.e. debug builds); release builds reject it.
 /// - anything else (other schemes, no scheme) → rejected.
 fn is_allowed_update_url_impl(url: &str, allow_insecure_http: bool) -> bool {
-    if let Some(rest) = url.strip_prefix("https://") {
-        let host = url_host(rest);
-        return is_loopback_host(host) || ALLOWED_UPDATE_HOSTS.contains(&host);
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return false;
+    };
+    let host = url_host(rest);
+    if scheme.eq_ignore_ascii_case("https") {
+        return is_loopback_host(host)
+            || ALLOWED_UPDATE_HOSTS
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(host));
     }
-    if let Some(rest) = url.strip_prefix("http://") {
-        let host = url_host(rest);
+    if scheme.eq_ignore_ascii_case("http") {
         return is_loopback_host(host) || allow_insecure_http;
     }
     false
@@ -122,7 +127,7 @@ fn url_host(after_scheme: &str) -> &str {
 /// string like `127.example.com` or `127.0.0.1.evil.com` does NOT match - the
 /// old `starts_with("127.")` prefix test let those bypass the https allow-list.
 fn is_loopback_host(host: &str) -> bool {
-    if host == "localhost" {
+    if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
     host.parse::<std::net::IpAddr>()
@@ -674,6 +679,10 @@ mod tests {
             false
         ));
         assert!(is_allowed_update_url_impl(
+            "HTTPS://API.GITHUB.COM/repos/ArthurDEV44/paneflow/releases/latest",
+            false
+        ));
+        assert!(is_allowed_update_url_impl(
             "https://github.com/ArthurDEV44/paneflow/releases/download/v1/x.tar.gz",
             false
         ));
@@ -713,6 +722,7 @@ mod tests {
         for url in [
             "http://127.0.0.1:8080/latest",
             "http://localhost:9000/latest",
+            "http://LOCALHOST:9000/latest",
             "http://127.0.0.1:1/latest",
         ] {
             assert!(

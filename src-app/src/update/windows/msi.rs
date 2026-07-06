@@ -34,7 +34,7 @@
 //! the enclosing crate is a single compile-closure. `msiexec.exe` only
 //! exists on Windows; the dispatcher only routes `InstallMethod::WindowsMsi`
 //! here, and that variant is produced solely by Windows path detection
-//! (`%ProgramFiles%\PaneFlow\` or `%LocalAppData%\Programs\PaneFlow\`),
+//! (`%ProgramFiles%\PaneFlow\`),
 //! so on Linux/macOS the function compiles but is runtime-unreachable.
 //!
 //! **The running-.exe-lock caveat.** Windows refuses to overwrite a
@@ -45,7 +45,6 @@
 //! "applications should be closed" dialog and ensures restart ownership
 //! is outside the process being replaced.
 
-use std::io::Read;
 #[cfg(target_os = "windows")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -58,6 +57,24 @@ use super::super::error::UpdateError;
 
 /// Upper bound on any single HTTP call (US-001).
 const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Relay should only wait briefly for the GUI process it spawned from to exit.
+/// If that process is still alive after this, continuing is safer than wedging
+/// the detached relay forever.
+#[cfg(target_os = "windows")]
+const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
+
+/// Native MSI execution can legitimately take minutes, but it must remain
+/// bounded so the relay eventually logs, cleans up, and relaunches the app.
+const MSIEXEC_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+
+#[cfg(target_os = "windows")]
+const WINDOWS_WAIT_SLICE_MS: u32 = 500;
+
+const NATIVE_STDOUT_CAP: u64 = 64 * 1024;
+
+#[cfg(target_os = "windows")]
+const WINDOWS_PUBLISHER_ORGANIZATION: &str = "Strivex";
 
 /// 500 MB ceiling on the MSI download. Real PaneFlow MSIs are ~60-100 MB;
 /// a malicious mirror returning an unbounded stream would otherwise fill
@@ -168,6 +185,8 @@ fn install_with(msi_path: &Path, log_path: &Path, runner: &dyn Msiexec) -> Resul
         Err(MsiexecError::SpawnFailed(e)) => {
             Err(e).context("spawn msiexec.exe")
         }
+        Err(MsiexecError::Timeout) => Err(anyhow::Error::new(UpdateError::Timeout)
+            .context(format!("msiexec exceeded {}s deadline", MSIEXEC_TIMEOUT.as_secs()))),
         Err(MsiexecError::NonZeroExit { code }) => Err(map_exit_code(code, log_path)),
     }
 }
@@ -423,6 +442,10 @@ fn run_msiexec_for_relay(
             append_relay_log(relay_log_path, &format!("spawn msiexec failed: {err:#}"));
             RelayInstallResult { exit_code: 1 }
         }
+        Err(MsiexecError::Timeout) => {
+            append_relay_log(relay_log_path, "msiexec timed out");
+            RelayInstallResult { exit_code: 124 }
+        }
         Err(MsiexecError::NonZeroExit { code }) => RelayInstallResult { exit_code: code },
     }
 }
@@ -466,9 +489,9 @@ fn run_elevated_msiexec_for_relay(
 
 #[cfg(target_os = "windows")]
 fn wait_for_parent_exit(parent_pid: u32, relay_log_path: &Path) {
-    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_FAILED, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
-    use windows_sys::Win32::System::Threading::{INFINITE, OpenProcess, WaitForSingleObject};
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
 
     // SAFETY: OpenProcess does not retain Rust pointers; parent_pid is the
     // process id passed by the GUI before it exits.
@@ -482,8 +505,15 @@ fn wait_for_parent_exit(parent_pid: u32, relay_log_path: &Path) {
     }
 
     append_relay_log(relay_log_path, &format!("waiting for parent {parent_pid}"));
-    // SAFETY: handle is a valid process handle from OpenProcess.
-    let wait_result = unsafe { WaitForSingleObject(handle, INFINITE) };
+    let started = std::time::Instant::now();
+    let mut wait_result;
+    loop {
+        // SAFETY: handle is a valid process handle from OpenProcess.
+        wait_result = unsafe { WaitForSingleObject(handle, WINDOWS_WAIT_SLICE_MS) };
+        if wait_result != WAIT_TIMEOUT || started.elapsed() >= PARENT_EXIT_TIMEOUT {
+            break;
+        }
+    }
     // SAFETY: handle is no longer used after this call.
     unsafe {
         let _ = CloseHandle(handle);
@@ -491,6 +521,14 @@ fn wait_for_parent_exit(parent_pid: u32, relay_log_path: &Path) {
 
     if wait_result == WAIT_OBJECT_0 {
         append_relay_log(relay_log_path, "parent exited");
+    } else if wait_result == WAIT_TIMEOUT {
+        append_relay_log(
+            relay_log_path,
+            &format!(
+                "parent {parent_pid} did not exit within {}s; continuing",
+                PARENT_EXIT_TIMEOUT.as_secs()
+            ),
+        );
     } else if wait_result == WAIT_FAILED {
         append_relay_log(relay_log_path, "parent wait failed; continuing");
     } else {
@@ -591,9 +629,9 @@ fn shell_execute_wait_elevated(
     args: &[std::ffi::OsString],
 ) -> std::result::Result<i32, ElevatedProcessError> {
     use std::ffi::OsStr;
-    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_FAILED, WAIT_OBJECT_0};
+    use windows_sys::Win32::Foundation::{CloseHandle, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT};
     use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, INFINITE, WaitForSingleObject,
+        GetExitCodeProcess, TerminateProcess, WaitForSingleObject,
     };
     use windows_sys::Win32::UI::Shell::{
         SEE_MASK_NO_CONSOLE, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
@@ -637,9 +675,34 @@ fn shell_execute_wait_elevated(
         )));
     }
 
-    // SAFETY: hProcess is owned by this SHELLEXECUTEINFOW result when
-    // SEE_MASK_NOCLOSEPROCESS succeeds. It is closed on every return path below.
-    let wait_result = unsafe { WaitForSingleObject(info.hProcess, INFINITE) };
+    let started = std::time::Instant::now();
+    let mut wait_result;
+    loop {
+        // SAFETY: hProcess is owned by this SHELLEXECUTEINFOW result when
+        // SEE_MASK_NOCLOSEPROCESS succeeds.
+        wait_result = unsafe { WaitForSingleObject(info.hProcess, WINDOWS_WAIT_SLICE_MS) };
+        if wait_result != WAIT_TIMEOUT || started.elapsed() >= MSIEXEC_TIMEOUT {
+            break;
+        }
+    }
+    if wait_result == WAIT_TIMEOUT {
+        // SAFETY: hProcess is a live process handle from ShellExecuteExW. A
+        // timeout means the relay cannot wait usefully anymore; terminate
+        // best-effort, then close the handle below.
+        unsafe {
+            let _ = TerminateProcess(info.hProcess, 1);
+        }
+        unsafe {
+            let _ = CloseHandle(info.hProcess);
+        }
+        return Err(ElevatedProcessError::WaitFailed(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            format!(
+                "elevated msiexec exceeded {}s deadline",
+                MSIEXEC_TIMEOUT.as_secs()
+            ),
+        )));
+    }
     if wait_result == WAIT_FAILED {
         let err = std::io::Error::last_os_error();
         unsafe {
@@ -788,7 +851,7 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Security::WinTrust::{
         WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO, WTD_CHOICE_FILE,
-        WTD_REVOKE_NONE, WTD_SAFER_FLAG, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY,
+        WTD_REVOKE_WHOLECHAIN, WTD_SAFER_FLAG, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY,
         WTD_UI_NONE, WinVerifyTrust,
     };
 
@@ -813,7 +876,7 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
     let mut data: WINTRUST_DATA = unsafe { std::mem::zeroed() };
     data.cbStruct = std::mem::size_of::<WINTRUST_DATA>() as u32;
     data.dwUIChoice = WTD_UI_NONE;
-    data.fdwRevocationChecks = WTD_REVOKE_NONE;
+    data.fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN;
     data.dwUnionChoice = WTD_CHOICE_FILE;
     // Writing a union field is safe (only reads are unsafe).
     data.Anonymous.pFile = &mut file_info;
@@ -831,8 +894,10 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
         )
     };
 
-    // Always run the CLOSE pass to free the provider state, regardless of
-    // the verify result.
+    let publisher_organization = (status == 0).then(|| windows_signer_organization(&data));
+
+    // Always run the CLOSE pass to free the provider state. Publisher
+    // inspection must happen before this pass because hWVTStateData is freed.
     data.dwStateAction = WTD_STATEACTION_CLOSE;
     // SAFETY: same data block; CLOSE frees `hWVTStateData`.
     unsafe {
@@ -844,40 +909,15 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
     }
 
     if status == 0 {
-        // ERROR_SUCCESS / S_OK → the signature chains to a trusted root.
-        //
-        // US-018 (DEFERRED - blocked on Azure provisioning): a *publisher
-        // pin* would slot in HERE, after chain validation succeeds and
-        // before returning Ok. With the chain already proven by
-        // WinVerifyTrust, comparing the leaf cert's subject is NOT a
-        // forgeable name compare (an attacker cannot get a trusted CA to
-        // issue a cert with our validated org subject) - the right pin for
-        // Azure Trusted Signing, whose certs auto-rotate (so a thumbprint
-        // pin is wrong; the stable identity is the subject CN/Organization).
-        //
-        // It is deferred, NOT skipped, because the pin value is not yet
-        // knowable: Azure Trusted Signing is not provisioned (signing is
-        // disabled across the CI matrix - see `.github/workflows/release.yml`
-        // and `run_tests.yml`; the 6 `AZURE_TRUSTED_SIGNING_*` secrets are
-        // empty and no signed MSI exists to pin against). Pinning an
-        // unconfirmed subject on a platform that cannot be compiled/tested on
-        // the Linux dev host would risk bricking the Windows update path the
-        // moment signing goes live (PRD Technical Considerations: pins "must
-        // not break existing signed releases' update path"). Until then,
-        // `WinVerifyTrust` fail-closed (an unsigned/untrusted MSI is rejected
-        // below) is the active guard.
-        //
-        // To land once Trusted Signing is live (confirm the subject from the
-        // issued cert, e.g. `signtool verify /v` or `Get-AuthenticodeSignature`):
-        //   1. After this `status == 0` check, extract the signer's leaf cert
-        //      via `WTHelperProvDataFromStateData(data.hWVTStateData)` +
-        //      `WTHelperGetProvSignerFromChain` + `WTHelperGetProvCertFromChain`
-        //      BEFORE the CLOSE pass frees the provider state.
-        //   2. Read the subject (`CertGetNameStringW`, CERT_NAME_SIMPLE_DISPLAY)
-        //      and compare against a pinned `const WINDOWS_PUBLISHER_SUBJECT`.
-        //   3. On mismatch, return the same `IntegrityMismatch` shape used below.
-        // Tracked as a follow-up in the EP-005 status record.
-        return Ok(());
+        let publisher =
+            publisher_organization.context("missing Windows publisher verification result")??;
+        if publisher == WINDOWS_PUBLISHER_ORGANIZATION {
+            return Ok(());
+        }
+        return Err(anyhow::Error::new(super::super::error::IntegrityMismatch {
+            expected: format!("Windows publisher O={WINDOWS_PUBLISHER_ORGANIZATION}"),
+            got: format!("Windows publisher O={publisher}"),
+        }));
     }
 
     // Any nonzero HRESULT (TRUST_E_NOSIGNATURE, TRUST_E_SUBJECT_NOT_TRUSTED,
@@ -888,6 +928,75 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
     }))
 }
 
+#[cfg(target_os = "windows")]
+fn windows_signer_organization(
+    data: &windows_sys::Win32::Security::WinTrust::WINTRUST_DATA,
+) -> Result<String> {
+    use windows_sys::Win32::Security::Cryptography::{
+        CERT_NAME_ATTR_TYPE, CertGetNameStringW, szOID_ORGANIZATION_NAME,
+    };
+    use windows_sys::Win32::Security::WinTrust::{
+        WTHelperGetProvCertFromChain, WTHelperGetProvSignerFromChain, WTHelperProvDataFromStateData,
+    };
+
+    // SAFETY: data.hWVTStateData is owned by WinVerifyTrust after a successful
+    // VERIFY pass and remains valid until the caller runs CLOSE.
+    let provider = unsafe { WTHelperProvDataFromStateData(data.hWVTStateData) };
+    if provider.is_null() {
+        bail!("WinVerifyTrust returned no provider state");
+    }
+    // SAFETY: provider is non-null and owned by the WinTrust provider state.
+    let signer = unsafe { WTHelperGetProvSignerFromChain(provider, 0, 0, 0) };
+    if signer.is_null() {
+        bail!("WinVerifyTrust returned no primary signer");
+    }
+    // SAFETY: signer is non-null and points into the provider state.
+    let cert = unsafe { WTHelperGetProvCertFromChain(signer, 0) };
+    if cert.is_null() {
+        bail!("WinVerifyTrust returned no signer certificate");
+    }
+    // SAFETY: cert is non-null and pCert points to a CERT_CONTEXT owned by the
+    // provider state until CLOSE.
+    let context = unsafe { (*cert).pCert };
+    if context.is_null() {
+        bail!("WinVerifyTrust signer certificate has no context");
+    }
+
+    let oid = szOID_ORGANIZATION_NAME as *const core::ffi::c_void;
+    // SAFETY: context is a live CERT_CONTEXT and oid is a static NUL-terminated
+    // C string for the organizationName attribute.
+    let required = unsafe {
+        CertGetNameStringW(
+            context,
+            CERT_NAME_ATTR_TYPE,
+            0,
+            oid,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if required <= 1 {
+        bail!("Windows signer certificate has no Organization attribute");
+    }
+    let mut buf = vec![0u16; required as usize];
+    // SAFETY: buf has the exact capacity requested by the probe call above.
+    let written = unsafe {
+        CertGetNameStringW(
+            context,
+            CERT_NAME_ATTR_TYPE,
+            0,
+            oid,
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+    };
+    if written == 0 {
+        bail!("read Windows signer Organization attribute");
+    }
+    let nul = buf.iter().position(|c| *c == 0).unwrap_or(buf.len());
+    Ok(String::from_utf16_lossy(&buf[..nul]))
+}
+
 /// Download the MSI, verify its detached **minisign** signature (US-001),
 /// and persist at `dest` on success. Mirrors the shared pattern in
 /// `targz.rs` / `macos/dmg.rs` - see them for rationale on each guard
@@ -895,73 +1004,13 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
 /// same-host `.sha256`, is the trust anchor and is checked **before**
 /// msiexec is ever invoked.
 fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
-    log::info!("self-update/msi: downloading {asset_url}");
-
-    // 1. Stream the MSI to `.partial` so a crashed download doesn't
-    // poison the cache. The `file` handle is scoped so its Drop runs
-    // before `remove_file` - Windows `DeleteFile` fails while a handle
-    // is open (ERROR_SHARING_VIOLATION).
-    let partial = append_suffix(dest, ".partial")?;
-    let mut response = ureq::get(asset_url)
-        .config()
-        .timeout_global(Some(UPDATE_HTTP_TIMEOUT))
-        .build()
-        .header(
-            "User-Agent",
-            &format!("paneflow/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .call()
-        .with_context(|| "Could not download update. Try again when online.".to_string())?;
-    if !response.status().is_success() {
-        bail!(
-            "Update download returned HTTP {}. Try again later.",
-            response.status()
-        );
-    }
-
-    let stream_result = {
-        let reader = response.body_mut().as_reader();
-        let mut reader = Read::take(reader, MAX_MSI_BYTES + 1);
-        let mut file = std::fs::File::create(&partial)
-            .with_context(|| format!("create {}", partial.display()))?;
-        std::io::copy(&mut reader, &mut file)
-            .context("stream MSI to disk")
-            .and_then(|written| {
-                // US-010: propagate a flush failure (ENOSPC) so the
-                // classifier renders DiskFull, not a downstream mismatch.
-                file.sync_all().context("flush MSI to disk")?;
-                Ok(written)
-            })
-    };
-    let written = match stream_result {
-        Ok(n) => n,
-        Err(e) => {
-            let _ = std::fs::remove_file(&partial);
-            return Err(e);
-        }
-    };
-    if written > MAX_MSI_BYTES {
-        let _ = std::fs::remove_file(&partial);
-        bail!(
-            "Update download exceeded {} MiB - aborting.",
-            MAX_MSI_BYTES / 1024 / 1024
-        );
-    }
-
-    // 2. Verify the detached minisign signature BEFORE msiexec runs.
-    // Fail-closed: a missing/invalid signature deletes the partial and bails
-    // with the typed `IntegrityMismatch` tag so the UX toast is specific
-    // ("corrupt or tampered"). This is the US-001 root-of-trust check that
-    // replaces the old same-host `.sha256`; US-005 adds `WinVerifyTrust` on
-    // the Authenticode chain as a second, OS-native layer.
-    if let Err(e) = super::super::signature::fetch_and_verify(&partial, asset_url) {
-        let _ = std::fs::remove_file(&partial);
-        return Err(e);
-    }
-
-    std::fs::rename(&partial, dest)
-        .with_context(|| format!("rename {} → {}", partial.display(), dest.display()))?;
-    Ok(())
+    super::super::verified_download::download_verified_asset(
+        asset_url,
+        dest,
+        MAX_MSI_BYTES,
+        UPDATE_HTTP_TIMEOUT,
+        "MSI",
+    )
 }
 
 /// Map a non-zero msiexec exit code onto the right `UpdateError` variant.
@@ -982,15 +1031,6 @@ fn map_exit_code(code: i32, log_path: &Path) -> anyhow::Error {
     }
 }
 
-fn append_suffix(path: &Path, suffix: &str) -> Result<PathBuf> {
-    let name = path
-        .file_name()
-        .with_context(|| format!("path has no file name: {}", path.display()))?;
-    let mut name = name.to_os_string();
-    name.push(suffix);
-    Ok(path.with_file_name(name))
-}
-
 /// Why `msiexec` failed. `NotFound` and `NonZeroExit` route to specific
 /// `UpdateError` variants; `SpawnFailed` is for the rare kernel-level
 /// spawn error (PROCESS_CREATE_FAILED etc.) that isn't semantically
@@ -1000,6 +1040,7 @@ fn append_suffix(path: &Path, suffix: &str) -> Result<PathBuf> {
 enum MsiexecError {
     NotFound,
     SpawnFailed(anyhow::Error),
+    Timeout,
     NonZeroExit { code: i32 },
 }
 
@@ -1020,27 +1061,26 @@ impl Msiexec for MsiexecProcessRunner {
     fn run_installer(&self, msi: &Path, log: &Path) -> std::result::Result<(), MsiexecError> {
         let msiexec = msiexec_exe().ok_or(MsiexecError::NotFound)?;
 
-        // US-005: stdout/stderr go to `Stdio::null()`, NOT `piped()`. With
-        // `.status()` (which never reads the pipes) a `piped()` child that
-        // writes enough to fill the OS pipe buffer would block forever -
-        // a latent deadlock. msiexec under `/qb` shows its own progress UI
-        // and writes everything we need to the `/l*v` verbose log file, so
-        // its console streams carry no information we consume. Discarding
-        // them removes the deadlock with zero diagnostic loss.
-        let out = Command::new(&msiexec)
-            .arg("/i")
+        // Bound the native installer with the same process-tree runner used
+        // by other external tools. It drains pipes while enforcing a deadline,
+        // so `msiexec` cannot wedge the relay forever.
+        let mut cmd = Command::new(&msiexec);
+        cmd.arg("/i")
             .arg(msi)
             .arg("/qb")
             .arg("/norestart")
             .arg("/l*v")
-            .arg(log)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|e| MsiexecError::SpawnFailed(anyhow::Error::new(e)))?;
+            .arg(log);
+        let out = paneflow_process::run_with_timeout(cmd, MSIEXEC_TIMEOUT, NATIVE_STDOUT_CAP)
+            .map_err(|e| match e {
+                paneflow_process::ProcError::Timeout => MsiexecError::Timeout,
+                paneflow_process::ProcError::Spawn(err)
+                | paneflow_process::ProcError::Wait(err) => {
+                    MsiexecError::SpawnFailed(anyhow::Error::new(err))
+                }
+            })?;
 
-        if out.success() {
+        if out.status.success() {
             return Ok(());
         }
         // `code()` is `None` only when the process was terminated by a
@@ -1048,7 +1088,7 @@ impl Msiexec for MsiexecProcessRunner {
         // subprocess we started synchronously, but fall back to -1 so
         // the classifier doesn't drop the error on the floor.
         Err(MsiexecError::NonZeroExit {
-            code: out.code().unwrap_or(-1),
+            code: out.status.code().unwrap_or(-1),
         })
     }
 }
@@ -1071,17 +1111,6 @@ fn msiexec_exe() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use std::cell::Cell;
-
-    // ── Pure helpers ─────────────────────────────────────────────────
-
-    #[test]
-    fn append_suffix_preserves_full_name() {
-        let p = PathBuf::from("C:\\Temp\\paneflow-update-1234.msi");
-        assert_eq!(
-            append_suffix(&p, ".partial").unwrap(),
-            PathBuf::from("C:\\Temp\\paneflow-update-1234.msi.partial")
-        );
-    }
 
     #[cfg(target_os = "windows")]
     #[test]

@@ -1124,9 +1124,10 @@ jobs:
       #   AZURE_TRUSTED_SIGNING_ENDPOINT / _ACCOUNT / _CERT_PROFILE
       #       - addressing for the code-signing account / cert profile
       #
-      # AC-5: when `signing_available` is false the step is skipped; the
-      # MSI still ships, unsigned, picked up by Stage Windows assets and
-      # reported in $GITHUB_STEP_SUMMARY by the banner step below.
+      # AC-5: when `signing_available` is false the Windows leg still
+      # builds, tests, and lints, but skips MSI packaging/signing/staging.
+      # The banner step below records that no Windows installer was
+      # published. We do not ship unsigned Windows installers.
       - name: Sign MSI
         id: sign_msi
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
@@ -1486,16 +1487,17 @@ jobs:
       # US-002: sign every shipped artifact with the project minisign key so
       # clients can verify downloads against the public key baked into their
       # binary (update/signature.rs). The detached `.minisig` siblings are
-      # picked up by `files: release-assets/*` below. No-op (with a CI warning)
-      # when the key is not yet provisioned - see docs/self-update-signing.md.
+      # picked up by `files: release-assets/*` below. Missing key is a hard
+      # release failure: clients with embedded keys verify fail-closed, so an
+      # unsigned release would publish unusable self-update assets.
       - name: Sign release artifacts (minisign)
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${MINISIGN_SECRET_KEY}" ]; then
-            echo "::warning::MINISIGN_SECRET_KEY not set - release artifacts will be UNSIGNED. Clients with an embedded key will refuse to self-update from this release. Provision the key per docs/self-update-signing.md."
-            exit 0
+            echo "::error::MINISIGN_SECRET_KEY is required. Clients with an embedded key refuse unsigned self-update assets."
+            exit 1
           fi
           # minisign is NOT packaged in Ubuntu 22.04 (jammy) - it only enters
           # the archive in 24.04 (noble, universe). Install the upstream

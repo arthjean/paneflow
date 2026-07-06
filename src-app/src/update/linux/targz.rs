@@ -25,7 +25,6 @@
 //! test `never_writes_outside_its_roots` which runs the whole flow under
 //! a `tempdir`.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -216,74 +215,13 @@ fn recover_and_clean_staging(app_dir: &Path, old_dir: &Path) -> Result<()> {
 /// don't want a half-written tarball to masquerade as a cached update on
 /// the next run.
 fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
-    log::info!("self-update/targz: downloading {asset_url}");
-
-    // 1. Stream the tarball to a `.partial` sibling so a crashed download
-    // doesn't poison the cache. `file` is scoped to this block so its handle
-    // is closed before any `remove_file` - on Windows `DeleteFile` fails with
-    // ERROR_SHARING_VIOLATION while a handle is open. US-001 AC7.
-    let partial = append_suffix(dest, ".partial")?;
-    let mut response = ureq::get(asset_url)
-        .config()
-        .timeout_global(Some(UPDATE_HTTP_TIMEOUT))
-        .build()
-        .header(
-            "User-Agent",
-            &format!("paneflow/{}", env!("CARGO_PKG_VERSION")),
-        )
-        .call()
-        .with_context(|| "Could not download update. Try again when online.".to_string())?;
-    if !response.status().is_success() {
-        bail!(
-            "Update download returned HTTP {}. Try again later.",
-            response.status()
-        );
-    }
-
-    let stream_result = {
-        let reader = response.body_mut().as_reader();
-        let mut reader = Read::take(reader, MAX_TARBALL_BYTES + 1);
-        let mut file = std::fs::File::create(&partial)
-            .with_context(|| format!("create {}", partial.display()))?;
-        std::io::copy(&mut reader, &mut file)
-            .context("stream tarball to disk")
-            .and_then(|written| {
-                // US-010: propagate a sync failure (e.g. ENOSPC surfacing
-                // only on flush) instead of swallowing it - the classifier
-                // needs the real io::Error to render DiskFull rather than a
-                // downstream "corrupt/tampered" misdiagnosis.
-                file.sync_all().context("flush tarball to disk")?;
-                Ok(written)
-            })
-    };
-    let written = match stream_result {
-        Ok(n) => n,
-        Err(e) => {
-            let _ = std::fs::remove_file(&partial);
-            return Err(e);
-        }
-    };
-    if written > MAX_TARBALL_BYTES {
-        let _ = std::fs::remove_file(&partial);
-        bail!(
-            "Update download exceeded {} MiB - aborting.",
-            MAX_TARBALL_BYTES / 1024 / 1024
-        );
-    }
-
-    // 2. Verify the detached minisign signature BEFORE the tarball is
-    // promoted to `dest` (and long before `extract_and_swap` touches it).
-    // Fail-closed: a missing/invalid signature deletes the partial and
-    // aborts. This is the US-001 root-of-trust check that replaces the old
-    // same-host `.sha256` sibling.
-    if let Err(e) = super::super::signature::fetch_and_verify(&partial, asset_url) {
-        let _ = std::fs::remove_file(&partial);
-        return Err(e);
-    }
-
-    std::fs::rename(&partial, dest)
-        .with_context(|| format!("rename {} → {}", partial.display(), dest.display()))?;
-    Ok(())
+    super::super::verified_download::download_verified_asset(
+        asset_url,
+        dest,
+        MAX_TARBALL_BYTES,
+        UPDATE_HTTP_TIMEOUT,
+        "tarball",
+    )
 }
 
 /// Extract `tarball` into `new_dir` (cleaning any stale tree first), then
@@ -524,38 +462,11 @@ fn find_single_top_level(dir: &Path) -> Result<PathBuf> {
     }
 }
 
-/// Append a suffix to the filename (not to the extension). `foo.tar.gz`
-/// + `.partial` → `foo.tar.gz.partial`, not `foo.tar.partial`.
-///
-/// Refuses paths that don't have a filename component (e.g. `/` or
-/// ending in `..`) rather than silently turning them into `/.partial`.
-fn append_suffix(path: &Path, suffix: &str) -> Result<PathBuf> {
-    let name = path
-        .file_name()
-        .with_context(|| format!("path has no file name: {}", path.display()))?;
-    let mut name = name.to_os_string();
-    name.push(suffix);
-    Ok(path.with_file_name(name))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     // ── Pure helpers ───────────────────────────────────────────────────
-
-    #[test]
-    fn append_suffix_preserves_full_name() {
-        assert_eq!(
-            append_suffix(Path::new("/tmp/foo.tar.gz"), ".partial").unwrap(),
-            PathBuf::from("/tmp/foo.tar.gz.partial")
-        );
-    }
-
-    #[test]
-    fn append_suffix_rejects_pathless_input() {
-        assert!(append_suffix(Path::new("/"), ".partial").is_err());
-    }
 
     #[test]
     fn staging_dirs_derives_sibling_paths() {
