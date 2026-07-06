@@ -17,7 +17,7 @@ impl PaneFlowApp {
     pub(crate) fn render_notifications_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let config = &self.cached_config;
-        let native_notifications = config.agent_panel.as_ref().is_none_or(|agent_panel| {
+        let native_notifications = config.agent_panel.as_ref().is_some_and(|agent_panel| {
             agent_panel.resolved_notify_when_agent_waiting() != NotifyWhenAgentWaiting::Never
         });
         let rosetta_enabled = config.rosetta_enabled();

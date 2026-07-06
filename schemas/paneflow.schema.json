@@ -219,8 +219,8 @@
     },
     "rosetta_enabled": {
       "type": ["boolean", "null"],
-      "description": "Master switch for the in-app Rosetta card. Null/true (default) enables Rosetta for supported modes; false hides only Rosetta while sidebar, Attention Queue, and OS notifications continue unchanged.",
-      "default": true
+      "description": "Master switch for the in-app Rosetta card. Null/false (default) keeps Rosetta hidden until the user explicitly enables it; true shows Rosetta for supported modes.",
+      "default": false
     },
     "rosetta_show_passive": {
       "type": ["boolean", "null"],
@@ -334,7 +334,7 @@
         "notify_when_agent_waiting": {
           "type": ["string", "null"],
           "enum": ["PrimaryScreen", "AllScreens", "Never", null],
-          "default": "PrimaryScreen"
+          "default": "Never"
         }
       }
     },

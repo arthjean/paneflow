@@ -54,7 +54,7 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `claude_code_bypass_permissions` | boolean or null | `false` | Adds Claude Code `--permission-mode bypassPermissions` when launching from Paneflow. |
 | `ai_unrestricted` | boolean or null | `false` | Allows trusted automation to submit via IPC without `PANEFLOW_IPC_SCRIPTING=1`. |
 | `ai_injection_fence` | boolean or null | `true` | Wraps pane reads in an untrusted-output fence. Keep enabled for AI conductors. |
-| `rosetta_enabled` | boolean or null | `true` | Enables the in-app Rosetta status card. |
+| `rosetta_enabled` | boolean or null | `false` | Enables the in-app Rosetta status card. |
 | `rosetta_show_passive` | boolean or null | `false` | Shows compact Rosetta rows for passive running agents. |
 | `telemetry` | object or null | unanswered | Opt-in desktop telemetry consent. No event is sent unless `telemetry.enabled` is `true`. |
 | `agent_panel` | object or null | defaults below | Agents-view display, profiles, and notification settings. |
@@ -119,7 +119,7 @@ CLI binary.
 | `agent_panel.thinking_display` | string or null | `Auto` | `Auto`, `Preview`, `AlwaysExpanded`, or `AlwaysCollapsed`. |
 | `agent_panel.profiles` | object | `{}` | Named agent launch profiles. |
 | `agent_panel.default_profile` | string or null | none | Profile selected by default. |
-| `agent_panel.notify_when_agent_waiting` | string or null | `PrimaryScreen` | `PrimaryScreen`, `AllScreens`, or `Never`. |
+| `agent_panel.notify_when_agent_waiting` | string or null | `Never` | `PrimaryScreen`, `AllScreens`, or `Never`. |
 
 Profile entries under `agent_panel.profiles` can set `agent`, `model`,
 `mode`, `effort`, and `tools`.
@@ -128,7 +128,7 @@ Profile entries under `agent_panel.profiles` can set `agent`, `model`,
 {
   "agent_panel": {
     "thinking_display": "Auto",
-    "notify_when_agent_waiting": "PrimaryScreen",
+    "notify_when_agent_waiting": "Never",
     "profiles": {
       "Write": {
         "agent": "codex",
@@ -285,14 +285,14 @@ unconditionally.
     "thinking_display": "Auto",
     "profiles": {},
     "default_profile": null,
-    "notify_when_agent_waiting": "PrimaryScreen"
+    "notify_when_agent_waiting": "Never"
   },
   "tool_permissions": {},
   "commands": [],
   "claude_code_bypass_permissions": false,
   "ai_unrestricted": false,
   "ai_injection_fence": true,
-  "rosetta_enabled": true,
+  "rosetta_enabled": false,
   "rosetta_show_passive": false,
   "claude_code_button_visible": null,
   "codex_button_visible": null,

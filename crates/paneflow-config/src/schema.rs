@@ -176,9 +176,9 @@ pub struct PaneFlowConfig {
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub ai_injection_fence: Option<bool>,
     /// EP-004 US-013 (Rosetta): master switch for the in-app Rosetta card.
-    /// `Some(false)` disables only Rosetta; sidebar dots, Attention Queue and
-    /// OS notifications keep their existing behavior. Missing or malformed
-    /// values resolve to ON so urgent agent states stay visible after upgrade.
+    /// `Some(false)` disables only Rosetta; sidebar dots and Attention Queue
+    /// keep their existing behavior. Missing or malformed values resolve to
+    /// OFF so in-app notification surfaces are user opt-in.
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub rosetta_enabled: Option<bool>,
     /// EP-004 US-013 (Rosetta): whether passive running-only rows may show the
@@ -414,10 +414,10 @@ impl PaneFlowConfig {
         self.ai_injection_fence.unwrap_or(true)
     }
 
-    /// EP-004 US-013 (Rosetta): resolve the master switch. Default ON so
-    /// upgrading users get urgent Rosetta states without editing config.
+    /// EP-004 US-013 (Rosetta): resolve the master switch. Default OFF so
+    /// the in-app notification surface stays user opt-in.
     pub fn rosetta_enabled(&self) -> bool {
-        self.rosetta_enabled.unwrap_or(true)
+        self.rosetta_enabled.unwrap_or(false)
     }
 
     /// EP-004 US-013 (Rosetta): resolve passive display. Default OFF keeps
@@ -850,10 +850,9 @@ pub struct AgentPanelConfig {
     pub default_profile: Option<String>,
     /// US-116: gates OS notifications fired when a turn ends, refuses,
     /// or errors out while Paneflow is not the foreground window.
-    /// `None` resolves to [`NotifyWhenAgentWaiting::PrimaryScreen`].
-    /// An unknown string deserialises to that same default via the
-    /// custom [`NotifyWhenAgentWaiting`] deserialiser (AC #2 / unhappy
-    /// path: invalid value never silently disables notifications).
+    /// `None` resolves to [`NotifyWhenAgentWaiting::Never`] so native
+    /// notifications are user opt-in. Unknown strings also fail closed
+    /// through the custom [`NotifyWhenAgentWaiting`] deserialiser.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notify_when_agent_waiting: Option<NotifyWhenAgentWaiting>,
 }
@@ -919,18 +918,17 @@ pub enum ThinkingDisplayMode {
 /// completes (or refuses / errors) while Paneflow is not foregrounded.
 ///
 /// Mirrors Zed's `NotifyWhenAgentWaiting` setting cited in §23 of
-/// `docs/ZED_AGENT_REFERENCE.md`. Default is
-/// [`NotifyWhenAgentWaiting::PrimaryScreen`]. PaneFlow currently routes
-/// through native OS notification APIs, which do not expose reliable
-/// per-display fan-out on every platform; `PrimaryScreen` and
-/// `AllScreens` therefore share the same foreground-window gate.
+/// `docs/ZED_AGENT_REFERENCE.md`. PaneFlow keeps the setting opt-in by
+/// defaulting to [`NotifyWhenAgentWaiting::Never`]. Native OS notification
+/// APIs do not expose reliable per-display fan-out on every platform;
+/// `PrimaryScreen` and `AllScreens` therefore share the same
+/// foreground-window gate.
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "PascalCase")]
 pub enum NotifyWhenAgentWaiting {
     /// Fire a notification only when Paneflow is not the focused window.
-    /// Kept as the default Zed-compatible spelling; native OS backends
-    /// do not guarantee a Paneflow-controlled primary-display filter.
-    #[default]
+    /// Native OS backends do not guarantee a Paneflow-controlled
+    /// primary-display filter.
     PrimaryScreen,
     /// Zed-compatible spelling for every-display popups. The native OS
     /// toast path currently treats this like `PrimaryScreen` because the
@@ -938,6 +936,7 @@ pub enum NotifyWhenAgentWaiting {
     AllScreens,
     /// Never fire a notification. Disables the entire US-116 surface;
     /// no DBus / NSNotification / WinRT toast call is issued.
+    #[default]
     Never,
 }
 
@@ -955,9 +954,9 @@ impl<'de> Deserialize<'de> for NotifyWhenAgentWaiting {
                 tracing::warn!(
                     target: "paneflow_config::agent_panel",
                     value = other,
-                    "agent_panel.notify_when_agent_waiting value not recognized, defaulting to PrimaryScreen",
+                    "agent_panel.notify_when_agent_waiting value not recognized, defaulting to Never",
                 );
-                Ok(Self::PrimaryScreen)
+                Ok(Self::Never)
             }
         }
     }
@@ -1007,11 +1006,10 @@ impl AgentPanelConfig {
     }
 
     /// Resolve the configured `notify_when_agent_waiting` to a concrete
-    /// gate, applying the [`NotifyWhenAgentWaiting::PrimaryScreen`]
-    /// default when the field is missing (US-116 AC #2). Unknown
-    /// strings are already filtered by the custom
-    /// [`NotifyWhenAgentWaiting`] deserialiser so the only mapping
-    /// needed here is `None` -> `PrimaryScreen`.
+    /// gate, applying the [`NotifyWhenAgentWaiting::Never`] default when
+    /// the field is missing. Unknown strings are already filtered by the
+    /// custom [`NotifyWhenAgentWaiting`] deserialiser so the only mapping
+    /// needed here is `None` -> `Never`.
     pub fn resolved_notify_when_agent_waiting(&self) -> NotifyWhenAgentWaiting {
         self.notify_when_agent_waiting.unwrap_or_default()
     }
@@ -1986,22 +1984,46 @@ mod tests {
     #[test]
     fn rosetta_settings_resolve_defaults_and_tolerate_garbage() {
         let cfg = PaneFlowConfig::default();
-        assert!(cfg.rosetta_enabled());
+        assert!(!cfg.rosetta_enabled());
         assert!(!cfg.rosetta_show_passive_enabled());
 
         let cfg: PaneFlowConfig =
-            serde_json::from_str(r#"{"rosetta_enabled": false, "rosetta_show_passive": false}"#)
+            serde_json::from_str(r#"{"rosetta_enabled": true, "rosetta_show_passive": false}"#)
                 .unwrap();
-        assert!(!cfg.rosetta_enabled());
+        assert!(cfg.rosetta_enabled());
         assert!(!cfg.rosetta_show_passive_enabled());
 
         let cfg: PaneFlowConfig = serde_json::from_str(
             r#"{"theme": "One Dark", "rosetta_enabled": "no", "rosetta_show_passive": 0}"#,
         )
         .unwrap();
-        assert!(cfg.rosetta_enabled());
+        assert!(!cfg.rosetta_enabled());
         assert!(!cfg.rosetta_show_passive_enabled());
         assert_eq!(cfg.theme.as_deref(), Some("One Dark"));
+    }
+
+    #[test]
+    fn agent_panel_notifications_are_opt_in_by_default() {
+        let cfg: AgentPanelConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(cfg.notify_when_agent_waiting.is_none());
+        assert_eq!(
+            cfg.resolved_notify_when_agent_waiting(),
+            NotifyWhenAgentWaiting::Never
+        );
+
+        let cfg: AgentPanelConfig =
+            serde_json::from_str(r#"{"notify_when_agent_waiting": "Bogus"}"#).unwrap();
+        assert_eq!(
+            cfg.resolved_notify_when_agent_waiting(),
+            NotifyWhenAgentWaiting::Never
+        );
+
+        let cfg: AgentPanelConfig =
+            serde_json::from_str(r#"{"notify_when_agent_waiting": "PrimaryScreen"}"#).unwrap();
+        assert_eq!(
+            cfg.resolved_notify_when_agent_waiting(),
+            NotifyWhenAgentWaiting::PrimaryScreen
+        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ pub(crate) fn fire_desktop_notification(
     executor: BackgroundExecutor,
 ) {
     let gate = config.agent_panel.as_ref().map_or(
-        NotifyWhenAgentWaiting::PrimaryScreen,
+        NotifyWhenAgentWaiting::Never,
         AgentPanelConfig::resolved_notify_when_agent_waiting,
     );
     if !should_fire_desktop_notification(gate, window_active()) {
