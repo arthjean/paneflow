@@ -450,8 +450,6 @@ mod native_material_tests {
 enum PanelCorner {
     TopLeft,
     TopRight,
-    BottomLeft,
-    BottomRight,
 }
 
 fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> impl IntoElement {
@@ -487,26 +485,6 @@ fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> impl IntoEl
                         point(left, top),
                         point(right, bottom - k),
                         point(left + k, top),
-                    );
-                }
-                PanelCorner::BottomLeft => {
-                    builder.move_to(point(left, top));
-                    builder.line_to(point(left, bottom));
-                    builder.line_to(point(right, bottom));
-                    builder.cubic_bezier_to(
-                        point(left, top),
-                        point(right - k, bottom),
-                        point(left, top + k),
-                    );
-                }
-                PanelCorner::BottomRight => {
-                    builder.move_to(point(right, top));
-                    builder.line_to(point(right, bottom));
-                    builder.line_to(point(left, bottom));
-                    builder.cubic_bezier_to(
-                        point(right, top),
-                        point(left + k, bottom),
-                        point(right, top + k),
                     );
                 }
             }
@@ -1498,8 +1476,8 @@ impl Render for PaneFlowApp {
             / crate::app::files_sidebar::FILES_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
         let secondary_sidebar_open = sessions_sidebar_mounted || files_sidebar_mounted;
-        // Every mode now renders the right area as ONE rounded-clipped panel
-        // (`panel_bg` fill + 16px rail-side radius + 5px inset), replacing the
+        // Every mode now renders the right area as ONE top-rounded clipped panel
+        // (`panel_bg` fill + 16px rail-side top radius + 5px inset), replacing the
         // old Cli/Diff corner-mask trick. GPUI clips the panel's bg fill to the
         // radius, so the window backdrop shows in the corner notch - a clean
         // radius on every platform (Linux, macOS, Windows Mica), where a solid
@@ -1919,7 +1897,7 @@ impl Render for PaneFlowApp {
                             .flex_col()
                             // Codex cockpit: every mode renders the right area as a
                             // floating panel - a slightly-lighter bg sitting on the
-                            // chrome-dark body row, with the rail-side corners
+                            // chrome-dark body row, with the rail-side top corner
                             // rounded. GPUI clips the panel's bg fill to the radius
                             // but NOT its children, so the 5px inset keeps opaque
                             // content (terminal cells, diff rows, settings cards)
@@ -1936,10 +1914,7 @@ impl Render for PaneFlowApp {
                                     .overflow_hidden()
                                     .bg(panel_bg)
                                     .rounded_tl(px(16.))
-                                    .rounded_bl(px(16.))
-                                    .when(secondary_sidebar_open, |d| {
-                                        d.rounded_tr(px(16.)).rounded_br(px(16.))
-                                    })
+                                    .when(secondary_sidebar_open, |d| d.rounded_tr(px(16.)))
                                     .p(px(5.))
                                     .child(main_content)
                                     .when_some(rosetta_surface, |d, surface| d.child(surface)),
@@ -1948,7 +1923,7 @@ impl Render for PaneFlowApp {
                             // mask, so rounded panel children can still paint
                             // square backgrounds in the corners. These masks
                             // restore the visual radius by painting the
-                            // surrounding chrome over those square corners.
+                            // surrounding chrome over the top square corners.
                             .child(
                                 div()
                                     .absolute()
@@ -1958,18 +1933,6 @@ impl Render for PaneFlowApp {
                                     .h(px(16.))
                                     .child(panel_corner_mask(
                                         PanelCorner::TopLeft,
-                                        panel_corner_mask_bg,
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .left_0()
-                                    .bottom_0()
-                                    .w(px(16.))
-                                    .h(px(16.))
-                                    .child(panel_corner_mask(
-                                        PanelCorner::BottomLeft,
                                         panel_corner_mask_bg,
                                     )),
                             )
@@ -1986,22 +1949,10 @@ impl Render for PaneFlowApp {
                                             panel_corner_mask_bg,
                                         )),
                                 )
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .right_0()
-                                        .bottom_0()
-                                        .w(px(16.))
-                                        .h(px(16.))
-                                        .child(panel_corner_mask(
-                                            PanelCorner::BottomRight,
-                                            panel_corner_mask_bg,
-                                        )),
-                                )
                             })
                             // Draw the panel contour. The right edge joins the
                             // contour only while a secondary sidebar is open,
-                            // giving the tabs/terminal matching corners on both
+                            // giving the tabs/terminal matching top corners on both
                             // sides without changing the normal full-width view.
                             .child(
                                 div()
@@ -2011,11 +1962,10 @@ impl Render for PaneFlowApp {
                                     .bottom_0()
                                     .top(panel_top)
                                     .rounded_tl(px(16.))
-                                    .rounded_bl(px(16.))
                                     .border_t_1()
                                     .border_l_1()
                                     .when(secondary_sidebar_open, |d| {
-                                        d.rounded_tr(px(16.)).rounded_br(px(16.)).border_r_1()
+                                        d.rounded_tr(px(16.)).border_r_1()
                                     })
                                     .border_color(panel_border),
                             ),
