@@ -592,6 +592,25 @@ mod tests {
     }
 
     #[test]
+    fn static_tool_manifests_match_runtime_tool_specs() {
+        let manifest_dir =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../mcps/paneflow/tools");
+
+        for spec in tool_specs() {
+            let name = spec["name"].as_str().expect("tool spec name");
+            let path = manifest_dir.join(format!("{name}.json"));
+            let manifest: Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(
+                manifest,
+                spec,
+                "static MCP manifest {} drifted from runtime tool_specs()",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
     fn list_panes_wraps_untrusted_metadata() {
         let t = FakeTransport::new().with(
             "surface.list",

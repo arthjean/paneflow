@@ -9,7 +9,7 @@ breaks" box. Referenced by US-021.
 step pushes you past that, check the step's troubleshooting box before
 plowing on - the runbook has probably already anticipated the failure.
 
-**Last validated on:** _pending - first end-to-end dry run at v0.2.0._
+**Last validated on:** _unknown - update this after the next release dry run._
 (Update this line every release so a returning maintainer knows the
 runbook has actually been exercised recently. See the "Dry-run
 validation" section at the bottom for the contract.)
@@ -46,7 +46,7 @@ ship to. Cross-reference `.github/workflows/release.yml`'s matrix.
 | `aarch64-apple-darwin` | **Active** | .dmg | Hard-required (gates the whole release) | - |
 | `x86_64-apple-darwin` | **Closed** | - | Removed from matrix entirely | Reopen only when Intel DMG signing is provisioned and the Homebrew cask is widened back to Intel |
 | `x86_64-pc-windows-msvc` | **Active** | signed .msi | Hard-required (gates the whole release) | - |
-| `aarch64-pc-windows-msvc` | **Closed - pending v0.3.0** | - | Not in matrix | Scope decision at v0.3.0 cut (Windows on ARM - real hardware is rare; evaluate demand before committing runner hours) |
+| `aarch64-pc-windows-msvc` | **Closed** | - | Not in matrix | Reopen only when GPUI DX11 ARM64 reliability, signing, and runner coverage are committed |
 
 **Interpretation:**
 - *Hard-required*: a failure blocks the release. The `Publish GitHub
@@ -54,10 +54,9 @@ ship to. Cross-reference `.github/workflows/release.yml`'s matrix.
 - *Best-effort*: in the matrix with `continue-on-error: true`.
   Catches Rust-level cross-compile regressions at PR time but a
   failure does NOT prevent the release from being published.
-- *Closed - pending vX.Y.Z*: deliberately not in the matrix. Restoring
-  the entry is tracked against the listed version's release PRD. Do
-  not silently re-add a closed target - adding back requires the
-  listed prerequisites AND a status update to this table.
+- *Closed*: deliberately not in the matrix. Do not silently re-add a
+  closed target - adding back requires the listed prerequisites AND a
+  status update to this table.
 
 **Closed target rule:** do not re-add `x86_64-apple-darwin` or
 `aarch64-pc-windows-msvc` as best-effort release legs. Reopening either
@@ -555,4 +554,5 @@ on: vX.Y.Z, YYYY-MM-DD") - keep that line updated every release so a
 maintainer returning after a long break knows the runbook still
 works.
 
-Last validated on: _pending - first dry run at v0.2.0_.
+Last validated on: _unknown - update after the next dry run with tag,
+date, workflow run, and smoke-test evidence_.

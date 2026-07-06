@@ -11,7 +11,6 @@
     "scripts",
     "debian",
     "keys",
-    "schemas",
     "assets",
     ".github"
   ],
@@ -31,9 +30,9 @@
   ],
   "rules": [
     "Paneflow is a GPU-native terminal multiplexer rendered via GPUI (Zed's Rust UI framework). It is NOT a TUI and NOT an Electron app.",
-    "Configuration lives in paneflow.json under ~/.config/paneflow/. Config keys (default_shell, theme, window_decorations, shortcuts, commands) are English and must never be translated or renamed.",
+    "Configuration lives in paneflow.json: ~/.config/paneflow/ on Linux, ~/Library/Application Support/paneflow/ on macOS, and %APPDATA%\\paneflow\\ on Windows. Config keys are English and must never be translated or renamed.",
     "Keybinding strings use Ctrl/Alt/Shift modifier names verbatim (e.g. Ctrl+Shift+D).",
-    "Paneflow is free and open source under GPL-3.0. There is no paid tier, no login, no telemetry, no backend.",
+    "Paneflow is free and open source under GPL-3.0. There is no paid tier, no login, and no hosted backend. Desktop telemetry is disabled unless the user explicitly opts in, never includes terminal contents/prompts/paths, and PANEFLOW_NO_TELEMETRY=1 disables it unconditionally.",
     "Paneflow ships native builds for Linux, macOS Apple Silicon, and Windows x64. Windows ARM64 and macOS Intel are not shipped today.",
     "The live documentation is at https://paneflow.dev/docs. Raw Markdown twins of every docs page are served at the page URL plus .md (e.g. https://paneflow.dev/docs/installation/linux.md)."
   ],

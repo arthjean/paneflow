@@ -1525,6 +1525,21 @@ mod tests {
         keys.iter().map(|key| (*key).to_string()).collect()
     }
 
+    fn assert_doc_mentions_property_keys(doc: &str, value: &serde_json::Value, context: &str) {
+        for key in value
+            .as_object()
+            .expect("expected schema properties")
+            .keys()
+        {
+            let needle = format!("`{key}`");
+            let dotted = format!("`{context}.{key}`");
+            assert!(
+                doc.contains(&needle) || doc.contains(&dotted),
+                "configuration docs do not mention public schema key {context}.{key}"
+            );
+        }
+    }
+
     #[test]
     fn public_json_schema_covers_every_config_field() {
         let mut permissions = HashMap::new();
@@ -1705,6 +1720,76 @@ mod tests {
             object_keys(&serialized_command["workspace"]["layout"]["surfaces"][0]),
             object_keys(&schema["definitions"]["surface"]["properties"]),
             "SurfaceDefinition and public JSON Schema drifted"
+        );
+    }
+
+    #[test]
+    fn public_configuration_schema_doc_mentions_schema_keys() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let schema_path = root.join("schemas/paneflow.schema.json");
+        let doc_path = root.join("docs/user/configuration/schema.md");
+        let schema: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(schema_path).unwrap()).unwrap();
+        let doc = std::fs::read_to_string(doc_path).unwrap();
+
+        assert_doc_mentions_property_keys(&doc, &schema["properties"], "top-level");
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["properties"]["terminal"]["properties"],
+            "terminal",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["properties"]["agent_panel"]["properties"],
+            "agent_panel",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["profileConfig"]["properties"],
+            "profileConfig",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["toolPermissionsEntry"]["properties"],
+            "toolPermissionsEntry",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["commandDefinition"]["properties"],
+            "commandDefinition",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["workspaceDefinition"]["properties"],
+            "workspaceDefinition",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["layoutNode"]["oneOf"][0]["properties"],
+            "paneLayoutNode",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["layoutNode"]["oneOf"][1]["properties"],
+            "splitLayoutNode",
+        );
+        assert_doc_mentions_property_keys(
+            &doc,
+            &schema["definitions"]["surface"]["properties"],
+            "surface",
+        );
+
+        assert!(
+            doc.contains("| `font_size` | number or null | `13.0` |"),
+            "configuration docs must publish the runtime font_size default"
+        );
+        assert!(
+            doc.contains("| `line_height` | number or null | `1.2` |"),
+            "configuration docs must publish the runtime line_height default"
+        );
+        assert!(
+            doc.contains("Windows: configured -> `pwsh.exe` -> `powershell.exe`"),
+            "configuration docs must describe the Windows shell fallback chain"
         );
     }
 

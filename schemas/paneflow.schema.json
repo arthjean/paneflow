@@ -17,7 +17,7 @@
     },
     "default_shell": {
       "type": ["string", "null"],
-      "description": "Shell binary path. When null or omitted, falls back to $SHELL, then /bin/sh on Unix, then %COMSPEC% on Windows."
+      "description": "Shell binary path. When null or omitted, Unix falls back to $SHELL then /bin/sh. Windows falls back to PowerShell 7 (pwsh.exe), Windows PowerShell 5.1 (powershell.exe), %ComSpec%, C:\\Windows\\System32\\cmd.exe, then bare cmd.exe."
     },
     "theme": {
       "type": ["string", "null"],
