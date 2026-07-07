@@ -7,7 +7,8 @@
     - paneflow.exe at the install root (no `bin` subdirectory - matches
       the PRD `%ProgramFiles%\PaneFlow\paneflow.exe` detection rule
       used by `InstallMethod::WindowsMsi` in US-010).
-    - Start Menu shortcut under "PaneFlow".
+    - Start Menu shortcut under "PaneFlow", using the target exe icon so
+      taskbar pins keep a stable icon path across major upgrades.
     - ARP (Add or Remove Programs) entry with publisher "Strivex" and
       the multi-resolution icon at `packaging/wix/paneflow.ico`.
     - User config at %APPDATA%\paneflow\ is preserved on uninstall
@@ -130,13 +131,17 @@
             <Directory Id='ProgramMenuFolder'>
                 <Directory Id='ApplicationProgramsFolder' Name='PaneFlow'>
                     <Component Id='ApplicationShortcut' Guid='E369E12B-8CFA-4A4E-BDBF-5EA5BD50DA28'>
+                        <!-- Do not set Shortcut/@Icon here. WiX Icon table
+                             paths resolve through C:\Windows\Installer and
+                             include the ProductCode, so taskbar pins copied
+                             from this shortcut can keep a stale icon after a
+                             major upgrade. Let Explorer use paneflow.exe's
+                             embedded icon instead. -->
                         <Shortcut Id='ApplicationStartMenuShortcut'
                                   Name='PaneFlow'
                                   Description='Run coding agents in parallel'
                                   Target='[APPLICATIONFOLDER]paneflow.exe'
-                                  WorkingDirectory='APPLICATIONFOLDER'
-                                  Icon='PaneflowICO'
-                                  IconIndex='0'>
+                                  WorkingDirectory='APPLICATIONFOLDER'>
                             <ShortcutProperty Key='System.AppUserModel.ID' Value='Strivex.PaneFlow'/>
                         </Shortcut>
                         <!-- RemoveFolder keeps the uninstall clean; the

@@ -10,14 +10,11 @@ use gpui::BackgroundExecutor;
 use paneflow_config::schema::{AgentPanelConfig, NotifyWhenAgentWaiting, PaneFlowConfig};
 
 use crate::agent_launcher::TerminalAgent;
+#[cfg(target_os = "windows")]
+use crate::windows_app_identity::PANEFLOW_WINDOWS_AUMID;
 
 const NOTIFICATION_DETAIL_CAP_CHARS: usize = 512;
 
-/// Stable Windows AppUserModelID. The WiX Start Menu shortcut mirrors this in
-/// `packaging/wix/main.wxs`; the dev/unpackaged path also registers it under
-/// HKCU\Software\Classes\AppUserModelId before showing a toast.
-#[cfg(target_os = "windows")]
-const PANEFLOW_WINDOWS_AUMID: &str = "Strivex.PaneFlow";
 #[cfg(target_os = "windows")]
 const PANEFLOW_WINDOWS_NOTIFICATION_ICON_ASSET: &str = "icons/paneflow.png";
 #[cfg(target_os = "windows")]
@@ -191,7 +188,7 @@ fn show_desktop_notification(notification: DesktopNotification) -> Result<(), St
 
     #[cfg(target_os = "windows")]
     {
-        let _ = ensure_windows_process_app_user_model_id();
+        let _ = crate::windows_app_identity::ensure_process_app_user_model_id();
         let _ = ensure_windows_app_user_model_id_registered();
         builder.app_id(PANEFLOW_WINDOWS_AUMID);
     }
@@ -214,22 +211,6 @@ fn notification_urgency_for_platform(urgency: DesktopNotificationUrgency) -> not
             DesktopNotificationUrgency::Normal => notify_rust::Urgency::Normal,
             DesktopNotificationUrgency::Critical => notify_rust::Urgency::Critical,
         }
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn ensure_windows_process_app_user_model_id() -> Result<(), String> {
-    let app_id = windows_wide_null(PANEFLOW_WINDOWS_AUMID);
-    let result = unsafe {
-        windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr())
-    };
-    if result < 0 {
-        Err(format!(
-            "SetCurrentProcessExplicitAppUserModelID({PANEFLOW_WINDOWS_AUMID}) returned HRESULT 0x{:08X}",
-            result as u32
-        ))
-    } else {
-        Ok(())
     }
 }
 
@@ -280,11 +261,6 @@ fn ensure_windows_notification_icon() -> Result<std::path::PathBuf, String> {
             .map_err(|err| format!("write notification icon {}: {err}", icon_path.display()))?;
     }
     Ok(icon_path)
-}
-
-#[cfg(target_os = "windows")]
-fn windows_wide_null(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 #[cfg(test)]

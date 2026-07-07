@@ -66,6 +66,7 @@ mod ui_primitives;
 mod update;
 mod widgets;
 mod window_chrome;
+mod windows_app_identity;
 mod workspace;
 
 use crate::window_chrome::title_bar;
@@ -2710,6 +2711,11 @@ fn main() {
         Err(e) => log::warn!(
             "paneflow: MCP bridge extraction failed ({e:#}); `paneflow mcp install` will be unavailable until resolved"
         ),
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Err(err) = windows_app_identity::ensure_process_app_user_model_id() {
+        log::warn!("paneflow: Windows app identity setup failed: {err}");
     }
 
     application()
