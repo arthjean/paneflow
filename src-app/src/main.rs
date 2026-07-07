@@ -38,6 +38,7 @@ mod command_sessions;
 mod config_writer;
 mod diff;
 mod editor;
+mod external_open;
 mod fonts;
 mod ipc;
 mod ipc_events;
@@ -1771,7 +1772,9 @@ impl Render for PaneFlowApp {
                 }),
             )
             .on_action(cx.listener(|_this: &mut Self, _: &OpenHelp, _window, _cx| {
-                if let Err(e) = open::that("https://github.com/ArthurDEV44/paneflow#readme") {
+                if let Err(e) =
+                    crate::external_open::open_url("https://github.com/ArthurDEV44/paneflow#readme")
+                {
                     log::warn!("Help > PaneFlow Help: could not open browser: {e}");
                 }
             }))
@@ -2446,6 +2449,10 @@ fn main() {
     #[cfg(unix)]
     if args.get(1).map(String::as_str) == Some(agents::parent_guard::PTY_GUARD_SUBCOMMAND) {
         std::process::exit(agents::parent_guard::run_pty_guard_from_args(&args));
+    }
+    #[cfg(target_os = "windows")]
+    if external_open::is_open_url_helper_invocation(&args) {
+        std::process::exit(external_open::run_open_url_helper_from_args(&args));
     }
     #[cfg(windows)]
     let is_msi_relay = update::windows::msi::is_relay_invocation(&args);

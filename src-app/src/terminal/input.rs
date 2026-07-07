@@ -699,7 +699,9 @@ impl TerminalView {
                 });
             }
             HyperlinkSource::Osc8 | HyperlinkSource::Regex => {
-                let _ = open::that(&link.uri);
+                if let Err(err) = crate::external_open::open_url(&link.uri) {
+                    log::warn!("terminal: open URL failed: {err}");
+                }
             }
         }
     }

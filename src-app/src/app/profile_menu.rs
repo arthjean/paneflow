@@ -28,7 +28,7 @@ type TitleBarMenuClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut gpui::App) + 
 
 impl PaneFlowApp {
     fn open_help_url(&mut self, url: &'static str, cx: &mut Context<Self>) {
-        if let Err(err) = open::that(url) {
+        if let Err(err) = crate::external_open::open_url(url) {
             log::warn!("help menu: open URL failed: {err}");
             self.show_toast(format!("Could not open URL: {err}"), cx);
         }

@@ -555,16 +555,14 @@ impl PaneFlowApp {
                                         let ui = crate::theme::ui_colors();
                                         s.bg(ui.surface)
                                     })
-                                    // US-011 AC4/5/6 + AC7: delegate to the
-                                    // `open` crate which already dispatches
-                                    // per-OS - `xdg-open` subprocess on
-                                    // Linux, `open` subprocess on macOS,
-                                    // and `ShellExecuteW` (Win32 API call,
-                                    // NOT a `cmd /C start ""` subprocess)
-                                    // on Windows.
+                                    // Open via Paneflow's URL launcher so
+                                    // Windows browsers break away from the
+                                    // kill-on-close Job Object.
                                     .on_click(cx.listener(
                                         move |this, _: &ClickEvent, _w, cx| {
-                                            if let Err(err) = open::that(&url) {
+                                            if let Err(err) =
+                                                crate::external_open::open_url(&url)
+                                            {
                                                 let msg = if err.kind()
                                                     == std::io::ErrorKind::NotFound
                                                 {

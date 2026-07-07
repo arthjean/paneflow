@@ -519,7 +519,9 @@ impl PaneFlowApp {
             Some(update::checker::UpdateStatus::Available { url, .. }) => {
                 // No Linux asset on this release (edge case: draft, mis-tagged).
                 // Fall back to opening the release page so the user can grab it.
-                let _ = open::that(url);
+                if let Err(err) = crate::external_open::open_url(url) {
+                    log::warn!("self-update: open release page failed: {err}");
+                }
                 return;
             }
             _ => return,
