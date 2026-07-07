@@ -63,6 +63,16 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.7.8" date="2026-07-07">
+      <description>
+        <p>Theme, Windows launch, and interface polish update.</p>
+        <ul>
+          <li>Vercel, Claude, and Cursor theme presets added with bundled Geist and Geist Mono fonts</li>
+          <li>Windows browser, editor, folder, taskbar, Start Menu, and notification launch behavior hardened</li>
+          <li>Terminal hyperlink hover and sidebar diff stats simplified for cleaner daily use</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.7" date="2026-07-06">
       <description>
         <p>Major control-plane, terminal, and release-hardening update.</p>
