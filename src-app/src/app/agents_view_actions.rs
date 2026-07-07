@@ -2303,9 +2303,8 @@ fn open_agents_cwd_auto(path: &std::path::Path) -> Result<String, String> {
 }
 
 fn open_agents_cwd_with_system_handler(path: &std::path::Path) -> Result<String, String> {
-    open::that(path)
+    crate::app::workspace_ops::open_folder_in_file_manager(path)
         .map(|_| "System default".to_string())
-        .map_err(|err| format!("Could not open folder: {err}"))
 }
 
 fn spawn_agents_editor(path: &std::path::Path, command: &str, label: &str) -> Result<(), String> {

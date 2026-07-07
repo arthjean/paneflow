@@ -13,7 +13,9 @@ use gpui::{AppContext, Context, PathPromptOptions, Pixels, Point, Window};
 
 use super::state::{AgentsContextMenu, AgentsDeleteTarget, AgentsRenameTarget};
 use crate::PaneFlowApp;
-use crate::app::workspace_ops::{resolve_editor_binary, reveal_in_file_manager};
+use crate::app::workspace_ops::{
+    editor_toast_label, resolve_editor_binary, reveal_in_file_manager,
+};
 use crate::widgets::text_area::TextArea;
 
 impl PaneFlowApp {
@@ -792,13 +794,14 @@ impl PaneFlowApp {
         };
         let cwd = project.cwd.clone();
         let bin = resolve_editor_binary(command);
+        let toast_label = editor_toast_label(label);
         if let Err(err) = std::process::Command::new(&bin)
             .current_dir(&cwd)
             .arg(".")
             .spawn()
         {
-            log::warn!("agents-sidebar: open in {label} failed: {err}");
-            self.show_toast(format!("Couldn't open in {label}: {err}"), cx);
+            log::warn!("agents-sidebar: open in {toast_label} failed: {err}");
+            self.show_toast(format!("Couldn't open in {toast_label}: {err}"), cx);
         }
         self.agents_view.agents_menu_open = None;
         cx.notify();
