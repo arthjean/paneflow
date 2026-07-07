@@ -27,14 +27,8 @@ pub(crate) const DEFAULT_LINE_HEIGHT: f32 = 1.2;
 pub(crate) const DEFAULT_CELL_WIDTH: f32 = 0.6;
 pub(crate) const DEFAULT_FONT_WEIGHT_KEY: &str = "normal";
 
-/// Preferred terminal/code font when installed on the host system.
-///
-/// The `NFM` face is the mono-width Nerd Font build, so it keeps terminal
-/// cell geometry predictable while covering prompt icons out of the box.
-pub(crate) const PREFERRED_MONO_FAMILY: &str = "JetBrainsMono NFM";
-
-/// Embedded monospace family - the bundled cross-platform fallback. Files:
-/// `assets/fonts/Lilex-{Regular,Bold,Italic,BoldItalic}.ttf`,
+/// Embedded monospace family - the bundled cross-platform default. Files:
+/// `assets/fonts/GeistMono-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`,
 /// registered with GPUI at startup (`main.rs` → `Assets::load_fonts` →
 /// `cx.text_system().add_fonts`).
 ///
@@ -46,17 +40,15 @@ pub(crate) const PREFERRED_MONO_FAMILY: &str = "JetBrainsMono NFM";
 /// so the system primary "renders" zero glyphs and nothing falls through. With
 /// an embedded family as primary, GPUI's text system owns the font tables
 /// end-to-end and rasterization always works.
-pub(crate) const EMBEDDED_MONO_FAMILY: &str = "Lilex";
+pub(crate) const EMBEDDED_MONO_FAMILY: &str = "Geist Mono";
+pub(crate) const LEGACY_EMBEDDED_MONO_FAMILY: &str = "Lilex";
 
 /// Embedded UI/sans family. Files:
-/// `assets/fonts/IBMPlexSans-{Regular,SemiBold,Italic,SemiBoldItalic}.ttf`.
-/// Mirrors Zed's `.ZedSans` → "IBM Plex Sans" alias. Currently used
-/// only in the Paneflow font fallback chain (so missing UI glyphs
-/// like e.g. extended Latin diacritics fall through to a known-good
-/// embedded font); a future split where the sidebar/tabs use sans
-/// while the terminal stays mono would set `.PaneflowSans` as the
-/// `ui_font_family` config root.
-pub(crate) const EMBEDDED_SANS_FAMILY: &str = "IBM Plex Sans";
+/// `assets/fonts/Geist-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`.
+/// Used as Paneflow's primary UI family and as the `.PaneflowSans`
+/// config alias target. The terminal stays mono by default; this
+/// sans target exists for explicit user config and GPUI fallback.
+pub(crate) const EMBEDDED_SANS_FAMILY: &str = "Geist";
 
 /// Paneflow-side virtual font aliases. Mirror Zed's `.ZedMono` /
 /// `.ZedSans` pattern from `crates/gpui/src/text_system.rs:1167-1173`,
@@ -64,9 +56,9 @@ pub(crate) const EMBEDDED_SANS_FAMILY: &str = "IBM Plex Sans";
 /// before the family name reaches GPUI - GPUI's pinned rev does not
 /// know about Paneflow-specific aliases.
 ///
-/// Users can write either the alias (`".PaneflowMono"`) or the
-/// concrete name (`"Lilex"`) in `paneflow.json`; both resolve to the
-/// same embedded TTF. Keeping the alias available lets a future swap
+/// Users can write either an alias (`".PaneflowMono"` / `".PaneflowSans"`) or
+/// a concrete embedded family (`"Geist Mono"` / `"Geist"`) in `paneflow.json`.
+/// Keeping the alias available lets a future swap
 /// of the bundled fallback happen with a single edit to this constant
 /// table instead of a config migration for every user.
 pub(crate) const PANEFLOW_MONO_ALIAS: &str = ".PaneflowMono";
@@ -107,10 +99,10 @@ fn expand_paneflow_alias(name: &str) -> &str {
 // Font for Starship / oh-my-posh / Terminal-Icons glyphs that no Windows
 // system font carries), and `None` otherwise - never a hardcoded chain.
 //
-// Glyph fallback for codepoints Lilex doesn't cover (emoji, CJK,
+// Glyph fallback for codepoints Geist Mono doesn't cover (emoji, CJK,
 // symbols) still works: GPUI walks its built-in `fallback_font_stack`
-// - which already ships `.ZedMono` (resolves to Lilex, which we
-// embed), `.ZedSans` (resolves to IBM Plex Sans, which we embed),
+// - which already ships `.ZedMono` (resolves to Lilex, which we still
+// embed), `.ZedSans` (resolves to IBM Plex Sans, which we historically embed),
 // then OS-canonical sans like Helvetica / Segoe UI / Arial. That
 // chain is global, not per-`Font`, so it does NOT pollute the
 // per-Font CTFont cascade list.
@@ -223,26 +215,19 @@ static FONT_CONFIG_CACHE: std::sync::Mutex<Option<CachedFontConfig>> = std::sync
 static DEFAULT_MONO_FAMILY: LazyLock<&'static str> =
     LazyLock::new(|| select_default_font_family(crate::fonts::load_mono_fonts()));
 
-fn select_default_font_family<I, S>(available_families: I) -> &'static str
+fn select_default_font_family<I, S>(_available_families: I) -> &'static str
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
-    if available_families
-        .into_iter()
-        .any(|family| family.as_ref() == PREFERRED_MONO_FAMILY)
-    {
-        PREFERRED_MONO_FAMILY
-    } else {
-        EMBEDDED_MONO_FAMILY
-    }
+    EMBEDDED_MONO_FAMILY
 }
 
 /// The default monospace family PaneFlow uses out of the box.
 ///
-/// Prefers JetBrainsMono NFM when it is installed, then falls back to bundled
-/// Lilex. The fallback keeps fresh installs cross-platform and avoids the Core
-/// Text empty-raster failure documented by commit c3e2331.
+/// Uses bundled Geist Mono so fresh installs are visually consistent across
+/// Linux, macOS, and Windows while avoiding the Core Text empty-raster failure
+/// documented by commit c3e2331.
 ///
 /// Users can still override with any system font via
 /// `paneflow.json#font_family` - `resolve_font_family` validates the
@@ -263,11 +248,12 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
     // registers them directly with GPUI's text system at boot,
     // bypassing the OS font enumeration registry. Short-circuit before
     // the INSTALLED_MONO_FONTS lookup, which only sees system fonts.
-    // IBM Plex Mono is also embedded and remains a valid explicit choice.
-    // JetBrainsMono NFM is a preferred system default, so it flows through
-    // normal system-font resolution when installed.
+    // Lilex and IBM Plex Mono are also embedded and remain valid explicit
+    // choices. Installed families flow through normal system-font resolution.
     if candidate == EMBEDDED_MONO_FAMILY
+        || candidate == LEGACY_EMBEDDED_MONO_FAMILY
         || candidate == EMBEDDED_SANS_FAMILY
+        || candidate == "IBM Plex Sans"
         || candidate == "IBM Plex Mono"
     {
         return candidate.to_string();
@@ -715,13 +701,13 @@ mod tests {
     #[test]
     fn expand_paneflow_alias_resolves_mono_alias() {
         assert_eq!(expand_paneflow_alias(".PaneflowMono"), EMBEDDED_MONO_FAMILY);
-        assert_eq!(expand_paneflow_alias(".PaneflowMono"), "Lilex");
+        assert_eq!(expand_paneflow_alias(".PaneflowMono"), "Geist Mono");
     }
 
     #[test]
     fn expand_paneflow_alias_resolves_sans_alias() {
         assert_eq!(expand_paneflow_alias(".PaneflowSans"), EMBEDDED_SANS_FAMILY);
-        assert_eq!(expand_paneflow_alias(".PaneflowSans"), "IBM Plex Sans");
+        assert_eq!(expand_paneflow_alias(".PaneflowSans"), "Geist");
     }
 
     #[test]
@@ -753,44 +739,43 @@ mod tests {
         // Both aliases must resolve through to their embedded targets
         // - the value GPUI's `text_system().resolve_font` will look
         // up against the registered TTFs.
-        assert_eq!(resolve_font_family(Some(".PaneflowMono")), "Lilex");
-        assert_eq!(resolve_font_family(Some(".PaneflowSans")), "IBM Plex Sans");
+        assert_eq!(resolve_font_family(Some(".PaneflowMono")), "Geist Mono");
+        assert_eq!(resolve_font_family(Some(".PaneflowSans")), "Geist");
     }
 
     #[test]
     fn resolve_font_family_short_circuits_embedded_concrete_names() {
-        // Users who write `"Lilex"` or `"IBM Plex Sans"` in
+        // Users who write `"Geist Mono"`, `"Lilex"`, `"Geist"`, or
+        // `"IBM Plex Sans"` in
         // paneflow.json get the embedded font even on platforms whose
         // INSTALLED_MONO_FONTS registry doesn't list them (Windows
         // pre-DirectWrite, container without fontconfig). The short
         // circuit before the registry lookup is what makes that work.
+        assert_eq!(resolve_font_family(Some("Geist Mono")), "Geist Mono");
         assert_eq!(resolve_font_family(Some("Lilex")), "Lilex");
+        assert_eq!(resolve_font_family(Some("Geist")), "Geist");
         assert_eq!(resolve_font_family(Some("IBM Plex Sans")), "IBM Plex Sans");
     }
 
     #[test]
-    fn select_default_font_family_prefers_jetbrainsmono_nfm_when_present() {
+    fn select_default_font_family_uses_bundled_geist_mono() {
         assert_eq!(
-            select_default_font_family(["Menlo", PREFERRED_MONO_FAMILY, EMBEDDED_MONO_FAMILY]),
-            PREFERRED_MONO_FAMILY
-        );
-    }
-
-    #[test]
-    fn select_default_font_family_falls_back_to_lilex_when_preferred_is_absent() {
-        assert_eq!(
-            select_default_font_family(["Menlo", "Cascadia Mono", EMBEDDED_MONO_FAMILY]),
+            select_default_font_family(["Menlo", "JetBrainsMono NFM", EMBEDDED_MONO_FAMILY]),
             EMBEDDED_MONO_FAMILY
         );
     }
 
     #[test]
-    fn default_font_family_is_preferred_font_or_bundled_fallback() {
-        assert!(
-            [PREFERRED_MONO_FAMILY, EMBEDDED_MONO_FAMILY].contains(&default_font_family()),
-            "unexpected default font family: {}",
-            default_font_family()
+    fn select_default_font_family_does_not_depend_on_installed_fonts() {
+        assert_eq!(
+            select_default_font_family(["Menlo", "Cascadia Mono", LEGACY_EMBEDDED_MONO_FAMILY]),
+            EMBEDDED_MONO_FAMILY
         );
+    }
+
+    #[test]
+    fn default_font_family_is_bundled_geist_mono() {
+        assert_eq!(default_font_family(), EMBEDDED_MONO_FAMILY);
     }
 
     // ─── font_fallbacks sanitization ─────────────────────────────────

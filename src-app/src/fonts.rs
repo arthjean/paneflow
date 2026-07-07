@@ -62,7 +62,11 @@ pub fn load_mono_fonts() -> Vec<String> {
 
     // Embedded families are available to GPUI even though GDI cannot enumerate
     // application-registered font bytes.
-    let mut families = BTreeSet::from(["IBM Plex Mono".to_string(), "Lilex".to_string()]);
+    let mut families = BTreeSet::from([
+        "Geist Mono".to_string(),
+        "IBM Plex Mono".to_string(),
+        "Lilex".to_string(),
+    ]);
 
     let mut filter: LOGFONTW = unsafe { std::mem::zeroed() };
     filter.lfCharSet = DEFAULT_CHARSET;
@@ -272,6 +276,7 @@ mod windows_tests {
     fn gdi_returns_embedded_and_system_monospace_families() {
         let families = load_mono_fonts();
 
+        assert!(families.iter().any(|family| family == "Geist Mono"));
         assert!(families.iter().any(|family| family == "IBM Plex Mono"));
         assert!(families.iter().any(|family| family == "Lilex"));
         assert!(

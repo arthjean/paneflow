@@ -22,7 +22,7 @@
     "theme": {
       "type": ["string", "null"],
       "description": "Bundled theme name.",
-      "enum": ["One Dark", "PaneFlow Light", null]
+      "enum": ["One Dark", "PaneFlow Light", "Vercel", "Claude", "Cursor", null]
     },
     "theme_mode": {
       "type": ["string", "null"],
@@ -32,7 +32,7 @@
     },
     "font_family": {
       "type": ["string", "null"],
-      "description": "Font family. Default: JetBrainsMono NFM when installed, otherwise bundled Lilex. Accepts the special aliases '.PaneflowMono' (bundled Lilex) and '.PaneflowSans' (bundled IBM Plex Sans), the concrete embedded names ('Lilex', 'IBM Plex Mono', 'IBM Plex Sans'), or any installed system monospace family such as 'JetBrainsMono NFM'. Unknown families fall back to the default with a warning."
+      "description": "Font family. Default: bundled Geist Mono. Accepts the special aliases '.PaneflowMono' (bundled Geist Mono) and '.PaneflowSans' (bundled Geist), the concrete embedded names ('Geist Mono', 'Geist', 'Lilex', 'IBM Plex Mono', 'IBM Plex Sans'), or any installed system monospace family such as 'JetBrainsMono NFM'. Unknown families fall back to the default with a warning."
     },
     "font_fallbacks": {
       "type": ["array", "null"],

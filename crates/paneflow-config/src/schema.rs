@@ -39,7 +39,7 @@ pub struct PaneFlowConfig {
     pub shortcuts: HashMap<String, String>,
     /// Default shell binary path. `None` uses the system default.
     pub default_shell: Option<String>,
-    /// Terminal color theme name (e.g. "One Dark", "PaneFlow Light").
+    /// Terminal color theme name (e.g. "One Dark", "PaneFlow Light", "Vercel", "Claude", "Cursor").
     pub theme: Option<String>,
     /// Theme selection mode: `"light"`, `"dark"`, or `"system"`. `theme`
     /// stores the currently resolved concrete bundled theme for compatibility.
@@ -62,7 +62,7 @@ pub struct PaneFlowConfig {
     pub line_height: Option<f32>,
     /// Terminal cell width multiplier (default: 0.6, valid range: 0.3-2.0).
     pub cell_width: Option<f32>,
-    /// Terminal font family (default: JetBrainsMono NFM when installed, else bundled Lilex).
+    /// Terminal font family (default: bundled Geist Mono).
     pub font_family: Option<String>,
     /// Ordered fallback font families, consulted in order for glyphs the
     /// primary `font_family` does not cover - e.g. a Nerd Font for the
@@ -1574,7 +1574,7 @@ mod tests {
             windows_chrome_material: Some(true),
             line_height: Some(1.2),
             cell_width: Some(0.6),
-            font_family: Some("Lilex".to_string()),
+            font_family: Some("Geist Mono".to_string()),
             font_fallbacks: Some(vec!["FiraCode Nerd Font Mono".to_string()]),
             font_size: Some(13.0),
             font_weight: Some("normal".to_string()),

@@ -563,7 +563,7 @@ impl Render for StartupSplashView {
             ..ui.muted
         };
         div()
-            .font_family("IBM Plex Sans")
+            .font_family("Geist")
             .size_full()
             .bg(crate::app::constants::cockpit_backdrop_background(
                 crate::theme::active_theme().title_bar_background,
@@ -1688,12 +1688,12 @@ impl Render for PaneFlowApp {
         }
 
         // The inner app content (title bar + sidebar + main). UI tree
-        // uses IBM Plex Sans (bundled, registered at boot via
+        // uses Geist (bundled, registered at boot via
         // `Assets::load_fonts`). TerminalElement resolves its own
         // monospace family from `paneflow.json#font_family`, so the
         // terminal output is unaffected.
         let mut app_content = div()
-            .font_family("IBM Plex Sans")
+            .font_family("Geist")
             .relative()
             .flex()
             .flex_col()
@@ -2723,7 +2723,7 @@ fn main() {
 
             // Register every embedded `.ttf` under `assets/fonts/` BEFORE
             // any window opens, so GPUI's text system can resolve the
-            // `Lilex` family (mono, 4 weights) and `IBM Plex Sans`
+            // `Geist Mono` family (mono) and `Geist`
             // family (sans, 4 weights) Paneflow ships as the default
             // primaries - same strategy Zed uses with `.ZedMono` /
             // `.ZedSans` (`zed/assets/settings/default.json:29,57`).
@@ -2734,7 +2734,7 @@ fn main() {
             // and rasterize them as empty bitmaps; GPUI's per-Font
             // fallback chain only walks on missing-glyph not on
             // empty-raster, so the system primary "rendered" zero glyphs
-            // and nothing fell through. With Lilex as the registered
+            // and nothing fell through. With Geist Mono as the registered
             // primary, GPUI owns the font tables end-to-end. Iterates
             // the rust-embed registry (Zed pattern,
             // `zed/crates/assets/src/assets.rs:42`) so adding a new font
@@ -2772,7 +2772,7 @@ fn main() {
             // We don't pull the heavy `theme_settings` crate (which
             // would drag in `settings`, `language`, etc.); instead we
             // implement the trait directly with fixed values that match
-            // Paneflow's UI (IBM Plex Sans / Lilex, 13 px). The
+            // Paneflow's UI (Geist / Geist Mono, 13 px). The
             // markdown renderer only reads font_family and font size
             // for its embedded ui components - anything else flows
             // through the `MarkdownStyle` we pass to `MarkdownElement`.
@@ -2800,14 +2800,14 @@ fn main() {
             ::theme::set_theme_settings_provider(
                 Box::new(PaneflowThemeSettingsProvider {
                     ui_font: gpui::Font {
-                        family: "IBM Plex Sans".into(),
+                        family: "Geist".into(),
                         features: Default::default(),
                         fallbacks: None,
                         weight: Default::default(),
                         style: Default::default(),
                     },
                     buffer_font: gpui::Font {
-                        family: "Lilex".into(),
+                        family: "Geist Mono".into(),
                         features: Default::default(),
                         fallbacks: None,
                         weight: Default::default(),

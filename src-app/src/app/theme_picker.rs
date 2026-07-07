@@ -12,10 +12,14 @@ use crate::settings::components::{menu_divider_color, menu_surface, select_item}
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, ThemeMode, config_writer};
 
+pub(crate) fn is_default_theme_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("One Dark") || name.eq_ignore_ascii_case("PaneFlow Light")
+}
+
 impl PaneFlowApp {
     /// Resolve the theme currently persisted in config (or the built-in
     /// default). US-014: reads the cached config, not a per-call `load_config()`.
-    fn current_theme_name(&self) -> String {
+    pub(crate) fn current_theme_name(&self) -> String {
         self.cached_config
             .theme
             .clone()
@@ -86,7 +90,28 @@ impl PaneFlowApp {
         true
     }
 
+    fn persist_theme_preset_selection(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+        let ok = config_writer::save_config_values_checked([
+            ("theme_mode", serde_json::Value::Null),
+            ("theme", serde_json::Value::String(name.to_string())),
+        ]);
+        if !ok {
+            self.show_toast("Could not save theme", cx);
+            return false;
+        }
+        self.theme_mode = ThemeMode::Dark;
+        self.cached_config.theme_mode = None;
+        self.cached_config.theme = Some(name.to_string());
+        crate::theme::invalidate_theme_cache();
+        crate::theme::sync_markdown_global_theme(cx);
+        cx.notify();
+        true
+    }
+
     pub(crate) fn apply_theme_by_name(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+        if !is_default_theme_name(name) {
+            return self.persist_theme_preset_selection(name, cx);
+        }
         self.persist_theme_selection(ThemeMode::from_theme_name(name), name, cx)
     }
 

@@ -197,7 +197,7 @@ impl PaneFlowApp {
                 .max_w(max_w)
                 .min_w(px(220.))
                 .rounded(px(8.))
-                .bg(with_alpha(ui.text, 0.08))
+                .bg(ui.subtle)
                 .text_sm()
                 .text_color(ui.text)
                 .overflow_hidden()

@@ -1,6 +1,6 @@
 # Themes
 
-> Choose Paneflow's bundled themes from Settings or paneflow.json. One Dark and PaneFlow Light ship today and hot-reload without restart.
+> Choose Paneflow's bundled themes from Settings or paneflow.json. One Dark, PaneFlow Light, Vercel, Claude, and Cursor ship today and hot-reload without restart.
 
 Canonical: https://paneflow.dev/docs/themes
 
@@ -9,12 +9,12 @@ Canonical: https://paneflow.dev/docs/themes
      change to the site source before the next sync. -->
 
 Paneflow reads a top-level `"theme"` value from `paneflow.json`.
-The current bundled themes are `One Dark` and `PaneFlow Light`.
+The current bundled themes are `One Dark`, `PaneFlow Light`, `Vercel`, `Claude`, and `Cursor`.
 Omit the key, set it to `null`, or reset it from Settings to use
 the default `One Dark` theme.
 
 > **TL;DR.** Use **Settings -> Themes** for the UI, or set
-> `"theme": "One Dark"` / `"theme": "PaneFlow Light"` in
+> `"theme": "One Dark"` / `"theme": "PaneFlow Light"` / `"theme": "Vercel"` / `"theme": "Claude"` / `"theme": "Cursor"` in
 > `paneflow.json`. Theme changes hot-reload after save, with no app
 > restart.
 
@@ -63,6 +63,9 @@ Stable in current builds.
 | --- | --- |
 | `"One Dark"` | Dark theme, default. Inspired by Atom's One Dark palette, then adjusted for Paneflow's terminal and app chrome. |
 | `"PaneFlow Light"` | Light theme with a white work surface, light app shell, and a dedicated light syntax palette. |
+| `"Vercel"` | Monochrome dark theme inspired by Vercel's black, white, and precise accent style. Includes terminal, app chrome, settings, diff, and syntax palettes. |
+| `"Claude"` | Claude Desktop-style dark theme: graphite surfaces, ivory text, muted controls, and Claude's orange accent. Keeps Paneflow's canonical diff/status red, green, and yellow. |
+| `"Cursor"` | Cursor IDE-style dark theme: near-black workspace, compact graphite sidebar, dark composer surface, and pale blue accent. Keeps Paneflow's canonical diff/status red, green, and yellow. |
 
 A Paneflow theme defines 36 terminal colour slots: a 24-colour ANSI
 palette (8 hues x 3 intensities: normal, bright, dim), 5 base

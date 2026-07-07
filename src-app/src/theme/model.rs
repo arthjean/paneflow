@@ -4,11 +4,15 @@ use gpui::{Hsla, Rgba};
 
 use crate::terminal::element::{MIN_APCA_CONTRAST, ensure_minimum_contrast};
 
-/// Terminal color theme with 36 slots:
+/// Terminal color theme with an optional app-wide UI palette plus 36 terminal slots:
 /// 5 base + cursor + selection + selection_foreground + scrollbar_thumb +
 /// link_text + 2 title bar + 24 ANSI (8 hues x 3 intensities).
 #[derive(Clone, Copy)]
 pub struct TerminalTheme {
+    /// Optional app-wide UI palette. Legacy themes derive their chrome colors
+    /// from light/dark defaults; bundled custom themes can opt into exact UI
+    /// tokens so the theme affects the whole app, not just ANSI colors.
+    pub ui: Option<UiColors>,
     pub background: Hsla,
     pub foreground: Hsla,
     pub bright_foreground: Hsla,
@@ -177,6 +181,117 @@ impl SyntaxPalette {
         }
     }
 
+    /// Vercel-inspired dark syntax palette: mostly monochrome neutrals with a
+    /// few crisp product-style accents for code structure.
+    pub fn vercel_dark() -> Self {
+        Self {
+            comment: h(0x737373),
+            comment_doc: h(0x8a8a8a),
+            keyword: h(0xffffff),
+            function: h(0x7dd3fc),
+            r#type: h(0x60a5fa),
+            r#enum: h(0x93c5fd),
+            constructor: h(0xa5b4fc),
+            string: h(0x86efac),
+            string_escape: h(0x67e8f9),
+            string_special: h(0xf0abfc),
+            number: h(0xfde68a),
+            boolean: h(0xfbbf24),
+            constant: h(0xf5d90a),
+            constant_builtin: h(0x38bdf8),
+            property: h(0xfca5a5),
+            variable: h(0xe5e5e5),
+            variable_builtin: h(0xfcd34d),
+            operator: h(0x94a3b8),
+            punctuation: h(0xa3a3a3),
+            punctuation_special: h(0xf87171),
+            attribute: h(0x7dd3fc),
+            tag: h(0xfb7185),
+            label: h(0xd4d4d4),
+            namespace: h(0xc4b5fd),
+            title: h(0xffffff),
+            text_literal: h(0x86efac),
+            link_uri: h(0x7dd3fc),
+            link_text: h(0xffffff),
+            emphasis: h(0xf9a8d4),
+            emphasis_strong: h(0xf5f5f5),
+        }
+    }
+
+    /// Claude Desktop-inspired dark syntax palette: graphite neutrals, ivory
+    /// text, and restrained Claude orange accents.
+    pub fn claude_dark() -> Self {
+        Self {
+            comment: h(0x75736d),
+            comment_doc: h(0x93938b),
+            keyword: h(0xd97757),
+            function: h(0xddd5c8),
+            r#type: h(0xb9b9ae),
+            r#enum: h(0xb8a1c8),
+            constructor: h(0xd3b49a),
+            string: h(0x9ab38a),
+            string_escape: h(0x95b8b2),
+            string_special: h(0xd9905f),
+            number: h(0xc3a45f),
+            boolean: h(0xd97757),
+            constant: h(0xc3c2b7),
+            constant_builtin: h(0x8fa4b8),
+            property: h(0xd3a082),
+            variable: h(0xd7d0c6),
+            variable_builtin: h(0xd5b976),
+            operator: h(0x93938b),
+            punctuation: h(0xa5a49c),
+            punctuation_special: h(0xd97757),
+            attribute: h(0xb9b9ae),
+            tag: h(0xe68a6d),
+            label: h(0xc3c2b7),
+            namespace: h(0xb8a1c8),
+            title: h(0xc3c2b7),
+            text_literal: h(0x9ab38a),
+            link_uri: h(0x8fa4b8),
+            link_text: h(0xd97757),
+            emphasis: h(0xd9905f),
+            emphasis_strong: h(0xf2eee8),
+        }
+    }
+
+    /// Cursor-inspired dark syntax palette: near-black editor neutrals,
+    /// blue-white IDE accents, and Paneflow's stable status hues.
+    pub fn cursor_dark() -> Self {
+        Self {
+            comment: h(0x6f6f6f),
+            comment_doc: h(0x989898),
+            keyword: h(0xa0d0f0),
+            function: h(0xe8e8e8),
+            r#type: h(0x7dd3fc),
+            r#enum: h(0x8fb7ff),
+            constructor: h(0xb8e0f0),
+            string: h(0x57d992),
+            string_escape: h(0x8bdcff),
+            string_special: h(0xc79bff),
+            number: h(0xffd166),
+            boolean: h(0xffb86b),
+            constant: h(0xd8d8d8),
+            constant_builtin: h(0xa0d0f0),
+            property: h(0xb8e0f0),
+            variable: h(0xf5f5f5),
+            variable_builtin: h(0xffd166),
+            operator: h(0x989898),
+            punctuation: h(0xb0b0b0),
+            punctuation_special: h(0xff8580),
+            attribute: h(0x7dd3fc),
+            tag: h(0xff8580),
+            label: h(0xd0d0d0),
+            namespace: h(0xc79bff),
+            title: h(0xffffff),
+            text_literal: h(0x57d992),
+            link_uri: h(0xa0d0f0),
+            link_text: h(0x8fb7ff),
+            emphasis: h(0xb8e0f0),
+            emphasis_strong: h(0xffffff),
+        }
+    }
+
     /// All slots as a flat array - for tests counting distinct hues and for any
     /// future iteration over the palette.
     #[cfg(test)]
@@ -263,7 +378,7 @@ impl TerminalTheme {
 }
 
 pub(super) fn apply_surface_overrides(mut theme: TerminalTheme) -> TerminalTheme {
-    if is_light_theme(&theme) {
+    if theme.ui.is_some() || is_light_theme(&theme) {
         // US-007: light themes skip surface overrides but still need their
         // selection_foreground populated; do it here so every theme exiting
         // this function has a valid value regardless of branch taken.
@@ -294,6 +409,10 @@ pub(super) fn apply_surface_overrides(mut theme: TerminalTheme) -> TerminalTheme
 /// Colors for the app chrome (sidebar, settings, badges, etc.).
 #[derive(Clone, Copy)]
 pub struct UiColors {
+    /// Use the theme's `vc_*` washes directly for the Diff surface. Default
+    /// dark themes keep Paneflow's historical opaque Codex-style diff washes;
+    /// custom bundled themes opt into their own line backgrounds.
+    pub use_theme_diff_washes: bool,
     pub base: Hsla,    // deepest background (settings sidebar, app bg)
     pub surface: Hsla, // card/panel background
     pub overlay: Hsla, // dropdown/popover bg
@@ -388,7 +507,7 @@ impl UiColors {
     /// keyed off `base.l` so any render path holding a `UiColors` can call it
     /// without re-locking the theme cache.
     pub fn diff_colors(&self) -> DiffColors {
-        if self.base.l > 0.5 {
+        if self.base.l > 0.5 || self.use_theme_diff_washes {
             return DiffColors {
                 added: self.vc_added,
                 deleted: self.vc_deleted,
@@ -444,9 +563,14 @@ pub fn ui_colors() -> UiColors {
 /// for every visible item, so passing the cached theme through saves
 /// O(visible_items) mutex acquisitions per frame.
 pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
+    if let Some(ui) = theme.ui {
+        return ui;
+    }
+
     let is_light = is_light_theme(theme);
     if is_light {
         UiColors {
+            use_theme_diff_washes: false,
             // Codex-style light shell: the right-hand work area is pure white,
             // while controls use cool, near-white layers for hierarchy.
             base: h(0xffffff),
@@ -494,6 +618,7 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
         }
     } else {
         UiColors {
+            use_theme_diff_washes: false,
             base: h(TERMINAL_BACKGROUND_HEX),
             surface: h(0x212121),
             overlay: h(CHROME_BACKGROUND_HEX),
@@ -542,7 +667,7 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
 mod tests {
     use super::*;
     use crate::terminal::element::apca_contrast;
-    use crate::theme::builtin::{one_dark, paneflow_light, theme_by_name};
+    use crate::theme::builtin::{claude, cursor, one_dark, paneflow_light, theme_by_name, vercel};
 
     #[test]
     fn light_theme_keeps_light_surfaces_after_overrides() {
@@ -584,6 +709,63 @@ mod tests {
         assert_eq!(ui.border, h(BORDER_HEX));
     }
 
+    #[test]
+    fn custom_dark_themes_keep_their_app_wide_palette() {
+        for (
+            label,
+            theme,
+            expected_base,
+            expected_title,
+            expected_surface,
+            expected_accent,
+            expected_theme_diff_washes,
+        ) in [
+            (
+                "Vercel",
+                vercel(),
+                h(0x000000),
+                h(0x000000),
+                h(0x0a0a0a),
+                h(0xffffff),
+                true,
+            ),
+            (
+                "Claude",
+                claude(),
+                h(0x1f1f1e),
+                h(0x1f1f1e),
+                h(0x262626),
+                h(0xd97757),
+                false,
+            ),
+            (
+                "Cursor",
+                cursor(),
+                h(0x141414),
+                h(0x181818),
+                h(0x181818),
+                h(0xa0d0f0),
+                false,
+            ),
+        ] {
+            let theme = apply_surface_overrides(theme);
+            let ui = ui_colors_with(&theme);
+
+            assert_eq!(theme.background, expected_base, "{label} background");
+            assert_eq!(
+                theme.title_bar_background, expected_title,
+                "{label} title bar"
+            );
+            assert_eq!(ui.base, expected_base, "{label} ui base");
+            assert_eq!(ui.surface, expected_surface, "{label} ui surface");
+            assert_eq!(ui.accent, expected_accent, "{label} ui accent");
+            assert_eq!(
+                ui.use_theme_diff_washes, expected_theme_diff_washes,
+                "{label} diff wash mode"
+            );
+        }
+    }
+
     /// US-007 invariant: for any theme exiting `apply_surface_overrides` or
     /// `theme_by_name`, the selection foreground must satisfy the same
     /// APCA Lc threshold the per-cell contrast pass uses. A near-luminance
@@ -606,6 +788,9 @@ mod tests {
         for (label, theme) in [
             ("One Dark", apply_surface_overrides(one_dark())),
             ("PaneFlow Light", apply_surface_overrides(paneflow_light())),
+            ("Vercel", apply_surface_overrides(vercel())),
+            ("Claude", apply_surface_overrides(claude())),
+            ("Cursor", apply_surface_overrides(cursor())),
         ] {
             assert_selection_invariant(&theme, label);
         }
@@ -683,6 +868,35 @@ mod tests {
                 bg.a
             );
         }
+
+        let vercel = ui_colors_with(&vercel());
+        let diff = vercel.diff_colors();
+        assert_eq!(diff.added, vercel.vc_added);
+        assert_eq!(diff.deleted, vercel.vc_deleted);
+        assert_eq!(diff.added_background, vercel.vc_added_background);
+
+        let claude = ui_colors_with(&claude());
+        let diff = claude.diff_colors();
+        let canonical_dark_diff = dark.diff_colors();
+        assert_eq!(diff.added, canonical_dark_diff.added);
+        assert_eq!(diff.deleted, canonical_dark_diff.deleted);
+        assert_eq!(diff.added_background, canonical_dark_diff.added_background);
+        assert_eq!(
+            diff.deleted_background,
+            canonical_dark_diff.deleted_background
+        );
+        assert_eq!(claude.vc_modified, dark.vc_modified);
+
+        let cursor = ui_colors_with(&cursor());
+        let diff = cursor.diff_colors();
+        assert_eq!(diff.added, canonical_dark_diff.added);
+        assert_eq!(diff.deleted, canonical_dark_diff.deleted);
+        assert_eq!(diff.added_background, canonical_dark_diff.added_background);
+        assert_eq!(
+            diff.deleted_background,
+            canonical_dark_diff.deleted_background
+        );
+        assert_eq!(cursor.vc_modified, dark.vc_modified);
     }
 
     #[test]
@@ -700,7 +914,7 @@ mod tests {
 
     // ------------------------------------------------------------------
     // EP-001 / US-001 + US-007 (prd-diff-syntax-palette-2026-Q3.md):
-    // the per-language syntax palette must be richly populated on BOTH
+    // the per-language syntax palette must be richly populated on bundled
     // themes and stay readable on the light theme.
     // ------------------------------------------------------------------
 
@@ -717,11 +931,14 @@ mod tests {
     }
 
     #[test]
-    fn both_themes_populate_at_least_18_distinct_syntax_hues() {
+    fn bundled_themes_populate_at_least_18_distinct_syntax_hues() {
         // US-001 AC #1/#5: ≥ 18 distinct color values per theme (up from 8).
         for (label, theme) in [
             ("One Dark", one_dark()),
             ("PaneFlow Light", paneflow_light()),
+            ("Vercel", vercel()),
+            ("Claude", claude()),
+            ("Cursor", cursor()),
         ] {
             let distinct = distinct_count(&theme.syntax.all_slots());
             assert!(
@@ -740,6 +957,9 @@ mod tests {
         for (label, theme) in [
             ("One Dark", one_dark()),
             ("PaneFlow Light", paneflow_light()),
+            ("Vercel", vercel()),
+            ("Claude", claude()),
+            ("Cursor", cursor()),
         ] {
             for (i, slot) in theme.syntax.all_slots().iter().enumerate() {
                 assert_ne!(*slot, default, "{label}: syntax slot #{i} left at default");
