@@ -39,6 +39,19 @@ struct SidebarRenderTimeCanary {
     workspace_count: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarDiffSummary {
+    None,
+    Lines { insertions: usize, deletions: usize },
+    Files { files_changed: usize },
+}
+
+impl SidebarDiffSummary {
+    fn is_visible(self) -> bool {
+        !matches!(self, Self::None)
+    }
+}
+
 impl SidebarRenderTimeCanary {
     fn new(workspace_count: usize) -> Self {
         Self {
@@ -90,6 +103,25 @@ fn visible_service_ports(
         .copied()
         .filter(|port| service_labels.contains_key(port))
         .collect()
+}
+
+fn sidebar_diff_summary(stats: &crate::workspace::GitDiffStats) -> SidebarDiffSummary {
+    if stats.insertions > 0 || stats.deletions > 0 {
+        SidebarDiffSummary::Lines {
+            insertions: stats.insertions,
+            deletions: stats.deletions,
+        }
+    } else if stats.files_changed > 0 {
+        SidebarDiffSummary::Files {
+            files_changed: stats.files_changed,
+        }
+    } else {
+        SidebarDiffSummary::None
+    }
+}
+
+fn sidebar_file_change_label(files_changed: usize) -> String {
+    format!("{files_changed} changed")
 }
 
 impl PaneFlowApp {
@@ -459,7 +491,8 @@ impl PaneFlowApp {
             // natural width (GPUI's truncate + flex_shrink + min_w_0 combo
             // collapses the label to "…" even with room to spare).
             let has_branch = !ws.git_branch.is_empty();
-            let has_stats = !ws.git_stats.is_empty();
+            let diff_summary = sidebar_diff_summary(&ws.git_stats);
+            let has_stats = diff_summary.is_visible();
             let display_ports = visible_service_ports(&ws.active_ports, &ws.service_labels);
             let has_ports = !display_ports.is_empty();
             if has_branch || has_stats || has_ports {
@@ -489,27 +522,45 @@ impl PaneFlowApp {
                 }
 
                 if has_stats {
-                    let ins = ws.git_stats.insertions;
-                    let del = ws.git_stats.deletions;
                     // Shared diff palette (Codex green/red on dark, theme vc_* on
                     // light) so the CLI sidebar diffstat matches the Diff/Review
                     // view and the Agents dock instead of inlining its own hex.
                     let diff = ui.diff_colors();
-                    meta_row = meta_row
-                        .child(
-                            div()
-                                .flex_none()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(diff.added)
-                                .child(format!("+{ins}")),
-                        )
-                        .child(
-                            div()
-                                .flex_none()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(diff.deleted)
-                                .child(format!("-{del}")),
-                        );
+                    match diff_summary {
+                        SidebarDiffSummary::Lines {
+                            insertions,
+                            deletions,
+                        } => {
+                            if insertions > 0 {
+                                meta_row = meta_row.child(
+                                    div()
+                                        .flex_none()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(diff.added)
+                                        .child(format!("+{insertions}")),
+                                );
+                            }
+                            if deletions > 0 {
+                                meta_row = meta_row.child(
+                                    div()
+                                        .flex_none()
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .text_color(diff.deleted)
+                                        .child(format!("-{deletions}")),
+                                );
+                            }
+                        }
+                        SidebarDiffSummary::Files { files_changed } => {
+                            meta_row = meta_row.child(
+                                div()
+                                    .flex_none()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(ui.muted)
+                                    .child(sidebar_file_change_label(files_changed)),
+                            );
+                        }
+                        SidebarDiffSummary::None => {}
+                    }
                 }
 
                 // Separator before the ports, only when branch/diff preceded
@@ -896,8 +947,12 @@ impl Render for WorkspaceCwdTooltip {
 
 #[cfg(test)]
 mod tests {
-    use super::{collapse_home, visible_service_ports};
+    use super::{
+        SidebarDiffSummary, collapse_home, sidebar_diff_summary, sidebar_file_change_label,
+        visible_service_ports,
+    };
     use crate::terminal::ServiceInfo;
+    use crate::workspace::GitDiffStats;
     use std::collections::HashMap;
 
     #[cfg(not(target_os = "windows"))]
@@ -958,6 +1013,43 @@ mod tests {
             visible_service_ports(&[3000, 53154, 8000, 53155], &labels),
             vec![3000, 8000]
         );
+    }
+
+    #[test]
+    fn sidebar_diff_summary_hides_zero_line_counts() {
+        let binary_only = GitDiffStats {
+            files_changed: 1,
+            insertions: 0,
+            deletions: 0,
+        };
+        assert_eq!(
+            sidebar_diff_summary(&binary_only),
+            SidebarDiffSummary::Files { files_changed: 1 }
+        );
+
+        let deletion_only = GitDiffStats {
+            files_changed: 1,
+            insertions: 0,
+            deletions: 82,
+        };
+        assert_eq!(
+            sidebar_diff_summary(&deletion_only),
+            SidebarDiffSummary::Lines {
+                insertions: 0,
+                deletions: 82
+            }
+        );
+
+        assert_eq!(
+            sidebar_diff_summary(&GitDiffStats::default()),
+            SidebarDiffSummary::None
+        );
+    }
+
+    #[test]
+    fn sidebar_file_change_label_is_compact_for_unmeasured_diffs() {
+        assert_eq!(sidebar_file_change_label(1), "1 changed");
+        assert_eq!(sidebar_file_change_label(2), "2 changed");
     }
 
     #[cfg(not(target_os = "windows"))]
