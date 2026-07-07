@@ -76,7 +76,7 @@ const WINDOWS_WAIT_SLICE_MS: u32 = 500;
 const NATIVE_STDOUT_CAP: u64 = 64 * 1024;
 
 #[cfg(target_os = "windows")]
-const WINDOWS_PUBLISHER_ORGANIZATION: &str = "Strivex";
+const WINDOWS_PUBLISHER_ORGANIZATION: &str = "StriveX";
 
 /// 500 MB ceiling on the MSI download. Real PaneFlow MSIs are ~60-100 MB;
 /// a malicious mirror returning an unbounded stream would otherwise fill

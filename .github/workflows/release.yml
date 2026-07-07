@@ -1730,8 +1730,41 @@ jobs:
         with:
           files: release-assets/*
           generate_release_notes: true
-          draft: false
+          # Keep the release hidden from /releases/latest until every signed
+          # asset is attached. The updater fetches <asset>.minisig and fails
+          # closed, so exposing a half-populated release can look like a
+          # tampered Windows MSI to clients that click Update immediately.
+          draft: true
           prerelease: ${{ contains(env.RELEASE_TAG, 'alpha') || contains(env.RELEASE_TAG, 'beta') || contains(env.RELEASE_TAG, 'rc') }}
+
+      - name: Verify uploaded release asset set
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          local_assets="$(mktemp)"
+          remote_assets="$(mktemp)"
+          trap 'rm -f "$local_assets" "$remote_assets"' EXIT
+
+          find release-assets -maxdepth 1 -type f -printf '%f\n' | sort > "$local_assets"
+          gh release view "${RELEASE_TAG}" \
+            --json assets \
+            --jq '.assets[].name' \
+            | sort > "$remote_assets"
+
+          if ! diff -u "$local_assets" "$remote_assets"; then
+            echo "::error::Uploaded release assets do not match signed local artifacts."
+            exit 1
+          fi
+
+      - name: Publish GitHub Release after asset verification
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release edit "${RELEASE_TAG}" --draft=false
 
   # ─── Smoke tests (US-016 + US-002 multi-distro expansion) ───────────
   # Exercise the postinst scripts and packaged binary in clean distro
@@ -2199,6 +2232,10 @@ jobs:
       run:
         shell: pwsh
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
       - name: Download signed Windows MSI
         uses: actions/download-artifact@v4
         with:
@@ -2248,6 +2285,19 @@ jobs:
 
           if ($signature.SignerCertificate) {
               Write-Host "MSI signed by $($signature.SignerCertificate.Subject)"
+          }
+          $publisherSource = Get-Content -LiteralPath 'src-app/src/update/windows/msi.rs' -Raw
+          $publisherMatch = [regex]::Match(
+              $publisherSource,
+              'const\s+WINDOWS_PUBLISHER_ORGANIZATION:\s*&str\s*=\s*"([^"]+)";'
+          )
+          if (-not $publisherMatch.Success) {
+              throw "Could not read WINDOWS_PUBLISHER_ORGANIZATION from src-app/src/update/windows/msi.rs"
+          }
+          $expectedPublisher = $publisherMatch.Groups[1].Value
+          $publisherPattern = "(?:^|,\s*)O=$([regex]::Escape($expectedPublisher))(?:,|$)"
+          if ($signature.SignerCertificate.Subject -notmatch $publisherPattern) {
+              throw "MSI publisher mismatch: expected O=$expectedPublisher, got $($signature.SignerCertificate.Subject)"
           }
 
           function Show-LogTail {
