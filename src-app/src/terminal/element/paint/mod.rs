@@ -7,7 +7,7 @@
 //! 2. `selection`   - selection highlight rects
 //! 3. `overlay::search_highlights` - search match rects
 //! 4. `text`        - batched `shape_line` glyph runs
-//! 5. `overlay::hyperlink` - Ctrl+hover underline + URL tooltip
+//! 5. `overlay::hyperlink` - Ctrl+hover underline
 //! 6. `cursor`      - primary cursor + copy-mode anchor cursor
 //! 7. `scrollbar`   - right-edge thumb
 //! 8. `overlay::ime` - IME handler registration + preedit overlay

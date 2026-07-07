@@ -1464,7 +1464,6 @@ impl Render for TerminalView {
             self.ctrl_hovered_link
                 .as_ref()
                 .map(|link| (link.start.line.0, link.start.column.0, link.end.column.0)),
-            self.ctrl_hovered_link.as_ref().map(|link| link.uri.clone()),
             self.ime_marked_text.clone(),
             self.focus_handle.clone(),
             cx.entity().clone(),

@@ -1,4 +1,4 @@
-//! Overlay paint passes - search highlights, hyperlink underline + tooltip,
+//! Overlay paint passes - search highlights, hyperlink underline,
 //! IME preedit, process-exit banner, and the debug latency probe bookends.
 //!
 //! These layers draw on top of text and cursor; they're grouped here because
@@ -22,15 +22,12 @@ pub fn paint_search_highlights(layout: &LayoutState, geom: &CellGeometry, window
     }
 }
 
-/// Paint the Ctrl+hover hyperlink underline and, if a URI is hovered,
-/// a tooltip near the link (auto-flipped above the link when the link
-/// is near the bottom of the terminal).
-pub fn paint_hyperlink_tooltip(
+/// Paint the Ctrl+hover hyperlink underline.
+pub fn paint_hyperlink_underline(
     element: &TerminalElement,
     layout: &LayoutState,
     geom: &CellGeometry,
     window: &mut Window,
-    cx: &mut App,
 ) {
     let Some((link_line, col_start, col_end)) = element.hovered_link_range else {
         return;
@@ -59,77 +56,6 @@ pub fn paint_hyperlink_tooltip(
         },
     );
     window.paint_quad(fill(underline_bounds, layout.link_text_color));
-
-    // Paint URL tooltip near the underline
-    let Some(ref uri) = element.hovered_link_uri else {
-        return;
-    };
-    let tooltip_font_size = gpui::px(11.0);
-    let tooltip_padding = gpui::px(4.0);
-    // Char-safe truncation to avoid panics on multibyte URIs
-    let display_uri: String = if uri.chars().count() > 80 {
-        let mut s: String = uri.chars().take(77).collect();
-        s.push_str("...");
-        s
-    } else {
-        uri.clone()
-    };
-    let display_len = display_uri.len(); // UTF-8 byte count for TextRun
-    let shaped = window.text_system().shape_line(
-        SharedString::from(display_uri),
-        tooltip_font_size,
-        &[gpui::TextRun {
-            len: display_len,
-            font: gpui::Font {
-                family: "monospace".into(),
-                ..Default::default()
-            },
-            color: layout.link_text_color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }],
-        None,
-    );
-    let text_width = shaped.width;
-    let tooltip_height = tooltip_font_size + tooltip_padding * 2.0;
-    let tooltip_x = x_start;
-    // Flip tooltip above the link when near the bottom of the terminal
-    let tooltip_y = {
-        let below = y + gpui::px(3.0);
-        let bottom_edge = origin.y + line_height * layout.desired_rows as f32;
-        if below + tooltip_height > bottom_edge {
-            // Place above the link line
-            origin.y + line_height * screen_line as f32 - tooltip_height - gpui::px(2.0)
-        } else {
-            below
-        }
-    };
-    let bg_bounds = Bounds::new(
-        Point {
-            x: tooltip_x - tooltip_padding,
-            y: tooltip_y,
-        },
-        gpui::Size {
-            width: text_width + tooltip_padding * 2.0,
-            height: tooltip_height,
-        },
-    );
-    // Semi-transparent overlay background for visibility
-    let mut tooltip_bg = layout.background_color;
-    tooltip_bg.a = 0.92;
-    window.paint_quad(fill(bg_bounds, tooltip_bg));
-    let _ = shaped.paint(
-        Point {
-            x: tooltip_x,
-            y: tooltip_y + tooltip_padding,
-        },
-        line_height,
-        TextAlign::Left,
-        None,
-        window,
-        cx,
-    );
 }
 
 /// Register the IME `InputHandler` for this element and paint the preedit

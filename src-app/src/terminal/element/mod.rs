@@ -554,7 +554,7 @@ pub struct LayoutState {
     desired_cols: usize,
     /// Number of rows in the terminal grid
     desired_rows: usize,
-    /// Theme color for hyperlink underline and tooltip text.
+    /// Theme color for hyperlink underline.
     link_text_color: Hsla,
     /// Cursor position bounds for IME popup positioning (pixel coordinates).
     ime_cursor_bounds: Option<Bounds<Pixels>>,
@@ -597,8 +597,6 @@ pub struct TerminalElement {
     copy_mode_cursor: Option<CopyModeCursorState>,
     /// Ctrl+hovered hyperlink range for underline rendering (line, start_col, end_col).
     hovered_link_range: Option<(i32, usize, usize)>,
-    /// Full URI of the Ctrl+hovered link (for tooltip display).
-    hovered_link_uri: Option<String>,
     /// IME preedit text to render at cursor position.
     ime_marked_text: String,
     /// Focus handle for IME input handler registration.
@@ -651,7 +649,6 @@ impl TerminalElement {
         search_highlights: Vec<SearchHighlight>,
         copy_mode_cursor: Option<CopyModeCursorState>,
         hovered_link_range: Option<(i32, usize, usize)>,
-        hovered_link_uri: Option<String>,
         ime_marked_text: String,
         focus_handle: gpui::FocusHandle,
         terminal_view: gpui::Entity<crate::terminal::TerminalView>,
@@ -679,7 +676,6 @@ impl TerminalElement {
             search_highlights,
             copy_mode_cursor,
             hovered_link_range,
-            hovered_link_uri,
             ime_marked_text,
             focus_handle,
             terminal_view,
@@ -1579,8 +1575,8 @@ impl Element for TerminalElement {
                 paint::overlay::paint_pixel_probe_overlay(&layout, &geom, window);
             }
 
-            // 3b. Hyperlink underline + tooltip (Ctrl+hover)
-            paint::overlay::paint_hyperlink_tooltip(self, &layout, &geom, window, cx);
+            // 3b. Hyperlink underline (Ctrl+hover)
+            paint::overlay::paint_hyperlink_underline(self, &layout, &geom, window);
 
             // 4. Primary cursor
             paint::cursor::paint_cursor(&layout, &geom, base_font, font_size, window, cx);
