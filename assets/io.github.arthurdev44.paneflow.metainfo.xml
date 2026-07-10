@@ -63,6 +63,16 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.7.10" date="2026-07-10">
+      <description>
+        <p>Sidebar workspace title containment fix.</p>
+        <ul>
+          <li>Long workspace titles now truncate cleanly inside sidebar cards</li>
+          <li>Active session indicators remain visible beside long workspace names</li>
+          <li>Rename fields and horizontal overflow stay contained within the sidebar</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.9" date="2026-07-07">
       <description>
         <p>Windows updater recovery and release hardening update.</p>
