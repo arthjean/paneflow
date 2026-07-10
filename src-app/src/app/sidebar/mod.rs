@@ -46,6 +46,13 @@ enum SidebarDiffSummary {
     Files { files_changed: usize },
 }
 
+const SIDEBAR_CARD_MARGIN_X: f32 = 8.0;
+const SIDEBAR_CARD_PADDING_X: f32 = 10.0;
+const SIDEBAR_TITLE_ROW_GAP: f32 = 6.0;
+const SIDEBAR_SESSION_DOT_SIZE: f32 = 7.0;
+const SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH: f32 =
+    SIDEBAR_WIDTH - SIDEBAR_CARD_MARGIN_X * 2.0 - SIDEBAR_CARD_PADDING_X * 2.0;
+
 impl SidebarDiffSummary {
     fn is_visible(self) -> bool {
         !matches!(self, Self::None)
@@ -122,6 +129,15 @@ fn sidebar_diff_summary(stats: &crate::workspace::GitDiffStats) -> SidebarDiffSu
 
 fn sidebar_file_change_label(files_changed: usize) -> String {
     format!("{files_changed} changed")
+}
+
+fn sidebar_workspace_title_slot_width(has_active_session: bool) -> f32 {
+    let reserved = if has_active_session {
+        SIDEBAR_TITLE_ROW_GAP + SIDEBAR_SESSION_DOT_SIZE
+    } else {
+        0.0
+    };
+    (SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH - reserved).max(0.0)
 }
 
 impl PaneFlowApp {
@@ -213,6 +229,8 @@ impl PaneFlowApp {
         let mut list = div()
             .id("workspace-list")
             .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
             .overflow_y_scroll()
             .track_scroll(&self.sidebar_scroll)
             .flex()
@@ -334,6 +352,7 @@ impl PaneFlowApp {
                 .py(px(8.))
                 .rounded(crate::app::constants::WORKSPACE_CARD_CORNER_RADIUS)
                 .cursor_pointer()
+                .overflow_x_hidden()
                 // Quiet card (Codex/OpenAI sidebar row): transparent at rest,
                 // with the same subtle translucent tint for selection and hover
                 // in dark mode. The accent stays reserved for agent status.
@@ -416,11 +435,19 @@ impl PaneFlowApp {
                 .flex_col()
                 .gap(px(5.));
 
-            // ── Row 1: Title ──
+            // Row 1: title
+            let agent_status =
+                ai_types::workspace_agent_status(ws.agent_sessions.values(), &ws.detected_agents);
+            let has_active_session = !agent_status.active_labels.is_empty();
+            let session_tooltip = agent_session_tooltip(&agent_status.active_labels);
+            let title_slot_width = sidebar_workspace_title_slot_width(has_active_session);
+
             let title_el = if self.renaming_idx == Some(i) {
                 div()
-                    .flex_1()
+                    .w(px(title_slot_width))
+                    .max_w(px(title_slot_width))
                     .min_w_0()
+                    .overflow_x_hidden()
                     .text_color(ui.text)
                     .text_sm()
                     .font_weight(FontWeight::NORMAL)
@@ -429,45 +456,36 @@ impl PaneFlowApp {
                     .rounded_sm()
                     .child(format!("{}|", self.rename_text))
             } else {
-                // Display title keeps its natural width so the
-                // session pastille that follows sits flush against
-                // the workspace name. No `flex_1 / min_w_0 / truncate`
-                // here -- that combo causes GPUI to collapse the
-                // label to "…" even with plenty of room (same bug
-                // we hit on the branch label). Unusually long titles
-                // will push the row width past the card; the user
-                // can rename them.
                 div()
-                    .flex_none()
+                    .w(px(title_slot_width))
+                    .max_w(px(title_slot_width))
+                    .min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
                     .text_color(ui.text)
                     .text_sm()
                     .font_weight(FontWeight::NORMAL)
                     .child(title)
             };
 
-            // Shared projection for hook-backed rows and detected-but-unhooked
-            // fallbacks. `Workspace::detected_agents` covers every known
-            // `TerminalAgent`, so the title dot tooltip uses the real display
-            // names instead of the old Claude/Codex-only helper.
-            let agent_status =
-                ai_types::workspace_agent_status(ws.agent_sessions.values(), &ws.detected_agents);
-            let has_active_session = !agent_status.active_labels.is_empty();
-            let session_tooltip = agent_session_tooltip(&agent_status.active_labels);
-
             let title_row = div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.))
+                .gap(px(SIDEBAR_TITLE_ROW_GAP))
+                .w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
+                .max_w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
                 .min_w_0()
+                .overflow_x_hidden()
                 .child(title_el)
                 .when(has_active_session, |d| {
                     d.child(
                         div()
                             .id(SharedString::from(format!("ws-{i}-session-dot")))
                             .flex_none()
-                            .w(px(7.))
-                            .h(px(7.))
+                            .w(px(SIDEBAR_SESSION_DOT_SIZE))
+                            .h(px(SIDEBAR_SESSION_DOT_SIZE))
                             .rounded_full()
                             .bg(rgb(0x3B82F6)) // Tailwind blue-500
                             .tooltip({
@@ -948,8 +966,9 @@ impl Render for WorkspaceCwdTooltip {
 #[cfg(test)]
 mod tests {
     use super::{
+        SIDEBAR_SESSION_DOT_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH,
         SidebarDiffSummary, collapse_home, sidebar_diff_summary, sidebar_file_change_label,
-        visible_service_ports,
+        sidebar_workspace_title_slot_width, visible_service_ports,
     };
     use crate::terminal::ServiceInfo;
     use crate::workspace::GitDiffStats;
@@ -1050,6 +1069,18 @@ mod tests {
     fn sidebar_file_change_label_is_compact_for_unmeasured_diffs() {
         assert_eq!(sidebar_file_change_label(1), "1 changed");
         assert_eq!(sidebar_file_change_label(2), "2 changed");
+    }
+
+    #[test]
+    fn sidebar_workspace_title_slot_width_reserves_session_dot() {
+        assert_eq!(
+            sidebar_workspace_title_slot_width(false),
+            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH
+        );
+        assert_eq!(
+            sidebar_workspace_title_slot_width(true),
+            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH - SIDEBAR_TITLE_ROW_GAP - SIDEBAR_SESSION_DOT_SIZE
+        );
     }
 
     #[cfg(not(target_os = "windows"))]
