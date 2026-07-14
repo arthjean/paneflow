@@ -63,6 +63,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.7.11" date="2026-07-14">
+      <description>
+        <p>Workspace navigation and terminal legibility update.</p>
+        <ul>
+          <li>The sidebar now uses simpler workspace-first navigation with persistent agent completion indicators</li>
+          <li>Workspace actions expose rename, workflow, local service, editor, reveal, and close controls in one context menu</li>
+          <li>JetBrainsMono Nerd Font Mono is bundled as the cross-platform terminal default</li>
+          <li>One Dark and Cursor terminal palettes now use softer ANSI colors and restrained bold intensity</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.10" date="2026-07-10">
       <description>
         <p>Sidebar workspace title containment fix.</p>
