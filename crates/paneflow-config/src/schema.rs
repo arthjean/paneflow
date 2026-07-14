@@ -175,17 +175,6 @@ pub struct PaneFlowConfig {
     /// non-boolean value resolves to `None` (fence ON) with a warn.
     #[serde(default, deserialize_with = "lenient_opt_bool")]
     pub ai_injection_fence: Option<bool>,
-    /// EP-004 US-013 (Rosetta): master switch for the in-app Rosetta card.
-    /// `Some(false)` disables only Rosetta; sidebar dots and Attention Queue
-    /// keep their existing behavior. Missing or malformed values resolve to
-    /// OFF so in-app notification surfaces are user opt-in.
-    #[serde(default, deserialize_with = "lenient_opt_bool")]
-    pub rosetta_enabled: Option<bool>,
-    /// EP-004 US-013 (Rosetta): whether passive running-only rows may show the
-    /// compact card. `None` resolves to false so a fresh config is urgent-only;
-    /// users can turn it on when they want passive running summaries.
-    #[serde(default, deserialize_with = "lenient_opt_bool")]
-    pub rosetta_show_passive: Option<bool>,
     /// Show the built-in "Claude Code" command button in the tab bar.
     /// `Some(true)` always renders the button, `Some(false)` hides it, and
     /// `None` (default) renders it only when the CLI binary is installed.
@@ -413,23 +402,10 @@ impl PaneFlowConfig {
     pub fn ai_injection_fence_enabled(&self) -> bool {
         self.ai_injection_fence.unwrap_or(true)
     }
-
-    /// EP-004 US-013 (Rosetta): resolve the master switch. Default OFF so
-    /// the in-app notification surface stays user opt-in.
-    pub fn rosetta_enabled(&self) -> bool {
-        self.rosetta_enabled.unwrap_or(false)
-    }
-
-    /// EP-004 US-013 (Rosetta): resolve passive display. Default OFF keeps
-    /// Rosetta urgent-only on a fresh config; setting true restores the compact
-    /// running-only card from US-004.
-    pub fn rosetta_show_passive_enabled(&self) -> bool {
-        self.rosetta_show_passive.unwrap_or(false)
-    }
 }
 
-/// Lenient `Option<bool>` deserializer for the security-sensitive AI-access
-/// and Rosetta toggles. A non-boolean value (e.g. the string `"true"`)
+/// Lenient `Option<bool>` deserializer for security-sensitive AI-access
+/// toggles. A non-boolean value (e.g. the string `"true"`)
 /// deserializes to `None` with a `warn!` instead of hard-erroring, which would
 /// propagate to `parse_and_validate` and wipe EVERY sibling setting on a single
 /// typo (the all-or-nothing fallback the terminal enums avoid for the same
@@ -1588,8 +1564,6 @@ mod tests {
             claude_code_bypass_permissions: Some(false),
             ai_unrestricted: Some(true),
             ai_injection_fence: Some(false),
-            rosetta_enabled: Some(true),
-            rosetta_show_passive: Some(false),
             claude_code_button_visible: Some(true),
             codex_button_visible: Some(true),
             opencode_button_visible: Some(true),
@@ -1979,27 +1953,6 @@ mod tests {
             Some("One Dark"),
             "siblings survive a malformed AI-access toggle"
         );
-    }
-
-    #[test]
-    fn rosetta_settings_resolve_defaults_and_tolerate_garbage() {
-        let cfg = PaneFlowConfig::default();
-        assert!(!cfg.rosetta_enabled());
-        assert!(!cfg.rosetta_show_passive_enabled());
-
-        let cfg: PaneFlowConfig =
-            serde_json::from_str(r#"{"rosetta_enabled": true, "rosetta_show_passive": false}"#)
-                .unwrap();
-        assert!(cfg.rosetta_enabled());
-        assert!(!cfg.rosetta_show_passive_enabled());
-
-        let cfg: PaneFlowConfig = serde_json::from_str(
-            r#"{"theme": "One Dark", "rosetta_enabled": "no", "rosetta_show_passive": 0}"#,
-        )
-        .unwrap();
-        assert!(!cfg.rosetta_enabled());
-        assert!(!cfg.rosetta_show_passive_enabled());
-        assert_eq!(cfg.theme.as_deref(), Some("One Dark"));
     }
 
     #[test]

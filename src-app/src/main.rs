@@ -1130,26 +1130,6 @@ struct PaneFlowApp {
     attention_queue_open: bool,
     attention_queue_selected: usize,
     attention_queue_focus: FocusHandle,
-    /// EP-001 (Rosetta): volatile recent done/error/wait events. Starts empty
-    /// on every app launch and never writes to disk; live rows are still
-    /// derived from workspace/session/thread truth.
-    rosetta_recent_history: app::rosetta::RosettaRecentHistory,
-    /// EP-002 (Rosetta): top-center surface UI state. Rows stay derived live;
-    /// this only tracks the user's expanded/cursor state for the current frame.
-    rosetta_surface_expanded: bool,
-    rosetta_surface_selected: usize,
-    rosetta_surface_selected_key: Option<app::rosetta::RosettaRowKey>,
-    rosetta_surface_focus: FocusHandle,
-    rosetta_surface_scroll: gpui::ScrollHandle,
-    rosetta_surface_pending_focus: bool,
-    /// EP-003 (Rosetta): volatile row-level noise controls. Snoozes reduce
-    /// compact urgency until expiry; dismissed error rows stay available in the
-    /// expanded panel while they exist in live app state.
-    rosetta_snoozed_rows:
-        std::collections::HashMap<app::rosetta::RosettaRowKey, std::time::Instant>,
-    rosetta_dismissed_rows: std::collections::HashSet<app::rosetta::RosettaRowKey>,
-    rosetta_read_rows: std::collections::HashSet<app::rosetta::RosettaRowKey>,
-    rosetta_passive_display_enabled: bool,
     /// EP-006 US-018 (cli-cockpit): fleet-grep overlay state, `None` =
     /// closed. Results are a bounded snapshot (counts + names, never the
     /// match vectors); the fan-out is generation-guarded.
@@ -1626,14 +1606,6 @@ impl Render for PaneFlowApp {
                 )
                 .into_any_element()
         };
-        let rosetta_surface_allowed = self.rosetta_surface_allowed();
-        if !rosetta_surface_allowed {
-            self.reset_rosetta_surface_state();
-        }
-        let rosetta_surface = rosetta_surface_allowed
-            .then(|| self.render_rosetta_surface(window, cx))
-            .flatten();
-
         // Update title bar with current workspace name. US-010: in Agents
         // mode the brand slot carries the thread/chat context instead, so the
         // center workspace breadcrumb is suppressed (a CLI workspace name is
@@ -1662,9 +1634,6 @@ impl Render for PaneFlowApp {
         self.title_bar.update(cx, |tb, _| {
             tb.workspace_name = ws_name;
             tb.sidebar_visible = self.primary_sidebar_visible;
-            tb.rosetta_enabled = self.cached_config.rosetta_enabled();
-            tb.rosetta_button_enabled = rosetta_surface_allowed;
-            tb.rosetta_surface_open = rosetta_surface_allowed && self.rosetta_surface_expanded;
             tb.files_menu_open = self.title_bar_files_menu_open.is_some();
             tb.help_menu_open = self.title_bar_help_menu_open.is_some();
             tb.update_available = update_info;
@@ -1782,7 +1751,6 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_start_self_update))
             .on_action(cx.listener(Self::handle_dismiss_update))
             .on_action(cx.listener(Self::handle_open_agents_view))
-            .on_action(cx.listener(Self::handle_toggle_rosetta_surface))
             .on_action(cx.listener(Self::handle_toggle_files_sidebar))
             // US-011: title-bar `⋯` overflow menu for the current Agents thread.
             .on_action(cx.listener(Self::handle_open_agents_thread_menu))
@@ -1920,8 +1888,7 @@ impl Render for PaneFlowApp {
                                     .rounded_tl(px(16.))
                                     .when(secondary_sidebar_open, |d| d.rounded_tr(px(16.)))
                                     .p(px(5.))
-                                    .child(main_content)
-                                    .when_some(rosetta_surface, |d, surface| d.child(surface)),
+                                    .child(main_content),
                             )
                             // GPUI clips overflow with a rectangular content
                             // mask, so rounded panel children can still paint
@@ -2069,14 +2036,6 @@ impl Render for PaneFlowApp {
         }
         if self.launch_pad.is_some() && in_cli_mode {
             app_content = app_content.child(self.render_launch_pad(cx));
-        }
-        if rosetta_surface_allowed
-            && self.rosetta_surface_expanded
-            && std::mem::take(&mut self.rosetta_surface_pending_focus)
-        {
-            self.rosetta_surface_focus.focus(window, cx);
-        } else if !rosetta_surface_allowed {
-            self.rosetta_surface_pending_focus = false;
         }
         // EP-006 US-018: fleet-grep results overlay (same mode gate). The
         // deferred focus (the trigger event has no Window) lands here.

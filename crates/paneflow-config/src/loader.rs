@@ -276,8 +276,6 @@ pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, serde_json::
     set_field!(claude_code_bypass_permissions);
     set_field!(ai_unrestricted);
     set_field!(ai_injection_fence);
-    set_field!(rosetta_enabled);
-    set_field!(rosetta_show_passive);
     set_field!(claude_code_button_visible);
     set_field!(codex_button_visible);
     set_field!(opencode_button_visible);
@@ -1061,8 +1059,6 @@ mod tests {
             claude_code_bypass_permissions: None,
             ai_unrestricted: None,
             ai_injection_fence: None,
-            rosetta_enabled: None,
-            rosetta_show_passive: None,
             claude_code_button_visible: None,
             codex_button_visible: None,
             opencode_button_visible: None,

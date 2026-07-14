@@ -217,16 +217,6 @@
       "description": "Anti-injection fence on the surface.read CLI/IPC path, independent of ai_unrestricted. Null/true (default) wraps returned terminal text in an <untrusted_terminal_output> marker so a malicious peer pane cannot hijack a conductor reading it. False returns raw text (an assumed risk). Stays ON by default even in free-access mode because the fence protects the AI, it does not bridle it.",
       "default": true
     },
-    "rosetta_enabled": {
-      "type": ["boolean", "null"],
-      "description": "Master switch for the in-app Rosetta card. Null/false (default) keeps Rosetta hidden until the user explicitly enables it; true shows Rosetta for supported modes.",
-      "default": false
-    },
-    "rosetta_show_passive": {
-      "type": ["boolean", "null"],
-      "description": "Show compact Rosetta rows when all rows are passive running agents. Null/false (default) keeps Rosetta urgent-only until waiting, failed, stalled, or recent rows exist; true enables passive running summaries.",
-      "default": false
-    },
     "claude_code_button_visible": {
       "type": ["boolean", "null"],
       "description": "Show the built-in 'Claude Code' command button. Null/omitted auto-detects the CLI binary.",

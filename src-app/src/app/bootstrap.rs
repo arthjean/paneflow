@@ -836,7 +836,6 @@ impl PaneFlowApp {
 
         let cached_config = paneflow_config::loader::load_config();
         let effective_shortcuts = keybindings::effective_shortcuts(&cached_config.shortcuts);
-        let rosetta_passive_display_enabled = cached_config.rosetta_show_passive_enabled();
         let theme_mode = crate::ThemeMode::from_config(
             cached_config.theme_mode.as_deref(),
             cached_config.theme.as_deref(),
@@ -955,17 +954,6 @@ impl PaneFlowApp {
             attention_queue_open: false,
             attention_queue_selected: 0,
             attention_queue_focus: cx.focus_handle(),
-            rosetta_recent_history: crate::app::rosetta::RosettaRecentHistory::default(),
-            rosetta_surface_expanded: false,
-            rosetta_surface_selected: 0,
-            rosetta_surface_selected_key: None,
-            rosetta_surface_focus: cx.focus_handle(),
-            rosetta_surface_scroll: gpui::ScrollHandle::new(),
-            rosetta_surface_pending_focus: false,
-            rosetta_snoozed_rows: std::collections::HashMap::new(),
-            rosetta_dismissed_rows: std::collections::HashSet::new(),
-            rosetta_read_rows: std::collections::HashSet::new(),
-            rosetta_passive_display_enabled,
             // EP-006 US-018 (cli-cockpit): fleet grep closed.
             fleet_search: None,
             fleet_search_generation: 0,

@@ -1413,7 +1413,6 @@ impl PaneFlowApp {
             // of `config` - move it in.
             self.cached_config = config;
             self.theme_mode = theme_mode;
-            self.sync_rosetta_config_state();
             if default_shell_changed {
                 self.handle_default_shell_changed(cx);
             }
@@ -3375,14 +3374,6 @@ impl PaneFlowApp {
                         explicit_surface_id,
                         cx,
                     );
-                    if !interrupt_stop {
-                        self.record_workspace_rosetta_event(
-                            workspace_id,
-                            session_key,
-                            crate::app::rosetta::RosettaRowState::Finished,
-                            std::time::Instant::now(),
-                        );
-                    }
                     self.sync_attention(cx);
                     // EP-001 US-003 (cli-cockpit): the turn ended - flush any
                     // queued prompt for this pane (prefill only).
@@ -3443,13 +3434,6 @@ impl PaneFlowApp {
                     if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
                         t.last_result = session_summary.clone();
                         apply_agents_thread_state(t, ai_types::AgentState::Finished, pid, None);
-                    }
-                    if !interrupt_stop {
-                        self.record_agents_thread_rosetta_event(
-                            target,
-                            crate::app::rosetta::RosettaRowState::Finished,
-                            std::time::Instant::now(),
-                        );
                     }
                     cx.notify();
                     if !interrupt_stop {
@@ -3518,8 +3502,6 @@ impl PaneFlowApp {
                     // classifier is pure and unit-tested in `ai_types`.
                     let state = ai_types::state_for_exit(exit_code);
                     let errored = state == ai_types::AgentState::Errored;
-                    let interrupt_exit = is_interrupt_lifecycle_event(params)
-                        || ai_types::is_human_interruption_exit(exit_code);
                     let key = upsert_session_state(&mut ws.agent_sessions, pid, tool, state, None);
                     // The binary is gone - whatever question it was asking is
                     // moot (same ghost-message rationale as `ai.stop`).
@@ -3546,12 +3528,6 @@ impl PaneFlowApp {
                             explicit_surface_id,
                             cx,
                         );
-                        self.record_workspace_rosetta_event(
-                            workspace_id,
-                            key,
-                            crate::app::rosetta::RosettaRowState::Errored,
-                            std::time::Instant::now(),
-                        );
                     } else {
                         self.bind_or_resolve_session_surface(
                             workspace_id,
@@ -3559,19 +3535,8 @@ impl PaneFlowApp {
                             explicit_surface_id,
                             cx,
                         );
-                        if !interrupt_exit {
-                            self.record_workspace_rosetta_event(
-                                workspace_id,
-                                key,
-                                crate::app::rosetta::RosettaRowState::Finished,
-                                std::time::Instant::now(),
-                            );
-                        }
                     }
                     // Clean exits intentionally fire no notification here.
-                    // Interrupt exits also skip Rosetta history; the shim's
-                    // `ai.session_end` lands right after this frame to clear
-                    // the row.
                     self.sync_attention(cx);
                     self.agent_sessions_changed(cx);
                     serde_json::json!({"status": if errored { "errored" } else { "finished" }})
@@ -3581,8 +3546,6 @@ impl PaneFlowApp {
                     // crashes become a red indicator (no status text).
                     let state = ai_types::state_for_exit(exit_code);
                     let errored = state == ai_types::AgentState::Errored;
-                    let interrupt_exit = is_interrupt_lifecycle_event(params)
-                        || ai_types::is_human_interruption_exit(exit_code);
                     let Some(thread) = self.thread_for_target(target) else {
                         return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
                     };
@@ -3591,17 +3554,6 @@ impl PaneFlowApp {
                         .unwrap_or_else(|| thread.title.clone());
                     if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
                         apply_agents_thread_state(t, state, pid, None);
-                    }
-                    if errored || !interrupt_exit {
-                        self.record_agents_thread_rosetta_event(
-                            target,
-                            if errored {
-                                crate::app::rosetta::RosettaRowState::Errored
-                            } else {
-                                crate::app::rosetta::RosettaRowState::Finished
-                            },
-                            std::time::Instant::now(),
-                        );
                     }
                     if errored {
                         fire_agent_exit_notification(
@@ -3640,7 +3592,6 @@ impl PaneFlowApp {
                 // still works, only the tool-name fallback is skipped.
                 let tool = crate::agent_launcher::TerminalAgent::from_binary(tool_str);
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
-                let interrupt_session_end = is_interrupt_lifecycle_event(params);
 
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     // Prefer exact PID removal. Legacy no-PID frames are only
@@ -3658,21 +3609,12 @@ impl PaneFlowApp {
                     // closes (`sweep_stale_pids`).
                     let is_errored =
                         |s: &ai_types::AgentSession| s.state == ai_types::AgentState::Errored;
-                    let mut recent_event = None;
                     let removed = if let Some(p) = pid
-                        && let Some(session) = ws.agent_sessions.get(&p)
-                        && !is_errored(session)
+                        && ws
+                            .agent_sessions
+                            .get(&p)
+                            .is_some_and(|session| !is_errored(session))
                     {
-                        if !interrupt_session_end {
-                            recent_event = Some(workspace_recent_event_with_surface_fallback(
-                                ws.id,
-                                &ws.title,
-                                session,
-                                crate::app::rosetta::RosettaRowState::Finished,
-                                std::time::Instant::now(),
-                                explicit_surface_id,
-                            ));
-                        }
                         ws.agent_sessions.remove(&p).is_some()
                     } else if pid.is_some_and(|p| ws.agent_sessions.contains_key(&p)) {
                         // Exact-PID match exists but is Errored: keep it, and
@@ -3686,18 +3628,6 @@ impl PaneFlowApp {
                             explicit_surface_id,
                         );
                         if let Some(k) = pid_to_remove {
-                            if !interrupt_session_end
-                                && let Some(session) = ws.agent_sessions.get(&k)
-                            {
-                                recent_event = Some(workspace_recent_event_with_surface_fallback(
-                                    ws.id,
-                                    &ws.title,
-                                    session,
-                                    crate::app::rosetta::RosettaRowState::Finished,
-                                    std::time::Instant::now(),
-                                    explicit_surface_id,
-                                ));
-                            }
                             ws.agent_sessions.remove(&k);
                             true
                         } else {
@@ -3705,9 +3635,6 @@ impl PaneFlowApp {
                         }
                     };
                     if removed {
-                        if let Some(event) = recent_event {
-                            self.rosetta_recent_history.push(event);
-                        }
                         self.sync_attention(cx);
                         // EP-001 US-003 (cli-cockpit): a removed session
                         // leaves a bare shell - always a safe prefill target.
@@ -3720,17 +3647,6 @@ impl PaneFlowApp {
                         return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
                     };
                     let thread_id = thread.id;
-                    let should_record_finished = thread.status
-                        != crate::project::ThreadStatus::Idle
-                        && thread.status != crate::project::ThreadStatus::Failed
-                        && !interrupt_session_end;
-                    if should_record_finished {
-                        self.record_agents_thread_rosetta_event(
-                            target,
-                            crate::app::rosetta::RosettaRowState::Finished,
-                            std::time::Instant::now(),
-                        );
-                    }
                     let Some(t) = self.agents_thread_mut_by_id(thread_id) else {
                         return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
                     };
@@ -3838,33 +3754,6 @@ fn clear_agents_thread_on_session_end(thread: &mut crate::project::Thread) -> bo
     thread.active_tool_name = None;
     thread.last_activity = std::time::Instant::now();
     was_active
-}
-
-fn workspace_recent_event_with_surface_fallback(
-    workspace_id: u64,
-    workspace_title: &str,
-    session: &ai_types::AgentSession,
-    state: crate::app::rosetta::RosettaRowState,
-    occurred_at: std::time::Instant,
-    fallback_surface_id: Option<u64>,
-) -> crate::app::rosetta::RosettaRecentEvent {
-    let mut event = crate::app::rosetta::rosetta_recent_event_from_workspace_session(
-        workspace_id,
-        workspace_title,
-        session,
-        state,
-        occurred_at,
-    );
-    if event.surface_id.is_none() {
-        event.surface_id = fallback_surface_id;
-        event.focus_target = fallback_surface_id.map(|surface_id| {
-            crate::app::rosetta::RosettaFocusTarget::WorkspaceSurface {
-                workspace_id,
-                surface_id,
-            }
-        });
-    }
-    event
 }
 
 // ---------------------------------------------------------------------------

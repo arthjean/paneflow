@@ -90,7 +90,6 @@ const NAV_GROUPS: &[NavGroup] = &[
                     "native",
                     "os",
                     "system",
-                    "rosetta",
                     "bell",
                     "toast",
                     "agent",

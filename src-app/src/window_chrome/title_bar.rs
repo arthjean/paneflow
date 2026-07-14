@@ -12,9 +12,6 @@ pub struct TitleBar {
     should_move: bool,
     pub workspace_name: Option<String>,
     pub sidebar_visible: bool,
-    pub rosetta_enabled: bool,
-    pub rosetta_button_enabled: bool,
-    pub rosetta_surface_open: bool,
     pub files_menu_open: bool,
     pub help_menu_open: bool,
     pub ipc_state: crate::ipc::IpcState,
@@ -120,9 +117,6 @@ impl TitleBar {
             should_move: false,
             workspace_name: None,
             sidebar_visible: true,
-            rosetta_enabled: true,
-            rosetta_button_enabled: true,
-            rosetta_surface_open: false,
             files_menu_open: false,
             help_menu_open: false,
             ipc_state: crate::ipc::IpcState::Online,
@@ -141,7 +135,6 @@ impl TitleBar {
 pub enum TitleBarEvent {
     CloseRequested,
     ToggleSidebar,
-    ToggleRosettaSurface,
     ToggleFilesMenu(gpui::Point<gpui::Pixels>),
     ToggleHelpMenu(gpui::Point<gpui::Pixels>),
 }
@@ -253,7 +246,6 @@ impl Render for TitleBar {
             gpui::px(12.0)
         };
         let toggle_sidebar_handle = cx.entity().downgrade();
-        let toggle_rosetta_handle = cx.entity().downgrade();
         let toggle_files_menu_handle = cx.entity().downgrade();
         let toggle_help_menu_handle = cx.entity().downgrade();
         let sidebar_tooltip: gpui::SharedString = if self.sidebar_visible {
@@ -262,24 +254,6 @@ impl Render for TitleBar {
             "Show sidebar"
         }
         .into();
-        let rosetta_enabled = self.rosetta_enabled;
-        let rosetta_button_enabled = rosetta_enabled && self.rosetta_button_enabled;
-        let rosetta_open = rosetta_button_enabled && self.rosetta_surface_open;
-        let rosetta_tooltip: gpui::SharedString = if !rosetta_enabled {
-            "Rosetta disabled"
-        } else if !rosetta_button_enabled {
-            "Available in CLI and Agents"
-        } else if rosetta_open {
-            "Hide Rosetta"
-        } else {
-            "Show Rosetta"
-        }
-        .into();
-        let rosetta_icon = if rosetta_enabled {
-            "icons/bell.svg"
-        } else {
-            "icons/bell-off.svg"
-        };
         let mut brand = div()
             .flex_none()
             .flex()
@@ -322,43 +296,6 @@ impl Render for TitleBar {
                             .size(px(14.))
                             .path("icons/sidebar.svg")
                             .text_color(ui.muted),
-                    ),
-            )
-            .child(
-                div()
-                    .id("toggle-rosetta-surface")
-                    .flex_none()
-                    .w(px(24.))
-                    .h(px(24.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(5.))
-                    .when(rosetta_button_enabled, |d| {
-                        d.cursor_pointer()
-                            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
-                            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-                                cx.stop_propagation();
-                                if let Some(entity) = toggle_rosetta_handle.upgrade() {
-                                    entity.update(cx, |_this, cx| {
-                                        cx.emit(TitleBarEvent::ToggleRosettaSurface);
-                                    });
-                                }
-                            })
-                    })
-                    .when(rosetta_open, |d| {
-                        d.bg(crate::app::constants::sidebar_tab_active_background())
-                    })
-                    .tooltip(move |_window, cx| {
-                        let label = rosetta_tooltip.clone();
-                        cx.new(|_| crate::app::sidebar::SidebarTooltip { label })
-                            .into()
-                    })
-                    .child(
-                        svg()
-                            .size(px(14.))
-                            .path(rosetta_icon)
-                            .text_color(if rosetta_open { ui.text } else { ui.muted }),
                     ),
             )
             .child(

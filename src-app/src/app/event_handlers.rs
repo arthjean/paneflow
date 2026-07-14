@@ -422,34 +422,6 @@ impl PaneFlowApp {
                     self.title_bar_help_menu_open = None;
                 }
             }
-            title_bar::TitleBarEvent::ToggleRosettaSurface => {
-                self.dismiss_transient_surfaces();
-
-                if !self.rosetta_surface_allowed() {
-                    self.reset_rosetta_surface_state();
-                    cx.notify();
-                    return;
-                }
-
-                if self.rosetta_surface_expanded {
-                    self.rosetta_surface_expanded = false;
-                    self.rosetta_surface_selected = 0;
-                    self.rosetta_surface_selected_key = None;
-                    self.rosetta_surface_pending_focus = false;
-                } else {
-                    let projection = self.rosetta_projection(std::time::Instant::now());
-                    self.rosetta_surface_expanded = true;
-                    self.rosetta_surface_selected = self
-                        .rosetta_surface_selected
-                        .min(projection.rows.len().saturating_sub(1));
-                    self.rosetta_surface_selected_key = projection
-                        .rows
-                        .get(self.rosetta_surface_selected)
-                        .map(crate::app::rosetta::RosettaRow::key);
-                    self.rosetta_surface_pending_focus = true;
-                }
-                cx.notify();
-            }
             title_bar::TitleBarEvent::ToggleFilesMenu(anchor) => {
                 let open = self.title_bar_files_menu_open.is_none();
                 self.dismiss_transient_surfaces();

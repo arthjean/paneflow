@@ -27,7 +27,6 @@ pub mod launch_pad;
 pub mod notifications;
 pub mod profile_menu;
 pub mod project_ops;
-pub mod rosetta;
 pub mod self_update_flow;
 pub mod session;
 pub mod sessions_sidebar;

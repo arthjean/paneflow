@@ -18,7 +18,6 @@
 - Paneflow Conductor: `paneflow` CLI, JSON-RPC IPC, `paneflow up`, `paneflow watch`, and `paneflow flow run`.
 - MCP bridge: `list_panes`, `read_pane`, and `search_pane`; read-only and untrusted-output aware.
 - Review: side-by-side worktree diffs, hunk navigation, branch review prompts, and local cost estimates.
-- Rosetta: in-app agent status and notification surface for urgent and recent agent states.
 
 ## Code Entry Points
 

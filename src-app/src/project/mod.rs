@@ -301,7 +301,7 @@ pub struct Thread {
     /// Monotonic timestamp for entering `WaitingForInput`. Runtime-only so a
     /// restored thread starts neutral.
     pub waiting_since: Option<std::time::Instant>,
-    /// Last hook activity for the thread, used by Rosetta relative labels.
+    /// Last hook activity for the thread, used by agent status timestamps.
     pub last_activity: std::time::Instant,
     /// Name of the currently active CLI sub-tool, when reported by hooks.
     pub active_tool_name: Option<String>,

@@ -1,5 +1,4 @@
-//! "Notifications" settings page - channel-level controls for OS-native
-//! notifications and the in-app Rosetta surface.
+//! "Notifications" settings page for OS-native agent notifications.
 
 use gpui::{
     ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement, SharedString,
@@ -9,9 +8,7 @@ use paneflow_config::schema::NotifyWhenAgentWaiting;
 use serde_json::Value;
 
 use crate::PaneFlowApp;
-use crate::settings::components::{
-    hairline, section_header, setting_card, setting_text, toggle_pill,
-};
+use crate::settings::components::{section_header, setting_card, setting_text, toggle_pill};
 
 impl PaneFlowApp {
     pub(crate) fn render_notifications_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -20,11 +17,7 @@ impl PaneFlowApp {
         let native_notifications = config.agent_panel.as_ref().is_some_and(|agent_panel| {
             agent_panel.resolved_notify_when_agent_waiting() != NotifyWhenAgentWaiting::Never
         });
-        let rosetta_enabled = config.rosetta_enabled();
-        let rosetta_show_passive = config.rosetta_show_passive_enabled();
-
-        let mut channels_card = setting_card(ui)
-            .child(agent_panel_toggle_row(
+        let channels_card = setting_card(ui).child(agent_panel_toggle_row(
                 "row-native-notifications",
                 "Native OS notifications",
                 "Send system notifications when agents need attention or finish while Paneflow is unfocused.",
@@ -37,29 +30,7 @@ impl PaneFlowApp {
                 },
                 ui,
                 cx,
-            ))
-            .child(hairline(ui))
-            .child(top_level_toggle_row(
-                "row-rosetta-enabled",
-                "Rosetta",
-                "Show the in-app Rosetta surface for agent notifications and status.",
-                rosetta_enabled,
-                "rosetta_enabled",
-                ui,
-                cx,
             ));
-
-        if rosetta_enabled {
-            channels_card = channels_card.child(hairline(ui)).child(top_level_toggle_row(
-                "row-rosetta-passive",
-                "Show running agents",
-                "Include running-only agent rows in Rosetta, not just states that need attention.",
-                rosetta_show_passive,
-                "rosetta_show_passive",
-                ui,
-                cx,
-            ));
-        }
 
         div()
             .flex()
@@ -68,33 +39,6 @@ impl PaneFlowApp {
             .child(channels_card)
             .child(div().h(px(180.)).flex_none())
     }
-}
-
-fn top_level_toggle_row(
-    id: &'static str,
-    title: &'static str,
-    description: &'static str,
-    current: bool,
-    config_key: &'static str,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> impl IntoElement {
-    let target_value = !current;
-
-    toggle_row(
-        id,
-        title,
-        description,
-        ui,
-        div()
-            .id(SharedString::from(id))
-            .flex_shrink_0()
-            .cursor(CursorStyle::PointingHand)
-            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.persist_setting(false, config_key, serde_json::Value::Bool(target_value), cx);
-            }))
-            .child(toggle_pill(current, ui)),
-    )
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -130,11 +130,9 @@ status, notifications, and session restore.
 
 ### See what needs attention
 
-The sidebar, tab dots, desktop notifications, Attention Queue, and Rosetta
-surface turn scattered agent events into a readable queue: waiting for input,
-running, stalled, errored, or recently finished. Rosetta is the in-app status
-surface for agent notifications and can stay quiet unless something needs your
-attention.
+The sidebar, tab dots, desktop notifications, and Attention Queue turn scattered
+agent events into a readable queue: waiting for input, running, stalled,
+errored, or recently finished.
 
 ### Coordinate a fleet with Conductor
 
@@ -179,7 +177,7 @@ is available.
 | Area | What Paneflow gives you |
 |---|---|
 | Terminal workspace | Splits, tabs, resize, layout presets, session restore, markdown panes |
-| Agent state | Thinking, waiting, finished, errored, stalled, notifications, Rosetta |
+| Agent state | Thinking, waiting, finished, errored, stalled, notifications |
 | Review | Worktree diff columns, hunk navigation, review prompts, cost estimate |
 | Automation | CLI, JSON-RPC socket, `paneflow up`, `paneflow flow run`, event stream |
 | Agent context | Read-only MCP bridge with `list_panes`, `read_pane`, `search_pane` |
