@@ -40,6 +40,30 @@ pub fn next_workspace_id() -> u64 {
     NEXT_WORKSPACE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Runtime-only notification state for a completed agent turn.
+///
+/// A natural `ai.stop` marks the completion unread. It stays unread even after
+/// the transient `AgentState::Finished` session is auto-cleared, and only a
+/// direct click on the workspace card acknowledges it.
+#[derive(Debug, Default)]
+pub(crate) struct AgentCompletionNotification {
+    unread: bool,
+}
+
+impl AgentCompletionNotification {
+    pub(crate) fn mark_finished(&mut self) {
+        self.unread = true;
+    }
+
+    pub(crate) fn acknowledge(&mut self) {
+        self.unread = false;
+    }
+
+    pub(crate) fn is_unread(&self) -> bool {
+        self.unread
+    }
+}
+
 pub struct Workspace {
     /// Unique workspace identifier, assigned at construction.
     pub id: u64,
@@ -93,6 +117,9 @@ pub struct Workspace {
     /// `ai_types::aggregate_by_tool`. Cleaned up by the stale-PID sweep
     /// in `event_handlers::sweep_stale_pids`.
     pub agent_sessions: std::collections::HashMap<u32, AgentSession>,
+    /// Persistent-in-session completion notification shown as a blue dot in
+    /// the Workspaces sidebar until the user clicks this workspace card.
+    pub(crate) agent_completion_notification: AgentCompletionNotification,
     /// AI agent process basenames detected by walking the workspace's
     /// PTY descendants (Linux `/proc/<pid>/comm`, macOS `libproc::name`).
     /// Independent of the optional IPC hook handshake -- this is what
@@ -158,6 +185,7 @@ impl Workspace {
             port_scan_pending: false,
             service_labels: std::collections::HashMap::new(),
             agent_sessions: std::collections::HashMap::new(),
+            agent_completion_notification: AgentCompletionNotification::default(),
             detected_agents: std::collections::HashSet::new(),
             custom_buttons: Vec::new(),
             files_expanded: Vec::new(),
@@ -342,5 +370,22 @@ fn walk_and_push_config(
                 walk_and_push_config(&child.node, config, cx);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AgentCompletionNotification;
+
+    #[test]
+    fn agent_completion_stays_unread_until_acknowledged() {
+        let mut notification = AgentCompletionNotification::default();
+        assert!(!notification.is_unread());
+
+        notification.mark_finished();
+        assert!(notification.is_unread());
+
+        notification.acknowledge();
+        assert!(!notification.is_unread());
     }
 }

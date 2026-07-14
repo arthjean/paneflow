@@ -12,7 +12,7 @@ pub(crate) mod context_menu;
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled,
-    Transformation, Window, div, percentage, prelude::*, px, rgb, svg,
+    Window, div, prelude::*, px, rgb, svg,
 };
 
 use crate::{
@@ -20,11 +20,8 @@ use crate::{
     ai_types, workspace::Workspace,
 };
 
-/// US-048: memoized result of the sidebar's sibling-worktree grouping. The
-/// `order` is a list of indices into `PaneFlowApp::workspaces`; `signature` is
-/// the cheap content hash it was computed for (`None` until the first render).
-/// Stored behind a `RefCell` on `PaneFlowApp` because `render_sidebar` borrows
-/// `&self`.
+/// Memoized sibling-worktree ordering. Group labels stay hidden, but sibling
+/// worktrees remain contiguous as before the visual redesign.
 #[derive(Default)]
 pub(crate) struct SidebarOrderCache {
     signature: Option<u64>,
@@ -46,16 +43,74 @@ enum SidebarDiffSummary {
     Files { files_changed: usize },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidebarAgentState {
+    NeedsInput,
+    Errored,
+    Stalled,
+    Finished,
+    Thinking,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SidebarAgentSummary {
+    state: SidebarAgentState,
+    count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SidebarServiceSummary {
+    primary: u16,
+    overflow: usize,
+}
+
 const SIDEBAR_CARD_MARGIN_X: f32 = 8.0;
 const SIDEBAR_CARD_PADDING_X: f32 = 10.0;
 const SIDEBAR_TITLE_ROW_GAP: f32 = 6.0;
-const SIDEBAR_SESSION_DOT_SIZE: f32 = 7.0;
+const SIDEBAR_AGENT_STATUS_SLOT_WIDTH: f32 = 48.0;
+const SIDEBAR_AGENT_ICON_SLOT_WIDTH: f32 = 20.0;
 const SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_CARD_MARGIN_X * 2.0 - SIDEBAR_CARD_PADDING_X * 2.0;
 
 impl SidebarDiffSummary {
     fn is_visible(self) -> bool {
         !matches!(self, Self::None)
+    }
+}
+
+impl SidebarAgentSummary {
+    fn slot_width(self) -> f32 {
+        if self.state == SidebarAgentState::NeedsInput {
+            SIDEBAR_AGENT_STATUS_SLOT_WIDTH
+        } else if self.count > 1 {
+            28.0
+        } else {
+            SIDEBAR_AGENT_ICON_SLOT_WIDTH
+        }
+    }
+
+    fn tooltip_state(self) -> String {
+        match self.state {
+            SidebarAgentState::NeedsInput => {
+                agent_status_sentence(self.count, "needs input", "need input")
+            }
+            SidebarAgentState::Errored => agent_status_sentence(self.count, "errored", "errored"),
+            SidebarAgentState::Stalled => agent_status_sentence(self.count, "stalled", "stalled"),
+            SidebarAgentState::Thinking => {
+                agent_status_sentence(self.count, "thinking", "thinking")
+            }
+            SidebarAgentState::Finished => {
+                "Agent finished · Click workspace to dismiss".to_string()
+            }
+        }
+    }
+}
+
+fn agent_status_sentence(count: usize, singular_state: &str, plural_state: &str) -> String {
+    if count == 1 {
+        format!("1 agent {singular_state}")
+    } else {
+        format!("{count} agents {plural_state}")
     }
 }
 
@@ -112,6 +167,26 @@ fn visible_service_ports(
         .collect()
 }
 
+fn sidebar_service_summary(
+    active_ports: &[u16],
+    service_labels: &std::collections::HashMap<u16, crate::terminal::ServiceInfo>,
+) -> Option<SidebarServiceSummary> {
+    let visible = visible_service_ports(active_ports, service_labels);
+    let primary = visible
+        .iter()
+        .copied()
+        .find(|port| {
+            service_labels
+                .get(port)
+                .is_some_and(|info| info.is_frontend)
+        })
+        .or_else(|| visible.first().copied())?;
+    Some(SidebarServiceSummary {
+        primary,
+        overflow: visible.len().saturating_sub(1),
+    })
+}
+
 fn sidebar_diff_summary(stats: &crate::workspace::GitDiffStats) -> SidebarDiffSummary {
     if stats.insertions > 0 || stats.deletions > 0 {
         SidebarDiffSummary::Lines {
@@ -131,27 +206,71 @@ fn sidebar_file_change_label(files_changed: usize) -> String {
     format!("{files_changed} changed")
 }
 
-fn sidebar_workspace_title_slot_width(has_active_session: bool) -> f32 {
-    let reserved = if has_active_session {
-        SIDEBAR_TITLE_ROW_GAP + SIDEBAR_SESSION_DOT_SIZE
-    } else {
-        0.0
-    };
+fn sidebar_agent_summary<'a, I>(sessions: I, completion_unread: bool) -> Option<SidebarAgentSummary>
+where
+    I: IntoIterator<Item = &'a ai_types::AgentSession>,
+{
+    let mut counts = [0usize; 4];
+    for session in sessions {
+        let index = match session.state {
+            ai_types::AgentState::WaitingForInput => 0,
+            ai_types::AgentState::Errored => 1,
+            ai_types::AgentState::Stalled => 2,
+            ai_types::AgentState::Thinking => 3,
+            ai_types::AgentState::Finished => continue,
+        };
+        counts[index] += 1;
+    }
+
+    let priority = [
+        SidebarAgentState::NeedsInput,
+        SidebarAgentState::Errored,
+        SidebarAgentState::Stalled,
+    ];
+    for (state, count) in priority.into_iter().zip(counts[..3].iter().copied()) {
+        if count > 0 {
+            return Some(SidebarAgentSummary { state, count });
+        }
+    }
+
+    if completion_unread {
+        return Some(SidebarAgentSummary {
+            state: SidebarAgentState::Finished,
+            count: 1,
+        });
+    }
+
+    (counts[3] > 0).then_some(SidebarAgentSummary {
+        state: SidebarAgentState::Thinking,
+        count: counts[3],
+    })
+}
+
+fn sidebar_workspace_title_slot_width(summary: Option<SidebarAgentSummary>) -> f32 {
+    let reserved = summary.map_or(0.0, |summary| SIDEBAR_TITLE_ROW_GAP + summary.slot_width());
     (SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH - reserved).max(0.0)
 }
 
 impl PaneFlowApp {
-    /// Cheap content signature for the sidebar display order (US-048). Hashes
-    /// the workspace count plus each `(id, repo_root)` in positional order, so
-    /// it changes on create / close / reorder / repo-root change - exactly the
-    /// inputs [`Self::compute_display_order`] reads. No allocation.
+    fn begin_workspace_rename(&mut self, index: usize, cx: &gpui::App) {
+        self.commit_rename(cx);
+        if let Some(title) = self
+            .workspaces
+            .get(index)
+            .map(|workspace| workspace.title.clone())
+        {
+            self.rename_text = title;
+            self.renaming_idx = Some(index);
+        }
+    }
+
     fn sidebar_order_signature(workspaces: &[Workspace]) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         workspaces.len().hash(&mut hasher);
-        for ws in workspaces {
-            ws.id.hash(&mut hasher);
-            match &ws.repo_root {
+        for workspace in workspaces {
+            workspace.id.hash(&mut hasher);
+            match &workspace.repo_root {
                 Some(root) => root.hash(&mut hasher),
                 None => 0u8.hash(&mut hasher),
             }
@@ -159,36 +278,33 @@ impl PaneFlowApp {
         hasher.finish()
     }
 
-    /// Sibling-worktree grouping (US-002): workspaces sharing a `repo_root`
-    /// render contiguously when ≥2 share it (group appears at the first
-    /// member's position); a lone workspace keeps its original position.
-    /// Returns indices into `workspaces`. Pure - memoized by the caller.
     fn compute_display_order(workspaces: &[Workspace]) -> Vec<usize> {
         let mut repo_members: std::collections::HashMap<&std::path::Path, Vec<usize>> =
             std::collections::HashMap::new();
-        for (i, ws) in workspaces.iter().enumerate() {
-            if let Some(root) = &ws.repo_root {
-                repo_members.entry(root.as_path()).or_default().push(i);
+        for (index, workspace) in workspaces.iter().enumerate() {
+            if let Some(root) = &workspace.repo_root {
+                repo_members.entry(root.as_path()).or_default().push(index);
             }
         }
-        let mut order: Vec<usize> = Vec::with_capacity(workspaces.len());
+
+        let mut order = Vec::with_capacity(workspaces.len());
         let mut placed = vec![false; workspaces.len()];
-        for (i, ws) in workspaces.iter().enumerate() {
-            if placed[i] {
+        for (index, workspace) in workspaces.iter().enumerate() {
+            if placed[index] {
                 continue;
             }
-            if let Some(root) = &ws.repo_root
+            if let Some(root) = &workspace.repo_root
                 && let Some(members) = repo_members.get(root.as_path())
                 && members.len() >= 2
             {
-                for &m in members {
-                    order.push(m);
-                    placed[m] = true;
+                for &member in members {
+                    order.push(member);
+                    placed[member] = true;
                 }
                 continue;
             }
-            order.push(i);
-            placed[i] = true;
+            order.push(index);
+            placed[index] = true;
         }
         order
     }
@@ -218,10 +334,66 @@ impl PaneFlowApp {
             .flex()
             .flex_col();
 
-        // All top-of-sidebar affordances (New workspace, Clear all,
-        // Open Settings) moved into the bottom-of-sidebar Settings
-        // popover. The top of the CLI sidebar is now empty -- see
-        // `cli_menu_items` for the popover contents.
+        let new_workspace_tooltip = self.shortcut_for_action("new_workspace").map_or_else(
+            || "New workspace".to_string(),
+            |key| format!("New workspace  {key}"),
+        );
+        sidebar = sidebar.child(
+            div()
+                .h(px(44.))
+                .flex_none()
+                .px(px(8.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .child(
+                    div()
+                        .pl(px(10.))
+                        .text_size(px(12.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(ui.text)
+                        .child("Workspaces"),
+                )
+                .child(
+                    div()
+                        .id("sidebar-new-workspace")
+                        .h(px(26.))
+                        .px(px(7.))
+                        .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.))
+                        .cursor_pointer()
+                        .text_size(px(11.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(ui.muted)
+                        .hover(|s| {
+                            let ui = crate::theme::ui_colors();
+                            s.bg(crate::app::constants::sidebar_tab_hover_background())
+                                .text_color(ui.text)
+                        })
+                        .tooltip(move |_w, cx| {
+                            cx.new(|_| SidebarTooltip {
+                                label: new_workspace_tooltip.clone().into(),
+                            })
+                            .into()
+                        })
+                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                            this.create_workspace_with_picker(window, cx);
+                        }))
+                        .child(
+                            svg()
+                                .size(px(11.))
+                                .flex_none()
+                                .path("icons/plus.svg")
+                                .text_color(ui.muted),
+                        )
+                        .child("New"),
+                ),
+        );
+
         // Workspace list - scrollable area. Wheel-scroll comes from
         // `overflow_y_scroll + track_scroll`; the visible scroll bar
         // is gone, so the list uses the full sidebar width without a
@@ -235,7 +407,8 @@ impl PaneFlowApp {
             .track_scroll(&self.sidebar_scroll)
             .flex()
             .flex_col()
-            .gap(px(6.))
+            .gap(px(2.))
+            .pt(px(2.))
             .pb(px(8.));
 
         if self.workspaces.is_empty() {
@@ -246,44 +419,13 @@ impl PaneFlowApp {
                     .flex_col()
                     .items_center()
                     .justify_center()
-                    .gap(px(12.))
+                    .gap(px(10.))
                     .px(px(16.))
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(44.))
-                            .h(px(44.))
-                            .rounded(px(10.))
-                            .bg(ui.subtle)
-                            .child(
-                                svg()
-                                    .size(px(20.))
-                                    .flex_none()
-                                    .path("icons/folder_open.svg")
-                                    .text_color(ui.muted),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .items_center()
-                            .gap(px(2.))
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(ui.text)
-                                    .child("No workspaces yet"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(11.))
-                                    .text_color(ui.muted)
-                                    .child("Create one to get started"),
-                            ),
+                            .text_size(px(11.))
+                            .text_color(ui.muted)
+                            .child("Open a project folder"),
                     )
                     .child(
                         div()
@@ -292,15 +434,18 @@ impl PaneFlowApp {
                             .flex_row()
                             .items_center()
                             .gap(px(6.))
-                            .px(px(12.))
-                            .py(px(6.))
+                            .px(px(10.))
+                            .py(px(5.))
                             .rounded(px(6.))
                             .cursor_pointer()
-                            .bg(ui.text)
-                            .text_color(ui.base)
+                            .bg(ui.subtle)
+                            .text_color(ui.text)
                             .text_size(px(11.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .hover(|s| s.opacity(0.85))
+                            .font_weight(FontWeight::MEDIUM)
+                            .hover(|s| {
+                                let ui = crate::theme::ui_colors();
+                                s.bg(ui.surface)
+                            })
                             .on_click(cx.listener(|this, _: &ClickEvent, w, cx| {
                                 this.create_workspace_with_picker(w, cx);
                             }))
@@ -308,23 +453,27 @@ impl PaneFlowApp {
                                 svg()
                                     .size(px(12.))
                                     .flex_none()
-                                    .path("icons/plus.svg")
-                                    .text_color(ui.base),
+                                    .path("icons/folder_open.svg")
+                                    .text_color(ui.muted),
                             )
-                            .child("New Workspace"),
+                            .child("Open folder"),
                     ),
             );
-            sidebar = sidebar.child(list);
-            return sidebar;
         }
 
-        // ── Sibling-worktree grouping (US-002), memoized (US-048) ──
-        // The display order depends only on the workspace set/order and each
-        // `repo_root`. `render_sidebar` runs on every app `notify()`, so the old
-        // per-frame `HashMap` + `Vec` rebuild was pure waste - recompute only
-        // when a cheap content signature changes. `idx` stays the workspace's
-        // real index in `self.workspaces`, so selection/drag/rename are
-        // unaffected by the display reordering.
+        list = self.render_workspace_rows(list, ui, cx);
+        sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
+        sidebar = sidebar.child(self.render_sidebar_settings_footer(self.cli_menu_items(), cx));
+        sidebar = sidebar.child(self.render_mode_toggle(cx));
+        sidebar
+    }
+
+    fn render_workspace_rows(
+        &self,
+        mut list: gpui::Stateful<gpui::Div>,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
         let signature = Self::sidebar_order_signature(&self.workspaces);
         if self.sidebar_order_cache.borrow().signature != Some(signature) {
             let order = Self::compute_display_order(&self.workspaces);
@@ -334,398 +483,398 @@ impl PaneFlowApp {
         }
         let order_cache = self.sidebar_order_cache.borrow();
         for &i in &order_cache.order {
-            let ws = &self.workspaces[i];
-            let is_active = i == self.active_idx;
+            list = list.child(self.render_workspace_row(i, ui, cx));
+        }
+        list
+    }
 
-            let title = ws.title.clone();
-            // Format cwd as ~/... (collapse home dir)
-            let cwd_display = collapse_home(&ws.cwd, &self.home_dir);
+    fn render_workspace_row(
+        &self,
+        i: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let ws = &self.workspaces[i];
+        let is_active = i == self.active_idx;
 
-            let idx = i;
-            let ws_id = ws.id;
-            let ws_title: SharedString = ws.title.clone().into();
+        let title = ws.title.clone();
+        // Format cwd as ~/... (collapse home dir)
+        let cwd_display = collapse_home(&ws.cwd, &self.home_dir);
 
-            let mut card = div()
-                .id(SharedString::from(format!("ws-{i}")))
-                .mx(px(8.))
-                .px(px(10.))
-                .py(px(8.))
-                .rounded(crate::app::constants::WORKSPACE_CARD_CORNER_RADIUS)
-                .cursor_pointer()
-                .overflow_x_hidden()
-                // Quiet card (Codex/OpenAI sidebar row): transparent at rest,
-                // with the same subtle translucent tint for selection and hover
-                // in dark mode. The accent stays reserved for agent status.
-                .when(is_active, |d| {
-                    d.bg(crate::app::constants::sidebar_tab_active_background())
-                })
-                .when(!is_active, |d| {
-                    d.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
-                })
-                .on_drag(
-                    WorkspaceDrag {
-                        id: ws_id,
-                        title: ws_title.clone(),
-                    },
-                    |drag, _offset, _window, cx| {
-                        cx.new(|_| WorkspaceDragPreview {
-                            title: drag.title.clone(),
-                        })
-                    },
-                )
-                .on_drop(cx.listener(move |this, drag: &WorkspaceDrag, _window, cx| {
-                    this.reorder_workspace(drag.id, idx, cx);
-                }))
-                .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+        let idx = i;
+        let ws_id = ws.id;
+        let ws_title: SharedString = ws.title.clone().into();
+
+        let mut card = div()
+            .id(SharedString::from(format!("ws-{i}")))
+            .mx(px(8.))
+            .px(px(10.))
+            .py(px(7.))
+            .min_h(px(48.))
+            .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
+            .cursor_pointer()
+            .overflow_x_hidden()
+            .when(is_active, |d| {
+                d.bg(crate::app::constants::sidebar_tab_active_background())
+            })
+            .when(!is_active, |d| {
+                d.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            })
+            .on_drag(
+                WorkspaceDrag {
+                    id: ws_id,
+                    title: ws_title.clone(),
+                },
+                |drag, _offset, _window, cx| {
+                    cx.new(|_| WorkspaceDragPreview {
+                        title: drag.title.clone(),
+                    })
+                },
+            )
+            .on_drop(cx.listener(move |this, drag: &WorkspaceDrag, _window, cx| {
+                this.reorder_workspace(drag.id, idx, cx);
+            }))
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                this.dismiss_transient_surfaces();
+                if let Some(workspace) = this.workspaces.get_mut(idx) {
+                    workspace.agent_completion_notification.acknowledge();
+                }
+                let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count == 2);
+                if is_double {
+                    this.begin_workspace_rename(idx, cx);
+                } else {
+                    this.commit_rename(cx);
+                    this.select_workspace(idx, window, cx);
+                }
+                cx.notify();
+            }))
+            .on_aux_click(cx.listener(move |this, e: &ClickEvent, _window, cx| {
+                if e.is_right_click()
+                    && let Some(position) = e.mouse_position()
+                {
+                    this.commit_rename(cx);
                     this.dismiss_transient_surfaces();
-                    let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count == 2);
-                    if is_double {
-                        this.commit_rename(cx); // commit any previous rename
-                        this.rename_text = this.workspaces[idx].title.clone();
-                        this.renaming_idx = Some(idx);
-                    } else {
-                        this.commit_rename(cx);
-                        this.select_workspace(idx, window, cx);
-                    }
+                    this.workspace_menu_open = Some(WorkspaceContextMenu { idx, position });
+                    cx.stop_propagation();
                     cx.notify();
-                }))
-                .on_aux_click(cx.listener(move |this, e: &ClickEvent, _window, cx| {
-                    if e.is_right_click()
-                        && let Some(position) = e.mouse_position()
-                    {
-                        this.commit_rename(cx);
-                        this.dismiss_transient_surfaces();
-                        this.workspace_menu_open = Some(WorkspaceContextMenu { idx, position });
+                }
+            }))
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
+                let key = e.keystroke.key.as_str();
+                if this.renaming_idx != Some(idx) {
+                    if key == "f2" {
+                        this.begin_workspace_rename(idx, cx);
                         cx.stop_propagation();
                         cx.notify();
                     }
-                }))
-                .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
-                    if this.renaming_idx != Some(idx) {
-                        return;
+                    return;
+                }
+                match key {
+                    "enter" => {
+                        this.commit_rename(cx);
+                        cx.notify();
                     }
-                    let key = e.keystroke.key.as_str();
-                    match key {
-                        "enter" => {
-                            this.commit_rename(cx);
+                    "escape" => {
+                        this.renaming_idx = None;
+                        this.rename_text.clear();
+                        cx.notify();
+                    }
+                    "backspace" => {
+                        this.rename_text.pop();
+                        cx.notify();
+                    }
+                    _ => {
+                        if let Some(ch) = &e.keystroke.key_char
+                            && !ch.is_empty()
+                            && !e.keystroke.modifiers.control
+                            && !e.keystroke.modifiers.platform
+                        {
+                            this.rename_text.push_str(ch);
                             cx.notify();
-                        }
-                        "escape" => {
-                            this.renaming_idx = None;
-                            this.rename_text.clear();
-                            cx.notify();
-                        }
-                        "backspace" => {
-                            this.rename_text.pop();
-                            cx.notify();
-                        }
-                        _ => {
-                            if let Some(ch) = &e.keystroke.key_char
-                                && !ch.is_empty()
-                                && !e.keystroke.modifiers.control
-                                && !e.keystroke.modifiers.platform
-                            {
-                                this.rename_text.push_str(ch);
-                                cx.notify();
-                            }
                         }
                     }
-                }))
-                .flex()
-                .flex_col()
-                .gap(px(5.));
+                }
+            }))
+            .flex()
+            .flex_col()
+            .gap(px(3.));
 
-            // Row 1: title
-            let agent_status =
-                ai_types::workspace_agent_status(ws.agent_sessions.values(), &ws.detected_agents);
-            let has_active_session = !agent_status.active_labels.is_empty();
-            let session_tooltip = agent_session_tooltip(&agent_status.active_labels);
-            let title_slot_width = sidebar_workspace_title_slot_width(has_active_session);
+        // Row 1: title
+        let agent_status =
+            ai_types::workspace_agent_status(ws.agent_sessions.values(), &ws.detected_agents);
+        let row_agent_status = sidebar_agent_summary(
+            ws.agent_sessions.values(),
+            ws.agent_completion_notification.is_unread(),
+        );
+        let title_slot_width = sidebar_workspace_title_slot_width(row_agent_status);
 
-            let title_el = if self.renaming_idx == Some(i) {
-                div()
-                    .w(px(title_slot_width))
-                    .max_w(px(title_slot_width))
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .text_color(ui.text)
-                    .text_sm()
-                    .font_weight(FontWeight::NORMAL)
-                    .bg(ui.overlay)
-                    .px_1()
-                    .rounded_sm()
-                    .child(format!("{}|", self.rename_text))
-            } else {
-                div()
-                    .w(px(title_slot_width))
-                    .max_w(px(title_slot_width))
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_color(ui.text)
-                    .text_sm()
-                    .font_weight(FontWeight::NORMAL)
-                    .child(title)
-            };
+        let title_el = if self.renaming_idx == Some(i) {
+            div()
+                .w(px(title_slot_width))
+                .max_w(px(title_slot_width))
+                .min_w_0()
+                .overflow_x_hidden()
+                .text_color(ui.text)
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .bg(ui.overlay)
+                .px_1()
+                .rounded_sm()
+                .child(format!("{}|", self.rename_text))
+        } else {
+            div()
+                .w(px(title_slot_width))
+                .max_w(px(title_slot_width))
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(ui.text)
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .child(title)
+        };
 
-            let title_row = div()
+        let mut title_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(SIDEBAR_TITLE_ROW_GAP))
+            .w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
+            .max_w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
+            .min_w_0()
+            .overflow_x_hidden()
+            .child(title_el);
+        if let Some(row_agent_status) = row_agent_status {
+            let status_tooltip = sidebar_agent_status_tooltip(row_agent_status, &agent_status);
+            title_row = title_row.child(render_workspace_agent_summary(
+                row_agent_status,
+                ws.id,
+                status_tooltip,
+                ui,
+            ));
+        }
+
+        card = card.child(title_row);
+
+        if let Some(meta_row) = self.render_workspace_meta_row(idx, ws, ui, cx) {
+            card = card.child(meta_row);
+        }
+
+        let cwd_tooltip = SharedString::from(cwd_display);
+        card = card.tooltip(move |_w, cx| {
+            cx.new(|_| WorkspaceCwdTooltip {
+                path: cwd_tooltip.clone(),
+            })
+            .into()
+        });
+        card
+    }
+
+    fn render_workspace_meta_row(
+        &self,
+        idx: usize,
+        ws: &Workspace,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        // Branch, diff, and service summary stay on one clipped line so a
+        // workspace row keeps its compact 48px rhythm.
+        let has_branch = !ws.git_branch.is_empty();
+        let diff_summary = sidebar_diff_summary(&ws.git_stats);
+        let has_stats = diff_summary.is_visible();
+        let service_summary = sidebar_service_summary(&ws.active_ports, &ws.service_labels);
+        let has_ports = service_summary.is_some();
+        if has_branch || has_stats || has_ports {
+            let mut meta_row = div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(SIDEBAR_TITLE_ROW_GAP))
+                .gap(px(6.))
                 .w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
                 .max_w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
-                .min_w_0()
+                .h(px(14.))
                 .overflow_x_hidden()
-                .child(title_el)
-                .when(has_active_session, |d| {
-                    d.child(
+                .whitespace_nowrap()
+                .text_xs()
+                .text_color(ui.muted);
+
+            if has_branch {
+                let branch_width = match (has_stats, has_ports) {
+                    (true, true) => 64.0,
+                    (true, false) => 112.0,
+                    (false, true) => 126.0,
+                    (false, false) => SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH,
+                };
+                meta_row = meta_row.child(
+                    div()
+                        .min_w_0()
+                        .max_w(px(branch_width))
+                        .overflow_x_hidden()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(4.))
+                        .child(
+                            svg()
+                                .size(px(10.))
+                                .flex_none()
+                                .path("icons/git-branch-sidebar.svg")
+                                .text_color(ui.muted),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .overflow_x_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .child(ws.git_branch.clone()),
+                        ),
+                );
+            }
+
+            if has_stats {
+                // Shared diff palette (Codex green/red on dark, theme vc_* on
+                // light) so the CLI sidebar diffstat matches the Diff/Review
+                // view and the Agents dock instead of inlining its own hex.
+                let diff = ui.diff_colors();
+                match diff_summary {
+                    SidebarDiffSummary::Lines {
+                        insertions,
+                        deletions,
+                    } => {
+                        if insertions > 0 {
+                            meta_row = meta_row.child(
+                                div()
+                                    .flex_none()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(diff.added)
+                                    .child(format!("+{insertions}")),
+                            );
+                        }
+                        if deletions > 0 {
+                            meta_row = meta_row.child(
+                                div()
+                                    .flex_none()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(diff.deleted)
+                                    .child(format!("-{deletions}")),
+                            );
+                        }
+                    }
+                    SidebarDiffSummary::Files { files_changed } => {
+                        meta_row = meta_row.child(
+                            div()
+                                .flex_none()
+                                .font_weight(FontWeight::MEDIUM)
+                                .text_color(ui.muted)
+                                .child(sidebar_file_change_label(files_changed)),
+                        );
+                    }
+                    SidebarDiffSummary::None => {}
+                }
+            }
+
+            // Separator before the ports, only when branch/diff preceded
+            // them (a leading `·` would otherwise dangle).
+            if (has_branch || has_stats) && has_ports {
+                meta_row = meta_row.child(div().flex_none().text_color(ui.muted).child("·"));
+            }
+
+            if let Some(service) = service_summary {
+                let port = service.primary;
+                let info = ws.service_labels.get(&port);
+                let is_frontend = info.is_some_and(|service| service.is_frontend);
+                let service_name = info
+                    .and_then(|service| service.label.clone())
+                    .unwrap_or_else(|| "Local service".to_string());
+                let service_tooltip: SharedString = format!("{service_name}  :{port}").into();
+
+                if is_frontend {
+                    let url = info
+                        .and_then(|service| service.url.clone())
+                        .unwrap_or_else(|| format!("http://localhost:{port}"));
+                    meta_row = meta_row.child(
                         div()
-                            .id(SharedString::from(format!("ws-{i}-session-dot")))
-                            .flex_none()
-                            .w(px(SIDEBAR_SESSION_DOT_SIZE))
-                            .h(px(SIDEBAR_SESSION_DOT_SIZE))
-                            .rounded_full()
-                            .bg(rgb(0x3B82F6)) // Tailwind blue-500
+                            .id(SharedString::from(format!("port-{idx}-{port}")))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(2.))
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(ui.muted)
+                            .cursor_pointer()
+                            .hover(|style| style.text_color(crate::theme::ui_colors().text))
                             .tooltip({
-                                let label = session_tooltip.clone();
+                                let label = service_tooltip.clone();
                                 move |_w, cx| {
                                     cx.new(|_| SidebarTooltip {
                                         label: label.clone(),
                                     })
                                     .into()
                                 }
-                            }),
-                    )
-                });
-
-            card = card.child(title_row);
-
-            // ── Meta line - branch, diff stats, and detected services, all on a
-            // single compact muted line (Codex quiet-card: one airy meta row,
-            // not a stack of three). `flex_wrap()` lets a long branch or extra
-            // ports drop gracefully instead of truncating; the branch keeps its
-            // natural width (GPUI's truncate + flex_shrink + min_w_0 combo
-            // collapses the label to "…" even with room to spare).
-            let has_branch = !ws.git_branch.is_empty();
-            let diff_summary = sidebar_diff_summary(&ws.git_stats);
-            let has_stats = diff_summary.is_visible();
-            let display_ports = visible_service_ports(&ws.active_ports, &ws.service_labels);
-            let has_ports = !display_ports.is_empty();
-            if has_branch || has_stats || has_ports {
-                let mut meta_row = div()
-                    .flex()
-                    .flex_row()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(6.))
-                    .text_xs()
-                    .text_color(ui.muted);
-
-                if has_branch {
-                    meta_row = meta_row
-                        .child(
-                            svg()
-                                .size(px(11.))
-                                .flex_none()
-                                .path("icons/git-branch.svg")
-                                .text_color(ui.muted),
-                        )
-                        .child(div().flex_none().child(ws.git_branch.clone()));
-                }
-
-                if has_branch && has_stats {
-                    meta_row = meta_row.child(div().flex_none().text_color(ui.muted).child("·"));
-                }
-
-                if has_stats {
-                    // Shared diff palette (Codex green/red on dark, theme vc_* on
-                    // light) so the CLI sidebar diffstat matches the Diff/Review
-                    // view and the Agents dock instead of inlining its own hex.
-                    let diff = ui.diff_colors();
-                    match diff_summary {
-                        SidebarDiffSummary::Lines {
-                            insertions,
-                            deletions,
-                        } => {
-                            if insertions > 0 {
-                                meta_row = meta_row.child(
-                                    div()
-                                        .flex_none()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(diff.added)
-                                        .child(format!("+{insertions}")),
-                                );
-                            }
-                            if deletions > 0 {
-                                meta_row = meta_row.child(
-                                    div()
-                                        .flex_none()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .text_color(diff.deleted)
-                                        .child(format!("-{deletions}")),
-                                );
-                            }
-                        }
-                        SidebarDiffSummary::Files { files_changed } => {
-                            meta_row = meta_row.child(
-                                div()
+                            })
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                                this.open_workspace_service_url(&url, cx);
+                                cx.stop_propagation();
+                            }))
+                            .child(
+                                svg()
+                                    .size(px(10.))
                                     .flex_none()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(ui.muted)
-                                    .child(sidebar_file_change_label(files_changed)),
-                            );
-                        }
-                        SidebarDiffSummary::None => {}
-                    }
-                }
-
-                // Separator before the ports, only when branch/diff preceded
-                // them (a leading `·` would otherwise dangle).
-                if (has_branch || has_stats) && has_ports {
-                    meta_row = meta_row.child(div().flex_none().text_color(ui.muted).child("·"));
-                }
-
-                // Detected services. Frontend services are clickable tinted chips;
-                // non-frontend ports render as plain muted `:port` text so the
-                // chip ink stays meaningful (= clickable). Capped at 3 visible
-                // to keep the card height predictable; overflow condenses to a
-                // `+N` muted counter.
-                if has_ports {
-                    const PORTS_VISIBLE: usize = 3;
-                    for (pi, port) in display_ports.iter().take(PORTS_VISIBLE).enumerate() {
-                        let info = ws.service_labels.get(port);
-                        let is_frontend = info.is_some_and(|i| i.is_frontend);
-                        let label = if let Some(i) = info
-                            && let Some(ref l) = i.label
-                        {
-                            format!("{l} :{port}")
-                        } else {
-                            format!(":{port}")
-                        };
-
-                        if is_frontend {
-                            let url = info
-                                .and_then(|i| i.url.clone())
-                                .unwrap_or_else(|| format!("http://localhost:{port}"));
-                            meta_row = meta_row.child(
-                                div()
-                                    .id(SharedString::from(format!("port-{idx}-{pi}")))
-                                    .px(px(6.))
-                                    .py(px(1.))
-                                    .rounded(px(4.))
-                                    .bg(ui.subtle)
-                                    .text_size(px(10.))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(ui.text)
-                                    .cursor_pointer()
-                                    .hover(|s| {
-                                        let ui = crate::theme::ui_colors();
-                                        s.bg(ui.surface)
+                                    .path("icons/world.svg")
+                                    .text_color(ui.muted),
+                            )
+                            .child(format!(":{port}")),
+                    );
+                } else {
+                    meta_row = meta_row.child(
+                        div()
+                            .id(SharedString::from(format!("port-{idx}-{port}-info")))
+                            .text_size(px(10.))
+                            .text_color(ui.muted)
+                            .tooltip({
+                                let label = service_tooltip.clone();
+                                move |_w, cx| {
+                                    cx.new(|_| SidebarTooltip {
+                                        label: label.clone(),
                                     })
-                                    // Open via Paneflow's URL launcher so
-                                    // Windows browsers break away from the
-                                    // kill-on-close Job Object.
-                                    .on_click(cx.listener(
-                                        move |this, _: &ClickEvent, _w, cx| {
-                                            if let Err(err) =
-                                                crate::external_open::open_url(&url)
-                                            {
-                                                let msg = if err.kind()
-                                                    == std::io::ErrorKind::NotFound
-                                                {
-                                                    "Could not open URL - install xdg-utils (Linux), or check your default browser".to_string()
-                                                } else {
-                                                    format!("Could not open URL: {err}")
-                                                };
-                                                log::warn!("sidebar: open URL failed: {err}");
-                                                this.show_toast(msg, cx);
-                                            }
-                                        },
-                                    ))
-                                    .child(label),
-                            );
-                        } else {
-                            meta_row = meta_row
-                                .child(div().text_size(px(10.)).text_color(ui.muted).child(label));
-                        }
-                    }
-
-                    if display_ports.len() > PORTS_VISIBLE {
-                        meta_row = meta_row.child(
-                            div()
-                                .px(px(4.))
-                                .text_size(px(10.))
-                                .text_color(ui.muted)
-                                .child(format!("+{}", display_ports.len() - PORTS_VISIBLE)),
-                        );
-                    }
+                                    .into()
+                                }
+                            })
+                            .child(format!(":{port}")),
+                    );
                 }
 
-                card = card.child(meta_row);
+                if service.overflow > 0 {
+                    let overflow = service.overflow;
+                    meta_row = meta_row.child(
+                        div()
+                            .id(SharedString::from(format!("ports-{idx}-overflow")))
+                            .flex_none()
+                            .text_size(px(10.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(ui.muted)
+                            .tooltip(move |_w, cx| {
+                                cx.new(|_| SidebarTooltip {
+                                    label: format!(
+                                        "{overflow} more services · Right-click workspace to view"
+                                    )
+                                    .into(),
+                                })
+                                .into()
+                            })
+                            .child(format!("+{overflow}")),
+                    );
+                }
             }
 
-            // ── Row 4: AI tool status (one row per active tool). The projection
-            // is shared with `fleet.list`; this render layer only maps status
-            // specs to GPUI elements.
-            for agg in &agent_status.hooked {
-                card = card.child(render_workspace_agent_status_row(agg, ws.id, ui));
-            }
-
-            // Agents detected in the process tree (per-pane /proc scan) with
-            // NO IPC session - the shim was bypassed (shell alias, rc file
-            // rewriting PATH, absolute binary path) or the agent has no hook
-            // support at all. Show an honest static "running" row instead of
-            // nothing: the user sees the agent is alive without a fabricated
-            // lifecycle state (no spinner - we genuinely don't know).
-            for tool in agent_status.unhooked {
-                let name = tool.display_name();
-                card = card.child(
-                    div()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.))
-                        .text_xs()
-                        .text_color(ui.muted)
-                        .child(
-                            div()
-                                .w(px(11.))
-                                .h(px(11.))
-                                .flex_none()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(div().w(px(5.)).h(px(5.)).rounded_full().bg(ui.muted)),
-                        )
-                        .child(div().child(format!("{name} running"))),
-                );
-            }
-
-            // Working directory moves into a hover tooltip so the card
-            // height stays tight. Users who need the path still get it
-            // on hover; the visible layout no longer carries a row
-            // that duplicates information already implied by the title.
-            let cwd_tooltip = SharedString::from(cwd_display);
-            card = card.tooltip(move |_w, cx| {
-                cx.new(|_| WorkspaceCwdTooltip {
-                    path: cwd_tooltip.clone(),
-                })
-                .into()
-            });
-
-            list = list.child(card);
+            Some(meta_row.into_any_element())
+        } else {
+            None
         }
-
-        // Wrap list + scrollbar in a relative flex_1 container so the
-        // overlay can absolutely-position itself over the list. Mouse
-        // handlers stay on the wrapper to track drag even if the cursor
-        // leaves the 6px-wide thumb.
-        sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
-        sidebar = sidebar.child(self.render_sidebar_settings_footer(self.cli_menu_items(), cx));
-        sidebar = sidebar.child(self.render_mode_toggle(cx));
-        sidebar
     }
 
     /// Items rendered inside the bottom Settings popover when in CLI
@@ -782,132 +931,207 @@ impl PaneFlowApp {
     }
 }
 
-fn agent_session_tooltip(labels: &[String]) -> SharedString {
-    match labels {
-        [] => SharedString::default(),
-        [one] => format!("{one} session active").into(),
-        [a, b] => format!("{a} + {b} sessions active").into(),
-        many => format!("{} active sessions", many.len()).into(),
+fn sidebar_agent_status_tooltip(
+    summary: SidebarAgentSummary,
+    status: &ai_types::WorkspaceAgentStatus,
+) -> SharedString {
+    let state = summary.tooltip_state();
+    if summary.state == SidebarAgentState::Finished {
+        return state.into();
+    }
+
+    let mut details: Vec<String> = status
+        .hooked
+        .iter()
+        .map(|aggregate| {
+            format!(
+                "{}{}",
+                aggregate.tool.display_name(),
+                aggregate.extra_suffix()
+            )
+        })
+        .chain(
+            status
+                .unhooked
+                .iter()
+                .map(|tool| format!("{} running", tool.display_name())),
+        )
+        .collect();
+    for label in &status.active_labels {
+        if !details.iter().any(|detail| detail.starts_with(label)) {
+            details.push(label.clone());
+        }
+    }
+
+    if details.is_empty() {
+        state.into()
+    } else {
+        format!("{state} · {}", details.join(", ")).into()
     }
 }
 
-fn render_workspace_agent_status_row(
-    agg: &ai_types::ToolAggregate,
+fn render_workspace_agent_summary(
+    summary: SidebarAgentSummary,
     workspace_id: u64,
+    tooltip: SharedString,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
-    let extra = agg.extra_suffix();
-    match &agg.dominant {
-        ai_types::AgentState::Thinking => {
-            let is_claude = matches!(agg.tool, crate::agent_launcher::TerminalAgent::ClaudeCode);
-            let thinking_color: gpui::Hsla = if is_claude {
-                ui.agent_claude
-            } else {
-                rgb(0xc4c4c4).into()
-            };
-            let glyph: AnyElement = svg()
+    let (color, glyph, label): (gpui::Hsla, AnyElement, Option<String>) = match summary.state {
+        SidebarAgentState::NeedsInput => (
+            rgb(0xFBBF24).into(),
+            svg()
                 .size(px(11.))
                 .flex_none()
-                .path("icons/loader-circle.svg")
-                .text_color(thinking_color)
-                .with_animation(
-                    SharedString::from(format!(
-                        "sidebar-spinner-{}-{}",
-                        workspace_id,
-                        agg.tool.display_name()
-                    )),
-                    Animation::new(std::time::Duration::from_secs(1)).repeat(),
-                    |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
-                )
-                .into_any_element();
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                .text_xs()
-                .text_color(thinking_color)
-                .child(glyph)
-                .child(div().child(format!("{} thinking…{}", agg.tool.display_name(), extra)))
-                .into_any_element()
-        }
-        ai_types::AgentState::WaitingForInput => div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .self_start()
-            .px(px(6.))
-            .py(px(1.))
-            .rounded(px(4.))
-            .bg(rgb(0xFBBF24))
-            .child(
-                svg()
-                    .size(px(11.))
-                    .flex_none()
-                    .path("icons/bell.svg")
-                    .text_color(ui.base),
+                .path("icons/bell.svg")
+                .text_color(rgb(0xFBBF24))
+                .into_any_element(),
+            Some(if summary.count > 1 {
+                format!("Input {}", summary.count)
+            } else {
+                "Input".to_string()
+            }),
+        ),
+        SidebarAgentState::Errored => (
+            ui.agent_error,
+            svg()
+                .size(px(11.))
+                .flex_none()
+                .path("icons/x_circle.svg")
+                .text_color(ui.agent_error)
+                .into_any_element(),
+            (summary.count > 1).then(|| summary.count.to_string()),
+        ),
+        SidebarAgentState::Stalled => (
+            ui.agent_stalled,
+            svg()
+                .size(px(11.))
+                .flex_none()
+                .path("icons/triangle-alert.svg")
+                .text_color(ui.agent_stalled)
+                .into_any_element(),
+            (summary.count > 1).then(|| summary.count.to_string()),
+        ),
+        SidebarAgentState::Thinking => {
+            let color = ui.muted;
+            (
+                color,
+                render_comet_trail_loader(workspace_id, color),
+                (summary.count > 1).then(|| summary.count.to_string()),
             )
-            .child(
+        }
+        SidebarAgentState::Finished => {
+            let color: gpui::Hsla = rgb(0x83C3FF).into();
+            (
+                color,
                 div()
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(ui.base)
-                    .child(format!("{} needs input{}", agg.tool.display_name(), extra)),
+                    .size(px(11.))
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(div().size(px(7.)).rounded_full().bg(color))
+                    .into_any_element(),
+                None,
             )
-            .into_any_element(),
-        ai_types::AgentState::Finished => {
-            let done_color = rgb(0x00E08A);
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(6.))
-                .text_xs()
-                .text_color(done_color)
-                .child(
-                    svg()
-                        .size(px(11.))
-                        .flex_none()
-                        .path("icons/check.svg")
-                        .text_color(done_color),
-                )
-                .child(div().child(format!("{} done{}", agg.tool.display_name(), extra)))
-                .into_any_element()
         }
-        ai_types::AgentState::Errored => div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .text_xs()
-            .text_color(ui.agent_error)
-            .child(
-                svg()
-                    .size(px(11.))
-                    .flex_none()
-                    .path("icons/x_circle.svg")
-                    .text_color(ui.agent_error),
-            )
-            .child(div().child(format!("{} errored{}", agg.tool.display_name(), extra)))
-            .into_any_element(),
-        ai_types::AgentState::Stalled => div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .text_xs()
-            .text_color(ui.agent_stalled)
-            .child(
-                svg()
-                    .size(px(11.))
-                    .flex_none()
-                    .path("icons/triangle-alert.svg")
-                    .text_color(ui.agent_stalled),
-            )
-            .child(div().child(format!("{} stalled{}", agg.tool.display_name(), extra)))
-            .into_any_element(),
-    }
+    };
+
+    div()
+        .id(SharedString::from(format!(
+            "workspace-agent-status-{workspace_id}"
+        )))
+        .w(px(summary.slot_width()))
+        .h(px(20.))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .gap(px(3.))
+        .text_size(px(10.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(color)
+        .tooltip(move |_w, cx| {
+            cx.new(|_| SidebarTooltip {
+                label: tooltip.clone(),
+            })
+            .into()
+        })
+        .child(glyph)
+        .when_some(label, |d, label| d.child(label))
+        .into_any_element()
+}
+
+/// Compact GPUI adaptation of Dot Matrix's `Comet Trail` loader. The 3x3
+/// perimeter leaves room for larger dots while keeping the native sidebar free
+/// of a web runtime, glow, or accent color.
+fn render_comet_trail_loader(workspace_id: u64, color: gpui::Hsla) -> AnyElement {
+    static SYNC_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+    const MATRIX_SIZE: usize = 3;
+    const DOT_SIZE: f32 = 3.0;
+    const DOT_GAP: f32 = 1.0;
+    const CYCLE_MS: u64 = 720;
+    const PERIMETER: usize = 8;
+    const BASE_OPACITY: f32 = 0.06;
+    const TAIL_OPACITIES: [f32; 3] = [0.8144, 0.4864, 0.2568];
+
+    div()
+        .size(px(11.))
+        .flex_none()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(DOT_GAP))
+        .with_animation(
+            SharedString::from(format!("workspace-comet-trail-{workspace_id}")),
+            Animation::new(std::time::Duration::from_millis(CYCLE_MS)).repeat(),
+            move |loader, _delta| {
+                let cycle_elapsed = SYNC_EPOCH
+                    .get_or_init(std::time::Instant::now)
+                    .elapsed()
+                    .as_millis()
+                    % u128::from(CYCLE_MS);
+                let head = (cycle_elapsed * PERIMETER as u128 / u128::from(CYCLE_MS)) as usize;
+
+                loader.children((0..MATRIX_SIZE).map(|row| {
+                    div()
+                        .h(px(DOT_SIZE))
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .gap(px(DOT_GAP))
+                        .children((0..MATRIX_SIZE).map(move |col| {
+                            let order = match (row, col) {
+                                (0, 0) => Some(0),
+                                (0, 1) => Some(1),
+                                (0, 2) => Some(2),
+                                (1, 2) => Some(3),
+                                (2, 2) => Some(4),
+                                (2, 1) => Some(5),
+                                (2, 0) => Some(6),
+                                (1, 0) => Some(7),
+                                _ => None,
+                            };
+                            let opacity = order.map_or_else(
+                                || if head % 2 == 0 { 0.1 } else { 0.18 },
+                                |order| {
+                                    let trail = (head + PERIMETER - order) % PERIMETER;
+                                    TAIL_OPACITIES.get(trail).copied().unwrap_or(BASE_OPACITY)
+                                },
+                            );
+
+                            div()
+                                .size(px(DOT_SIZE))
+                                .flex_none()
+                                .rounded_full()
+                                .bg(color.opacity(opacity))
+                        }))
+                }))
+            },
+        )
+        .into_any_element()
 }
 
 /// Lightweight tooltip body reused by sidebar affordances that just
@@ -966,13 +1190,21 @@ impl Render for WorkspaceCwdTooltip {
 #[cfg(test)]
 mod tests {
     use super::{
-        SIDEBAR_SESSION_DOT_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH,
-        SidebarDiffSummary, collapse_home, sidebar_diff_summary, sidebar_file_change_label,
+        SIDEBAR_AGENT_ICON_SLOT_WIDTH, SIDEBAR_AGENT_STATUS_SLOT_WIDTH, SIDEBAR_TITLE_ROW_GAP,
+        SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH, SidebarAgentState, SidebarAgentSummary,
+        SidebarDiffSummary, SidebarServiceSummary, collapse_home, sidebar_agent_summary,
+        sidebar_diff_summary, sidebar_file_change_label, sidebar_service_summary,
         sidebar_workspace_title_slot_width, visible_service_ports,
     };
+    use crate::agent_launcher::TerminalAgent;
+    use crate::ai_types::{AgentSession, AgentState};
     use crate::terminal::ServiceInfo;
     use crate::workspace::GitDiffStats;
     use std::collections::HashMap;
+
+    fn session(state: AgentState) -> AgentSession {
+        AgentSession::new(TerminalAgent::ClaudeCode, state)
+    }
 
     #[cfg(not(target_os = "windows"))]
     #[test]
@@ -1035,6 +1267,79 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_service_summary_prefers_frontend_and_counts_overflow() {
+        let labels = HashMap::from([
+            (
+                3000,
+                ServiceInfo {
+                    port: 3000,
+                    url: Some("http://localhost:3000".to_string()),
+                    label: Some("API".to_string()),
+                    is_frontend: false,
+                },
+            ),
+            (
+                5173,
+                ServiceInfo {
+                    port: 5173,
+                    url: Some("http://localhost:5173".to_string()),
+                    label: Some("Vite".to_string()),
+                    is_frontend: true,
+                },
+            ),
+            (
+                8000,
+                ServiceInfo {
+                    port: 8000,
+                    url: Some("http://localhost:8000".to_string()),
+                    label: Some("Fastify".to_string()),
+                    is_frontend: false,
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            sidebar_service_summary(&[3000, 53154, 5173, 8000], &labels),
+            Some(SidebarServiceSummary {
+                primary: 5173,
+                overflow: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn sidebar_service_summary_falls_back_to_first_visible_service() {
+        let labels = HashMap::from([
+            (
+                3000,
+                ServiceInfo {
+                    port: 3000,
+                    url: None,
+                    label: Some("API".to_string()),
+                    is_frontend: false,
+                },
+            ),
+            (
+                8000,
+                ServiceInfo {
+                    port: 8000,
+                    url: None,
+                    label: Some("Worker".to_string()),
+                    is_frontend: false,
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            sidebar_service_summary(&[3000, 8000], &labels),
+            Some(SidebarServiceSummary {
+                primary: 3000,
+                overflow: 1,
+            })
+        );
+    }
+
+    #[test]
     fn sidebar_diff_summary_hides_zero_line_counts() {
         let binary_only = GitDiffStats {
             files_changed: 1,
@@ -1072,14 +1377,99 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_workspace_title_slot_width_reserves_session_dot() {
+    fn sidebar_agent_summary_hides_idle_without_signal() {
+        assert_eq!(sidebar_agent_summary(std::iter::empty(), false), None);
+    }
+
+    #[test]
+    fn sidebar_agent_summary_counts_winning_needs_input_sessions() {
+        let sessions = [
+            session(AgentState::WaitingForInput),
+            session(AgentState::Errored),
+            session(AgentState::WaitingForInput),
+        ];
         assert_eq!(
-            sidebar_workspace_title_slot_width(false),
+            sidebar_agent_summary(sessions.iter(), false),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::NeedsInput,
+                count: 2
+            })
+        );
+    }
+
+    #[test]
+    fn sidebar_agent_summary_applies_sidebar_priority() {
+        let cases = [
+            (
+                vec![AgentState::Finished, AgentState::Thinking],
+                SidebarAgentState::Thinking,
+            ),
+            (
+                vec![AgentState::Thinking, AgentState::Stalled],
+                SidebarAgentState::Stalled,
+            ),
+            (
+                vec![AgentState::Stalled, AgentState::Errored],
+                SidebarAgentState::Errored,
+            ),
+            (
+                vec![AgentState::Errored, AgentState::WaitingForInput],
+                SidebarAgentState::NeedsInput,
+            ),
+        ];
+        for (states, expected) in cases {
+            let sessions: Vec<_> = states.into_iter().map(session).collect();
+            assert_eq!(
+                sidebar_agent_summary(sessions.iter(), false).map(|summary| summary.state),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn sidebar_agent_summary_surfaces_unread_completion_without_live_session() {
+        assert_eq!(
+            sidebar_agent_summary(std::iter::empty(), true),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::Finished,
+                count: 1
+            })
+        );
+    }
+
+    #[test]
+    fn sidebar_agent_summary_hides_acknowledged_finished_session() {
+        let sessions = [session(AgentState::Finished)];
+        assert_eq!(sidebar_agent_summary(sessions.iter(), false), None);
+    }
+
+    #[test]
+    fn sidebar_workspace_title_slot_width_reserves_agent_status() {
+        assert_eq!(
+            sidebar_workspace_title_slot_width(None),
             SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH
         );
+
+        let needs_input = Some(SidebarAgentSummary {
+            state: SidebarAgentState::NeedsInput,
+            count: 1,
+        });
         assert_eq!(
-            sidebar_workspace_title_slot_width(true),
-            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH - SIDEBAR_TITLE_ROW_GAP - SIDEBAR_SESSION_DOT_SIZE
+            sidebar_workspace_title_slot_width(needs_input),
+            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH
+                - SIDEBAR_TITLE_ROW_GAP
+                - SIDEBAR_AGENT_STATUS_SLOT_WIDTH
+        );
+
+        let unread_completion = Some(SidebarAgentSummary {
+            state: SidebarAgentState::Finished,
+            count: 1,
+        });
+        assert_eq!(
+            sidebar_workspace_title_slot_width(unread_completion),
+            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH
+                - SIDEBAR_TITLE_ROW_GAP
+                - SIDEBAR_AGENT_ICON_SLOT_WIDTH
         );
     }
 

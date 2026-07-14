@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use gpui::{
     AnyElement, App, ClickEvent, ClipboardItem, Context, Entity, InteractiveElement, IntoElement,
     MouseButton, ParentElement, Pixels, SharedString, Styled, Window, deferred, div, point,
-    prelude::*, px, rgb,
+    prelude::*, px,
 };
 
 use crate::app::files_tree;
@@ -38,6 +38,14 @@ pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
         "open_workspace_in_windsurf",
     ),
 ];
+
+fn context_menu_divider(ui: crate::theme::UiColors) -> gpui::Div {
+    div()
+        .mx(px(6.))
+        .my(px(4.))
+        .h(px(1.))
+        .bg(menu_divider_color(ui))
+}
 
 pub(crate) fn clamped_context_menu_position(
     position: gpui::Point<Pixels>,
@@ -148,45 +156,17 @@ impl PaneFlowApp {
             })
     }
 
-    fn render_primary_select_menu_item(
-        &self,
-        id: SharedString,
-        label: &str,
-        ui: crate::theme::UiColors,
-        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        let blue = if ui.base.l > 0.5 {
-            gpui::Hsla::from(rgb(0x007aff))
-        } else {
-            gpui::Hsla::from(rgb(0x0a84ff))
-        };
-        let blue_hover = gpui::Hsla::from(rgb(0x339cff));
-        let white = gpui::Hsla::from(rgb(0xffffff));
-
-        div()
-            .id(id)
-            .h(px(28.))
-            .px(px(8.))
-            .rounded(px(7.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .bg(blue)
-            .text_size(px(12.))
-            .text_color(white)
-            .cursor_pointer()
-            .hover(move |s| s.bg(blue_hover))
-            .on_click(on_click)
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(label.to_string()),
-            )
+    pub(crate) fn open_workspace_service_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        if let Err(err) = crate::external_open::open_url(url) {
+            let message = if err.kind() == std::io::ErrorKind::NotFound {
+                "Could not open URL - install xdg-utils (Linux), or check your default browser"
+                    .to_string()
+            } else {
+                format!("Could not open URL: {err}")
+            };
+            log::warn!("sidebar: open URL failed: {err}");
+            self.show_toast(message, cx);
+        }
     }
 
     /// Build the deferred element that paints the right-click workspace
@@ -201,12 +181,30 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let idx = menu.idx;
-        let can_delete = !self.workspaces.is_empty();
+        let can_close = !self.workspaces.is_empty();
         let workflow_template = self.workspace_template_for_workspace(idx);
+        let services: Vec<_> = self
+            .workspaces
+            .get(idx)
+            .map(|workspace| {
+                workspace
+                    .active_ports
+                    .iter()
+                    .filter_map(|port| {
+                        workspace
+                            .service_labels
+                            .get(port)
+                            .cloned()
+                            .map(|info| (*port, info))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let workflow_rows = usize::from(workflow_template.is_some());
-        let separator_rows = 2 + workflow_rows;
-        let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows;
+        let service_rows = services.len();
+        let separator_rows = 3 + usize::from(service_rows > 0);
+        let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len() + 5 + workflow_rows + service_rows;
         let menu_height = px(8. + menu_rows as f32 * 28. + separator_rows as f32 * 9.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
 
@@ -222,10 +220,24 @@ impl PaneFlowApp {
             }))
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
 
+        context_menu = context_menu.child(self.render_select_menu_item(
+            "workspace-context-rename".into(),
+            "Rename",
+            None,
+            ui,
+            cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.workspace_menu_open = None;
+                this.begin_workspace_rename(idx, cx);
+                cx.stop_propagation();
+                cx.notify();
+            }),
+        ));
+
         if let Some(template_idx) = workflow_template {
-            context_menu = context_menu.child(self.render_primary_select_menu_item(
+            context_menu = context_menu.child(self.render_select_menu_item(
                 "workspace-context-run-workflow".into(),
                 "Run Workflow",
+                None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     this.workspace_menu_open = None;
@@ -233,13 +245,43 @@ impl PaneFlowApp {
                     cx.stop_propagation();
                 }),
             ));
-            context_menu = context_menu.child(
-                div()
-                    .mx(px(6.))
-                    .my(px(4.))
-                    .h(px(1.))
-                    .bg(menu_divider_color(ui)),
-            );
+        }
+
+        context_menu = context_menu.child(context_menu_divider(ui));
+
+        for (port, info) in services {
+            let service_name = info
+                .label
+                .clone()
+                .unwrap_or_else(|| "Local service".to_string());
+            if info.is_frontend {
+                let label = format!("Open {service_name} :{port}");
+                let url = info
+                    .url
+                    .clone()
+                    .unwrap_or_else(|| format!("http://localhost:{port}"));
+                context_menu = context_menu.child(self.render_select_menu_item(
+                    SharedString::from(format!("workspace-context-service-{port}")),
+                    &label,
+                    None,
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.workspace_menu_open = None;
+                        this.open_workspace_service_url(&url, cx);
+                        cx.stop_propagation();
+                    }),
+                ));
+            } else {
+                context_menu = context_menu.child(Self::render_disabled_select_menu_item(
+                    SharedString::from(format!("workspace-context-service-{port}-info")),
+                    &format!("{service_name} :{port}"),
+                    ui,
+                ));
+            }
+        }
+
+        if service_rows > 0 {
+            context_menu = context_menu.child(context_menu_divider(ui));
         }
 
         for &(id, label, command, shortcut_action) in EDITOR_CONTEXT_MENU_ITEMS {
@@ -260,14 +302,7 @@ impl PaneFlowApp {
             ));
         }
 
-        // ── Separator ──
-        context_menu = context_menu.child(
-            div()
-                .mx(px(6.))
-                .my(px(4.))
-                .h(px(1.))
-                .bg(menu_divider_color(ui)),
-        );
+        context_menu = context_menu.child(context_menu_divider(ui));
 
         // Reveal in file manager
         let reveal_shortcut = self
@@ -311,22 +346,15 @@ impl PaneFlowApp {
             }),
         ));
 
-        // ── Separator ──
-        context_menu = context_menu.child(
-            div()
-                .mx(px(6.))
-                .my(px(4.))
-                .h(px(1.))
-                .bg(menu_divider_color(ui)),
-        );
+        context_menu = context_menu.child(context_menu_divider(ui));
 
-        // Delete workspace (conditionally disabled)
+        // Close workspace (conditionally disabled)
         let close_shortcut = self
             .shortcut_for_action("close_workspace")
             .map(|s| SharedString::from(s.to_string()));
         context_menu = context_menu.child(
             div()
-                .id("workspace-context-delete")
+                .id("workspace-context-close")
                 .h(px(28.))
                 .px(px(8.))
                 .rounded(px(7.))
@@ -336,14 +364,14 @@ impl PaneFlowApp {
                 .gap(px(8.))
                 .text_size(px(12.))
                 .text_color(ui.muted)
-                .when(can_delete, |d| d.text_color(ui.text))
-                .when(can_delete, |d| {
+                .when(can_close, |d| d.text_color(ui.text))
+                .when(can_close, |d| {
                     d.cursor_pointer()
                         .hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    if can_delete {
+                    if can_close {
                         this.close_workspace_at(idx, window, cx);
                     } else {
                         this.workspace_menu_open = None;
@@ -357,7 +385,7 @@ impl PaneFlowApp {
                         .overflow_x_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
-                        .child("Delete"),
+                        .child("Close Workspace"),
                 )
                 .when_some(close_shortcut, |d, shortcut| {
                     d.child(

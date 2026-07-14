@@ -3311,6 +3311,9 @@ impl PaneFlowApp {
                 let notify_config = self.cached_config.clone();
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     let interrupt_stop = is_interrupt_lifecycle_event(params);
+                    if !interrupt_stop {
+                        ws.agent_completion_notification.mark_finished();
+                    }
                     // U-014: key the auto-clear on the RESOLVED session key, not
                     // the raw `pid`. A legacy no-pid frame is stored under a
                     // fallback/synthetic key by `upsert_session_state`; the old

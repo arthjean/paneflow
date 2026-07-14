@@ -42,11 +42,6 @@ const DARK_RIGHT_PANEL_BORDER: u32 = 0x383838;
 /// Shared radius for the Agents search field and its primary navigation rows.
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 
-/// Larger radius for workspace cards. GPUI currently renders circular arcs
-/// rather than true Apple-style continuous corners, so the extra radius gives
-/// the closest restrained Codex treatment without changing the card geometry.
-pub(crate) const WORKSPACE_CARD_CORNER_RADIUS: Pixels = px(12.);
-
 /// Native material used behind the main application window.
 ///
 /// Windows delegates to GPUI's system backdrop support. On macOS PaneFlow
