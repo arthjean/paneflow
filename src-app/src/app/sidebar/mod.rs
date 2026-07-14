@@ -1115,7 +1115,7 @@ fn render_comet_trail_loader(workspace_id: u64, color: gpui::Hsla) -> AnyElement
                                 _ => None,
                             };
                             let opacity = order.map_or_else(
-                                || if head % 2 == 0 { 0.1 } else { 0.18 },
+                                || if head.is_multiple_of(2) { 0.1 } else { 0.18 },
                                 |order| {
                                     let trail = (head + PERIMETER - order) % PERIMETER;
                                     TAIL_OPACITIES.get(trail).copied().unwrap_or(BASE_OPACITY)
