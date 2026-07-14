@@ -62,7 +62,7 @@ pub struct PaneFlowConfig {
     pub line_height: Option<f32>,
     /// Terminal cell width multiplier (default: 0.6, valid range: 0.3-2.0).
     pub cell_width: Option<f32>,
-    /// Terminal font family (default: bundled Geist Mono).
+    /// Terminal font family (default: bundled JetBrainsMono Nerd Font Mono).
     pub font_family: Option<String>,
     /// Ordered fallback font families, consulted in order for glyphs the
     /// primary `font_family` does not cover - e.g. a Nerd Font for the

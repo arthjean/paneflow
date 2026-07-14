@@ -28,7 +28,7 @@ pub(crate) const DEFAULT_CELL_WIDTH: f32 = 0.6;
 pub(crate) const DEFAULT_FONT_WEIGHT_KEY: &str = "normal";
 
 /// Embedded monospace family - the bundled cross-platform default. Files:
-/// `assets/fonts/GeistMono-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`,
+/// `assets/fonts/JetBrainsMonoNerdFontMono-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`,
 /// registered with GPUI at startup (`main.rs` → `Assets::load_fonts` →
 /// `cx.text_system().add_fonts`).
 ///
@@ -40,7 +40,9 @@ pub(crate) const DEFAULT_FONT_WEIGHT_KEY: &str = "normal";
 /// so the system primary "renders" zero glyphs and nothing falls through. With
 /// an embedded family as primary, GPUI's text system owns the font tables
 /// end-to-end and rasterization always works.
-pub(crate) const EMBEDDED_MONO_FAMILY: &str = "Geist Mono";
+pub(crate) const EMBEDDED_MONO_FAMILY: &str = "JetBrainsMono Nerd Font Mono";
+pub(crate) const JETBRAINS_MONO_NFM_ALIAS: &str = "JetBrainsMono NFM";
+pub(crate) const LEGACY_GEIST_MONO_FAMILY: &str = "Geist Mono";
 pub(crate) const LEGACY_EMBEDDED_MONO_FAMILY: &str = "Lilex";
 
 /// Embedded UI/sans family. Files:
@@ -56,8 +58,8 @@ pub(crate) const EMBEDDED_SANS_FAMILY: &str = "Geist";
 /// before the family name reaches GPUI - GPUI's pinned rev does not
 /// know about Paneflow-specific aliases.
 ///
-/// Users can write either an alias (`".PaneflowMono"` / `".PaneflowSans"`) or
-/// a concrete embedded family (`"Geist Mono"` / `"Geist"`) in `paneflow.json`.
+/// Users can write an alias (`".PaneflowMono"`, `"JetBrainsMono NFM"`, or
+/// `".PaneflowSans"`) or a concrete embedded family in `paneflow.json`.
 /// Keeping the alias available lets a future swap
 /// of the bundled fallback happen with a single edit to this constant
 /// table instead of a config migration for every user.
@@ -70,7 +72,7 @@ pub(crate) const PANEFLOW_SANS_ALIAS: &str = ".PaneflowSans";
 /// Paneflow boundary before the family name reaches GPUI.
 fn expand_paneflow_alias(name: &str) -> &str {
     match name {
-        PANEFLOW_MONO_ALIAS => EMBEDDED_MONO_FAMILY,
+        PANEFLOW_MONO_ALIAS | JETBRAINS_MONO_NFM_ALIAS => EMBEDDED_MONO_FAMILY,
         PANEFLOW_SANS_ALIAS => EMBEDDED_SANS_FAMILY,
         other => other,
     }
@@ -99,7 +101,7 @@ fn expand_paneflow_alias(name: &str) -> &str {
 // Font for Starship / oh-my-posh / Terminal-Icons glyphs that no Windows
 // system font carries), and `None` otherwise - never a hardcoded chain.
 //
-// Glyph fallback for codepoints Geist Mono doesn't cover (emoji, CJK,
+// Glyph fallback for codepoints the primary font doesn't cover (emoji, CJK,
 // symbols) still works: GPUI walks its built-in `fallback_font_stack`
 // - which already ships `.ZedMono` (resolves to Lilex, which we still
 // embed), `.ZedSans` (resolves to IBM Plex Sans, which we historically embed),
@@ -225,9 +227,9 @@ where
 
 /// The default monospace family PaneFlow uses out of the box.
 ///
-/// Uses bundled Geist Mono so fresh installs are visually consistent across
-/// Linux, macOS, and Windows while avoiding the Core Text empty-raster failure
-/// documented by commit c3e2331.
+/// Uses bundled JetBrainsMono Nerd Font Mono so fresh installs are visually
+/// consistent across Linux, macOS, and Windows while avoiding the Core Text
+/// empty-raster failure documented by commit c3e2331.
 ///
 /// Users can still override with any system font via
 /// `paneflow.json#font_family` - `resolve_font_family` validates the
@@ -251,6 +253,7 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
     // Lilex and IBM Plex Mono are also embedded and remain valid explicit
     // choices. Installed families flow through normal system-font resolution.
     if candidate == EMBEDDED_MONO_FAMILY
+        || candidate == LEGACY_GEIST_MONO_FAMILY
         || candidate == LEGACY_EMBEDDED_MONO_FAMILY
         || candidate == EMBEDDED_SANS_FAMILY
         || candidate == "IBM Plex Sans"
@@ -701,7 +704,14 @@ mod tests {
     #[test]
     fn expand_paneflow_alias_resolves_mono_alias() {
         assert_eq!(expand_paneflow_alias(".PaneflowMono"), EMBEDDED_MONO_FAMILY);
-        assert_eq!(expand_paneflow_alias(".PaneflowMono"), "Geist Mono");
+        assert_eq!(
+            expand_paneflow_alias(".PaneflowMono"),
+            "JetBrainsMono Nerd Font Mono"
+        );
+        assert_eq!(
+            expand_paneflow_alias("JetBrainsMono NFM"),
+            EMBEDDED_MONO_FAMILY
+        );
     }
 
     #[test]
@@ -717,10 +727,6 @@ mod tests {
         // expansion must not eat user-configured system fonts.
         assert_eq!(expand_paneflow_alias("Menlo"), "Menlo");
         assert_eq!(expand_paneflow_alias("Cascadia Mono"), "Cascadia Mono");
-        assert_eq!(
-            expand_paneflow_alias("JetBrainsMono NFM"),
-            "JetBrainsMono NFM"
-        );
         assert_eq!(expand_paneflow_alias("Lilex"), "Lilex");
         assert_eq!(expand_paneflow_alias(""), "");
         // Case-sensitive: `.paneflowmono` is not `.PaneflowMono`.
@@ -739,18 +745,29 @@ mod tests {
         // Both aliases must resolve through to their embedded targets
         // - the value GPUI's `text_system().resolve_font` will look
         // up against the registered TTFs.
-        assert_eq!(resolve_font_family(Some(".PaneflowMono")), "Geist Mono");
+        assert_eq!(
+            resolve_font_family(Some(".PaneflowMono")),
+            "JetBrainsMono Nerd Font Mono"
+        );
+        assert_eq!(
+            resolve_font_family(Some("JetBrainsMono NFM")),
+            "JetBrainsMono Nerd Font Mono"
+        );
         assert_eq!(resolve_font_family(Some(".PaneflowSans")), "Geist");
     }
 
     #[test]
     fn resolve_font_family_short_circuits_embedded_concrete_names() {
-        // Users who write `"Geist Mono"`, `"Lilex"`, `"Geist"`, or
-        // `"IBM Plex Sans"` in
+        // Users who write the canonical JetBrainsMono name, `"Geist Mono"`,
+        // `"Lilex"`, `"Geist"`, or `"IBM Plex Sans"` in
         // paneflow.json get the embedded font even on platforms whose
         // INSTALLED_MONO_FONTS registry doesn't list them (Windows
         // pre-DirectWrite, container without fontconfig). The short
         // circuit before the registry lookup is what makes that work.
+        assert_eq!(
+            resolve_font_family(Some("JetBrainsMono Nerd Font Mono")),
+            "JetBrainsMono Nerd Font Mono"
+        );
         assert_eq!(resolve_font_family(Some("Geist Mono")), "Geist Mono");
         assert_eq!(resolve_font_family(Some("Lilex")), "Lilex");
         assert_eq!(resolve_font_family(Some("Geist")), "Geist");
@@ -758,7 +775,7 @@ mod tests {
     }
 
     #[test]
-    fn select_default_font_family_uses_bundled_geist_mono() {
+    fn select_default_font_family_uses_bundled_jetbrains_mono_nfm() {
         assert_eq!(
             select_default_font_family(["Menlo", "JetBrainsMono NFM", EMBEDDED_MONO_FAMILY]),
             EMBEDDED_MONO_FAMILY
@@ -774,7 +791,7 @@ mod tests {
     }
 
     #[test]
-    fn default_font_family_is_bundled_geist_mono() {
+    fn default_font_family_is_bundled_jetbrains_mono_nfm() {
         assert_eq!(default_font_family(), EMBEDDED_MONO_FAMILY);
     }
 
