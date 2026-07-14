@@ -1565,7 +1565,7 @@ impl Element for TerminalElement {
             paint::background::paint_block_quads(&layout, &cell_x_bounds, &cell_y_bounds, window);
 
             // 3. Batched text runs
-            paint::text::paint_text_runs(&layout, &geom, font_size, window, cx);
+            paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
 
             // 3a. PANEFLOW_PIXEL_PROBE_OVERLAY: draw thin red cell borders
             // above the text. Independent of `PANEFLOW_PIXEL_PROBE`; opt-in

@@ -64,6 +64,7 @@ fn paint_cursor_info(
                 if cursor.italic {
                     cursor_font.style = FontStyle::Italic;
                 }
+                let cursor_font = super::display_font_for_intensity(&cursor_font, base_font.weight);
                 let text = ch.to_string();
                 let len = text.len();
                 window.text_system().shape_line(

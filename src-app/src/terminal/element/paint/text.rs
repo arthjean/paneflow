@@ -1,6 +1,8 @@
 //! Batched-text paint pass - one `shape_line` per `BatchedTextRun`.
 
-use gpui::{App, Bounds, Pixels, Point, ShapedLine, TextAlign, TextRun, Window, point, px, size};
+use gpui::{
+    App, Bounds, Font, Pixels, Point, ShapedLine, TextAlign, TextRun, Window, point, px, size,
+};
 
 use super::super::LayoutState;
 use super::super::geometry::CellGeometry;
@@ -24,6 +26,7 @@ pub(super) fn glyph_origin(geom: &CellGeometry, line: i32, col_start: usize) -> 
 pub fn paint_text_runs(
     layout: &LayoutState,
     geom: &CellGeometry,
+    base_font: &Font,
     font_size: Pixels,
     window: &mut Window,
     cx: &mut App,
@@ -43,7 +46,7 @@ pub fn paint_text_runs(
 
         let text_run = TextRun {
             len: run.text.len(),
-            font: run.font.clone(),
+            font: super::display_font_for_intensity(&run.font, base_font.weight),
             color: run.color,
             background_color: None,
             underline: run.underline,
