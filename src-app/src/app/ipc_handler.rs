@@ -3162,7 +3162,7 @@ impl PaneFlowApp {
                 } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
                     // The row spinner self-animates (declarative GPUI
                     // Animation in `thread_row`) - no loader-loop start here.
-                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid, None);
+                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid);
                     cx.notify();
                     serde_json::json!({"status": "running"})
                 } else {
@@ -3213,12 +3213,7 @@ impl PaneFlowApp {
                 } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
                     // tool_use keeps (or promotes) the thread spinner -
                     // same Finished-revival rationale as the workspace arm.
-                    apply_agents_thread_state(
-                        t,
-                        ai_types::AgentState::Thinking,
-                        pid,
-                        active_tool_name,
-                    );
+                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid);
                     cx.notify();
                     serde_json::json!({"status": "running"})
                 } else {
@@ -3275,8 +3270,7 @@ impl PaneFlowApp {
                     self.agent_sessions_changed(cx);
                     serde_json::json!({"status": "waiting"})
                 } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
-                    apply_agents_thread_state(t, ai_types::AgentState::WaitingForInput, pid, None);
-                    t.message = message.clone();
+                    apply_agents_thread_state(t, ai_types::AgentState::WaitingForInput, pid);
                     // Notification body uses the cleaned title so a CLI
                     // spinner glyph baked into the OSC title never leaks
                     // into the desktop notification.
@@ -3432,8 +3426,7 @@ impl PaneFlowApp {
                         read_stop_summary(params)
                     };
                     if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
-                        t.last_result = session_summary.clone();
-                        apply_agents_thread_state(t, ai_types::AgentState::Finished, pid, None);
+                        apply_agents_thread_state(t, ai_types::AgentState::Finished, pid);
                     }
                     cx.notify();
                     if !interrupt_stop {
@@ -3553,7 +3546,7 @@ impl PaneFlowApp {
                     let title = crate::project::clean_sidebar_title(&thread.title)
                         .unwrap_or_else(|| thread.title.clone());
                     if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
-                        apply_agents_thread_state(t, state, pid, None);
+                        apply_agents_thread_state(t, state, pid);
                     }
                     if errored {
                         fire_agent_exit_notification(
@@ -3679,10 +3672,7 @@ impl PaneFlowApp {
         self.agents_thread_target_by_id(thread_id)
     }
 
-    pub(crate) fn agents_thread_target_by_id(
-        &self,
-        thread_id: u64,
-    ) -> Option<crate::project::AgentsTarget> {
+    fn agents_thread_target_by_id(&self, thread_id: u64) -> Option<crate::project::AgentsTarget> {
         for (project_idx, project) in self.projects.iter().enumerate() {
             if let Some(thread_idx) = project
                 .threads
@@ -3706,27 +3696,8 @@ fn apply_agents_thread_state(
     thread: &mut crate::project::Thread,
     state: ai_types::AgentState,
     pid: Option<u32>,
-    active_tool_name: Option<String>,
 ) {
-    let previous_status = thread.status;
-    let next_status = crate::project::ThreadStatus::from_agent_state(state);
-    let now = std::time::Instant::now();
-    thread.status = next_status;
-    thread.last_activity = now;
-    thread.active_tool_name = active_tool_name;
-    match next_status {
-        crate::project::ThreadStatus::WaitingForInput => {
-            if previous_status != crate::project::ThreadStatus::WaitingForInput
-                || thread.waiting_since.is_none()
-            {
-                thread.waiting_since = Some(now);
-            }
-        }
-        _ => {
-            thread.waiting_since = None;
-            thread.message = None;
-        }
-    }
+    thread.status = crate::project::ThreadStatus::from_agent_state(state);
     match thread.status {
         crate::project::ThreadStatus::Idle | crate::project::ThreadStatus::Failed => {
             thread.agent_pid = None;
@@ -3749,10 +3720,6 @@ fn clear_agents_thread_on_session_end(thread: &mut crate::project::Thread) -> bo
     thread.status = crate::project::ThreadStatus::Idle;
     thread.agent_pid = None;
     thread.agent_proc_start = None;
-    thread.waiting_since = None;
-    thread.message = None;
-    thread.active_tool_name = None;
-    thread.last_activity = std::time::Instant::now();
     was_active
 }
 
@@ -5116,38 +5083,24 @@ mod tests {
         let self_pid = std::process::id();
         let mut thread = Thread::new_terminal("Codex", "/tmp", None);
 
-        super::apply_agents_thread_state(
-            &mut thread,
-            AgentState::Thinking,
-            Some(self_pid),
-            Some("Bash".to_string()),
-        );
+        super::apply_agents_thread_state(&mut thread, AgentState::Thinking, Some(self_pid));
         assert_eq!(thread.status, ThreadStatus::Thinking);
         assert_eq!(thread.agent_pid, Some(self_pid));
-        assert_eq!(thread.active_tool_name.as_deref(), Some("Bash"));
-        assert!(thread.last_activity.elapsed().as_secs() < 2);
 
-        super::apply_agents_thread_state(&mut thread, AgentState::WaitingForInput, None, None);
+        super::apply_agents_thread_state(&mut thread, AgentState::WaitingForInput, None);
         assert_eq!(thread.status, ThreadStatus::WaitingForInput);
-        assert!(thread.waiting_since.is_some());
-        thread.message = Some("Approve?".to_string());
-        let first_waiting_since = thread.waiting_since;
-        super::apply_agents_thread_state(&mut thread, AgentState::WaitingForInput, None, None);
-        assert_eq!(thread.waiting_since, first_waiting_since);
         assert_eq!(
             thread.agent_pid,
             Some(self_pid),
             "no-pid frames preserve the last known PID for stale sweeping"
         );
 
-        super::apply_agents_thread_state(&mut thread, AgentState::Finished, None, None);
+        super::apply_agents_thread_state(&mut thread, AgentState::Finished, None);
         assert_eq!(thread.status, ThreadStatus::Idle);
-        assert!(thread.waiting_since.is_none());
-        assert!(thread.message.is_none());
         assert!(thread.agent_pid.is_none());
         assert!(thread.agent_proc_start.is_none());
 
-        super::apply_agents_thread_state(&mut thread, AgentState::Errored, Some(self_pid), None);
+        super::apply_agents_thread_state(&mut thread, AgentState::Errored, Some(self_pid));
         assert_eq!(thread.status, ThreadStatus::Failed);
         assert!(
             thread.agent_pid.is_none(),

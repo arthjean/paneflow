@@ -143,10 +143,7 @@ fn notification_detail(raw: &str) -> Option<String> {
     (!clean.is_empty()).then_some(clean)
 }
 
-pub(crate) fn notification_context_body(
-    workspace_title: &str,
-    session_summary: Option<&str>,
-) -> String {
+fn notification_context_body(workspace_title: &str, session_summary: Option<&str>) -> String {
     session_summary
         .and_then(notification_detail)
         .or_else(|| notification_detail(workspace_title))

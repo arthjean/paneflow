@@ -404,8 +404,8 @@ impl PaneFlowConfig {
     }
 }
 
-/// Lenient `Option<bool>` deserializer for security-sensitive AI-access
-/// toggles. A non-boolean value (e.g. the string `"true"`)
+/// Lenient `Option<bool>` deserializer for optional config toggles. A
+/// non-boolean value (e.g. the string `"true"`)
 /// deserializes to `None` with a `warn!` instead of hard-erroring, which would
 /// propagate to `parse_and_validate` and wipe EVERY sibling setting on a single
 /// typo (the all-or-nothing fallback the terminal enums avoid for the same
