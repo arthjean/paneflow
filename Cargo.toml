@@ -12,11 +12,6 @@ members = [
     "crates/paneflow-telemetry",
     "src-app",
 ]
-exclude = [
-    "crates/hera-dogfood/terminal-core",
-    "crates/hera-dogfood/terminal-protocol",
-    "crates/hera-dogfood/terminal-render-model",
-]
 # Scope bare `cargo run` / `cargo build` / `cargo test` to the desktop app.
 # The AI-hook callback and shim binaries are helpers built on demand (via
 # `-p` or the release-min profile); including them here would make `cargo

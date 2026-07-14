@@ -28,8 +28,6 @@ use super::element::color::palette_color_at;
 use super::listener::{SpikeTermSize, ZedListener};
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
 use super::shell::{resolve_default_shell, setup_shell_integration};
-#[cfg(feature = "hera-dogfood")]
-use super::types::content_from_term;
 use super::types::{SharedTerm, ShellQuoting, TerminalWindowSize};
 use crate::limits::{MAX_CHARS, MAX_OSC52_BYTES};
 use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
@@ -125,26 +123,11 @@ pub enum TerminalType {
 /// `PtySender` (`crates/terminal/src/alacritty.rs:84-108`), which exposes only
 /// notify / resize / shutdown - never the raw `Msg` channel.
 #[derive(Clone)]
-pub struct PtySender(
-    TerminalType,
-    #[cfg(feature = "hera-dogfood")] Option<super::hera_dogfood::HeraResizeTap>,
-);
+pub struct PtySender(TerminalType);
 
 impl PtySender {
-    #[cfg(feature = "hera-dogfood")]
-    fn new(kind: TerminalType) -> Self {
-        Self(kind, None)
-    }
-
-    #[cfg(not(feature = "hera-dogfood"))]
     fn new(kind: TerminalType) -> Self {
         Self(kind)
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    fn with_hera_resize_tap(mut self, tap: Option<super::hera_dogfood::HeraResizeTap>) -> Self {
-        self.1 = tap;
-        self
     }
 
     /// Real sender wired to a live `EventLoop` channel.
@@ -186,13 +169,7 @@ impl PtySender {
 
     /// Resize the PTY grid (drives SIGWINCH to the child).
     pub fn resize(&self, size: AlacWindowSize) {
-        #[cfg(feature = "hera-dogfood")]
-        let hera_dimensions = (usize::from(size.num_cols), usize::from(size.num_lines));
         self.send(Msg::Resize(size));
-        #[cfg(feature = "hera-dogfood")]
-        if let Some(tap) = &self.1 {
-            tap.mirror_resize(hera_dimensions.0, hera_dimensions.1);
-        }
     }
 
     /// Ask the `EventLoop` to shut down (sent from `Drop` before the teardown
@@ -407,11 +384,6 @@ pub struct TerminalState {
     /// `Send` and matches the crate's interior-mutability idiom; the lock is
     /// uncontended (main thread only).
     pending_input: std::sync::Mutex<Vec<Cow<'static, [u8]>>>,
-    /// M3 Hera dogfood shadow core. Present only when the Cargo feature is
-    /// enabled and the runtime env gate explicitly asks for shadow mode.
-    #[cfg(feature = "hera-dogfood")]
-    #[allow(dead_code)]
-    pub(crate) hera_shadow: super::hera_dogfood::TerminalShadowState,
 }
 
 /// Cap on input buffered during the pre-promotion window. Generous for a
@@ -542,22 +514,14 @@ struct Osc7Pty<T: tty::EventedPty> {
     inner: T,
     scanner: Osc7Scanner,
     cwd_tx: UnboundedSender<String>,
-    #[cfg(feature = "hera-dogfood")]
-    hera_tap: Option<super::hera_dogfood::PtyOutputTap>,
 }
 
 impl<T: tty::EventedPty> Osc7Pty<T> {
-    fn new(
-        inner: T,
-        cwd_tx: UnboundedSender<String>,
-        #[cfg(feature = "hera-dogfood")] hera_tap: Option<super::hera_dogfood::PtyOutputTap>,
-    ) -> Self {
+    fn new(inner: T, cwd_tx: UnboundedSender<String>) -> Self {
         Self {
             inner,
             scanner: Osc7Scanner::default(),
             cwd_tx,
-            #[cfg(feature = "hera-dogfood")]
-            hera_tap,
         }
     }
 }
@@ -569,10 +533,6 @@ impl<T: tty::EventedPty> Read for Osc7Pty<T> {
         self.scanner.advance(&buf[..read], |cwd| {
             let _ = cwd_tx.unbounded_send(cwd);
         });
-        #[cfg(feature = "hera-dogfood")]
-        if let Some(tap) = &self.hera_tap {
-            tap.record_output(&buf[..read]);
-        }
         Ok(read)
     }
 }
@@ -840,16 +800,7 @@ impl TerminalState {
             params.shell_quoting,
         );
         let term = state.term.clone();
-        #[cfg(feature = "hera-dogfood")]
-        let hera_pty_tap = state.hera_pty_tap();
-        let spawned = Self::open_pty_and_eventloop(
-            params,
-            term,
-            events_tx,
-            signal_mask,
-            #[cfg(feature = "hera-dogfood")]
-            hera_pty_tap,
-        )?;
+        let spawned = Self::open_pty_and_eventloop(params, term, events_tx, signal_mask)?;
         state.promote(spawned);
         Ok(state)
     }
@@ -988,7 +939,6 @@ impl TerminalState {
         term: SharedTerm,
         events_tx: UnboundedSender<AlacEvent>,
         signal_mask: Option<ForegroundSignalMask>,
-        #[cfg(feature = "hera-dogfood")] hera_tap: Option<super::hera_dogfood::PtyOutputTap>,
     ) -> anyhow::Result<SpawnedPty> {
         let listener = ZedListener(events_tx);
         let (cwd_tx, cwd_rx) = unbounded();
@@ -1063,12 +1013,7 @@ impl TerminalState {
             (dup >= 0).then_some(dup)
         };
 
-        let pty = Osc7Pty::new(
-            pty,
-            cwd_tx,
-            #[cfg(feature = "hera-dogfood")]
-            hera_tap,
-        );
+        let pty = Osc7Pty::new(pty, cwd_tx);
         let event_loop = EventLoop::new(
             term,
             listener,
@@ -1102,8 +1047,6 @@ impl TerminalState {
     /// child.
     pub(super) fn promote(&mut self, spawned: SpawnedPty) {
         let sender = PtySender::pty(spawned.channel);
-        #[cfg(feature = "hera-dogfood")]
-        let sender = sender.with_hera_resize_tap(self.hera_shadow.resize_tap());
         self.notifier = PtyNotifier(sender);
         self.cwd_rx = Some(spawned.cwd_rx);
         self.child_pid = spawned.child_pid;
@@ -1146,11 +1089,6 @@ impl TerminalState {
     /// production path always goes through GPUI's scheduler.
     pub fn set_background_executor(&mut self, executor: gpui::BackgroundExecutor) {
         self.background_executor = Some(executor);
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    pub(super) fn hera_pty_tap(&self) -> Option<super::hera_dogfood::PtyOutputTap> {
-        self.hera_shadow.pty_tap()
     }
 
     /// Create a display-only terminal with no PTY, no reader thread, no message loop.
@@ -1199,11 +1137,7 @@ impl TerminalState {
         };
         let term = Term::new(config, &dimensions, listener);
         let term = Arc::new(FairMutex::new(term));
-        #[cfg(feature = "hera-dogfood")]
-        let hera_shadow = super::hera_dogfood::TerminalShadowState::from_runtime_gate(cols, rows);
         let notifier_sender = PtySender::display_only();
-        #[cfg(feature = "hera-dogfood")]
-        let notifier_sender = notifier_sender.with_hera_resize_tap(hera_shadow.resize_tap());
 
         let state = Self {
             term,
@@ -1245,8 +1179,6 @@ impl TerminalState {
             last_keystroke_at: None,
             background_executor: None,
             pending_input: std::sync::Mutex::new(Vec::new()),
-            #[cfg(feature = "hera-dogfood")]
-            hera_shadow,
         };
         (state, events_tx)
     }
@@ -1296,9 +1228,6 @@ impl TerminalState {
     /// `cwd_now()` as a fallback. The fallback is throttled so we don't
     /// `readlink` on every poll tick.
     pub fn sync_channels(&mut self) {
-        #[cfg(feature = "hera-dogfood")]
-        self.hera_shadow.drain_output();
-
         if let Some(mut rx) = self.cwd_rx.take() {
             while let Ok(cwd) = rx.try_recv() {
                 self.current_cwd = Some(cwd);
@@ -1311,55 +1240,6 @@ impl TerminalState {
             && let Some(cwd) = self.cwd_now()
         {
             self.current_cwd = Some(cwd.to_string_lossy().into_owned());
-        }
-
-        #[cfg(feature = "hera-dogfood")]
-        self.run_hera_comparison_checkpoint();
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    fn run_hera_comparison_checkpoint(&mut self) {
-        let (columns, rows, active_screen, content) = {
-            let term = self.term.lock_unfair();
-            let active_screen = if term.mode().contains(TermMode::ALT_SCREEN) {
-                super::hera_dogfood::ComparisonScreen::Alternate
-            } else {
-                super::hera_dogfood::ComparisonScreen::Primary
-            };
-            (
-                term.columns(),
-                term.screen_lines(),
-                Some(active_screen),
-                content_from_term(&term),
-            )
-        };
-        let paneflow_summary = super::hera_dogfood::ComparisonSummary::from_paneflow_content(
-            columns,
-            rows,
-            active_screen,
-            &content,
-        );
-        let context = self.hera_report_context();
-        let _ = self
-            .hera_shadow
-            .compare_checkpoint(&paneflow_summary, context);
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    fn hera_report_context(&self) -> super::hera_dogfood::DogfoodReportContext {
-        super::hera_dogfood::DogfoodReportContext::new(
-            self.hera_pane_id(),
-            self.current_cwd.as_deref(),
-            self.exited,
-        )
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    fn hera_pane_id(&self) -> String {
-        if self.child_pid == 0 {
-            "pending".to_owned()
-        } else {
-            format!("pid-{}", self.child_pid)
         }
     }
 
@@ -1414,9 +1294,6 @@ impl TerminalState {
                     self.exit_signal = Some(format_signal(sig));
                 }
                 self.exited = Some(status.code().unwrap_or(-1));
-                #[cfg(feature = "hera-dogfood")]
-                self.hera_shadow
-                    .record_exit(&self.hera_pane_id(), self.exited.unwrap_or(-1));
                 self.dirty = true;
                 self.cached_foreground_command = None;
                 #[cfg(all(unix, not(test)))]
@@ -1435,9 +1312,6 @@ impl TerminalState {
                 if self.exited.is_none() {
                     self.exited = Some(-1);
                 }
-                #[cfg(feature = "hera-dogfood")]
-                self.hera_shadow
-                    .record_exit(&self.hera_pane_id(), self.exited.unwrap_or(-1));
                 self.dirty = true;
                 self.cached_foreground_command = None;
                 #[cfg(all(unix, not(test)))]
@@ -1690,8 +1564,6 @@ impl TerminalState {
         self.keyboard_input_sent
             .store(true, std::sync::atomic::Ordering::Relaxed);
         let input = input.into();
-        #[cfg(feature = "hera-dogfood")]
-        self.hera_shadow.note_input_metadata(input.as_ref());
         self.notify_or_buffer(input);
     }
 
@@ -2678,105 +2550,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "hera-dogfood")]
-    fn new_shadow_pending(cols: usize, rows: usize) -> TerminalState {
-        let (mut state, _events_tx) = TerminalState::new_pending(cols, rows);
-        state.hera_shadow = crate::terminal::hera_dogfood::TerminalShadowState::for_mode(
-            crate::terminal::hera_dogfood::DogfoodMode::Shadow,
-            cols,
-            rows,
-        );
-        let sender = PtySender::display_only().with_hera_resize_tap(state.hera_shadow.resize_tap());
-        state.notifier = PtyNotifier(sender);
-        state
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    #[test]
-    fn hera_shadow_tap_receives_pty_output_token() {
-        let mut state = new_shadow_pending(80, 24);
-        let tap = state
-            .hera_pty_tap()
-            .expect("shadow mode exposes a PTY output tap");
-
-        tap.record_output(b"PANEFLOW_HERA_TOKEN");
-        state.sync_channels();
-
-        let text = state
-            .hera_shadow
-            .with_shadow_mut(crate::terminal::hera_dogfood::ShadowSession::viewport_text)
-            .flatten()
-            .expect("shadow snapshot text");
-        assert!(text.contains("PANEFLOW_HERA_TOKEN"));
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    #[test]
-    fn hera_shadow_output_queue_overflow_records_dropped_bytes() {
-        let mut state = new_shadow_pending(80, 24);
-        let tap = state
-            .hera_pty_tap()
-            .expect("shadow mode exposes a PTY output tap");
-
-        for _ in 0..65 {
-            tap.record_output(b"drop");
-        }
-        state.sync_channels();
-
-        let dropped = state
-            .hera_shadow
-            .with_shadow(crate::terminal::hera_dogfood::ShadowSession::dropped_output_bytes)
-            .expect("shadow session");
-        assert_eq!(dropped, 4);
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    #[test]
-    fn hera_shadow_input_metadata_does_not_duplicate_pty_write() {
-        let state = new_shadow_pending(80, 24);
-
-        state.write_to_pty(b"a\n".to_vec());
-
-        let queued = state.pending_input.lock().expect("pending_input lock");
-        assert_eq!(queued.as_slice(), &[Cow::from(b"a\n".to_vec())]);
-        drop(queued);
-
-        let input = state
-            .hera_shadow
-            .with_shadow(|shadow| shadow.latest_input().cloned())
-            .flatten()
-            .expect("input metadata");
-        assert_eq!(input.byte_count(), 2);
-        assert_eq!(input.escaped_summary(), "a\\n");
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    #[test]
-    fn hera_shadow_resize_tracks_notifier_dimensions_and_disables_on_error() {
-        let state = new_shadow_pending(80, 24);
-
-        state
-            .notifier
-            .notify_window_size(TerminalWindowSize::new(100, 40, 8, 16));
-        let (columns, rows) = state
-            .hera_shadow
-            .with_shadow_mut(|shadow| {
-                let snapshot = shadow.render_snapshot().expect("shadow snapshot");
-                (snapshot.columns(), snapshot.rows())
-            })
-            .expect("shadow session");
-        assert_eq!((columns, rows), (100, 40));
-
-        state
-            .notifier
-            .notify_window_size(TerminalWindowSize::new(0, 40, 8, 16));
-        let enabled = state
-            .hera_shadow
-            .with_shadow(crate::terminal::hera_dogfood::ShadowSession::is_enabled)
-            .expect("shadow session");
-        assert!(!enabled);
-    }
-
     #[cfg(unix)]
     #[test]
     fn promote_flushes_buffered_input_into_grid() {
@@ -2791,17 +2564,8 @@ mod tests {
         assert!(!state.notifier.0.is_pty());
 
         let term = state.term.clone();
-        #[cfg(feature = "hera-dogfood")]
-        let hera_pty_tap = state.hera_pty_tap();
-        let spawned = TerminalState::open_pty_and_eventloop(
-            params,
-            term,
-            events_tx,
-            None,
-            #[cfg(feature = "hera-dogfood")]
-            hera_pty_tap,
-        )
-        .expect("US-012: open a PTY-backed terminal via tty::new + EventLoop");
+        let spawned = TerminalState::open_pty_and_eventloop(params, term, events_tx, None)
+            .expect("US-012: open a PTY-backed terminal via tty::new + EventLoop");
         state.promote(spawned);
         assert!(state.notifier.0.is_pty());
 

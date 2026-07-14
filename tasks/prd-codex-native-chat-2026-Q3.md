@@ -517,7 +517,6 @@ Explicit boundaries - what this version does NOT include:
 - `crates/paneflow-acp/**` - ACP chat a été retiré; ne pas réutiliser ce crate comme adaptateur Codex App Server.
 - `crates/paneflow-process/src/lib.rs` - runner one-shot avec stdin null et timeout; préserver son contrat et créer un supervisor long-lived dédié.
 - `src-app/src/update/**` et `.github/workflows/release.yml` - update/release signing hors scope.
-- `src-app/src/terminal/hera_dogfood/**` et `src-app/src/terminal/element/golden/hera_*.txt` - surfaces Hera sans rapport avec Codex Chat et actuellement sensibles aux changements de rendu.
 - `tasks/prd-agents-ui-codex-redesign-2026-Q3.md` et son status JSON - PRD distinct déjà exécuté; ne pas le réécrire ou réouvrir.
 
 ## Technical Considerations

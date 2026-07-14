@@ -86,103 +86,6 @@ fn cursor_color_override_from_config(terminal_config: &TerminalConfig) -> Option
         .and_then(hsla_from_hex_color)
 }
 
-#[cfg(feature = "hera-dogfood")]
-fn render_hera_side_by_side_surface(
-    surface: crate::terminal::hera_dogfood::SideBySideDiagnosticSurface,
-    copy_mode_active: bool,
-    ime_active: bool,
-) -> impl IntoElement {
-    let ui = crate::theme::ui_colors();
-    let counters = surface.counters();
-    let mut diagnostics: Vec<String> = surface
-        .diagnostics()
-        .iter()
-        .map(|diagnostic| format!("{}: {}", diagnostic.code(), diagnostic.message()))
-        .collect();
-    if let Some(reason) = surface.skipped_reason() {
-        diagnostics.push(format!("render_skipped: {reason}"));
-    }
-    if copy_mode_active {
-        diagnostics.push("copy_mode: primary_only".to_owned());
-    }
-    if ime_active {
-        diagnostics.push("ime_preedit: primary_only".to_owned());
-    }
-    if diagnostics.is_empty() {
-        diagnostics.push("ok".to_owned());
-    }
-
-    let rows = surface
-        .rows()
-        .iter()
-        .take(32)
-        .map(|row| {
-            div()
-                .font_family("monospace")
-                .text_size(gpui::px(11.0))
-                .text_color(ui.text)
-                .child(row.trim_end().to_owned())
-        })
-        .collect::<Vec<_>>();
-
-    let diagnostics = diagnostics
-        .into_iter()
-        .take(8)
-        .map(|line| {
-            div()
-                .text_size(gpui::px(11.0))
-                .text_color(ui.muted)
-                .child(line)
-        })
-        .collect::<Vec<_>>();
-
-    div()
-        .id("hera-side-by-side")
-        .w(gpui::px(360.0))
-        .min_w(gpui::px(280.0))
-        .h_full()
-        .flex()
-        .flex_col()
-        .gap(gpui::px(8.0))
-        .p(gpui::px(10.0))
-        .border_l_1()
-        .border_color(ui.border)
-        .bg(ui.subtle)
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .child(
-                    div()
-                        .text_size(gpui::px(12.0))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(ui.text)
-                        .child("Hera"),
-                )
-                .child(
-                    div()
-                        .text_size(gpui::px(11.0))
-                        .text_color(ui.muted)
-                        .child(format!(
-                            "eq={} diff={} skip={}",
-                            counters.equal(),
-                            counters.mismatch(),
-                            counters.side_by_side_skipped()
-                        )),
-                ),
-        )
-        .child(div().flex().flex_col().gap(gpui::px(1.0)).children(rows))
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(gpui::px(2.0))
-                .children(diagnostics),
-        )
-}
-
 /// Strip control characters from an OSC 52 clipboard payload so a hostile PTY
 /// program can't plant a paste-injection (U-023). Keeps TAB and LF (legitimate
 /// in clipboard text); drops CR (the byte that commits a line on paste into a
@@ -464,8 +367,6 @@ impl TerminalView {
         // channel, so the placeholder's event loop keeps working after promotion
         // - no view-side rewiring needed.
         let term = terminal.term.clone();
-        #[cfg(feature = "hera-dogfood")]
-        let hera_pty_tap = terminal.hera_pty_tap();
         // Capture the foreground signal mask on the MAIN thread so the
         // background-spawned child still gets correct Ctrl-C / Ctrl-Z (US-012).
         let signal_mask = crate::terminal::pty_session::capture_foreground_signal_mask();
@@ -478,14 +379,7 @@ impl TerminalView {
                 // Blocking PTY open (`tty::new` forks) runs off the render thread.
                 let spawned = executor
                     .spawn(async move {
-                        TerminalState::open_pty_and_eventloop(
-                            params,
-                            term,
-                            events_tx,
-                            signal_mask,
-                            #[cfg(feature = "hera-dogfood")]
-                            hera_pty_tap,
-                        )
+                        TerminalState::open_pty_and_eventloop(params, term, events_tx, signal_mask)
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
@@ -1482,22 +1376,6 @@ impl Render for TerminalView {
             keystroke_at,
         );
 
-        #[cfg(feature = "hera-dogfood")]
-        let terminal_body = match self.terminal.hera_shadow.side_by_side_surface() {
-            Some(surface) => div()
-                .size_full()
-                .flex()
-                .flex_row()
-                .child(div().flex_1().size_full().child(terminal_element))
-                .child(render_hera_side_by_side_surface(
-                    surface,
-                    self.copy_mode_active,
-                    !self.ime_marked_text.is_empty(),
-                )),
-            None => div().size_full().child(terminal_element),
-        };
-
-        #[cfg(not(feature = "hera-dogfood"))]
         let terminal_body = terminal_element;
 
         // Search overlay bar

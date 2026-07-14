@@ -16,14 +16,6 @@ readme = "../README.md"
 name = "paneflow"
 path = "src/main.rs"
 
-[features]
-default = []
-hera-dogfood = [
-    "dep:terminal-core",
-    "dep:terminal-protocol",
-    "dep:terminal-render-model",
-]
-
 [dependencies]
 # GPUI framework - pinned to a minimal Paneflow fork of Zed while
 # prd-markdown-append-fix-2026-Q3.md (US-021 of cli-hardening-followup
@@ -105,13 +97,6 @@ paneflow-process = { workspace = true }
 # `paneflow <verb>` CLI subcommands use to drive a RUNNING instance over the
 # existing IPC socket and exit before any GPUI init.
 paneflow-ipc-client = { workspace = true }
-# M3 Hera dogfood: disabled by default. These proxy crates are local path deps
-# named after the Hera crates, but load the sibling Hera source only when the
-# `hera-dogfood` feature is enabled.
-terminal-core = { path = "../crates/hera-dogfood/terminal-core", optional = true, default-features = false, features = ["hera-dogfood"] }
-terminal-protocol = { path = "../crates/hera-dogfood/terminal-protocol", optional = true, default-features = false, features = ["hera-dogfood"] }
-terminal-render-model = { path = "../crates/hera-dogfood/terminal-render-model", optional = true, default-features = false, features = ["hera-dogfood"] }
-
 # File system watcher (OS-native: inotify/FSEvents/ReadDirectoryChanges)
 notify = "7"
 

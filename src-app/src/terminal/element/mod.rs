@@ -2296,59 +2296,6 @@ mod golden_frame_tests {
         );
     }
 
-    #[cfg(feature = "hera-dogfood")]
-    fn hera_golden_text(
-        state: &LayoutState,
-        diagnostics: &[crate::terminal::hera_dogfood::AdapterDiagnostic],
-    ) -> String {
-        use std::fmt::Write as _;
-
-        let mut text = state.golden_repr();
-        let _ = writeln!(text, "diagnostics[{}]:", diagnostics.len());
-        for diagnostic in diagnostics {
-            let _ = writeln!(text, "  {} {:?}", diagnostic.code(), diagnostic.message());
-        }
-        text
-    }
-
-    #[cfg(feature = "hera-dogfood")]
-    fn run_hera_case(case: crate::terminal::hera_dogfood::HeraLayoutGoldenCase) -> String {
-        let diagnostics = case.layout.diagnostics().to_vec();
-        let content = case.layout.into_content();
-        let theme = crate::theme::one_dark();
-        let cursor = cursor_from_content(
-            content.cursor,
-            true,
-            true,
-            white(),
-            CursorShape::Block,
-            &theme,
-            false,
-        );
-        let state = layout_from_snapshot(LayoutInputs {
-            cells: content.cells,
-            cursor,
-            selection_range: content.selection,
-            copy_mode_cursor: None,
-            search_highlights: &[],
-            display_offset: content.display_offset,
-            history_size: content.history_size,
-            desired_cols: case.columns,
-            desired_rows: case.rows,
-            first_visible_row: 0,
-            last_visible_row: case.rows as i32,
-            dims: test_dims(),
-            base_font: test_font(),
-            theme: &theme,
-            exited: None,
-            exit_signal: None,
-            terminal_material_active: false,
-            integrated_glyphs_enabled: true,
-            color_emoji_enabled: true,
-        });
-        hera_golden_text(&state, &diagnostics)
-    }
-
     /// The full fixture corpus. One test so a `BLESS` run regenerates every
     /// golden in a single pass; each fixture still asserts independently.
     #[test]
@@ -2532,22 +2479,6 @@ mod golden_frame_tests {
             CellFlags::empty(),
         )];
         assert_golden("apca_contrast", &run(apca, None, None));
-    }
-
-    #[test]
-    #[cfg(feature = "hera-dogfood")]
-    fn hera_golden_frame_corpus() {
-        let cases = crate::terminal::hera_dogfood::hera_layout_golden_cases();
-        assert!(
-            cases.len() >= 12,
-            "US-013 requires at least 12 Hera-sourced layout goldens"
-        );
-
-        for case in cases {
-            let name = case.name;
-            let actual = run_hera_case(case);
-            assert_golden_text(name, actual);
-        }
     }
 
     /// Structural invariant (AC-2/AC-4 of the spike risk): block-element cells
