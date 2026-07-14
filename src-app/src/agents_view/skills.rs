@@ -337,7 +337,7 @@ fn render_skill_card(
         // Flexible width: `w` acts as the flex-basis (drives wrap), `flex_grow`
         // fills the row's leftover space, `max_w` caps a grown card.
         .w(px(CARD_WIDTH_PX))
-        .flex_grow()
+        .flex_grow(1.0)
         .max_w(px(CARD_MAX_WIDTH_PX))
         .px(px(14.))
         .py(px(12.))

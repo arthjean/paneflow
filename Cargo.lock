@@ -4,10 +4,11 @@ version = 4
 
 [[package]]
 name = "accesskit"
-version = "0.24.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5351dcebb14b579ccab05f288596b2ae097005be7ee50a7c3d4ca9d0d5a66f6a"
+checksum = "d3b7f7f85a7e5f68090000ed7622545829afd484d210358702ae4cb97dd0c320"
 dependencies = [
+ "enumn",
  "uuid",
 ]
 
@@ -27,9 +28,9 @@ dependencies = [
 
 [[package]]
 name = "accesskit_consumer"
-version = "0.35.0"
+version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "53cf47daed85312e763fbf85ceca136e0d7abc68e0a7e12abe11f48172bc3b10"
+checksum = "25e0d7e25d06f4dc21d1774d67146e9e80d6789216cbd4d1e88185b0095dba60"
 dependencies = [
  "accesskit",
  "hashbrown 0.16.1",
@@ -37,9 +38,9 @@ dependencies = [
 
 [[package]]
 name = "accesskit_consumer"
-version = "0.36.0"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25e0d7e25d06f4dc21d1774d67146e9e80d6789216cbd4d1e88185b0095dba60"
+checksum = "f950720ce064757a1b629caad3a408e8d2c63bb01f29b8a3ff8daa331053ffeb"
 dependencies = [
  "accesskit",
  "hashbrown 0.16.1",
@@ -79,12 +80,12 @@ dependencies = [
 
 [[package]]
 name = "accesskit_windows"
-version = "0.32.1"
+version = "0.33.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eff7009f1a532e917d66970a1e80c965140c6cfbbabbdde3d64e5431e6c78e21"
+checksum = "36e93ac7bf50b964f1cbb75f741629a4e950571baa1ef1274457ab5a80d9bcc2"
 dependencies = [
  "accesskit",
- "accesskit_consumer 0.35.0",
+ "accesskit_consumer 0.37.0",
  "hashbrown 0.16.1",
  "static_assertions",
  "windows 0.62.2",
@@ -364,7 +365,7 @@ dependencies = [
 [[package]]
 name = "askpass"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "futures",
@@ -1216,7 +1217,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 [[package]]
 name = "clock"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "serde",
  "smallvec",
@@ -1225,7 +1226,7 @@ dependencies = [
 [[package]]
 name = "cloud_llm_client"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "serde",
@@ -1317,8 +1318,9 @@ dependencies = [
 [[package]]
 name = "collections"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
+ "gpui_util",
  "indexmap",
  "rustc-hash 2.1.2",
 ]
@@ -1348,7 +1350,7 @@ dependencies = [
 [[package]]
 name = "component"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "collections",
  "gpui",
@@ -2051,7 +2053,7 @@ dependencies = [
 [[package]]
 name = "derive_refineable"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2223,9 +2225,8 @@ dependencies = [
 
 [[package]]
 name = "dugong"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f5b0a9f36306eb29685e6e27b82df4d0bb5af64261324f7d5f7716d7c39ba1b"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.2",
@@ -2235,9 +2236,8 @@ dependencies = [
 
 [[package]]
 name = "dugong-graphlib"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75aca4df30a85b3ba8cead498f4e38e9de4aff630155ce47515d11dfd729c6ea"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
 dependencies = [
  "hashbrown 0.16.1",
  "rustc-hash 2.1.2",
@@ -2344,6 +2344,17 @@ name = "enumflags2_derive"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67c78a4d8fdf9953a5c9d458f9efe940fd97a0cab0941c075a813ac594733827"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "enumn"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9ed6b3789237c8a0c1c505af1c7eb2c560df6186f01b098c3a1064ea532f38"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2518,6 +2529,9 @@ name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+dependencies = [
+ "getrandom 0.2.17",
+]
 
 [[package]]
 name = "fax"
@@ -2618,13 +2632,13 @@ checksum = "8bf7cc16383c4b8d58b9905a8509f02926ce3058053c056376248d958c9df1e8"
 
 [[package]]
 name = "flume"
-version = "0.11.1"
+version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
+checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
 dependencies = [
+ "fastrand 2.3.0",
  "futures-core",
  "futures-sink",
- "nanorand",
  "spin 0.9.8",
 ]
 
@@ -2661,7 +2675,7 @@ version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbc773e24e02d4ddd8395fd30dc147524273a83e54e0f312d986ea30de5f5646"
 dependencies = [
- "roxmltree",
+ "roxmltree 0.20.0",
 ]
 
 [[package]]
@@ -2728,7 +2742,7 @@ dependencies = [
 [[package]]
 name = "fs"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -2744,7 +2758,7 @@ dependencies = [
  "is_executable",
  "libc",
  "log",
- "notify 8.2.0",
+ "notify 9.0.0-rc.4",
  "parking_lot",
  "paths",
  "proto",
@@ -2758,6 +2772,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "trash",
+ "unicode-normalization",
  "util",
  "windows 0.61.3",
 ]
@@ -2913,10 +2928,21 @@ dependencies = [
 [[package]]
 name = "fuzzy"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "gpui",
  "log",
+ "util",
+]
+
+[[package]]
+name = "fuzzy_nucleo"
+version = "0.1.0"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
+dependencies = [
+ "fuzzy",
+ "gpui",
+ "nucleo",
  "util",
 ]
 
@@ -2993,16 +3019,6 @@ dependencies = [
 
 [[package]]
 name = "gif"
-version = "0.13.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ae047235e33e2829703574b54fdec96bfbad892062d97fed2f76022287de61b"
-dependencies = [
- "color_quant",
- "weezl",
-]
-
-[[package]]
-name = "gif"
 version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f5df2ba84018d80c213569363bdcd0c64e6933c67fe4c1d60ecf822971a3c35e"
@@ -3025,7 +3041,7 @@ dependencies = [
 [[package]]
 name = "git"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "askpass",
@@ -3034,7 +3050,6 @@ dependencies = [
  "collections",
  "derive_more",
  "futures",
- "git2",
  "gpui",
  "http_client",
  "itertools 0.14.0",
@@ -3055,18 +3070,6 @@ dependencies = [
  "util",
  "uuid",
  "ztracing",
-]
-
-[[package]]
-name = "git2"
-version = "0.21.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e"
-dependencies = [
- "bitflags 2.11.0",
- "libc",
- "libgit2-sys",
- "log",
 ]
 
 [[package]]
@@ -3277,7 +3280,7 @@ dependencies = [
 [[package]]
 name = "gpui"
 version = "0.2.2"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "accesskit",
  "anyhow",
@@ -3308,6 +3311,7 @@ dependencies = [
  "gpui_macros",
  "gpui_shared_string",
  "gpui_util",
+ "heapless",
  "http_client",
  "image",
  "inventory",
@@ -3360,7 +3364,7 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -3375,6 +3379,7 @@ dependencies = [
  "filedescriptor",
  "futures",
  "gpui",
+ "gpui_util",
  "gpui_wgpu",
  "http_client",
  "image",
@@ -3393,7 +3398,6 @@ dependencies = [
  "strum",
  "swash",
  "url",
- "util",
  "uuid",
  "wayland-backend",
  "wayland-client",
@@ -3411,7 +3415,7 @@ dependencies = [
 [[package]]
 name = "gpui_macos"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -3433,6 +3437,7 @@ dependencies = [
  "foreign-types",
  "futures",
  "gpui",
+ "gpui_util",
  "image",
  "itertools 0.14.0",
  "libc",
@@ -3441,14 +3446,15 @@ dependencies = [
  "media",
  "metal",
  "objc",
+ "objc2 0.6.4",
  "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "parking_lot",
  "pathfinder_geometry",
  "raw-window-handle",
  "semver",
  "smallvec",
  "strum",
- "util",
  "uuid",
  "zed-font-kit",
 ]
@@ -3456,7 +3462,7 @@ dependencies = [
 [[package]]
 name = "gpui_macros"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "heck 0.5.0",
  "proc-macro2",
@@ -3467,7 +3473,7 @@ dependencies = [
 [[package]]
 name = "gpui_platform"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "console_error_panic_hook",
  "gpui",
@@ -3480,7 +3486,7 @@ dependencies = [
 [[package]]
 name = "gpui_shared_string"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "schemars",
  "serde",
@@ -3490,16 +3496,17 @@ dependencies = [
 [[package]]
 name = "gpui_util"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "log",
+ "which 6.0.3",
 ]
 
 [[package]]
 name = "gpui_web"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
@@ -3523,7 +3530,7 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3552,15 +3559,17 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "accesskit",
  "accesskit_windows",
  "anyhow",
  "collections",
+ "dunce",
  "etagere",
  "futures",
  "gpui",
+ "gpui_util",
  "image",
  "itertools 0.14.0",
  "log",
@@ -3568,7 +3577,6 @@ dependencies = [
  "rand 0.9.2",
  "raw-window-handle",
  "smallvec",
- "util",
  "uuid",
  "windows 0.61.3",
  "windows-core 0.61.2",
@@ -3769,12 +3777,10 @@ dependencies = [
 [[package]]
 name = "http_client"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "async-compression",
- "async-fs",
- "async-tar",
  "bytes",
  "derive_more",
  "futures",
@@ -3785,10 +3791,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
- "sha2",
- "tempfile",
  "url",
- "util",
 ]
 
 [[package]]
@@ -3824,7 +3827,7 @@ dependencies = [
 [[package]]
 name = "icons"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "serde",
  "strum",
@@ -3971,7 +3974,7 @@ dependencies = [
  "byteorder-lite",
  "color_quant",
  "exr",
- "gif 0.14.1",
+ "gif",
  "image-webp",
  "moxcms",
  "num-traits",
@@ -3979,10 +3982,9 @@ dependencies = [
  "qoi",
  "ravif",
  "rayon",
- "rgb",
  "tiff",
- "zune-core 0.5.1",
- "zune-jpeg 0.5.15",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -3997,9 +3999,9 @@ dependencies = [
 
 [[package]]
 name = "imagesize"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "edcd27d72f2f071c64249075f42e205ff93c9a4c5f6c6da53e79ed9f9832c285"
+checksum = "09e54e57b4c48b40f7aec75635392b12b3421fa26fe8b4332e63138ed278459c"
 
 [[package]]
 name = "imara-diff"
@@ -4347,12 +4349,13 @@ dependencies = [
 
 [[package]]
 name = "kurbo"
-version = "0.11.3"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c62026ae44756f8a599ba21140f350303d4f08dcdcc71b5ad9c9bb8128c13c62"
+checksum = "4b60dfc32f652b926df6192e55525b16d186c69d47876c3ead4da5cc9f8450e2"
 dependencies = [
  "arrayvec",
  "euclid",
+ "polycool",
  "smallvec",
 ]
 
@@ -4399,7 +4402,7 @@ dependencies = [
 [[package]]
 name = "language"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4411,7 +4414,7 @@ dependencies = [
  "fs",
  "futures",
  "futures-lite 1.13.0",
- "fuzzy",
+ "fuzzy_nucleo",
  "globset",
  "gpui",
  "http_client",
@@ -4449,7 +4452,7 @@ dependencies = [
 [[package]]
 name = "language_core"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
@@ -4469,7 +4472,7 @@ dependencies = [
 [[package]]
 name = "language_model_core"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "async-lock",
@@ -4545,18 +4548,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libgit2-sys"
-version = "0.18.4+1.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b26f66f35e1871b22efcf7191564123d2a446ca0538cde63c23adfefa9b15b7"
-dependencies = [
- "cc",
- "libc",
- "libz-sys",
- "pkg-config",
-]
-
-[[package]]
 name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4593,18 +4584,6 @@ dependencies = [
  "libc",
  "plain",
  "redox_syscall 0.7.3",
-]
-
-[[package]]
-name = "libz-sys"
-version = "1.1.28"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc3a226e576f50782b3305c5ccf458698f92798987f551c6a02efe8276721e22"
-dependencies = [
- "cc",
- "libc",
- "pkg-config",
- "vcpkg",
 ]
 
 [[package]]
@@ -4747,7 +4726,7 @@ dependencies = [
 [[package]]
 name = "lsp"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
@@ -4877,9 +4856,8 @@ dependencies = [
 
 [[package]]
 name = "manatee"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c5ed3cc0bf5f911d242bed4b4cdf12c00186e471e9fdf57d9dd0a033bbbdc87"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
 dependencies = [
  "indexmap",
  "nalgebra",
@@ -4890,7 +4868,7 @@ dependencies = [
 [[package]]
 name = "markdown"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "base64",
@@ -4905,6 +4883,7 @@ dependencies = [
  "mermaid_render",
  "pulldown-cmark 0.13.4",
  "settings",
+ "smallvec",
  "stacksafe",
  "sum_tree",
  "theme",
@@ -4981,7 +4960,7 @@ dependencies = [
 [[package]]
 name = "media"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "bindgen 0.71.1",
@@ -5029,7 +5008,7 @@ dependencies = [
 [[package]]
 name = "menu"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "gpui",
 ]
@@ -5037,7 +5016,7 @@ dependencies = [
 [[package]]
 name = "mermaid_render"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "gpui",
@@ -5048,9 +5027,8 @@ dependencies = [
 
 [[package]]
 name = "merman"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3209bcfe9c8e9787a7534f8d97f1d27f7d2fdd54d3c49d9f59bb693aedabbf95"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
 dependencies = [
  "merman-core",
  "merman-render",
@@ -5059,9 +5037,8 @@ dependencies = [
 
 [[package]]
 name = "merman-core"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72fc438439ca428b449486f8eaf9ce2f8ab76cea159181d0b1b454e1192e4649"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
 dependencies = [
  "chrono",
  "euclid",
@@ -5086,9 +5063,8 @@ dependencies = [
 
 [[package]]
 name = "merman-render"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5698e2681196051479ae8bc5153ed7eda6490f56240fd8d92da7c3932a00735"
+version = "0.6.2"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
 dependencies = [
  "base64",
  "chrono",
@@ -5127,11 +5103,11 @@ dependencies = [
 [[package]]
 name = "migrator"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
- "convert_case 0.8.0",
+ "convert_case 0.11.0",
  "log",
  "serde_json",
  "serde_json_lenient",
@@ -5221,8 +5197,9 @@ checksum = "e5ce46fe64a9d73be07dcbe690a38ce1b293be448fd8ce1e6c1b8062c9f72c6a"
 
 [[package]]
 name = "naga"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b2bf919621e7975acb27d881bae2fb993e0d45c8e0446e85e6272971e00dc8df"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -5278,15 +5255,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nanorand"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a51313c5820b0b02bd422f4b44776fbf47961755c74ce64afc73bfad10226c3"
-dependencies = [
- "getrandom 0.2.17",
-]
-
-[[package]]
 name = "ndk-sys"
 version = "0.6.0+11769913"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5298,7 +5266,7 @@ dependencies = [
 [[package]]
 name = "net"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "async-io",
@@ -5403,20 +5371,22 @@ dependencies = [
 
 [[package]]
 name = "notify"
-version = "8.2.0"
+version = "9.0.0-rc.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4d3d07927151ff8575b7087f245456e549fea62edf0ec4e565a5ee50c8402bc3"
+checksum = "b44b771d4dd781ef14c84078693e67495da6b47f609f72e8a4da8420a861240e"
 dependencies = [
  "bitflags 2.11.0",
- "fsevent-sys",
  "inotify 0.11.1",
  "kqueue",
  "libc",
  "log",
  "mio",
  "notify-types 2.1.0",
+ "objc2-core-foundation",
+ "objc2-core-services",
  "walkdir",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
+ "xxhash-rust",
 ]
 
 [[package]]
@@ -5467,6 +5437,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "nucleo"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5262af4c94921c2646c5ac6ff7900c2af9cbb08dc26a797e18130a7019c039d4"
+dependencies = [
+ "nucleo-matcher",
+ "parking_lot",
+ "rayon",
+]
+
+[[package]]
+name = "nucleo-matcher"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf33f538733d1a5a3494b836ba913207f14d9d4a1d3cd67030c5061bdd2cac85"
+dependencies = [
+ "memchr",
+ "unicode-segmentation",
 ]
 
 [[package]]
@@ -5693,6 +5684,7 @@ dependencies = [
  "bitflags 2.11.0",
  "block2 0.6.2",
  "objc2 0.6.4",
+ "objc2-core-foundation",
  "objc2-foundation 0.3.2",
 ]
 
@@ -5729,6 +5721,16 @@ dependencies = [
  "objc2 0.5.2",
  "objc2-foundation 0.2.2",
  "objc2-metal 0.2.2",
+]
+
+[[package]]
+name = "objc2-core-services"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "583300ad934cba24ff5292aee751ecc070f7ca6b39a574cc21b7b5e588e06a0b"
+dependencies = [
+ "libc",
+ "objc2-core-foundation",
 ]
 
 [[package]]
@@ -6212,7 +6214,7 @@ dependencies = [
 [[package]]
 name = "paths"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "const_format",
  "dirs",
@@ -6248,7 +6250,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 [[package]]
 name = "perf"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "collections",
  "serde",
@@ -6613,6 +6615,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f3a9f18d041e6d0e102a0a46750538147e5e8992d3b4873aaafee2520b00ce3"
 
 [[package]]
+name = "polycool"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
+dependencies = [
+ "arrayvec",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6847,7 +6858,7 @@ dependencies = [
 [[package]]
 name = "proto"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "prost",
@@ -7268,7 +7279,7 @@ dependencies = [
 [[package]]
 name = "refineable"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "derive_refineable",
 ]
@@ -7319,7 +7330,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 [[package]]
 name = "release_channel"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "gpui",
  "semver",
@@ -7333,19 +7344,19 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "resvg"
-version = "0.45.1"
+version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8928798c0a55e03c9ca6c4c6846f76377427d2c1e1f7e6de3c06ae57942df43"
+checksum = "b563218631706d614e23059436526d005b50ab5f2d506b55a17eb65c5eb83419"
 dependencies = [
- "gif 0.13.3",
+ "gif",
  "image-webp",
  "log",
  "pico-args",
  "rgb",
- "svgtypes 0.15.3",
+ "svgtypes 0.16.1",
  "tiny-skia",
  "usvg",
- "zune-jpeg 0.4.21",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -7401,7 +7412,7 @@ dependencies = [
 [[package]]
 name = "rope"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "heapless",
  "log",
@@ -7416,8 +7427,7 @@ dependencies = [
 [[package]]
 name = "roughr-merman"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c34fd013a888d8b2119b3ed57cd3df0f1f9dd2db3fa94fdb98f58d60f9855ef0"
+source = "git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1"
 dependencies = [
  "derive_builder",
  "euclid",
@@ -7436,6 +7446,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c20b6793b5c2fa6553b250154b78d6d0db37e72700ae35fad9387a46f487c97"
 
 [[package]]
+name = "roxmltree"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1964b10c76125c36f8afe190065a4bf9a87bf324842c05701330bba9f1cacbb"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "rpassword"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7449,7 +7468,7 @@ dependencies = [
 [[package]]
 name = "rpc"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "async-tungstenite",
@@ -7711,7 +7730,7 @@ dependencies = [
 [[package]]
 name = "scheduler"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "async-task",
  "backtrace",
@@ -8000,7 +8019,7 @@ dependencies = [
 [[package]]
 name = "settings"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
@@ -8029,7 +8048,7 @@ dependencies = [
 [[package]]
 name = "settings_content"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
@@ -8050,7 +8069,7 @@ dependencies = [
 [[package]]
 name = "settings_json"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "serde",
@@ -8065,7 +8084,7 @@ dependencies = [
 [[package]]
 name = "settings_macros"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -8428,7 +8447,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "sum_tree"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "heapless",
  "log",
@@ -8543,11 +8562,11 @@ dependencies = [
 
 [[package]]
 name = "svgtypes"
-version = "0.15.3"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68c7541fff44b35860c1a7a47a7cadf3e4a304c457b58f9870d9706ece028afc"
+checksum = "695b5790b3131dafa99b3bbfd25a216edb3d216dad9ca208d4657bfb8f2abc3d"
 dependencies = [
- "kurbo 0.11.3",
+ "kurbo 0.13.1",
  "siphasher 1.0.2",
 ]
 
@@ -8598,7 +8617,7 @@ dependencies = [
 [[package]]
 name = "syntax_theme"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "gpui",
 ]
@@ -8697,7 +8716,7 @@ checksum = "adb6935a6f5c20170eeceb1a3835a49e12e19d792f6dd344ccc76a985ca5a6ca"
 [[package]]
 name = "task"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
@@ -8731,7 +8750,7 @@ dependencies = [
 [[package]]
 name = "telemetry"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "futures",
  "serde",
@@ -8742,7 +8761,7 @@ dependencies = [
 [[package]]
 name = "telemetry_events"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "semver",
  "serde",
@@ -8756,7 +8775,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand 2.3.0",
- "getrandom 0.4.2",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.4",
  "windows-sys 0.52.0",
@@ -8796,7 +8815,7 @@ dependencies = [
 [[package]]
 name = "text"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "clock",
@@ -8814,7 +8833,7 @@ dependencies = [
 [[package]]
 name = "theme"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
@@ -8835,7 +8854,7 @@ dependencies = [
 [[package]]
 name = "theme_settings"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "collections",
@@ -8913,7 +8932,7 @@ dependencies = [
  "half",
  "quick-error 2.0.1",
  "weezl",
- "zune-jpeg 0.5.15",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -9233,7 +9252,7 @@ dependencies = [
 [[package]]
 name = "trash"
 version = "5.2.5"
-source = "git+https://github.com/zed-industries/trash-rs?rev=3bf27effd4eb8699f2e484d3326b852fe3e53af7#3bf27effd4eb8699f2e484d3326b852fe3e53af7"
+source = "git+https://github.com/zed-industries/trash-rs?rev=47761739192828a66b11a94ba5420b82d63c03c5#47761739192828a66b11a94ba5420b82d63c03c5"
 dependencies = [
  "chrono",
  "libc",
@@ -9477,7 +9496,7 @@ dependencies = [
 [[package]]
 name = "ui"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "chrono",
  "component",
@@ -9502,7 +9521,7 @@ dependencies = [
 [[package]]
 name = "ui_macros"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "quote",
  "syn 2.0.117",
@@ -9549,6 +9568,15 @@ name = "unicode-linebreak"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b09c83c3c29d37506a3e260c08c03743a6bb66a9cd432c6934ab501a190571f"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-properties"
@@ -9651,24 +9679,24 @@ checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
 name = "usvg"
-version = "0.45.1"
+version = "0.46.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80be9b06fbae3b8b303400ab20778c80bbaf338f563afe567cf3c9eea17b47ef"
+checksum = "e419dff010bb12512b0ae9e3d2f318dfbdf0167fde7eb05465134d4e8756076f"
 dependencies = [
  "base64",
  "data-url",
  "flate2",
  "fontdb",
  "imagesize",
- "kurbo 0.11.3",
+ "kurbo 0.13.1",
  "log",
  "pico-args",
- "roxmltree",
+ "roxmltree 0.21.1",
  "rustybuzz",
  "simplecss",
  "siphasher 1.0.2",
  "strict-num",
- "svgtypes 0.15.3",
+ "svgtypes 0.16.1",
  "tiny-skia-path",
  "unicode-bidi",
  "unicode-script",
@@ -9703,7 +9731,7 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 [[package]]
 name = "util"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "async-fs",
@@ -9737,12 +9765,13 @@ dependencies = [
  "url",
  "walkdir",
  "which 6.0.3",
+ "windows 0.61.3",
 ]
 
 [[package]]
 name = "util_macros"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "perf",
  "quote",
@@ -9814,12 +9843,6 @@ dependencies = [
  "sval_ref",
  "sval_serde",
 ]
-
-[[package]]
-name = "vcpkg"
-version = "0.2.15"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"
@@ -10266,7 +10289,7 @@ dependencies = [
 [[package]]
 name = "watch"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "parking_lot",
 ]
@@ -10406,8 +10429,9 @@ checksum = "a28ac98ddc8b9274cb41bb4d9d4d5c425b6020c50c46f25559911905610b4a88"
 
 [[package]]
 name = "wgpu"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76e8840e1ba2881d4cbb18d2147627a56af426ff064c0401eb0c8410c6325d07"
 dependencies = [
  "arrayvec",
  "bitflags 2.11.0",
@@ -10435,8 +10459,9 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f519832254e56965a9940c4af57dcb75f702b6f6fa4a0b172f685395843a4d7"
 dependencies = [
  "arrayvec",
  "bit-set 0.9.1",
@@ -10467,32 +10492,36 @@ dependencies = [
 
 [[package]]
 name = "wgpu-core-deps-apple"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f5e39e26c4c0e07589e67d18546cf79ff45383659fc72fca4dd293358a0347f3"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-emscripten"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01e09be551dc939498bdd5f6b2c66e55ab275dad25825267a08605a80fc9f0af"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e592c1bbef6ad047647ae6e666ebd8cee7a32bb4544d9700ec96cbf73230257"
 dependencies = [
  "wgpu-hal",
 ]
 
 [[package]]
 name = "wgpu-hal"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97ace1c17727311c22a46e4e3faf56ea6de81af99dcc839bdfb54857b94d448d"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -10544,8 +10573,9 @@ dependencies = [
 
 [[package]]
 name = "wgpu-naga-bridge"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95226013f547544b223281cd16a4fb549aa9dcb562adbda0faae4c73ffbbc161"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -10553,8 +10583,9 @@ dependencies = [
 
 [[package]]
 name = "wgpu-types"
-version = "29.0.3"
-source = "git+https://github.com/zed-industries/wgpu.git?rev=357a0c56e0070480ad9daea5d2eaa83150b79e88#357a0c56e0070480ad9daea5d2eaa83150b79e88"
+version = "29.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84bf84cd9ca8ca45e2b223a3868f1adf9bfc0c66aeac212e76ee7e40fdadf8f5"
 dependencies = [
  "bitflags 2.11.0",
  "bytemuck",
@@ -11516,6 +11547,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
+name = "xxhash-rust"
+version = "0.8.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d93c89cdc2d3a63c3ec48ffe926931bdc069eafa8e4402fe6d8f790c9d1e576"
+
+[[package]]
 name = "y4m"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11728,13 +11765,12 @@ dependencies = [
 [[package]]
 name = "zed_actions"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "gpui",
  "schemars",
  "serde",
  "util",
- "uuid",
 ]
 
 [[package]]
@@ -11840,7 +11876,7 @@ dependencies = [
 [[package]]
 name = "zlog"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "anyhow",
  "chrono",
@@ -11886,7 +11922,7 @@ dependencies = [
 [[package]]
 name = "ztracing"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 dependencies = [
  "tracing",
  "tracing-subscriber",
@@ -11897,13 +11933,7 @@ dependencies = [
 [[package]]
 name = "ztracing_macro"
 version = "0.1.0"
-source = "git+https://github.com/ArthurDEV44/zed?rev=3d1a014119f12274d1985bd3390606ddf0878da1#3d1a014119f12274d1985bd3390606ddf0878da1"
-
-[[package]]
-name = "zune-core"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f423a2c17029964870cfaabb1f13dfab7d092a62a29a89264f4d36990ca414a"
+source = "git+https://github.com/arthjean/zed?rev=3aaba57b95c22f4d21bbbf9f4b10b513173209db#3aaba57b95c22f4d21bbbf9f4b10b513173209db"
 
 [[package]]
 name = "zune-core"
@@ -11922,20 +11952,11 @@ dependencies = [
 
 [[package]]
 name = "zune-jpeg"
-version = "0.4.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29ce2c8a9384ad323cf564b67da86e21d3cfdff87908bc1223ed5c99bc792713"
-dependencies = [
- "zune-core 0.4.12",
-]
-
-[[package]]
-name = "zune-jpeg"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
- "zune-core 0.5.1",
+ "zune-core",
 ]
 
 [[package]]

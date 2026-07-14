@@ -60,24 +60,24 @@ fn test_three_children_flex_basis(cx: &mut TestAppContext) {
                 .child(
                     div()
                         .flex_basis(relative(0.33))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .h_full()
                         .debug_selector(|| "c3-child-0".into()),
                 )
                 .child(
                     div()
                         .flex_basis(relative(0.33))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .h_full()
                         .debug_selector(|| "c3-child-1".into()),
                 )
                 .child(
                     div()
                         .flex_basis(relative(0.34))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .h_full()
                         .debug_selector(|| "c3-child-2".into()),
                 )
@@ -142,8 +142,8 @@ fn test_five_children_equal(cx: &mut TestAppContext) {
                 container = container.child(
                     div()
                         .flex_basis(relative(0.2))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .h_full()
                         .debug_selector(|| sel.into()),
                 );
@@ -186,24 +186,24 @@ fn test_imprecise_sum(cx: &mut TestAppContext) {
                 .child(
                     div()
                         .flex_basis(relative(0.33))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .h_full()
                         .debug_selector(|| "imp-child-0".into()),
                 )
                 .child(
                     div()
                         .flex_basis(relative(0.33))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .h_full()
                         .debug_selector(|| "imp-child-1".into()),
                 )
                 .child(
                     div()
                         .flex_basis(relative(0.33))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .h_full()
                         .debug_selector(|| "imp-child-2".into()),
                 )
@@ -256,8 +256,8 @@ const DIVIDER_PX: f32 = 4.0;
 fn pane_div(ratio: f32, selector: &'static str) -> gpui::Div {
     div()
         .flex_basis(relative(ratio))
-        .flex_grow()
-        .flex_shrink()
+        .flex_grow(1.0)
+        .flex_shrink(1.0)
         .size_full()
         .min_w(px(80.))
         .min_h(px(80.))
@@ -362,8 +362,8 @@ fn test_deeply_nested_four_levels(cx: &mut TestAppContext) {
                     // Level 2: Horizontal split (flex_col) - top subtree + C
                     div()
                         .flex_basis(relative(0.6))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .size_full()
                         .min_w(px(80.))
                         .min_h(px(80.))
@@ -378,8 +378,8 @@ fn test_deeply_nested_four_levels(cx: &mut TestAppContext) {
                                     // Level 3: Vertical split (flex_row) - A + B
                                     div()
                                         .flex_basis(relative(0.5))
-                                        .flex_grow()
-                                        .flex_shrink()
+                                        .flex_grow(1.0)
+                                        .flex_shrink(1.0)
                                         .size_full()
                                         .min_w(px(80.))
                                         .min_h(px(80.))

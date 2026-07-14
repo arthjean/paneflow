@@ -237,8 +237,8 @@ impl LayoutTree {
                     let elem = child.node.render(window, cx, on_resize_end.clone());
                     let child_wrapper = div()
                         .flex_basis(gpui::relative(child.ratio.get()))
-                        .flex_grow()
-                        .flex_shrink()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
                         .size_full()
                         .min_w(px(80.))
                         .min_h(px(80.))

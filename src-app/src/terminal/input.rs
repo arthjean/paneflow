@@ -991,7 +991,7 @@ impl TerminalView {
                 self.scroll_remainder = 0.0;
                 return;
             }
-            TouchPhase::Ended => return,
+            TouchPhase::Ended | TouchPhase::Cancelled => return,
             TouchPhase::Moved => {}
         }
 

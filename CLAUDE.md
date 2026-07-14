@@ -26,7 +26,7 @@ cargo fmt --check
 
 ### Fork-pin maintenance (Zed Markdown widget)
 
-While `prd-markdown-append-fix-2026-Q3.md` is in flight, the Zed git deps in `src-app/Cargo.toml` and `crates/paneflow-threads/Cargo.toml` point at a Paneflow fork branch (`ArthurDEV44/zed@paneflow/markdown-append-fix`) instead of upstream `zed-industries/zed`. To bump the pin (rebase the fork onto a newer upstream rev, or revert to mainline once the PR merges), follow the two-outcome runbook in `tasks/prd-markdown-append-fix-2026-Q3.md` under "Technical Considerations" → "Switchover Plan".
+The eight Zed git deps in `src-app/Cargo.toml` pin `arthjean/zed@3aaba57b95c22f4d21bbbf9f4b10b513173209db`, published from `paneflow/gpui-2026-07-14`. That commit is based on `zed-industries/zed@afc13dc8` and carries the Paneflow Markdown streaming optimization. To bump it, choose and freeze a tested upstream revision, create a new dated fork branch from that revision, reapply the Markdown patch while preserving Zed's current public API, validate and publish the fork commit, update all eight exact `rev` values, run `cargo update`, then run the workspace test, Clippy, and format gates. Once the optimization lands upstream, switch all eight entries back to `zed-industries/zed` at the exact tested merge revision.
 
 ### Perf / heap profiling
 
@@ -149,9 +149,9 @@ KeyDownEvent → TerminalView::handle_key_down() → keys::to_esc_str()
 GPUI and related crates are **git dependencies** pinned to the Paneflow Zed fork while the markdown streaming patch is in flight:
 
 ```toml
-gpui = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
-gpui_platform = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
-collections = { git = "https://github.com/ArthurDEV44/zed", branch = "paneflow/markdown-append-fix" }
+gpui = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
+gpui_platform = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
+collections = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
 ```
 
 Cargo fetches GPUI from git automatically - no local checkout required. Two crates-io patches are required by GPUI:
