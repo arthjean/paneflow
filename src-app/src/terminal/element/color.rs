@@ -245,7 +245,8 @@ fn named_color(name: NamedColor, theme: &TerminalTheme) -> Hsla {
         NamedColor::BrightMagenta => theme.bright_magenta,
         NamedColor::BrightCyan => theme.bright_cyan,
         NamedColor::BrightWhite => theme.bright_white,
-        NamedColor::Foreground | NamedColor::BrightForeground => theme.foreground,
+        NamedColor::Foreground => theme.foreground,
+        NamedColor::BrightForeground => theme.bright_foreground,
         NamedColor::Background => theme.ansi_background,
         NamedColor::DimBlack => theme.dim_black,
         NamedColor::DimRed => theme.dim_red,
@@ -312,4 +313,27 @@ pub(super) fn rgb_to_hsla(r: u8, g: u8, b: u8) -> Hsla {
         b: b as f32 / 255.0,
         a: 1.0,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn foreground_intensity_uses_distinct_theme_slots() {
+        let theme = crate::theme::one_dark();
+
+        assert_eq!(
+            convert_color(Color::Named(NamedColor::Foreground), &theme),
+            theme.foreground
+        );
+        assert_eq!(
+            convert_color(Color::Named(NamedColor::BrightForeground), &theme),
+            theme.bright_foreground
+        );
+        assert_eq!(
+            convert_color(Color::Named(NamedColor::DimForeground), &theme),
+            theme.dim_foreground
+        );
+    }
 }

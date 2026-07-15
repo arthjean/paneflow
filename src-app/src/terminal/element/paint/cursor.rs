@@ -78,7 +78,9 @@ fn paint_cursor_info(
                         underline: None,
                         strikethrough: None,
                     }],
-                    None,
+                    // Match the normal terminal text path so the glyph does
+                    // not shift when a block cursor moves over it.
+                    Some(geom.cell_width),
                 )
             });
 

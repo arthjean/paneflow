@@ -28,20 +28,23 @@ pub(super) mod scrollbar;
 pub(super) mod selection;
 pub(super) mod text;
 
-/// Convert terminal intensity into a restrained display weight.
+/// Convert terminal intensity into a distinct display weight.
 ///
-/// SGR 1 means increased intensity, but assigning an absolute 700 weight makes
-/// large colored surfaces such as fastfetch appear much heavier than Windows
-/// Terminal. Advance one weight step from the configured base instead. Layout
-/// state keeps the original bold attribute for batching and snapshots; only
-/// glyph shaping receives the optical adjustment.
+/// SGR 1 must remain visibly distinct from regular terminal text. A single
+/// 100-point step turns the default 400 face into Medium 500, which is too
+/// subtle at terminal sizes. Keep at least a 200-point separation, use the
+/// bundled SemiBold face as the floor, and never reduce an already-heavy base.
 fn display_font_for_intensity(font: &Font, base_weight: FontWeight) -> Font {
     let mut display_font = font.clone();
     if font.weight == FontWeight::BOLD {
         display_font.weight = if base_weight.0 >= FontWeight::BOLD.0 {
             base_weight
         } else {
-            FontWeight((base_weight.0 + 100.0).min(FontWeight::BOLD.0))
+            FontWeight(
+                (base_weight.0 + 200.0)
+                    .max(FontWeight::SEMIBOLD.0)
+                    .min(FontWeight::BOLD.0),
+            )
         };
     }
     display_font
@@ -63,9 +66,15 @@ mod tests {
     }
 
     #[test]
-    fn ansi_bold_advances_one_weight_step_from_normal() {
+    fn ansi_bold_uses_semibold_from_normal() {
         let display = display_font_for_intensity(&font(FontWeight::BOLD), FontWeight::NORMAL);
-        assert_eq!(display.weight, FontWeight::MEDIUM);
+        assert_eq!(display.weight, FontWeight::SEMIBOLD);
+    }
+
+    #[test]
+    fn ansi_bold_uses_bold_from_medium() {
+        let display = display_font_for_intensity(&font(FontWeight::BOLD), FontWeight::MEDIUM);
+        assert_eq!(display.weight, FontWeight::BOLD);
     }
 
     #[test]
