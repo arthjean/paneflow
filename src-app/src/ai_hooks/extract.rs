@@ -20,7 +20,8 @@
 //! Idempotency: every target path's contents are SHA256-matched against
 //! the embedded bytes before rewriting. Re-extraction is a no-op when the
 //! cache is already up to date - verified by the `re_extraction_is_noop`
-//! unit test below.
+//! unit test below. A successful verification is memoized for the process
+//! lifetime so opening another terminal does not hash every wrapper again.
 //!
 //! EP-001 US-003 - the `paneflow-mcp` bridge takes a **different** path.
 //! The shim/ai-hook helpers live in the version-pinned cache above because
@@ -40,6 +41,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result, anyhow};
 use sha2::{Digest, Sha256};
@@ -106,6 +108,20 @@ pub(crate) struct Entry<'a> {
     pub bytes: &'a [u8],
 }
 
+static VERIFIED_BIN_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+fn memoized_verified_path(
+    cache: &OnceLock<PathBuf>,
+    verify: impl FnOnce() -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    if let Some(path) = cache.get() {
+        return Ok(path.clone());
+    }
+
+    let path = verify()?;
+    Ok(cache.get_or_init(|| path).clone())
+}
+
 /// Materialize the AI-hook binaries into
 /// `<dirs::cache_dir()>/paneflow/bin/<version>/` and return the
 /// containing directory.
@@ -116,10 +132,16 @@ pub(crate) struct Entry<'a> {
 /// - Unix: sets mode `0o755` on every extracted file.
 /// - Idempotent: if every file already exists with a matching SHA256,
 ///   returns the target dir without writing.
+/// - Process-memoized: after one successful verification, later terminal
+///   spawns reuse the verified path without hashing all wrappers again.
 ///
 /// Errors surface via `anyhow::Result` for log-and-skip handling in
 /// `src-app/src/terminal/pty_session.rs::inject_ai_hook_env` (US-009).
 pub fn ensure_binaries_extracted() -> Result<PathBuf> {
+    memoized_verified_path(&VERIFIED_BIN_DIR, ensure_binaries_extracted_uncached)
+}
+
+fn ensure_binaries_extracted_uncached() -> Result<PathBuf> {
     #[cfg(windows)]
     if let Some(dir) = packaged_bin_dir_if_complete() {
         return Ok(dir);
@@ -595,6 +617,41 @@ mod tests {
                 p.display()
             );
         }
+    }
+
+    #[test]
+    fn successful_verification_is_memoized_for_process_lifetime() {
+        let cache = OnceLock::new();
+        let calls = std::cell::Cell::new(0);
+        let expected = PathBuf::from("verified-bin-dir");
+
+        for _ in 0..2 {
+            let actual = memoized_verified_path(&cache, || {
+                calls.set(calls.get() + 1);
+                Ok(expected.clone())
+            })
+            .unwrap();
+            assert_eq!(actual, expected);
+        }
+
+        assert_eq!(calls.get(), 1, "a verified directory must be reused");
+    }
+
+    #[test]
+    fn failed_verification_is_retried() {
+        let cache = OnceLock::new();
+        let calls = std::cell::Cell::new(0);
+
+        for _ in 0..2 {
+            let result = memoized_verified_path(&cache, || {
+                calls.set(calls.get() + 1);
+                Err(anyhow!("transient extraction failure"))
+            });
+            assert!(result.is_err());
+        }
+
+        assert_eq!(calls.get(), 2, "a failed verification must not be cached");
+        assert!(cache.get().is_none());
     }
 
     #[test]
