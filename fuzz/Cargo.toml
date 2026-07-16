@@ -1,0 +1,34 @@
+[package]
+name = "paneflow-libghostty-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+default = ["native"]
+native = ["paneflow-terminal-ghostty/native"]
+
+[dependencies]
+alacritty_terminal = "=0.26.0"
+libfuzzer-sys = "=0.4.12"
+paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty" }
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "snapshot"
+path = "fuzz_targets/snapshot.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
