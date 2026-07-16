@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Command Outcome Marks - OSC 133 + export",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 3
     },
     {
       "id": "EP-004",
@@ -123,31 +123,31 @@
       "id": "US-006",
       "title": "Tap byte-stream pré-parse + store de marks",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [],
       "started_at": "2026-06-10",
       "completed_at": "2026-06-10",
-      "reviewed_at": null
+      "reviewed_at": "2026-07-14"
     },
     {
       "id": "US-007",
       "title": "Snippet shell-integration OSC 133 (zsh, bash, fish, pwsh)",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [],
       "started_at": "2026-06-10",
       "completed_at": "2026-06-10",
-      "reviewed_at": null
+      "reviewed_at": "2026-07-14"
     },
     {
       "id": "US-008",
       "title": "Exit-dots dans la marge + jump-to-prompt (secondary-shift-up/down)",
       "epic": "EP-003",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -156,13 +156,13 @@
       ],
       "started_at": "2026-06-10",
       "completed_at": "2026-06-10",
-      "reviewed_at": null
+      "reviewed_at": "2026-07-15"
     },
     {
       "id": "US-009",
       "title": "Export CommandBlock (markdown / JSON)",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "CANCELLED",
       "priority": "P2",
       "size": "M",
       "blocked_by": [
