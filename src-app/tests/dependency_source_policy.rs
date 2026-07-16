@@ -2,18 +2,9 @@ use std::path::Path;
 use std::process::Command;
 
 const MERMAN_SOURCE: &str = "source = \"git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1\"";
-const MERMAN_PACKAGES: [(&str, &str); 7] = [
-    ("dugong", "0.6.2"),
-    ("dugong-graphlib", "0.6.2"),
-    ("manatee", "0.6.2"),
-    ("merman", "0.6.2"),
-    ("merman-core", "0.6.2"),
-    ("merman-render", "0.6.2"),
-    ("roughr-merman", "0.12.0"),
-];
 
 #[test]
-fn cargo_deny_merman_exclusions_stay_locked_to_the_reviewed_commit() {
+fn cargo_lock_git_sources_are_immutable() {
     let lock_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.lock");
     let lock = std::fs::read_to_string(&lock_path);
     assert!(
@@ -24,20 +15,39 @@ fn cargo_deny_merman_exclusions_stay_locked_to_the_reviewed_commit() {
     );
     let lock = lock.unwrap_or_default();
 
-    for (name, version) in MERMAN_PACKAGES {
-        let package_header = format!("name = \"{name}\"\nversion = \"{version}\"");
-        let section = lock
-            .split("[[package]]")
-            .find(|section| section.contains(&package_header));
+    let mut saw_merman = false;
+    for source_line in lock
+        .lines()
+        .filter(|line| line.starts_with("source = \"git+"))
+    {
+        if source_line == MERMAN_SOURCE {
+            saw_merman = true;
+            continue;
+        }
+
+        let source = source_line
+            .strip_prefix("source = \"git+")
+            .and_then(|source| source.strip_suffix('"'))
+            .unwrap_or_default();
+        let (spec, resolved) = source.rsplit_once('#').unwrap_or_default();
+        let revision = spec
+            .rsplit_once("?rev=")
+            .map(|(_, revision)| revision)
+            .unwrap_or_default();
         assert!(
-            section.is_some(),
-            "cargo-deny exclusion {name}@{version} no longer matches Cargo.lock"
+            revision.len() == 40 && revision.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "git source must use a full immutable revision: {source_line}"
         );
-        assert!(
-            section.is_some_and(|section| section.contains(MERMAN_SOURCE)),
-            "{name}@{version} must stay on the reviewed Merman tag and commit"
+        assert_eq!(
+            revision, resolved,
+            "git source revision and resolved commit differ: {source_line}"
         );
     }
+
+    assert!(
+        saw_merman,
+        "the reviewed Merman tag disappeared; tighten cargo-deny back to revision-only sources"
+    );
 }
 
 #[test]

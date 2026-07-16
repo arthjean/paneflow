@@ -17,21 +17,6 @@
 #
 # Reference: https://embarkstudios.github.io/cargo-deny/
 
-[graph]
-# cargo-deny 0.19.8 cannot scope `required-git-spec` exceptions by URL: the
-# check runs before allow-git/allow-org. Zed pins these seven packages through
-# one patched tag. Exclude only the exact package versions here; the workspace
-# dependency_source_policy test independently locks the tag and resolved SHA.
-exclude = [
-    "dugong@0.6.2",
-    "dugong-graphlib@0.6.2",
-    "manatee@0.6.2",
-    "merman@0.6.2",
-    "merman-core@0.6.2",
-    "merman-render@0.6.2",
-    "roughr-merman@0.12.0",
-]
-
 [advisories]
 # Treat unmaintained crates as a workspace-scoped warn (not a blanket
 # dep-tree warn). "workspace" scope: only direct workspace members'
@@ -175,23 +160,25 @@ exceptions = [
 ]
 
 [sources]
-# Block unknown crate registries or git sources. The GPUI fork is now
-# commit-pinned in `src-app/Cargo.toml`, so new git origins should be an
-# intentional Cargo manifest change instead of background lockfile drift.
+# Block unknown crate registries or git sources. Require tags or immutable
+# revisions: the sole reviewed tag is locked to its resolved commit by the
+# workspace dependency_source_policy test.
 unknown-registry = "deny"
 unknown-git      = "deny"
-required-git-spec = "rev"
+required-git-spec = "tag"
 # Pin the crates.io registry explicitly; anything else is "unknown".
 allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
-# The Paneflow Zed fork is the only allowed repository outside the org list.
-# Its dependency is commit-pinned in src-app/Cargo.toml.
-allow-git        = ["https://github.com/arthjean/zed"]
-
-[sources.allow-org]
-# Pre-declared GitHub orgs that host the known git deps transitively
-# pulled in by GPUI. Verified against the current Cargo.lock via
-#   grep -E '^source = "git\+' Cargo.lock | sed 's|.*github.com/\([^/]*\)/.*|\1|' | sort -u
-# which returns these three orgs plus the exact arthjean/zed repository above.
-# When bumping the GPUI pin, re-run that check and update the list if new
-# origins appear.
-github = ["zed-industries", "smol-rs", "proptest-rs"]
+# Keep repository authorization exact. Organization-wide grants would let a
+# transitive update introduce an unrelated repository without review.
+allow-git = [
+    "https://github.com/arthjean/zed",
+    "https://github.com/proptest-rs/proptest",
+    "https://github.com/smol-rs/async-task.git",
+    "https://github.com/zed-industries/async-process.git",
+    "https://github.com/zed-industries/calloop",
+    "https://github.com/zed-industries/font-kit",
+    "https://github.com/zed-industries/lsp-types",
+    "https://github.com/zed-industries/merman",
+    "https://github.com/zed-industries/trash-rs",
+    "https://github.com/zed-industries/xim-rs.git",
+]
