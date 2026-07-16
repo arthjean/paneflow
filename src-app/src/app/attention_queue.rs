@@ -1,4 +1,4 @@
-//! Attention Queue (EP-002 US-004, prd-cli-cockpit-ergonomics-2026-Q3.md).
+//! Attention Queue (EP-002 US-004, CLI Cockpit).
 //!
 //! A cross-workspace overlay (theme-picker modal scaffold) listing every
 //! agent session in `WaitingForInput`: tool + workspace + the sanitized

@@ -1,6 +1,6 @@
 # Diagnostic - non-hooking d'un agent lancé via `send "claude"` (EP-002 US-004)
 
-> Spike de `prd-agent-control-plane-hardening-2026-Q3.md`. Statut : analyse code
+> Spike du hardening du control plane agent. Statut : analyse code
 > complète + instrumentation livrée ; US-005 a ensuite corrigé la cause la plus
 > dangereuse : un hook persistant Paneflow stale ne supprime plus l'injection
 > project-local.

@@ -1201,7 +1201,7 @@ impl PaneFlowApp {
             .find(|t| t.id == thread_id)
     }
 
-    /// US-010 (prd-agents-ui-codex-redesign-2026-Q3.md): the title-bar brand
+    /// US-010 (Agents UI redesign): the title-bar brand
     /// labels for Agents mode. Returns `(primary, context, overflow_enabled)`:
     /// - selected project thread -> (thread title, project name, true)
     /// - selected free chat      -> (chat title, "Chat", true)

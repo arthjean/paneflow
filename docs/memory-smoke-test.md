@@ -4,8 +4,7 @@ Manual validation for the memory-optimization PRD. This is not an RSS
 benchmark. It proves the issue #11 workload stays usable while the structural
 caps added by the PR are observable in code, logs, tests, or direct inspection.
 
-Referenced by `US-012` in
-[`tasks/prd-memory-optimization-2026-Q3.md`](../tasks/prd-memory-optimization-2026-Q3.md).
+This runbook implements the historical `US-012` memory-validation contract.
 
 ---
 

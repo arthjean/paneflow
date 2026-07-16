@@ -116,7 +116,7 @@ actions!(
         // US-003 of tasks/prd-ai-in-diff-2026-Q3.md - copy the hunk under the
         // cursor as a unified diff (Ctrl+Shift+C inside the DiffView context).
         CopyDiffHunk,
-        // EP-003 US-009 (prd-review-redesign-2026-Q3.md) - keyboard-first review
+        // EP-003 US-009 (review redesign) - keyboard-first review
         // loop. All scoped to `DiffView && !Terminal && !TextInput` so they drive
         // the diff body without stealing keystrokes from an embedded review/shell
         // terminal or the base-branch filter input.
@@ -128,7 +128,7 @@ actions!(
         DiffToggleView,
         DiffToggleSync,
         DiffDismiss,
-        // US-011 of tasks/prd-agents-ui-codex-redesign-2026-Q3.md - open the
+        // US-011 of the Agents UI redesign - open the
         // overflow (`⋯`) menu for the current Agents thread/chat. Dispatched
         // by the title-bar `⋯` button (a SEPARATE `TitleBar` entity with no
         // access to agents state), caught by `PaneFlowApp` which resolves the
@@ -136,7 +136,7 @@ actions!(
         // button never calls agents methods directly - it dispatches this
         // typed action, mirroring the update pill's `StartSelfUpdate`.
         OpenAgentsThreadMenu,
-        // EP-001 (prd-cli-cockpit-ergonomics-2026-Q3.md) - Cli-cockpit
+        // EP-001 (CLI Cockpit) - CLI cockpit
         // steering. `OpenComposer` (US-001) anchors the multi-line prompt
         // Composer to the focused pane; `ToggleBroadcastMember` and
         // `OpenBroadcastGroups` (US-002) manage the named pane groups the
@@ -144,7 +144,7 @@ actions!(
         OpenComposer,
         ToggleBroadcastMember,
         OpenBroadcastGroups,
-        // EP-002 (prd-cli-cockpit-ergonomics-2026-Q3.md) - triage & launch.
+        // EP-002 (CLI Cockpit) - triage & launch.
         // `OpenAttentionQueue` (US-004) lists every WaitingForInput session
         // cross-workspace with its question + wait time; `OpenLaunchPad`
         // (US-005) is the worktree + split + agent + prefill one-gesture

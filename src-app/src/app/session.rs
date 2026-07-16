@@ -118,7 +118,7 @@ impl PaneFlowApp {
                 .map(crate::project::project_to_session)
                 .collect(),
             active_project: self.active_project_idx,
-            // US-002 (prd-agents-ui-codex-redesign-2026-Q3.md): persist free
+            // US-002 (Agents UI redesign): persist free
             // chats alongside projects. Empty list serializes to nothing
             // (`skip_serializing_if`), so a no-chats session.json is byte-
             // identical to a pre-refonte one.

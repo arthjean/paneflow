@@ -1,4 +1,4 @@
-//! Broadcast Groups (EP-001, prd-cli-cockpit-ergonomics-2026-Q3.md).
+//! Broadcast Groups (EP-001, CLI Cockpit).
 //!
 //! US-002: named groups of panes sharing a colored left-edge stripe - the
 //! explicit, visible target of a Composer broadcast (US-003). Groups are

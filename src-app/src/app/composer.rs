@@ -1,4 +1,4 @@
-//! Prompt Composer (EP-001, prd-cli-cockpit-ergonomics-2026-Q3.md).
+//! Prompt Composer (EP-001, CLI Cockpit).
 //!
 //! US-001: a multi-line prompt bar anchored to the bottom edge of the
 //! focused pane. Delivery goes through the hardened text injection path

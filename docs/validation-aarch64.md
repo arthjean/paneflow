@@ -2,9 +2,8 @@
 
 On-device validation of every aarch64 artifact produced by the release
 workflow, before a release is promoted to the public "latest" tag.
-Referenced by US-020. Prerequisite context in
-[`tasks/spike-aarch64-build.md`](../tasks/spike-aarch64-build.md) (US-018
-go-decision) and the US-019 matrix in
+It implements the historical US-020 validation contract after the US-018
+go-decision and uses the US-019 matrix in
 [`.github/workflows/release.yml`](../.github/workflows/release.yml).
 
 CI cannot exercise this path - GitHub's `ubuntu-22.04-arm` runner has no

@@ -87,8 +87,7 @@ Bump versions. Single source of truth for the Rust version is the
 workspace `Cargo.toml`:
 
 ```bash
-# Run this block from the repo root (cd to /home/arthur/dev/paneflow
-# or wherever you cloned it). The `sed` and the changelog write use
+# Run this block from the repository root. The `sed` and changelog write use
 # relative paths and silently misbehave if CWD is a subdirectory.
 cd "$(git rev-parse --show-toplevel)"
 
@@ -195,9 +194,9 @@ fingerprint guard" near-miss.
 
 | Symptom | Top 3 recoveries |
 |---|---|
-| aarch64 leg queues for > 5 min on `ubuntu-22.04-arm` | 1. Wait - GitHub's free-tier ARM queue is bursty and usually clears within 10 min. 2. If genuinely stuck > 20 min, cancel via `gh run cancel <id>` and re-run the workflow from the Actions UI. 3. Persistent queueing may mean the runner label is wrong post-GitHub-maintenance; see the Runner Availability notes in [`tasks/spike-aarch64-build.md`](../tasks/spike-aarch64-build.md) §Residual-unknowns. |
+| aarch64 leg queues for > 5 min on `ubuntu-22.04-arm` | 1. Wait - GitHub's free-tier ARM queue is bursty and usually clears within 10 min. 2. If genuinely stuck > 20 min, cancel via `gh run cancel <id>` and re-run the workflow from the Actions UI. 3. Persistent queueing may mean the runner label is wrong post-GitHub-maintenance; verify the runner matrix in [`.github/workflows/release.yml`](../.github/workflows/release.yml) and follow [`docs/validation-aarch64.md`](validation-aarch64.md). |
 | GPG signing step exits with `GPG signing failed: key not loaded` | 1. A required secret (`GPG_PRIVATE_KEY`, `GPG_KEY_ID`, `GPG_PASSPHRASE`) is missing or malformed. Check the run log for the exact secret referenced. 2. Re-populate the secret from the password manager (see `docs/pkg-repo-runbook.md` §4). 3. Re-run the failed job - don't re-tag. |
-| `fail-fast: true` cancelled the x86_64 leg after aarch64 failed | 1. Click through to the aarch64 log and find the real failure - `fail-fast` makes the reported failure cascade-prone. 2. If aarch64 is the blocker and you need an x86_64-only release, patch the matrix in a hotfix commit to skip aarch64, re-tag to a patch number, and note the aarch64 gap in release notes. 3. If aarch64 is a first-time failure since a GPUI bump, see [`tasks/spike-aarch64-build.md`](../tasks/spike-aarch64-build.md) - may indicate an upstream GPUI regression. |
+| `fail-fast: true` cancelled the x86_64 leg after aarch64 failed | 1. Click through to the aarch64 log and find the real failure - `fail-fast` makes the reported failure cascade-prone. 2. If aarch64 is the blocker and you need an x86_64-only release, patch the matrix in a hotfix commit to skip aarch64, re-tag to a patch number, and note the aarch64 gap in release notes. 3. If aarch64 is a first-time failure since a GPUI bump, follow [`docs/validation-aarch64.md`](validation-aarch64.md) and check for an upstream GPUI regression. |
 
 ---
 

@@ -1,4 +1,4 @@
-//! EP-004 US-017 (`prd-review-redesign-2026-Q3.md`): a build-time-embedded,
+//! EP-004 US-017 (review redesign): a build-time-embedded,
 //! versioned model pricing table for the Review attribution badge's estimated
 //! cost. 100% local - no network lookup (a hard Paneflow constraint); a signed
 //! remote manifest is out of scope unless model churn proves painful.

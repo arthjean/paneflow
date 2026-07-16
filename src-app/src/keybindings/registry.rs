@@ -452,7 +452,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         context: "DiffView",
         description: "Copy hunk as diff",
     },
-    // EP-003 US-009 (prd-review-redesign-2026-Q3.md): keyboard-first review loop.
+    // EP-003 US-009 (review redesign): keyboard-first review loop.
     // Keep these off embedded terminals and text widgets inside DiffView.
     ActionMeta {
         name: "diff_next_hunk",
@@ -484,7 +484,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
         description: "Diff: close popover / refocus body",
     },
-    // EP-001 (prd-cli-cockpit-ergonomics-2026-Q3.md): Cli-cockpit steering.
+    // EP-001 (CLI Cockpit): CLI cockpit steering.
     // Global context - the handlers gate on `AppMode::Cli` themselves.
     ActionMeta {
         name: "open_composer",
@@ -504,7 +504,7 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         context: "",
         description: "Broadcast groups",
     },
-    // EP-002 (prd-cli-cockpit-ergonomics-2026-Q3.md): triage & launch.
+    // EP-002 (CLI Cockpit): triage & launch.
     ActionMeta {
         name: "open_attention_queue",
         factory: || Box::new(crate::OpenAttentionQueue),

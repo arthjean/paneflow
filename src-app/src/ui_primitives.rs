@@ -1,5 +1,5 @@
 //! Cross-surface UI primitives shared by the Agents view and the Review (Git
-//! Diff) view (PRD `prd-review-redesign-2026-Q3.md`, EP-001 US-003).
+//! Diff) view (review redesign, EP-001 US-003).
 //!
 //! Before this module, the Review and Agents surfaces re-coded the same recipes
 //! inline: a byte-for-byte tooltip struct in each (`DiffHeaderTooltip` ==

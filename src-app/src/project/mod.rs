@@ -62,7 +62,7 @@ pub fn next_thread_id() -> u64 {
 /// `session.json` so newly-created projects/threads cannot collide
 /// with restored ones.
 ///
-/// US-002 (prd-agents-ui-codex-redesign-2026-Q3.md): free `chats` are
+/// US-002 (Agents UI redesign): free `chats` are
 /// `Thread`s allocated from the SAME `next_thread_id` counter as project
 /// threads, so they MUST be folded into the thread-ID max here. Omitting
 /// them would leave the counter below the highest restored chat ID and
@@ -104,7 +104,7 @@ pub fn thread_id_from_env_id(env_id: u64) -> Option<u64> {
 }
 
 /// Explicit selection target for the Agents-view center surface (US-003
-/// of `prd-agents-ui-codex-redesign-2026-Q3.md`). Replaces the positional
+/// of the Agents UI redesign). Replaces the positional
 /// `active_thread_idx: Option<usize>` so the center can address a thread of
 /// a project OR a free chat without the index-stale bug class that a second
 /// parallel `Option<usize>` would reintroduce. `None` (the `Option` wrapper
@@ -185,7 +185,7 @@ pub fn agents_target_from_session(
 
 /// What a newly-launched agent is created into when no target is selected
 /// (the picker/home state, US-005 of
-/// `prd-agents-ui-codex-redesign-2026-Q3.md`). `Project` → a thread in the
+/// the Agents UI redesign). `Project` → a thread in the
 /// active project (the legacy "select a project → agent picker" flow);
 /// `NewChat` → a free chat in the home dir (the rail's "New chat" row). The
 /// render branch reads this to pick the launcher title + create path; every
@@ -278,7 +278,7 @@ pub struct Thread {
     /// "New terminal thread" affordance + legacy Agent rows). Always
     /// `None` for `ThreadKind::Agent`.
     pub terminal_agent: Option<crate::agent_launcher::TerminalAgent>,
-    /// US-001 (prd-agents-ui-codex-redesign-2026-Q3.md): whether the user
+    /// US-001 (Agents UI redesign): whether the user
     /// pinned this thread. Pinned threads (project threads and free chats
     /// alike) are surfaced in the rail's PINNED section. Round-trips through
     /// [`ThreadSession::pinned`]; a restored thread without the flag is

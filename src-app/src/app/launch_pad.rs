@@ -1,4 +1,4 @@
-//! Launch Pad (EP-002 US-005, prd-cli-cockpit-ergonomics-2026-Q3.md).
+//! Launch Pad (EP-002 US-005, CLI Cockpit).
 //!
 //! A modal (custom-buttons modal scaffold) that compresses the
 //! worktree-per-agent ritual into one gesture: pick an agent, name a NEW

@@ -5,7 +5,7 @@
 //! thread's working directory: the working-tree diff against `HEAD` (staged +
 //! unstaged tracked changes) plus untracked files.
 //!
-//! EP-001 (prd-review-redesign-2026-Q3.md, US-001/US-002): the dock no longer
+//! EP-001 (review redesign, US-001/US-002): the dock no longer
 //! has its own diff renderer or unified-diff parser. It renders through the
 //! exact same path as the full-screen Review view ([`crate::diff`]): the shared
 //! git pipeline ([`crate::diff::compute_head_diff`]), the shared row model

@@ -1187,7 +1187,7 @@ struct PaneFlowApp {
     /// projects, persisted to `session.json` via [`save_session`].
     /// Empty until the user creates their first project (US-011).
     pub(crate) projects: Vec<crate::project::Project>,
-    /// US-002 (prd-agents-ui-codex-redesign-2026-Q3.md): free chats -
+    /// US-002 (Agents UI redesign): free chats -
     /// terminal threads not attached to any project, anchored on the
     /// user's home dir. A separate list from [`Self::projects`] by design
     /// (no implicit "~" project). Persisted to `session.json`. Each chat
@@ -1201,13 +1201,13 @@ struct PaneFlowApp {
     /// to render anything). Stays the rail's focused-project anchor +
     /// the picker's create-into-project context after US-003.
     pub(crate) active_project_idx: usize,
-    /// US-003 (prd-agents-ui-codex-redesign-2026-Q3.md): explicit center
+    /// US-003 (Agents UI redesign): explicit center
     /// selection target. Replaces the old positional `active_thread_idx`
     /// so the center can address a project thread OR a free chat without
     /// an ambiguous parallel index. `None` is the picker/home state (the
     /// project anchor for that state is [`Self::active_project_idx`]).
     pub(crate) agents_target: Option<crate::project::AgentsTarget>,
-    /// US-005 (prd-agents-ui-codex-redesign-2026-Q3.md): in the picker/home
+    /// US-005 (Agents UI redesign): in the picker/home
     /// state (`agents_target == None`), what a launched agent is created
     /// into - the active project, or a free chat in the home dir (the rail's
     /// "New chat" row). Reset to `Project` on every concrete selection.

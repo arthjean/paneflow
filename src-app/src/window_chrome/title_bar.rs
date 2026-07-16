@@ -17,7 +17,7 @@ pub struct TitleBar {
     pub ipc_state: crate::ipc::IpcState,
     /// Set by PaneFlowApp when a newer version is detected.
     pub update_available: Option<UpdateInfo>,
-    /// US-010 (prd-agents-ui-codex-redesign-2026-Q3.md): the brand slot's
+    /// US-010 (Agents UI redesign): the brand slot's
     /// primary text in Agents mode (current thread/chat title, or a neutral
     /// "Agents"/project label in the picker state). `None` in Cli/Diff leaves
     /// the brand slot empty. PUSHED by `PaneFlowApp::render` only on the Agents

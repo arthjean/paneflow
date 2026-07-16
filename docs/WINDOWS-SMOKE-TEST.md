@@ -2,8 +2,7 @@
 
 Manual QA checklist run on Windows 10 (1809) and Windows 11 VMs before
 every Windows release is promoted from pre-release to the public
-"latest" tag. Referenced by US-021 in
-[`tasks/prd-windows-port.md`](../tasks/prd-windows-port.md).
+"latest" tag. It implements the historical Windows-port US-021 contract.
 
 CI cannot exercise these scenarios - the `windows-2022` GitHub-hosted
 runner image covers compile + signtool verification only
@@ -328,9 +327,8 @@ release on this specific edge case unless PaneFlow itself crashes.
 These scenarios validate the agent control-plane paths that are
 **compile-verified on the Linux build host but only runtime-observable on
 Windows**: the named-pipe event bus (`events.subscribe` / `paneflow watch`),
-ConPTY bracketed paste, and ConPTY `Ctrl+C` -> `ai.stop`. They are referenced by
-US-013 / US-014 of
-[`tasks/prd-agent-control-plane-hardening-2026-Q3.md`](../tasks/prd-agent-control-plane-hardening-2026-Q3.md).
+ConPTY bracketed paste, and ConPTY `Ctrl+C` -> `ai.stop`. They implement the
+historical agent control-plane hardening contracts US-013 and US-014.
 
 Unlike Part 1 (run every release), run Part 2 whenever the control plane
 changes (the IPC server, the shim's Ctrl-C path, or the EP-001 paste path).
@@ -501,8 +499,7 @@ Examples:
 ### Bucket B - Log as known-v1 issue in `docs/WINDOWS.md`
 
 The failure is a known upstream limitation, a cosmetic bug, or a
-functional gap explicitly scoped out of v1 (see "Out of Scope" in
-`tasks/prd-windows-port.md`). Add or update an entry in the
+functional gap explicitly scoped out of Windows v1. Add or update an entry in the
 "Known limitations" section of `docs/WINDOWS.md` (US-022) with:
 
 - Title, description, upstream GitHub issue link
@@ -556,12 +553,8 @@ as the permanent record.
 
 ## Cross-references
 
-- [`tasks/prd-windows-port.md`](../tasks/prd-windows-port.md) - the
-  PRD containing US-021 (this runbook) and the risks table
 - [`docs/WINDOWS.md`](WINDOWS.md) - user-facing known-limitations
-  catalog. **NOTE:** the file does not exist in the repo until US-022
-  ships; the link above 404s today. Triage bucket B entries land here
-  once the doc is authored.
+  catalog. Triage bucket B entries land here.
 - [`docs/validation-aarch64.md`](validation-aarch64.md) -
   structural sibling for aarch64 Linux validation
 - [`.github/workflows/release.yml`](../.github/workflows/release.yml)

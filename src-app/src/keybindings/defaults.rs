@@ -351,7 +351,7 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "copy_diff_hunk",
         context: Some("DiffView"),
     },
-    // EP-003 US-009 (prd-review-redesign-2026-Q3.md): keyboard-first review loop.
+    // EP-003 US-009 (review redesign): keyboard-first review loop.
     // Bare keys, scoped away from terminals and text widgets so focus children
     // of the DiffView do not lose a keystroke.
     DefaultBinding {
@@ -379,7 +379,7 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "diff_dismiss",
         context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
-    // EP-001 (prd-cli-cockpit-ergonomics-2026-Q3.md): Composer + broadcast
+    // EP-001 (CLI Cockpit): Composer + broadcast
     // groups. All three are unclaimed `secondary-shift-…` slots (taken set
     // before this block: d/e/w/n/q/j/t/z/=/s/a/g) and none shadows a common
     // shell/readline/TUI chord (FR-12) - Ctrl+Shift+Space/B/M mean nothing to

@@ -108,7 +108,7 @@ capability. New to Paneflow? Start with [Get started](/docs).
   ## Agent chat [#agent-chat]
 
   Open a dedicated chat that launches Claude Code, Codex, or any agent CLI
-  from your home directory (`/home/arthur`) instead of a project. It's a
+  from your home directory instead of a project. It's a
   ChatGPT- or Claude-style conversation surface that runs in the terminal
   with the full power of a coding agent behind it - for research,
   planning, or quick questions that don't belong to a specific codebase.

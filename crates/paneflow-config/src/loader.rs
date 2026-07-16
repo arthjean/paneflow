@@ -1973,7 +1973,7 @@ mod tests {
         assert_eq!(restored.mode, AppMode::Agents);
     }
 
-    // US-001/US-002 (prd-agents-ui-codex-redesign-2026-Q3.md): the
+    // US-001/US-002 (Agents UI redesign): the
     // SessionState gained `chats` and ThreadSession gained `pinned`. These
     // cover the round-trip with both fields populated and the backward-compat
     // default when a pre-refonte session.json lacks the keys.

@@ -271,7 +271,6 @@ implemented:
   orchestration.
 - `memory/project_windows_signing.md` - Strivex-specific metadata
   (account names, expiration dates, rotation reminders).
-- `tasks/prd-cmux-port-2026-q2.md` US-024 - acceptance criteria.
 - Microsoft Learn - Trusted Signing:
   <https://learn.microsoft.com/en-us/azure/trusted-signing/>
 - Microsoft Learn - `signtool sign`:

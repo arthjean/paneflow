@@ -318,8 +318,6 @@ do not install the package.
   runbook for macOS signing & notarization.
 - [`docs/release/windows-signing.md`](windows-signing.md) - equivalent
   runbook for Windows Azure Trusted Signing.
-- [`tasks/prd-cmux-port-2026-q2.md`](../../tasks/prd-cmux-port-2026-q2.md)
-  US-025 - acceptance criteria for this document.
 - `dpkg-sig(1)` - `man dpkg-sig` for the underlying signing tool.
 - `rpm(8)` `--checksig` - `man rpm` and Fedora docs at
   <https://docs.fedoraproject.org/en-US/quick-docs/installing-plugins-for-playing-movies-and-music/#proc_signing>.

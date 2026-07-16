@@ -453,7 +453,7 @@ pub struct UiColors {
     pub vc_word_added: Hsla,
     /// Intra-line word-diff emphasis (deleted side).
     pub vc_word_deleted: Hsla,
-    // EP-001 (prd-cli-cockpit-ergonomics-2026-Q3.md, US-002): broadcast-group
+    // EP-001 (CLI Cockpit, US-002): broadcast-group
     // stripe palette - eight first-class slots so render code never inlines a
     // hex (FR-08). Positional identity colors (not semantic status colors):
     // they only need to stay mutually distinguishable and readable as a 3px
@@ -466,7 +466,7 @@ pub struct UiColors {
     pub group_6: Hsla,
     pub group_7: Hsla,
     pub group_8: Hsla,
-    // EP-004 (prd-cli-cockpit-ergonomics-2026-Q3.md): agent terminal-state
+    // EP-004 (CLI Cockpit): agent terminal-state
     // slots (FR-08 - no inline hex in render code). Both are deliberately
     // distinct from `vc_conflict` (the attention/waiting dot) so a crashed
     // agent never reads as "needs input".
