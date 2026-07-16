@@ -53,8 +53,10 @@ Les archives statiques vérifiées pour `x86_64-unknown-linux-gnu` et `aarch64-u
 
 #### US-018: Utiliser Ghostty par défaut sur Linux
 
-**Status:** DONE  
-**Priority:** P0  
+**Status:** DONE
+
+**Priority:** P0
+
 **Size:** M (3 pts)
 
 **Acceptance Criteria:**
