@@ -75,7 +75,6 @@ use std::process::Command;
 /// stays active: the outer build still fails if the staged total exceeds
 /// this cap, so an unexpectedly bloated dependency cannot ship silently.
 const EMBED_SIZE_LIMIT_BYTES: u64 = 1_835_008;
-
 fn main() {
     // 1. Telemetry env vars (unchanged behavior - preserved so a key
     //    rotation forces the downstream `option_env!` to be re-resolved).
