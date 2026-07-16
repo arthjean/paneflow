@@ -8,6 +8,7 @@
 | 1.0 | 2026-07-14 | Arthur Jean | PRD initial pour intégrer libghostty-vt, conserver GPUI et promouvoir Ghostty comme backend Linux par défaut |
 | 1.1 | 2026-07-16 | Arthur Jean | Scope fonctionnel clôturé; qualification, packaging, dogfood et promotion extraits vers un PRD dédié |
 | 1.2 | 2026-07-16 | Arthur Jean | Migration Linux actée: Ghostty devient le défaut des builds standards, sans processus d'approbation supplémentaire |
+| 1.3 | 2026-07-16 | Arthur Jean | Références aux plans archivés remplacées par les contrats effectivement livrés |
 
 ## Problem Statement
 
@@ -87,8 +88,8 @@ Key findings that informed this PRD:
 - src-app/src/terminal/view.rs conserve le flux placeholder -> spawn background -> promotion et batch les événements par tranches de 4 ms et 100 événements.
 - src-app/src/terminal/types.rs:504-645 et src-app/src/terminal/element/mod.rs:497-836 forment déjà la cible de snapshot neutre consommée par GPUI.
 - src-app/src/search.rs, src-app/src/terminal/search.rs et src-app/src/terminal/element/hyperlink.rs lisent encore directement la grille Alacritty.
-- tasks/prd-memory-optimization-2026-Q3-status.json est DONE. Ses profils scrollback, caps et règles de cache sont des contrats à préserver.
-- tasks/prd-cli-cockpit-ergonomics-2026-Q3-status.json garde EP-003 OSC 133 en IN_REVIEW. Cette migration ne doit ni dupliquer ni écraser ce travail.
+- Les optimisations mémoire livrées définissent les profils scrollback, caps et règles de cache à préserver.
+- Les contrats OSC 133, CommandMark et exit codes sont déjà livrés. Cette migration doit les réutiliser sans créer de second store.
 - Le commit Paneflow de référence est 6eba52c9525c35fdaea9bb11dcb0b41561482242. Le commit Ghostling de référence est f9034e43a50a2f3a8101e35497f486090c1ddd6e.
 
 ### Primary Sources
@@ -113,7 +114,7 @@ Key findings that informed this PRD:
 - Le snapshot Content actuel peut représenter les données Ghostty nécessaires sans modifier le pipeline paint GPUI.
 - Une seule acquisition de verrou par frame suffit pour copier le render state sans contention visible avec huit panes actives.
 - Le format texte du scrollback permet de restaurer une session créée avec Alacritty dans Ghostty, et inversement, sans migration de schéma.
-- EP-003 OSC 133 du PRD CLI Cockpit sera DONE avant US-014. Si ce n'est pas le cas, US-014 reste bloquée sans réimplémenter ce tracker.
+- Les contrats OSC 133 et CommandMark existants sont un prérequis de US-014 et ne doivent pas être réimplémentés.
 
 ### Hard Constraints
 
@@ -128,7 +129,7 @@ Key findings that informed this PRD:
 - Les caps existants restent au minimum: input pending 64 KiB, OSC 52 100 KiB, 8 opérations clipboard, 4 000 lignes et 400 000 caractères persistés, scrollback par défaut 10 000 lignes.
 - L'identité backend est immuable pour une session active. Le fallback automatique n'est permis qu'avant le spawn du child.
 - Aucun contenu terminal, commande, cwd, clipboard ou texte de session n'entre dans les diagnostics ou la télémétrie.
-- Le dépôt C:/dev/ghostling est une référence read-only. L'implémentation vit uniquement dans un worktree Paneflow isolé.
+- Le checkout Ghostling de référence reste read-only. L'implémentation vit uniquement dans un worktree Paneflow isolé.
 
 ## Validation technique
 
@@ -408,17 +409,17 @@ Fermer les écarts visibles et produit avant la bascule Linux par défaut, sans 
 
 **Priority:** P0
 **Size:** L (5 pts)
-**Dependencies:** Blocked by US-003, US-007, US-010, US-013; external prerequisite: tasks/prd-cli-cockpit-ergonomics-2026-Q3 EP-003 must be DONE
+**Dependencies:** Blocked by US-003, US-007, US-010, US-013
 
 **Acceptance Criteria:**
 
-- [x] Given EP-003 OSC 133 du PRD CLI Cockpit, when US-014 démarre, then son status est DONE et ses CommandMark/exit codes sont consommés ou adaptés, jamais réimplémentés dans un second store.
+- [x] Given les contrats OSC 133 existants, when US-014 démarre, then ses CommandMark/exit codes sont consommés ou adaptés, jamais réimplémentés dans un second store.
 - [x] Given OSC 7, title et process fallback, when le shell change de cwd, then la sidebar, le split cwd et la restauration reçoivent la même valeur validée que sous Alacritty.
 - [x] Given OSC 133 absent, désactivé ou malformé, when une commande s'exécute, then le terminal fonctionne sans marks, sans erreur visible et sans allocation par chunk dédiée au cas absent.
 - [x] Given output terminal, when Wakeup est traité, then output_generation, activity burst, service detection, ports, waiting state et child exit suivent les mêmes transitions.
 - [x] Given recherche locale, fleet search, copy-mode et hyperlinks, when ils parcourent Ghostty, then résultats, caps, navigation et priorités OSC8/URL/path restent identiques.
 - [x] Given save/restore, when le scrollback vient de l'autre backend, then 4 000 lignes et 400 000 caractères maximum sont restaurés après sanitation, sans changement du format session.
-- [x] Given les profils Normal, CachedAgent et Review, when un terminal est créé, caché ou libéré, then les budgets de scrollback et cache du PRD mémoire DONE restent appliqués.
+- [x] Given les profils Normal, CachedAgent et Review, when un terminal est créé, caché ou libéré, then les budgets de scrollback et cache livrés restent appliqués.
 - [x] Given un child qui sort sans input ou après input utilisateur, when should_close_on_exit est évalué, then l'overlay et la fermeture de pane gardent la logique actuelle, y compris code non nul et signal.
 
 ---
@@ -445,7 +446,7 @@ EP-005 est DONE dans `tasks/prd-linux-libghostty-promotion-2026-Q3.md`. Il activ
 - FR-14: Un échec Ghostty avant spawn DOIT fallback vers Alacritty avec un child unique et une raison structurée.
 - FR-15: Une session active NE DOIT PAS changer de backend ni tenter une migration de grille en mémoire.
 - FR-16: Les diagnostics DOIVENT inclure identité, version et fallback sans contenu utilisateur.
-- FR-17: Le travail DOIT réutiliser les contrats des PRDs mémoire, CLI Cockpit et control-plane existants sans modifier leurs statuts.
+- FR-17: Le travail DOIT réutiliser les contrats implémentés de mémoire, CLI Cockpit et control plane.
 - FR-18: Le dépôt Ghostling, Raylib et l'ancien worktree Hera NE DOIVENT PAS devenir des dépendances runtime ou des sources copiées aveuglément.
 
 ## Non-Functional Requirements
@@ -491,7 +492,7 @@ Les tests de performance, stress, compatibilité CI, distribution et reproductib
 | 5 | Dual-backend devient permanent et coûteux | High | Med | Interface unique, Alacritty confiné; suppression Linux traitée dans une décision séparée |
 | 6 | Build natif ou packaging non reproductible | Med | High | Source/toolchain/cache épinglés, static link, aucun réseau build.rs, smokes de chaque format |
 | 7 | Régression performance à plusieurs panes | Med | High | Baseline US-003, seuils relatifs, verrou unique et benchmark 8 panes en CI |
-| 8 | Collision avec OSC 133 en IN_REVIEW | Med | Med | Gate externe DONE avant US-014, réutilisation du store existant, aucun changement de son tracker |
+| 8 | Régression du contrat OSC 133 existant | Med | Med | Réutilisation du store et des CommandMark existants, avec couverture différentielle |
 | 9 | Crash natif impossible à fallback en cours de session | Low | High | Pas de promesse de hot fallback, fuzz, stress PTY et rollback config pour nouvelles sessions |
 | 10 | Source Ghostty ou dépendances augmentent fortement le binaire | Med | Med | Budget suivi, inventaire des licences et mesure du delta par artefact |
 
@@ -507,19 +508,18 @@ Explicit boundaries for this PRD:
 - Supprimer alacritty_terminal du workspace. Il reste le backend macOS/Windows et le rollback Linux.
 - Basculer automatiquement une session active de Ghostty vers Alacritty après le spawn.
 - Modifier le format session, persister un dump natif Ghostty ou migrer une grille en mémoire.
-- Refaire EP-003 OSC 133, les budgets mémoire ou les stories control-plane déjà suivies ailleurs.
+- Refaire EP-003 OSC 133, les budgets mémoire ou les stories control plane déjà implémentés.
 - Contribuer des changements upstream à Ghostty, Ghostling, Alacritty ou portable-pty dans ce périmètre.
 
 ## Files NOT to Modify
 
-- C:/dev/ghostling/** - dépôt de référence read-only; aucun changement ni vendoring de main.c/Raylib.
-- C:/dev/paneflow-hera-m6/** - ancien worktree expérimental supprimé de main; référence éventuelle uniquement.
+- Checkout Ghostling de référence - aucun changement ni vendoring de main.c/Raylib.
+- Ancien worktree expérimental Hera - supprimé de main; référence éventuelle uniquement.
 - src-app/src/terminal/element/paint/** - renderer GPUI déjà neutre; corriger l'adaptateur/snapshot plutôt que masquer une divergence dans paint.
 - src-app/src/terminal/element/font.rs, color.rs et geometry.rs - aucune refonte font/color/layout dans une migration backend.
 - src-app/src/terminal/element/golden/*.txt existants - ne pas modifier les attentes pour faire passer Ghostty; ajouter des fixtures séparées si nécessaire.
 - src-app/src/keybindings/** - aucune nouvelle combinaison ou remap dans ce PRD.
 - src-app/src/update/** et les étapes de signature release - la migration ne change ni updater, ni publisher, ni trust model.
-- tasks/prd-memory-optimization-2026-Q3* et tasks/prd-cli-cockpit-ergonomics-2026-Q3* - lire leurs contrats, ne pas modifier leurs PRD/status.
 - Toute source upstream Alacritty ou Ghostty hors du pin géré - aucun fork opportuniste dans cette migration.
 
 ## Technical Considerations

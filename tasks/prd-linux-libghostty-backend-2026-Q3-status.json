@@ -7,7 +7,6 @@
     "reference_codebases": [
       {
         "name": "Ghostling",
-        "local_path": "/home/arthur/dev/ghostling",
         "remote_repository": "git@github.com:ghostty-org/ghostling.git",
         "purpose": "Explorer le codebase officiel pendant l'implémentation du PRD"
       }
