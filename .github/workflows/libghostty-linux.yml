@@ -1,0 +1,413 @@
+name: libghostty Linux
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/libghostty-linux.yml"
+      - ".github/workflows/release.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/paneflow-ghostty-smoke/**"
+      - "crates/paneflow-libghostty-sys/**"
+      - "crates/paneflow-terminal-ghostty/**"
+      - "fuzz/**"
+      - "native/libghostty/**"
+      - "scripts/*libghostty*"
+      - "scripts/bundle-appimage.sh"
+      - "scripts/bundle-tarball.sh"
+      - "src-app/Cargo.toml"
+      - "src-app/src/terminal/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/libghostty-linux.yml"
+      - ".github/workflows/release.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/paneflow-ghostty-smoke/**"
+      - "crates/paneflow-libghostty-sys/**"
+      - "crates/paneflow-terminal-ghostty/**"
+      - "fuzz/**"
+      - "native/libghostty/**"
+      - "scripts/*libghostty*"
+      - "scripts/bundle-appimage.sh"
+      - "scripts/bundle-tarball.sh"
+      - "src-app/Cargo.toml"
+      - "src-app/src/terminal/**"
+  schedule:
+    - cron: "17 1 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  GHOSTTY_SHA: ae52f97dcac558735cfa916ea3965f247e5c6e9e
+  ZIG_VERSION: 0.15.2
+
+jobs:
+  native:
+    name: Native, tests, release, package (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runs-on: ubuntu-22.04
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            runs-on: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runs-on }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Checkout pinned Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ env.GHOSTTY_SHA }}
+          path: .ghostty-source
+          fetch-depth: 1
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.96.1"
+          components: rustfmt, clippy
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: v1-libghostty
+          key: ${{ matrix.target }}
+
+      - name: Install Linux build and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            appstream \
+            binutils \
+            elfutils \
+            icnsutils \
+            imagemagick \
+            libfontconfig1-dev \
+            libfreetype6-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libxcb1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            patchelf \
+            rpm
+          cargo install cargo-deb --version 3.6.3 --locked
+          cargo install cargo-generate-rpm --version 0.20.0 --locked
+
+      - name: Build Alacritty release baseline
+        run: |
+          cargo build --release --locked --no-default-features \
+            -p paneflow-app --target "${{ matrix.target }}"
+          cp "target/${{ matrix.target }}/release/paneflow" \
+             "target/${{ matrix.target }}/release/paneflow-alacritty-baseline"
+
+      - name: Prepare reproducible libghostty archive
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+        run: |
+          scripts/build-libghostty-linux.sh \
+            --target "${{ matrix.target }}" \
+            --verify-reproducible
+          cp .ghostty-source/build.zig.zon \
+             "target/libghostty/${{ matrix.target }}/build.zig.zon"
+          sha256sum "target/libghostty/${{ matrix.target }}/build.zig.zon" \
+            > "target/libghostty/${{ matrix.target }}/build.zig.zon.sha256"
+          cp native/libghostty/manifest.toml \
+             native/libghostty/THIRD_PARTY_NOTICES.md \
+             "target/libghostty/${{ matrix.target }}/"
+          echo "PANEFLOW_LIBGHOSTTY_DIR=${{ github.workspace }}/target/libghostty/${{ matrix.target }}" \
+            >> "$GITHUB_ENV"
+
+      - name: Debug tests with native backend
+        run: >-
+          cargo test --workspace --locked
+          --features paneflow-app/libghostty-linux
+          --target "${{ matrix.target }}"
+
+      - name: Release candidate and package smoke binary
+        run: |
+          cargo build --release --locked \
+            -p paneflow-app \
+            --target "${{ matrix.target }}"
+          cargo build --release --locked \
+            -p paneflow-ghostty-smoke \
+            --features native \
+            --target "${{ matrix.target }}"
+          "target/${{ matrix.target }}/release/paneflow-ghostty-smoke"
+
+      - name: Extended performance and PTY resilience checks
+        if: >-
+          matrix.arch == 'x86_64' &&
+          (github.event_name == 'pull_request' ||
+          github.event_name == 'schedule' ||
+          github.event_name == 'workflow_dispatch')
+        run: |
+          cargo test --release --locked \
+            -p paneflow-app \
+            --features libghostty-linux \
+            --target "${{ matrix.target }}" \
+            ghostty_parser_and_snapshot_performance_gate \
+            -- --ignored --nocapture
+          cargo test --release --locked \
+            -p paneflow-app \
+            --features libghostty-linux \
+            --target "${{ matrix.target }}" \
+            ghostty_spawn_resize_close_stress_has_no_residual_growth \
+            -- --ignored --nocapture
+
+      - name: Enforce static link and 15 MiB binary delta
+        run: |
+          baseline="target/${{ matrix.target }}/release/paneflow-alacritty-baseline"
+          candidate="target/${{ matrix.target }}/release/paneflow"
+          measurement_dir="$(mktemp -d)"
+          trap 'rm -rf "$measurement_dir"' EXIT
+          cp "$baseline" "$measurement_dir/baseline"
+          cp "$candidate" "$measurement_dir/candidate"
+          strip --strip-all "$measurement_dir/baseline" "$measurement_dir/candidate"
+          baseline_size="$(stat -c%s "$measurement_dir/baseline")"
+          candidate_size="$(stat -c%s "$measurement_dir/candidate")"
+          delta=$((candidate_size - baseline_size))
+          if ((delta > 15 * 1024 * 1024)); then
+            echo "libghostty candidate grows the stripped binary by ${delta} bytes" >&2
+            exit 1
+          fi
+          scripts/verify-libghostty-package.sh \
+            --binary "$candidate" \
+            --notice native/libghostty/THIRD_PARTY_NOTICES.md
+
+      - name: Build unsigned candidate packages
+        env:
+          TARGET: ${{ matrix.target }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          scripts/bundle-tarball.sh "$version"
+          cargo deb --no-build -p paneflow-app --target "$TARGET"
+          cargo generate-rpm -p src-app --target "$TARGET"
+          scripts/bundle-appimage.sh "$version"
+
+      - name: Verify notices in every candidate format
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          tar -tzf "$(find target/bundle -name '*.tar.gz' -print -quit)" \
+            | grep -Fq 'paneflow.app/THIRD_PARTY_NOTICES.md'
+          dpkg-deb -c "$(find "target/$TARGET/debian" -name '*.deb' -print -quit)" \
+            | grep -Fq './usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md'
+          rpm -qlp "$(find "target/$TARGET/generate-rpm" -name '*.rpm' -print -quit)" \
+            | grep -Fq '/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md'
+          appimage="$(find target/appimage -name '*.AppImage' -print -quit)"
+          chmod +x "$appimage"
+          extract_dir="$(mktemp -d)"
+          trap 'rm -rf "$extract_dir"' EXIT
+          (cd "$extract_dir" && "$GITHUB_WORKSPACE/$appimage" --appimage-extract >/dev/null)
+          test -f "$extract_dir/squashfs-root/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md"
+
+      - name: Upload prepared native input
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-native-${{ matrix.target }}
+          path: target/libghostty/${{ matrix.target }}
+          retention-days: 14
+
+      - name: Upload candidate packages
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-packages-${{ matrix.arch }}
+          path: |
+            target/${{ matrix.target }}/release/paneflow-ghostty-smoke
+            target/${{ matrix.target }}/debian/*.deb
+            target/${{ matrix.target }}/generate-rpm/*.rpm
+            target/bundle/*.tar.gz
+            target/appimage/*.AppImage
+          retention-days: 14
+
+  bindings:
+    name: Regenerated bindings and ABI
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Checkout pinned Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ env.GHOSTTY_SHA }}
+          path: .ghostty-source
+          fetch-depth: 1
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.96.1"
+      - name: Install pinned bindgen and native tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang elfutils libclang-dev
+          cargo install bindgen-cli --version 0.72.1 --locked
+      - name: Regenerate and compare bindings
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+        run: scripts/generate-libghostty-bindings.sh
+      - name: Prepare x86_64 archive and run ABI layouts
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+          PANEFLOW_LIBGHOSTTY_DIR: ${{ github.workspace }}/target/libghostty/x86_64-unknown-linux-gnu
+        run: |
+          scripts/build-libghostty-linux.sh --target x86_64-unknown-linux-gnu
+          cargo test --locked -p paneflow-terminal-ghostty \
+            --features native abi_layout
+
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    needs: native
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parser, snapshot]
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: nightly-2026-07-14
+      - name: Install pinned cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.12.0 --locked
+      - name: Download prepared x86_64 archive
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: libghostty-native-x86_64-unknown-linux-gnu
+          path: target/libghostty/x86_64-unknown-linux-gnu
+      - name: Run bounded native fuzz target
+        env:
+          PANEFLOW_LIBGHOSTTY_DIR: ${{ github.workspace }}/target/libghostty/x86_64-unknown-linux-gnu
+          FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '1800' || '60' }}
+        run: cargo fuzz run --locked "${{ matrix.target }}" -- -max_total_time="$FUZZ_SECONDS"
+
+  distro-smoke:
+    name: Package smoke (${{ matrix.distro }})
+    needs: native
+    runs-on: ubuntu-22.04
+    container: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: ubuntu
+            image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
+            format: deb
+          - distro: debian
+            image: debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+            format: deb
+          - distro: fedora
+            image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
+            format: rpm
+          - distro: opensuse
+            image: registry.opensuse.org/opensuse/tumbleweed:latest@sha256:87f5378ba715a5359557f4142a597dc07091e277af79d49119948c5209fe7750
+            format: rpm
+          - distro: arch
+            image: archlinux:base@sha256:fe6972d4dc1f660c0c10f4c41b2de8986bab89e7e2955378f8beadb8ebcd7433
+            format: tar
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: libghostty-packages-x86_64
+          path: candidate
+      - name: Install candidate and inspection tools
+        env:
+          DISTRO: ${{ matrix.distro }}
+          FORMAT: ${{ matrix.format }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$DISTRO" in
+            ubuntu|debian)
+              apt-get update
+              apt-get install -y --no-install-recommends binutils ca-certificates \
+                "$(find candidate -name '*.deb' -print -quit)"
+              binary=/usr/bin/paneflow
+              notice=/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md
+              ;;
+            fedora)
+              dnf install -y binutils "$(find candidate -name '*.rpm' -print -quit)"
+              binary=/usr/bin/paneflow
+              notice=/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md
+              ;;
+            opensuse)
+              zypper --non-interactive --no-gpg-checks install --allow-unsigned-rpm binutils \
+                "$(find candidate -name '*.rpm' -print -quit)"
+              binary=/usr/bin/paneflow
+              notice=/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md
+              ;;
+            arch)
+              pacman -Sy --noconfirm --needed binutils fontconfig freetype2 glibc \
+                libx11 libxcb libxkbcommon libxkbcommon-x11 vulkan-icd-loader
+              mkdir -p /opt/paneflow-candidate
+              tar -xzf "$(find candidate -name '*.tar.gz' -print -quit)" \
+                -C /opt/paneflow-candidate
+              binary=/opt/paneflow-candidate/paneflow.app/bin/paneflow
+              notice=/opt/paneflow-candidate/paneflow.app/THIRD_PARTY_NOTICES.md
+              ;;
+          esac
+          "$binary" --version
+          scripts/verify-libghostty-package.sh --binary "$binary" --notice "$notice"
+          smoke="$(find candidate -name paneflow-ghostty-smoke -type f -print -quit)"
+          chmod +x "$smoke"
+          "$smoke"
+
+  supply-chain:
+    name: Cargo and native supply chain
+    needs: [native, bindings]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.96.1"
+      - name: Install pinned cargo-deny
+        run: cargo install cargo-deny --version 0.19.8 --locked
+      - name: Audit Cargo graph
+        run: cargo deny check
+
+  validation-summary:
+    name: libghostty validation
+    if: always()
+    needs: [native, bindings, fuzz, distro-smoke, supply-chain]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require every automated check
+        env:
+          NATIVE: ${{ needs.native.result }}
+          BINDINGS: ${{ needs.bindings.result }}
+          FUZZ: ${{ needs.fuzz.result }}
+          DISTRO: ${{ needs.distro-smoke.result }}
+          SUPPLY: ${{ needs.supply-chain.result }}
+        run: |
+          for result in "$NATIVE" "$BINDINGS" "$FUZZ" "$DISTRO" "$SUPPLY"; do
+            [ "$result" = success ] || exit 1
+          done
+          echo "All automated libghostty Linux checks passed."
