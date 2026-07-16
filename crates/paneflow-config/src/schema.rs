@@ -55,8 +55,8 @@ pub struct PaneFlowConfig {
     /// Windows-only: when enabled, the CLI terminal's default background cells
     /// are transparent so the active native backdrop can show through.
     pub windows_terminal_material: Option<bool>,
-    /// Linux-only: when enabled, the CLI terminal's default background cells
-    /// are translucent and compositor blur is requested when supported.
+    /// Linux-only: when enabled, the CLI terminal uses translucency and blur
+    /// only when the active compositor exposes native, app-controlled blur.
     pub linux_terminal_material: Option<bool>,
     /// Windows-only: when enabled, sidebars/title bar use transparent chrome so
     /// the active native backdrop can show through around the terminal.

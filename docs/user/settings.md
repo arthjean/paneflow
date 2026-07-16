@@ -29,6 +29,10 @@ workspace templates, agent launchers, AI access, and MCP setup.
 | AI Agent           | Launcher button visibility, Claude Code bypass mode, AI free access, and the injection fence.                                                        | `*_button_visible`, `claude_code_bypass_permissions`, `ai_unrestricted`, `ai_injection_fence`                                                                                                               | Launcher and access changes hot-reload.                                     |
 | MCP Servers        | Installs or repairs the bundled `paneflow-mcp` bridge for Claude Code, Codex, Gemini, and opencode.                                                  | Agent config files, not `paneflow.json`                                                                                                                                                                     | Re-run after a Paneflow update or when an agent config changes.             |
 
+On Linux, the terminal material control is shown only when the active compositor
+exposes native blur that Paneflow can control, including KWin on Wayland and X11.
+Mutter sessions keep terminals opaque and do not show the control.
+
 ## AI access vs MCP [#ai-access-vs-mcp]
 
 The AI Agent page controls how Paneflow launches agents and how much

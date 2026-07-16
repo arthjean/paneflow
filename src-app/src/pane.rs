@@ -792,7 +792,7 @@ impl Pane {
         config: &paneflow_config::schema::PaneFlowConfig,
         cx: &mut Context<Self>,
     ) {
-        let terminal_material_active = config.terminal_material_enabled();
+        let terminal_material_active = crate::window_chrome::terminal_material_active(config);
         let integrated_glyphs_enabled = config
             .terminal
             .as_ref()
@@ -1460,7 +1460,10 @@ impl Pane {
         // Windows keeps the historical fully transparent strip over Mica.
         // Linux leaves the strip opaque so its terminal-only material never
         // leaks into pane chrome.
-        let bar_bg = tab_bar_background(&theme, self.cached_config.terminal_material_enabled());
+        let bar_bg = tab_bar_background(
+            &theme,
+            crate::window_chrome::terminal_material_active(&self.cached_config),
+        );
 
         // Outer container: full-width, fixed height, tab_bar background. The
         // chips are shorter than the bar, so center them vertically to float.
@@ -2273,7 +2276,7 @@ impl Render for Pane {
         };
         let content_background = pane_content_background(
             &crate::theme::active_theme(),
-            self.cached_config.terminal_material_enabled(),
+            crate::window_chrome::terminal_material_active(&self.cached_config),
             terminal_selected,
         );
 

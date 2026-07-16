@@ -1530,7 +1530,8 @@ impl Render for PaneFlowApp {
         // keeps the terminal background; terminal material lets the native
         // backdrop show through. Diff / Agents / Settings use the #181818
         // surface.
-        let terminal_material_active = self.cached_config.terminal_material_enabled();
+        let terminal_material_active =
+            crate::window_chrome::terminal_material_active(&self.cached_config);
         let chrome_material_active = self.cached_config.cockpit_chrome_material_enabled();
         let terminal_surface_mounted = self.active_workspace().is_some_and(|ws| ws.root.is_some());
         let terminal_material_visible = !settings_open
@@ -3019,7 +3020,7 @@ fn main() {
                     #[cfg(target_os = "linux")]
                     crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
                         window,
-                        config.terminal_material_enabled(),
+                        config.linux_terminal_material_enabled(),
                     );
 
                     cx.new(StartupSplashView::new)

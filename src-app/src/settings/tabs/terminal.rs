@@ -304,20 +304,25 @@ impl PaneFlowApp {
 
         #[cfg(target_os = "linux")]
         let content = {
-            let material_card = setting_card(ui).child(self.terminal_toggle_row(
-                "term-linux-terminal-material",
-                "Transparent background",
-                "Make terminal backgrounds translucent. Blur is added when supported by the desktop compositor.",
-                config.linux_terminal_material_enabled(),
-                "linux_terminal_material",
-                false,
-                ui,
-                cx,
-            ));
+            content.when(
+                crate::window_chrome::linux_backdrop::terminal_material_available(),
+                |content| {
+                    let material_card = setting_card(ui).child(self.terminal_toggle_row(
+                        "term-linux-terminal-material",
+                        "Terminal transparency and blur",
+                        "Make terminal backgrounds translucent with native compositor blur.",
+                        config.linux_terminal_material_enabled(),
+                        "linux_terminal_material",
+                        false,
+                        ui,
+                        cx,
+                    ));
 
-            content
-                .child(section_header(ui, "Window"))
-                .child(material_card)
+                    content
+                        .child(section_header(ui, "Window"))
+                        .child(material_card)
+                },
+            )
         };
 
         content

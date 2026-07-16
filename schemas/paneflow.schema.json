@@ -87,7 +87,7 @@
     },
     "linux_terminal_material": {
       "type": ["boolean", "null"],
-      "description": "Linux-only. When true, CLI terminal default backgrounds are translucent and Paneflow requests compositor blur. Transparency remains active when blur is unavailable. Other platforms ignore this field.",
+      "description": "Linux-only. When true, CLI terminal default backgrounds are translucent and blurred only when the active compositor exposes native, app-controlled blur. Unsupported compositors keep the terminal opaque and hide the setting. Other platforms ignore this field.",
       "default": false
     },
     "windows_chrome_material": {

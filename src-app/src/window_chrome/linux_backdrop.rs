@@ -17,6 +17,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 const LINUX_NATIVE_BACKDROP_ENV: &str = "PANEFLOW_LINUX_NATIVE_BACKDROP";
 
 static NATIVE_BLUR_ACTIVE: AtomicBool = AtomicBool::new(false);
+static NATIVE_TERMINAL_BLUR_AVAILABLE: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static BACKDROP: RefCell<Option<LinuxBackdrop>> = const { RefCell::new(None) };
@@ -53,8 +54,13 @@ pub(crate) fn set_chrome_geometry(geometry: ChromeGeometry) {
 
 pub(crate) fn set_terminal_material_requested(enabled: bool) {
     TERMINAL_MATERIAL_REQUESTED.with(|requested| {
-        requested.set(enabled);
+        requested.set(enabled && terminal_material_available());
     });
+}
+
+/// Whether the active compositor exposes blur that PaneFlow can control.
+pub(crate) fn terminal_material_available() -> bool {
+    NATIVE_TERMINAL_BLUR_AVAILABLE.load(Ordering::Relaxed)
 }
 
 /// Whether PaneFlow can safely expose translucent application chrome.
@@ -80,11 +86,46 @@ fn native_backdrop_enabled() -> bool {
     chrome_backdrop_enabled() || terminal_material_requested()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BackdropStatus {
+    available: bool,
+    active: bool,
+}
+
+fn resolve_backdrop_status(
+    capability_available: bool,
+    refresh_succeeded: bool,
+    requested: bool,
+) -> BackdropStatus {
+    BackdropStatus {
+        available: capability_available,
+        active: capability_available && refresh_succeeded && requested,
+    }
+}
+
 /// Detects and installs the best native blur mechanism for the active session.
 pub(crate) fn apply_subtle_chrome_material(window: &mut Window, terminal_material: bool) {
+    ensure_backdrop(window);
     set_terminal_material_requested(terminal_material);
     refresh_blur_region(window);
     window.refresh();
+}
+
+fn ensure_backdrop(window: &Window) {
+    BACKDROP.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            let backdrop = match LinuxBackdrop::new(window) {
+                Ok(backdrop) => backdrop,
+                Err(error) => {
+                    log::warn!("Linux native blur initialization failed: {error:#}");
+                    LinuxBackdrop::Unsupported
+                }
+            };
+            NATIVE_TERMINAL_BLUR_AVAILABLE.store(backdrop.is_active(), Ordering::Relaxed);
+            *slot = Some(backdrop);
+        }
+    });
 }
 
 /// Refreshes compositor regions after resize and processes Wayland capability
@@ -100,32 +141,35 @@ pub(crate) fn refresh_blur_region(window: &mut Window) {
         return;
     }
 
+    ensure_backdrop(window);
     BACKDROP.with(|slot| {
         let mut slot = slot.borrow_mut();
-        if slot.is_none() {
-            let backdrop = match LinuxBackdrop::new(window) {
-                Ok(backdrop) => backdrop,
-                Err(error) => {
-                    log::warn!("Linux native blur initialization failed: {error:#}");
-                    LinuxBackdrop::Unsupported
-                }
-            };
-            *slot = Some(backdrop);
-        }
         let Some(backdrop) = slot.as_mut() else {
             return;
         };
 
-        if let Err(error) = backdrop.refresh(window) {
+        let refresh_succeeded = if let Err(error) = backdrop.refresh(window) {
             log::warn!("Could not refresh the Linux blur region: {error:#}");
-        }
+            false
+        } else {
+            true
+        };
 
-        let active = backdrop.is_active();
-        NATIVE_BLUR_ACTIVE.store(active && chrome_backdrop_enabled(), Ordering::Relaxed);
-        let appearance = if active {
+        let status = resolve_backdrop_status(
+            backdrop.is_active(),
+            refresh_succeeded,
+            native_backdrop_enabled(),
+        );
+        NATIVE_TERMINAL_BLUR_AVAILABLE.store(status.available, Ordering::Relaxed);
+        if !status.available {
+            set_terminal_material_requested(false);
+        }
+        NATIVE_BLUR_ACTIVE.store(
+            status.active && chrome_backdrop_enabled(),
+            Ordering::Relaxed,
+        );
+        let appearance = if status.active {
             backdrop.background_appearance()
-        } else if terminal_material_requested() {
-            WindowBackgroundAppearance::Transparent
         } else {
             WindowBackgroundAppearance::Opaque
         };
@@ -140,6 +184,7 @@ pub(crate) fn clear_subtle_chrome_material() {
         slot.borrow_mut().take();
     });
     NATIVE_BLUR_ACTIVE.store(false, Ordering::Relaxed);
+    NATIVE_TERMINAL_BLUR_AVAILABLE.store(false, Ordering::Relaxed);
 }
 
 enum LinuxBackdrop {
@@ -599,7 +644,7 @@ impl Drop for X11Backdrop {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChromeGeometry, blur_rectangles_for_geometry};
+    use super::{ChromeGeometry, blur_rectangles_for_geometry, resolve_backdrop_status};
 
     const WIDTH: i32 = 1200;
     const HEIGHT: i32 = 800;
@@ -648,5 +693,13 @@ mod tests {
         assert!(
             blur_rectangles_for_geometry(WIDTH, HEIGHT, geometry(false), 1.0, false).is_empty()
         );
+    }
+
+    #[test]
+    fn transient_refresh_failure_keeps_capability_for_retry() {
+        let status = resolve_backdrop_status(true, false, true);
+
+        assert!(status.available);
+        assert!(!status.active);
     }
 }
