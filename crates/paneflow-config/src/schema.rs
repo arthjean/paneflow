@@ -55,9 +55,6 @@ pub struct PaneFlowConfig {
     /// Windows-only: when enabled, the CLI terminal's default background cells
     /// are transparent so the active native backdrop can show through.
     pub windows_terminal_material: Option<bool>,
-    /// Linux-only: when enabled, the CLI terminal uses translucency and blur
-    /// only when the active compositor exposes native, app-controlled blur.
-    pub linux_terminal_material: Option<bool>,
     /// Windows-only: when enabled, sidebars/title bar use transparent chrome so
     /// the active native backdrop can show through around the terminal.
     pub windows_chrome_material: Option<bool>,
@@ -308,17 +305,6 @@ impl PaneFlowConfig {
     /// stay opaque even if the field exists in a shared config file.
     pub fn windows_terminal_material_enabled(&self) -> bool {
         cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)
-    }
-
-    /// Resolve the Linux terminal material switch. Other platforms ignore the
-    /// field so one shared config remains portable.
-    pub fn linux_terminal_material_enabled(&self) -> bool {
-        cfg!(target_os = "linux") && self.linux_terminal_material.unwrap_or(false)
-    }
-
-    /// Resolve the terminal material for the current platform.
-    pub fn terminal_material_enabled(&self) -> bool {
-        self.windows_terminal_material_enabled() || self.linux_terminal_material_enabled()
     }
 
     /// Resolve the desktop chrome material switch. `window_backdrop = "opaque"`
@@ -1561,7 +1547,6 @@ mod tests {
             window_decorations: Some("client".to_string()),
             window_backdrop: Some("auto".to_string()),
             windows_terminal_material: Some(true),
-            linux_terminal_material: Some(true),
             windows_chrome_material: Some(true),
             line_height: Some(1.2),
             cell_width: Some(0.6),
@@ -1889,29 +1874,6 @@ mod tests {
             ..Default::default()
         };
         assert!(!cfg.cockpit_chrome_material_enabled());
-    }
-
-    #[test]
-    fn terminal_material_resolves_for_the_current_platform_only() {
-        let windows_cfg = PaneFlowConfig {
-            windows_terminal_material: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            windows_cfg.terminal_material_enabled(),
-            cfg!(target_os = "windows")
-        );
-        assert!(!windows_cfg.linux_terminal_material_enabled());
-
-        let linux_cfg = PaneFlowConfig {
-            linux_terminal_material: Some(true),
-            ..Default::default()
-        };
-        assert_eq!(
-            linux_cfg.terminal_material_enabled(),
-            cfg!(target_os = "linux")
-        );
-        assert!(!linux_cfg.windows_terminal_material_enabled());
     }
 
     #[test]

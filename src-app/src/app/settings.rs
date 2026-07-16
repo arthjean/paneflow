@@ -95,12 +95,7 @@ impl PaneFlowApp {
                 != normalized_shell_setting(value.as_str());
         self.cached_config =
             config_writer::with_field(&self.cached_config, nested, key, value.clone());
-        if !nested
-            && matches!(
-                key,
-                "windows_terminal_material" | "linux_terminal_material" | "windows_chrome_material"
-            )
-        {
+        if !nested && matches!(key, "windows_terminal_material" | "windows_chrome_material") {
             for ws in &self.workspaces {
                 ws.propagate_config(&self.cached_config, cx);
             }

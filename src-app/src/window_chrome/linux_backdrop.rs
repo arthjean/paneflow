@@ -1,11 +1,11 @@
-//! Native Linux compositor blur for PaneFlow chrome and terminal material.
+//! Native Linux compositor blur for PaneFlow's sidebar and title bar.
 //!
 //! Linux has no distribution-wide material API. Capability detection is done
 //! against the active display server: ext-background-effect-v1 on Wayland,
 //! GPUI's legacy KDE Wayland integration, then KWin's X11 property.
 
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     ffi::c_void,
     sync::atomic::{AtomicBool, Ordering},
 };
@@ -17,12 +17,10 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 const LINUX_NATIVE_BACKDROP_ENV: &str = "PANEFLOW_LINUX_NATIVE_BACKDROP";
 
 static NATIVE_BLUR_ACTIVE: AtomicBool = AtomicBool::new(false);
-static NATIVE_TERMINAL_BLUR_AVAILABLE: AtomicBool = AtomicBool::new(false);
 
 thread_local! {
     static BACKDROP: RefCell<Option<LinuxBackdrop>> = const { RefCell::new(None) };
     static CHROME_GEOMETRY: RefCell<Option<ChromeGeometry>> = const { RefCell::new(None) };
-    static TERMINAL_MATERIAL_REQUESTED: Cell<bool> = const { Cell::new(false) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,7 +29,6 @@ pub(crate) struct ChromeGeometry {
     pub(crate) right_sidebar_width: f32,
     pub(crate) title_bar_height: f32,
     pub(crate) title_bar_spans_window: bool,
-    pub(crate) terminal_blur: bool,
 }
 
 impl ChromeGeometry {
@@ -41,7 +38,6 @@ impl ChromeGeometry {
             right_sidebar_width: 0.,
             title_bar_height: (1.75 * f32::from(window.rem_size())).max(34.),
             title_bar_spans_window: true,
-            terminal_blur: false,
         }
     }
 }
@@ -52,23 +48,16 @@ pub(crate) fn set_chrome_geometry(geometry: ChromeGeometry) {
     });
 }
 
-pub(crate) fn set_terminal_material_requested(enabled: bool) {
-    TERMINAL_MATERIAL_REQUESTED.with(|requested| {
-        requested.set(enabled && terminal_material_available());
-    });
-}
-
-/// Whether the active compositor exposes blur that PaneFlow can control.
-pub(crate) fn terminal_material_available() -> bool {
-    NATIVE_TERMINAL_BLUR_AVAILABLE.load(Ordering::Relaxed)
-}
-
 /// Whether PaneFlow can safely expose translucent application chrome.
 pub(crate) fn native_blur_active() -> bool {
     NATIVE_BLUR_ACTIVE.load(Ordering::Relaxed)
 }
 
-fn chrome_backdrop_enabled() -> bool {
+fn native_blur_is_active(capability_available: bool, refresh_succeeded: bool) -> bool {
+    capability_available && refresh_succeeded
+}
+
+fn native_backdrop_enabled() -> bool {
     match std::env::var(LINUX_NATIVE_BACKDROP_ENV) {
         Ok(value) => matches!(
             value.trim().to_ascii_lowercase().as_str(),
@@ -78,35 +67,19 @@ fn chrome_backdrop_enabled() -> bool {
     }
 }
 
-fn terminal_material_requested() -> bool {
-    TERMINAL_MATERIAL_REQUESTED.with(Cell::get)
-}
-
-fn native_backdrop_enabled() -> bool {
-    chrome_backdrop_enabled() || terminal_material_requested()
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct BackdropStatus {
-    available: bool,
-    active: bool,
-}
-
-fn resolve_backdrop_status(
-    capability_available: bool,
-    refresh_succeeded: bool,
-    requested: bool,
-) -> BackdropStatus {
-    BackdropStatus {
-        available: capability_available,
-        active: capability_available && refresh_succeeded && requested,
-    }
-}
-
 /// Detects and installs the best native blur mechanism for the active session.
-pub(crate) fn apply_subtle_chrome_material(window: &mut Window, terminal_material: bool) {
+pub(crate) fn apply_subtle_chrome_material(window: &mut Window) {
+    if !native_backdrop_enabled() {
+        BACKDROP.with(|slot| {
+            slot.borrow_mut().take();
+        });
+        NATIVE_BLUR_ACTIVE.store(false, Ordering::Relaxed);
+        window.set_background_appearance(WindowBackgroundAppearance::Opaque);
+        window.refresh();
+        return;
+    }
+
     ensure_backdrop(window);
-    set_terminal_material_requested(terminal_material);
     refresh_blur_region(window);
     window.refresh();
 }
@@ -122,22 +95,20 @@ fn ensure_backdrop(window: &Window) {
                     LinuxBackdrop::Unsupported
                 }
             };
-            NATIVE_TERMINAL_BLUR_AVAILABLE.store(backdrop.is_active(), Ordering::Relaxed);
             *slot = Some(backdrop);
         }
     });
 }
 
 /// Refreshes compositor regions after resize and processes Wayland capability
-/// changes.
+/// changes. The blur is confined to the sidebar plus title bar.
 pub(crate) fn refresh_blur_region(window: &mut Window) {
     if !native_backdrop_enabled() {
         BACKDROP.with(|slot| {
             slot.borrow_mut().take();
         });
         NATIVE_BLUR_ACTIVE.store(false, Ordering::Relaxed);
-        let appearance = WindowBackgroundAppearance::Opaque;
-        window.set_background_appearance(appearance);
+        window.set_background_appearance(WindowBackgroundAppearance::Opaque);
         return;
     }
 
@@ -148,43 +119,29 @@ pub(crate) fn refresh_blur_region(window: &mut Window) {
             return;
         };
 
-        let refresh_succeeded = if let Err(error) = backdrop.refresh(window) {
-            log::warn!("Could not refresh the Linux blur region: {error:#}");
-            false
-        } else {
-            true
-        };
+        let refresh_succeeded = backdrop
+            .refresh(window)
+            .inspect_err(|error| {
+                log::warn!("Could not refresh the Linux blur region: {error:#}");
+            })
+            .is_ok();
 
-        let status = resolve_backdrop_status(
-            backdrop.is_active(),
-            refresh_succeeded,
-            native_backdrop_enabled(),
-        );
-        NATIVE_TERMINAL_BLUR_AVAILABLE.store(status.available, Ordering::Relaxed);
-        if !status.available {
-            set_terminal_material_requested(false);
-        }
-        NATIVE_BLUR_ACTIVE.store(
-            status.active && chrome_backdrop_enabled(),
-            Ordering::Relaxed,
-        );
-        let appearance = if status.active {
+        let active = native_blur_is_active(backdrop.is_active(), refresh_succeeded);
+        NATIVE_BLUR_ACTIVE.store(active, Ordering::Relaxed);
+        window.set_background_appearance(if active {
             backdrop.background_appearance()
         } else {
             WindowBackgroundAppearance::Opaque
-        };
-        window.set_background_appearance(appearance);
+        });
     });
 }
 
 /// Releases guest Wayland/X11 resources before GPUI tears down its display.
 pub(crate) fn clear_subtle_chrome_material() {
-    set_terminal_material_requested(false);
     BACKDROP.with(|slot| {
         slot.borrow_mut().take();
     });
     NATIVE_BLUR_ACTIVE.store(false, Ordering::Relaxed);
-    NATIVE_TERMINAL_BLUR_AVAILABLE.store(false, Ordering::Relaxed);
 }
 
 enum LinuxBackdrop {
@@ -258,7 +215,7 @@ impl LinuxBackdrop {
     }
 }
 
-fn blur_rectangles(window: &Window, scale: f32) -> Vec<[i32; 4]> {
+fn chrome_rectangles(window: &Window, scale: f32) -> Vec<[i32; 4]> {
     let bounds = window.bounds().size;
     let width = (f32::from(bounds.width) * scale).ceil().max(1.0) as i32;
     let height = (f32::from(bounds.height) * scale).ceil().max(1.0) as i32;
@@ -266,15 +223,14 @@ fn blur_rectangles(window: &Window, scale: f32) -> Vec<[i32; 4]> {
         slot.borrow()
             .unwrap_or_else(|| ChromeGeometry::fallback(window))
     });
-    blur_rectangles_for_geometry(width, height, geometry, scale, chrome_backdrop_enabled())
+    chrome_rectangles_for_geometry(width, height, geometry, scale)
 }
 
-fn blur_rectangles_for_geometry(
+fn chrome_rectangles_for_geometry(
     width: i32,
     height: i32,
     geometry: ChromeGeometry,
     scale: f32,
-    chrome_blur: bool,
 ) -> Vec<[i32; 4]> {
     let left_sidebar = (geometry.left_sidebar_width * scale)
         .ceil()
@@ -286,33 +242,24 @@ fn blur_rectangles_for_geometry(
         .ceil()
         .clamp(1.0, height as f32) as i32;
 
-    let mut rectangles = Vec::with_capacity(4);
-    if chrome_blur {
-        if left_sidebar > 0 {
-            rectangles.push([0, 0, left_sidebar, height]);
-        }
-        if geometry.title_bar_spans_window && left_sidebar < width {
-            let title_width = width - left_sidebar;
-            rectangles.push([left_sidebar, 0, title_width, title_bar]);
-        }
-        if right_sidebar > 0 {
-            let x = width - right_sidebar;
-            let y = if geometry.title_bar_spans_window {
-                title_bar
-            } else {
-                0
-            };
-            let h = height.saturating_sub(y);
-            if h > 0 {
-                rectangles.push([x, y, right_sidebar, h]);
-            }
-        }
+    let mut rectangles = Vec::with_capacity(3);
+    if left_sidebar > 0 {
+        rectangles.push([0, 0, left_sidebar, height]);
     }
-    if geometry.terminal_blur {
-        let terminal_width = width.saturating_sub(left_sidebar + right_sidebar);
-        let terminal_height = height.saturating_sub(title_bar);
-        if terminal_width > 0 && terminal_height > 0 {
-            rectangles.push([left_sidebar, title_bar, terminal_width, terminal_height]);
+    if geometry.title_bar_spans_window && left_sidebar < width {
+        let title_width = width - left_sidebar;
+        rectangles.push([left_sidebar, 0, title_width, title_bar]);
+    }
+    if right_sidebar > 0 {
+        let x = width - right_sidebar;
+        let y = if geometry.title_bar_spans_window {
+            title_bar
+        } else {
+            0
+        };
+        let h = height.saturating_sub(y);
+        if h > 0 {
+            rectangles.push([x, y, right_sidebar, h]);
         }
     }
     rectangles
@@ -411,6 +358,7 @@ fn setup_wayland(surface_ptr: *mut c_void, display_ptr: *mut c_void) -> Result<L
             .iter()
             .any(|global| global.interface == KDE_WAYLAND_BLUR_INTERFACE)
     });
+
     let mut state = WaylandDispatchState {
         blur_supported: false,
     };
@@ -493,7 +441,7 @@ impl WaylandExtBackdrop {
             return Ok(());
         }
 
-        let rectangles = blur_rectangles(window, 1.0);
+        let rectangles = chrome_rectangles(window, 1.0);
         if rectangles == self.last_rectangles {
             return Ok(());
         }
@@ -593,7 +541,7 @@ fn setup_x11(
 
 impl X11Backdrop {
     fn refresh(&mut self, window: &Window) -> Result<()> {
-        let rectangles = blur_rectangles(window, window.scale_factor());
+        let rectangles = chrome_rectangles(window, window.scale_factor());
         if rectangles == self.last_rectangles {
             return Ok(());
         }
@@ -644,62 +592,26 @@ impl Drop for X11Backdrop {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChromeGeometry, blur_rectangles_for_geometry, resolve_backdrop_status};
+    use super::{ChromeGeometry, chrome_rectangles_for_geometry, native_blur_is_active};
 
-    const WIDTH: i32 = 1200;
-    const HEIGHT: i32 = 800;
-
-    fn geometry(terminal_blur: bool) -> ChromeGeometry {
-        ChromeGeometry {
+    #[test]
+    fn chrome_material_requests_only_chrome_regions() {
+        let geometry = ChromeGeometry {
             left_sidebar_width: 240.0,
             right_sidebar_width: 300.0,
             title_bar_height: 34.0,
             title_bar_spans_window: true,
-            terminal_blur,
-        }
-    }
+        };
 
-    #[test]
-    fn terminal_material_requests_only_the_main_content_region() {
         assert_eq!(
-            blur_rectangles_for_geometry(WIDTH, HEIGHT, geometry(true), 1.0, false),
-            vec![[240, 34, 660, 766]]
-        );
-    }
-
-    #[test]
-    fn chrome_material_requests_only_chrome_regions() {
-        assert_eq!(
-            blur_rectangles_for_geometry(WIDTH, HEIGHT, geometry(false), 1.0, true),
+            chrome_rectangles_for_geometry(1200, 800, geometry, 1.0),
             vec![[0, 0, 240, 800], [240, 0, 960, 34], [900, 34, 300, 766]]
         );
     }
 
     #[test]
-    fn terminal_and_chrome_regions_remain_independent() {
-        assert_eq!(
-            blur_rectangles_for_geometry(WIDTH, HEIGHT, geometry(true), 1.0, true),
-            vec![
-                [0, 0, 240, 800],
-                [240, 0, 960, 34],
-                [900, 34, 300, 766],
-                [240, 34, 660, 766],
-            ]
-        );
-    }
-
-    #[test]
-    fn disabled_material_has_no_blur_regions() {
-        assert!(
-            blur_rectangles_for_geometry(WIDTH, HEIGHT, geometry(false), 1.0, false).is_empty()
-        );
-    }
-
-    #[test]
-    fn transient_refresh_failure_keeps_capability_for_retry() {
-        let status = resolve_backdrop_status(true, false, true);
-
-        assert!(status.available);
-        assert!(!status.active);
+    fn transient_refresh_failure_does_not_activate_blur() {
+        assert!(!native_blur_is_active(true, false));
+        assert!(native_blur_is_active(true, true));
     }
 }

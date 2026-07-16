@@ -1,7 +1,7 @@
 //! "Terminal" settings tab (US-016) - the small set of terminal preferences
 //! worth keeping in the primary Settings UI: cursor shape, font
-//! family, font size, font weight, line height, cell width, and platform terminal
-//! materials.
+//! family, font size, font weight, line height, cell width, and Windows terminal
+//! material.
 //!
 //! Controls map to config like so:
 //! - **cursor_shape** -> enum/preset dropdown persisted into the `terminal`
@@ -21,8 +21,6 @@
 //!   [`config_writer::save_terminal_field`].
 //! - **windows_terminal_material** -> Windows-only top-level toggle persisted
 //!   via [`config_writer::save_config_value`].
-//! - **linux_terminal_material** -> Linux-only top-level toggle persisted via
-//!   [`config_writer::save_config_value`].
 //!
 //! Other advanced terminal knobs remain supported in `paneflow.json`, but are
 //! intentionally not mirrored here to keep Settings focused.
@@ -300,29 +298,6 @@ impl PaneFlowApp {
             content
                 .child(section_header(ui, "Window"))
                 .child(material_card)
-        };
-
-        #[cfg(target_os = "linux")]
-        let content = {
-            content.when(
-                crate::window_chrome::linux_backdrop::terminal_material_available(),
-                |content| {
-                    let material_card = setting_card(ui).child(self.terminal_toggle_row(
-                        "term-linux-terminal-material",
-                        "Terminal transparency and blur",
-                        "Make terminal backgrounds translucent with native compositor blur.",
-                        config.linux_terminal_material_enabled(),
-                        "linux_terminal_material",
-                        false,
-                        ui,
-                        cx,
-                    ));
-
-                    content
-                        .child(section_header(ui, "Window"))
-                        .child(material_card)
-                },
-            )
         };
 
         content

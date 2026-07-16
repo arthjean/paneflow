@@ -85,9 +85,6 @@ fn tab_bar_background(theme: &crate::theme::TerminalTheme, terminal_material_act
     }
 }
 
-#[cfg(target_os = "linux")]
-const LINUX_TERMINAL_MATERIAL_OPACITY: f32 = 0.82;
-
 fn pane_content_background(
     theme: &crate::theme::TerminalTheme,
     terminal_material_active: bool,
@@ -97,17 +94,12 @@ fn pane_content_background(
         return theme.background;
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        theme.background.opacity(LINUX_TERMINAL_MATERIAL_OPACITY)
-    }
-
     #[cfg(target_os = "windows")]
     {
         gpui::transparent_black()
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[cfg(not(target_os = "windows"))]
     {
         theme.background
     }
@@ -792,7 +784,7 @@ impl Pane {
         config: &paneflow_config::schema::PaneFlowConfig,
         cx: &mut Context<Self>,
     ) {
-        let terminal_material_active = crate::window_chrome::terminal_material_active(config);
+        let terminal_material_active = config.windows_terminal_material_enabled();
         let integrated_glyphs_enabled = config
             .terminal
             .as_ref()
@@ -1457,12 +1449,13 @@ impl Pane {
         // indicator drawn during a same-pane reorder hover.
         let self_entity = cx.entity();
         let accent = ui.accent;
-        // Windows keeps the historical fully transparent strip over Mica.
-        // Linux leaves the strip opaque so its terminal-only material never
-        // leaks into pane chrome.
+        // Tab strip uses the terminal background so it melts into the terminal
+        // body below it - one clean surface (Arthur). When Windows terminal
+        // material is enabled, the strip goes transparent too so the tab bar
+        // and terminal body share the same native backdrop.
         let bar_bg = tab_bar_background(
             &theme,
-            crate::window_chrome::terminal_material_active(&self.cached_config),
+            self.cached_config.windows_terminal_material_enabled(),
         );
 
         // Outer container: full-width, fixed height, tab_bar background. The
@@ -2276,7 +2269,7 @@ impl Render for Pane {
         };
         let content_background = pane_content_background(
             &crate::theme::active_theme(),
-            crate::window_chrome::terminal_material_active(&self.cached_config),
+            self.cached_config.windows_terminal_material_enabled(),
             terminal_selected,
         );
 
@@ -2536,7 +2529,7 @@ mod tests {
     };
 
     #[test]
-    fn terminal_material_scopes_tab_bar_by_platform() {
+    fn terminal_material_scopes_tab_bar_to_windows() {
         let theme = crate::theme::one_dark();
 
         assert_eq!(tab_bar_background(&theme, false), theme.background);
@@ -2548,7 +2541,7 @@ mod tests {
     }
 
     #[test]
-    fn terminal_material_is_scoped_to_selected_terminal_content() {
+    fn terminal_material_scopes_content_to_windows_terminal_tabs() {
         let theme = crate::theme::one_dark();
 
         assert_eq!(
@@ -2561,11 +2554,9 @@ mod tests {
         );
 
         let material = pane_content_background(&theme, true, true);
-        #[cfg(target_os = "linux")]
-        assert_eq!(material.a, super::LINUX_TERMINAL_MATERIAL_OPACITY);
         #[cfg(target_os = "windows")]
         assert_eq!(material.a, 0.0);
-        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        #[cfg(not(target_os = "windows"))]
         assert_eq!(material, theme.background);
     }
 
