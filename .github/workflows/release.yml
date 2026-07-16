@@ -53,6 +53,8 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
+  GHOSTTY_SHA: ae52f97dcac558735cfa916ea3965f247e5c6e9e
+  ZIG_VERSION: 0.15.2
   # US-003: synthesize the canonical TAG every downstream packaging
   # step already uses as its version source (every `cp`, sha256, .deb,
   # .rpm, .dmg, .msi name resolves through `${TAG#v}`). In tag-push
@@ -192,6 +194,21 @@ jobs:
           # echoes github.ref_name there).
           ref: ${{ env.RELEASE_REF }}
 
+      - name: Checkout pinned Ghostty source
+        if: runner.os == 'Linux'
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ env.GHOSTTY_SHA }}
+          path: .ghostty-source
+          fetch-depth: 1
+
+      - name: Install pinned Zig
+        if: runner.os == 'Linux'
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
       - name: Install system dependencies
         if: runner.os == 'Linux'
         run: |
@@ -208,6 +225,9 @@ jobs:
             libxkbcommon-x11-dev \
             libfontconfig1-dev \
             libfreetype6-dev \
+            binutils \
+            elfutils \
+            jq \
             patchelf \
             lintian \
             dpkg-sig \
@@ -312,6 +332,15 @@ jobs:
         # prior minor versions.
         run: cargo install cargo-generate-rpm --version 0.20.0 --locked
 
+      - name: Prepare reproducible libghostty archive
+        if: runner.os == 'Linux'
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/build-libghostty-linux.sh --target "$TARGET" --verify-reproducible
+          echo "PANEFLOW_LIBGHOSTTY_DIR=${{ github.workspace }}/target/libghostty/$TARGET" >> "$GITHUB_ENV"
+
       # --- Quality gates (defense-in-depth against shipping broken builds) ---
       - name: cargo fmt --check
         if: runner.os != 'Windows'
@@ -324,15 +353,25 @@ jobs:
           cargo fmt --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: cargo clippy
-        if: runner.os != 'Windows'
-        run: cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
+      - name: cargo clippy (Linux with libghostty)
+        if: runner.os == 'Linux'
+        run: >-
+          cargo clippy --workspace --locked
+          --features paneflow-app/libghostty-linux
+          --target ${{ matrix.target }}
+          -- -D warnings
+
+      - name: cargo clippy (macOS)
+        if: runner.os == 'macOS'
+        run: >-
+          cargo clippy --workspace --locked --no-default-features
+          --target ${{ matrix.target }} -- -D warnings
 
       - name: cargo clippy (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
+          cargo clippy --workspace --locked --no-default-features --target ${{ matrix.target }} -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # cargo test runs once in the `verify_workspace_tests` job before this
@@ -497,7 +536,20 @@ jobs:
           if [ "${WINDOWS_HELPERS_PREPARED:-}" = "true" ]; then
             export PANEFLOW_SKIP_EMBED_BUILD=1
           fi
-          cargo build --release -p paneflow-app --locked --target "$TARGET"
+          feature_args=(--no-default-features)
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            feature_args=()
+          fi
+          cargo build --release -p paneflow-app --locked --target "$TARGET" "${feature_args[@]}"
+
+      - name: Verify packaged libghostty identity and static linkage
+        if: runner.os == 'Linux'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/verify-libghostty-package.sh \
+            --binary "target/$TARGET/release/paneflow" \
+            --notice native/libghostty/THIRD_PARTY_NOTICES.md
 
       - name: Build release binary (Windows)
         if: runner.os == 'Windows'
@@ -512,7 +564,7 @@ jobs:
           if ($env:WINDOWS_HELPERS_PREPARED -eq 'true') {
               $env:PANEFLOW_SKIP_EMBED_BUILD = '1'
           }
-          cargo build --release -p paneflow-app --locked --target $env:TARGET
+          cargo build --release -p paneflow-app --locked --no-default-features --target $env:TARGET
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # --- Phase 1 artifacts ---

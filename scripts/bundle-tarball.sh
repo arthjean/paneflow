@@ -8,6 +8,7 @@
 #     share/icons/hicolor/{16,32,48,128,256,512}x{..}/apps/paneflow.png
 #     share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml
 #     LICENSE
+#     THIRD_PARTY_NOTICES.md
 #     README.md
 #     install.sh
 #
@@ -67,6 +68,8 @@ done
 
 install -m 644 "$REPO_ROOT/LICENSE"   "$APP/LICENSE"
 install -m 644 "$REPO_ROOT/README.md" "$APP/README.md"
+install -m 644 "$REPO_ROOT/native/libghostty/THIRD_PARTY_NOTICES.md" \
+               "$APP/THIRD_PARTY_NOTICES.md"
 install -m 755 "$SCRIPT_DIR/tarball-install.sh" "$APP/install.sh"
 
 # Reproducible tar: sorted entries, fixed ownership, fixed mtime.

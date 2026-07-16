@@ -111,10 +111,13 @@ OUT_DIR="$REPO_ROOT/target/appimage"
 APPDIR="$OUT_DIR/PaneFlow.AppDir"
 rm -rf "$APPDIR" "$OUT_DIR"/*.AppImage "$OUT_DIR"/*.AppImage.zsync
 mkdir -p "$APPDIR/usr/share/metainfo"
+mkdir -p "$APPDIR/usr/share/doc/paneflow"
 
 # Pre-stage AppStream metainfo so linuxdeploy picks it up
 install -m 644 "$REPO_ROOT/assets/io.github.arthurdev44.paneflow.metainfo.xml" \
                "$APPDIR/usr/share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml"
+install -m 644 "$REPO_ROOT/native/libghostty/THIRD_PARTY_NOTICES.md" \
+               "$APPDIR/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md"
 
 # --- invoke linuxdeploy -------------------------------------------------
 # NOTE: UPDATE_INFORMATION must be set in the environment BEFORE linuxdeploy
