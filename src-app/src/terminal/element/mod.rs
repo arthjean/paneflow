@@ -11,11 +11,11 @@ use gpui::{
     StrikethroughStyle, Style, UnderlineStyle, Window, px, relative,
 };
 
-use crate::terminal::PtyNotifier;
+use crate::terminal::TerminalSessionBackend;
 use crate::terminal::types::{
     Cell, CellFlags, Color, Content, CopyModeCursorState, CursorShape, NamedColor,
-    Point as GridPoint, RenderableCursor, SearchHighlight, SelectionRange, SharedTerm,
-    TerminalWindowSize, content_from_term_visible, resize_if_needed, terminal_metric_to_u16,
+    Point as GridPoint, RenderableCursor, SearchHighlight, SelectionRange, TerminalWindowSize,
+    terminal_metric_to_u16,
 };
 
 pub(super) mod color;
@@ -279,6 +279,53 @@ struct BlockQuad {
     coverage: (f32, f32, f32, f32),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct BoxDrawingShape {
+    left: bool,
+    right: bool,
+    up: bool,
+    down: bool,
+    rounded: bool,
+}
+
+struct BoxDrawingGlyph {
+    line: i32,
+    col: usize,
+    color: Hsla,
+    shape: BoxDrawingShape,
+}
+
+/// Map the single-stroke box glyphs used by terminal TUIs to geometry. These
+/// glyphs must meet at exact cell boundaries, which font advances cannot
+/// guarantee across font fallback and fractional scaling.
+fn box_drawing_shape(c: char) -> Option<BoxDrawingShape> {
+    let shape = match c {
+        '─' => (true, true, false, false, false),
+        '│' => (false, false, true, true, false),
+        '┌' => (false, true, false, true, false),
+        '┐' => (true, false, false, true, false),
+        '└' => (false, true, true, false, false),
+        '┘' => (true, false, true, false, false),
+        '├' => (false, true, true, true, false),
+        '┤' => (true, false, true, true, false),
+        '┬' => (true, true, false, true, false),
+        '┴' => (true, true, true, false, false),
+        '┼' => (true, true, true, true, false),
+        '╭' => (false, true, false, true, true),
+        '╮' => (true, false, false, true, true),
+        '╯' => (true, false, true, false, true),
+        '╰' => (false, true, true, false, true),
+        _ => return None,
+    };
+    Some(BoxDrawingShape {
+        left: shape.0,
+        right: shape.1,
+        up: shape.2,
+        down: shape.3,
+        rounded: shape.4,
+    })
+}
+
 /// If `c` is a Unicode block element, return its fractional cell coverage as
 /// a slice of `(x, y, w, h)` rects (origin at the cell's top-left, in 0..1).
 /// Returns `None` for characters that should be rendered as normal glyphs.
@@ -502,7 +549,7 @@ fn focused_copy_mode_cursor(
 /// reproducible with no display. The cells are the backend-neutral
 /// [`crate::terminal::types::Cell`] (EP-003) - no alacritty types reach here.
 pub(crate) struct LayoutInputs<'a> {
-    pub cells: Vec<Cell>,
+    pub cells: Arc<[Cell]>,
     /// Cursor as snapshotted from the grid (before the copy-mode / selection
     /// anchor override, which `layout_from_snapshot` applies internally).
     pub cursor: Option<CursorInfo>,
@@ -534,6 +581,7 @@ pub struct LayoutState {
     batched_runs: Vec<BatchedTextRun>,
     rects: Vec<LayoutRect>,
     block_quads: Vec<BlockQuad>,
+    box_drawing_glyphs: Vec<BoxDrawingGlyph>,
     selection_rects: Vec<LayoutRect>,
     search_rects: Vec<LayoutRect>,
     cursor: Option<CursorInfo>,
@@ -581,8 +629,7 @@ struct CellStyle {
 // ---------------------------------------------------------------------------
 
 pub struct TerminalElement {
-    term: SharedTerm,
-    notifier: PtyNotifier,
+    backend: TerminalSessionBackend,
     cursor_visible: bool,
     focused: bool,
     exited: Option<i32>,
@@ -639,8 +686,7 @@ pub struct TerminalElement {
 impl TerminalElement {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        term: SharedTerm,
-        notifier: PtyNotifier,
+        backend: TerminalSessionBackend,
         cursor_visible: bool,
         focused: bool,
         exited: Option<i32>,
@@ -666,8 +712,7 @@ impl TerminalElement {
         #[cfg(debug_assertions)] last_keystroke_at: Option<std::time::Instant>,
     ) -> Self {
         Self {
-            term,
-            notifier,
+            backend,
             cursor_visible,
             focused,
             exited,
@@ -738,10 +783,12 @@ impl TerminalElement {
             .ceil()
             .max(0.0) as i32;
 
-        // Snapshot the grid into a neutral `Content` under lock (resize first so
-        // the snapshot reflects the resized grid), minimizing FairMutex hold
-        // time. The renderer never touches alacritty types - the lock-and-read
-        // is confined to the `types` seam (`content_from_term`, EP-003).
+        // Snapshot the grid into neutral owned data. Alacritty resizes under
+        // the same lock and therefore returns the requested dimensions here.
+        // Ghostty applies the resize on its runtime thread, so it can return the
+        // previous complete grid for one frame before its wakeup publishes the
+        // resized snapshot. The layout below must use the snapshot dimensions,
+        // never combine old cells with the newly requested GPUI dimensions.
         let cursor_color = self.cursor_color_override.unwrap_or(theme.cursor);
         let window_size = TerminalWindowSize::new(
             desired_cols,
@@ -750,22 +797,22 @@ impl TerminalElement {
             terminal_metric_to_u16(dims.line_height.as_f32()),
         );
 
-        let content: Content = {
-            let mut term = self.term.lock();
-            // Resize the terminal grid if bounds have changed.
-            let resized_grid = resize_if_needed(&mut term, desired_cols, desired_rows);
-            // On the first real grid resize, clear shell startup content that
-            // landed before the actual window dimensions were known. Preserved
-            // display-only content disables this flag at the view boundary.
-            if self
-                .needs_initial_clear
-                .swap(false, std::sync::atomic::Ordering::Relaxed)
-                && resized_grid
-            {
-                term.grid_mut().reset();
-            }
-            content_from_term_visible(&term, first_visible_row, last_visible_row)
-        };
+        // A provisional layout can still match the 120x40 bootstrap grid. Keep
+        // the one-shot armed until a backend actually resizes and clears, or the
+        // next real layout would preserve startup bytes in Ghostty's scrollback.
+        let clear_on_resize = self
+            .needs_initial_clear
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let (content, initial_clear_consumed): (Content, bool) = self.backend.render_content(
+            window_size,
+            first_visible_row,
+            last_visible_row,
+            clear_on_resize,
+        );
+        if initial_clear_consumed {
+            self.needs_initial_clear
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+        }
         let notify_resize = {
             let mut last = self
                 .terminal_window_size
@@ -779,9 +826,11 @@ impl TerminalElement {
             }
         };
         if notify_resize {
-            self.notifier.notify_window_size(window_size);
+            self.backend.notify_window_size(window_size);
         }
 
+        let render_cols = content.cols.max(1);
+        let render_rows = content.rows.max(1);
         let display_offset = content.display_offset;
         let history_size = content.history_size;
         let selection_range = content.selection;
@@ -808,8 +857,8 @@ impl TerminalElement {
             search_highlights: &self.search_highlights,
             display_offset,
             history_size,
-            desired_cols,
-            desired_rows,
+            desired_cols: render_cols,
+            desired_rows: render_rows,
             first_visible_row,
             last_visible_row,
             dims,
@@ -880,12 +929,18 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             terminal_material_active,
         };
 
-        let main = selection_marker_cursor(&cells, display_line, cm.col, marker_color, cursor_ctx);
+        let main = selection_marker_cursor(
+            cells.as_ref(),
+            display_line,
+            cm.col,
+            marker_color,
+            cursor_ctx,
+        );
 
         let anchor = cm.anchor_grid_line.and_then(|anchor_line| {
             let display_anchor = anchor_line + display_offset as i32;
             selection_marker_cursor(
-                &cells,
+                cells.as_ref(),
                 display_anchor,
                 cm.anchor_col,
                 marker_color,
@@ -905,11 +960,12 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     let mut batch = BatchAccumulator::new(base_font.clone());
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut block_quads: Vec<BlockQuad> = Vec::new();
+    let mut box_drawing_glyphs: Vec<BoxDrawingGlyph> = Vec::new();
     let mut current_rect: Option<LayoutRect> = None;
     let mut last_line: i32 = i32::MIN;
     let mut previous_cell_had_extras = false;
 
-    for cell in &cells {
+    for cell in cells.iter() {
         let Cell {
             point,
             c,
@@ -1047,6 +1103,21 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         if c == ' ' || c == '\0' {
             previous_cell_had_extras = has_extras;
             batch.flush();
+            continue;
+        }
+
+        // Render common single-stroke box drawing as connected paths. Every
+        // segment reaches the shared cell boundary, so adjacent `─` and `│`
+        // cells cannot expose font-side-bearing gaps.
+        if integrated_glyphs_enabled && let Some(shape) = box_drawing_shape(c) {
+            batch.flush();
+            box_drawing_glyphs.push(BoxDrawingGlyph {
+                line: point.line.0,
+                col: point.column.0,
+                color: fg,
+                shape,
+            });
+            previous_cell_had_extras = false;
             continue;
         }
 
@@ -1285,6 +1356,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         batched_runs: batch.runs,
         rects,
         block_quads,
+        box_drawing_glyphs,
         selection_rects,
         search_rects,
         cursor: cursor_snapshot,
@@ -1563,6 +1635,14 @@ impl Element for TerminalElement {
 
             // 2d. Block element quads (pixel-perfect, no font glyph gaps)
             paint::background::paint_block_quads(&layout, &cell_x_bounds, &cell_y_bounds, window);
+
+            // 2e. Single-stroke box drawing with shared cell-edge endpoints.
+            paint::box_drawing::paint_box_drawing_glyphs(
+                &layout,
+                &cell_x_bounds,
+                &cell_y_bounds,
+                window,
+            );
 
             // 3. Batched text runs
             paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
@@ -2204,7 +2284,7 @@ mod golden_frame_tests {
     ) -> LayoutState {
         let theme = crate::theme::one_dark();
         layout_from_snapshot(LayoutInputs {
-            cells,
+            cells: cells.into(),
             cursor,
             selection_range: selection,
             copy_mode_cursor: None,
@@ -2233,7 +2313,7 @@ mod golden_frame_tests {
     ) -> LayoutState {
         let theme = crate::theme::one_dark();
         layout_from_snapshot(LayoutInputs {
-            cells: Vec::new(),
+            cells: Vec::new().into(),
             cursor: None,
             selection_range: Some(selection),
             copy_mode_cursor: None,
@@ -2526,10 +2606,39 @@ mod golden_frame_tests {
     }
 
     #[test]
+    fn codex_box_drawing_chars_emit_paths_not_text_runs() {
+        let boxes: Vec<Cell> = "╭──╮│┌┼┐╰──╯"
+            .chars()
+            .enumerate()
+            .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
+            .collect();
+        let state = run(boxes, None, None);
+
+        assert_eq!(state.box_drawing_glyphs.len(), 12);
+        assert!(
+            state.batched_runs.is_empty(),
+            "integrated box drawing must not use font glyphs"
+        );
+    }
+
+    #[test]
+    fn box_drawing_uses_font_glyphs_when_integrated_glyphs_are_disabled() {
+        let boxes: Vec<Cell> = "╭─╮│╰─╯"
+            .chars()
+            .enumerate()
+            .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
+            .collect();
+        let state = run_with_integrated_glyphs(boxes, None, None, false);
+
+        assert!(state.box_drawing_glyphs.is_empty());
+        assert_eq!(state.batched_runs.len(), 1);
+    }
+
+    #[test]
     fn shell_cursor_is_hidden_when_scrolled_away_from_live_edge() {
         let theme = crate::theme::one_dark();
         let state = layout_from_snapshot(LayoutInputs {
-            cells: text_row(0, "history", default_fg(), CellFlags::empty()),
+            cells: text_row(0, "history", default_fg(), CellFlags::empty()).into(),
             cursor: Some(cursor_at_line(3, 0, CursorShape::Block, None)),
             selection_range: None,
             copy_mode_cursor: None,
@@ -2765,7 +2874,7 @@ mod golden_frame_tests {
             cell(2, 0, 'b', default_fg(), default_bg(), CellFlags::empty()),
         ];
         let state = layout_from_snapshot(LayoutInputs {
-            cells,
+            cells: cells.into(),
             cursor: None,
             selection_range: None,
             copy_mode_cursor: None,
@@ -2837,7 +2946,7 @@ mod golden_frame_tests {
             ),
         ];
         let state = layout_from_snapshot(LayoutInputs {
-            cells,
+            cells: cells.into(),
             cursor: None,
             selection_range: None,
             copy_mode_cursor: None,
@@ -2921,7 +3030,7 @@ mod golden_frame_tests {
             ),
         ];
         let state = layout_from_snapshot(LayoutInputs {
-            cells,
+            cells: cells.into(),
             cursor: None,
             selection_range: None,
             copy_mode_cursor: None,

@@ -539,6 +539,18 @@ pub enum CursorBlinkConfig {
     TerminalControlled,
 }
 
+/// Terminal engine requested for newly-created sessions. `Auto` selects
+/// Ghostty in standard Linux builds and Alacritty on macOS, Windows, or Linux
+/// builds using `--no-default-features`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalBackendConfig {
+    #[default]
+    Auto,
+    Ghostty,
+    Alacritty,
+}
+
 // Manual `Deserialize` for the terminal enums. A derived `Deserialize` hard-
 // errors on an unrecognised variant; that error propagates up to
 // `parse_and_validate` (loader.rs), which discards the ENTIRE user config and
@@ -597,6 +609,28 @@ impl<'de> Deserialize<'de> for CursorBlinkConfig {
     }
 }
 
+impl<'de> Deserialize<'de> for TerminalBackendConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() {
+            "auto" => Self::Auto,
+            "ghostty" => Self::Ghostty,
+            "alacritty" => Self::Alacritty,
+            other => {
+                tracing::warn!(
+                    target: "paneflow_config::terminal",
+                    value = other,
+                    "terminal.backend value not recognized, defaulting to auto",
+                );
+                Self::Auto
+            }
+        })
+    }
+}
+
 /// Memory budget profile for a terminal surface.
 ///
 /// Normal and Agent terminals keep the standard interactive scrollback default so
@@ -631,6 +665,12 @@ impl TerminalSurfaceProfile {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TerminalConfig {
+    /// Backend requested for new sessions. `auto` resolves to Ghostty in
+    /// standard Linux builds and to Alacritty on macOS, Windows, or Linux
+    /// builds using `--no-default-features`.
+    /// `alacritty` is the explicit Linux rollback.
+    #[serde(default, deserialize_with = "lenient_terminal_backend")]
+    pub backend: TerminalBackendConfig,
     /// Render programming-font ligatures (FiraCode `=>`, `!=`, …) when
     /// `Some(true)`. `None` and `Some(false)` both keep the historical
     /// behavior of disabling ligatures via GPUI's `FontFeatures`.
@@ -786,6 +826,13 @@ impl TerminalConfig {
         let base = self.resolved_scrollback_lines();
         profile.scrollback_cap().map_or(base, |cap| base.min(cap))
     }
+}
+
+fn lenient_terminal_backend<'de, D>(deserializer: D) -> Result<TerminalBackendConfig, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    TerminalBackendConfig::deserialize(deserializer)
 }
 
 /// Agents-view-scoped configuration block (US-103).
@@ -1584,6 +1631,7 @@ mod tests {
                 enabled: Some(false),
             }),
             terminal: Some(TerminalConfig {
+                backend: TerminalBackendConfig::Auto,
                 ligatures: Some(false),
                 integrated_glyphs: Some(true),
                 color_emoji: Some(true),
@@ -2064,6 +2112,19 @@ mod tests {
             cfg.cursor_blink.unwrap_or_default(),
             CursorBlinkConfig::TerminalControlled
         );
+    }
+
+    #[test]
+    fn terminal_backend_is_lenient_and_defaults_to_auto() {
+        let automatic: TerminalConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert_eq!(automatic.backend, TerminalBackendConfig::Auto);
+
+        let ghostty: TerminalConfig = serde_json::from_str(r#"{"backend":"ghostty"}"#).unwrap();
+        assert_eq!(ghostty.backend, TerminalBackendConfig::Ghostty);
+
+        let unknown: TerminalConfig =
+            serde_json::from_str(r#"{"backend":"future-engine"}"#).unwrap();
+        assert_eq!(unknown.backend, TerminalBackendConfig::Auto);
     }
 
     #[test]

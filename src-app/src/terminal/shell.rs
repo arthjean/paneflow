@@ -40,6 +40,22 @@ __paneflow_path_prepend() {
     path=("${PANEFLOW_BIN_DIR}" "${(@)path:#${PANEFLOW_BIN_DIR}}")
 }
 autoload -Uz add-zsh-hook
+if [[ -o interactive ]]; then
+    __paneflow_osc133_precmd() {
+        local ret=$?
+        if [[ -n "${__paneflow_cmd_ran-}" ]]; then
+            printf '\e]133;D;%s\a' "${ret}"
+            unset __paneflow_cmd_ran
+        fi
+        printf '\e]133;A\a'
+    }
+    __paneflow_osc133_preexec() {
+        __paneflow_cmd_ran=1
+        printf '\e]133;C\a'
+    }
+    add-zsh-hook precmd __paneflow_osc133_precmd
+    add-zsh-hook preexec __paneflow_osc133_preexec
+fi
 add-zsh-hook chpwd __paneflow_osc7
 add-zsh-hook precmd __paneflow_path_prepend
 __paneflow_osc7
@@ -61,7 +77,16 @@ __paneflow_path_prepend() {
     PATH="${PANEFLOW_BIN_DIR}:${p}"
     export PATH
 }
-PROMPT_COMMAND="__paneflow_osc7;__paneflow_path_prepend${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+__paneflow_osc133_precmd() {
+    local ret=$?
+    if [[ "${HISTCMD-0}" != "${__paneflow_histcmd-}" ]]; then
+        [[ -n "${__paneflow_histcmd-}" ]] && printf '\e]133;D;%s\a' "${ret}"
+        __paneflow_histcmd="${HISTCMD-0}"
+    fi
+    printf '\e]133;A\a'
+}
+PS0=$'\e]133;C\a'"${PS0-}"
+PROMPT_COMMAND="__paneflow_osc133_precmd;__paneflow_osc7;__paneflow_path_prepend${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 __paneflow_path_prepend
 "#;
 
@@ -77,6 +102,17 @@ end
 __paneflow_osc7
 if set -q PANEFLOW_BIN_DIR; and test -n "$PANEFLOW_BIN_DIR"
     fish_add_path -gp $PANEFLOW_BIN_DIR
+end
+if status is-interactive
+    function __paneflow_osc133_prompt --on-event fish_prompt
+        printf '\e]133;A\a'
+    end
+    function __paneflow_osc133_preexec --on-event fish_preexec
+        printf '\e]133;C\a'
+    end
+    function __paneflow_osc133_postexec --on-event fish_postexec
+        printf '\e]133;D;%s\a' $status
+    end
 end
 "#;
 
@@ -114,6 +150,21 @@ function global:__paneflow_cwd_uri {
     }
 }
 
+# PSReadLine owns the pre-exec boundary on PowerShell. Wrap its existing
+# entry point after the user's profile has loaded so custom key handlers and
+# prompt frameworks stay intact. The accepted line is returned unchanged.
+if (-not $global:__paneflow_readline_wrapped -and (Test-Path function:PSConsoleHostReadLine)) {
+    $global:__paneflow_prev_readline = $function:PSConsoleHostReadLine
+    function global:PSConsoleHostReadLine {
+        $__paneflow_line = & $global:__paneflow_prev_readline
+        if (-not [string]::IsNullOrWhiteSpace([string]$__paneflow_line)) {
+            [Console]::Write("$([char]27)]133;C$([char]7)")
+        }
+        $__paneflow_line
+    }
+    $global:__paneflow_readline_wrapped = $true
+}
+
 # Capture the CURRENT prompt as a ScriptBlock VALUE (snapshot) via
 # `$function:prompt`, NOT `Get-Item function:prompt`. A FunctionInfo from
 # Get-Item is a LIVE handle: its `.ScriptBlock` re-resolves to whatever
@@ -126,10 +177,20 @@ function global:__paneflow_cwd_uri {
 if (-not $global:__paneflow_prompt_wrapped) {
     $global:__paneflow_prev_prompt = $function:prompt
     function global:prompt {
+        $__paneflow_ok = $?
+        $__paneflow_last_exit = $global:LASTEXITCODE
+        $__paneflow_history = (Get-History -Count 1).Id
         # Call the wrapped prompt FIRST, while $?/$LASTEXITCODE still reflect
         # the user's last command -- Starship / oh-my-posh read them to render
         # the exit-status segment. Our OSC 7 + PATH bookkeeping runs after.
+        $global:LASTEXITCODE = $__paneflow_last_exit
         $__paneflow_out = if ($global:__paneflow_prev_prompt) { & $global:__paneflow_prev_prompt } else { "PS $($executionContext.SessionState.Path.CurrentLocation)> " }
+        if ($null -ne $global:__paneflow_previous_history -and $__paneflow_history -ne $global:__paneflow_previous_history) {
+            $__paneflow_code = if ($__paneflow_ok) { 0 } elseif ($null -ne $__paneflow_last_exit) { $__paneflow_last_exit } else { 1 }
+            [Console]::Write("$([char]27)]133;D;$__paneflow_code$([char]7)")
+        }
+        $global:__paneflow_previous_history = $__paneflow_history
+        [Console]::Write("$([char]27)]133;A$([char]7)")
         # OSC 7 with BEL terminator (matches zsh/bash/fish emitters). Use
         # [char]27 instead of `e: Windows PowerShell 5.1 treats `e as a
         # literal "e", which leaks "e]7;..." into the terminal.
@@ -793,6 +854,19 @@ mod tests {
             !s.contains("`e]7;"),
             "`e is PowerShell 7-only for ESC and must not be used in shared 5.1/7 script"
         );
+    }
+
+    #[test]
+    fn shell_integrations_emit_osc133_without_replacing_prompt_hooks() {
+        assert!(super::ZSH_OSC7.contains("add-zsh-hook precmd __paneflow_osc133_precmd"));
+        assert!(super::ZSH_OSC7.contains("add-zsh-hook preexec __paneflow_osc133_preexec"));
+        assert!(super::BASH_OSC7.contains("PROMPT_COMMAND=\"__paneflow_osc133_precmd;"));
+        assert!(super::BASH_OSC7.contains("PS0=$'\\e]133;C\\a'"));
+        assert!(super::FISH_OSC7.contains("--on-event fish_postexec"));
+        assert!(super::PWSH_OSC7.contains("function global:PSConsoleHostReadLine"));
+        assert!(super::PWSH_OSC7.contains(")]133;C"));
+        assert!(super::PWSH_OSC7.contains(")]133;D;"));
+        assert!(super::PWSH_OSC7.contains(")]133;A"));
     }
 
     #[test]

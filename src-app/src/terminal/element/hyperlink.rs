@@ -30,7 +30,7 @@ pub(super) fn url_regex() -> &'static regex::Regex {
 /// accounting for wide-char spacers that were skipped during text extraction.
 pub fn detect_urls_on_line_mapped(
     line_text: &str,
-    line: alacritty_terminal::index::Line,
+    line: crate::terminal::types::Line,
     char_to_col: &[usize],
 ) -> Vec<HyperlinkZone> {
     let re = url_regex();
@@ -51,14 +51,8 @@ pub fn detect_urls_on_line_mapped(
             Some(HyperlinkZone {
                 uri,
                 id: String::new(),
-                start: alacritty_terminal::index::Point::new(
-                    line,
-                    alacritty_terminal::index::Column(*col_start),
-                ),
-                end: alacritty_terminal::index::Point::new(
-                    line,
-                    alacritty_terminal::index::Column(*col_end),
-                ),
+                start: crate::terminal::types::Point::new(line.0, *col_start),
+                end: crate::terminal::types::Point::new(line.0, *col_end),
                 is_openable,
                 source: HyperlinkSource::Regex,
                 line: None,
@@ -355,7 +349,7 @@ struct CandidateZoneSpec {
 
 fn zone_for_candidate(
     line_text: &str,
-    line: alacritty_terminal::index::Line,
+    line: crate::terminal::types::Line,
     char_to_col: &[usize],
     resolved: PathBuf,
     spec: CandidateZoneSpec,
@@ -366,14 +360,8 @@ fn zone_for_candidate(
     Some(HyperlinkZone {
         uri: resolved.to_string_lossy().into_owned(),
         id: String::new(),
-        start: alacritty_terminal::index::Point::new(
-            line,
-            alacritty_terminal::index::Column(*col_start),
-        ),
-        end: alacritty_terminal::index::Point::new(
-            line,
-            alacritty_terminal::index::Column(*col_end),
-        ),
+        start: crate::terminal::types::Point::new(line.0, *col_start),
+        end: crate::terminal::types::Point::new(line.0, *col_end),
         is_openable: true,
         source: spec.source,
         line: spec.line_no,
@@ -395,7 +383,7 @@ fn zone_for_candidate(
 /// - Candidate must resolve to an existing file on disk.
 pub fn detect_file_paths_on_line_mapped(
     line_text: &str,
-    line: alacritty_terminal::index::Line,
+    line: crate::terminal::types::Line,
     char_to_col: &[usize],
     cwd: Option<&Path>,
 ) -> Vec<HyperlinkZone> {
@@ -598,7 +586,7 @@ fn canonical_has_code_extension(path: &Path) -> bool {
 /// argv when invoking the editor.
 pub fn detect_code_paths_on_line_mapped(
     line_text: &str,
-    line: alacritty_terminal::index::Line,
+    line: crate::terminal::types::Line,
     char_to_col: &[usize],
     cwd: Option<&Path>,
 ) -> Vec<HyperlinkZone> {
@@ -670,8 +658,8 @@ mod tests {
     use std::fs;
     use std::time::Instant;
 
-    fn line0() -> alacritty_terminal::index::Line {
-        alacritty_terminal::index::Line(0)
+    fn line0() -> crate::terminal::types::Line {
+        crate::terminal::types::Line(0)
     }
 
     /// Builds a 1-to-1 char→column map for ASCII-only test text.

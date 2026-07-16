@@ -8,9 +8,9 @@ use gpui::Action;
 
 use crate::{
     ClearScrollHistory, ClosePane, CloseTab, CloseWindow, CloseWorkspace, CopyWorkspacePath,
-    DismissSearch, FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextWaiting,
-    LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled, MarkdownCopy,
-    MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
+    DismissSearch, FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextPrompt, JumpNextWaiting,
+    JumpPrevPrompt, LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled,
+    MarkdownCopy, MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
     MarkdownScrollPageDown, MarkdownScrollPageUp, NewTab, NewWorkspace, NextWorkspace,
     OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
     Quit, ResetTerminal, RevealWorkspaceInFileManager, ScrollPageDown, ScrollPageUp, SearchNext,
@@ -230,6 +230,18 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         factory: || Box::new(ScrollPageDown),
         context: "Terminal",
         description: "Scroll down",
+    },
+    ActionMeta {
+        name: "jump_prev_prompt",
+        factory: || Box::new(JumpPrevPrompt),
+        context: "Terminal",
+        description: "Jump to previous prompt",
+    },
+    ActionMeta {
+        name: "jump_next_prompt",
+        factory: || Box::new(JumpNextPrompt),
+        context: "Terminal",
+        description: "Jump to next prompt",
     },
     ActionMeta {
         name: "close_window",

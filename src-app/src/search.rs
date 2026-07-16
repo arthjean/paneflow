@@ -13,6 +13,7 @@ use regex::Regex;
 use std::sync::Arc;
 
 use crate::terminal::ZedListener;
+use crate::terminal::types::Point;
 
 /// Maximum number of matches to collect before stopping search.
 const MAX_MATCHES: usize = 10_000;
@@ -23,8 +24,8 @@ pub const MAX_QUERY_LEN: usize = 512;
 /// A single search match: start and end points in the terminal grid.
 #[derive(Clone, Debug)]
 pub struct SearchMatch {
-    pub start: AlacPoint,
-    pub end: AlacPoint,
+    pub start: Point,
+    pub end: Point,
 }
 
 /// Result of a search operation.
@@ -76,8 +77,8 @@ fn search_match_from_chars(
     let start_col = *char_to_col.get(char_start)?;
     let end_col = *char_to_col.get(char_end)?;
     Some(SearchMatch {
-        start: AlacPoint::new(line, GridCol(start_col)),
-        end: AlacPoint::new(line, GridCol(end_col)),
+        start: Point::new(line.0, start_col),
+        end: Point::new(line.0, end_col),
     })
 }
 
@@ -248,7 +249,7 @@ mod tests {
     fn restored_search(text: &str, query: &str, regex_mode: bool) -> SearchResult {
         let state = TerminalState::new_display_only(5, 20);
         state.restore_scrollback(text);
-        search_term(&state.term, query, regex_mode)
+        state.session_backend().search(query, regex_mode)
     }
 
     #[test]
@@ -256,8 +257,8 @@ mod tests {
         let result = restored_search("中abc", "中a", false);
 
         assert!(!result.matches.is_empty());
-        assert_eq!(result.matches[0].start.column, GridCol(0));
-        assert_eq!(result.matches[0].end.column, GridCol(2));
+        assert_eq!(result.matches[0].start.column.0, 0);
+        assert_eq!(result.matches[0].end.column.0, 2);
     }
 
     #[test]
@@ -265,8 +266,8 @@ mod tests {
         let result = restored_search("İabc", "abc", false);
 
         assert!(!result.matches.is_empty());
-        assert_eq!(result.matches[0].start.column, GridCol(1));
-        assert_eq!(result.matches[0].end.column, GridCol(3));
+        assert_eq!(result.matches[0].start.column.0, 1);
+        assert_eq!(result.matches[0].end.column.0, 3);
     }
 
     #[test]
@@ -274,7 +275,7 @@ mod tests {
         let result = restored_search("中abc", "中a", true);
 
         assert!(!result.matches.is_empty());
-        assert_eq!(result.matches[0].start.column, GridCol(0));
-        assert_eq!(result.matches[0].end.column, GridCol(2));
+        assert_eq!(result.matches[0].start.column.0, 0);
+        assert_eq!(result.matches[0].end.column.0, 2);
     }
 }

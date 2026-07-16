@@ -7,26 +7,24 @@
 //!
 //! Extracted from `terminal.rs` per US-014 of the src-app refactor PRD.
 
-use alacritty_terminal::grid::{Dimensions, Scroll as AlacScroll};
-use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point as AlacPoint, Side};
-use alacritty_terminal::selection::{Selection, SelectionType};
 use gpui::{ClipboardItem, Context, Focusable};
 
 use super::TerminalView;
+use super::types::Point;
 
 const LOCAL_SEARCH_DEBOUNCE_MS: u64 = 80;
 
 fn copy_mode_entry_cursor(
-    cursor_point: AlacPoint,
+    cursor_point: Point,
     display_offset: usize,
     screen_lines: usize,
-) -> AlacPoint {
+) -> Point {
     let cursor_display_line = cursor_point.line.0 + display_offset as i32;
     if cursor_display_line >= 0 && cursor_display_line < screen_lines as i32 {
         cursor_point
     } else {
         let center_display = screen_lines as i32 / 2;
-        AlacPoint::new(GridLine(center_display - display_offset as i32), GridCol(0))
+        Point::new(center_display - display_offset as i32, 0)
     }
 }
 
@@ -34,9 +32,7 @@ impl TerminalView {
     // --- Terminal control actions ---
 
     pub(super) fn clear_scroll_history(&mut self, cx: &mut Context<Self>) {
-        let mut term = self.terminal.term.lock();
-        term.grid_mut().clear_history();
-        drop(term);
+        self.terminal.session_backend().clear_history();
         cx.notify();
     }
 
@@ -137,8 +133,7 @@ impl TerminalView {
         } else {
             // Reset scroll position and hand focus back to the terminal.
             {
-                let mut term = self.terminal.term.lock();
-                term.scroll_display(AlacScroll::Bottom);
+                self.terminal.session_backend().scroll_to_bottom();
             }
             self.focus_handle(cx).focus(window, cx);
         }
@@ -175,8 +170,7 @@ impl TerminalView {
         self.search_matches.clear();
         self.search_current = 0;
         self.search_regex_error = None;
-        let mut term = self.terminal.term.lock();
-        term.scroll_display(AlacScroll::Bottom);
+        self.terminal.session_backend().scroll_to_bottom();
         cx.notify();
     }
 
@@ -220,7 +214,7 @@ impl TerminalView {
             return;
         }
 
-        let term = self.terminal.term.clone();
+        let backend = self.terminal.session_backend();
         let query = self.search_query.clone();
         let regex = self.search_regex_mode;
         cx.spawn(
@@ -228,9 +222,7 @@ impl TerminalView {
                 smol::Timer::after(std::time::Duration::from_millis(LOCAL_SEARCH_DEBOUNCE_MS))
                     .await;
                 let worker_query = query.clone();
-                let result =
-                    smol::unblock(move || crate::search::search_term(&term, &worker_query, regex))
-                        .await;
+                let result = smol::unblock(move || backend.search(&worker_query, regex)).await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |view, cx| {
                         if view.search_generation == generation
@@ -259,7 +251,7 @@ impl TerminalView {
 
     fn scroll_to_current_match(&mut self) {
         if let Some(m) = self.search_matches.get(self.search_current) {
-            crate::search::scroll_to_match(&self.terminal.term, m);
+            self.terminal.session_backend().scroll_to_match(m);
         }
     }
 
@@ -279,88 +271,55 @@ impl TerminalView {
             self.dismiss_search(cx);
         }
 
-        let mut term = self.terminal.term.lock();
-        let cursor_point = term.renderable_content().cursor.point;
-        let display_offset = term.grid().display_offset();
-        let screen_lines = term.screen_lines();
-        term.selection = None;
+        let backend = self.terminal.session_backend();
+        let metrics = backend.grid_metrics();
+        backend.clear_selection();
 
-        let copy_cursor = copy_mode_entry_cursor(cursor_point, display_offset, screen_lines);
-        drop(term);
+        let copy_cursor =
+            copy_mode_entry_cursor(metrics.cursor, metrics.display_offset, metrics.screen_lines);
 
         self.copy_cursor = copy_cursor;
-        self.copy_mode_frozen_offset = display_offset;
+        self.copy_mode_frozen_offset = metrics.display_offset;
         self.copy_mode_active = true;
 
         cx.notify();
     }
 
     pub(super) fn exit_copy_mode(&mut self, copy_to_clipboard: bool, cx: &mut Context<Self>) {
-        let mut term = self.terminal.term.lock();
+        let backend = self.terminal.session_backend();
 
         if copy_to_clipboard {
-            if let Some(text) = term.selection_to_string() {
+            if let Some(text) = backend.selection_text() {
                 cx.write_to_clipboard(ClipboardItem::new_string(text));
             }
             // After copying, scroll to bottom
-            term.scroll_display(AlacScroll::Bottom);
+            backend.scroll_to_bottom();
         } else {
             // On cancel, restore the scroll position from before copy mode entry
-            let current = term.grid().display_offset();
-            let frozen = self.copy_mode_frozen_offset;
-            if current != frozen {
-                let delta = frozen as i32 - current as i32;
-                term.scroll_display(AlacScroll::Delta(delta));
-            }
+            backend.restore_display_offset(self.copy_mode_frozen_offset);
         }
 
-        term.selection = None;
-        drop(term);
+        backend.clear_selection();
 
         self.copy_mode_active = false;
         cx.notify();
     }
 
     pub(super) fn move_copy_cursor(&mut self, dx: i32, dy: i32, cx: &mut Context<Self>) {
-        let (cols, top, bottom) = {
-            let mut term = self.terminal.term.lock();
-            term.selection = None;
-            (term.columns(), term.topmost_line(), term.bottommost_line())
-        };
-
-        let new_col = (self.copy_cursor.column.0 as i32 + dx)
-            .max(0)
-            .min(cols as i32 - 1) as usize;
-        let new_line = (self.copy_cursor.line.0 + dy).max(top.0).min(bottom.0);
-        self.copy_cursor = AlacPoint::new(GridLine(new_line), GridCol(new_col));
+        self.copy_cursor =
+            self.terminal
+                .session_backend()
+                .move_copy_cursor(self.copy_cursor, dx, dy, false);
 
         self.ensure_copy_cursor_visible();
         cx.notify();
     }
 
     pub(super) fn extend_copy_selection(&mut self, dx: i32, dy: i32, cx: &mut Context<Self>) {
-        let mut term = self.terminal.term.lock();
-        let cols = term.columns();
-        let top = term.topmost_line();
-        let bottom = term.bottommost_line();
-
-        // Start a new selection if none exists
-        if term.selection.is_none() {
-            let sel = Selection::new(SelectionType::Simple, self.copy_cursor, Side::Left);
-            term.selection = Some(sel);
-        }
-
-        // Move cursor and update selection endpoint - all under the same lock
-        let new_col = (self.copy_cursor.column.0 as i32 + dx)
-            .max(0)
-            .min(cols as i32 - 1) as usize;
-        let new_line = (self.copy_cursor.line.0 + dy).max(top.0).min(bottom.0);
-        self.copy_cursor = AlacPoint::new(GridLine(new_line), GridCol(new_col));
-
-        if let Some(ref mut sel) = term.selection {
-            sel.update(self.copy_cursor, Side::Right);
-        }
-        drop(term);
+        self.copy_cursor =
+            self.terminal
+                .session_backend()
+                .move_copy_cursor(self.copy_cursor, dx, dy, true);
 
         self.ensure_copy_cursor_visible();
         cx.notify();
@@ -371,8 +330,8 @@ impl TerminalView {
         let offset = self.copy_mode_frozen_offset as i32;
         let cursor_display_line = self.copy_cursor.line.0 + offset;
 
-        let mut term = self.terminal.term.lock();
-        let screen_lines = term.screen_lines() as i32;
+        let backend = self.terminal.session_backend();
+        let screen_lines = backend.grid_metrics().screen_lines as i32;
 
         let new_offset = if cursor_display_line < 0 {
             // Cursor is above visible area - scroll up
@@ -387,11 +346,7 @@ impl TerminalView {
 
         if let Some(new_offset) = new_offset {
             self.copy_mode_frozen_offset = new_offset;
-            let current = term.grid().display_offset();
-            let delta = new_offset as i32 - current as i32;
-            if delta != 0 {
-                term.scroll_display(AlacScroll::Delta(delta));
-            }
+            backend.restore_display_offset(new_offset);
         }
     }
 }
@@ -402,22 +357,19 @@ mod tests {
 
     #[test]
     fn copy_mode_entry_keeps_visible_raw_cursor_at_live_edge() {
-        let cursor = AlacPoint::new(GridLine(12), GridCol(8));
+        let cursor = Point::new(12, 8);
         assert_eq!(copy_mode_entry_cursor(cursor, 0, 24), cursor);
     }
 
     #[test]
     fn copy_mode_entry_centers_when_live_cursor_is_scrolled_out() {
-        let cursor = AlacPoint::new(GridLine(23), GridCol(8));
-        assert_eq!(
-            copy_mode_entry_cursor(cursor, 10, 24),
-            AlacPoint::new(GridLine(2), GridCol(0))
-        );
+        let cursor = Point::new(23, 8);
+        assert_eq!(copy_mode_entry_cursor(cursor, 10, 24), Point::new(2, 0));
     }
 
     #[test]
     fn copy_mode_entry_keeps_scrollback_cursor_when_visible() {
-        let cursor = AlacPoint::new(GridLine(-5), GridCol(3));
+        let cursor = Point::new(-5, 3);
         assert_eq!(copy_mode_entry_cursor(cursor, 10, 24), cursor);
     }
 }

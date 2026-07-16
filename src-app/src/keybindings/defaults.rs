@@ -182,6 +182,16 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         context: Some("Terminal"),
     },
     DefaultBinding {
+        key: "secondary-shift-up",
+        action_name: "jump_prev_prompt",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
+        key: "secondary-shift-down",
+        action_name: "jump_next_prompt",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
         key: "secondary-shift-z",
         action_name: "toggle_zoom",
         context: None,

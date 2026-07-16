@@ -417,9 +417,8 @@ impl From<AlacFlags> for CellFlags {
 /// Terminal private-mode flags, Paneflow-owned mirror of the `term::TermMode`
 /// subset the neutral renderer/input layers read (the element gates IME on
 /// `ALT_SCREEN`, `keys` picks app-cursor sequences, `mouse` picks the SGR/UTF-8
-/// mouse encoding). Term-driving backend modules (`input`/`view`) keep reading
-/// alacritty's `TermMode` directly, so this stays a small, consumed surface
-/// rather than a full mirror.
+/// mouse encoding). Backend adapters translate their native mode bits into
+/// this complete consumer-facing surface before any UI code sees them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modes(u16);
 
@@ -428,6 +427,15 @@ impl Modes {
     pub const APP_CURSOR: Self = Self(1 << 1);
     pub const SGR_MOUSE: Self = Self(1 << 2);
     pub const UTF8_MOUSE: Self = Self(1 << 3);
+    pub const APP_KEYPAD: Self = Self(1 << 4);
+    pub const BRACKETED_PASTE: Self = Self(1 << 5);
+    pub const FOCUS_IN_OUT: Self = Self(1 << 6);
+    pub const ALTERNATE_SCROLL: Self = Self(1 << 7);
+    pub const MOUSE_REPORT_CLICK: Self = Self(1 << 8);
+    pub const MOUSE_DRAG: Self = Self(1 << 9);
+    pub const MOUSE_MOTION: Self = Self(1 << 10);
+    pub const MOUSE_MODE: Self =
+        Self(Self::MOUSE_REPORT_CLICK.0 | Self::MOUSE_DRAG.0 | Self::MOUSE_MOTION.0);
 
     #[inline]
     pub const fn empty() -> Self {
@@ -437,6 +445,11 @@ impl Modes {
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
+    }
+
+    #[inline]
+    pub const fn intersects(self, other: Self) -> bool {
+        self.0 & other.0 != 0
     }
 }
 
@@ -464,6 +477,27 @@ impl From<AlacTermMode> for Modes {
         if m.contains(AlacTermMode::UTF8_MOUSE) {
             out = out | Modes::UTF8_MOUSE;
         }
+        if m.contains(AlacTermMode::APP_KEYPAD) {
+            out = out | Modes::APP_KEYPAD;
+        }
+        if m.contains(AlacTermMode::BRACKETED_PASTE) {
+            out = out | Modes::BRACKETED_PASTE;
+        }
+        if m.contains(AlacTermMode::FOCUS_IN_OUT) {
+            out = out | Modes::FOCUS_IN_OUT;
+        }
+        if m.contains(AlacTermMode::ALTERNATE_SCROLL) {
+            out = out | Modes::ALTERNATE_SCROLL;
+        }
+        if m.contains(AlacTermMode::MOUSE_REPORT_CLICK) {
+            out = out | Modes::MOUSE_REPORT_CLICK;
+        }
+        if m.contains(AlacTermMode::MOUSE_DRAG) {
+            out = out | Modes::MOUSE_DRAG;
+        }
+        if m.contains(AlacTermMode::MOUSE_MOTION) {
+            out = out | Modes::MOUSE_MOTION;
+        }
         out
     }
 }
@@ -480,6 +514,39 @@ pub struct SelectionRange {
     pub start: Point,
     pub end: Point,
     pub is_block: bool,
+}
+
+/// Endpoint affinity for a selection update.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionSide {
+    Left,
+    Right,
+}
+
+/// Selection expansion policy requested by the input layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionKind {
+    Simple,
+    Semantic,
+    Lines,
+}
+
+/// Grid and viewport facts captured under one backend lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GridMetrics {
+    pub columns: usize,
+    pub screen_lines: usize,
+    pub display_offset: usize,
+    pub topmost_line: Line,
+    pub bottommost_line: Line,
+    pub cursor: Point,
+}
+
+/// One logical terminal line copied for link detection.
+pub struct GridLineText {
+    pub line: Line,
+    pub text: String,
+    pub char_to_column: Vec<usize>,
 }
 
 impl From<AlacSelectionRange> for SelectionRange {
@@ -547,7 +614,12 @@ pub struct RenderableCursor {
 /// Zed's `TerminalContent`.
 #[derive(Clone, Debug)]
 pub struct Content {
-    pub cells: Vec<Cell>,
+    /// Grid dimensions owned by this exact snapshot. Ghostty applies host
+    /// resizes on its runtime thread, so these can briefly differ from the
+    /// latest GPUI bounds while the resize transaction is in flight.
+    pub cols: usize,
+    pub rows: usize,
+    pub cells: Arc<[Cell]>,
     pub cursor: RenderableCursor,
     pub selection: Option<SelectionRange>,
     pub display_offset: usize,
@@ -593,7 +665,7 @@ fn content_from_term_rows(
     // so culling, Y positioning, hyperlink zones, and batching all speak the
     // same coordinate system. The cursor intentionally stays raw below because
     // layout needs to know when it has scrolled out of the viewport.
-    let cells: Vec<Cell> = content
+    let cells: Arc<[Cell]> = content
         .display_iter
         .filter_map(|ic| {
             let line = ic.point.line.0 + display_offset_i;
@@ -609,11 +681,16 @@ fn content_from_term_rows(
                 fg: ic.cell.fg.into(),
                 bg: ic.cell.bg.into(),
                 flags: ic.cell.flags.into(),
-                zerowidth: ic.cell.zerowidth().map(|z| z.to_vec()),
+                zerowidth: ic
+                    .cell
+                    .zerowidth()
+                    .filter(|characters| !characters.is_empty())
+                    .map(<[_]>::to_vec),
                 hyperlink: ic.cell.hyperlink().is_some(),
             })
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .into();
 
     let cur = &content.cursor;
     let cursor_cell = &term.grid()[cur.point];
@@ -636,19 +713,14 @@ fn content_from_term_rows(
     let selection = content.selection.map(SelectionRange::from);
 
     Content {
+        cols: term.columns(),
+        rows: term.screen_lines(),
         cells,
         cursor,
         selection,
         display_offset,
         history_size: term.history_size(),
     }
-}
-
-/// Current grid size as `(columns, screen_lines)`. Confines the `Dimensions`
-/// trait read to this seam so callers (e.g. split sizing) stay off
-/// `alacritty_terminal`.
-pub fn grid_size(term: &Term<ZedListener>) -> (usize, usize) {
-    (term.columns(), term.screen_lines())
 }
 
 /// Resize the grid to `cols`×`rows` if it differs from the current size,
@@ -707,8 +779,8 @@ pub enum HyperlinkSource {
 pub struct HyperlinkZone {
     pub uri: String,
     pub id: String,
-    pub start: AlacPoint,
-    pub end: AlacPoint,
+    pub start: Point,
+    pub end: Point,
     /// Whether this URL's scheme is in the openable allowlist.
     pub is_openable: bool,
     /// How this hyperlink was detected (OSC 8 takes priority over regex).
@@ -749,6 +821,14 @@ mod tests {
             assert_eq!(alac.line.0, line);
             assert_eq!(alac.column.0, column);
         }
+    }
+
+    #[test]
+    fn composite_mouse_mode_matches_any_reporting_mode() {
+        assert!(Modes::MOUSE_REPORT_CLICK.intersects(Modes::MOUSE_MODE));
+        assert!(Modes::MOUSE_DRAG.intersects(Modes::MOUSE_MODE));
+        assert!(Modes::MOUSE_MOTION.intersects(Modes::MOUSE_MODE));
+        assert!(!Modes::ALT_SCREEN.intersects(Modes::MOUSE_MODE));
     }
 
     #[test]
@@ -907,14 +987,11 @@ mod tests {
 
         // Paths are relative to `src-app/src/`, forward-slash normalized.
         const ALLOWLIST: &[&str] = &[
-            "terminal/types.rs",             // the neutral translation seam itself
-            "terminal/pty_session.rs",       // tty + EventLoop + Notifier backend
-            "terminal/listener.rs",          // EventListener -> neutral event seam
-            "terminal/input.rs",             // selection/scroll/mouse logic on Term
-            "terminal/view.rs",              // drives Term: selection, scroll, mode
-            "terminal/search.rs",            // grid search machinery on Term
-            "search.rs",                     // root: scrollback grid search on Term
-            "terminal/element/hyperlink.rs", // grid-coordinate URL/path detection
+            "terminal/types.rs",          // native-to-neutral value translation
+            "terminal/pty_session.rs",    // Alacritty adapter, PTY and event loop
+            "terminal/listener.rs",       // Alacritty EventListener adapter
+            "search.rs",                  // private grid search used only by the adapter
+            "terminal/backend_corpus.rs", // Alacritty differential baseline tests only
         ];
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -957,6 +1034,51 @@ mod tests {
              these through crate::terminal::types neutral types (or, if the file is \
              genuinely backend, add it to ALLOWLIST with a rationale):\n{}",
             violations.join("\n")
+        );
+
+        let opaque_handle_violations = ["app", "layout", "workspace", "terminal/element"]
+            .into_iter()
+            .flat_map(|relative_dir| {
+                let base = root.join(relative_dir);
+                let mut files = Vec::new();
+                let mut dirs = vec![base];
+                while let Some(dir) = dirs.pop() {
+                    let Ok(entries) = std::fs::read_dir(dir) else {
+                        continue;
+                    };
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            dirs.push(path);
+                        } else if path.extension().and_then(|extension| extension.to_str())
+                            == Some("rs")
+                        {
+                            files.push(path);
+                        }
+                    }
+                }
+                files
+            })
+            .filter_map(|path| {
+                let text = std::fs::read_to_string(&path).ok()?;
+                text.contains("SharedTerm").then(|| {
+                    path.strip_prefix(&root)
+                        .unwrap_or(&path)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            opaque_handle_violations.is_empty(),
+            "raw Alacritty terminal handles leaked across the backend facade:\n{}",
+            opaque_handle_violations.join("\n")
+        );
+
+        let adapter = std::fs::read_to_string(root.join("terminal/pty_session.rs")).unwrap();
+        assert!(
+            !adapter.contains("pub term:") && !adapter.contains("pub notifier:"),
+            "TerminalState exposed a concrete Alacritty handle; keep it private behind TerminalSessionBackend"
         );
     }
 }

@@ -259,12 +259,19 @@ impl LayoutTree {
 mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
+    use std::time::Instant;
 
     use gpui::{AppContext, Entity, Render, TestAppContext, px, size};
 
     use super::super::tree::LayoutChild;
     use crate::pane::Pane;
-    use crate::terminal::TerminalView;
+    use crate::terminal::backend_corpus::{
+        CORPUS_SEED, cpu_model, deterministic_streams, percentile_us, process_cpu_time,
+        resident_set_bytes,
+    };
+    use crate::terminal::{
+        TerminalView, start_render_content_timing_probe, take_render_content_lock_durations,
+    };
 
     use super::*;
 
@@ -282,6 +289,22 @@ mod tests {
             "{label}: expected ~{expected:.1}px, got {:.1}px (diff {diff:.1}px)",
             actual.as_f32()
         );
+    }
+
+    fn equal_container(direction: SplitDirection, nodes: Vec<LayoutTree>) -> LayoutTree {
+        let ratio = 1.0 / nodes.len() as f32;
+        LayoutTree::Container {
+            direction,
+            children: nodes
+                .into_iter()
+                .map(|node| LayoutChild {
+                    node,
+                    ratio: Rc::new(Cell::new(ratio)),
+                })
+                .collect(),
+            drag: Rc::new(Cell::new(None)),
+            container_size: Rc::new(Cell::new(0.0)),
+        }
     }
 
     struct RenderHarness {
@@ -357,6 +380,94 @@ mod tests {
             px(captured_container_size.get()),
             container_w,
             "captured main-axis container size",
+        );
+    }
+
+    #[gpui::test]
+    #[ignore = "captures the machine-specific EP-001 GPUI input-to-paint baseline"]
+    fn alacritty_eight_pane_gpui_input_to_paint_baseline(cx: &mut TestAppContext) {
+        assert!(
+            !cfg!(debug_assertions),
+            "run this baseline with cargo test --release"
+        );
+
+        let terminals_for_test = Rc::new(std::cell::RefCell::new(Vec::with_capacity(8)));
+        let terminals_for_window = terminals_for_test.clone();
+        let (_view, cx) = cx.add_window_view(move |_, cx| {
+            let rows = (0..2)
+                .map(|_| {
+                    let columns = (0..4)
+                        .map(|_| {
+                            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+                            terminals_for_window.borrow_mut().push(terminal.clone());
+                            LayoutTree::Leaf(cx.new(|cx| Pane::new(terminal, 1, cx)))
+                        })
+                        .collect();
+                    equal_container(SplitDirection::Vertical, columns)
+                })
+                .collect();
+            RenderHarness {
+                tree: equal_container(SplitDirection::Horizontal, rows),
+            }
+        });
+        cx.executor().allow_parking();
+        cx.simulate_resize(size(px(1600.0), px(1000.0)));
+        cx.run_until_parked();
+
+        let terminals = terminals_for_test.borrow().clone();
+        assert_eq!(terminals.len(), 8, "benchmark must keep eight panes live");
+        let streams = deterministic_streams();
+        let total_bytes = streams.iter().map(Vec::len).sum::<usize>() * terminals.len();
+        let mut input_to_frame = Vec::with_capacity(streams.len());
+        let rss_start = resident_set_bytes();
+        let mut rss_peak = rss_start;
+        start_render_content_timing_probe();
+        let cpu_start = process_cpu_time();
+        let wall_start = Instant::now();
+
+        for stream in &streams {
+            let frame_start = Instant::now();
+            for terminal in &terminals {
+                terminal.update(cx, |view, cx| {
+                    view.terminal.write_output(stream);
+                    cx.notify();
+                });
+            }
+            cx.run_until_parked();
+            input_to_frame.push(frame_start.elapsed());
+            rss_peak = rss_peak.max(resident_set_bytes());
+        }
+
+        let wall = wall_start.elapsed();
+        let cpu = process_cpu_time().saturating_sub(cpu_start);
+        let rss_end = resident_set_bytes();
+        let mut render_content_lock = take_render_content_lock_durations();
+        let expected_lock_samples = streams.len() * terminals.len();
+        assert!(
+            render_content_lock.len() >= expected_lock_samples,
+            "each measured GPUI frame must paint all eight active terminals"
+        );
+        assert_eq!(
+            render_content_lock.len() % terminals.len(),
+            0,
+            "render_content samples must cover complete eight-pane paint passes"
+        );
+
+        input_to_frame.sort_unstable();
+        render_content_lock.sort_unstable();
+        let throughput = total_bytes as f64 / wall.as_secs_f64() / (1024.0 * 1024.0);
+        println!(
+            "{{\"seed\":\"0x{CORPUS_SEED:016x}\",\"panes\":8,\"streams_per_pane\":{},\"bytes\":{total_bytes},\"throughput_mib_s\":{throughput:.3},\"input_to_frame_p50_us\":{},\"input_to_frame_p95_us\":{},\"render_content_lock_samples\":{},\"render_content_lock_held_p50_us\":{},\"render_content_lock_held_p95_us\":{},\"wall_ms\":{},\"cpu_ms\":{},\"rss_start_bytes\":{rss_start},\"rss_peak_bytes\":{rss_peak},\"rss_end_bytes\":{rss_end},\"hardware\":{:?},\"platform\":{:?},\"profile\":\"release\",\"measurement_boundary\":\"byte injection through GPUI dispatcher parked after TerminalElement::paint\",\"lock_measurement\":\"all render_content terminal-lock hold durations from the measured GPUI paints\",\"presentation_scope\":\"GPUI test-platform scene generation; excludes Window::present, GPU submission, compositor, and display scanout\"}}",
+            streams.len(),
+            percentile_us(&input_to_frame, 50),
+            percentile_us(&input_to_frame, 95),
+            render_content_lock.len(),
+            percentile_us(&render_content_lock, 50),
+            percentile_us(&render_content_lock, 95),
+            wall.as_millis(),
+            cpu.as_millis(),
+            cpu_model(),
+            format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
         );
     }
 

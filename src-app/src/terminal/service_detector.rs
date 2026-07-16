@@ -7,6 +7,272 @@
 //! Keep the matchers string-based and allocation-light: this runs on every
 //! terminal write batch, on the GPUI main thread.
 
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+use std::collections::VecDeque;
+
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+const SERVICE_TAIL_MAX_LINES: usize = 100;
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+const SERVICE_TAIL_MAX_LINE_BYTES: usize = 8 * 1024;
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+const SERVICE_TAIL_MAX_TOTAL_BYTES: usize = 64 * 1024;
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+const TAB_WIDTH: usize = 8;
+
+/// Bounded, ANSI-aware tail of raw PTY output used by the Ghostty backend.
+///
+/// Keeping this beside service detection makes the hot runtime path independent
+/// from Ghostty's per-cell grid FFI. The VTE parser owns partial UTF-8 and escape
+/// state across reads, while the performer retains only text that the detector
+/// can inspect.
+#[derive(Default)]
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+pub(super) struct ServiceOutputTail {
+    parser: ServiceOutputParser,
+    output: ServiceOutputPerformer,
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+impl ServiceOutputTail {
+    pub(super) fn advance(&mut self, bytes: &[u8]) {
+        self.parser.advance(&mut self.output, bytes);
+    }
+
+    pub(super) fn recent_lines(&self) -> Vec<String> {
+        self.output.recent_lines()
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+enum ServiceOutputParseState {
+    #[default]
+    Ground,
+    Escape,
+    EscapeIntermediate,
+    Csi,
+    Osc,
+    OscEscape,
+    String,
+    StringEscape,
+}
+
+/// Fixed-size ANSI text extractor. It intentionally ignores cursor-oriented
+/// CSI semantics, but bounds every parser state independently from untrusted
+/// PTY input, including unterminated OSC/DCS strings.
+#[derive(Default)]
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+struct ServiceOutputParser {
+    state: ServiceOutputParseState,
+    utf8: [u8; 4],
+    utf8_len: usize,
+    utf8_expected: usize,
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+impl ServiceOutputParser {
+    fn advance(&mut self, output: &mut ServiceOutputPerformer, bytes: &[u8]) {
+        for &byte in bytes {
+            self.advance_byte(output, byte);
+        }
+    }
+
+    fn advance_byte(&mut self, output: &mut ServiceOutputPerformer, byte: u8) {
+        if self.utf8_len != 0 {
+            if byte & 0b1100_0000 == 0b1000_0000 {
+                self.utf8[self.utf8_len] = byte;
+                self.utf8_len += 1;
+                if self.utf8_len == self.utf8_expected {
+                    let character = std::str::from_utf8(&self.utf8[..self.utf8_len])
+                        .ok()
+                        .and_then(|text| text.chars().next())
+                        .unwrap_or(char::REPLACEMENT_CHARACTER);
+                    self.utf8_len = 0;
+                    self.utf8_expected = 0;
+                    output.push_char(character);
+                }
+                return;
+            }
+            self.utf8_len = 0;
+            self.utf8_expected = 0;
+            output.push_char(char::REPLACEMENT_CHARACTER);
+        }
+
+        match self.state {
+            ServiceOutputParseState::Ground => match byte {
+                0x1b => self.state = ServiceOutputParseState::Escape,
+                0x9b => self.state = ServiceOutputParseState::Csi,
+                0x9d => self.state = ServiceOutputParseState::Osc,
+                0x90 | 0x98 | 0x9e | 0x9f => self.state = ServiceOutputParseState::String,
+                0x00..=0x1f | 0x7f => output.execute(byte),
+                0x20..=0x7e => output.push_char(char::from(byte)),
+                0xc2..=0xdf => self.begin_utf8(byte, 2),
+                0xe0..=0xef => self.begin_utf8(byte, 3),
+                0xf0..=0xf4 => self.begin_utf8(byte, 4),
+                _ => output.push_char(char::REPLACEMENT_CHARACTER),
+            },
+            ServiceOutputParseState::Escape => {
+                self.state = match byte {
+                    b'[' => ServiceOutputParseState::Csi,
+                    b']' => ServiceOutputParseState::Osc,
+                    b'P' | b'X' | b'^' | b'_' => ServiceOutputParseState::String,
+                    0x20..=0x2f => ServiceOutputParseState::EscapeIntermediate,
+                    0x1b => ServiceOutputParseState::Escape,
+                    _ => ServiceOutputParseState::Ground,
+                };
+            }
+            ServiceOutputParseState::EscapeIntermediate => {
+                if byte == 0x1b {
+                    self.state = ServiceOutputParseState::Escape;
+                } else if matches!(byte, 0x18 | 0x1a | 0x30..=0x7e) {
+                    self.state = ServiceOutputParseState::Ground;
+                }
+            }
+            ServiceOutputParseState::Csi => {
+                if byte == 0x1b {
+                    self.state = ServiceOutputParseState::Escape;
+                } else if matches!(byte, 0x18 | 0x1a | 0x40..=0x7e) {
+                    self.state = ServiceOutputParseState::Ground;
+                }
+            }
+            ServiceOutputParseState::Osc => {
+                self.state = match byte {
+                    0x07 | 0x18 | 0x1a => ServiceOutputParseState::Ground,
+                    0x1b => ServiceOutputParseState::OscEscape,
+                    _ => ServiceOutputParseState::Osc,
+                };
+            }
+            ServiceOutputParseState::OscEscape => {
+                self.state = match byte {
+                    b'\\' | 0x07 | 0x18 | 0x1a => ServiceOutputParseState::Ground,
+                    0x1b => ServiceOutputParseState::OscEscape,
+                    _ => ServiceOutputParseState::Osc,
+                };
+            }
+            ServiceOutputParseState::String => {
+                self.state = match byte {
+                    0x18 | 0x1a => ServiceOutputParseState::Ground,
+                    0x1b => ServiceOutputParseState::StringEscape,
+                    _ => ServiceOutputParseState::String,
+                };
+            }
+            ServiceOutputParseState::StringEscape => {
+                self.state = match byte {
+                    b'\\' | 0x18 | 0x1a => ServiceOutputParseState::Ground,
+                    0x1b => ServiceOutputParseState::StringEscape,
+                    _ => ServiceOutputParseState::String,
+                };
+            }
+        }
+    }
+
+    fn begin_utf8(&mut self, byte: u8, expected: usize) {
+        self.utf8[0] = byte;
+        self.utf8_len = 1;
+        self.utf8_expected = expected;
+    }
+}
+
+#[derive(Default)]
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+struct ServiceOutputPerformer {
+    completed: VecDeque<String>,
+    completed_bytes: usize,
+    current: String,
+    carriage_return_pending: bool,
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+impl ServiceOutputPerformer {
+    fn prepare_for_write(&mut self) {
+        if self.carriage_return_pending {
+            self.current.clear();
+            self.carriage_return_pending = false;
+        }
+    }
+
+    fn push_char(&mut self, character: char) {
+        self.prepare_for_write();
+        if self.current.len().saturating_add(character.len_utf8()) <= SERVICE_TAIL_MAX_LINE_BYTES {
+            self.current.push(character);
+        }
+        self.enforce_caps();
+    }
+
+    fn push_tab(&mut self) {
+        self.prepare_for_write();
+        let column = self.current.chars().count();
+        let spaces = TAB_WIDTH - column % TAB_WIDTH;
+        for _ in 0..spaces {
+            if self.current.len() == SERVICE_TAIL_MAX_LINE_BYTES {
+                break;
+            }
+            self.current.push(' ');
+        }
+        self.enforce_caps();
+    }
+
+    fn backspace(&mut self) {
+        self.prepare_for_write();
+        self.current.pop();
+    }
+
+    fn finish_line(&mut self) {
+        self.carriage_return_pending = false;
+        let trimmed = self.current.trim_end();
+        if !trimmed.is_empty() {
+            let line = trimmed.to_owned();
+            self.completed_bytes = self.completed_bytes.saturating_add(line.len());
+            self.completed.push_back(line);
+        }
+        self.current.clear();
+        self.enforce_caps();
+    }
+
+    fn enforce_caps(&mut self) {
+        let current_is_non_empty = !self.current.trim().is_empty();
+        while self.completed.len() + usize::from(current_is_non_empty) > SERVICE_TAIL_MAX_LINES
+            || self.completed_bytes.saturating_add(self.current.len())
+                > SERVICE_TAIL_MAX_TOTAL_BYTES
+        {
+            let Some(removed) = self.completed.pop_front() else {
+                break;
+            };
+            self.completed_bytes = self.completed_bytes.saturating_sub(removed.len());
+        }
+    }
+
+    fn recent_lines(&self) -> Vec<String> {
+        let mut lines =
+            Vec::with_capacity(SERVICE_TAIL_MAX_LINES.min(self.completed.len().saturating_add(1)));
+        let current = self.current.trim_end();
+        if !current.is_empty() {
+            lines.push(current.to_owned());
+        }
+        lines.extend(
+            self.completed
+                .iter()
+                .rev()
+                .take(SERVICE_TAIL_MAX_LINES.saturating_sub(lines.len()))
+                .cloned(),
+        );
+        lines
+    }
+}
+
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+impl ServiceOutputPerformer {
+    fn execute(&mut self, byte: u8) {
+        match byte {
+            b'\n' | 0x0b | 0x0c => self.finish_line(),
+            b'\r' => self.carriage_return_pending = true,
+            b'\x08' => self.backspace(),
+            b'\t' => self.push_tab(),
+            _ => {}
+        }
+    }
+}
+
 /// Metadata about a detected service (server listening on a port).
 /// Enriches the bare port number from the OS port scan (`workspace::ports`;
 /// Linux `/proc/net/tcp`, macOS libproc, Windows IP Helper) with human-readable info.
@@ -207,6 +473,74 @@ fn contains_keyword(haystack: &str, needle: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn service_tail_preserves_fragmented_utf8_and_strips_fragmented_ansi() {
+        let mut tail = ServiceOutputTail::default();
+        let utf8 = "prêt".as_bytes();
+        tail.advance(&utf8[..3]);
+        tail.advance(&utf8[3..]);
+        tail.advance(b" \x1b[3");
+        tail.advance(b"2mhttp://localhost:5173\x1b[0m");
+
+        assert_eq!(
+            tail.recent_lines(),
+            vec!["prêt http://localhost:5173".to_owned()]
+        );
+    }
+
+    #[test]
+    fn service_tail_models_cr_progress_backspace_tabs_and_current_line() {
+        let mut tail = ServiceOutputTail::default();
+        tail.advance(b"progress 10%\rprogress 20%\r\nport: 1234\x08\x0856\nA\tB");
+
+        assert_eq!(
+            tail.recent_lines(),
+            vec![
+                "A       B".to_owned(),
+                "port: 1256".to_owned(),
+                "progress 20%".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn service_tail_enforces_line_count_line_size_and_total_size_caps() {
+        let mut tail = ServiceOutputTail::default();
+        let oversized = vec![b'x'; SERVICE_TAIL_MAX_LINE_BYTES + 512];
+        tail.advance(&oversized);
+        tail.advance(b"\n");
+        assert_eq!(tail.recent_lines()[0].len(), SERVICE_TAIL_MAX_LINE_BYTES);
+
+        let line = vec![b'y'; 1024];
+        for _ in 0..120 {
+            tail.advance(&line);
+            tail.advance(b"\n");
+        }
+        let lines = tail.recent_lines();
+        assert!(lines.len() <= SERVICE_TAIL_MAX_LINES);
+        assert!(lines.iter().map(String::len).sum::<usize>() <= SERVICE_TAIL_MAX_TOTAL_BYTES);
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.len() <= SERVICE_TAIL_MAX_LINE_BYTES)
+        );
+    }
+
+    #[test]
+    fn service_tail_discards_unterminated_control_strings_without_buffering_them() {
+        let mut tail = ServiceOutputTail::default();
+        tail.advance(b"\x1b]");
+        let hostile = vec![b'x'; SERVICE_TAIL_MAX_TOTAL_BYTES * 2];
+        tail.advance(&hostile);
+        assert!(tail.recent_lines().is_empty());
+
+        tail.advance(b"\x07http://localhost:4321");
+        assert_eq!(
+            tail.recent_lines(),
+            vec!["http://localhost:4321".to_owned()]
+        );
+    }
 
     // EP-005 security review: the clickable URL must never leave loopback -
     // a hostile pane printing a localhost anchor next to an attacker URL

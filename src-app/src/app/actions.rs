@@ -58,6 +58,8 @@ actions!(
         ToggleCopyMode,
         ClearScrollHistory,
         ResetTerminal,
+        JumpPrevPrompt,
+        JumpNextPrompt,
         // EP-006 US-019 (cli-cockpit) - per-pane font zoom. Terminal
         // context; the secondary-=/-/-0 default chords follow the Linux
         // terminal-emulator zoom convention (gnome-terminal, Ghostty) -

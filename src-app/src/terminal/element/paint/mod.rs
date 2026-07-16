@@ -6,12 +6,13 @@
 //! 1. `background`  - terminal background, per-cell bg rects, block quads
 //! 2. `selection`   - selection highlight rects
 //! 3. `overlay::search_highlights` - search match rects
-//! 4. `text`        - batched `shape_line` glyph runs
-//! 5. `overlay::hyperlink` - Ctrl+hover underline
-//! 6. `cursor`      - primary cursor + copy-mode anchor cursor
-//! 7. `scrollbar`   - right-edge thumb
-//! 8. `overlay::ime` - IME handler registration + preedit overlay
-//! 9. `overlay::exit` - process-exited centered message
+//! 4. `box_drawing` - connected single-stroke box glyphs
+//! 5. `text`        - batched `shape_line` glyph runs
+//! 6. `overlay::hyperlink` - Ctrl+hover underline
+//! 7. `cursor`      - primary cursor + copy-mode anchor cursor
+//! 8. `scrollbar`   - right-edge thumb
+//! 9. `overlay::ime` - IME handler registration + preedit overlay
+//! 10. `overlay::exit` - process-exited centered message
 //!
 //! Every function here is a `pub fn` inside a `pub(super)` module - the
 //! parent module boundary gates access to `element`, and every function
@@ -22,6 +23,7 @@
 use gpui::{Font, FontWeight};
 
 pub(super) mod background;
+pub(super) mod box_drawing;
 pub(super) mod cursor;
 pub(super) mod overlay;
 pub(super) mod scrollbar;
@@ -40,11 +42,7 @@ fn display_font_for_intensity(font: &Font, base_weight: FontWeight) -> Font {
         display_font.weight = if base_weight.0 >= FontWeight::BOLD.0 {
             base_weight
         } else {
-            FontWeight(
-                (base_weight.0 + 200.0)
-                    .max(FontWeight::SEMIBOLD.0)
-                    .min(FontWeight::BOLD.0),
-            )
+            FontWeight((base_weight.0 + 200.0).clamp(FontWeight::SEMIBOLD.0, FontWeight::BOLD.0))
         };
     }
     display_font

@@ -9,26 +9,93 @@
 
 use std::sync::{Arc, Mutex};
 
-use alacritty_terminal::event::{Event as AlacEvent, Notify};
-use alacritty_terminal::grid::{Dimensions, Scroll as AlacScroll};
-use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point as AlacPoint};
-use alacritty_terminal::term::TermMode;
 use futures::StreamExt;
 use gpui::{
     App, ClipboardItem, Context, EventEmitter, FocusHandle, Hsla, InteractiveElement, IntoElement,
     KeyContext, MouseButton, Render, Styled, Window, div, prelude::*,
 };
-use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
+use paneflow_config::schema::{TerminalBackendConfig, TerminalConfig, TerminalSurfaceProfile};
 
+use super::TerminalState;
 use super::element::TerminalElement;
-use super::pty_session::{ClipboardOp, alacritty_window_size};
+use super::pty_session::{ClipboardOp, TerminalBackendEvent};
 use super::service_detector::ServiceInfo;
 use super::types::{
-    CopyModeCursorState, CursorShape, HyperlinkZone, Modes, SearchHighlight, TerminalWindowSize,
-    terminal_metric_to_u16,
+    CopyModeCursorState, CursorShape, HyperlinkZone, Line, Modes, Point, SearchHighlight,
+    TerminalWindowSize, terminal_metric_to_u16,
 };
-use super::{PtyNotifier, TerminalState};
 use crate::limits::MAX_OSC52_BYTES;
+
+#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+use super::ghostty_session::{GhosttySession, GhosttyStartError, SpawnedGhostty};
+
+#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+fn should_start_ghostty(requested: TerminalBackendConfig) -> bool {
+    cfg!(all(target_os = "linux", feature = "libghostty-linux"))
+        && requested != TerminalBackendConfig::Alacritty
+}
+
+enum BackgroundSpawnOutcome {
+    Alacritty(anyhow::Result<super::pty_session::SpawnedPty>),
+    #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+    Ghostty(SpawnedGhostty),
+    #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+    GhosttyFallback {
+        spawned: anyhow::Result<super::pty_session::SpawnedPty>,
+        reason: String,
+    },
+    #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+    GhosttyPtyFailed(String),
+}
+
+#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+fn event_uses_ghostty_backend(event: &TerminalBackendEvent) -> bool {
+    matches!(event, TerminalBackendEvent::Ghostty(_))
+}
+
+#[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+fn event_uses_ghostty_backend(_event: &TerminalBackendEvent) -> bool {
+    false
+}
+
+#[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+fn warn_ghostty_unavailable_once() {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        log::warn!(
+            target: "paneflow::terminal::backend",
+            "Ghostty backend requested but unavailable on this platform/build; using Alacritty"
+        );
+    });
+}
+
+fn log_backend_diagnostics(terminal: &TerminalState) {
+    let diagnostics = terminal.backend_diagnostics();
+    let fallback_reason = diagnostics.fallback_reason.as_deref().unwrap_or("none");
+
+    if let Some(ghostty) = diagnostics.ghostty.as_ref() {
+        log::info!(
+            target: "paneflow::terminal::backend",
+            "Terminal backend selected: requested={:?} resolved={} fallback_reason={} ghostty_source_sha={} ghostty_api_version={} zig_version={} optimization={} simd={}",
+            diagnostics.requested,
+            diagnostics.resolved,
+            fallback_reason,
+            ghostty.source_sha,
+            ghostty.api_version,
+            ghostty.zig_version,
+            ghostty.optimization,
+            ghostty.simd,
+        );
+    } else {
+        log::info!(
+            target: "paneflow::terminal::backend",
+            "Terminal backend selected: requested={:?} resolved={} fallback_reason={}",
+            diagnostics.requested,
+            diagnostics.resolved,
+            fallback_reason,
+        );
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Debug latency probes - zero overhead in release builds
@@ -108,19 +175,20 @@ pub(super) fn sanitize_osc52(text: &str) -> String {
 // observed by every `TerminalView`, replacing the per-terminal `smol::Timer`
 // loop that lived here.
 
-/// US-015: anchor for an in-progress scrollbar drag. The cursor Y and the
-/// `display_offset` at grab time; each move maps the pixel delta since the grab
-/// to a relative scrollback delta, so the thumb never jumps on grab regardless
-/// of where on it the user clicked.
+/// US-015: stable authority for an in-progress scrollbar drag. Geometry is
+/// frozen at grab time so output and reflow cannot rescale the gesture, while
+/// `last_target` suppresses duplicate line targets from dense pointer events.
 #[derive(Clone, Copy)]
 pub(super) struct ScrollbarDrag {
     pub(super) anchor_y: gpui::Pixels,
     pub(super) anchor_offset: usize,
+    pub(super) metrics: super::element::ScrollbarMetrics,
+    pub(super) last_target: usize,
 }
 
 #[derive(Clone)]
 pub(super) struct HoverLinkCache {
-    line: GridLine,
+    line: Line,
     cwd: Option<String>,
     line_text: String,
     zones: Vec<HyperlinkZone>,
@@ -184,7 +252,7 @@ pub struct TerminalView {
     /// effect on the next new terminal, consistent with the other terminal
     /// settings here.
     pub(super) scroll_multiplier: f32,
-    /// Windows-only appearance switch: default terminal backgrounds become
+    /// Platform appearance switch: default terminal backgrounds become
     /// transparent so the native window material can show through.
     pub(super) terminal_material_active: bool,
     /// Renderer switch: block elements use Paneflow's built-in quad renderer
@@ -195,13 +263,13 @@ pub struct TerminalView {
     /// Whether copy mode (keyboard-driven selection) is active
     pub(super) copy_mode_active: bool,
     /// Copy mode cursor position in grid coordinates
-    pub(super) copy_cursor: AlacPoint,
+    pub(super) copy_cursor: Point,
     /// Display offset frozen at copy mode entry to prevent auto-scroll
     pub(super) copy_mode_frozen_offset: usize,
     /// Previous focus state, used to detect focus transitions for DEC 1004 events.
     was_focused: bool,
     /// Last hovered cell position for URL regex detection (US-015).
-    pub(super) hovered_cell: Option<AlacPoint>,
+    pub(super) hovered_cell: Option<Point>,
     /// Active hyperlink under Ctrl+hover - drives underline rendering and Ctrl+click.
     pub(super) ctrl_hovered_link: Option<HyperlinkZone>,
     /// Last full-line link detection result. Avoids repeating canonicalize on
@@ -231,19 +299,50 @@ impl TerminalView {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn current_window_size(&self) -> alacritty_terminal::event::WindowSize {
+    fn current_window_size(&self) -> TerminalWindowSize {
         if let Some(size) = self.recorded_window_size() {
-            return alacritty_window_size(size);
+            return size;
         }
 
-        let term = self.terminal.term.lock_unfair();
-        let (cols, rows) = crate::terminal::types::grid_size(&term);
-        alacritty_window_size(TerminalWindowSize::new(
+        let (cols, rows) = self.terminal.session_backend().grid_size();
+        TerminalWindowSize::new(
             cols,
             rows,
             terminal_metric_to_u16(self.cell_width.as_f32()),
             terminal_metric_to_u16(self.line_height.as_f32()),
-        ))
+        )
+    }
+
+    fn process_dirty_terminal(&mut self, cx: &mut Context<Self>) {
+        if !self.terminal.dirty {
+            return;
+        }
+        self.terminal.dirty = false;
+
+        // Leading edge + throttle (replaces the old every-10th-tick
+        // modulo): the first dirty update after a quiet spell fires
+        // immediately, while sustained output re-fires at most every 300ms.
+        const BURST_THROTTLE: std::time::Duration = std::time::Duration::from_millis(300);
+        let now = std::time::Instant::now();
+        if self
+            .terminal
+            .last_activity_burst
+            .is_none_or(|t| now.duration_since(t) >= BURST_THROTTLE)
+        {
+            self.terminal.last_activity_burst = Some(now);
+            for service in self.terminal.scan_output() {
+                cx.emit(TerminalEvent::ServiceDetected(service));
+            }
+            cx.emit(TerminalEvent::ActivityBurst);
+        }
+
+        if self.copy_mode_active {
+            self.terminal
+                .session_backend()
+                .restore_display_offset(self.copy_mode_frozen_offset);
+        }
+
+        cx.notify();
     }
 
     pub(crate) fn restore_scrollback(&self, text: &str) {
@@ -353,12 +452,35 @@ impl TerminalView {
             user_env,
             profile,
         );
-        let (mut terminal, events_tx) = TerminalState::new_pending_with_profile_and_shell_quoting(
+        let (mut terminal, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
             params.cols,
             params.rows,
             params.profile,
             params.shell_quoting,
         );
+        let requested_backend = paneflow_config::loader::load_config()
+            .terminal
+            .unwrap_or_default()
+            .backend;
+        terminal.set_backend_request(requested_backend, None);
+
+        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+        let ghostty_spawn = if should_start_ghostty(requested_backend) {
+            let initial_window_size = TerminalWindowSize::new(params.cols, params.rows, 0, 0);
+            let (ghostty, runtime_pending, events_rx) =
+                GhosttySession::pending(initial_window_size);
+            terminal.attach_ghostty(ghostty.clone(), events_rx);
+            Some((ghostty, runtime_pending))
+        } else {
+            None
+        };
+
+        #[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+        if requested_backend == TerminalBackendConfig::Ghostty {
+            let reason = "ghostty backend requires Linux and the libghostty-linux feature";
+            warn_ghostty_unavailable_once();
+            terminal.set_backend_request(requested_backend, Some(reason.into()));
+        }
         // Route the Drop-time force-kill timer through GPUI's background
         // executor instead of a detached OS thread (Zed parity, prevents a
         // thread leak per closed pane under heavy use).
@@ -366,7 +488,6 @@ impl TerminalView {
         // The background `EventLoop` attaches to this same shared `term` + event
         // channel, so the placeholder's event loop keeps working after promotion
         // - no view-side rewiring needed.
-        let term = terminal.term.clone();
         // Capture the foreground signal mask on the MAIN thread so the
         // background-spawned child still gets correct Ctrl-C / Ctrl-Z (US-012).
         let signal_mask = crate::terminal::pty_session::capture_foreground_signal_mask();
@@ -377,30 +498,125 @@ impl TerminalView {
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 // Blocking PTY open (`tty::new` forks) runs off the render thread.
-                let spawned = executor
+                let outcome = executor
                     .spawn(async move {
-                        TerminalState::open_pty_and_eventloop(params, term, events_tx, signal_mask)
+                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+                        if let Some((ghostty, runtime_pending)) = ghostty_spawn {
+                            let max_scrollback = paneflow_config::loader::load_config()
+                                .terminal
+                                .unwrap_or_default()
+                                .resolved_scrollback_lines_for_profile(params.profile);
+                            match ghostty.start(
+                                runtime_pending,
+                                params.clone(),
+                                signal_mask,
+                                max_scrollback,
+                            ) {
+                                Ok(spawned) => BackgroundSpawnOutcome::Ghostty(spawned),
+                                Err(GhosttyStartError::Initialization(error)) => {
+                                    let spawned = TerminalState::open_pty_and_eventloop(
+                                        params,
+                                        pending,
+                                        signal_mask,
+                                    );
+                                    BackgroundSpawnOutcome::GhosttyFallback {
+                                        spawned,
+                                        reason: format!("{error:#}"),
+                                    }
+                                }
+                                Err(GhosttyStartError::Pty(error)) => {
+                                    BackgroundSpawnOutcome::GhosttyPtyFailed(format!("{error:#}"))
+                                }
+                            }
+                        } else {
+                            BackgroundSpawnOutcome::Alacritty(
+                                TerminalState::open_pty_and_eventloop(
+                                    params,
+                                    pending,
+                                    signal_mask,
+                                ),
+                            )
+                        }
+                        #[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+                        {
+                            BackgroundSpawnOutcome::Alacritty(
+                                TerminalState::open_pty_and_eventloop(
+                                    params,
+                                    pending,
+                                    signal_mask,
+                                ),
+                            )
+                        }
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
-                    match spawned {
-                        Ok(spawned) => {
+                    match outcome {
+                        BackgroundSpawnOutcome::Alacritty(Ok(spawned)) => {
                             view.terminal.promote(spawned);
                             if let Some(size) = view.recorded_window_size() {
-                                view.terminal.notifier.notify_window_size(size);
+                                view.terminal.notify_window_size(size);
                             }
                         }
-                        Err(e) => {
+                        BackgroundSpawnOutcome::Alacritty(Err(error)) => {
                             // Spawn failed: keep the display-only placeholder and
                             // surface the error in-pane (no orphan, no panic - same
                             // outcome as the old synchronous fallback).
-                            log::error!("PTY creation failed: {e:#}");
+                            log::error!("PTY creation failed: {error:#}");
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             view.terminal
-                                .write_output(spawn_error_message(&e).as_bytes());
+                                .write_output(spawn_error_message(&error).as_bytes());
+                        }
+                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+                        BackgroundSpawnOutcome::Ghostty(spawned) => {
+                            view.terminal.promote_ghostty(spawned);
+                            if let Some(size) = view.recorded_window_size() {
+                                view.terminal.notify_window_size(size);
+                            }
+                        }
+                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+                        BackgroundSpawnOutcome::GhosttyFallback { spawned, reason } => {
+                            log::warn!(
+                                target: "paneflow::terminal::backend",
+                                "Ghostty initialization failed before spawn; using Alacritty: {reason}"
+                            );
+                            view.terminal.abandon_ghostty(format!(
+                                "ghostty_initialization_failed: {reason}"
+                            ));
+                            match spawned {
+                                Ok(spawned) => {
+                                    view.terminal.promote(spawned);
+                                    if let Some(size) = view.recorded_window_size() {
+                                        view.terminal.notify_window_size(size);
+                                    }
+                                }
+                                Err(error) => {
+                                    log::error!("PTY creation failed after Ghostty fallback: {error:#}");
+                                    view.needs_initial_clear.store(
+                                        false,
+                                        std::sync::atomic::Ordering::Relaxed,
+                                    );
+                                    view.terminal
+                                        .write_output(spawn_error_message(&error).as_bytes());
+                                }
+                            }
+                        }
+                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+                        BackgroundSpawnOutcome::GhosttyPtyFailed(reason) => {
+                            log::error!(
+                                target: "paneflow::terminal::backend",
+                                "Ghostty PTY failed after engine initialization; refusing child fallback"
+                            );
+                            view.terminal
+                                .abandon_ghostty("ghostty_pty_failed_after_initialization");
+                            view.needs_initial_clear
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
+                            view.terminal.write_output(
+                                spawn_error_message(&anyhow::anyhow!(reason)).as_bytes(),
+                            );
                         }
                     }
+                    log_backend_diagnostics(&view.terminal);
                     cx.notify();
                 });
             },
@@ -426,27 +642,51 @@ impl TerminalView {
         })
         .detach();
 
-        // Event batch coalescing (Zed pattern):
+        // Backend event coalescing:
         // Phase 1: Block until first event (zero CPU when idle)
-        // Phase 2: Batch for 4ms, max 100 events, dedup Wakeup
+        // Phase 2: Render the leading Ghostty wakeup immediately, then batch
+        // trailing events for 4ms (max 100, dedup Wakeup). Alacritty retains
+        // the existing fixed-window behavior.
         // Phase 3: Process batch, yield to other GPUI tasks
-        let events_rx = terminal.events_rx.take().expect("events_rx already taken");
+        let events_rx = terminal.take_backend_events();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut events_rx = events_rx;
+                let mut ghostty_wakeup_burst_active = false;
                 loop {
                     // Phase 1: Block until first event arrives (zero CPU when idle)
                     let Some(first_event) = events_rx.next().await else {
                         break; // Channel closed
                     };
 
-                    // Phase 2: Batch additional events for 4ms, max 100
-                    let mut batch: Vec<AlacEvent> = Vec::with_capacity(32);
-                    let mut had_wakeup = matches!(first_event, AlacEvent::Wakeup);
-                    if !had_wakeup {
+                    // Phase 2: Ghostty's first wakeup after a quiet window is
+                    // latency-sensitive. Mark the terminal dirty and notify
+                    // GPUI before opening the trailing batch window. Further
+                    // wakeups in the same sustained burst remain coalesced.
+                    let mut batch = Vec::with_capacity(32);
+                    let mut dequeued = 1usize;
+                    let first_uses_ghostty = event_uses_ghostty_backend(&first_event);
+                    let mut had_wakeup = first_event.is_wakeup();
+                    let leading_ghostty_wakeup =
+                        first_uses_ghostty && had_wakeup && !ghostty_wakeup_burst_active;
+                    if leading_ghostty_wakeup {
+                        ghostty_wakeup_burst_active = true;
+                        let result = cx.update(|cx| {
+                            this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                                view.terminal.process_backend_wakeup();
+                                view.process_dirty_terminal(cx);
+                            })
+                        });
+                        if result.is_err() {
+                            break;
+                        }
+                        had_wakeup = false;
+                    }
+                    if !had_wakeup && !leading_ghostty_wakeup {
                         batch.push(first_event);
                     }
 
+                    let mut batch_window_elapsed = false;
                     {
                         let timer = futures::FutureExt::fuse(smol::Timer::after(
                             std::time::Duration::from_millis(4),
@@ -456,15 +696,27 @@ impl TerminalView {
                             futures::select_biased! {
                                 event = events_rx.next() => {
                                     match event {
-                                        Some(AlacEvent::Wakeup) => had_wakeup = true,
-                                        Some(e) => batch.push(e),
+                                        Some(event) if event.is_wakeup() => {
+                                            had_wakeup = true;
+                                            dequeued += 1;
+                                        }
+                                        Some(event) => {
+                                            batch.push(event);
+                                            dequeued += 1;
+                                        }
                                         None => break,
                                     }
-                                    if batch.len() >= 100 { break; }
+                                    if dequeued >= 100 { break; }
                                 }
-                                _ = timer => break,
+                                _ = timer => {
+                                    batch_window_elapsed = true;
+                                    break;
+                                },
                             }
                         }
+                    }
+                    if batch_window_elapsed {
+                        ghostty_wakeup_burst_active = false;
                     }
 
                     // Phase 3: Process the batch in a single entity update
@@ -474,14 +726,16 @@ impl TerminalView {
                             let old_cwd = view.terminal.current_cwd.clone();
                             view.terminal.sync_channels();
                             if had_wakeup {
-                                view.terminal.process_event(AlacEvent::Wakeup);
+                                view.terminal.process_backend_wakeup();
                             }
                             for event in batch {
-                                view.terminal.process_event(event);
+                                view.terminal.process_backend_event(event);
                             }
 
                             // Execute deferred clipboard operations (OSC 52)
-                            for op in view.terminal.pending_clipboard_ops.drain(..) {
+                            let clipboard_ops =
+                                std::mem::take(&mut view.terminal.pending_clipboard_ops);
+                            for op in clipboard_ops {
                                 match op {
                                     ClipboardOp::Store(text) => {
                                         // U-023: sanitize untrusted PTY output before it
@@ -516,7 +770,7 @@ impl TerminalView {
                                         // path (now also strips CR / other C0 / DEL, not just
                                         // ESC + C1).
                                         let response = format_fn(&sanitize_osc52(&text));
-                                        view.terminal.notifier.notify(response.into_bytes());
+                                        view.terminal.write_to_pty_silent(response.into_bytes());
                                     }
                                 }
                             }
@@ -534,16 +788,9 @@ impl TerminalView {
                             // Keep the most recent entries - older replies would
                             // race the writer that requested them and are
                             // effectively stale by the time we'd answer.
-                            if view.terminal.pending_size_ops.len() > 8 {
-                                let drop_count = view.terminal.pending_size_ops.len() - 8;
-                                view.terminal.pending_size_ops.drain(..drop_count);
-                            }
-                            let pending_size_ops =
-                                std::mem::take(&mut view.terminal.pending_size_ops);
-                            for format_fn in pending_size_ops {
-                                let size = view.current_window_size();
-                                let response = format_fn(size);
-                                view.terminal.notifier.notify(response.into_bytes());
+                            let size = view.current_window_size();
+                            for response in view.terminal.drain_size_responses(size) {
+                                view.terminal.write_to_pty_silent(response.into_bytes());
                             }
 
                             // US-002: close only on a user-initiated or clean
@@ -565,43 +812,7 @@ impl TerminalView {
                                 cx.emit(TerminalEvent::CwdChanged(cwd.clone()));
                             }
 
-                            if view.terminal.dirty {
-                                view.terminal.dirty = false;
-                                // Leading edge + throttle (replaces the old
-                                // every-10th-tick modulo): the FIRST dirty
-                                // batch after a quiet spell fires immediately
-                                // - a dev server printing its banner in fewer
-                                // than 10 batches then going silent used to
-                                // be missed entirely - and sustained output
-                                // re-fires at most every 300ms.
-                                const BURST_THROTTLE: std::time::Duration =
-                                    std::time::Duration::from_millis(300);
-                                let now = std::time::Instant::now();
-                                if view
-                                    .terminal
-                                    .last_activity_burst
-                                    .is_none_or(|t| now.duration_since(t) >= BURST_THROTTLE)
-                                {
-                                    view.terminal.last_activity_burst = Some(now);
-                                    for service in view.terminal.scan_output() {
-                                        cx.emit(TerminalEvent::ServiceDetected(service));
-                                    }
-                                    cx.emit(TerminalEvent::ActivityBurst);
-                                }
-
-                                // Copy mode: restore frozen display offset
-                                if view.copy_mode_active {
-                                    let mut term = view.terminal.term.lock();
-                                    let current = term.grid().display_offset();
-                                    let frozen = view.copy_mode_frozen_offset;
-                                    if current != frozen {
-                                        let delta = frozen as i32 - current as i32;
-                                        term.scroll_display(AlacScroll::Delta(delta));
-                                    }
-                                }
-
-                                cx.notify();
-                            }
+                            view.process_dirty_terminal(cx);
                         })
                     });
                     if result.is_err() {
@@ -693,7 +904,7 @@ impl TerminalView {
             integrated_glyphs_enabled,
             color_emoji_enabled,
             copy_mode_active: false,
-            copy_cursor: AlacPoint::new(GridLine(0), GridCol(0)),
+            copy_cursor: Point::new(0, 0),
             copy_mode_frozen_offset: 0,
             was_focused: false,
             hovered_cell: None,
@@ -745,10 +956,9 @@ impl TerminalView {
     /// bracketed-paste mode (`ESC[?2004h`).
     pub fn bracketed_paste_enabled(&self) -> bool {
         self.terminal
-            .term
-            .lock_unfair()
-            .mode()
-            .contains(TermMode::BRACKETED_PASTE)
+            .session_backend()
+            .modes()
+            .contains(Modes::BRACKETED_PASTE)
     }
 
     /// Send a shell command to the PTY and execute it (appends `\r`).
@@ -771,10 +981,8 @@ impl TerminalView {
     /// `surface.send_text` with `submit=true`.
     pub fn send_keystroke(&self, keystroke_str: &str) -> Result<(), String> {
         let keystroke = gpui::Keystroke::parse(keystroke_str).map_err(|e| format!("{e}"))?;
-        let mode = *self.terminal.term.lock_unfair().mode();
-        if let Some(seq) =
-            crate::keys::to_esc_str(&keystroke, &Modes::from(mode), self.option_as_meta)
-        {
+        let mode = self.terminal.session_backend().modes();
+        if let Some(seq) = crate::keys::to_esc_str(&keystroke, &mode, self.option_as_meta) {
             if sequence_would_submit(&seq) {
                 return Err(format!(
                     "keystroke '{keystroke_str}' would submit (CR/LF); use \
@@ -817,36 +1025,10 @@ fn sequence_would_submit(seq: &str) -> bool {
 // ---------------------------------------------------------------------------
 
 impl TerminalView {
-    fn hovered_line_text(&self) -> Option<(alacritty_terminal::index::Line, String, Vec<usize>)> {
+    fn hovered_line_text(&self) -> Option<(Line, String, Vec<usize>)> {
         let point = self.hovered_cell?;
-        // Read-only grid scan for hover detection; unfair lock keeps the
-        // mouse-move hot path off the PTY reader's fair queue.
-        let term = self.terminal.term.lock_unfair();
-        let grid = term.grid();
-        let line = point.line;
-        // US-011 hardening: a stale hovered cell (captured before a resize,
-        // `clear`, or alt-screen swap) may now be outside the grid's line
-        // range. alacritty bounds-checks the grid only under debug_assert!, so
-        // guard before indexing to avoid a release-mode panic.
-        if line < term.topmost_line() || line > term.bottommost_line() {
-            return None;
-        }
-
-        let cols = term.columns();
-        let mut line_text = String::with_capacity(cols);
-        let mut char_to_col: Vec<usize> = Vec::with_capacity(cols);
-        for col in 0..cols {
-            let cell = &grid[line][alacritty_terminal::index::Column(col)];
-            if cell
-                .flags
-                .contains(alacritty_terminal::term::cell::Flags::WIDE_CHAR_SPACER)
-            {
-                continue;
-            }
-            char_to_col.push(col);
-            line_text.push(cell.c);
-        }
-        Some((line, line_text, char_to_col))
+        let line = self.terminal.session_backend().line_text_at(point)?;
+        Some((line.line, line.text, line.char_to_column))
     }
 
     pub(super) fn detect_links_at_hover(&mut self) -> Vec<HyperlinkZone> {
@@ -1008,40 +1190,40 @@ impl TerminalView {
     /// Build a rich key context from the terminal's current mode flags.
     /// Enables keybindings scoped to terminal state (e.g. `"Terminal && screen == alt"`).
     fn dispatch_context(&self) -> KeyContext {
-        let mode = *self.terminal.term.lock_unfair().mode();
+        let mode = self.terminal.session_backend().modes();
         let mut ctx = KeyContext::default();
         ctx.add("Terminal");
 
         // Screen mode
-        if mode.contains(TermMode::ALT_SCREEN) {
+        if mode.contains(Modes::ALT_SCREEN) {
             ctx.set("screen", "alt");
         } else {
             ctx.set("screen", "normal");
         }
 
         // DEC private modes
-        if mode.contains(TermMode::APP_CURSOR) {
+        if mode.contains(Modes::APP_CURSOR) {
             ctx.add("DECCKM");
         }
-        if mode.contains(TermMode::APP_KEYPAD) {
+        if mode.contains(Modes::APP_KEYPAD) {
             ctx.add("DECPAM");
         }
-        if mode.contains(TermMode::BRACKETED_PASTE) {
+        if mode.contains(Modes::BRACKETED_PASTE) {
             ctx.add("bracketed_paste");
         }
-        if mode.contains(TermMode::FOCUS_IN_OUT) {
+        if mode.contains(Modes::FOCUS_IN_OUT) {
             ctx.add("report_focus");
         }
-        if mode.contains(TermMode::ALTERNATE_SCROLL) {
+        if mode.contains(Modes::ALTERNATE_SCROLL) {
             ctx.add("alternate_scroll");
         }
 
         // Mouse reporting mode
-        if mode.intersects(TermMode::MOUSE_MODE) {
+        if mode.intersects(Modes::MOUSE_MODE) {
             ctx.add("any_mouse_reporting");
-            if mode.contains(TermMode::MOUSE_MOTION) {
+            if mode.contains(Modes::MOUSE_MOTION) {
                 ctx.set("mouse_reporting", "motion");
-            } else if mode.contains(TermMode::MOUSE_DRAG) {
+            } else if mode.contains(Modes::MOUSE_DRAG) {
                 ctx.set("mouse_reporting", "drag");
             } else {
                 ctx.set("mouse_reporting", "click");
@@ -1051,9 +1233,9 @@ impl TerminalView {
         }
 
         // Mouse encoding format
-        if mode.contains(TermMode::SGR_MOUSE) {
+        if mode.contains(Modes::SGR_MOUSE) {
             ctx.set("mouse_format", "sgr");
-        } else if mode.contains(TermMode::UTF8_MOUSE) {
+        } else if mode.contains(Modes::UTF8_MOUSE) {
             ctx.set("mouse_format", "utf8");
         } else {
             ctx.set("mouse_format", "normal");
@@ -1259,11 +1441,12 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus_handle.is_focused(window);
-        let terminal_mode = { *self.terminal.term.lock_unfair().mode() };
+        let backend = self.terminal.session_backend();
+        let terminal_mode = backend.modes();
 
         // DEC 1004: send focus in/out events on focus transitions
         if focused != self.was_focused {
-            if terminal_mode.contains(TermMode::FOCUS_IN_OUT) {
+            if terminal_mode.contains(Modes::FOCUS_IN_OUT) {
                 // Automated protocol write, NOT user input - go through the
                 // notifier directly so US-002's keyboard_input_sent flag is not
                 // tripped by a mere focus change (a failed-spawn pane that gets
@@ -1295,8 +1478,8 @@ impl Render for TerminalView {
                 .iter()
                 .enumerate()
                 .map(|(i, m)| SearchHighlight {
-                    start: m.start.into(),
-                    end: m.end.into(),
+                    start: m.start,
+                    end: m.end,
                     is_active: i == self.search_current,
                 })
                 .collect()
@@ -1308,14 +1491,10 @@ impl Render for TerminalView {
         // also expose the anchor (selection start) so the element can render it as
         // a distinct tmux-style marker.
         let copy_cursor_state = if self.copy_mode_active {
-            let (anchor_grid_line, anchor_col) = {
-                let term = self.terminal.term.lock_unfair();
-                term.selection
-                    .as_ref()
-                    .and_then(|sel| sel.to_range(&term))
-                    .map(|range| (Some(range.start.line.0), range.start.column.0))
-                    .unwrap_or((None, 0))
-            };
+            let (anchor_grid_line, anchor_col) = backend
+                .selection_range()
+                .map(|range| (Some(range.start.line.0), range.start.column.0))
+                .unwrap_or((None, 0));
             Some(CopyModeCursorState {
                 grid_line: self.copy_cursor.line.0,
                 col: self.copy_cursor.column.0,
@@ -1327,7 +1506,7 @@ impl Render for TerminalView {
         };
 
         // ALT_SCREEN: cursor always visible (no blink-off) for TUI apps
-        let alt_screen = terminal_mode.contains(TermMode::ALT_SCREEN);
+        let alt_screen = terminal_mode.contains(Modes::ALT_SCREEN);
         let cursor_visible = self.cursor_visible || alt_screen;
 
         // EP-006 US-017: match positions for the scrollbar rail, converted
@@ -1336,18 +1515,17 @@ impl Render for TerminalView {
         // search → the rail disappears at the same repaint (US-017 AC).
         let search_rail_lines: Vec<usize> = if self.search_active && !self.search_matches.is_empty()
         {
-            let bottom = self.terminal.term.lock_unfair().bottommost_line();
+            let bottom = backend.bottommost_line();
             self.search_matches
                 .iter()
-                .map(|m| (bottom - m.start.line).0.max(0) as usize)
+                .map(|m| bottom.0.saturating_sub(m.start.line.0).max(0) as usize)
                 .collect()
         } else {
             Vec::new()
         };
 
         let terminal_element = TerminalElement::new(
-            self.terminal.term.clone(),
-            PtyNotifier(self.terminal.notifier.0.clone()),
+            self.terminal.session_backend(),
             cursor_visible,
             focused,
             self.terminal.exited,
@@ -1417,6 +1595,12 @@ impl Render for TerminalView {
             }))
             .on_action(cx.listener(|this, _: &crate::ScrollPageDown, window, cx| {
                 this.handle_scroll_page_down(window, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::JumpPrevPrompt, _window, cx| {
+                this.jump_to_prompt(true, cx);
+            }))
+            .on_action(cx.listener(|this, _: &crate::JumpNextPrompt, _window, cx| {
+                this.jump_to_prompt(false, cx);
             }))
             .on_action(cx.listener(|this, _: &crate::ToggleSearch, window, cx| {
                 this.toggle_search(window, cx);
@@ -1526,6 +1710,21 @@ mod tests {
     use super::*;
     use crate::terminal::pty_session::strip_partial_ansi_tail;
 
+    #[test]
+    fn terminal_backend_policy_keeps_alacritty_as_explicit_rollback() {
+        let ghostty_available = cfg!(all(target_os = "linux", feature = "libghostty-linux"));
+
+        assert_eq!(
+            should_start_ghostty(TerminalBackendConfig::Auto),
+            ghostty_available
+        );
+        assert_eq!(
+            should_start_ghostty(TerminalBackendConfig::Ghostty),
+            ghostty_available
+        );
+        assert!(!should_start_ghostty(TerminalBackendConfig::Alacritty));
+    }
+
     // --- send_keystroke submission guard (US-005, orchestration-v2) ---
 
     #[test]
@@ -1618,22 +1817,24 @@ mod tests {
     fn scrollback_round_trip() {
         // EP-002 US-004: the mockable PtyBackend is gone; a display-only
         // TerminalState has a real `Term` (no PTY) and is the right harness for
-        // the grid-only scrollback round-trip.
-        let state = TerminalState::new_display_only(24, 80);
+        // the grid-only history round-trip.
+        let state = TerminalState::new_display_only(3, 80);
 
-        // Feed some text into the terminal grid
-        state.restore_scrollback("line one\nline two\nline three");
+        state.restore_scrollback("history one\nhistory two\nvisible three\nvisible four");
 
-        // Extract it back
         let scrollback = state.extract_scrollback();
         assert!(scrollback.is_some(), "Expected scrollback content");
         let text = scrollback.unwrap();
-        assert!(text.contains("line one"), "Missing 'line one' in: {text}");
-        assert!(text.contains("line two"), "Missing 'line two' in: {text}");
         assert!(
-            text.contains("line three"),
-            "Missing 'line three' in: {text}"
+            text.contains("history one"),
+            "Missing 'history one' in: {text}"
         );
+        assert!(
+            text.contains("history two"),
+            "Missing 'history two' in: {text}"
+        );
+        assert!(!text.contains("visible three"), "Leaked viewport: {text}");
+        assert!(!text.contains("visible four"), "Leaked viewport: {text}");
     }
 
     #[test]

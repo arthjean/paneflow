@@ -1622,6 +1622,7 @@ mod tests {
         assert_eq!(
             from_empty.terminal,
             Some(TerminalConfig {
+                backend: Default::default(),
                 ligatures: None,
                 integrated_glyphs: None,
                 color_emoji: None,
@@ -1636,6 +1637,7 @@ mod tests {
         assert_eq!(
             from_null.terminal,
             Some(TerminalConfig {
+                backend: Default::default(),
                 ligatures: None,
                 integrated_glyphs: None,
                 color_emoji: None,
@@ -1655,6 +1657,7 @@ mod tests {
         assert_eq!(
             config.terminal,
             Some(TerminalConfig {
+                backend: Default::default(),
                 ligatures: Some(true),
                 integrated_glyphs: None,
                 color_emoji: None,
@@ -1680,6 +1683,7 @@ mod tests {
         assert_eq!(
             config.terminal,
             Some(TerminalConfig {
+                backend: Default::default(),
                 ligatures: Some(false),
                 integrated_glyphs: None,
                 color_emoji: None,
@@ -1709,6 +1713,7 @@ mod tests {
         assert_eq!(
             disabled.terminal,
             Some(TerminalConfig {
+                backend: Default::default(),
                 ligatures: None,
                 integrated_glyphs: Some(false),
                 color_emoji: None,
@@ -1746,6 +1751,7 @@ mod tests {
         assert_eq!(
             disabled.terminal,
             Some(TerminalConfig {
+                backend: Default::default(),
                 ligatures: None,
                 integrated_glyphs: None,
                 color_emoji: Some(false),
@@ -1780,6 +1786,7 @@ mod tests {
     #[test]
     fn test_terminal_scrollback_lines_clamps_out_of_range() {
         let tc = TerminalConfig {
+            backend: Default::default(),
             ligatures: None,
             integrated_glyphs: None,
             color_emoji: None,
@@ -1795,6 +1802,7 @@ mod tests {
             TerminalConfig::MIN_SCROLLBACK_LINES
         );
         let tc = TerminalConfig {
+            backend: Default::default(),
             ligatures: None,
             integrated_glyphs: None,
             color_emoji: None,

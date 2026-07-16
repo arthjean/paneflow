@@ -64,10 +64,9 @@ impl PaneFlowApp {
         regex: bool,
         cx: &mut Context<Self>,
     ) {
-        // Snapshot the fleet on the main thread: (sid, name, ws title, term
-        // Arc). The Arc<FairMutex<Term>> is the one sanctioned cross-thread
-        // handle (thread-model contract).
-        let mut targets: Vec<(u64, String, String, crate::terminal::types::SharedTerm)> =
+        // Snapshot the fleet on the main thread with an opaque backend handle.
+        // The background scan never receives a concrete terminal-grid type.
+        let mut targets: Vec<(u64, String, String, crate::terminal::TerminalSessionBackend)> =
             Vec::new();
         for ws in &self.workspaces {
             if let Some(root) = &ws.root {
@@ -89,7 +88,7 @@ impl PaneFlowApp {
                             t.entity_id().as_u64(),
                             name,
                             ws.title.clone(),
-                            r.terminal.term.clone(),
+                            r.terminal.session_backend(),
                         ));
                     }
                 }
@@ -119,8 +118,8 @@ impl PaneFlowApp {
                     let mut hits: Vec<(u64, String, String, usize)> = Vec::new();
                     let mut total = 0usize;
                     let mut error: Option<String> = None;
-                    for (sid, name, ws_title, term) in targets {
-                        let result = crate::search::search_term(&term, &query, regex);
+                    for (sid, name, ws_title, backend) in targets {
+                        let result = backend.search(&query, regex);
                         if let Some(e) = result.regex_error {
                             // Same query, same engine → the error is
                             // identical for every pane: keep ONE, stop.

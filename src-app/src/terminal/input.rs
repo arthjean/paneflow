@@ -8,17 +8,15 @@
 
 use std::borrow::Cow;
 
-use alacritty_terminal::grid::{Dimensions, Scroll as AlacScroll};
-use alacritty_terminal::index::{Column as GridCol, Line as GridLine, Point as AlacPoint, Side};
-use alacritty_terminal::selection::{Selection, SelectionType};
-use alacritty_terminal::term::TermMode;
 use gpui::{
     ClipboardEntry, ClipboardItem, Context, ExternalPaths, Focusable, KeyDownEvent, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, TouchPhase, Window,
 };
 
 use crate::mouse;
-use crate::terminal::types::{HyperlinkSource, HyperlinkZone, Modes, ShellQuoting};
+use crate::terminal::types::{
+    HyperlinkSource, HyperlinkZone, Modes, Point, SelectionKind, SelectionSide, ShellQuoting,
+};
 
 #[cfg(debug_assertions)]
 use super::probe_enabled;
@@ -217,11 +215,10 @@ impl TerminalView {
             && !keystroke.modifiers.alt
             && !keystroke.modifiers.platform
         {
-            let mut term = self.terminal.term.lock();
-            if term.grid().display_offset() > 0 {
-                term.scroll_display(AlacScroll::Bottom);
+            let backend = self.terminal.session_backend();
+            if backend.grid_metrics().display_offset > 0 {
+                backend.scroll_to_bottom();
                 self.terminal.dirty = true;
-                drop(term);
                 // Reset accumulated sub-line scroll so the next wheel tick
                 // does not "snap back" by the leftover fraction.
                 self.scroll_remainder = 0.0;
@@ -231,25 +228,21 @@ impl TerminalView {
         }
 
         // Get current TermMode for key mapping (APP_CURSOR, etc.)
-        let term_guard = self.terminal.term.lock();
-        let mode = *term_guard.mode();
-        drop(term_guard);
+        let mode = self.terminal.session_backend().modes();
 
         // Special keys / modifiers → write the escape sequence directly.
         // Printable characters are NOT handled here: GPUI's InputHandler
         // (replace_text_in_range) is the single source of truth for them on
         // both normal and alt screens. Writing them here as well caused
         // character doubling in ALT_SCREEN mode (e.g. Claude Code fullscreen TUI).
-        if let Some(seq) =
-            crate::keys::to_esc_str(keystroke, &Modes::from(mode), self.option_as_meta)
-        {
+        if let Some(seq) = crate::keys::to_esc_str(keystroke, &mode, self.option_as_meta) {
             // Snap to bottom on input. Matches Zed `terminal.rs:input()` - if
             // the user is scrolled back in the history and types, the shell's
             // echo would otherwise be invisible.
             {
-                let mut term = self.terminal.term.lock();
-                if term.grid().display_offset() > 0 {
-                    term.scroll_display(AlacScroll::Bottom);
+                let backend = self.terminal.session_backend();
+                if backend.grid_metrics().display_offset > 0 {
+                    backend.scroll_to_bottom();
                     self.terminal.dirty = true;
                     self.scroll_remainder = 0.0;
                 }
@@ -280,7 +273,7 @@ impl TerminalView {
 
     // --- Pixel → grid coordinate conversion ---
 
-    pub(super) fn pixel_to_grid(&self, pos: gpui::Point<gpui::Pixels>) -> (AlacPoint, Side) {
+    pub(super) fn pixel_to_grid(&self, pos: gpui::Point<gpui::Pixels>) -> (Point, SelectionSide) {
         // Poison-safe: if a panic happened inside paint() while holding the
         // lock, the inner Point is still a valid value - recover and continue.
         let origin = *self
@@ -294,30 +287,25 @@ impl TerminalView {
         let half_cell = self.cell_width / 2.0;
         let cell_x = relative_x % self.cell_width;
         let side = if cell_x > half_cell {
-            Side::Right
+            SelectionSide::Right
         } else {
-            Side::Left
+            SelectionSide::Left
         };
 
-        let term = self.terminal.term.lock();
-        let max_col = term.columns().saturating_sub(1);
-        let max_line = term.screen_lines().saturating_sub(1) as i32;
-        let display_offset = term.grid().display_offset();
-        drop(term);
+        let metrics = self.terminal.session_backend().grid_metrics();
+        let max_col = metrics.columns.saturating_sub(1);
+        let max_line = metrics.screen_lines.saturating_sub(1) as i32;
 
         let col = (col_f as usize).min(max_col);
         let line = ((relative_y / self.line_height) as i32).min(max_line);
 
-        (
-            AlacPoint::new(GridLine(line - display_offset as i32), GridCol(col)),
-            side,
-        )
+        (Point::new(line - metrics.display_offset as i32, col), side)
     }
 
     /// Convert pixel position to viewport grid coordinates (for mouse reporting).
     /// Unlike `pixel_to_grid`, this returns 0-based viewport coordinates without
     /// the scrollback display_offset subtraction.
-    pub(super) fn pixel_to_viewport(&self, pos: gpui::Point<gpui::Pixels>) -> AlacPoint {
+    pub(super) fn pixel_to_viewport(&self, pos: gpui::Point<gpui::Pixels>) -> Point {
         let origin = *self
             .element_origin
             .lock()
@@ -325,32 +313,23 @@ impl TerminalView {
         let relative_x = (pos.x - origin.x).max(gpui::px(0.0));
         let relative_y = (pos.y - origin.y).max(gpui::px(0.0));
         let col_f = relative_x / self.cell_width;
-        let term = self.terminal.term.lock();
-        let max_col = term.columns().saturating_sub(1);
-        let max_line = term.screen_lines().saturating_sub(1) as i32;
-        drop(term);
+        let metrics = self.terminal.session_backend().grid_metrics();
+        let max_col = metrics.columns.saturating_sub(1);
+        let max_line = metrics.screen_lines.saturating_sub(1) as i32;
         let col = (col_f as usize).min(max_col);
         let line = ((relative_y / self.line_height) as i32).min(max_line);
-        AlacPoint::new(GridLine(line), GridCol(col))
+        Point::new(line, col)
     }
 
     /// Write a mouse report to the PTY using the appropriate encoding format.
-    pub(super) fn write_mouse_report(
-        &self,
-        point: AlacPoint,
-        button: u8,
-        pressed: bool,
-        mode: TermMode,
-    ) {
-        let format = mouse::MouseFormat::from_mode(Modes::from(mode));
+    pub(super) fn write_mouse_report(&self, point: Point, button: u8, pressed: bool, mode: Modes) {
+        let format = mouse::MouseFormat::from_mode(mode);
         let bytes = match format {
-            mouse::MouseFormat::Sgr => {
-                mouse::sgr_mouse_report(point.into(), button, pressed).into_bytes()
-            }
+            mouse::MouseFormat::Sgr => mouse::sgr_mouse_report(point, button, pressed).into_bytes(),
             mouse::MouseFormat::Normal { utf8 } => {
                 // Normal/UTF-8 encoding: release always uses button code 3 (no per-button release)
                 let btn = if pressed { button } else { 3 };
-                match mouse::normal_mouse_report(point.into(), btn, utf8) {
+                match mouse::normal_mouse_report(point, btn, utf8) {
                     Some(b) => b,
                     None => return, // position exceeds encoding limits
                 }
@@ -378,16 +357,38 @@ impl TerminalView {
     /// US-015: scroll the grid so `target_offset` scrollback lines sit above the
     /// viewport. `target_offset` is pre-clamped to history by the caller
     /// (`ScrollbarMetrics::offset_for_y`). No-op when already there.
-    fn apply_scrollbar_jump(&mut self, target_offset: usize) {
-        let mut term = self.terminal.term.lock();
-        let current = term.grid().display_offset();
-        let delta = target_offset as i64 - current as i64;
-        if delta != 0 {
-            // Scrollback never approaches i32::MAX lines; the cast is safe.
-            term.scroll_display(AlacScroll::Delta(delta as i32));
-            drop(term);
+    fn apply_scrollbar_jump(&mut self, target_offset: usize, history_size: usize) -> bool {
+        let row = history_size.saturating_sub(target_offset.min(history_size));
+        if self.terminal.session_backend().scroll_to_viewport_row(row) {
             self.terminal.dirty = true;
+            true
+        } else {
+            false
         }
+    }
+
+    /// Apply a drag step relative to the last target accepted by the backend.
+    /// Relative steps compose with Ghostty's live viewport pin when output or
+    /// reflow changes the scrollback while the pointer is held.
+    fn apply_scrollbar_drag_delta(&mut self, delta_lines: i64) -> bool {
+        if delta_lines == 0
+            || !self
+                .terminal
+                .session_backend()
+                .scroll_delta(delta_lines.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+        {
+            return false;
+        }
+        self.terminal.dirty = true;
+        true
+    }
+
+    fn scrollbar_drag_target(drag: super::view::ScrollbarDrag, pointer_y: gpui::Pixels) -> usize {
+        let usable = drag.metrics.thumb_travel().max(gpui::px(1.0));
+        let dy = (pointer_y - drag.anchor_y) / usable;
+        let delta_lines = (dy * drag.metrics.history_size as f32).round() as i64;
+        (drag.anchor_offset as i64 - delta_lines).clamp(0, drag.metrics.history_size as i64)
+            as usize
     }
 
     pub(super) fn handle_mouse_down(
@@ -408,19 +409,24 @@ impl TerminalView {
         {
             // A press on the bare track first jumps to that proportional
             // position; a press on the thumb grabs it in place (no jump).
-            // Either way we anchor the drag at the resulting offset so every
-            // subsequent move is RELATIVE - the thumb never jumps under the
-            // cursor regardless of where on it the user grabbed.
+            // Either way the pointer gesture owns an absolute target. The
+            // painted geometry stays frozen until release so output or reflow
+            // cannot change its scale under the cursor.
+            let mut last_target = metrics.display_offset;
             let anchor_offset = if metrics.y_on_thumb(event.position.y) {
-                self.terminal.term.lock().grid().display_offset()
+                metrics.display_offset
             } else {
                 let target = metrics.offset_for_y(event.position.y);
-                self.apply_scrollbar_jump(target);
+                if self.apply_scrollbar_jump(target, metrics.history_size) {
+                    last_target = target;
+                }
                 target
             };
             self.scrollbar_drag = Some(super::view::ScrollbarDrag {
                 anchor_y: event.position.y,
                 anchor_offset,
+                metrics,
+                last_target,
             });
             cx.notify();
             return;
@@ -438,19 +444,19 @@ impl TerminalView {
         {
             self.mouse_down_link = self.ctrl_hovered_link.clone();
             let (point, side) = self.pixel_to_grid(event.position);
-            let mut term = self.terminal.term.lock();
-            term.selection = Some(Selection::new(SelectionType::Simple, point, side));
-            drop(term);
+            self.terminal
+                .session_backend()
+                .start_selection(SelectionKind::Simple, point, side);
             self.selecting = true;
             cx.notify();
             return;
         }
 
-        let mode = { *self.terminal.term.lock().mode() };
+        let mode = self.terminal.session_backend().modes();
 
         // Forward to PTY when mouse reporting is active.
         // Shift overrides mouse mode for text selection (standard terminal convention).
-        if mode.intersects(TermMode::MOUSE_MODE) && !event.modifiers.shift {
+        if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
             // Side/Navigate mouse buttons have no terminal report encoding;
             // skip them instead of injecting a phantom Left click.
             if let Some(button) = mouse::mouse_button_code(event.button, event.modifiers) {
@@ -468,16 +474,15 @@ impl TerminalView {
         let (point, side) = self.pixel_to_grid(event.position);
 
         let selection_type = match event.click_count {
-            1 => SelectionType::Simple,
-            2 => SelectionType::Semantic,
-            3 => SelectionType::Lines,
+            1 => SelectionKind::Simple,
+            2 => SelectionKind::Semantic,
+            3 => SelectionKind::Lines,
             _ => return,
         };
 
-        let selection = Selection::new(selection_type, point, side);
-        let mut term = self.terminal.term.lock();
-        term.selection = Some(selection);
-        drop(term);
+        self.terminal
+            .session_backend()
+            .start_selection(selection_type, point, side);
 
         self.selecting = true;
         cx.notify();
@@ -490,32 +495,18 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         // US-015: while dragging the scrollbar, map the pixel delta since the
-        // grab to a relative scrollback delta and consume the event (no
+        // grab to an absolute scrollback target and consume the event (no
         // selection / mouse report). The drag continues even if the pointer
         // leaves the strip horizontally.
-        if let Some(drag) = self.scrollbar_drag {
+        if let Some(mut drag) = self.scrollbar_drag {
             if event.pressed_button == Some(MouseButton::Left) {
-                if let Some(metrics) = {
-                    *self
-                        .scrollbar_metrics
-                        .lock()
-                        .unwrap_or_else(|p| p.into_inner())
-                } {
-                    // Drag down (positive dy) scrolls toward the live edge, so
-                    // the offset decreases by the same fraction of history. The
-                    // denominator is the thumb's USABLE travel (track minus thumb
-                    // height) - the range its top actually sweeps per the paint
-                    // formula in `scrollbar_metrics` - so the thumb tracks the
-                    // cursor 1:1 and a full drag reaches offset 0 (the live edge).
-                    // The bare `track_height` would make the thumb lag the cursor
-                    // and never quite reach the bottom.
-                    let usable = (metrics.track_height - metrics.thumb_height).max(gpui::px(1.0));
-                    let dy = (event.position.y - drag.anchor_y) / usable;
-                    let delta_lines = (dy * metrics.history_size as f32).round() as i64;
-                    let target = (drag.anchor_offset as i64 - delta_lines)
-                        .clamp(0, metrics.history_size as i64)
-                        as usize;
-                    self.apply_scrollbar_jump(target);
+                // Drag down (positive dy) scrolls toward the live edge. Use
+                // the exact frozen course swept by the painted thumb.
+                let target = Self::scrollbar_drag_target(drag, event.position.y);
+                let step = target as i64 - drag.last_target as i64;
+                if target != drag.last_target && self.apply_scrollbar_drag_delta(step) {
+                    drag.last_target = target;
+                    self.scrollbar_drag = Some(drag);
                     cx.notify();
                 }
             } else {
@@ -525,13 +516,13 @@ impl TerminalView {
             return;
         }
 
-        let mode = { *self.terminal.term.lock().mode() };
+        let mode = self.terminal.session_backend().modes();
 
         // Forward motion to PTY when mouse tracking is active.
         // Shift overrides mouse mode for text selection.
         if !event.modifiers.shift
-            && (mode.contains(TermMode::MOUSE_MOTION)
-                || (mode.contains(TermMode::MOUSE_DRAG) && event.pressed_button.is_some()))
+            && (mode.contains(Modes::MOUSE_MOTION)
+                || (mode.contains(Modes::MOUSE_DRAG) && event.pressed_button.is_some()))
         {
             // Skip motion reports for side/Navigate buttons - they have no
             // terminal mouse-report encoding.
@@ -585,24 +576,22 @@ impl TerminalView {
 
         let (point, side) = self.pixel_to_grid(event.position);
 
-        let mut term = self.terminal.term.lock();
-        if let Some(ref mut selection) = term.selection {
-            selection.update(point, side);
-        }
-        // On Linux/freebsd, mirror the in-progress selection into the X11/Wayland
-        // PRIMARY buffer so middle-click paste during drag uses the *current*
-        // selection (not the previous mouse-up snapshot). Zed: `UpdateSelection`
-        // handler writes primary on every change.
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let primary_text = term.selection_to_string();
-        drop(term);
-
+        let primary_text = self
+            .terminal
+            .session_backend()
+            .update_selection(point, side);
+        // On Linux/freebsd, mirror backends that can format the in-progress
+        // selection without blocking into the X11/Wayland PRIMARY buffer.
+        // Ghostty defers formatting until mouse-up to keep this UI hot path
+        // asynchronous; `finish_selection` writes the committed value below.
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         if let Some(text) = primary_text
             && !text.is_empty()
         {
             cx.write_to_primary(ClipboardItem::new_string(text));
         }
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        drop(primary_text);
 
         cx.notify();
     }
@@ -611,42 +600,12 @@ impl TerminalView {
     /// OSC 8 → URL → markdown → code-path priority chain and store it in
     /// `ctrl_hovered_link`. Shared by mouse-move (throttled by the caller) and
     /// the modifiers-changed handler (runs on Ctrl/Cmd press without a move).
-    fn refresh_hovered_link(&mut self, hover_point: AlacPoint, cx: &mut Context<Self>) {
+    fn refresh_hovered_link(&mut self, hover_point: Point, cx: &mut Context<Self>) {
         // OSC 8 explicit hyperlink on the hovered cell takes priority.
-        let osc8_link = {
-            let term = self.terminal.term.lock();
-            // US-011 hardening: `hover_point` was captured by an earlier mouse-
-            // move and may be stale - a resize, `clear`, or alt-screen swap can
-            // shrink the grid before the modifier-press path reuses it.
-            // alacritty's grid Index bounds-checks only under debug_assert!, so a
-            // stale point would index out of bounds and panic the render thread
-            // in release. Bail (clearing any existing affordance) instead.
-            if hover_point.line < term.topmost_line()
-                || hover_point.line > term.bottommost_line()
-                || hover_point.column.0 >= term.columns()
-            {
-                drop(term);
-                if self.ctrl_hovered_link.is_some() {
-                    self.ctrl_hovered_link = None;
-                    cx.notify();
-                }
-                return;
-            }
-            let cell = &term.grid()[hover_point.line][hover_point.column];
-            cell.hyperlink().map(|hl| {
-                use crate::terminal::element::is_url_scheme_openable;
-                HyperlinkZone {
-                    uri: hl.uri().to_string(),
-                    id: hl.id().to_string(),
-                    start: hover_point,
-                    end: hover_point, // single cell - hover underline covers it
-                    is_openable: is_url_scheme_openable(hl.uri()),
-                    source: HyperlinkSource::Osc8,
-                    line: None,
-                    col: None,
-                }
-            })
-        };
+        let osc8_link = self
+            .terminal
+            .session_backend()
+            .osc8_hyperlink_at(hover_point);
         let in_zone = |z: &HyperlinkZone| {
             hover_point.line == z.start.line
                 && hover_point.column >= z.start.column
@@ -717,16 +676,23 @@ impl TerminalView {
         // Left so a right-click release mid-drag still reaches the PTY
         // mouse-report path and is not swallowed (which would strand a
         // mouse-mode TUI in a phantom-button-held state).
-        if self.scrollbar_drag.is_some() && event.button == MouseButton::Left {
+        if let Some(drag) = self.scrollbar_drag
+            && event.button == MouseButton::Left
+        {
+            let target = Self::scrollbar_drag_target(drag, event.position.y);
+            let step = target as i64 - drag.last_target as i64;
+            if target != drag.last_target && self.apply_scrollbar_drag_delta(step) {
+                cx.notify();
+            }
             self.scrollbar_drag = None;
             return;
         }
 
-        let mode = { *self.terminal.term.lock().mode() };
+        let mode = self.terminal.session_backend().modes();
 
         // Forward release to PTY when mouse reporting is active.
         // Shift overrides mouse mode for text selection.
-        if mode.intersects(TermMode::MOUSE_MODE) && !event.modifiers.shift {
+        if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
             // US-012: a Ctrl-press may have stashed a pending link on mouse-down
             // (that path returns before this mouse-mode check). If the modifier
             // is released before this mouse-mode release, the link-open path
@@ -770,20 +736,7 @@ impl TerminalView {
         // Clear empty selections, or auto-copy non-empty selections (tmux-style):
         // write to both PRIMARY (middle-click paste) and CLIPBOARD (Ctrl+V),
         // then clear the selection so the disappearing highlight signals the copy.
-        let mut term = self.terminal.term.lock();
-        let selection_empty = match &term.selection {
-            Some(sel) => sel.is_empty(),
-            None => true,
-        };
-        let copied = if selection_empty {
-            term.selection = None;
-            None
-        } else {
-            term.selection_to_string().inspect(|_| {
-                term.selection = None;
-            })
-        };
-        drop(term);
+        let (selection_empty, copied) = self.terminal.session_backend().finish_selection();
 
         // US-012: open on a genuine click (empty selection = no drag).
         if selection_empty
@@ -808,9 +761,7 @@ impl TerminalView {
     // --- Clipboard handlers ---
 
     pub(super) fn handle_copy(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        let term = self.terminal.term.lock();
-        if let Some(text) = term.selection_to_string() {
-            drop(term);
+        if let Some(text) = self.terminal.session_backend().selection_text() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
         }
     }
@@ -832,7 +783,7 @@ impl TerminalView {
                 && let Some(text) =
                     paths_to_pty_text(ext_paths.paths(), self.terminal.shell_quoting)
             {
-                let mode = { *self.terminal.term.lock().mode() };
+                let mode = self.terminal.session_backend().modes();
                 self.write_paste_text(&text, mode);
                 return;
             }
@@ -840,7 +791,7 @@ impl TerminalView {
 
         // Text paste (normal Ctrl+V)
         if let Some(text) = clipboard.text() {
-            let mode = { *self.terminal.term.lock().mode() };
+            let mode = self.terminal.session_backend().modes();
             self.write_paste_text(&text, mode);
             return;
         }
@@ -866,13 +817,13 @@ impl TerminalView {
         _cx: &mut Context<Self>,
     ) {
         if let Some(text) = paths_to_pty_text(paths.paths(), self.terminal.shell_quoting) {
-            let mode = *self.terminal.term.lock().mode();
+            let mode = self.terminal.session_backend().modes();
             self.write_paste_text(&text, mode);
         }
     }
 
-    pub(super) fn write_paste_text(&self, text: &str, mode: TermMode) {
-        let paste_text = if mode.contains(TermMode::BRACKETED_PASTE) {
+    pub(super) fn write_paste_text(&self, text: &str, mode: Modes) {
+        let paste_text = if mode.contains(Modes::BRACKETED_PASTE) {
             wrap_bracketed_paste(text)
         } else {
             text.replace("\r\n", "\r").replace('\n', "\r")
@@ -893,8 +844,8 @@ impl TerminalView {
     /// inject toward an agent that has not (yet) enabled `ESC[?2004h` must not
     /// smuggle Enters through the burst.
     pub fn inject_text(&self, text: &str) {
-        let mode = { *self.terminal.term.lock().mode() };
-        if mode.contains(TermMode::BRACKETED_PASTE) {
+        let mode = self.terminal.session_backend().modes();
+        if mode.contains(Modes::BRACKETED_PASTE) {
             self.write_paste_text(text, mode);
         } else {
             self.send_text(text);
@@ -909,11 +860,11 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mode = { *self.terminal.term.lock().mode() };
+        let mode = self.terminal.session_backend().modes();
 
         // Forward scroll to PTY when mouse reporting is active.
         // Shift overrides mouse mode for scrollback.
-        if mode.intersects(TermMode::MOUSE_MODE) && !event.modifiers.shift {
+        if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
             let delta_y = event.delta.pixel_delta(self.line_height).y;
             self.scroll_remainder += delta_y / self.line_height;
             self.scroll_remainder = self.scroll_remainder.clamp(-500.0, 500.0);
@@ -930,13 +881,13 @@ impl TerminalView {
                 mouse::ScrollDirection::Down
             };
             let button = mouse::scroll_button_code(direction, event.modifiers);
-            let format = mouse::MouseFormat::from_mode(Modes::from(mode));
+            let format = mouse::MouseFormat::from_mode(mode);
             let report = match format {
                 mouse::MouseFormat::Sgr => {
-                    mouse::sgr_mouse_report(point.into(), button, true).into_bytes()
+                    mouse::sgr_mouse_report(point, button, true).into_bytes()
                 }
                 mouse::MouseFormat::Normal { utf8 } => {
-                    match mouse::normal_mouse_report(point.into(), button, utf8) {
+                    match mouse::normal_mouse_report(point, button, utf8) {
                         Some(bytes) => bytes,
                         None => return,
                     }
@@ -953,9 +904,7 @@ impl TerminalView {
 
         // Alternate scroll: ALT_SCREEN + ALTERNATE_SCROLL without MOUSE_MODE
         // Synthesize arrow key sequences so scroll works in less, vim, htop, etc.
-        if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL)
-            && !event.modifiers.shift
-        {
+        if mode.contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL) && !event.modifiers.shift {
             let delta_y = event.delta.pixel_delta(self.line_height).y;
             self.scroll_remainder += delta_y / self.line_height;
             self.scroll_remainder = self.scroll_remainder.clamp(-500.0, 500.0);
@@ -965,7 +914,7 @@ impl TerminalView {
             }
             self.scroll_remainder -= lines as f32;
 
-            let app_cursor = mode.contains(TermMode::APP_CURSOR);
+            let app_cursor = mode.contains(Modes::APP_CURSOR);
             let arrow: &[u8] = match (lines > 0, app_cursor) {
                 (true, true) => b"\x1bOA",
                 (true, false) => b"\x1b[A",
@@ -1014,15 +963,10 @@ impl TerminalView {
 
         // Positive wheel delta means scrolling up (toward history in natural-scroll
         // convention), which matches AlacScroll::Delta positive = scroll toward history.
-        let mut term = self.terminal.term.lock();
-        let before = term.grid().display_offset();
-        term.scroll_display(AlacScroll::Delta(lines));
-        let after = term.grid().display_offset();
-        if after == before {
+        if !self.terminal.session_backend().scroll_delta(lines) {
             return;
         }
         self.terminal.dirty = true;
-        drop(term);
 
         cx.notify();
     }
@@ -1036,23 +980,17 @@ impl TerminalView {
         // test in `keys.rs`).
         let alt_screen = self
             .terminal
-            .term
-            .lock()
-            .mode()
-            .contains(TermMode::ALT_SCREEN);
+            .session_backend()
+            .modes()
+            .contains(Modes::ALT_SCREEN);
         if alt_screen {
             self.terminal.write_to_pty(b"\x1b[5~".as_slice());
             return;
         }
-        let mut term = self.terminal.term.lock();
-        let before = term.grid().display_offset();
-        term.scroll_display(AlacScroll::PageUp);
-        let after = term.grid().display_offset();
-        if after == before {
+        if !self.terminal.session_backend().scroll_page_up() {
             return;
         }
         self.terminal.dirty = true;
-        drop(term);
         cx.notify();
     }
 
@@ -1060,24 +998,45 @@ impl TerminalView {
         // US-009: see handle_scroll_page_up. `\x1b[6~` is plain PageDown.
         let alt_screen = self
             .terminal
-            .term
-            .lock()
-            .mode()
-            .contains(TermMode::ALT_SCREEN);
+            .session_backend()
+            .modes()
+            .contains(Modes::ALT_SCREEN);
         if alt_screen {
             self.terminal.write_to_pty(b"\x1b[6~".as_slice());
             return;
         }
-        let mut term = self.terminal.term.lock();
-        let before = term.grid().display_offset();
-        term.scroll_display(AlacScroll::PageDown);
-        let after = term.grid().display_offset();
-        if after == before {
+        if !self.terminal.session_backend().scroll_page_down() {
             return;
         }
         self.terminal.dirty = true;
-        drop(term);
         cx.notify();
+    }
+
+    pub(super) fn jump_to_prompt(&mut self, backward: bool, cx: &mut Context<Self>) {
+        let backend = self.terminal.session_backend();
+        let metrics = backend.grid_metrics();
+        let history_size = i64::from(metrics.topmost_line.0.saturating_neg());
+        let top_abs = history_size.saturating_sub(metrics.display_offset as i64);
+        let target = {
+            let marks = self
+                .terminal
+                .marks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if backward {
+                marks.prompt_before(top_abs)
+            } else {
+                marks.prompt_after(top_abs)
+            }
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let offset = history_size.saturating_sub(target).clamp(0, history_size) as usize;
+        if backend.restore_display_offset(offset) {
+            self.terminal.dirty = true;
+            cx.notify();
+        }
     }
 }
 

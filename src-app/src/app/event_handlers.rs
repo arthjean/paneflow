@@ -910,8 +910,7 @@ impl PaneFlowApp {
                     Some(active) => {
                         let view = active.read(cx);
                         let cwd = view.terminal.cwd_now();
-                        let term = view.terminal.term.lock();
-                        let (cols, rows) = crate::terminal::types::grid_size(&term);
+                        let (cols, rows) = view.terminal.session_backend().grid_size();
                         let size = match direction {
                             crate::layout::SplitDirection::Horizontal => (cols, (rows / 2).max(1)),
                             crate::layout::SplitDirection::Vertical => ((cols / 2).max(1), rows),

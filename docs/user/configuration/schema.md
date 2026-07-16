@@ -87,6 +87,7 @@ CLI binary.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
+| `terminal.backend` | string | `auto` | `auto`, `ghostty`, or `alacritty`. In standard Linux builds, including `cargo run`, `auto` selects Ghostty and `alacritty` is the explicit rollback. macOS, Windows, and Linux builds using `--no-default-features` use Alacritty. Applies only to new sessions. |
 | `terminal.ligatures` | boolean or null | `false` | Enables programming ligatures for fonts that ship them. |
 | `terminal.integrated_glyphs` | boolean or null | `true` | Draws built-in block-element glyphs as filled quads. |
 | `terminal.color_emoji` | boolean or null | `true` | Uses the platform color-emoji path. |
@@ -100,6 +101,7 @@ CLI binary.
 ```json
 {
   "terminal": {
+    "backend": "auto",
     "ligatures": false,
     "integrated_glyphs": true,
     "color_emoji": true,
@@ -267,6 +269,7 @@ unconditionally.
   "external_editor": "auto",
   "shortcuts": {},
   "terminal": {
+    "backend": "auto",
     "ligatures": false,
     "integrated_glyphs": true,
     "color_emoji": true,
