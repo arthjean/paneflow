@@ -17,6 +17,21 @@
 #
 # Reference: https://embarkstudios.github.io/cargo-deny/
 
+[graph]
+# cargo-deny 0.19.8 cannot scope `required-git-spec` exceptions by URL: the
+# check runs before allow-git/allow-org. Zed pins these seven packages through
+# one patched tag. Exclude only the exact package versions here; the workspace
+# dependency_source_policy test independently locks the tag and resolved SHA.
+exclude = [
+    "dugong@0.6.2",
+    "dugong-graphlib@0.6.2",
+    "manatee@0.6.2",
+    "merman@0.6.2",
+    "merman-core@0.6.2",
+    "merman-render@0.6.2",
+    "roughr-merman@0.12.0",
+]
+
 [advisories]
 # Treat unmaintained crates as a workspace-scoped warn (not a blanket
 # dep-tree warn). "workspace" scope: only direct workspace members'
@@ -152,6 +167,13 @@ allow = [
     "GPL-3.0-or-later",
 ]
 
+# Boost Software License 1.0 is required only by xxhash-rust 0.8.16, pulled
+# through Zed's fs -> notify 9 path. Keep it crate-and-version scoped so a new
+# BSL-1.0 dependency is still rejected.
+exceptions = [
+    { crate = "xxhash-rust@0.8.16", allow = ["BSL-1.0"] },
+]
+
 [sources]
 # Block unknown crate registries or git sources. The GPUI fork is now
 # commit-pinned in `src-app/Cargo.toml`, so new git origins should be an
@@ -161,16 +183,15 @@ unknown-git      = "deny"
 required-git-spec = "rev"
 # Pin the crates.io registry explicitly; anything else is "unknown".
 allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
+# The Paneflow Zed fork is the only allowed repository outside the org list.
+# Its dependency is commit-pinned in src-app/Cargo.toml.
+allow-git        = ["https://github.com/arthjean/zed"]
 
 [sources.allow-org]
 # Pre-declared GitHub orgs that host the known git deps transitively
 # pulled in by GPUI. Verified against the current Cargo.lock via
 #   grep -E '^source = "git\+' Cargo.lock | sed 's|.*github.com/\([^/]*\)/.*|\1|' | sort -u
-# which returns exactly these four orgs. When bumping the GPUI pin,
-# re-run that check and update the list if new orgs appear.
-#
-# `ArthurDEV44` hosts the Paneflow fork of `zed-industries/zed`, pinned to an
-# exact commit for `prd-markdown-append-fix-2026-Q3`.
-# Remove this entry when the upstream Zed PR merges and the fork pin is
-# reverted to mainline (see CLAUDE.md "Fork-pin maintenance").
-github = ["zed-industries", "smol-rs", "proptest-rs", "ArthurDEV44"]
+# which returns these three orgs plus the exact arthjean/zed repository above.
+# When bumping the GPUI pin, re-run that check and update the list if new
+# origins appear.
+github = ["zed-industries", "smol-rs", "proptest-rs"]
