@@ -1,6 +1,7 @@
 //! Session persistence for `PaneFlowApp` - save/restore workspace layouts
-//! and their per-pane CWD + scrollback so relaunching rebuilds exactly
-//! what the user had open.
+//! and their per-pane metadata so relaunching rebuilds what the user had open.
+//! Terminal scrollback stays process-local: a relaunched shell must not inherit
+//! plain-text output from an earlier PTY.
 //!
 //! Extracted from `main.rs` per US-017 of the src-app refactor PRD.
 
@@ -75,15 +76,9 @@ pub(crate) struct SessionCorruptionInfo {
 impl PaneFlowApp {
     /// Build the [`SessionState`] snapshot from live app state.
     ///
-    /// `terms` selects the scrollback strategy: `Some(vec)` defers the drain
-    /// (terminal handles are collected into `vec` in surface-emission order for
-    /// an off-thread drain - see [`save_session`]); `None` drains inline on the
-    /// calling thread (see [`save_session_blocking`]).
-    fn build_session_state(
-        &self,
-        cx: &App,
-        terms: &mut Option<Vec<crate::terminal::types::SharedTerm>>,
-    ) -> paneflow_config::schema::SessionState {
+    /// Every persisted terminal surface emits `scrollback: None`, keeping PTY
+    /// output local to the process that produced it.
+    fn build_session_state(&self, cx: &App) -> paneflow_config::schema::SessionState {
         paneflow_config::schema::SessionState {
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
             active_workspace: self.active_idx,
@@ -93,10 +88,7 @@ impl PaneFlowApp {
                 .map(|ws| paneflow_config::schema::WorkspaceSession {
                     title: ws.title.clone(),
                     cwd: ws.cwd.clone(),
-                    layout: match terms {
-                        Some(terms) => ws.serialize_layout_deferred(cx, terms),
-                        None => ws.serialize_layout(cx),
-                    },
+                    layout: ws.serialize_layout_without_scrollback(cx),
                     custom_buttons: ws.custom_buttons.clone(),
                     // US-007: store expanded dirs relative to the workspace
                     // root. A path that can't be made relative (symlinked
@@ -153,19 +145,16 @@ impl PaneFlowApp {
     /// US-011: persist the session WITHOUT blocking the GPUI main thread.
     ///
     /// The lightweight metadata snapshot is built here (render thread, cheap),
-    /// terminal handles collected, then the heavy work - per-pane scrollback
-    /// drain, JSON serialize, atomic write - runs on a background task. A burst
-    /// of saves (e.g. closing 20 workspaces) is coalesced into a single write
-    /// via a monotonic token + short debounce, so the most-recent snapshot
-    /// wins and the render thread never drains scrollback.
+    /// then JSON serialization and the atomic write run on a background task.
+    /// A burst of saves (e.g. closing 20 workspaces) is coalesced into a single
+    /// write via a monotonic token + short debounce, so the most-recent snapshot
+    /// wins.
     ///
     /// The quit / pre-update-install paths must use [`save_session_blocking`]
     /// instead - there the write has to land before the process exits or is
     /// replaced, so a deferred task would be lost.
     pub(crate) fn save_session(&self, cx: &App) {
-        let mut terms = Some(Vec::new());
-        let state = self.build_session_state(cx, &mut terms);
-        let terms = terms.unwrap_or_default();
+        let state = self.build_session_state(cx);
         let Some(path) = paneflow_config::loader::session_path() else {
             return;
         };
@@ -183,26 +172,12 @@ impl PaneFlowApp {
                 // latest state; skip this redundant write.
                 return;
             }
-            // `smol::unblock` keeps the scrollback drain + serialize + write off
-            // the background executor's async threads too.
+            // `smol::unblock` keeps serialization and filesystem I/O off the
+            // background executor's async threads.
             smol::unblock(move || {
-                let mut state = state;
-                let mut terms = terms.into_iter();
-                for ws in state.workspaces.iter_mut() {
-                    if let Some(layout) = ws.layout.as_mut() {
-                        crate::layout::fill_scrollback(layout, &mut terms);
-                    }
-                }
-                // Re-check the token AFTER the (potentially slow) drain, right
-                // before the write. The debounce check above only covers the
-                // sleep window; the drain itself takes real time, during which a
-                // quit-path `save_session_blocking` (or a newer deferred save)
-                // can bump `save_seq`. Without this second check the older
-                // snapshot would `rename` over the final write - the exact
-                // resurrection bug US-011 (c80eba5) set out to close, left open
-                // for the drain sub-window. Both writers also share the
-                // `session.json.tmp` path, so skipping here avoids a concurrent
-                // temp-file clobber too.
+                // Re-check inside the shared write lock. A quit-path blocking
+                // save or a newer deferred save may have superseded this task
+                // after its debounce check but before it reached the filesystem.
                 write_session_json_if_current(&path, &state, &save_seq, seq);
             })
             .await;
@@ -212,8 +187,7 @@ impl PaneFlowApp {
 
     /// US-011: synchronous session save for the quit / pre-update-install
     /// paths, where a deferred background write would be lost when the process
-    /// exits or is replaced. Drains scrollback inline on the calling thread -
-    /// acceptable because these paths are terminal and rare (one final save).
+    /// exits or is replaced.
     pub(crate) fn save_session_blocking(&self, cx: &App) {
         // Cancel any in-flight deferred save: bump the coalescing token so a
         // background task still sleeping in its debounce wakes to a stale `seq`
@@ -222,7 +196,7 @@ impl PaneFlowApp {
         // resurrecting pre-quit state (e.g. a just-closed workspace).
         self.save_seq
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let state = self.build_session_state(cx, &mut None);
+        let state = self.build_session_state(cx);
         let Some(path) = paneflow_config::loader::session_path() else {
             return;
         };
@@ -419,6 +393,7 @@ impl PaneFlowApp {
             let restored_layout = ws_session
                 .layout
                 .clone()
+                .map(without_persisted_scrollback)
                 .and_then(validated_layout_within_cap);
 
             let mut workspace = if let Some(layout) = restored_layout {
@@ -545,6 +520,8 @@ impl PaneFlowApp {
                         )
                     });
 
+                    // Explicit layout definitions may still seed scrollback.
+                    // Session restore clears the legacy field before this path.
                     if let Some(ref scrollback) = surface.scrollback {
                         t.read(cx).restore_scrollback(scrollback);
                     }
@@ -711,6 +688,26 @@ fn resolved_surface_cwd(raw: Option<&str>, fallback_cwd: &Path) -> PathBuf {
         fallback_cwd.display()
     );
     fallback_cwd.to_path_buf()
+}
+
+fn without_persisted_scrollback(mut layout: LayoutNode) -> LayoutNode {
+    fn clear(node: &mut LayoutNode) {
+        match node {
+            LayoutNode::Pane { surfaces } => {
+                for surface in surfaces {
+                    surface.scrollback = None;
+                }
+            }
+            LayoutNode::Split { children, .. } => {
+                for child in children {
+                    clear(child);
+                }
+            }
+        }
+    }
+
+    clear(&mut layout);
+    layout
 }
 
 /// Validate a persisted layout and enforce the hard `MAX_PANES` ceiling
@@ -1029,6 +1026,43 @@ mod tests {
     }
 
     #[test]
+    fn session_restore_discards_legacy_scrollback_recursively() {
+        let surface = |scrollback: &str| paneflow_config::schema::SurfaceDefinition {
+            scrollback: Some(scrollback.to_string()),
+            ..Default::default()
+        };
+        let layout = LayoutNode::Split {
+            direction: "horizontal".to_string(),
+            ratio: None,
+            ratios: None,
+            children: vec![
+                LayoutNode::Pane {
+                    surfaces: vec![surface("old pane")],
+                },
+                LayoutNode::Split {
+                    direction: "vertical".to_string(),
+                    ratio: None,
+                    ratios: None,
+                    children: vec![LayoutNode::Pane {
+                        surfaces: vec![surface("old nested pane")],
+                    }],
+                },
+            ],
+        };
+
+        let cleaned = without_persisted_scrollback(layout);
+        let mut pending = vec![&cleaned];
+        while let Some(node) = pending.pop() {
+            match node {
+                LayoutNode::Pane { surfaces } => {
+                    assert!(surfaces.iter().all(|surface| surface.scrollback.is_none()));
+                }
+                LayoutNode::Split { children, .. } => pending.extend(children),
+            }
+        }
+    }
+
+    #[test]
     fn validated_layout_within_cap_rejects_overshooting_deep_layout() {
         use paneflow_config::schema::LayoutNode;
         // A small, valid layout passes through unchanged.
@@ -1318,13 +1352,11 @@ mod tests {
         );
     }
 
-    /// Regression guard for the US-011 quit-path race (c80eba5 + the
-    /// drain-window follow-up): a deferred save that passed its debounce check
-    /// must STILL skip its write if `save_session_blocking` bumped the token
-    /// while the scrollback drain was running. Mirrors the re-check now placed
-    /// immediately before `write_session_json` inside the `smol::unblock` body.
+    /// Regression guard for the US-011 quit-path race: a deferred save that
+    /// passed its debounce check must still skip its write if a blocking or
+    /// newer save bumped the token before it acquired the write lock.
     #[test]
-    fn deferred_save_skips_write_when_superseded_during_drain() {
+    fn deferred_save_skips_write_when_superseded_before_write() {
         use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 
         let save_seq = AtomicU64::new(0);
@@ -1336,7 +1368,7 @@ mod tests {
             "deferred is latest pre-drain"
         );
 
-        // While it drains, a quit-path `save_session_blocking` bumps the token.
+        // Before it reaches the write lock, a blocking save bumps the token.
         save_seq.fetch_add(1, SeqCst);
 
         // The pre-write re-check inside `smol::unblock` must now observe the

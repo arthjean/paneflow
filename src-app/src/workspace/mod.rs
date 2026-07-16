@@ -298,16 +298,11 @@ impl Workspace {
         Some(tree.serialize(cx))
     }
 
-    /// US-011: like [`serialize_layout`] but defers the per-terminal scrollback
-    /// drain. The terminal handles are pushed into `terms` (surface-emission
-    /// order) so `save_session` can drain them off the GPUI main thread.
-    pub fn serialize_layout_deferred(
-        &self,
-        cx: &App,
-        terms: &mut Vec<crate::terminal::types::SharedTerm>,
-    ) -> Option<LayoutNode> {
+    /// Serialize the workspace for session persistence without terminal
+    /// output, which must remain local to the current process.
+    pub fn serialize_layout_without_scrollback(&self, cx: &App) -> Option<LayoutNode> {
         let tree = self.saved_layout.as_ref().or(self.root.as_ref())?;
-        Some(tree.serialize_deferred(cx, terms))
+        Some(tree.serialize_without_scrollback(cx))
     }
 
     /// Push the current `custom_buttons` list to every `Pane` in the
