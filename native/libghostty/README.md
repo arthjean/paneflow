@@ -20,6 +20,11 @@ otherwise it uses the bundled archive. `cargo build` only verifies and links
 those inputs. The manifest pins the archive hash for each supported target, so
 an unreviewed file under `target/` cannot change a standard build.
 
+The manifest also records the complete archive-member license inventory and
+pins `THIRD_PARTY_NOTICES.md` by SHA-256. The package verifier rejects a Linux
+artifact when its notice differs from that reviewed file, including truncated
+or stale copies.
+
 `bindings.rs` is the complete pregenerated bindgen output for the pinned
 header. Its checksum is recorded in `manifest.toml`, copied into every
 prepared target and verified before Cargo links the archive. The

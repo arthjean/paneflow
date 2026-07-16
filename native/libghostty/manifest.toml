@@ -7,6 +7,8 @@ header_path = "include/ghostty/vt.h"
 header_sha256 = "4967e3edfc5802648c280246e7aac66f36a28d7c3739727c0d2e2cd85c9f4eee"
 bindings_path = "native/libghostty/bindings.rs"
 bindings_sha256 = "a1f0876e144e69889ed1d9a5501ee7e254afe674985c93c703d61cee49da81d0"
+notice_path = "native/libghostty/THIRD_PARTY_NOTICES.md"
+notice_sha256 = "4e47e237c13f2fdabc427ab92b5ff8ff0bfb62fad8bc0cd695eed7384b52f956"
 api_version = "0.1.0"
 build_mode = "ReleaseFast"
 simd_profile = "upstream-default"
@@ -20,18 +22,60 @@ linux_targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
 
 [[licenses]]
 component = "libghostty-vt"
-version = "0.1.0-dev@ae52f97"
+version = "0.1.0-dev@ae52f97dcac558735cfa916ea3965f247e5c6e9e"
 license = "MIT"
 notice = "Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors"
 
 [[licenses]]
+component = "Zig compiler runtime"
+version = "0.15.2"
+license = "MIT"
+notice = "compiler_rt.o and generated Zig code bundled by the pinned Ghostty build"
+
+[[licenses]]
+component = "uucode"
+version = "0.2.0@54d650cf37948552f0c3d8168903e5e8a16901b8"
+license = "MIT"
+notice = "Copyright (c) 2026 Jacob Sandlund; statically compiled into libghostty-vt-static_zcu.o"
+
+[[licenses]]
+component = "Unicode Character Database"
+version = "17.0.0"
+license = "Unicode-3.0"
+notice = "Copyright 1991-2025 Unicode, Inc.; data bundled through uucode 0.2.0"
+
+[[licenses]]
+component = "Bjoern Hoehrmann UTF-8 DFA"
+version = "uucode-0.2.0-bundled"
+license = "MIT"
+notice = "Copyright (c) 2008-2009 Bjoern Hoehrmann"
+
+[[licenses]]
+component = "X.Org rgb data"
+version = "rgb-1.1.1@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e"
+license = "MIT"
+notice = "Copyright The Open Group and Oracle; data bundled by the pinned Ghostty source"
+
+[[licenses]]
+component = "foot kitty keymap"
+version = "c13495e26ef7c239b330dccf1afef44430b15543"
+license = "MIT"
+notice = "Copyright 2019 Daniel Eklöf; table bundled by the pinned Ghostty source"
+
+[[licenses]]
 component = "simdutf"
-version = "5.2.8"
-license = "Apache-2.0 OR MIT"
-notice = "Vendored by the pinned Ghostty source and statically bundled when SIMD is enabled"
+version = "9.0.0"
+license = "(Apache-2.0 OR MIT) AND BSD-3-Clause"
+notice = "Compiled amalgamation version; MIT selected for the main project with mandatory BSD ISA detection terms"
 
 [[licenses]]
 component = "highway"
-version = "1.2.0@66486a1"
-license = "Apache-2.0 AND BSD-3-Clause"
+version = "1.2.0@66486a10623fa0d72fe91260f96c892e41aceb06"
+license = "Apache-2.0 OR BSD-3-Clause"
 notice = "Copyright Google LLC and Arm Limited; vendored by the pinned Ghostty source"
+
+[[licenses]]
+component = "LLVM libc++ headers"
+version = "zig-0.15.2-bundled"
+license = "Apache-2.0 WITH LLVM-exception"
+notice = "C++ headers compiled into the libghostty-vt support objects"
