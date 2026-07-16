@@ -1,0 +1,37 @@
+schema_version = 1
+source_repository = "https://github.com/ghostty-org/ghostty.git"
+source_sha = "ae52f97dcac558735cfa916ea3965f247e5c6e9e"
+ghostty_app_version = "1.3.2-dev+ae52f97dc"
+zig_version = "0.15.2"
+header_path = "include/ghostty/vt.h"
+header_sha256 = "4967e3edfc5802648c280246e7aac66f36a28d7c3739727c0d2e2cd85c9f4eee"
+bindings_path = "native/libghostty/bindings.rs"
+bindings_sha256 = "a1f0876e144e69889ed1d9a5501ee7e254afe674985c93c703d61cee49da81d0"
+api_version = "0.1.0"
+build_mode = "ReleaseFast"
+simd_profile = "upstream-default"
+archive_normalization = "elfutils-strip-debug+ar-D"
+emit_mode = "lib-vt"
+archive_path = "lib/libghostty-vt.a"
+build_info_symbol = "ghostty_build_info"
+archive_sha256_x86_64_unknown_linux_gnu = "0d3e8fad7503658cb1fca3f1d78f2dc725dd3650264cebaa4ee30af9be619916"
+archive_sha256_aarch64_unknown_linux_gnu = "183c81ca54681587e79bceb4cee7751df35db7a0c3e55dd95a608d14b981fc87"
+linux_targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+
+[[licenses]]
+component = "libghostty-vt"
+version = "0.1.0-dev@ae52f97"
+license = "MIT"
+notice = "Copyright (c) 2024 Mitchell Hashimoto, Ghostty contributors"
+
+[[licenses]]
+component = "simdutf"
+version = "5.2.8"
+license = "Apache-2.0 OR MIT"
+notice = "Vendored by the pinned Ghostty source and statically bundled when SIMD is enabled"
+
+[[licenses]]
+component = "highway"
+version = "1.2.0@66486a1"
+license = "Apache-2.0 AND BSD-3-Clause"
+notice = "Copyright Google LLC and Arm Limited; vendored by the pinned Ghostty source"

@@ -1,0 +1,31 @@
+[package]
+name = "paneflow-ghostty-smoke"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+native = [
+    "dep:paneflow-terminal-ghostty",
+    "dep:portable-pty",
+    "paneflow-terminal-ghostty/native",
+]
+
+[[bin]]
+name = "paneflow-ghostty-smoke"
+path = "src/main.rs"
+required-features = ["native"]
+
+[dependencies]
+anyhow.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc.workspace = true
+paneflow-terminal-ghostty = { path = "../paneflow-terminal-ghostty", optional = true }
+portable-pty = { version = "0.9.0", optional = true }
+
+[lints]
+workspace = true

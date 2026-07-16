@@ -1,0 +1,19 @@
+[package]
+name = "paneflow-libghostty-sys"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+links = "ghostty-vt"
+build = "build.rs"
+publish = false
+
+[features]
+default = []
+link = []
+
+[build-dependencies]
+sha2 = "0.10"
+
+[lints]
+workspace = true

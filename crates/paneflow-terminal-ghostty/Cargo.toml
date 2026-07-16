@@ -1,0 +1,23 @@
+[package]
+name = "paneflow-terminal-ghostty"
+version.workspace = true
+edition = "2024"
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[features]
+default = []
+native = ["dep:paneflow-libghostty-sys", "paneflow-libghostty-sys/link"]
+
+[dependencies]
+base64 = "0.22"
+regex = "1"
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+paneflow-libghostty-sys = { path = "../paneflow-libghostty-sys", optional = true }
+
+[lints]
+workspace = true
