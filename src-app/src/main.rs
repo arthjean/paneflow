@@ -319,6 +319,27 @@ impl StartupSplashView {
     }
 }
 
+fn app_backdrop_background(
+    background: gpui::Hsla,
+    is_window_active: bool,
+    native_material_active: bool,
+    terminal_material_visible: bool,
+) -> gpui::Hsla {
+    #[cfg(target_os = "linux")]
+    if terminal_material_visible {
+        return gpui::transparent_black();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    let _ = terminal_material_visible;
+
+    crate::app::constants::cockpit_backdrop_background(
+        background,
+        is_window_active,
+        native_material_active,
+    )
+}
+
 fn native_backdrop_material_active(
     mode: paneflow_config::schema::AppMode,
     settings_open: bool,
@@ -356,8 +377,8 @@ fn should_extract_mcp_bridge_for_cli(args: &[String]) -> bool {
 #[cfg(test)]
 mod native_material_tests {
     use super::{
-        native_backdrop_material_active, should_extract_mcp_bridge_for_cli,
-        should_load_login_shell_env_for_startup,
+        app_backdrop_background, native_backdrop_material_active,
+        should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup,
     };
     use paneflow_config::schema::AppMode;
 
@@ -405,6 +426,22 @@ mod native_material_tests {
             false,
             true
         ));
+    }
+
+    #[test]
+    fn terminal_material_only_clears_the_linux_window_backdrop() {
+        let background = gpui::hsla(0.0, 0.0, 0.2, 1.0);
+
+        assert_eq!(
+            app_backdrop_background(background, true, false, false),
+            background
+        );
+
+        let visible = app_backdrop_background(background, true, false, true);
+        #[cfg(target_os = "linux")]
+        assert_eq!(visible, gpui::transparent_black());
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(visible, background);
     }
 
     #[test]
@@ -498,6 +535,30 @@ fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> impl IntoEl
         },
     )
     .size_full()
+}
+
+fn terminal_material_csd_frame(tiling: gpui::Tiling, background: gpui::Hsla) -> impl IntoElement {
+    div()
+        .id("terminal-material-csd-frame")
+        .absolute()
+        .size_full()
+        .border_color(background)
+        .when(!(tiling.top || tiling.left), |frame| {
+            frame.rounded_tl(RESIZE_BORDER)
+        })
+        .when(!(tiling.top || tiling.right), |frame| {
+            frame.rounded_tr(RESIZE_BORDER)
+        })
+        .when(!(tiling.bottom || tiling.left), |frame| {
+            frame.rounded_bl(RESIZE_BORDER)
+        })
+        .when(!(tiling.bottom || tiling.right), |frame| {
+            frame.rounded_br(RESIZE_BORDER)
+        })
+        .when(!tiling.top, |frame| frame.border_t(RESIZE_BORDER))
+        .when(!tiling.bottom, |frame| frame.border_b(RESIZE_BORDER))
+        .when(!tiling.left, |frame| frame.border_l(RESIZE_BORDER))
+        .when(!tiling.right, |frame| frame.border_r(RESIZE_BORDER))
 }
 
 fn startup_splash_letter(
@@ -1466,22 +1527,35 @@ impl Render for PaneFlowApp {
         // mask would read as a square patch. The 5px inset keeps opaque content
         // (terminal cells, diff rows, settings cards) off the arc, since GPUI
         // does NOT clip children to the radius. The Cli pane grid normally
-        // keeps the terminal background; on Windows terminal material it lets
-        // the native backdrop show through. Diff / Agents / Settings use the
-        // #181818 surface.
-        let terminal_material_active = self.cached_config.windows_terminal_material_enabled();
+        // keeps the terminal background; terminal material lets the native
+        // backdrop show through. Diff / Agents / Settings use the #181818
+        // surface.
+        let terminal_material_active = self.cached_config.terminal_material_enabled();
         let chrome_material_active = self.cached_config.cockpit_chrome_material_enabled();
+        let terminal_surface_mounted = self.active_workspace().is_some_and(|ws| ws.root.is_some());
+        let terminal_material_visible = !settings_open
+            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+            && terminal_surface_mounted
+            && terminal_material_active;
+        let linux_terminal_material_visible =
+            terminal_material_visible && self.cached_config.linux_terminal_material_enabled();
         let native_material_active = native_backdrop_material_active(
             self.mode,
             settings_open,
             terminal_material_active,
             chrome_material_active,
         );
+        let app_backdrop_bg = app_backdrop_background(
+            theme.title_bar_background,
+            window.is_window_active(),
+            native_material_active,
+            terminal_material_visible,
+        );
         let panel_bg = if settings_open {
             ui.base
         } else {
             match self.mode {
-                paneflow_config::schema::AppMode::Cli if terminal_material_active => {
+                paneflow_config::schema::AppMode::Cli if terminal_material_visible => {
                     gpui::transparent_black()
                 }
                 paneflow_config::schema::AppMode::Cli => theme.background,
@@ -1497,6 +1571,7 @@ impl Render for PaneFlowApp {
             chrome_material_active,
         );
         let panel_top = title_bar_h;
+        let panel_inset = px(5.);
         let primary_sidebar_width = self.rendered_primary_sidebar_width(window);
         let primary_sidebar_mounted = self.settings_section.is_some()
             || self.primary_sidebar_visible
@@ -1520,7 +1595,11 @@ impl Render for PaneFlowApp {
                     },
                     title_bar_height: f32::from(title_bar_h),
                     title_bar_spans_window: true,
+                    terminal_blur: terminal_material_visible,
                 },
+            );
+            crate::window_chrome::linux_backdrop::set_terminal_material_requested(
+                terminal_material_visible,
             );
             crate::window_chrome::linux_backdrop::refresh_blur_region(window);
         }
@@ -1785,15 +1864,44 @@ impl Render for PaneFlowApp {
                     .flex_row()
                     .flex_1()
                     .overflow_hidden()
+                    .relative()
                     // The row backdrop must be transparent when either chrome
                     // material is enabled or the visible CLI terminal asks for
                     // material. Sidebars/title bar still paint their own opaque
                     // fills when Chrome material is off.
-                    .bg(crate::app::constants::cockpit_backdrop_background(
-                        theme.title_bar_background,
-                        window.is_window_active(),
-                        native_material_active,
-                    ))
+                    .bg(app_backdrop_bg)
+                    // Sidebar content fades during width animations. Keep a
+                    // stable chrome fill behind it so terminal-only material
+                    // never exposes unblurred desktop pixels in the rail area.
+                    .when(
+                        terminal_material_visible && primary_sidebar_mounted,
+                        |row| {
+                            row.child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .top_0()
+                                    .bottom_0()
+                                    .w(px(primary_sidebar_width))
+                                    .bg(panel_corner_mask_bg),
+                            )
+                        },
+                    )
+                    .when(terminal_material_visible && secondary_sidebar_open, |row| {
+                        row.child(
+                            div()
+                                .absolute()
+                                .right_0()
+                                .top_0()
+                                .bottom_0()
+                                .w(px(if sessions_sidebar_mounted {
+                                    sessions_sidebar_width
+                                } else {
+                                    files_sidebar_width
+                                }))
+                                .bg(panel_corner_mask_bg),
+                        )
+                    })
                     // While settings is open the left rail becomes the Codex
                     // settings nav (kept visible even if the user had hidden the
                     // primary rail, so the back button is always reachable).
@@ -1873,8 +1981,10 @@ impl Render for PaneFlowApp {
                             // rounded. GPUI clips the panel's bg fill to the radius
                             // but NOT its children, so the 5px inset keeps opaque
                             // content (terminal cells, diff rows, settings cards)
-                            // off the arc; the window backdrop then shows in the
-                            // corner notch (a clean radius on every platform).
+                            // off the arc. On Linux terminal material, the panel
+                            // stays transparent and each terminal pane paints its
+                            // own translucent body; opaque inset bands keep blur
+                            // out of the surrounding panel chrome.
                             .child(div().h(title_bar_h).flex_none())
                             .child(
                                 div()
@@ -1887,8 +1997,47 @@ impl Render for PaneFlowApp {
                                     .bg(panel_bg)
                                     .rounded_tl(px(16.))
                                     .when(secondary_sidebar_open, |d| d.rounded_tr(px(16.)))
-                                    .p(px(5.))
-                                    .child(main_content),
+                                    .p(panel_inset)
+                                    .child(main_content)
+                                    .when(linux_terminal_material_visible, |panel| {
+                                        panel
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .left_0()
+                                                    .right_0()
+                                                    .top_0()
+                                                    .h(panel_inset)
+                                                    .bg(panel_corner_mask_bg),
+                                            )
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .left_0()
+                                                    .right_0()
+                                                    .bottom_0()
+                                                    .h(panel_inset)
+                                                    .bg(panel_corner_mask_bg),
+                                            )
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .left_0()
+                                                    .top(panel_inset)
+                                                    .bottom(panel_inset)
+                                                    .w(panel_inset)
+                                                    .bg(panel_corner_mask_bg),
+                                            )
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .right_0()
+                                                    .top(panel_inset)
+                                                    .bottom(panel_inset)
+                                                    .w(panel_inset)
+                                                    .bg(panel_corner_mask_bg),
+                                            )
+                                    }),
                             )
                             // GPUI clips overflow with a rectangular content
                             // mask, so rounded panel children can still paint
@@ -2089,15 +2238,18 @@ impl Render for PaneFlowApp {
         // Outer backdrop div - provides the invisible resize border zone for CSD
         div()
             .id("window-backdrop")
-            .bg(crate::app::constants::cockpit_backdrop_background(
-                theme.title_bar_background,
-                window.is_window_active(),
-                native_material_active,
-            ))
+            .bg(app_backdrop_bg)
             .size_full()
             .map(|d| match decorations {
                 Decorations::Server => d,
                 Decorations::Client { tiling } => d
+                    // The window surface must stay alpha-capable for the
+                    // terminal, but the CSD resize inset is chrome. Paint an
+                    // opaque rounded ring inside that inset so only the pane
+                    // content can reveal the compositor backdrop.
+                    .when(linux_terminal_material_visible, |d| {
+                        d.child(terminal_material_csd_frame(tiling, panel_corner_mask_bg))
+                    })
                     // Resize cursor canvas (absolute overlay for the full window)
                     .child(
                         canvas(
@@ -2865,7 +3017,10 @@ fn main() {
                         );
                     }
                     #[cfg(target_os = "linux")]
-                    crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(window);
+                    crate::window_chrome::linux_backdrop::apply_subtle_chrome_material(
+                        window,
+                        config.terminal_material_enabled(),
+                    );
 
                     cx.new(StartupSplashView::new)
                 },

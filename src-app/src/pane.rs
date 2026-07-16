@@ -78,9 +78,37 @@ fn tab_colors() -> crate::theme::UiColors {
 }
 
 fn tab_bar_background(theme: &crate::theme::TerminalTheme, terminal_material_active: bool) -> Hsla {
-    if terminal_material_active {
+    if terminal_material_active && cfg!(target_os = "windows") {
         gpui::transparent_black()
     } else {
+        theme.background
+    }
+}
+
+#[cfg(target_os = "linux")]
+const LINUX_TERMINAL_MATERIAL_OPACITY: f32 = 0.82;
+
+fn pane_content_background(
+    theme: &crate::theme::TerminalTheme,
+    terminal_material_active: bool,
+    terminal_selected: bool,
+) -> Hsla {
+    if !terminal_material_active || !terminal_selected {
+        return theme.background;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        theme.background.opacity(LINUX_TERMINAL_MATERIAL_OPACITY)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        gpui::transparent_black()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    {
         theme.background
     }
 }
@@ -764,7 +792,7 @@ impl Pane {
         config: &paneflow_config::schema::PaneFlowConfig,
         cx: &mut Context<Self>,
     ) {
-        let terminal_material_active = config.windows_terminal_material_enabled();
+        let terminal_material_active = config.terminal_material_enabled();
         let integrated_glyphs_enabled = config
             .terminal
             .as_ref()
@@ -1429,14 +1457,10 @@ impl Pane {
         // indicator drawn during a same-pane reorder hover.
         let self_entity = cx.entity();
         let accent = ui.accent;
-        // Tab strip uses the terminal background so it melts into the terminal
-        // body below it - one clean surface (Arthur). When Windows terminal
-        // material is enabled, the strip goes transparent too so the tab bar
-        // and terminal body share the same native backdrop.
-        let bar_bg = tab_bar_background(
-            &theme,
-            self.cached_config.windows_terminal_material_enabled(),
-        );
+        // Windows keeps the historical fully transparent strip over Mica.
+        // Linux leaves the strip opaque so its terminal-only material never
+        // leaks into pane chrome.
+        let bar_bg = tab_bar_background(&theme, self.cached_config.terminal_material_enabled());
 
         // Outer container: full-width, fixed height, tab_bar background. The
         // chips are shorter than the bar, so center them vertically to float.
@@ -2239,12 +2263,19 @@ impl gpui::Focusable for Pane {
 
 impl Render for Pane {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = match self.tabs.get(self.selected_idx) {
+        let selected_tab = self.tabs.get(self.selected_idx);
+        let terminal_selected = matches!(selected_tab, Some(TabContent::Terminal(_)));
+        let body = match selected_tab {
             Some(TabContent::Terminal(t)) => t.clone().into_any_element(),
             Some(TabContent::Markdown(m)) => m.clone().into_any_element(),
             Some(TabContent::Diff(d)) => d.clone().into_any_element(),
             None => div().size_full().into_any_element(),
         };
+        let content_background = pane_content_background(
+            &crate::theme::active_theme(),
+            self.cached_config.terminal_material_enabled(),
+            terminal_selected,
+        );
 
         // EP-003 drop-to-split: the content region hosts the drag-move
         // direction probe, the drop commit, and the blue preview overlay.
@@ -2422,6 +2453,7 @@ impl Render for Pane {
             .flex_1()
             .size_full()
             .overflow_hidden()
+            .bg(content_background)
             // US-007: map the cursor within the content bounds to a split edge.
             // Stays on `content` (full pane) - the overlay shrinks to a half
             // when `dir = Some(edge)`, so probing there would miss the cursor
@@ -2495,14 +2527,43 @@ impl Render for Pane {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_TAB_TITLE_LEN, peek_badge_line, tab_bar_background, truncate_tab_title};
+    use super::{
+        MAX_TAB_TITLE_LEN, pane_content_background, peek_badge_line, tab_bar_background,
+        truncate_tab_title,
+    };
 
     #[test]
-    fn terminal_material_makes_tab_bar_transparent() {
+    fn terminal_material_scopes_tab_bar_by_platform() {
         let theme = crate::theme::one_dark();
 
         assert_eq!(tab_bar_background(&theme, false), theme.background);
-        assert_eq!(tab_bar_background(&theme, true).a, 0.0);
+        if cfg!(target_os = "windows") {
+            assert_eq!(tab_bar_background(&theme, true).a, 0.0);
+        } else {
+            assert_eq!(tab_bar_background(&theme, true), theme.background);
+        }
+    }
+
+    #[test]
+    fn terminal_material_is_scoped_to_selected_terminal_content() {
+        let theme = crate::theme::one_dark();
+
+        assert_eq!(
+            pane_content_background(&theme, true, false),
+            theme.background
+        );
+        assert_eq!(
+            pane_content_background(&theme, false, true),
+            theme.background
+        );
+
+        let material = pane_content_background(&theme, true, true);
+        #[cfg(target_os = "linux")]
+        assert_eq!(material.a, super::LINUX_TERMINAL_MATERIAL_OPACITY);
+        #[cfg(target_os = "windows")]
+        assert_eq!(material.a, 0.0);
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+        assert_eq!(material, theme.background);
     }
 
     #[test]

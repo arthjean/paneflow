@@ -85,6 +85,11 @@
       "description": "Windows-only. When true, CLI terminal default backgrounds are transparent so the active native window backdrop (Mica, blur, or transparent) can show through. Other platforms ignore this field.",
       "default": false
     },
+    "linux_terminal_material": {
+      "type": ["boolean", "null"],
+      "description": "Linux-only. When true, CLI terminal default backgrounds are translucent and Paneflow requests compositor blur. Transparency remains active when blur is unavailable. Other platforms ignore this field.",
+      "default": false
+    },
     "windows_chrome_material": {
       "type": ["boolean", "null"],
       "description": "Windows-only. When true, sidebars and the title bar are transparent so the active native window backdrop (Mica, blur, or transparent) can show through around the terminal. Other platforms ignore this field.",
