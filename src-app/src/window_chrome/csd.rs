@@ -3,9 +3,10 @@
 //! window-button layout across multiple files.
 
 use gpui::{
-    AnyElement, App, Bounds, ClickEvent, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, Point, ResizeEdge, SharedString, Size, Styled, Window, WindowButton,
-    WindowButtonLayout, WindowControlArea, WindowControls, div, point, prelude::*, px, size, svg,
+    AnyElement, App, Bounds, ClickEvent, CursorStyle, Decorations, HitboxBehavior, Hsla,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, ResizeEdge,
+    SharedString, Size, Styled, Tiling, Window, WindowButton, WindowButtonLayout,
+    WindowControlArea, WindowControls, canvas, div, point, prelude::*, px, size, svg,
 };
 
 /// Default button layout when the DE doesn't provide one.
@@ -17,6 +18,177 @@ pub fn default_button_layout() -> WindowButtonLayout {
             Some(WindowButton::Maximize),
             Some(WindowButton::Close),
         ],
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ClientDecorationGeometry {
+    free_top: bool,
+    free_bottom: bool,
+    free_left: bool,
+    free_right: bool,
+    round_top_left: bool,
+    round_top_right: bool,
+    round_bottom_left: bool,
+    round_bottom_right: bool,
+    draw_shadow: bool,
+}
+
+impl ClientDecorationGeometry {
+    fn from_tiling(tiling: Tiling) -> Self {
+        let free_top = !tiling.top;
+        let free_bottom = !tiling.bottom;
+        let free_left = !tiling.left;
+        let free_right = !tiling.right;
+        Self {
+            free_top,
+            free_bottom,
+            free_left,
+            free_right,
+            round_top_left: free_top && free_left,
+            round_top_right: free_top && free_right,
+            round_bottom_left: free_bottom && free_left,
+            round_bottom_right: free_bottom && free_right,
+            draw_shadow: !tiling.is_tiled(),
+        }
+    }
+}
+
+/// Wrap application content in a native-looking client-side decoration shell.
+///
+/// The outer inset belongs to the compositor shadow and resize hitbox, so it
+/// must stay transparent. The themed application surface lives in the inner
+/// rounded element and drops its radius, border, and padding edge-by-edge when
+/// the compositor tiles or maximizes the window.
+pub(crate) fn client_side_window_shell(
+    content: impl IntoElement,
+    window: &mut Window,
+    background: Hsla,
+    border_color: Hsla,
+) -> impl IntoElement {
+    let decorations = window.window_decorations();
+    match decorations {
+        Decorations::Client { .. } => window.set_client_inset(crate::RESIZE_BORDER),
+        Decorations::Server => window.set_client_inset(px(0.0)),
+    }
+
+    let mut outer = div().id("window-backdrop").relative().size_full();
+    let mut surface = div()
+        .id("window-surface")
+        .size_full()
+        .cursor(CursorStyle::Arrow)
+        .bg(background)
+        .child(content);
+
+    match decorations {
+        Decorations::Server => outer.child(surface),
+        Decorations::Client { tiling } => {
+            let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            surface = surface
+                .border_color(border_color)
+                .when(geometry.round_top_left, |surface| {
+                    surface.rounded_tl(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
+                .when(geometry.round_top_right, |surface| {
+                    surface.rounded_tr(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
+                .when(geometry.round_bottom_left, |surface| {
+                    surface.rounded_bl(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
+                .when(geometry.round_bottom_right, |surface| {
+                    surface.rounded_br(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
+                .when(geometry.free_top, |surface| {
+                    surface.border_t(crate::app::constants::WINDOW_BORDER_SIZE)
+                })
+                .when(geometry.free_bottom, |surface| {
+                    surface.border_b(crate::app::constants::WINDOW_BORDER_SIZE)
+                })
+                .when(geometry.free_left, |surface| {
+                    surface.border_l(crate::app::constants::WINDOW_BORDER_SIZE)
+                })
+                .when(geometry.free_right, |surface| {
+                    surface.border_r(crate::app::constants::WINDOW_BORDER_SIZE)
+                })
+                .when(geometry.draw_shadow, |surface| {
+                    surface.shadow(vec![
+                        gpui::BoxShadow::new(px(0.0), px(0.0), gpui::hsla(0.0, 0.0, 0.0, 0.4))
+                            .blur_radius(crate::RESIZE_BORDER / 2.0),
+                    ])
+                });
+
+            outer = outer
+                .bg(gpui::transparent_black())
+                .when(geometry.free_top, |outer| outer.pt(crate::RESIZE_BORDER))
+                .when(geometry.free_bottom, |outer| outer.pb(crate::RESIZE_BORDER))
+                .when(geometry.free_left, |outer| outer.pl(crate::RESIZE_BORDER))
+                .when(geometry.free_right, |outer| outer.pr(crate::RESIZE_BORDER))
+                .on_mouse_move(move |event, window, _| {
+                    let window_size = window.window_bounds().get_bounds().size;
+                    if resize_edge(
+                        event.position,
+                        crate::RESIZE_BORDER * 2.0,
+                        window_size,
+                        tiling,
+                    )
+                    .is_some()
+                    {
+                        window.refresh();
+                    }
+                })
+                .on_mouse_down(MouseButton::Left, move |event, window, _| {
+                    let window_size = window.window_bounds().get_bounds().size;
+                    if let Some(edge) =
+                        resize_edge(event.position, crate::RESIZE_BORDER, window_size, tiling)
+                    {
+                        window.start_window_resize(edge);
+                    }
+                })
+                .child(surface)
+                .child(
+                    canvas(
+                        |_bounds, window, _| {
+                            window.insert_hitbox(
+                                Bounds::new(
+                                    point(px(0.0), px(0.0)),
+                                    window.window_bounds().get_bounds().size,
+                                ),
+                                HitboxBehavior::Normal,
+                            )
+                        },
+                        move |_bounds, hitbox, window, _| {
+                            let Some(edge) = resize_edge(
+                                window.mouse_position(),
+                                crate::RESIZE_BORDER,
+                                window.window_bounds().get_bounds().size,
+                                tiling,
+                            ) else {
+                                return;
+                            };
+                            window.set_cursor_style(
+                                match edge {
+                                    ResizeEdge::Top | ResizeEdge::Bottom => {
+                                        CursorStyle::ResizeUpDown
+                                    }
+                                    ResizeEdge::Left | ResizeEdge::Right => {
+                                        CursorStyle::ResizeLeftRight
+                                    }
+                                    ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
+                                        CursorStyle::ResizeUpLeftDownRight
+                                    }
+                                    ResizeEdge::TopRight | ResizeEdge::BottomLeft => {
+                                        CursorStyle::ResizeUpRightDownLeft
+                                    }
+                                },
+                                &hitbox,
+                            );
+                        },
+                    )
+                    .size_full()
+                    .absolute(),
+                );
+            outer
+        }
     }
 }
 
@@ -236,4 +408,42 @@ pub(crate) fn render_window_button(
         })
     })
     .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ClientDecorationGeometry;
+    use gpui::Tiling;
+
+    #[test]
+    fn free_window_rounds_and_insets_every_edge() {
+        assert_eq!(
+            ClientDecorationGeometry::from_tiling(Tiling::default()),
+            ClientDecorationGeometry {
+                free_top: true,
+                free_bottom: true,
+                free_left: true,
+                free_right: true,
+                round_top_left: true,
+                round_top_right: true,
+                round_bottom_left: true,
+                round_bottom_right: true,
+                draw_shadow: true,
+            }
+        );
+    }
+
+    #[test]
+    fn tiled_top_edge_loses_top_rounding_padding_and_shadow() {
+        let geometry = ClientDecorationGeometry::from_tiling(Tiling {
+            top: true,
+            ..Tiling::default()
+        });
+        assert!(!geometry.free_top);
+        assert!(!geometry.round_top_left);
+        assert!(!geometry.round_top_right);
+        assert!(geometry.round_bottom_left);
+        assert!(geometry.round_bottom_right);
+        assert!(!geometry.draw_shadow);
+    }
 }

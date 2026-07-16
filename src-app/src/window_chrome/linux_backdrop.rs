@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, anyhow};
-use gpui::{Window, WindowBackgroundAppearance};
+use gpui::{Decorations, Window, WindowBackgroundAppearance};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 
 const LINUX_NATIVE_BACKDROP_ENV: &str = "PANEFLOW_LINUX_NATIVE_BACKDROP";
@@ -57,6 +57,28 @@ fn native_blur_is_active(capability_available: bool, refresh_succeeded: bool) ->
     capability_available && refresh_succeeded
 }
 
+fn unblurred_surface_appearance(
+    client_decorated: bool,
+    explicit_alpha_required: bool,
+) -> WindowBackgroundAppearance {
+    if client_decorated && explicit_alpha_required {
+        WindowBackgroundAppearance::Transparent
+    } else {
+        WindowBackgroundAppearance::Opaque
+    }
+}
+
+fn unblurred_window_appearance(window: &Window) -> WindowBackgroundAppearance {
+    let client_decorated = matches!(window.window_decorations(), Decorations::Client { .. });
+    let explicit_alpha_required = HasDisplayHandle::display_handle(window).is_ok_and(|handle| {
+        matches!(
+            handle.as_raw(),
+            RawDisplayHandle::Xcb(_) | RawDisplayHandle::Xlib(_)
+        )
+    });
+    unblurred_surface_appearance(client_decorated, explicit_alpha_required)
+}
+
 fn native_backdrop_enabled() -> bool {
     match std::env::var(LINUX_NATIVE_BACKDROP_ENV) {
         Ok(value) => matches!(
@@ -74,7 +96,7 @@ pub(crate) fn apply_subtle_chrome_material(window: &mut Window) {
             slot.borrow_mut().take();
         });
         NATIVE_BLUR_ACTIVE.store(false, Ordering::Relaxed);
-        window.set_background_appearance(WindowBackgroundAppearance::Opaque);
+        window.set_background_appearance(unblurred_window_appearance(window));
         window.refresh();
         return;
     }
@@ -108,7 +130,7 @@ pub(crate) fn refresh_blur_region(window: &mut Window) {
             slot.borrow_mut().take();
         });
         NATIVE_BLUR_ACTIVE.store(false, Ordering::Relaxed);
-        window.set_background_appearance(WindowBackgroundAppearance::Opaque);
+        window.set_background_appearance(unblurred_window_appearance(window));
         return;
     }
 
@@ -131,7 +153,7 @@ pub(crate) fn refresh_blur_region(window: &mut Window) {
         window.set_background_appearance(if active {
             backdrop.background_appearance()
         } else {
-            WindowBackgroundAppearance::Opaque
+            unblurred_window_appearance(window)
         });
     });
 }
@@ -592,7 +614,27 @@ impl Drop for X11Backdrop {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChromeGeometry, chrome_rectangles_for_geometry, native_blur_is_active};
+    use super::{
+        ChromeGeometry, chrome_rectangles_for_geometry, native_blur_is_active,
+        unblurred_surface_appearance,
+    };
+    use gpui::WindowBackgroundAppearance;
+
+    #[test]
+    fn only_x11_client_surfaces_require_explicit_alpha() {
+        assert_eq!(
+            unblurred_surface_appearance(true, true),
+            WindowBackgroundAppearance::Transparent
+        );
+        assert_eq!(
+            unblurred_surface_appearance(true, false),
+            WindowBackgroundAppearance::Opaque
+        );
+        assert_eq!(
+            unblurred_surface_appearance(false, true),
+            WindowBackgroundAppearance::Opaque
+        );
+    }
 
     #[test]
     fn chrome_material_requests_only_chrome_regions() {

@@ -10,20 +10,11 @@ use gpui::{Hsla, Pixels, WindowBackgroundAppearance, px};
 /// Sidebar width in pixels - shared between sidebar and title bar for alignment.
 pub(crate) const SIDEBAR_WIDTH: f32 = 240.;
 
-/// Dark cockpit tint used as a Linux readability veil over native blur.
-#[cfg(target_os = "linux")]
-const DARK_CHROME_TINT: u32 = 0x141414;
-/// Linux-only: opacity of the neutral `#141414` veil applied over native blur
-/// while the window is active (see `cockpit_chrome_background`). Only referenced
-/// from the `#[cfg(target_os = "linux")]` branch, so gate the declaration too -
-/// otherwise it reads as dead code on the Windows/macOS builds.
+/// Linux-only: opacity of a dark custom theme over native compositor blur.
 #[cfg(target_os = "linux")]
 const LINUX_CHROME_ACTIVE_OPACITY: f32 = 0.72;
 /// Linux blur protocols expose a region but no semantic light/dark material.
-/// A near-opaque cool tint keeps PaneFlow Light readable over every wallpaper
-/// while still leaving a restrained amount of compositor blur visible.
-#[cfg(target_os = "linux")]
-const LINUX_LIGHT_CHROME_TINT: u32 = 0xf5f7fd;
+/// Keep light themes nearly opaque so text remains readable over every wallpaper.
 #[cfg(target_os = "linux")]
 const LINUX_LIGHT_CHROME_OPACITY: f32 = 0.94;
 
@@ -46,8 +37,9 @@ pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 ///
 /// Windows delegates to GPUI's system backdrop support. On macOS PaneFlow
 /// installs a semantic AppKit sidebar material after the native window opens.
-/// Linux stays opaque: compositor blur/transparency protocols are too uneven
-/// across Wayland/X11 stacks to make rounded CSD borders look intentional.
+/// Linux starts opaque. Once the native handle exists, the Linux window layer
+/// enables explicit alpha only for X11 CSD; Wayland CSD is alpha-capable by
+/// construction and can keep opaque text rendering semantics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum WindowBackdropPreference {
     Auto,
@@ -127,7 +119,13 @@ fn window_background_appearance_for_preference(
         }
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    #[cfg(target_os = "linux")]
+    {
+        let _ = preference;
+        WindowBackgroundAppearance::Opaque
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = preference;
         WindowBackgroundAppearance::Opaque
@@ -180,66 +178,26 @@ fn windows_supports_system_backdrop() -> bool {
     unsafe { RtlGetVersion(&mut version) >= 0 && version.build >= 22_621 }
 }
 
-/// Background used by the title bar and navigation rails.
+/// Transparent fill used by chrome children inside the window shell.
 ///
-/// When material is enabled, Windows and macOS keep the app chrome transparent
-/// so the platform-owned material, including any inactive-window fallback,
-/// remains unobscured. Linux adds a theme-aware tint because its Wayland/X11
-/// blur protocols define regions, not semantic light/dark materials.
+/// The rounded shell owns the actual theme tint. Keeping title-adjacent rails
+/// transparent prevents their rectangular backgrounds from repainting pixels
+/// outside the shell's corner radius, since GPUI overflow masks are rectangular.
 pub(crate) fn cockpit_chrome_background(
-    background: Hsla,
-    is_window_active: bool,
-    material_active: bool,
+    _background: Hsla,
+    _is_window_active: bool,
+    _material_active: bool,
 ) -> Hsla {
-    #[cfg(not(target_os = "linux"))]
-    let _ = is_window_active;
-
-    if !material_active {
-        return background;
-    }
-
-    if background.l > 0.5 {
-        if cfg!(any(target_os = "windows", target_os = "macos")) {
-            return gpui::transparent_black();
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            let tint = Hsla::from(gpui::rgb(LINUX_LIGHT_CHROME_TINT));
-            return if crate::window_chrome::linux_backdrop::native_blur_active() {
-                tint.opacity(LINUX_LIGHT_CHROME_OPACITY)
-            } else {
-                tint
-            };
-        }
-
-        #[cfg(not(target_os = "linux"))]
-        return background;
-    }
-
-    if cfg!(any(target_os = "windows", target_os = "macos")) {
-        return gpui::transparent_black();
-    }
-
-    #[cfg(target_os = "linux")]
-    if crate::window_chrome::linux_backdrop::native_blur_active() {
-        return if is_window_active {
-            Hsla::from(gpui::rgb(DARK_CHROME_TINT)).opacity(LINUX_CHROME_ACTIVE_OPACITY)
-        } else {
-            Hsla::from(gpui::rgb(DARK_CHROME_TINT))
-        };
-    }
-
-    background
+    gpui::transparent_black()
 }
 
 /// Window-level backdrop behind the translucent chrome.
 ///
 /// This is what the rounded panel corners reveal in their clip notch, so it MUST
-/// match the rail ([`cockpit_chrome_background`]) - otherwise the corner exposes
-/// a different surface than the rail and the radius reads as a square patch.
-/// Native semantic materials remain raw; Linux uses the same theme tint here as
-/// the rail because its blur protocols do not expose light/dark appearances.
+/// show through the transparent rail ([`cockpit_chrome_background`]) - otherwise
+/// the corner exposes a different surface and the radius reads as a square patch.
+/// Native semantic materials remain raw. Linux uses a theme-aware shell tint
+/// because its blur protocols do not expose light/dark appearances.
 pub(crate) fn cockpit_backdrop_background(
     background: Hsla,
     is_window_active: bool,
@@ -257,23 +215,33 @@ pub(crate) fn cockpit_backdrop_background(
     }
 
     #[cfg(target_os = "linux")]
-    if background.l > 0.5 {
-        let tint = Hsla::from(gpui::rgb(LINUX_LIGHT_CHROME_TINT));
-        return if crate::window_chrome::linux_backdrop::native_blur_active() {
-            tint.opacity(LINUX_LIGHT_CHROME_OPACITY)
-        } else {
-            tint
-        };
-    } else if crate::window_chrome::linux_backdrop::native_blur_active() {
-        let tint = Hsla::from(gpui::rgb(DARK_CHROME_TINT));
-        return if is_window_active {
-            tint.opacity(LINUX_CHROME_ACTIVE_OPACITY)
-        } else {
-            tint
-        };
+    return linux_theme_backdrop_background(
+        background,
+        is_window_active,
+        crate::window_chrome::linux_backdrop::native_blur_active(),
+    );
+
+    #[cfg(not(target_os = "linux"))]
+    background
+}
+
+#[cfg(target_os = "linux")]
+fn linux_theme_backdrop_background(
+    background: Hsla,
+    is_window_active: bool,
+    native_blur_active: bool,
+) -> Hsla {
+    if !native_blur_active {
+        return background;
     }
 
-    background
+    if background.l > 0.5 {
+        background.opacity(LINUX_LIGHT_CHROME_OPACITY)
+    } else if is_window_active {
+        background.opacity(LINUX_CHROME_ACTIVE_OPACITY)
+    } else {
+        background
+    }
 }
 
 /// Background for the selected tab in the CLI and Agents sidebars.
@@ -325,13 +293,17 @@ pub(crate) const MAX_CLOSED_PANE_SCROLLBACK_BYTES: usize = 2 * 1024 * 1024;
 
 /// Width of the invisible border zone used for CSD edge/corner resize handles.
 pub(crate) const RESIZE_BORDER: Pixels = px(10.0);
+/// Radius of the visible application shell inside the transparent CSD shadow.
+pub(crate) const WINDOW_CORNER_RADIUS: Pixels = px(10.0);
+/// Hairline separating the themed shell from its native compositor shadow.
+pub(crate) const WINDOW_BORDER_SIZE: Pixels = px(1.0);
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
 
     #[test]
-    fn linux_window_background_stays_opaque_for_translucent_preferences() {
+    fn linux_window_starts_opaque_until_the_display_backend_is_known() {
         for preference in [
             WindowBackdropPreference::Auto,
             WindowBackdropPreference::Mica,
@@ -369,16 +341,33 @@ mod material_tests {
     }
 
     #[test]
-    fn cockpit_material_off_keeps_chrome_and_backdrop_opaque() {
+    fn cockpit_children_stay_transparent_over_an_opaque_shell() {
         let background = Hsla::from(gpui::rgb(0x141414));
 
         assert_eq!(
             cockpit_chrome_background(background, true, false),
-            background
+            gpui::transparent_black()
         );
         assert_eq!(
             cockpit_backdrop_background(background, true, false),
             background
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_blur_preserves_custom_theme_colors() {
+        let dark = gpui::hsla(0.71, 0.62, 0.32, 1.0);
+        let light = gpui::hsla(0.09, 0.54, 0.78, 1.0);
+
+        assert_eq!(linux_theme_backdrop_background(dark, true, false), dark);
+        assert_eq!(
+            linux_theme_backdrop_background(dark, true, true),
+            dark.opacity(LINUX_CHROME_ACTIVE_OPACITY)
+        );
+        assert_eq!(
+            linux_theme_backdrop_background(light, true, true),
+            light.opacity(LINUX_LIGHT_CHROME_OPACITY)
         );
     }
 }

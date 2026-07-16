@@ -166,7 +166,9 @@ impl Render for TitleBar {
         // (CSD) path - which PaneFlow uses everywhere it can - avoids this
         // entirely, which is why it is the default.
 
-        // --- Title bar background from theme, switching on window focus ---
+        // The parent window shell owns the active/inactive tint. This child is
+        // transparent so blur is composed once and cannot refill rounded CSD
+        // corner pixels with a rectangular background.
         let theme = crate::theme::active_theme();
         let is_window_active = window.is_window_active();
         let bg_color = if is_window_active {
@@ -728,9 +730,7 @@ impl Render for TitleBar {
                     .child("IPC offline")
             });
 
-        let csd_rounding = px(10.);
-
-        let mut bar = div()
+        let bar = div()
             .id("title-bar")
             .window_control_area(WindowControlArea::Drag)
             .relative()
@@ -739,37 +739,13 @@ impl Render for TitleBar {
             .items_center()
             .w_full()
             .h(height)
-            // Windows/macOS use GPUI's native blurred material through this
-            // translucent fill. Linux keeps the same color fully opaque.
+            // The transparent fill reveals either the themed shell or the
+            // platform material selected by the parent window.
             .bg(chrome_bg)
             // Windows: drop the right padding so the native-style caption
             // buttons sit flush in the top-right corner (Fitts's-law target).
             // Linux/macOS keep the 12px inset for the compact pill controls.
             .when(!cfg!(target_os = "windows"), |d| d.pr(px(12.)));
-
-        // CSD rounded corners with tiling awareness. Skipped in the cockpit
-        // (Agents + Cli): the title bar is a confined overlay there, so its
-        // corner fill + border would draw a stray frame (and a mid-window
-        // rounded top-right corner) over the rail + panel.
-        if !self.is_agents
-            && !self.cockpit
-            && let Decorations::Client { tiling } = decorations
-        {
-            if !(tiling.top || tiling.left) {
-                bar = bar.rounded_tl(csd_rounding);
-            }
-            if !(tiling.top || tiling.right) {
-                bar = bar.rounded_tr(csd_rounding);
-            }
-            // 1px border + negative margins fill transparent gap at rounded
-            // corners. Match the cockpit gray in Cli so the corner fill blends
-            // with the painted strip instead of showing the themed chrome.
-            bar = bar
-                .mt(px(-1.))
-                .mb(px(-1.))
-                .border(px(1.))
-                .border_color(chrome_bg);
-        }
 
         bar
             // Drag-to-move state machine

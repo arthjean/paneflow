@@ -72,10 +72,10 @@ mod workspace;
 use crate::window_chrome::title_bar;
 
 use gpui::{
-    Animation, AnimationExt, App, Bounds, Context, CursorStyle, Decorations, Entity, FocusHandle,
-    Focusable, HitboxBehavior, InteractiveElement, IntoElement, MouseButton, PathBuilder, Pixels,
-    Point, Render, ResizeEdge, SharedString, Styled, Window, WindowBounds, WindowDecorations,
-    WindowOptions, canvas, div, point, prelude::*, px, size,
+    Animation, AnimationExt, App, Bounds, Context, CursorStyle, Entity, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, PathBuilder, Pixels, Point, Render, SharedString, Styled,
+    Window, WindowBounds, WindowDecorations, WindowOptions, canvas, div, point, prelude::*, px,
+    size,
 };
 use gpui_platform::application;
 use notify::Watcher;
@@ -540,11 +540,6 @@ fn startup_splash_shimmer_color(base_color: gpui::Hsla, index: usize, delta: f32
 
 impl Render for StartupSplashView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match window.window_decorations() {
-            Decorations::Client { .. } => window.set_client_inset(RESIZE_BORDER),
-            Decorations::Server => window.set_client_inset(px(0.0)),
-        }
-
         if !self.mount_scheduled {
             self.mount_scheduled = true;
             cx.spawn_in(window, async move |_, cx| {
@@ -564,14 +559,21 @@ impl Render for StartupSplashView {
             a: STARTUP_SPLASH_TEXT_ALPHA,
             ..ui.muted
         };
-        div()
+        let theme = crate::theme::active_theme();
+        let is_window_active = window.is_window_active();
+        let shell_color = if is_window_active {
+            theme.title_bar_background
+        } else {
+            theme.title_bar_inactive_background
+        };
+        let background = crate::app::constants::cockpit_backdrop_background(
+            shell_color,
+            is_window_active,
+            self.native_material_active,
+        );
+        let content = div()
             .font_family("Geist")
             .size_full()
-            .bg(crate::app::constants::cockpit_backdrop_background(
-                crate::theme::active_theme().title_bar_background,
-                window.is_window_active(),
-                self.native_material_active,
-            ))
             .flex()
             .items_center()
             .justify_center()
@@ -591,7 +593,8 @@ impl Render for StartupSplashView {
                                 startup_splash_letter(label, index, splash_text_color)
                             }),
                     ),
-            )
+            );
+        crate::window_chrome::csd::client_side_window_shell(content, window, background, ui.border)
     }
 }
 
@@ -1418,12 +1421,6 @@ impl PaneFlowApp {
     // --- Sidebar rendering ---
 }
 
-// ---------------------------------------------------------------------------
-// CSD window resize helpers - `RESIZE_BORDER` lives in `app::constants`.
-// ---------------------------------------------------------------------------
-
-use crate::window_chrome::csd::resize_edge;
-
 impl Render for PaneFlowApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
@@ -1482,9 +1479,15 @@ impl Render for PaneFlowApp {
             terminal_material_active,
             chrome_material_active,
         );
+        let is_window_active = window.is_window_active();
+        let shell_color = if is_window_active {
+            theme.title_bar_background
+        } else {
+            theme.title_bar_inactive_background
+        };
         let app_backdrop_bg = crate::app::constants::cockpit_backdrop_background(
-            theme.title_bar_background,
-            window.is_window_active(),
+            shell_color,
+            is_window_active,
             native_material_active,
         );
         let panel_bg = if settings_open {
@@ -1501,9 +1504,9 @@ impl Render for PaneFlowApp {
         };
         let panel_border =
             crate::app::constants::right_panel_border_color(theme.background, ui.border);
-        let panel_corner_mask_bg = crate::app::constants::cockpit_chrome_background(
-            theme.title_bar_background,
-            window.is_window_active(),
+        let panel_corner_mask_bg = crate::app::constants::cockpit_backdrop_background(
+            shell_color,
+            is_window_active,
             chrome_material_active,
         );
         let panel_top = title_bar_h;
@@ -1511,6 +1514,14 @@ impl Render for PaneFlowApp {
         let primary_sidebar_mounted = self.settings_section.is_some()
             || self.primary_sidebar_visible
             || self.primary_sidebar_animation.is_some();
+        let client_tiling = match window.window_decorations() {
+            gpui::Decorations::Client { tiling } => Some(tiling),
+            gpui::Decorations::Server => None,
+        };
+        let round_panel_bottom_left = !primary_sidebar_mounted
+            && client_tiling.is_some_and(|tiling| !tiling.bottom && !tiling.left);
+        let round_panel_bottom_right = !secondary_sidebar_open
+            && client_tiling.is_some_and(|tiling| !tiling.bottom && !tiling.right);
         let primary_sidebar_opacity = if self.settings_section.is_some() {
             1.
         } else {
@@ -1660,14 +1671,6 @@ impl Render for PaneFlowApp {
             tb.cockpit_material_active = chrome_material_active;
         });
 
-        // --- CSD resize backdrop ---
-        let decorations = window.window_decorations();
-
-        match decorations {
-            Decorations::Client { .. } => window.set_client_inset(RESIZE_BORDER),
-            Decorations::Server => window.set_client_inset(px(0.0)),
-        }
-
         // The inner app content (title bar + sidebar + main). UI tree
         // uses Geist (bundled, registered at boot via
         // `Assets::load_fonts`). TerminalElement resolves its own
@@ -1796,11 +1799,10 @@ impl Render for PaneFlowApp {
                     .flex_1()
                     .overflow_hidden()
                     .relative()
-                    // The row backdrop must be transparent when either chrome
-                    // material is enabled or the visible CLI terminal asks for
-                    // material. Sidebars/title bar still paint their own opaque
-                    // fills when Chrome material is off.
-                    .bg(app_backdrop_bg)
+                    // The rounded window surface owns the backdrop. Keeping
+                    // this row transparent is load-bearing: GPUI clips child
+                    // overflow to a rectangle, so a row fill would repaint the
+                    // transparent pixels outside the surface's corner radius.
                     // Sidebar content fades during width animations. Keep a
                     // stable chrome fill behind it so terminal-only material
                     // never exposes unblurred desktop pixels in the rail area.
@@ -1926,6 +1928,12 @@ impl Render for PaneFlowApp {
                                     .bg(panel_bg)
                                     .rounded_tl(px(16.))
                                     .when(secondary_sidebar_open, |d| d.rounded_tr(px(16.)))
+                                    .when(round_panel_bottom_left, |d| {
+                                        d.rounded_bl(crate::app::constants::WINDOW_CORNER_RADIUS)
+                                    })
+                                    .when(round_panel_bottom_right, |d| {
+                                        d.rounded_br(crate::app::constants::WINDOW_CORNER_RADIUS)
+                                    })
                                     .p(px(5.))
                                     .child(main_content),
                             )
@@ -2125,81 +2133,12 @@ impl Render for PaneFlowApp {
                 app_content.child(self.render_agents_confirm_delete_dialog(target, ui, cx));
         }
 
-        // Outer backdrop div - provides the invisible resize border zone for CSD
-        div()
-            .id("window-backdrop")
-            .bg(app_backdrop_bg)
-            .size_full()
-            .map(|d| match decorations {
-                Decorations::Server => d,
-                Decorations::Client { tiling } => d
-                    // Resize cursor canvas (absolute overlay for the full window)
-                    .child(
-                        canvas(
-                            |_bounds, window, _cx| {
-                                window.insert_hitbox(
-                                    Bounds::new(
-                                        point(px(0.0), px(0.0)),
-                                        window.window_bounds().get_bounds().size,
-                                    ),
-                                    HitboxBehavior::Normal,
-                                )
-                            },
-                            move |_bounds, hitbox, window, _cx| {
-                                let mouse = window.mouse_position();
-                                let win_size = window.window_bounds().get_bounds().size;
-                                let Some(edge) =
-                                    resize_edge(mouse, RESIZE_BORDER, win_size, tiling)
-                                else {
-                                    return;
-                                };
-                                window.set_cursor_style(
-                                    match edge {
-                                        ResizeEdge::Top | ResizeEdge::Bottom => {
-                                            CursorStyle::ResizeUpDown
-                                        }
-                                        ResizeEdge::Left | ResizeEdge::Right => {
-                                            CursorStyle::ResizeLeftRight
-                                        }
-                                        ResizeEdge::TopLeft | ResizeEdge::BottomRight => {
-                                            CursorStyle::ResizeUpLeftDownRight
-                                        }
-                                        ResizeEdge::TopRight | ResizeEdge::BottomLeft => {
-                                            CursorStyle::ResizeUpRightDownLeft
-                                        }
-                                    },
-                                    &hitbox,
-                                );
-                            },
-                        )
-                        .size_full()
-                        .absolute(),
-                    )
-                    // Padding on non-tiled edges creates the invisible resize border
-                    .when(!tiling.top, |d| d.pt(RESIZE_BORDER))
-                    .when(!tiling.bottom, |d| d.pb(RESIZE_BORDER))
-                    .when(!tiling.left, |d| d.pl(RESIZE_BORDER))
-                    .when(!tiling.right, |d| d.pr(RESIZE_BORDER))
-                    // Refresh only around the resize band so cursor style can
-                    // enter and leave resize mode without repainting on every
-                    // content-area mouse move.
-                    .on_mouse_move(move |e, window, _cx| {
-                        let win_size = window.window_bounds().get_bounds().size;
-                        let hover_band = RESIZE_BORDER * 2.;
-                        if resize_edge(e.position, hover_band, win_size, tiling).is_some() {
-                            window.refresh();
-                        }
-                    })
-                    // Initiate resize on mouse-down in the border zone
-                    .on_mouse_down(MouseButton::Left, move |e, window, _cx| {
-                        let win_size = window.window_bounds().get_bounds().size;
-                        if let Some(edge) = resize_edge(e.position, RESIZE_BORDER, win_size, tiling)
-                        {
-                            window.start_window_resize(edge);
-                        }
-                    }),
-            })
-            .child(app_content)
+        crate::window_chrome::csd::client_side_window_shell(
+            app_content,
+            window,
+            app_backdrop_bg,
+            ui.border,
+        )
     }
 }
 
