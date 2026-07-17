@@ -17,9 +17,9 @@ pub(crate) const TITLE_BAR_CONTROL_SPACING: Pixels = px(12.);
 pub(crate) const TITLE_BAR_CONTROL_SIZE: Pixels = px(20.);
 /// Minimum title-bar height preserving an 8px inset around compact controls.
 pub(crate) const TITLE_BAR_MIN_HEIGHT: Pixels = px(36.);
-/// Inset between the window shell and the CLI sidebar card.
+/// Inset between the window shell and the primary navigation card.
 pub(crate) const SIDEBAR_CARD_INSET: f32 = 4.;
-/// The CLI rail and main panel share the same structural corner language.
+/// The primary navigation rails share the main panel's structural corner language.
 pub(crate) const SIDEBAR_CARD_CORNER_RADIUS: Pixels = WINDOW_CORNER_RADIUS;
 /// Inner CLI content inset. Combined with the pane's reserved 1px border,
 /// this places tabs and terminal cells 4px from the main panel edge.
@@ -197,12 +197,12 @@ pub(crate) fn cockpit_chrome_background(
     gpui::transparent_black()
 }
 
-/// Fill for the inset CLI sidebar card.
+/// Fill for the inset primary navigation card.
 ///
 /// Linux uses a fully opaque surface. macOS and Windows retain a restrained
 /// tint over their native material when enabled, with the same opaque fallback
 /// when the material is off.
-pub(crate) fn cli_sidebar_card_background(surface: Hsla, material_active: bool) -> Hsla {
+pub(crate) fn primary_sidebar_card_background(surface: Hsla, material_active: bool) -> Hsla {
     let opaque_surface = Hsla { a: 1.0, ..surface };
     if cfg!(target_os = "linux") || !material_active {
         opaque_surface
@@ -374,6 +374,6 @@ mod material_tests {
             cockpit_backdrop_background(light, true, true),
             Hsla { a: 1.0, ..light }
         );
-        assert_eq!(cli_sidebar_card_background(dark, true).a, 1.0);
+        assert_eq!(primary_sidebar_card_background(dark, true).a, 1.0);
     }
 }

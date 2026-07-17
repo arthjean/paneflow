@@ -1541,20 +1541,21 @@ impl Render for PaneFlowApp {
         } else {
             (primary_sidebar_width / self.primary_sidebar_expanded_width().max(1.)).clamp(0., 1.)
         };
-        let cli_sidebar_card_mounted = !settings_open
-            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
-            && primary_sidebar_mounted;
-        let cli_sidebar_card_horizontal_inset =
+        // Every primary rail, including Settings, uses the same inset card.
+        let primary_sidebar_card_mounted = primary_sidebar_mounted;
+        let primary_sidebar_card_horizontal_inset =
             crate::app::constants::SIDEBAR_CARD_INSET.min(primary_sidebar_width / 2.);
-        let main_panel_left_inset = if cli_sidebar_card_mounted {
-            crate::app::constants::SIDEBAR_CARD_INSET - cli_sidebar_card_horizontal_inset
+        let main_panel_left_inset = if primary_sidebar_card_mounted {
+            crate::app::constants::SIDEBAR_CARD_INSET - primary_sidebar_card_horizontal_inset
         } else {
             crate::app::constants::SIDEBAR_CARD_INSET
         };
-        let cli_sidebar_card_width =
-            (primary_sidebar_width - cli_sidebar_card_horizontal_inset * 2.).max(0.);
-        let cli_sidebar_card_bg =
-            crate::app::constants::cli_sidebar_card_background(ui.surface, chrome_material_active);
+        let primary_sidebar_card_width =
+            (primary_sidebar_width - primary_sidebar_card_horizontal_inset * 2.).max(0.);
+        let primary_sidebar_card_bg = crate::app::constants::primary_sidebar_card_background(
+            ui.surface,
+            chrome_material_active,
+        );
         #[cfg(target_os = "linux")]
         {
             crate::window_chrome::linux_backdrop::set_chrome_geometry(
@@ -1864,20 +1865,20 @@ impl Render for PaneFlowApp {
                                 .bg(panel_corner_mask_bg),
                         )
                     })
-                    // One childless decorative layer spans the CLI rail and
-                    // the title-bar overlay. Keeping it absolute preserves the
-                    // 240px reflow width and follows the existing open/close
-                    // animation without introducing a second layout path.
-                    .when(cli_sidebar_card_mounted, |row| {
+                    // One childless decorative layer spans every primary rail
+                    // and the title-bar overlay. Keeping it absolute preserves
+                    // each mode's reflow width and follows the existing
+                    // open/close animation without a second layout path.
+                    .when(primary_sidebar_card_mounted, |row| {
                         row.child(
                             div()
                                 .absolute()
-                                .left(px(cli_sidebar_card_horizontal_inset))
+                                .left(px(primary_sidebar_card_horizontal_inset))
                                 .top(px(crate::app::constants::SIDEBAR_CARD_INSET))
                                 .bottom(px(crate::app::constants::SIDEBAR_CARD_INSET))
-                                .w(px(cli_sidebar_card_width))
+                                .w(px(primary_sidebar_card_width))
                                 .rounded(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
-                                .bg(cli_sidebar_card_bg)
+                                .bg(primary_sidebar_card_bg)
                                 .border_1()
                                 .border_color(ui.border)
                                 .opacity(primary_sidebar_opacity),
