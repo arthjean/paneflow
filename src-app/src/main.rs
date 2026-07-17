@@ -1232,7 +1232,7 @@ struct PaneFlowApp {
     /// US-005 (Agents UI redesign): in the picker/home
     /// state (`agents_target == None`), what a launched agent is created
     /// into - the active project, or a free chat in the home dir (the rail's
-    /// "New chat" row). Reset to `Project` on every concrete selection.
+    /// "New chat" header action). Reset to `Project` on every concrete selection.
     pub(crate) agents_picker_context: crate::project::AgentsPickerContext,
     /// US-053: Agents-view sidebar state (rename/menu/skills/filter +
     /// the terminal-thread cache), extracted from the god-struct.

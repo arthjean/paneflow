@@ -187,8 +187,8 @@ pub fn agents_target_from_session(
 /// (the picker/home state, US-005 of
 /// the Agents UI redesign). `Project` → a thread in the
 /// active project (the legacy "select a project → agent picker" flow);
-/// `NewChat` → a free chat in the home dir (the rail's "New chat" row). The
-/// render branch reads this to pick the launcher title + create path; every
+/// `NewChat` → a free chat in the home dir (the rail's header compose action).
+/// The render branch reads this to pick the launcher title + create path; every
 /// concrete selection (`select_thread`/`select_chat`) resets it to
 /// `Project` so a later deselect never lands back in the new-chat picker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

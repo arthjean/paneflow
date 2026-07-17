@@ -2354,9 +2354,9 @@ fn agents_editor_label(value: &str) -> String {
 
 /// US-013: unified welcome/home empty-state when the Agents cockpit has no
 /// project AND no chat to open. Invites the two entry points the rail now
-/// exposes: the "New chat" row (a quick home-dir session) and the `+` next
-/// to the PROJECTS eyebrow (add a repo). Copy is kept in sync with the
-/// renamed rail affordances (the old "New threads" row no longer exists).
+/// exposes: the header's compose action (a quick home-dir session) and the
+/// `+` next to the PROJECTS eyebrow (add a repo). Copy stays in sync with
+/// those visible affordances.
 fn render_agents_no_project() -> gpui::AnyElement {
     let ui = crate::theme::ui_colors();
     div()
@@ -2382,8 +2382,8 @@ fn render_agents_no_project() -> gpui::AnyElement {
                 .text_color(ui.muted)
                 .text_center()
                 .child(
-                    "Click New chat for a quick session in your home directory, \
-                     or + next to Projects to add a repository.",
+                    "Use the compose button in the Agents header for a quick session in your \
+                     home directory, or + next to Projects to add a repository.",
                 ),
         )
         .into_any_element()

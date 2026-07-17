@@ -22,6 +22,7 @@
 mod affordances;
 mod context_menus;
 mod filter;
+mod header;
 mod state;
 
 pub(crate) use context_menus::render_open_agents_menu;
@@ -29,14 +30,18 @@ pub(crate) use state::{AgentsContextMenu, AgentsDeleteTarget, AgentsRenameTarget
 
 use gpui::{
     Animation, AnimationExt, ClickEvent, Context, Font, FontFeatures, FontStyle, FontWeight, Hsla,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, SharedString, Styled, StyledText,
-    TextRun, Transformation, div, percentage, prelude::*, px, rgb, svg,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Role, SharedString,
+    StatefulInteractiveElement, Styled, StyledText, TextRun, Transformation, div, percentage,
+    prelude::*, px, rgb, svg,
 };
 
 use crate::PaneFlowApp;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 use super::agents_view_actions::AGENTS_SIDEBAR_WIDTH;
+
+const AGENTS_SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
+const AGENTS_SIDEBAR_LIST_GAP: f32 = 4.0;
 
 /// US-010 (review follow-up): emit a `tracing::debug!` when
 /// [`PaneFlowApp::render_agents_sidebar`] exceeds the 16 ms frame
@@ -84,8 +89,8 @@ impl Drop for RenderTimeCanary {
 
 impl PaneFlowApp {
     /// Render the Agents-mode sidebar as Codex-style sections (US-004):
-    /// New chat, Search, then the PINNED / PROJECTS (+) / CHATS eyebrows
-    /// with their rows, then the Settings footer + mode toggle.
+    /// header + New chat action, Search, then the PINNED / PROJECTS (+) /
+    /// CHATS eyebrows with their rows, then the Settings footer + mode toggle.
     ///
     /// Visual language matches [`Self::render_sidebar`] (card-style rows,
     /// `sidebar_list_wrapper` scrollbar). Data binds directly from
@@ -129,27 +134,31 @@ impl PaneFlowApp {
             .flex()
             .flex_col();
 
+        sidebar = sidebar.child(self.render_agents_sidebar_header(ui, cx));
+
         // -- Scrollable list area. The wheel-scroll behaviour comes
         // from `overflow_y_scroll + track_scroll`; the visible scroll
         // bar has been removed, so the list uses the full sidebar
         // width and there is no trailing gutter.
         //
         // US-004: the rail is structured into Codex sections, top to
-        // bottom: New chat, Search, PINNED, PROJECTS (with `+`), CHATS,
-        // then the bottom Settings footer + mode toggle. Empty sections
-        // hide their eyebrow (no orphan label over a void).
+        // bottom: Search, PINNED, PROJECTS (with `+`), CHATS, then the
+        // bottom Settings footer + mode toggle. New chat lives in the
+        // fixed header so the primary action stays visible while scrolling.
+        // Empty sections hide their eyebrow (no orphan label over a void).
         let mut list = div()
             .id("agents-sidebar-list")
             .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
             .overflow_y_scroll()
             .track_scroll(&self.sidebar_scroll)
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .py_2()
-            // US-005: "New chat" replaces the old "New threads" row.
-            .child(self.new_chat_row(ui, cx))
-            // US-009: search migrates into the rail, inline under New chat.
+            .gap(px(AGENTS_SIDEBAR_LIST_GAP))
+            .pt(px(AGENTS_SIDEBAR_LIST_GAP))
+            .pb(px(8.))
+            // US-009: search sits directly under the fixed Agents header.
             .child(self.render_agents_filter_row(ui, cx));
 
         // US-010 (audit P1-4): lowercase the needle exactly once per render
@@ -449,49 +458,6 @@ impl PaneFlowApp {
         ]
     }
 
-    /// US-005: "New chat" affordance at the top of the rail (replaces the
-    /// old "New threads" row). Drops to the new-chat picker (cwd = home);
-    /// picking an agent there creates a free chat. Styled like a list row.
-    fn new_chat_row(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
-        let resting_background = hover_background.opacity(0.0);
-        div()
-            .id("agents-sidebar-new-chat")
-            .mx(px(6.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .bg(resting_background)
-            .animated_hover(move |style, delta| {
-                style.bg(lerp_color(resting_background, hover_background, delta));
-            })
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.start_new_chat(cx);
-            }))
-            .child(
-                svg()
-                    .size(px(14.))
-                    .flex_none()
-                    .path("icons/edit.svg")
-                    .text_color(ui.muted),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_color(ui.text)
-                    .text_size(px(12.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .truncate()
-                    .child("New chat"),
-            )
-            .into_any_element()
-    }
-
     fn project_header_row(
         &self,
         args: ProjectHeaderArgs,
@@ -511,7 +477,7 @@ impl PaneFlowApp {
         } else {
             "icons/folder.svg"
         };
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let hover_background = crate::app::constants::sidebar_tab_active_background();
         let resting_background = hover_background.opacity(0.0);
 
         // Title element switches between read-only and inline-input
@@ -542,7 +508,7 @@ impl PaneFlowApp {
 
         div()
             .id(SharedString::from(format!("agents-project-{project_id}")))
-            .mx(px(6.))
+            .mx(px(AGENTS_SIDEBAR_ROW_MARGIN_X))
             .px(px(8.))
             .py(px(6.))
             .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
@@ -724,17 +690,11 @@ impl PaneFlowApp {
         // titles read as shifted because removing the child also
         // removed the `gap` slot. Reserving an invisible placeholder
         // restores pixel-for-pixel alignment with the project title.
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
-        let active_background = crate::app::constants::sidebar_tab_active_background();
+        let row_background = crate::app::constants::sidebar_tab_active_background();
         let resting_background = if is_active {
-            active_background
+            row_background
         } else {
-            hover_background.opacity(0.0)
-        };
-        let hovered_background = if is_active {
-            active_background
-        } else {
-            hover_background
+            row_background.opacity(0.0)
         };
         let hover_actions =
             hover_actions_cluster(target, thread_id, is_pinned, row_scope, armed, ui, cx);
@@ -743,7 +703,7 @@ impl PaneFlowApp {
                 "agents-{row_scope}-thread-{thread_id}"
             )))
             .relative()
-            .mx(px(6.))
+            .mx(px(AGENTS_SIDEBAR_ROW_MARGIN_X))
             .px(px(8.))
             .py(px(6.))
             .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
@@ -757,7 +717,7 @@ impl PaneFlowApp {
             .bg(resting_background)
             .animated_hover_element(move |row, delta| {
                 row.style()
-                    .bg(lerp_color(resting_background, hovered_background, delta));
+                    .bg(lerp_color(resting_background, row_background, delta));
 
                 let right_slot_opacity = if armed { 0.0 } else { 1.0 - delta };
                 let right_slot = div()
@@ -832,7 +792,6 @@ impl PaneFlowApp {
             .items_center()
             .gap(px(4.))
             .px(px(8.))
-            .mb(px(4.))
             .child(
                 div()
                     .flex_1()
@@ -1030,8 +989,9 @@ fn section_eyebrow(
         .flex()
         .flex_row()
         .items_center()
-        .mt(px(10.))
-        .px(px(14.))
+        .mt(px(8.))
+        .pl(px(16.))
+        .pr(px(8.))
         .py(px(2.))
         .child(
             crate::ui_primitives::section_eyebrow(label.to_string(), ui)
@@ -1040,18 +1000,19 @@ fn section_eyebrow(
                 .truncate(),
         );
     if let Some(id) = add_button_id {
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let hover_background = crate::app::constants::sidebar_tab_active_background();
         let resting_background = hover_background.opacity(0.0);
         row = row.child(
             div()
                 .id(id)
+                .role(Role::Button)
+                .aria_label("New project")
                 .flex_none()
-                .w(px(16.))
-                .h(px(16.))
+                .size(px(24.))
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded(px(4.))
+                .rounded(px(6.))
                 .bg(resting_background)
                 .text_color(ui.muted)
                 .animated_hover_element(move |button, delta| {
@@ -1077,11 +1038,11 @@ fn section_eyebrow(
 }
 
 /// US-007: compact inline hint shown under the PROJECTS eyebrow when no
-/// project exists yet. The eyebrow's `+` (or "New chat" above) is the
-/// create affordance; this is just guidance copy.
+/// project exists yet. The eyebrow's `+` (or the header's New chat action)
+/// is the create affordance; this is just guidance copy.
 fn projects_empty_hint(ui: crate::theme::UiColors) -> impl IntoElement {
     div()
-        .mx(px(12.))
+        .mx(px(AGENTS_SIDEBAR_ROW_MARGIN_X))
         .px(px(8.))
         .py(px(6.))
         .text_size(px(11.))
@@ -1094,8 +1055,8 @@ fn projects_empty_hint(ui: crate::theme::UiColors) -> impl IntoElement {
 /// open the agent picker.
 fn empty_project_hint(ui: crate::theme::UiColors) -> impl IntoElement {
     div()
-        .mx(px(12.))
-        .pl(px(18.))
+        .mx(px(AGENTS_SIDEBAR_ROW_MARGIN_X))
+        .pl(px(28.))
         .py(px(4.))
         .text_size(px(11.))
         .text_color(ui.muted)
@@ -1107,8 +1068,8 @@ fn empty_project_hint(ui: crate::theme::UiColors) -> impl IntoElement {
 /// verbatim: "No threads match `<query>`. Press Esc to clear."
 fn no_matches_hint(query: &str, ui: crate::theme::UiColors) -> impl IntoElement {
     div()
-        .mx(px(12.))
-        .my(px(12.))
+        .mx(px(AGENTS_SIDEBAR_ROW_MARGIN_X))
+        .my(px(8.))
         .px(px(8.))
         .py(px(10.))
         .rounded(px(6.))
@@ -1268,13 +1229,15 @@ fn hover_actions_cluster(
     // `toggle_pin_for_target` (flips `thread.pinned` + saves the session).
     let pin_glyph = if is_pinned { "★" } else { "☆" };
     let pin_tooltip = if is_pinned { "Unpin" } else { "Pin" };
-    let hover_background = crate::app::constants::sidebar_tab_hover_background();
+    let hover_background = crate::app::constants::sidebar_tab_active_background();
     let resting_background = hover_background.opacity(0.0);
     let pin_resting_text = if is_pinned { ui.accent } else { ui.muted };
     let pin_btn = div()
         .id(SharedString::from(format!(
             "agents-{row_scope}-thread-{thread_id}-pin"
         )))
+        .role(Role::Button)
+        .aria_label(pin_tooltip)
         .flex_none()
         .w(px(20.))
         .h(px(20.))
@@ -1303,6 +1266,8 @@ fn hover_actions_cluster(
         .id(SharedString::from(format!(
             "agents-{row_scope}-thread-{thread_id}-trash"
         )))
+        .role(Role::Button)
+        .aria_label("Delete")
         .flex_none()
         .w(px(20.))
         .h(px(20.))
