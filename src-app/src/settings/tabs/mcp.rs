@@ -22,6 +22,7 @@ use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, hairline, section_header, setting_card, setting_text,
     with_alpha,
 };
+use crate::ui_primitives::AnimatedHoverExt;
 
 impl PaneFlowApp {
     pub(crate) fn render_mcp_servers_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -45,26 +46,29 @@ impl PaneFlowApp {
             }
         };
 
-        let mut button = div()
+        let button_bg = if enabled { ui.accent } else { ui.subtle };
+        let button_hover_bg = if enabled {
+            with_alpha(ui.accent, 0.85)
+        } else {
+            button_bg
+        };
+        let button = div()
             .id("mcp-install-btn")
             .flex_shrink_0()
             .px(px(12.))
             .py(px(6.))
             .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
             .text_size(px(12.))
-            .font_weight(FontWeight::MEDIUM);
-        button = if enabled {
-            button
-                .bg(ui.accent)
-                .text_color(gpui::white())
-                .hover(|s| s.bg(with_alpha(ui.accent, 0.85)))
-                .child(label)
-                .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            .font_weight(FontWeight::MEDIUM)
+            .bg(button_bg)
+            .text_color(if enabled { gpui::white() } else { ui.muted })
+            .animated_hover_bg(button_bg, button_hover_bg)
+            .child(label)
+            .when(enabled, |button| {
+                button.on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                     this.start_mcp_install(cx);
                 }))
-        } else {
-            button.bg(ui.subtle).text_color(ui.muted).child(label)
-        };
+            });
 
         let header_row = div()
             .flex()

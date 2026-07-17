@@ -8,9 +8,10 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::app::theme_picker::is_default_theme_name;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, secondary_button, section_header, section_header_with_action,
-    setting_card, setting_text, with_alpha,
+    SETTINGS_CONTROL_CORNER_RADIUS, card_colors, secondary_button, section_header,
+    section_header_with_action, setting_card, setting_text, with_alpha,
 };
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 const PRESET_THEME_NAMES: [&str; 3] = ["Vercel", "Claude", "Cursor"];
 const THEME_PREVIEW_CORNER_RADIUS: f32 = 7.;
@@ -52,11 +53,13 @@ impl PaneFlowApp {
                 "theme-mode-system",
             ),
         ];
+        let (theme_card_bg, _) = card_colors();
+        let theme_mode_hover_bg = lerp_color(theme_card_bg, ui.text, 0.06);
         let mut mode_switch = div().flex().flex_row().items_center().gap(px(2.));
         for (mode, label, icon, id) in modes {
             let is_active = default_theme_active && self.theme_mode == mode;
             let fg = if is_active { ui.text } else { ui.muted };
-            let mut seg = div()
+            let seg = div()
                 .id(id)
                 .flex()
                 .flex_row()
@@ -75,15 +78,17 @@ impl PaneFlowApp {
                         .text_color(fg)
                         .child(label),
                 );
-            if is_active {
-                seg = seg.bg(crate::app::constants::sidebar_tab_active_background());
+            let seg = if is_active {
+                seg.bg(crate::app::constants::sidebar_tab_active_background())
+                    .into_any_element()
             } else {
-                seg = seg
-                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+                seg.bg(theme_card_bg)
+                    .animated_hover_bg(theme_card_bg, theme_mode_hover_bg)
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.apply_theme_mode(mode, window, cx);
-                    }));
-            }
+                    }))
+                    .into_any_element()
+            };
             mode_switch = mode_switch.child(seg);
         }
 
@@ -188,9 +193,9 @@ impl PaneFlowApp {
             with_alpha(ui.text, 0.03)
         };
         let hover_bg = if is_current {
-            with_alpha(ui.text, 0.10)
+            with_alpha(ui.text, 0.12)
         } else {
-            with_alpha(ui.text, 0.055)
+            with_alpha(ui.text, 0.08)
         };
         let border = with_alpha(ui.text, 0.10);
 
@@ -209,7 +214,7 @@ impl PaneFlowApp {
             .border_1()
             .border_color(border)
             .bg(bg)
-            .hover(move |s| s.bg(hover_bg))
+            .animated_hover_bg(bg, hover_bg)
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.apply_theme_by_name(&name_owned, cx);
             }))

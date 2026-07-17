@@ -25,6 +25,8 @@ use gpui::{
     ParentElement, Pixels, Stateful, Styled, deferred, div, img, prelude::*, px, svg,
 };
 
+use crate::ui_primitives::{AnimatedHover, AnimatedHoverExt, lerp_color};
+
 pub(crate) const SETTINGS_CONTROL_CORNER_RADIUS: Pixels = px(8.);
 const SETTINGS_CARD_CORNER_RADIUS: Pixels = px(8.);
 
@@ -179,6 +181,8 @@ pub fn secondary_button(
     ui: crate::theme::UiColors,
     on_click: impl Fn(&ClickEvent, &mut gpui::Window, &mut gpui::App) + 'static,
 ) -> impl IntoElement {
+    let hover_bg = lerp_color(ui.subtle, ui.text, 0.06);
+
     div()
         .id(id)
         .px(px(10.))
@@ -188,7 +192,7 @@ pub fn secondary_button(
         .text_size(px(12.))
         .font_weight(gpui::FontWeight::MEDIUM)
         .text_color(ui.text)
-        .hover(move |s| s.bg(with_alpha(ui.text, 0.06)))
+        .animated_hover_bg(ui.subtle, hover_bg)
         .child(label)
         .on_click(on_click)
 }
@@ -234,7 +238,7 @@ pub fn select_chevron(ui: crate::theme::UiColors) -> impl IntoElement {
 /// The subtle-gray select trigger pill (Codex style). Returns a `relative` `Div`
 /// so a deferred menu can anchor to it; the caller adds the value cluster,
 /// [`select_chevron`], an open/close `on_mouse_down`, and (when open) the menu.
-pub fn select_trigger(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> Stateful<Div> {
+pub fn select_trigger(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> AnimatedHover {
     let hover_bg = Hsla {
         l: (ui.subtle.l - 0.04).max(0.0),
         ..ui.subtle
@@ -246,7 +250,7 @@ pub fn select_trigger_with_hover(
     id: impl Into<ElementId>,
     ui: crate::theme::UiColors,
     hover_bg: Hsla,
-) -> Stateful<Div> {
+) -> AnimatedHover {
     div()
         .id(id.into())
         .relative()
@@ -261,7 +265,7 @@ pub fn select_trigger_with_hover(
         .max_w(px(260.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
         .bg(ui.subtle)
-        .hover(move |s| s.bg(hover_bg))
+        .animated_hover_bg(ui.subtle, hover_bg)
 }
 
 /// The elevated surface color used by [`select_menu`]: white-ish lift in light,
@@ -330,7 +334,19 @@ pub fn select_item(
     id: impl Into<ElementId>,
     selected: bool,
     ui: crate::theme::UiColors,
-) -> Stateful<Div> {
+) -> AnimatedHover {
+    let selected_bg = with_alpha(ui.text, 0.10);
+    let resting_bg = if selected {
+        selected_bg
+    } else {
+        with_alpha(ui.text, 0.0)
+    };
+    let hover_bg = if selected {
+        selected_bg
+    } else {
+        with_alpha(ui.text, 0.05)
+    };
+
     div()
         .id(id.into())
         .flex_none()
@@ -343,10 +359,7 @@ pub fn select_item(
         .gap(px(8.))
         .cursor(CursorStyle::PointingHand)
         .text_size(px(12.))
-        .when(selected, |d| d.bg(with_alpha(ui.text, 0.10)))
-        .when(!selected, |d| {
-            d.hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
-        })
+        .animated_hover_bg(resting_bg, hover_bg)
 }
 
 /// Wrap a built menu in the deferred, occluding popover anchored just under the

@@ -7,8 +7,8 @@
 
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, ElementId, FontWeight, Hsla, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, PathPromptOptions, SharedString, Stateful, Styled,
-    div, img, prelude::*, px, rgb, svg,
+    IntoElement, MouseButton, ParentElement, PathPromptOptions, SharedString, Styled, div, img,
+    prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::{
     CommandDefinition, LayoutNode, SurfaceDefinition, WorkspaceDefinition,
@@ -27,6 +27,7 @@ use crate::settings::components::{
     setting_card, with_alpha,
 };
 use crate::terminal::TerminalView;
+use crate::ui_primitives::{AnimatedHover, AnimatedHoverExt};
 use crate::{PaneFlowApp, WorkspaceTemplateDropdown};
 
 const LAYOUT_PRESETS: &[(&str, &str)] = &[
@@ -519,6 +520,12 @@ impl PaneFlowApp {
             for (pane_idx, pane) in panes.iter().enumerate() {
                 let selected = pane_idx == selected_pane;
                 let kind = pane_kind(pane);
+                let resting_background = if selected {
+                    with_alpha(ui.text, 0.07)
+                } else {
+                    with_alpha(ui.text, 0.0)
+                };
+                let hover_background = with_alpha(ui.text, 0.05);
                 pane_list = pane_list.child(
                     div()
                         .id(("workspace-pane-row", pane_idx))
@@ -529,8 +536,8 @@ impl PaneFlowApp {
                         .flex_row()
                         .items_center()
                         .gap(px(10.))
-                        .when(selected, |d| d.bg(with_alpha(ui.text, 0.07)))
-                        .hover(|d| d.bg(with_alpha(ui.text, 0.05)))
+                        .bg(resting_background)
+                        .animated_hover_bg(resting_background, hover_background)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                             this.select_workspace_template_pane(pane_idx, cx);
                         }))
@@ -627,6 +634,12 @@ impl PaneFlowApp {
         let mut agent_grid = div().flex().flex_col().gap(px(6.));
         for agent in visible_agents {
             let selected = pane.agent.as_deref() == Some(agent.tag());
+            let resting_background = if selected {
+                with_alpha(switch_blue(), 0.16)
+            } else {
+                ui.subtle
+            };
+            let hover_background = with_alpha(ui.text, 0.08);
             agent_grid = agent_grid.child(
                 div()
                     .id(SharedString::from(format!(
@@ -636,16 +649,12 @@ impl PaneFlowApp {
                     .px(px(9.))
                     .py(px(6.))
                     .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .bg(if selected {
-                        with_alpha(switch_blue(), 0.16)
-                    } else {
-                        ui.subtle
-                    })
+                    .bg(resting_background)
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap(px(8.))
-                    .hover(|d| d.bg(with_alpha(ui.text, 0.08)))
+                    .animated_hover_bg(resting_background, hover_background)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.set_workspace_template_pane_agent(agent, cx);
                     }))
@@ -1746,6 +1755,7 @@ fn project_path_picker(
     } else {
         ui.text
     };
+    let hover_background = with_alpha(ui.text, 0.08);
 
     div()
         .id("workspace-project-path-picker")
@@ -1760,7 +1770,7 @@ fn project_path_picker(
         .flex_row()
         .items_center()
         .gap(px(8.))
-        .hover(|d| d.bg(with_alpha(ui.text, 0.08)))
+        .animated_hover_bg(ui.subtle, hover_background)
         .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
             this.pick_workspace_template_project_path(cx);
         }))
@@ -1802,11 +1812,19 @@ fn icon_button(
     ui: crate::theme::UiColors,
     primary: bool,
     enabled: bool,
-) -> Stateful<gpui::Div> {
+) -> AnimatedHover {
     let bg = if primary { switch_blue() } else { ui.subtle };
     let fg = if primary { gpui::white() } else { ui.text };
     let disabled_bg = ui.subtle;
     let disabled_fg = ui.muted;
+    let resting_background = if enabled { bg } else { disabled_bg };
+    let hover_background = if !enabled {
+        resting_background
+    } else if primary {
+        with_alpha(bg, 0.86)
+    } else {
+        with_alpha(ui.text, 0.06)
+    };
     div()
         .id(id)
         .flex()
@@ -1816,19 +1834,11 @@ fn icon_button(
         .px(px(10.))
         .py(px(5.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(if enabled { bg } else { disabled_bg })
+        .bg(resting_background)
         .text_size(px(12.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(if enabled { fg } else { disabled_fg })
-        .when(enabled, |d| {
-            d.hover(move |s| {
-                s.bg(if primary {
-                    with_alpha(bg, 0.86)
-                } else {
-                    with_alpha(ui.text, 0.06)
-                })
-            })
-        })
+        .animated_hover_bg(resting_background, hover_background)
         .child(
             svg()
                 .size(px(13.))
@@ -1839,8 +1849,9 @@ fn icon_button(
         .child(label.into())
 }
 
-fn pane_delete_button(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> Stateful<gpui::Div> {
+fn pane_delete_button(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> AnimatedHover {
     let icon_color = ui.muted;
+    let resting_background = with_alpha(ui.text, 0.0);
     let hover_bg = with_alpha(ui.text, 0.06);
 
     div()
@@ -1853,7 +1864,7 @@ fn pane_delete_button(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> S
         .justify_center()
         .rounded(px(7.))
         .text_color(icon_color)
-        .hover(move |s| s.bg(hover_bg))
+        .animated_hover_bg(resting_background, hover_bg)
         .tooltip(crate::ui_primitives::text_tooltip("Delete pane"))
         .child(
             svg()
@@ -1870,13 +1881,19 @@ fn destructive_icon_button(
     icon: &'static str,
     ui: crate::theme::UiColors,
     enabled: bool,
-) -> Stateful<gpui::Div> {
+) -> AnimatedHover {
     let bg = apple_red();
-    let hover_bg = Hsla {
+    let enabled_hover_background = Hsla {
         l: (bg.l - 0.05).max(0.0),
         ..bg
     };
     let fg = gpui::white();
+    let resting_background = if enabled { bg } else { ui.subtle };
+    let hover_background = if enabled {
+        enabled_hover_background
+    } else {
+        resting_background
+    };
     div()
         .id(id)
         .flex()
@@ -1886,11 +1903,11 @@ fn destructive_icon_button(
         .px(px(10.))
         .py(px(5.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(if enabled { bg } else { ui.subtle })
+        .bg(resting_background)
         .text_size(px(12.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(if enabled { fg } else { ui.muted })
-        .when(enabled, |d| d.hover(move |s| s.bg(hover_bg)))
+        .animated_hover_bg(resting_background, hover_background)
         .child(
             svg()
                 .size(px(13.))
@@ -1907,7 +1924,7 @@ fn save_icon_button(
     icon: &'static str,
     ui: crate::theme::UiColors,
     enabled: bool,
-) -> Stateful<gpui::Div> {
+) -> AnimatedHover {
     let light_theme = ui.surface.l > 0.5;
     let bg: Hsla = if light_theme {
         rgb(0x000000).into()
@@ -1919,7 +1936,12 @@ fn save_icon_button(
     } else {
         rgb(0x000000).into()
     };
-    let hover_bg = Hsla { a: 0.86, ..bg };
+    let resting_background = if enabled { bg } else { ui.subtle };
+    let hover_background = if enabled {
+        Hsla { a: 0.86, ..bg }
+    } else {
+        resting_background
+    };
 
     div()
         .id(id)
@@ -1930,11 +1952,11 @@ fn save_icon_button(
         .px(px(10.))
         .py(px(5.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(if enabled { bg } else { ui.subtle })
+        .bg(resting_background)
         .text_size(px(12.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(if enabled { fg } else { ui.muted })
-        .when(enabled, |d| d.hover(move |s| s.bg(hover_bg)))
+        .animated_hover_bg(resting_background, hover_background)
         .child(
             svg()
                 .size(px(13.))
@@ -1957,6 +1979,12 @@ fn pane_kind_chip(
         PaneKind::Empty => ("Shell", "icons/plus.svg"),
     };
     let selected = kind == current;
+    let resting_background = if selected {
+        with_alpha(switch_blue(), 0.16)
+    } else {
+        ui.subtle
+    };
+    let hover_background = with_alpha(ui.text, 0.08);
     div()
         .id(SharedString::from(format!("workspace-pane-kind-{label}")))
         .flex()
@@ -1966,14 +1994,10 @@ fn pane_kind_chip(
         .px(px(9.))
         .py(px(5.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .bg(if selected {
-            with_alpha(switch_blue(), 0.16)
-        } else {
-            ui.subtle
-        })
+        .bg(resting_background)
         .text_size(px(12.))
         .text_color(ui.text)
-        .hover(|d| d.bg(with_alpha(ui.text, 0.08)))
+        .animated_hover_bg(resting_background, hover_background)
         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.set_workspace_template_pane_kind(kind, cx);
         }))

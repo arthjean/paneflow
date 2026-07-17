@@ -21,6 +21,7 @@ use gpui::{
     Window, div, prelude::*, px, svg,
 };
 
+use crate::ui_primitives::AnimatedHoverExt;
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
@@ -179,6 +180,7 @@ impl PaneFlowApp {
         let theme = crate::theme::active_theme();
         let active = self.settings_section.unwrap_or(SettingsSection::General);
         let query = self.settings_search_input.read(cx).value().to_lowercase();
+        let nav_hover_bg = crate::app::constants::sidebar_tab_hover_background();
 
         // ── Back-to-app row ─────────────────────────────────────────────
         let back = div()
@@ -192,7 +194,7 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .animated_hover_bg(nav_hover_bg.opacity(0.0), nav_hover_bg)
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.close_settings(cx);
                 cx.notify();
@@ -258,7 +260,7 @@ impl PaneFlowApp {
                 // and signals the active row through the pill fill + the medium
                 // font weight alone, not a muted/bright color split.
                 let fg = ui.text;
-                let mut row = div()
+                let row = div()
                     .id(SharedString::from(format!("settings-nav-{}", it.label)))
                     .mx(px(8.))
                     .my(px(1.))
@@ -280,15 +282,16 @@ impl PaneFlowApp {
                             .truncate()
                             .child(it.label),
                     );
-                if is_active {
-                    row = row.bg(crate::app::constants::sidebar_tab_active_background());
+                let row = if is_active {
+                    row.bg(crate::app::constants::sidebar_tab_active_background())
+                        .into_any_element()
                 } else {
-                    row = row
-                        .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+                    row.animated_hover_bg(nav_hover_bg.opacity(0.0), nav_hover_bg)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.select_settings_section(section, window, cx);
-                        }));
-                }
+                        }))
+                        .into_any_element()
+                };
                 list = list.child(row);
             }
         }

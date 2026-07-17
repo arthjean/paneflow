@@ -15,6 +15,7 @@ use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, hairline, secondary_button, section_header_with_action,
     setting_card,
 };
+use crate::ui_primitives::AnimatedHoverExt;
 use crate::{PaneFlowApp, config_writer, keybindings};
 
 impl PaneFlowApp {
@@ -76,7 +77,7 @@ impl PaneFlowApp {
                 .gap(px(12.))
                 .px(px(12.))
                 .py(px(10.))
-                .hover(|s| s.bg(ui.subtle))
+                .animated_hover_bg(ui.subtle.opacity(0.0), ui.subtle)
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.recording_shortcut_idx = Some(i);
                     this.settings_focus.focus(window, cx);

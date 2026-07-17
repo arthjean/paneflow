@@ -37,6 +37,7 @@ use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, deferred_select_menu, hairline, section_header, select_chevron,
     select_item, select_menu, select_trigger_with_hover, setting_card, setting_text, toggle_pill,
 };
+use crate::ui_primitives::AnimatedHoverExt;
 
 use crate::{PaneFlowApp, TerminalDropdown};
 
@@ -540,6 +541,7 @@ impl PaneFlowApp {
                 for (col_idx, &hex) in chunk.iter().enumerate() {
                     let hex_string = hex_string_from_u32(hex);
                     let selected = !uses_theme && hex_string == current_hex;
+                    let resting_opacity = if selected { 1.0 } else { 0.92 };
                     let value = hex_string.clone();
                     swatch_row = swatch_row.child(
                         div()
@@ -550,8 +552,10 @@ impl PaneFlowApp {
                             .h(px(32.))
                             .rounded(px(6.))
                             .bg(hsla_from_u32(hex))
-                            .opacity(if selected { 1.0 } else { 0.92 })
-                            .hover(|s| s.opacity(1.0))
+                            .opacity(resting_opacity)
+                            .animated_hover(move |style, delta| {
+                                style.opacity(resting_opacity + (1.0 - resting_opacity) * delta);
+                            })
                             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                                 this.persist_setting(
                                     true,
@@ -588,7 +592,7 @@ impl PaneFlowApp {
                     .items_center()
                     .gap(px(8.))
                     .bg(scheme_bg)
-                    .hover(move |s| s.bg(scheme_hover_bg))
+                    .animated_hover_bg(scheme_bg, scheme_hover_bg)
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.persist_setting(true, "cursor_color", Value::Null, cx);
                     }))
@@ -776,7 +780,11 @@ impl PaneFlowApp {
         });
 
         let button = |btn_id: String, glyph: &'static str, disabled: bool| {
-            let hover_bg = lighter_control_hover(ui.subtle);
+            let hover_bg = if disabled {
+                ui.subtle
+            } else {
+                lighter_control_hover(ui.subtle)
+            };
             div()
                 .id(SharedString::from(btn_id))
                 .flex()
@@ -788,7 +796,7 @@ impl PaneFlowApp {
                 .bg(ui.subtle)
                 .text_size(px(15.))
                 .text_color(if disabled { ui.muted } else { ui.text })
-                .when(!disabled, |d| d.hover(move |s| s.bg(hover_bg)))
+                .animated_hover_bg(ui.subtle, hover_bg)
                 .child(glyph)
         };
 
