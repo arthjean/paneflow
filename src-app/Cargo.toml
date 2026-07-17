@@ -523,6 +523,9 @@ assets = [
 #   therefore installed with `%doc` instead - functionally equivalent for
 #   `rpm -qlp` inspection, but upstream RPM purists note the distinction.
 #   If we ever move to `rpmbuild`, restore the `%license` tag.
+# - THIRD_PARTY_NOTICES.md deliberately is not tagged `%doc`: minimal Fedora
+#   and openSUSE images exclude optional docs, but this compliance notice must
+#   remain installed with the application payload.
 [package.metadata.generate-rpm]
 # Override the RPM NAME to `paneflow` (dropping the `-app` suffix of the
 # crate itself). Keeps the artifact filename in sync with both cargo-deb
@@ -548,7 +551,7 @@ pre_uninstall_script = "packaging/rpm/preun.sh"
 post_uninstall_script = "packaging/rpm/postun.sh"
 assets = [
     { source = "target/release/paneflow",                                       dest = "/usr/bin/paneflow",                                                         mode = "755" },
-    { source = "native/libghostty/THIRD_PARTY_NOTICES.md",                      dest = "/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md",                              mode = "644", doc = true },
+    { source = "native/libghostty/THIRD_PARTY_NOTICES.md",                      dest = "/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md",                              mode = "644" },
     { source = "assets/paneflow.desktop",                                       dest = "/usr/share/applications/paneflow.desktop",                                  mode = "644" },
     { source = "assets/icons/paneflow-16.png",                                  dest = "/usr/share/icons/hicolor/16x16/apps/paneflow.png",                          mode = "644" },
     { source = "assets/icons/paneflow-32.png",                                  dest = "/usr/share/icons/hicolor/32x32/apps/paneflow.png",                          mode = "644" },

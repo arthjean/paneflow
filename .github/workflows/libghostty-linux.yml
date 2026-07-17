@@ -366,7 +366,7 @@ jobs:
             image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
             format: rpm
           - distro: opensuse
-            image: registry.opensuse.org/opensuse/tumbleweed:latest@sha256:87f5378ba715a5359557f4142a597dc07091e277af79d49119948c5209fe7750
+            image: registry.opensuse.org/opensuse/tumbleweed:latest@sha256:a3beb5ebf656cc64675376f518f80520c944610779ee8d8c344c5b13eb10aefe
             format: rpm
           - distro: arch
             image: archlinux:base@sha256:fe6972d4dc1f660c0c10f4c41b2de8986bab89e7e2955378f8beadb8ebcd7433
@@ -384,22 +384,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s globstar nullglob
+          case "$FORMAT" in
+            deb) packages=("$PWD"/candidate/**/*.deb) ;;
+            rpm) packages=("$PWD"/candidate/**/*.rpm) ;;
+            tar) packages=("$PWD"/candidate/**/*.tar.gz) ;;
+            *) echo "unsupported package format: $FORMAT" >&2; exit 1 ;;
+          esac
+          if (( ${#packages[@]} != 1 )); then
+            echo "expected exactly one $FORMAT package, found ${#packages[@]}" >&2
+            exit 1
+          fi
+          package="${packages[0]}"
           case "$DISTRO" in
             ubuntu|debian)
               apt-get update
-              apt-get install -y --no-install-recommends binutils ca-certificates \
-                "$(find candidate -name '*.deb' -print -quit)"
+              # Minimal Debian-family images exclude /usr/share/doc by default.
+              apt-get -o "Dpkg::Options::=--path-include=/usr/share/doc/paneflow/*" \
+                install -y --no-install-recommends binutils ca-certificates "$package"
               binary=/usr/bin/paneflow
               notice=/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md
               ;;
             fedora)
-              dnf install -y binutils "$(find candidate -name '*.rpm' -print -quit)"
+              # Clear the minimal image's nodocs transaction flag so regular
+              # package documentation remains covered by this smoke test.
+              dnf --setopt=tsflags= install -y binutils "$package"
               binary=/usr/bin/paneflow
               notice=/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md
               ;;
             opensuse)
               zypper --non-interactive --no-gpg-checks install --allow-unsigned-rpm binutils \
-                "$(find candidate -name '*.rpm' -print -quit)"
+                "$package"
               binary=/usr/bin/paneflow
               notice=/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md
               ;;
@@ -407,15 +422,19 @@ jobs:
               pacman -Sy --noconfirm --needed binutils fontconfig freetype2 glibc \
                 libx11 libxcb libxkbcommon libxkbcommon-x11 vulkan-icd-loader
               mkdir -p /opt/paneflow-candidate
-              tar -xzf "$(find candidate -name '*.tar.gz' -print -quit)" \
-                -C /opt/paneflow-candidate
+              tar -xzf "$package" -C /opt/paneflow-candidate
               binary=/opt/paneflow-candidate/paneflow.app/bin/paneflow
               notice=/opt/paneflow-candidate/paneflow.app/THIRD_PARTY_NOTICES.md
               ;;
           esac
           "$binary" --version
           scripts/verify-libghostty-package.sh --binary "$binary" --notice "$notice"
-          smoke="$(find candidate -name paneflow-ghostty-smoke -type f -print -quit)"
+          smokes=("$PWD"/candidate/**/paneflow-ghostty-smoke)
+          if (( ${#smokes[@]} != 1 )); then
+            echo "expected one paneflow-ghostty-smoke, found ${#smokes[@]}" >&2
+            exit 1
+          fi
+          smoke="${smokes[0]}"
           chmod +x "$smoke"
           "$smoke"
 
