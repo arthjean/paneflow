@@ -17,6 +17,7 @@ use gpui::{
 use crate::app::constants::{TOAST_ENTER_MS, TOAST_EXIT_MS, TOAST_HOLD_MS};
 use crate::settings::components::with_alpha;
 use crate::theme::UiColors;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 use crate::{PaneFlowApp, StartSelfUpdate, update};
 
 #[derive(Clone)]
@@ -158,6 +159,8 @@ impl PaneFlowApp {
                     }
                 };
                 let action_clone = action.clone();
+                let resting_background = with_alpha(ui.text, 0.08);
+                let hover_background = with_alpha(ui.text, 0.12);
                 let btn = div()
                     .id(SharedString::from(button_id))
                     .h(px(26.))
@@ -165,10 +168,12 @@ impl PaneFlowApp {
                     .flex()
                     .items_center()
                     .rounded(px(7.))
-                    .bg(with_alpha(ui.text, 0.08))
+                    .bg(resting_background)
                     .text_color(ui.text)
                     .text_size(px(12.))
-                    .hover(move |s| s.bg(with_alpha(ui.text, 0.12)))
+                    .animated_hover(move |style, delta| {
+                        style.bg(lerp_color(resting_background, hover_background, delta));
+                    })
                     .child(label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |_, window, cx| match &action_clone {

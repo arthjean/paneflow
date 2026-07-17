@@ -5,12 +5,16 @@ use gpui::{
     ParentElement, Styled, deferred, div, hsla, img, prelude::*, px, rgb, svg,
 };
 
-use crate::PaneFlowApp;
+use crate::{
+    PaneFlowApp,
+    ui_primitives::{AnimatedHoverExt, lerp_color},
+};
 
 impl PaneFlowApp {
     pub(crate) fn render_about_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let version = env!("CARGO_PKG_VERSION");
+        let button_hover_bg = gpui::Hsla::from(rgb(0x3a3a3c));
 
         let close_x = div()
             .id("about-close-x")
@@ -21,7 +25,13 @@ impl PaneFlowApp {
             .w(px(30.))
             .h(px(30.))
             .rounded(px(7.))
-            .hover(|s| s.bg(rgb(0x3a3a3c)))
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(
+                    button_hover_bg.opacity(0.0),
+                    button_hover_bg,
+                    delta,
+                ));
+            })
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.show_about_dialog = false;
                 cx.notify();
@@ -120,7 +130,13 @@ impl PaneFlowApp {
             .bg(rgb(0x2d2d2f))
             .text_size(px(12.))
             .text_color(ui.text)
-            .hover(|s| s.bg(rgb(0x3a3a3c)))
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(
+                    gpui::Hsla::from(rgb(0x2d2d2f)),
+                    button_hover_bg,
+                    delta,
+                ));
+            })
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.show_about_dialog = false;
                 cx.notify();
