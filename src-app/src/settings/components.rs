@@ -184,7 +184,6 @@ pub fn secondary_button(
         .px(px(10.))
         .py(px(4.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-        .cursor(CursorStyle::PointingHand)
         .bg(ui.subtle)
         .text_size(px(12.))
         .font_weight(gpui::FontWeight::MEDIUM)
@@ -262,7 +261,6 @@ pub fn select_trigger_with_hover(
         .max_w(px(260.))
         .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
         .bg(ui.subtle)
-        .cursor(CursorStyle::PointingHand)
         .hover(move |s| s.bg(hover_bg))
 }
 

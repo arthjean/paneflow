@@ -12,8 +12,8 @@
 //! lives on its own page (`settings::tabs::mcp`).
 
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement,
-    ParentElement, SharedString, Styled, div, img, prelude::*, px, rgb, svg,
+    AnyElement, ClickEvent, Context, Hsla, InteractiveElement, IntoElement, ParentElement,
+    SharedString, Styled, div, img, prelude::*, px, rgb, svg,
 };
 
 use crate::PaneFlowApp;
@@ -319,7 +319,6 @@ fn setting_row(
             div()
                 .id(SharedString::from(id))
                 .flex_shrink_0()
-                .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     // cache-mutate + notify + off-thread persist.
                     this.persist_setting(

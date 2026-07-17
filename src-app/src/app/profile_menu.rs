@@ -4,8 +4,9 @@
 //! is wired.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    Pixels, Point, SharedString, StatefulInteractiveElement, Styled, Window, deferred, div, px,
+    AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, Pixels, Point, SharedString, StatefulInteractiveElement, Styled, Window,
+    deferred, div, px,
 };
 
 use crate::PaneFlowApp;
@@ -48,14 +49,17 @@ impl PaneFlowApp {
         let top = anchor.y + px(4.);
 
         let menu_item = |id: &'static str, label: &'static str, on_click: TitleBarMenuClick| {
-            select_item(id, false, ui).on_click(on_click).child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(ui.text)
-                    .child(label),
-            )
+            select_item(id, false, ui)
+                .cursor(CursorStyle::Arrow)
+                .on_click(on_click)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(ui.text)
+                        .child(label),
+                )
         };
 
         let new_workspace = menu_item(
@@ -110,14 +114,17 @@ impl PaneFlowApp {
         let top = anchor.y + px(4.);
 
         let menu_item = |id: &'static str, label: &'static str, on_click: TitleBarMenuClick| {
-            select_item(id, false, ui).on_click(on_click).child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .text_color(ui.text)
-                    .child(label),
-            )
+            select_item(id, false, ui)
+                .cursor(CursorStyle::Arrow)
+                .on_click(on_click)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(ui.text)
+                        .child(label),
+                )
         };
 
         let documentation = menu_item(

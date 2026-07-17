@@ -21,7 +21,6 @@ impl PaneFlowApp {
             .w(px(30.))
             .h(px(30.))
             .rounded(px(7.))
-            .cursor_pointer()
             .hover(|s| s.bg(rgb(0x3a3a3c)))
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.show_about_dialog = false;
@@ -119,7 +118,6 @@ impl PaneFlowApp {
             .border_1()
             .border_color(rgb(0x66666a))
             .bg(rgb(0x2d2d2f))
-            .cursor_pointer()
             .text_size(px(12.))
             .text_color(ui.text)
             .hover(|s| s.bg(rgb(0x3a3a3c)))

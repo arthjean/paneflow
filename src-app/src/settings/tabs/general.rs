@@ -14,8 +14,8 @@
 //! the trigger, on Escape, and on a tab change.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, IntoElement, MouseButton, ParentElement, SharedString, Styled,
-    div, prelude::*, px,
+    AnyElement, ClickEvent, Context, CursorStyle, IntoElement, MouseButton, ParentElement,
+    SharedString, Styled, div, prelude::*, px,
 };
 use serde_json::Value;
 
@@ -212,12 +212,12 @@ impl PaneFlowApp {
             }));
             for (i, (label, icon, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
-                let mut item = select_item((config_key, i), selected, ui).on_click(cx.listener(
-                    move |this, _: &ClickEvent, _w, cx| {
+                let mut item = select_item((config_key, i), selected, ui)
+                    .cursor(CursorStyle::Arrow)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.general_dropdown = None;
                         this.persist_setting(false, config_key, value_for_click.clone(), cx);
-                    },
-                ));
+                    }));
                 if let Some(icon) = icon {
                     item = item.child(render_logo(icon, ui));
                 }

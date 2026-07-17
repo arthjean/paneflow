@@ -75,7 +75,6 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .cursor_pointer()
             .when(selected, |d| {
                 d.bg(crate::app::constants::sidebar_tab_active_background())
             })

@@ -1296,7 +1296,6 @@ impl TerminalView {
             .justify_center()
             .size(px(22.))
             .rounded(px(5.))
-            .cursor_pointer()
             .border_1()
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
@@ -1328,7 +1327,6 @@ impl TerminalView {
             .h(px(22.))
             .px(px(7.))
             .rounded(px(5.))
-            .cursor_pointer()
             .text_size(px(12.))
             .text_color(ui.muted)
             .hover(|s| {
@@ -1357,7 +1355,6 @@ impl TerminalView {
                 .justify_center()
                 .size(px(22.))
                 .rounded(px(5.))
-                .cursor_pointer()
                 .hover(|s| {
                     let ui = crate::theme::ui_colors();
                     s.bg(ui.subtle)

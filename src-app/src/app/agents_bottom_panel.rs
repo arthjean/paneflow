@@ -545,7 +545,6 @@ fn render_bottom_terminal_tab(
         .pr(px(5.))
         .rounded(px(8.))
         .bg(bg)
-        .cursor(CursorStyle::PointingHand)
         .hover(move |d| d.bg(hover_bg))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {
@@ -586,7 +585,6 @@ fn render_bottom_tab_close_button(
         .items_center()
         .justify_center()
         .rounded(px(5.))
-        .cursor(CursorStyle::PointingHand)
         .hover(move |d| d.bg(with_alpha(ui.text, 0.14)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {
@@ -614,7 +612,6 @@ fn render_bottom_restart_button(
         .items_center()
         .justify_center()
         .rounded(px(7.))
-        .cursor(CursorStyle::PointingHand)
         .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _e: &ClickEvent, window, cx| {
@@ -643,7 +640,6 @@ fn render_bottom_add_button(
         .items_center()
         .justify_center()
         .rounded(px(7.))
-        .cursor(CursorStyle::PointingHand)
         .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _e: &ClickEvent, window, cx| {
@@ -671,7 +667,6 @@ fn render_bottom_panel_close_button(
         .items_center()
         .justify_center()
         .rounded(px(7.))
-        .cursor(CursorStyle::PointingHand)
         .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
@@ -735,7 +730,6 @@ pub(crate) fn render_agents_bottom_toggle_button(
         .items_center()
         .justify_center()
         .rounded(px(10.))
-        .cursor(CursorStyle::PointingHand)
         .bg(fill)
         .hover(move |d| d.bg(hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

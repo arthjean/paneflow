@@ -175,7 +175,6 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(6.))
-            .cursor_pointer()
             .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.diff_mode.diff_files_collapsed = !this.diff_mode.diff_files_collapsed;
@@ -201,7 +200,6 @@ impl PaneFlowApp {
                     .justify_center()
                     .size(px(20.))
                     .rounded(px(4.))
-                    .cursor_pointer()
                     .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         this.diff_mode.diff_files_tree = !this.diff_mode.diff_files_tree;
@@ -249,7 +247,7 @@ impl PaneFlowApp {
         // Always-on filter field (cursor-aware TextInput). Escape clears it; a
         // clear-(×) button appears once it has content. Shares the [`filter_pill`]
         // primitive with the Agents sidebar filter.
-        let filter_field = crate::ui_primitives::filter_pill(
+        let filter_field = crate::ui_primitives::filter_pill_with_arrow_clear(
             "diff-files-filter",
             "diff-files-filter-clear",
             ui,
@@ -498,7 +496,6 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(5.))
-            .cursor_pointer()
             .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if !this.diff_mode.diff_collapsed_dirs.remove(&key) {
@@ -580,7 +577,6 @@ impl PaneFlowApp {
             .when(is_active, |d| {
                 d.bg(crate::app::constants::sidebar_tab_active_background())
             })
-            .cursor_pointer()
             .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if !this.diff_mode.diff_collapsed_branches.remove(&key_owned) {

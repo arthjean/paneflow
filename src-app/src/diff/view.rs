@@ -1233,6 +1233,7 @@ impl DiffView {
                         is_current,
                         ui,
                     )
+                    .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.set_base(branch_owned.clone(), cx);
                         window.focus(&this.focus_handle, cx);

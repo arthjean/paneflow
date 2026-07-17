@@ -105,9 +105,7 @@ impl PaneFlowApp {
 
         if actionable {
             // Whole row toggles a directory (US-003) / opens a markdown (US-004).
-            el = el
-                .cursor_pointer()
-                .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()));
+            el = el.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()));
             let click_path = path.clone();
             el = el.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.files_focus.focus(window, cx);

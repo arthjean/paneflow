@@ -207,7 +207,6 @@ pub fn render(
                     .w(SCROLLBAR_WIDTH)
                     .h(px(viewport_h))
                     .rounded(px(3.))
-                    .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, on_track_click),
             )
             .child(
@@ -221,7 +220,6 @@ pub fn render(
                     .rounded(px(3.))
                     .bg(thumb_bg)
                     .hover(move |s| s.bg(thumb_hover_bg))
-                    .cursor_pointer()
                     .on_mouse_down(MouseButton::Left, on_thumb_down),
             )
             .into_any_element(),

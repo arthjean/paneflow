@@ -88,7 +88,6 @@ impl PaneFlowApp {
                     .justify_center()
                     .size(px(22.))
                     .rounded(px(5.))
-                    .cursor_pointer()
                     .text_size(px(14.))
                     .text_color(ui.muted)
                     .hover(|s| {

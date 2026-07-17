@@ -1,8 +1,8 @@
 //! "Notifications" settings page for OS-native agent notifications.
 
 use gpui::{
-    ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Styled, div, prelude::*, px,
+    ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div,
+    prelude::*, px,
 };
 use paneflow_config::schema::NotifyWhenAgentWaiting;
 use serde_json::Value;
@@ -60,7 +60,6 @@ fn agent_panel_toggle_row(
         div()
             .id(SharedString::from(id))
             .flex_shrink_0()
-            .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.persist_agent_panel_setting(config_key, target_value.clone(), cx);
             }))

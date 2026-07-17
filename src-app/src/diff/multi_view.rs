@@ -221,7 +221,6 @@ impl Render for MultiRepoDiffView {
                     } else {
                         gpui::transparent_black()
                     })
-                    .cursor_pointer()
                     .hover(|s| {
                         let ui = crate::theme::ui_colors();
                         s.bg(ui.subtle)

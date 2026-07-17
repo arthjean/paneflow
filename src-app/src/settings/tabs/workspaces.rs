@@ -248,7 +248,6 @@ impl PaneFlowApp {
         setting_card(ui)
             .when(selected, |d| d.bg(with_alpha(switch_blue(), 0.08)))
             .id(("workspace-template-card", idx))
-            .cursor(CursorStyle::PointingHand)
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.select_workspace_template(idx, cx);
             }))
@@ -460,6 +459,7 @@ impl PaneFlowApp {
                 let next = (*value).to_string();
                 menu = menu.child(
                     select_item(("workspace-layout", i), selected, ui)
+                        .cursor(CursorStyle::Arrow)
                         .h(px(44.))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                             this.workspace_template_dropdown = None;
@@ -529,7 +529,6 @@ impl PaneFlowApp {
                         .flex_row()
                         .items_center()
                         .gap(px(10.))
-                        .cursor(CursorStyle::PointingHand)
                         .when(selected, |d| d.bg(with_alpha(ui.text, 0.07)))
                         .hover(|d| d.bg(with_alpha(ui.text, 0.05)))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
@@ -646,7 +645,6 @@ impl PaneFlowApp {
                     .flex_row()
                     .items_center()
                     .gap(px(8.))
-                    .cursor(CursorStyle::PointingHand)
                     .hover(|d| d.bg(with_alpha(ui.text, 0.08)))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.set_workspace_template_pane_agent(agent, cx);
@@ -1762,7 +1760,6 @@ fn project_path_picker(
         .flex_row()
         .items_center()
         .gap(px(8.))
-        .cursor(CursorStyle::PointingHand)
         .hover(|d| d.bg(with_alpha(ui.text, 0.08)))
         .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
             this.pick_workspace_template_project_path(cx);
@@ -1824,7 +1821,7 @@ fn icon_button(
         .font_weight(FontWeight::MEDIUM)
         .text_color(if enabled { fg } else { disabled_fg })
         .when(enabled, |d| {
-            d.cursor(CursorStyle::PointingHand).hover(move |s| {
+            d.hover(move |s| {
                 s.bg(if primary {
                     with_alpha(bg, 0.86)
                 } else {
@@ -1856,7 +1853,6 @@ fn pane_delete_button(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> S
         .justify_center()
         .rounded(px(7.))
         .text_color(icon_color)
-        .cursor(CursorStyle::PointingHand)
         .hover(move |s| s.bg(hover_bg))
         .tooltip(crate::ui_primitives::text_tooltip("Delete pane"))
         .child(
@@ -1894,10 +1890,7 @@ fn destructive_icon_button(
         .text_size(px(12.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(if enabled { fg } else { ui.muted })
-        .when(enabled, |d| {
-            d.cursor(CursorStyle::PointingHand)
-                .hover(move |s| s.bg(hover_bg))
-        })
+        .when(enabled, |d| d.hover(move |s| s.bg(hover_bg)))
         .child(
             svg()
                 .size(px(13.))
@@ -1941,10 +1934,7 @@ fn save_icon_button(
         .text_size(px(12.))
         .font_weight(FontWeight::MEDIUM)
         .text_color(if enabled { fg } else { ui.muted })
-        .when(enabled, |d| {
-            d.cursor(CursorStyle::PointingHand)
-                .hover(move |s| s.bg(hover_bg))
-        })
+        .when(enabled, |d| d.hover(move |s| s.bg(hover_bg)))
         .child(
             svg()
                 .size(px(13.))
@@ -1983,7 +1973,6 @@ fn pane_kind_chip(
         })
         .text_size(px(12.))
         .text_color(ui.text)
-        .cursor(CursorStyle::PointingHand)
         .hover(|d| d.bg(with_alpha(ui.text, 0.08)))
         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
             this.set_workspace_template_pane_kind(kind, cx);

@@ -418,6 +418,7 @@ impl DiffView {
                     false,
                     ui,
                 )
+                .cursor(CursorStyle::Arrow)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.toggle_review_pick(i, cx);
                 }))
@@ -455,7 +456,6 @@ impl DiffView {
                 .bg(ui.accent.opacity(0.15))
                 .text_size(crate::ui_primitives::BODY)
                 .text_color(ui.accent)
-                .cursor_pointer()
                 .hover(|s| {
                     let ui = crate::theme::ui_colors();
                     s.bg(ui.accent.opacity(0.25))
@@ -493,7 +493,6 @@ fn render_review_terminal_tab(
         .pr(px(5.))
         .rounded(px(8.))
         .bg(bg)
-        .cursor(CursorStyle::PointingHand)
         .hover(move |d| d.bg(hover_bg))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {
@@ -537,7 +536,6 @@ fn render_review_tab_close_button(
         .items_center()
         .justify_center()
         .rounded(px(5.))
-        .cursor(CursorStyle::PointingHand)
         .hover(move |d| d.bg(with_alpha(ui.text, 0.14)))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {

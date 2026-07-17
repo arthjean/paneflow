@@ -11,8 +11,8 @@
 //! inline-settings migration.
 
 use gpui::{
-    ClickEvent, Context, CursorStyle, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Styled, div, prelude::*, px,
+    ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
+    Styled, div, prelude::*, px,
 };
 
 use paneflow_mcp_install::{InstallKind, OverallState, StatusKind};
@@ -55,7 +55,6 @@ impl PaneFlowApp {
             .font_weight(FontWeight::MEDIUM);
         button = if enabled {
             button
-                .cursor(CursorStyle::PointingHand)
                 .bg(ui.accent)
                 .text_color(gpui::white())
                 .hover(|s| s.bg(with_alpha(ui.accent, 0.85)))

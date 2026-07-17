@@ -382,7 +382,6 @@ impl PaneFlowApp {
                     .w(px(22.))
                     .h(px(22.))
                     .rounded(px(4.))
-                    .cursor_pointer()
                     .hover(|s| s.bg(ui.subtle))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.close_custom_buttons_modal(cx);
@@ -622,7 +621,6 @@ impl PaneFlowApp {
                                 .w(px(24.))
                                 .h(px(24.))
                                 .rounded(px(4.))
-                                .cursor_pointer()
                                 .hover(|s| s.bg(ui.surface))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                     this.begin_edit_button(&edit_id, window, cx);
@@ -647,7 +645,6 @@ impl PaneFlowApp {
                                 .w(px(24.))
                                 .h(px(24.))
                                 .rounded(px(4.))
-                                .cursor_pointer()
                                 .hover(|s| s.bg(ui.surface))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                     this.delete_button(&del_id, cx);
@@ -673,7 +670,6 @@ impl PaneFlowApp {
             .px(px(8.))
             .py(px(8.))
             .rounded(px(6.))
-            .cursor_pointer()
             .hover(|s| s.bg(ui.subtle))
             .flex()
             .flex_row()
@@ -785,7 +781,6 @@ impl PaneFlowApp {
                     .w(px(32.))
                     .h(px(32.))
                     .rounded(px(6.))
-                    .cursor_pointer()
                     // Selection by fill, not border (Codex): the picked tile
                     // gets the same brightest-neutral fill as every selected
                     // surface in the app (#323232); the rest are bare and
@@ -853,7 +848,6 @@ impl PaneFlowApp {
                             .px(px(12.))
                             .py(px(6.))
                             .rounded(px(6.))
-                            .cursor_pointer()
                             .text_size(px(12.))
                             .text_color(ui.muted)
                             .hover(|s| s.bg(ui.subtle).text_color(ui.text))
@@ -872,10 +866,7 @@ impl PaneFlowApp {
                             .text_size(px(12.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .when(is_valid, |d| {
-                                d.cursor_pointer()
-                                    .bg(ui.text)
-                                    .text_color(ui.base)
-                                    .hover(|s| s.opacity(0.85))
+                                d.bg(ui.text).text_color(ui.base).hover(|s| s.opacity(0.85))
                             })
                             .when(!is_valid, |d| {
                                 d.bg(ui.subtle).text_color(ui.muted).cursor_default()

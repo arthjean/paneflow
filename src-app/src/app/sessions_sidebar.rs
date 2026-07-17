@@ -246,7 +246,6 @@ impl PaneFlowApp {
                     .justify_center()
                     .size(px(22.))
                     .rounded(px(5.))
-                    .cursor_pointer()
                     .text_size(px(14.))
                     .text_color(ui.muted)
                     .hover(|s| {
@@ -382,7 +381,6 @@ impl PaneFlowApp {
             .px(px(14.))
             .pt(px(12.))
             .pb(px(4.))
-            .cursor_pointer()
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.agent_sessions.sessions_focus.focus(window, cx);
                 this.agent_sessions.sessions_group_collapsed[idx] =
@@ -459,7 +457,6 @@ impl PaneFlowApp {
                         .px(px(8.))
                         .py(px(5.))
                         .rounded(px(6.))
-                        .cursor_pointer()
                         .text_size(px(11.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(ui.muted)
@@ -545,7 +542,6 @@ impl PaneFlowApp {
             .my(px(1.))
             .px(px(8.))
             .rounded(px(6.))
-            .cursor_pointer()
             .on_drag(drag_payload, |drag, _offset, _window, cx| {
                 cx.new(|_| TabDragPreview {
                     title: drag.title.clone(),

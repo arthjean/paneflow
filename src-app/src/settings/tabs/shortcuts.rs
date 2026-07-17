@@ -7,8 +7,8 @@
 //! `PaneFlowApp::handle_shortcut_recording` (in `app::settings`).
 
 use gpui::{
-    ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement, Styled, div,
-    prelude::*, px,
+    ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Styled, div, prelude::*,
+    px,
 };
 
 use crate::settings::components::{
@@ -76,7 +76,6 @@ impl PaneFlowApp {
                 .gap(px(12.))
                 .px(px(12.))
                 .py(px(10.))
-                .cursor(CursorStyle::PointingHand)
                 .hover(|s| s.bg(ui.subtle))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.recording_shortcut_idx = Some(i);

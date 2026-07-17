@@ -7,9 +7,9 @@
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ClipboardItem, Context, Entity, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, SharedString, Styled, Window, deferred, div, point,
-    prelude::*, px,
+    AnyElement, App, ClickEvent, ClipboardItem, Context, CursorStyle, Entity, InteractiveElement,
+    IntoElement, MouseButton, ParentElement, Pixels, SharedString, Styled, Window, deferred, div,
+    point, prelude::*, px,
 };
 
 use crate::app::files_tree;
@@ -92,7 +92,6 @@ impl PaneFlowApp {
             .px(px(8.))
             .py(px(5.))
             .rounded(px(4.))
-            .cursor_pointer()
             .text_size(px(11.))
             .text_color(ui.text)
             .hover(|s| {
@@ -134,6 +133,7 @@ impl PaneFlowApp {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> impl IntoElement {
         select_item(id, false, ui)
+            .cursor(CursorStyle::Arrow)
             .on_click(on_click)
             .child(
                 div()
@@ -366,8 +366,7 @@ impl PaneFlowApp {
                 .text_color(ui.muted)
                 .when(can_close, |d| d.text_color(ui.text))
                 .when(can_close, |d| {
-                    d.cursor_pointer()
-                        .hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
+                    d.hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
                 })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();

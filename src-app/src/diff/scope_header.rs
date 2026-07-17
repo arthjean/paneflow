@@ -13,8 +13,8 @@ use crate::PaneFlowApp;
 use crate::diff::DiffScope;
 use crate::settings::components::{menu_surface, select_item};
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Styled, deferred, div, prelude::*, px, svg,
+    AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
+    SharedString, Styled, deferred, div, prelude::*, px, svg,
 };
 
 impl PaneFlowApp {
@@ -34,7 +34,6 @@ impl PaneFlowApp {
             .px(px(7.))
             .rounded(px(5.))
             .when(open, |d| d.bg(ui.subtle))
-            .cursor_pointer()
             .text_size(crate::ui_primitives::BODY)
             .text_color(ui.text)
             .hover(|s| {
@@ -87,6 +86,7 @@ impl PaneFlowApp {
                         is_active,
                         ui,
                     )
+                    .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.diff_mode.diff_scope_picker_open = false;
                         this.diff_mode.diff_project_picker_open = false;
@@ -150,7 +150,6 @@ impl PaneFlowApp {
             .px(px(7.))
             .rounded(px(5.))
             .when(project_open, |d| d.bg(ui.subtle))
-            .cursor_pointer()
             .text_size(crate::ui_primitives::BODY)
             // EP-003 US-012: secondary context label - muted, demoted under the
             // primary scope chip in the `scope › project › branches` hierarchy.
@@ -230,6 +229,7 @@ impl PaneFlowApp {
                             is_active,
                             ui,
                         )
+                        .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.diff_mode.diff_project_picker_open = false;
                             // Routes through the standard workspace switch
@@ -307,7 +307,6 @@ impl PaneFlowApp {
                         .px(px(7.))
                         .rounded(px(5.))
                         .when(branches_open, |d| d.bg(ui.subtle))
-                        .cursor_pointer()
                         .text_size(crate::ui_primitives::BODY)
                         // EP-003 US-012: secondary context label - muted, demoted.
                         .text_color(ui.muted)
@@ -385,6 +384,7 @@ impl PaneFlowApp {
                                         chosen,
                                         ui,
                                     )
+                                    .cursor(CursorStyle::Arrow)
                                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                                         this.toggle_chosen_worktree(
                                             row_root.clone(),

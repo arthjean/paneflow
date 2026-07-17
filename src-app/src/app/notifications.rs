@@ -168,7 +168,6 @@ impl PaneFlowApp {
                     .bg(with_alpha(ui.text, 0.08))
                     .text_color(ui.text)
                     .text_size(px(12.))
-                    .cursor_pointer()
                     .hover(move |s| s.bg(with_alpha(ui.text, 0.12)))
                     .child(label)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

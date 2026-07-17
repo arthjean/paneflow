@@ -392,6 +392,7 @@ impl PaneFlowApp {
                         current_font == default_font,
                         ui,
                     )
+                    .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         this.font_dropdown_open = false;
                         this.font_search.clear();
@@ -413,6 +414,7 @@ impl PaneFlowApp {
                 let is_current = **name == current_font;
                 menu = menu.child(
                     select_item(("terminal-font", i), is_current, ui)
+                        .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                             this.font_dropdown_open = false;
                             this.font_search.clear();
@@ -486,7 +488,6 @@ impl PaneFlowApp {
             .gap(px(16.))
             .px(px(12.))
             .py(px(10.))
-            .cursor(CursorStyle::PointingHand)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, window, cx| {
@@ -550,7 +551,6 @@ impl PaneFlowApp {
                             .rounded(px(6.))
                             .bg(hsla_from_u32(hex))
                             .opacity(if selected { 1.0 } else { 0.92 })
-                            .cursor(CursorStyle::PointingHand)
                             .hover(|s| s.opacity(1.0))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                                 this.persist_setting(
@@ -588,7 +588,6 @@ impl PaneFlowApp {
                     .items_center()
                     .gap(px(8.))
                     .bg(scheme_bg)
-                    .cursor(CursorStyle::PointingHand)
                     .hover(move |s| s.bg(scheme_hover_bg))
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.persist_setting(true, "cursor_color", Value::Null, cx);
@@ -679,6 +678,7 @@ impl PaneFlowApp {
             for (i, (label, value, selected)) in options.into_iter().enumerate() {
                 let value_for_click = value;
                 let item = select_item((config_key, i), selected, ui)
+                    .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.terminal_dropdown = None;
                         this.persist_setting(nested, config_key, value_for_click.clone(), cx);
@@ -735,7 +735,6 @@ impl PaneFlowApp {
                 div()
                     .id(SharedString::from(id))
                     .flex_shrink_0()
-                    .cursor(CursorStyle::PointingHand)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                         this.persist_setting(nested, config_key, Value::Bool(target_value), cx);
                     }))
@@ -789,10 +788,7 @@ impl PaneFlowApp {
                 .bg(ui.subtle)
                 .text_size(px(15.))
                 .text_color(if disabled { ui.muted } else { ui.text })
-                .when(!disabled, |d| {
-                    d.cursor(CursorStyle::PointingHand)
-                        .hover(move |s| s.bg(hover_bg))
-                })
+                .when(!disabled, |d| d.hover(move |s| s.bg(hover_bg)))
                 .child(glyph)
         };
 

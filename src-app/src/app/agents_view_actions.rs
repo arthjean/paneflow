@@ -340,7 +340,7 @@ impl PaneFlowApp {
     ) -> gpui::AnyElement {
         use crate::agent_launcher::TerminalAgent;
         use gpui::{
-            ClickEvent, CursorStyle, FontWeight, InteractiveElement, MouseButton, SharedString,
+            ClickEvent, FontWeight, InteractiveElement, MouseButton, SharedString,
             StatefulInteractiveElement, rgb,
         };
 
@@ -379,7 +379,6 @@ impl PaneFlowApp {
                     .rounded(px(10.))
                     .bg(ui.subtle)
                     .when(!installed, |d| d.opacity(0.58))
-                    .cursor(CursorStyle::PointingHand)
                     .hover(move |s| s.bg(hover_bg))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
@@ -1609,7 +1608,6 @@ fn render_agents_editor_split_button(
                 .justify_center()
                 .rounded_tl(px(9.))
                 .rounded_bl(px(9.))
-                .cursor(CursorStyle::PointingHand)
                 .hover(move |d| d.bg(hover_bg))
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.open_agents_environment_in_editor(
@@ -1633,7 +1631,6 @@ fn render_agents_editor_split_button(
                 .justify_center()
                 .rounded_tr(px(9.))
                 .rounded_br(px(9.))
-                .cursor(CursorStyle::PointingHand)
                 .hover(move |d| d.bg(hover_bg))
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.toggle_agents_editor_menu(event, window, cx);
@@ -1693,6 +1690,7 @@ fn render_agents_editor_menu(
         let selected = current == *value;
         let mut item =
             crate::settings::components::select_item(("agents-env-editor", idx), selected, ui)
+                .cursor(CursorStyle::Arrow)
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.select_agents_environment_editor(value_owned.clone(), event, window, cx);
                 }));
@@ -1748,7 +1746,6 @@ fn render_agents_environment_toggle_button(
         .items_center()
         .justify_center()
         .rounded(px(10.))
-        .cursor(CursorStyle::PointingHand)
         .bg(fill)
         .hover(move |d| d.bg(hover))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1832,7 +1829,6 @@ fn render_agents_environment_header(
                 .items_center()
                 .justify_center()
                 .rounded(px(6.))
-                .cursor(CursorStyle::PointingHand)
                 .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.08)))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
@@ -1877,7 +1873,6 @@ fn render_agents_environment_changes_row(
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
     if is_repo {
         row = row
-            .cursor(CursorStyle::PointingHand)
             .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.spawn_agents_environment_git_refresh(cwd.clone(), cx);
@@ -1943,7 +1938,6 @@ fn render_agents_environment_branch_row(
         ));
     if summary.is_repo {
         row = row
-            .cursor(CursorStyle::PointingHand)
             .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.toggle_agents_branch_menu(cwd.clone(), current.clone(), event, window, cx);
@@ -2103,7 +2097,6 @@ fn render_agents_branch_item(
         .px(px(8.))
         .py(px(6.))
         .rounded(px(8.))
-        .cursor(CursorStyle::PointingHand)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             this.switch_agents_branch(cwd.clone(), item_branch.clone(), event, window, cx);

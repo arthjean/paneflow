@@ -16,11 +16,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, Corners, CursorStyle, Element, ElementId, Font,
-    FontFeatures, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
-    ImgResourceLoader, InspectorElementId, IntoElement, LayoutId, Length, Path, PathBuilder,
-    Pixels, Point, RenderImage, Resource, ShapedLine, SharedString, Style, TextAlign, TextRun,
-    Window, fill, point, px, quad, relative, size,
+    App, BorderStyle, Bounds, ContentMask, Corners, Element, ElementId, Font, FontFeatures,
+    FontStyle, FontWeight, GlobalElementId, Hsla, ImgResourceLoader, InspectorElementId,
+    IntoElement, LayoutId, Length, Path, PathBuilder, Pixels, Point, RenderImage, Resource,
+    ShapedLine, SharedString, Style, TextAlign, TextRun, Window, fill, point, px, quad, relative,
+    size,
 };
 
 use super::align::CellKind;
@@ -191,12 +191,6 @@ pub struct DiffPrepaint {
     sticky_quads: Vec<Quad>,
     sticky_images: Vec<ImagePaint>,
     sticky_glyphs: Vec<Glyphs>,
-    /// Hitboxes over the visible file-header rows so the cursor becomes a
-    /// pointing hand there (the headers are click-to-collapse). `Normal`
-    /// behavior - does not consume the click, which still bubbles to the
-    /// hosting div's `on_click`.
-    header_hitboxes: Vec<Hitbox>,
-    fold_hitboxes: Vec<Hitbox>,
 }
 
 pub struct DiffElement {
@@ -1348,8 +1342,6 @@ impl Element for DiffElement {
         let mut sticky_quads = Vec::with_capacity(2);
         let mut sticky_images = Vec::with_capacity(1);
         let mut sticky_glyphs = Vec::with_capacity(3);
-        let mut header_hitboxes = Vec::with_capacity(visible_rows / 12);
-        let mut fold_hitboxes = Vec::with_capacity(visible_rows / 8);
 
         // Clone the Rc so the borrow of `self.body` doesn't conflict with the
         // `&mut self` shaping calls below.
@@ -1364,17 +1356,6 @@ impl Element for DiffElement {
                     let collapsed = rows
                         .get(i + 1)
                         .is_none_or(|r| r.kind == RowKind::FileHeader);
-                    if matches!(rows[i].kind, RowKind::FileHeader) {
-                        header_hitboxes.push(window.insert_hitbox(
-                            Bounds::new(origin, size(width, row_h)),
-                            HitboxBehavior::Normal,
-                        ));
-                    } else if matches!(rows[i].kind, RowKind::Fold) {
-                        fold_hitboxes.push(window.insert_hitbox(
-                            Bounds::new(origin, size(width, row_h)),
-                            HitboxBehavior::Normal,
-                        ));
-                    }
                     let h_offset = px(file_at_row(&spans, i)
                         .map(|f| {
                             file_side_offset(&spans, &h_offsets, f, false, false, f32::from(width))
@@ -1443,17 +1424,6 @@ impl Element for DiffElement {
                     let collapsed = rows
                         .get(i + 1)
                         .is_none_or(|r| matches!(r, SplitRow::Header(_)));
-                    if matches!(rows[i], SplitRow::Header(_)) {
-                        header_hitboxes.push(window.insert_hitbox(
-                            Bounds::new(origin, size(width, row_h)),
-                            HitboxBehavior::Normal,
-                        ));
-                    } else if matches!(rows[i], SplitRow::Fold(_)) {
-                        fold_hitboxes.push(window.insert_hitbox(
-                            Bounds::new(origin, size(width, row_h)),
-                            HitboxBehavior::Normal,
-                        ));
-                    }
                     let (h_offset_left, h_offset_right) = file_at_row(&spans, i)
                         .map(|f| {
                             (
@@ -1570,8 +1540,6 @@ impl Element for DiffElement {
             sticky_quads,
             sticky_images,
             sticky_glyphs,
-            header_hitboxes,
-            fold_hitboxes,
         })
     }
 
@@ -1588,13 +1556,6 @@ impl Element for DiffElement {
         let Some(layout) = prepaint.take() else {
             return;
         };
-        // Pointer cursor over the clickable file-header cards.
-        for hb in &layout.header_hitboxes {
-            window.set_cursor_style(CursorStyle::PointingHand, hb);
-        }
-        for hb in &layout.fold_hitboxes {
-            window.set_cursor_style(CursorStyle::PointingHand, hb);
-        }
         let lh = self.line_height;
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for q in &layout.quads {

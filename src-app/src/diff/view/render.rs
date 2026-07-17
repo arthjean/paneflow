@@ -326,7 +326,6 @@ impl DiffView {
             .py(px(1.))
             .rounded(px(4.))
             .when(overridden, |d| d.bg(ui.accent.opacity(0.18)))
-            .cursor_pointer()
             .hover(|s| {
                 let ui = crate::theme::ui_colors();
                 s.bg(ui.subtle)
@@ -381,7 +380,6 @@ impl DiffView {
             })
             .border_b_1()
             .border_color(ui.border)
-            .cursor_pointer()
             .when(selected, |d| {
                 d.child(
                     div()
@@ -467,7 +465,6 @@ impl DiffView {
                     .justify_center()
                     .size(px(18.))
                     .rounded(px(4.))
-                    .cursor_pointer()
                     .hover(|s| {
                         let ui = crate::theme::ui_colors();
                         s.bg(ui.text.opacity(0.12))
@@ -493,7 +490,6 @@ impl DiffView {
                     .px(px(4.))
                     .text_size(BODY)
                     .text_color(ui.muted)
-                    .cursor_pointer()
                     .hover(|s| {
                         let ui = crate::theme::ui_colors();
                         s.text_color(ui.text)
@@ -740,13 +736,10 @@ impl DiffView {
                         .text_color(ui.text)
                         .font_weight(FontWeight::SEMIBOLD);
                 } else {
-                    s = s
-                        .text_color(ui.text.opacity(0.5))
-                        .cursor_pointer()
-                        .hover(|st| {
-                            let ui = crate::theme::ui_colors();
-                            st.text_color(ui.text)
-                        });
+                    s = s.text_color(ui.text.opacity(0.5)).hover(|st| {
+                        let ui = crate::theme::ui_colors();
+                        st.text_color(ui.text)
+                    });
                 }
                 s.child(
                     gpui::svg()

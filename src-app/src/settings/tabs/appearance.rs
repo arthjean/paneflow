@@ -1,8 +1,8 @@
 //! "Themes" settings tab - light, dark, and system theme selection.
 
 use gpui::{
-    ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, ParentElement,
-    SharedString, Styled, div, prelude::*, px, svg,
+    ClickEvent, Context, Hsla, InteractiveElement, IntoElement, ParentElement, SharedString,
+    Styled, div, prelude::*, px, svg,
 };
 
 use crate::PaneFlowApp;
@@ -79,7 +79,6 @@ impl PaneFlowApp {
                 seg = seg.bg(crate::app::constants::sidebar_tab_active_background());
             } else {
                 seg = seg
-                    .cursor(CursorStyle::PointingHand)
                     .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.apply_theme_mode(mode, window, cx);
@@ -147,7 +146,6 @@ impl PaneFlowApp {
                     div()
                         .id("windows-chrome-material-toggle")
                         .flex_shrink_0()
-                        .cursor(CursorStyle::PointingHand)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                             this.persist_setting(
                                 false,
@@ -211,7 +209,6 @@ impl PaneFlowApp {
             .border_1()
             .border_color(border)
             .bg(bg)
-            .cursor(CursorStyle::PointingHand)
             .hover(move |s| s.bg(hover_bg))
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.apply_theme_by_name(&name_owned, cx);

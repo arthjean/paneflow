@@ -7,8 +7,8 @@
 
 use crate::PaneFlowApp;
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, FontWeight, IntoElement, ParentElement,
-    SharedString, Styled, div, prelude::*, px, svg,
+    AnyElement, ClickEvent, Context, FontWeight, IntoElement, ParentElement, SharedString, Styled,
+    div, prelude::*, px, svg,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -204,7 +204,6 @@ fn render_refresh_button(
         .items_center()
         .justify_center()
         .rounded(px(7.))
-        .cursor(CursorStyle::PointingHand)
         .text_color(ui.muted)
         .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.08)))
         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
@@ -235,7 +234,6 @@ fn render_tab_bar(
             .px(px(12.))
             .py(px(6.))
             .rounded(px(6.))
-            .cursor_pointer()
             .text_size(px(12.))
             .font_weight(FontWeight::NORMAL);
         if is_active {
@@ -295,7 +293,6 @@ fn render_skill_card(
         .py(px(3.))
         .rounded(px(5.))
         .text_size(px(11.))
-        .cursor_pointer()
         .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(name_for_copy.clone()));
             this.mark_skill_copied(id_for_mark.clone(), cx);

@@ -16,9 +16,9 @@
 //! app's own left rail becomes the settings nav.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, FontWeight, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString,
-    Styled, Window, div, prelude::*, px, svg,
+    AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString, Styled,
+    Window, div, prelude::*, px, svg,
 };
 
 use crate::widgets::scrollbar;
@@ -192,7 +192,6 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .cursor(CursorStyle::PointingHand)
             .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.close_settings(cx);
@@ -285,7 +284,6 @@ impl PaneFlowApp {
                     row = row.bg(crate::app::constants::sidebar_tab_active_background());
                 } else {
                     row = row
-                        .cursor(CursorStyle::PointingHand)
                         .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.select_settings_section(section, window, cx);

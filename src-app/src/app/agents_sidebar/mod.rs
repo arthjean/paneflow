@@ -458,7 +458,6 @@ impl PaneFlowApp {
             .px(px(8.))
             .py(px(6.))
             .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
-            .cursor_pointer()
             .flex()
             .flex_row()
             .items_center()
@@ -539,7 +538,6 @@ impl PaneFlowApp {
             .px(px(8.))
             .py(px(6.))
             .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
-            .cursor_pointer()
             .flex()
             .flex_row()
             .items_center()
@@ -733,7 +731,6 @@ impl PaneFlowApp {
             .px(px(8.))
             .py(px(6.))
             .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
-            .cursor_pointer()
             .flex()
             .flex_row()
             .items_center()
@@ -1036,7 +1033,6 @@ fn section_eyebrow(
                 .items_center()
                 .justify_center()
                 .rounded(px(4.))
-                .cursor_pointer()
                 .text_color(ui.muted)
                 .hover(|s| {
                     s.bg(crate::app::constants::sidebar_tab_hover_background())
@@ -1230,7 +1226,6 @@ fn hover_actions_cluster(
                     .items_center()
                     .justify_center()
                     .rounded(px(4.))
-                    .cursor_pointer()
                     .bg(rgb(0xe5484d))
                     .text_color(rgb(0xffffff))
                     .text_size(px(11.))
@@ -1262,7 +1257,6 @@ fn hover_actions_cluster(
         .items_center()
         .justify_center()
         .rounded(px(4.))
-        .cursor_pointer()
         // Keep the glyph optically aligned with the neighboring 12px trash
         // icon inside the same 20px action box.
         .text_size(px(14.))
@@ -1289,7 +1283,6 @@ fn hover_actions_cluster(
         .items_center()
         .justify_center()
         .rounded(px(4.))
-        .cursor_pointer()
         .text_color(ui.muted)
         .hover(|s| {
             s.bg(crate::app::constants::sidebar_tab_hover_background())

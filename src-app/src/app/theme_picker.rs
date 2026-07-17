@@ -3,9 +3,9 @@
 //! with a typeahead filter and keyboard navigation.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString, Styled, Window, deferred,
-    div, prelude::*, px,
+    AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString, Styled,
+    Window, deferred, div, prelude::*, px,
 };
 
 use crate::settings::components::{menu_divider_color, menu_surface, select_item};
@@ -258,6 +258,7 @@ impl PaneFlowApp {
                         is_selected,
                         ui,
                     )
+                    .cursor(CursorStyle::Arrow)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         if this.apply_theme_by_name(&name_owned, cx) {

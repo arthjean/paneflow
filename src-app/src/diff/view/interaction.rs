@@ -356,8 +356,7 @@ impl DiffView {
                     .text_size(crate::ui_primitives::BODY)
                     .text_color(if has_hunk { ui.text } else { ui.muted })
                     .when(has_hunk, |d| {
-                        d.cursor_pointer()
-                            .hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
+                        d.hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                                 this.body_menu = None;
                                 this.copy_scope(col_idx, scope, true, cx);
@@ -368,6 +367,7 @@ impl DiffView {
             )
             .child(
                 select_item("diff-menu-copy-file", false, ui)
+                    .cursor(CursorStyle::Arrow)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.body_menu = None;
                         this.copy_scope(col_idx, scope, false, cx);

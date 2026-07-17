@@ -14,9 +14,9 @@
 //! mirroring the established pattern in [`crate::settings::components`].
 
 use gpui::{
-    AnimationExt, AnyView, App, ClickEvent, Div, ElementId, FontWeight, Hsla, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Render, SharedString, Stateful, Styled, Window, div,
-    prelude::*, px, svg,
+    AnimationExt, AnyView, App, ClickEvent, CursorStyle, Div, ElementId, FontWeight, Hsla,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, SharedString, Stateful, Styled,
+    Window, div, prelude::*, px, svg,
 };
 
 use crate::settings::components::with_alpha;
@@ -98,7 +98,6 @@ fn icon_button(
         .justify_center()
         .size(outer)
         .rounded(px(4.))
-        .cursor_pointer()
         .hover(move |s| s.bg(hover_bg))
         .child(
             svg()
@@ -148,7 +147,6 @@ pub(crate) fn toolbar_pill(id: impl Into<ElementId>, ui: UiColors, active: bool)
         .px(px(8.))
         .rounded(px(6.))
         .when(active, |d| d.bg(ui.subtle))
-        .cursor_pointer()
         .text_size(BODY)
         .text_color(ui.text)
         .hover(move |s| s.bg(ui.subtle))
@@ -167,6 +165,47 @@ pub(crate) fn filter_pill(
     ui: UiColors,
     input: impl IntoElement,
     show_clear: bool,
+    on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    filter_pill_with_clear_cursor(
+        id,
+        clear_id,
+        ui,
+        input,
+        show_clear,
+        CursorStyle::Arrow,
+        on_clear,
+    )
+}
+
+/// Explicit-arrow alias used by Review. Agents follows the same desktop cursor
+/// policy through [`filter_pill`], while the field itself keeps its text cursor.
+pub(crate) fn filter_pill_with_arrow_clear(
+    id: impl Into<ElementId>,
+    clear_id: impl Into<ElementId>,
+    ui: UiColors,
+    input: impl IntoElement,
+    show_clear: bool,
+    on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Stateful<Div> {
+    filter_pill_with_clear_cursor(
+        id,
+        clear_id,
+        ui,
+        input,
+        show_clear,
+        CursorStyle::Arrow,
+        on_clear,
+    )
+}
+
+fn filter_pill_with_clear_cursor(
+    id: impl Into<ElementId>,
+    clear_id: impl Into<ElementId>,
+    ui: UiColors,
+    input: impl IntoElement,
+    show_clear: bool,
+    clear_cursor: CursorStyle,
     on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Stateful<Div> {
     let clear_id = clear_id.into();
@@ -207,7 +246,7 @@ pub(crate) fn filter_pill(
                 .items_center()
                 .justify_center()
                 .rounded(px(3.))
-                .cursor_pointer()
+                .cursor(clear_cursor)
                 .text_color(ui.muted)
                 .hover(move |s| s.bg(with_alpha(ui.text, 0.10)).text_color(ui.text))
                 .on_click(on_clear)
