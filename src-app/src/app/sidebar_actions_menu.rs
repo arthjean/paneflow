@@ -9,9 +9,9 @@
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, ClickEvent, Context, FontWeight, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, SharedString, Styled, Transformation, div, percentage,
-    prelude::*, px, svg,
+    Animation, AnimationExt, AnyElement, ClickEvent, Context, CursorStyle, FontWeight,
+    InteractiveElement, IntoElement, MouseButton, ParentElement, SharedString, Styled,
+    Transformation, div, percentage, prelude::*, px, svg,
 };
 
 use crate::PaneFlowApp;
@@ -121,7 +121,6 @@ impl PaneFlowApp {
                     .text_color(muted)
                     .text_size(px(13.))
                     .font_weight(FontWeight::BOLD)
-                    .cursor_pointer()
                     .hover(move |s| s.text_color(text))
                     // stop_propagation on BOTH mouse-down and click so the
                     // press never reaches the banner's StartSelfUpdate
@@ -140,10 +139,9 @@ impl PaneFlowApp {
             banner = banner.opacity(0.7);
         } else {
             banner = banner
-                .cursor_pointer()
                 .when(system_hint, |d| d.opacity(0.8))
                 .hover(move |s| {
-                    let s = s.bg(crate::app::constants::sidebar_tab_hover_background());
+                    let s = s.bg(crate::app::constants::sidebar_tab_active_background());
                     if system_hint { s.opacity(1.0) } else { s }
                 })
                 .on_mouse_down(
@@ -224,14 +222,13 @@ impl PaneFlowApp {
             .h(px(30.))
             .w(px(30.))
             .rounded(px(9.))
-            .cursor_pointer()
             .flex()
             .items_center()
             .justify_center()
             .when(settings_open, |d| {
                 d.bg(crate::app::constants::sidebar_tab_active_background())
             })
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
             .tooltip(move |_window, cx| {
                 cx.new(|_| crate::app::sidebar::SidebarTooltip {
                     label: "Settings".into(),
@@ -266,7 +263,7 @@ impl PaneFlowApp {
                 .absolute()
                 .left(px(6.))
                 .right(px(6.))
-                .bottom(px(42.))
+                .bottom(px(44.))
                 .flex()
                 .flex_col()
                 .gap(px(1.))
@@ -328,8 +325,7 @@ impl PaneFlowApp {
                 button = button.bg(crate::app::constants::sidebar_tab_active_background());
             } else {
                 button = button
-                    .cursor_pointer()
-                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         activate(this, window, cx);
                         this.agents_view.sidebar_actions_menu_open = false;
@@ -342,7 +338,7 @@ impl PaneFlowApp {
 
         let footer_row: AnyElement = div()
             .id("sidebar-mode-tabs")
-            .mx(px(6.))
+            .mx(px(8.))
             .flex()
             .flex_row()
             .items_center()
@@ -371,7 +367,7 @@ impl PaneFlowApp {
             .child(settings_trigger)
             .into_any_element();
 
-        let mut footer = div().relative().flex_none().py(px(6.));
+        let mut footer = div().relative().flex_none().pt(px(6.)).pb(px(8.));
         if let Some(popover) = settings_popover {
             footer = footer.child(popover);
         }
@@ -412,6 +408,7 @@ fn render_menu_item(
 ) -> AnyElement {
     let handler = item.on_click;
     select_item(item.id, false, ui)
+        .cursor(CursorStyle::Arrow)
         .on_click(cx.listener(move |this, _: &ClickEvent, w, cx| {
             handler(this, w, cx);
             this.agents_view.sidebar_actions_menu_open = false;

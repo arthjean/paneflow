@@ -1,4 +1,4 @@
-//! Sidebar rendering for `PaneFlowApp`: workspace cards, action buttons,
+//! Sidebar rendering for `PaneFlowApp`: workspace rows, action buttons,
 //! notification dropdown, and the context-menu row helpers (in the
 //! [`context_menu`] submodule).
 //!
@@ -64,13 +64,13 @@ struct SidebarServiceSummary {
     overflow: usize,
 }
 
-const SIDEBAR_CARD_MARGIN_X: f32 = 8.0;
-const SIDEBAR_CARD_PADDING_X: f32 = 10.0;
-const SIDEBAR_TITLE_ROW_GAP: f32 = 6.0;
+const SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
+const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
+const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 const SIDEBAR_AGENT_STATUS_SLOT_WIDTH: f32 = 48.0;
 const SIDEBAR_AGENT_ICON_SLOT_WIDTH: f32 = 20.0;
-const SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH: f32 =
-    SIDEBAR_WIDTH - SIDEBAR_CARD_MARGIN_X * 2.0 - SIDEBAR_CARD_PADDING_X * 2.0;
+const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
+    SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
 
 impl SidebarDiffSummary {
     fn is_visible(self) -> bool {
@@ -248,7 +248,7 @@ where
 
 fn sidebar_workspace_title_slot_width(summary: Option<SidebarAgentSummary>) -> f32 {
     let reserved = summary.map_or(0.0, |summary| SIDEBAR_TITLE_ROW_GAP + summary.slot_width());
-    (SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH - reserved).max(0.0)
+    (SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - reserved).max(0.0)
 }
 
 impl PaneFlowApp {
@@ -340,7 +340,7 @@ impl PaneFlowApp {
         );
         sidebar = sidebar.child(
             div()
-                .h(px(44.))
+                .h(px(48.))
                 .flex_none()
                 .px(px(8.))
                 .flex()
@@ -349,8 +349,8 @@ impl PaneFlowApp {
                 .justify_between()
                 .child(
                     div()
-                        .pl(px(10.))
-                        .text_size(px(12.))
+                        .pl(px(8.))
+                        .text_size(px(13.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .text_color(ui.text)
                         .child("Workspaces"),
@@ -358,22 +358,12 @@ impl PaneFlowApp {
                 .child(
                     div()
                         .id("sidebar-new-workspace")
-                        .h(px(26.))
-                        .px(px(7.))
-                        .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
+                        .size(px(28.))
+                        .rounded(px(8.))
                         .flex()
-                        .flex_row()
                         .items_center()
-                        .gap(px(4.))
-                        .cursor_pointer()
-                        .text_size(px(11.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(ui.muted)
-                        .hover(|s| {
-                            let ui = crate::theme::ui_colors();
-                            s.bg(crate::app::constants::sidebar_tab_hover_background())
-                                .text_color(ui.text)
-                        })
+                        .justify_center()
+                        .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
                         .tooltip(move |_w, cx| {
                             cx.new(|_| SidebarTooltip {
                                 label: new_workspace_tooltip.clone().into(),
@@ -385,12 +375,11 @@ impl PaneFlowApp {
                         }))
                         .child(
                             svg()
-                                .size(px(11.))
+                                .size(px(12.))
                                 .flex_none()
                                 .path("icons/plus.svg")
                                 .text_color(ui.muted),
-                        )
-                        .child("New"),
+                        ),
                 ),
         );
 
@@ -407,8 +396,8 @@ impl PaneFlowApp {
             .track_scroll(&self.sidebar_scroll)
             .flex()
             .flex_col()
-            .gap(px(2.))
-            .pt(px(2.))
+            .gap(px(4.))
+            .pt(px(4.))
             .pb(px(8.));
 
         if self.workspaces.is_empty() {
@@ -437,15 +426,11 @@ impl PaneFlowApp {
                             .px(px(10.))
                             .py(px(5.))
                             .rounded(px(6.))
-                            .cursor_pointer()
                             .bg(ui.subtle)
                             .text_color(ui.text)
                             .text_size(px(11.))
                             .font_weight(FontWeight::MEDIUM)
-                            .hover(|s| {
-                                let ui = crate::theme::ui_colors();
-                                s.bg(ui.surface)
-                            })
+                            .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
                             .on_click(cx.listener(|this, _: &ClickEvent, w, cx| {
                                 this.create_workspace_with_picker(w, cx);
                             }))
@@ -505,20 +490,19 @@ impl PaneFlowApp {
         let ws_id = ws.id;
         let ws_title: SharedString = ws.title.clone().into();
 
-        let mut card = div()
+        let mut row = div()
             .id(SharedString::from(format!("ws-{i}")))
-            .mx(px(8.))
-            .px(px(10.))
-            .py(px(7.))
-            .min_h(px(48.))
-            .rounded(crate::app::constants::SIDEBAR_TAB_CORNER_RADIUS)
-            .cursor_pointer()
+            .mx(px(SIDEBAR_ROW_MARGIN_X))
+            .px(px(SIDEBAR_ROW_PADDING_X))
+            .py(px(4.))
+            .min_h(px(44.))
+            .rounded(px(8.))
             .overflow_x_hidden()
             .when(is_active, |d| {
                 d.bg(crate::app::constants::sidebar_tab_active_background())
             })
             .when(!is_active, |d| {
-                d.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+                d.hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
             })
             .on_drag(
                 WorkspaceDrag {
@@ -597,7 +581,7 @@ impl PaneFlowApp {
             }))
             .flex()
             .flex_col()
-            .gap(px(3.));
+            .gap(px(4.));
 
         // Row 1: title
         let agent_status =
@@ -640,8 +624,8 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(SIDEBAR_TITLE_ROW_GAP))
-            .w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
-            .max_w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
+            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
             .min_w_0()
             .overflow_x_hidden()
             .child(title_el);
@@ -655,20 +639,20 @@ impl PaneFlowApp {
             ));
         }
 
-        card = card.child(title_row);
+        row = row.child(title_row);
 
         if let Some(meta_row) = self.render_workspace_meta_row(idx, ws, ui, cx) {
-            card = card.child(meta_row);
+            row = row.child(meta_row);
         }
 
         let cwd_tooltip = SharedString::from(cwd_display);
-        card = card.tooltip(move |_w, cx| {
+        row = row.tooltip(move |_w, cx| {
             cx.new(|_| WorkspaceCwdTooltip {
                 path: cwd_tooltip.clone(),
             })
             .into()
         });
-        card
+        row
     }
 
     fn render_workspace_meta_row(
@@ -679,7 +663,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         // Branch, diff, and service summary stay on one clipped line so a
-        // workspace row keeps its compact 48px rhythm.
+        // workspace row keeps its compact 44px rhythm.
         let has_branch = !ws.git_branch.is_empty();
         let diff_summary = sidebar_diff_summary(&ws.git_stats);
         let has_stats = diff_summary.is_visible();
@@ -690,9 +674,9 @@ impl PaneFlowApp {
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.))
-                .w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
-                .max_w(px(SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH))
+                .gap(px(4.))
+                .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+                .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
                 .h(px(14.))
                 .overflow_x_hidden()
                 .whitespace_nowrap()
@@ -704,7 +688,7 @@ impl PaneFlowApp {
                     (true, true) => 64.0,
                     (true, false) => 112.0,
                     (false, true) => 126.0,
-                    (false, false) => SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH,
+                    (false, false) => SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH,
                 };
                 meta_row = meta_row.child(
                     div()
@@ -805,7 +789,6 @@ impl PaneFlowApp {
                             .text_size(px(10.))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(ui.muted)
-                            .cursor_pointer()
                             .hover(|style| style.text_color(crate::theme::ui_colors().text))
                             .tooltip({
                                 let label = service_tooltip.clone();
@@ -1191,7 +1174,7 @@ impl Render for WorkspaceCwdTooltip {
 mod tests {
     use super::{
         SIDEBAR_AGENT_ICON_SLOT_WIDTH, SIDEBAR_AGENT_STATUS_SLOT_WIDTH, SIDEBAR_TITLE_ROW_GAP,
-        SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH, SidebarAgentState, SidebarAgentSummary,
+        SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH, SidebarAgentState, SidebarAgentSummary,
         SidebarDiffSummary, SidebarServiceSummary, collapse_home, sidebar_agent_summary,
         sidebar_diff_summary, sidebar_file_change_label, sidebar_service_summary,
         sidebar_workspace_title_slot_width, visible_service_ports,
@@ -1447,7 +1430,7 @@ mod tests {
     fn sidebar_workspace_title_slot_width_reserves_agent_status() {
         assert_eq!(
             sidebar_workspace_title_slot_width(None),
-            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH
+            SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH
         );
 
         let needs_input = Some(SidebarAgentSummary {
@@ -1456,7 +1439,7 @@ mod tests {
         });
         assert_eq!(
             sidebar_workspace_title_slot_width(needs_input),
-            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH
+            SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH
                 - SIDEBAR_TITLE_ROW_GAP
                 - SIDEBAR_AGENT_STATUS_SLOT_WIDTH
         );
@@ -1467,7 +1450,7 @@ mod tests {
         });
         assert_eq!(
             sidebar_workspace_title_slot_width(unread_completion),
-            SIDEBAR_WORKSPACE_CARD_CONTENT_WIDTH
+            SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH
                 - SIDEBAR_TITLE_ROW_GAP
                 - SIDEBAR_AGENT_ICON_SLOT_WIDTH
         );
