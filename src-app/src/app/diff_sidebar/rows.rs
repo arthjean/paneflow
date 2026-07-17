@@ -11,6 +11,8 @@ use gpui::{
     SharedString, Styled, div, prelude::*, px,
 };
 
+use super::{REVIEW_SIDEBAR_ROW_MARGIN_X, REVIEW_SIDEBAR_ROW_PADDING_X, REVIEW_SIDEBAR_ROW_RADIUS};
+
 impl PaneFlowApp {
     /// One changed-file row: status-colored letter + filename + dimmed
     /// directory + +/- counts. Click selects `col_idx`'s branch AND scrolls its
@@ -60,11 +62,11 @@ impl PaneFlowApp {
             is_active && self.diff_mode.diff_selected_file.as_deref() == Some(entry.path.as_str());
         let path = entry.path.clone();
         let show_counts = !entry.is_binary && (entry.added > 0 || entry.removed > 0);
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let row_background = crate::app::constants::sidebar_tab_active_background();
         let resting_background = if selected {
-            crate::app::constants::sidebar_tab_active_background()
+            row_background
         } else {
-            hover_background.opacity(0.0)
+            row_background.opacity(0.0)
         };
 
         div()
@@ -76,14 +78,16 @@ impl PaneFlowApp {
             )))
             .flex_none()
             .h(px(28.))
-            .pl(px(10. + indent_px))
-            .pr(px(12.))
+            .mx(px(REVIEW_SIDEBAR_ROW_MARGIN_X))
+            .pl(px(REVIEW_SIDEBAR_ROW_PADDING_X + indent_px))
+            .pr(px(REVIEW_SIDEBAR_ROW_PADDING_X))
+            .rounded(px(REVIEW_SIDEBAR_ROW_RADIUS))
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
             .bg(resting_background)
-            .animated_hover_bg(resting_background, hover_background)
+            .animated_hover_bg(resting_background, row_background)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.diff_mode.diff_selected_file = Some(path.clone());
                 // Select that branch's column AND scroll its body to this file.
@@ -128,6 +132,11 @@ impl PaneFlowApp {
                     .child(
                         div()
                             .flex_none()
+                            .min_w_0()
+                            .flex_shrink(1.0)
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .text_ellipsis()
                             .text_color(name_color)
                             .text_size(crate::ui_primitives::BODY_EMPHASIS)
                             .when(matches!(entry.change, FileChange::Deleted), |d| {
@@ -140,6 +149,7 @@ impl PaneFlowApp {
                             div()
                                 .flex_1()
                                 .min_w_0()
+                                .max_w(px(140.))
                                 .truncate()
                                 .text_color(ui.muted)
                                 .text_size(crate::ui_primitives::LABEL_SM)

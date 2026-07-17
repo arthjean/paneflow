@@ -22,6 +22,7 @@ use gpui::{
 };
 use std::collections::BTreeMap;
 
+mod header;
 mod rows;
 
 /// One node of the changed-files directory tree (tree mode). `subdirs` is
@@ -33,6 +34,11 @@ struct DirNode {
     subdirs: BTreeMap<String, DirNode>,
     files: Vec<usize>,
 }
+
+const REVIEW_SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
+const REVIEW_SIDEBAR_ROW_PADDING_X: f32 = 8.0;
+const REVIEW_SIDEBAR_ROW_RADIUS: f32 = 8.0;
+const REVIEW_SIDEBAR_LIST_GAP: f32 = 4.0;
 
 impl PaneFlowApp {
     /// Sidebar render branch for [`AppMode::Diff`](paneflow_config::schema::AppMode::Diff).
@@ -166,86 +172,7 @@ impl PaneFlowApp {
             .to_lowercase();
         let filtering = !filter_lc.is_empty();
 
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
-        let transparent_background = hover_background.opacity(0.0);
-        let header = div()
-            .id("diff-files-header")
-            .flex_none()
-            .h(px(30.))
-            .pl(px(12.))
-            .pr(px(10.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .animated_hover_bg(transparent_background, hover_background)
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.diff_mode.diff_files_collapsed = !this.diff_mode.diff_files_collapsed;
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .flex_none()
-                    .text_color(ui.muted)
-                    .text_size(crate::ui_primitives::LABEL_XS)
-                    .child(if collapsed { "▸" } else { "▾" }),
-            )
-            .child(crate::ui_primitives::section_eyebrow("Changes", ui).flex_none())
-            .child(div().flex_1())
-            // Flat-list ⇄ directory-tree toggle. `stop_propagation` so toggling
-            // the layout doesn't also collapse the whole "Changes" section.
-            .child(
-                div()
-                    .id("diff-files-tree-toggle")
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(20.))
-                    .rounded(px(4.))
-                    .animated_hover_bg(transparent_background, hover_background)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                        this.diff_mode.diff_files_tree = !this.diff_mode.diff_files_tree;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }))
-                    .child(
-                        gpui::svg()
-                            .size(px(13.))
-                            .flex_none()
-                            .path(if self.diff_mode.diff_files_tree {
-                                "icons/list.svg"
-                            } else {
-                                "icons/file_tree.svg"
-                            })
-                            .text_color(ui.muted),
-                    ),
-            )
-            .when(total_added > 0 || total_removed > 0, |d| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.))
-                        .text_size(crate::ui_primitives::LABEL_SM)
-                        .when(total_added > 0, |d| {
-                            d.child(
-                                div()
-                                    .text_color(ui.diff_colors().added)
-                                    .child(format!("+{total_added}")),
-                            )
-                        })
-                        .when(total_removed > 0, |d| {
-                            d.child(
-                                div()
-                                    .text_color(ui.diff_colors().deleted)
-                                    .child(format!("-{total_removed}")),
-                            )
-                        }),
-                )
-            });
+        let header = self.render_diff_files_header(ui, collapsed, total_added, total_removed, cx);
 
         // Always-on filter field (cursor-aware TextInput). Escape clears it; a
         // clear-(×) button appears once it has content. Shares the [`filter_pill`]
@@ -263,7 +190,7 @@ impl PaneFlowApp {
             }),
         )
         .mx(px(8.))
-        .mb(px(6.))
+        .mt(px(4.))
         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _w, cx| {
             if ev.keystroke.key.as_str() == "escape" {
                 this.diff_mode.diff_file_filter.update(cx, |inp, cx| {
@@ -321,6 +248,9 @@ impl PaneFlowApp {
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
+                    .gap(px(REVIEW_SIDEBAR_LIST_GAP))
+                    .pt(px(REVIEW_SIDEBAR_LIST_GAP))
+                    .pb(px(8.))
                     .children(body),
             )
             .into_any_element()
@@ -343,8 +273,8 @@ impl PaneFlowApp {
         let filtering = !filter_lc.is_empty();
         let note = |msg: String| {
             div()
-                .pl(px(24.))
-                .pr(px(12.))
+                .mx(px(REVIEW_SIDEBAR_ROW_MARGIN_X))
+                .px(px(REVIEW_SIDEBAR_ROW_PADDING_X))
                 .py(px(8.))
                 .text_color(ui.muted)
                 .text_size(crate::ui_primitives::BODY)
@@ -487,15 +417,17 @@ impl PaneFlowApp {
     ) -> AnyElement {
         const INDENT: f32 = 12.0;
         let key = format!("{col_idx}\u{0}{full}");
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let hover_background = crate::app::constants::sidebar_tab_active_background();
         div()
             .id(SharedString::from(format!("diff-dir-{col_idx}-{full}")))
             .flex_none()
             // EP-003 US-013: match the 28px file-row height so the tree reads on
             // one consistent vertical rhythm (file + folder rows interleave).
             .h(px(28.))
-            .pl(px(10. + depth as f32 * INDENT))
-            .pr(px(12.))
+            .mx(px(REVIEW_SIDEBAR_ROW_MARGIN_X))
+            .pl(px(REVIEW_SIDEBAR_ROW_PADDING_X + depth as f32 * INDENT))
+            .pr(px(REVIEW_SIDEBAR_ROW_PADDING_X))
+            .rounded(px(REVIEW_SIDEBAR_ROW_RADIUS))
             .flex()
             .flex_row()
             .items_center()
@@ -508,11 +440,15 @@ impl PaneFlowApp {
                 cx.notify();
             }))
             .child(
-                div()
+                gpui::svg()
+                    .size(px(10.))
                     .flex_none()
                     .text_color(ui.muted)
-                    .text_size(crate::ui_primitives::LABEL_XS)
-                    .child(if collapsed { "▸" } else { "▾" }),
+                    .path(if collapsed {
+                        "icons/chevron-right.svg"
+                    } else {
+                        "icons/chevron-down.svg"
+                    }),
             )
             .child(
                 gpui::svg()
@@ -568,7 +504,7 @@ impl PaneFlowApp {
             _ => (0, 0, 0),
         };
         let key_owned = collapse_key.to_string();
-        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let hover_background = crate::app::constants::sidebar_tab_active_background();
         let resting_background = if is_active {
             crate::app::constants::sidebar_tab_active_background()
         } else {
@@ -577,9 +513,10 @@ impl PaneFlowApp {
         let sub_header = div()
             .id(SharedString::from(format!("diff-branch-{col_idx}")))
             .flex_none()
-            .h(px(26.))
-            .pl(px(8.))
-            .pr(px(10.))
+            .h(px(28.))
+            .mx(px(REVIEW_SIDEBAR_ROW_MARGIN_X))
+            .px(px(REVIEW_SIDEBAR_ROW_PADDING_X))
+            .rounded(px(REVIEW_SIDEBAR_ROW_RADIUS))
             .flex()
             .flex_row()
             .items_center()
@@ -595,11 +532,15 @@ impl PaneFlowApp {
                 cx.notify();
             }))
             .child(
-                div()
+                gpui::svg()
+                    .size(px(10.))
                     .flex_none()
                     .text_color(ui.muted)
-                    .text_size(crate::ui_primitives::LABEL_XS)
-                    .child(if section_collapsed { "▸" } else { "▾" }),
+                    .path(if section_collapsed {
+                        "icons/chevron-right.svg"
+                    } else {
+                        "icons/chevron-down.svg"
+                    }),
             )
             .child(
                 gpui::svg()
@@ -644,7 +585,12 @@ impl PaneFlowApp {
                 )
             });
 
-        let mut section = div().flex_none().flex().flex_col().child(sub_header);
+        let mut section = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap(px(REVIEW_SIDEBAR_LIST_GAP))
+            .child(sub_header);
         if !section_collapsed {
             section = section
                 .children(self.render_diff_file_rows(col_idx, is_active, state, filter_lc, ui, cx));
