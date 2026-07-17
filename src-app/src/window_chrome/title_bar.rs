@@ -7,11 +7,18 @@ use gpui::{
 };
 
 use super::csd::default_button_layout;
+use crate::app::constants::{
+    SIDEBAR_WIDTH, TITLE_BAR_CONTROL_SIZE, TITLE_BAR_EDGE_INSET, TITLE_BAR_MIN_HEIGHT,
+};
 
 pub struct TitleBar {
     should_move: bool,
     pub workspace_name: Option<String>,
     pub sidebar_visible: bool,
+    /// Stable expanded width of the active left rail. The body can animate to
+    /// zero independently, while title-bar controls remain stationary and
+    /// align with the open rail in CLI, Agents, Diff, and Settings.
+    pub left_rail_width: f32,
     pub files_menu_open: bool,
     pub help_menu_open: bool,
     pub ipc_state: crate::ipc::IpcState,
@@ -101,8 +108,8 @@ pub enum SystemPackageKind {
 /// Internal visual/interaction mode for the update pill.
 #[derive(Clone, Copy)]
 enum PillStyle {
-    /// Default accent pill; pointer cursor + hover fade. Dispatches the
-    /// in-app update action.
+    /// Default accent pill with a hover fade. Dispatches the in-app update
+    /// action.
     Clickable,
     /// De-emphasized, non-interactive (download/install in flight).
     Busy,
@@ -117,6 +124,7 @@ impl TitleBar {
             should_move: false,
             workspace_name: None,
             sidebar_visible: true,
+            left_rail_width: SIDEBAR_WIDTH,
             files_menu_open: false,
             help_menu_open: false,
             ipc_state: crate::ipc::IpcState::Online,
@@ -153,7 +161,7 @@ impl Render for TitleBar {
                 Some(cx.observe_button_layout_changed(window, |_, _, cx| cx.notify()));
         }
 
-        let height = (1.75 * window.rem_size()).max(px(34.));
+        let height = (1.75 * window.rem_size()).max(TITLE_BAR_MIN_HEIGHT);
         let decorations = window.window_decorations();
         let is_csd = matches!(decorations, Decorations::Client { .. });
         // #9: under real server-side decorations (`window_decorations: server`,
@@ -203,7 +211,7 @@ impl Render for TitleBar {
         // the minimize/maximize/close buttons vanish entirely on Windows.
         // macOS keeps its native traffic lights, so it stays gated on `is_csd`
         // (false there). Mirrors the settings title bar (settings/window.rs).
-        let render_controls = is_csd || cfg!(target_os = "windows");
+        let render_controls = !window.is_fullscreen() && (is_csd || cfg!(target_os = "windows"));
 
         let left_controls = if render_controls {
             super::csd::render_button_group(
@@ -230,22 +238,26 @@ impl Render for TitleBar {
         } else {
             None
         };
+        let left_controls_present = left_controls.is_some();
+        let right_controls_present = right_controls.is_some();
 
         // --- Left section: brand slot, fixed width aligned with sidebar ---
         let ui = crate::theme::ui_colors();
         // US-011: on macOS, reserve the leftmost ~80px of the custom titlebar
         // for the native red/yellow/green traffic lights (positioned at
         // x=12,y=12 by WindowOptions::titlebar::traffic_light_position in
-        // main.rs). On Linux the window controls are rendered elsewhere,
-        // so the brand keeps the historical `pl_3()` (12px) padding.
+        // main.rs). Linux control groups own the shared 8px edge inset;
+        // adding another brand inset would duplicate that spacing.
         //
         // In macOS fullscreen AppKit hides the traffic lights, so the 80px
         // reservation would leave a dead gap before the brand cluster - drop
-        // back to 12px there (matches Zed's `is_fullscreen()` gate).
+        // back to the shared 8px inset there.
         let brand_pl = if cfg!(target_os = "macos") && !window.is_fullscreen() {
             gpui::px(80.0)
+        } else if left_controls_present {
+            gpui::px(0.)
         } else {
-            gpui::px(12.0)
+            TITLE_BAR_EDGE_INSET
         };
         let toggle_sidebar_handle = cx.entity().downgrade();
         let toggle_files_menu_handle = cx.entity().downgrade();
@@ -257,29 +269,28 @@ impl Render for TitleBar {
         }
         .into();
         let mut brand = div()
-            .flex_none()
+            .flex_1()
+            .min_w_0()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(2.))
+            .gap(px(4.))
             .pl(brand_pl)
-            .pr(px(2.))
+            .pr(px(4.))
             .overflow_x_hidden()
             .child(
                 div()
                     .id("toggle-primary-sidebar")
                     .flex_none()
-                    .w(px(24.))
-                    .h(px(24.))
+                    .size(TITLE_BAR_CONTROL_SIZE)
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(px(5.))
-                    .cursor_pointer()
                     .when(!self.sidebar_visible, |d| {
                         d.bg(crate::app::constants::sidebar_tab_active_background())
                     })
-                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
                     .tooltip(move |_window, cx| {
                         let label = sidebar_tooltip.clone();
                         cx.new(|_| crate::app::sidebar::SidebarTooltip { label })
@@ -304,12 +315,11 @@ impl Render for TitleBar {
                 div()
                     .id("title-bar-files-menu-trigger")
                     .flex_none()
-                    .h(px(24.))
+                    .h(TITLE_BAR_CONTROL_SIZE)
                     .px(px(6.))
                     .flex()
                     .items_center()
                     .rounded(px(8.))
-                    .cursor_pointer()
                     .text_size(px(12.))
                     .font_weight(gpui::FontWeight::NORMAL)
                     .text_color(if self.files_menu_open {
@@ -321,7 +331,7 @@ impl Render for TitleBar {
                         d.bg(crate::app::constants::sidebar_tab_active_background())
                     })
                     .hover(|s| {
-                        s.bg(crate::app::constants::sidebar_tab_hover_background())
+                        s.bg(crate::app::constants::sidebar_tab_active_background())
                             .text_color(ui.text)
                     })
                     .on_mouse_down(MouseButton::Left, move |event, _, cx| {
@@ -339,12 +349,11 @@ impl Render for TitleBar {
                 div()
                     .id("title-bar-help-menu-trigger")
                     .flex_none()
-                    .h(px(24.))
+                    .h(TITLE_BAR_CONTROL_SIZE)
                     .px(px(6.))
                     .flex()
                     .items_center()
                     .rounded(px(8.))
-                    .cursor_pointer()
                     .text_size(px(12.))
                     .font_weight(gpui::FontWeight::NORMAL)
                     .text_color(if self.help_menu_open {
@@ -356,7 +365,7 @@ impl Render for TitleBar {
                         d.bg(crate::app::constants::sidebar_tab_active_background())
                     })
                     .hover(|s| {
-                        s.bg(crate::app::constants::sidebar_tab_hover_background())
+                        s.bg(crate::app::constants::sidebar_tab_active_background())
                             .text_color(ui.text)
                     })
                     .on_mouse_down(MouseButton::Left, move |event, _, cx| {
@@ -426,17 +435,15 @@ impl Render for TitleBar {
                     div()
                         .id("agents-overflow-btn")
                         .flex_none()
-                        .w(px(22.))
-                        .h(px(22.))
+                        .size(TITLE_BAR_CONTROL_SIZE)
                         .flex()
                         .items_center()
                         .justify_center()
                         .rounded(px(5.))
-                        .cursor_pointer()
                         .text_color(ui.muted)
                         .text_size(px(15.))
                         .hover(|s| {
-                            s.bg(crate::app::constants::sidebar_tab_hover_background())
+                            s.bg(crate::app::constants::sidebar_tab_active_background())
                                 .text_color(ui.text)
                         })
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
@@ -448,6 +455,16 @@ impl Render for TitleBar {
             }
         }
         let brand = brand;
+        let left_rail = div()
+            .flex_none()
+            .w(px(self.left_rail_width))
+            .h_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .overflow_x_hidden()
+            .children(left_controls)
+            .child(brand);
 
         // --- Center section: workspace name breadcrumb (muted) ---
         // Takes the remaining flex space and centers the current workspace
@@ -579,12 +596,9 @@ impl Render for TitleBar {
                 };
 
                 // The pill sits inside the title bar's `WindowControlArea::Drag`
-                // region declared on the parent. GPUI's hit-testing picks the
-                // most-specific element on hover, so `cursor_pointer()` on the
-                // pill itself overrides the parent's cursor without needing
-                // to detach from the drag area; the `cx.stop_propagation()`
-                // mouse-down further down ensures the click doesn't trigger
-                // a window drag. Same idiom Zed's `ButtonLike` relies on.
+                // region declared on the parent. Its nested mouse-down handlers
+                // stop propagation so interaction with the pill does not trigger
+                // a window drag while the rest of the title bar remains draggable.
                 // US-007 AC3: a small `×` dismiss affordance on the
                 // non-busy states. We deliberately omit it during
                 // Downloading/Installing/ReadyToRestart - those have a
@@ -632,7 +646,6 @@ impl Render for TitleBar {
                             .text_color(muted)
                             .text_size(px(13.))
                             .font_weight(gpui::FontWeight::BOLD)
-                            .cursor_pointer()
                             .hover(move |s| s.text_color(text))
                             // stop_propagation on BOTH mouse-down and click
                             // so the click never reaches the parent pill's
@@ -665,7 +678,6 @@ impl Render for TitleBar {
                     // action, so we don't lose "drag-out to cancel".
                     PillStyle::Clickable => {
                         pill = pill
-                            .cursor_pointer()
                             .hover(|s| {
                                 let ui = crate::theme::ui_colors();
                                 s.bg(ui.surface).border_color(ui.muted)
@@ -678,14 +690,12 @@ impl Render for TitleBar {
                     PillStyle::Busy => {
                         pill = pill.opacity(0.7);
                     }
-                    // SystemHint is a button that copies the upgrade command
-                    // to the clipboard via a toast. It's still a button, so
-                    // the cursor must hint that - `cursor_pointer()` matches
-                    // every other clickable surface in the chrome.
+                    // SystemHint copies the upgrade command to the clipboard
+                    // through a toast. It remains clickable with the default
+                    // cursor, consistent with the Review/Diff chrome.
                     PillStyle::SystemHint => {
                         pill = pill
                             .opacity(0.8)
-                            .cursor_pointer()
                             .hover(|s| {
                                 let ui = crate::theme::ui_colors();
                                 s.bg(ui.surface).border_color(ui.muted).opacity(1.0)
@@ -742,10 +752,13 @@ impl Render for TitleBar {
             // The transparent fill reveals either the themed shell or the
             // platform material selected by the parent window.
             .bg(chrome_bg)
-            // Windows: drop the right padding so the native-style caption
-            // buttons sit flush in the top-right corner (Fitts's-law target).
-            // Linux/macOS keep the 12px inset for the compact pill controls.
-            .when(!cfg!(target_os = "windows"), |d| d.pr(px(12.)));
+            // Windows remains flush for native caption hit targets. Linux
+            // right-side controls already own their 8px edge inset; macOS
+            // and layouts without right controls keep the bar-level inset.
+            .when(
+                !cfg!(target_os = "windows") && !right_controls_present,
+                |d| d.pr(TITLE_BAR_EDGE_INSET),
+            );
 
         bar
             // Drag-to-move state machine
@@ -781,8 +794,7 @@ impl Render for TitleBar {
                     window.show_window_menu(ev.position);
                 })
             })
-            .children(left_controls)
-            .child(brand)
+            .child(left_rail)
             .child(content)
             .children(ipc_pill)
             .children(update_pill)

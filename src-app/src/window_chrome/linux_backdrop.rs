@@ -1,8 +1,8 @@
-//! Native Linux compositor blur for PaneFlow's sidebar and title bar.
+//! Linux compositor-backdrop capability isolation.
 //!
-//! Linux has no distribution-wide material API. Capability detection is done
-//! against the active display server: ext-background-effect-v1 on Wayland,
-//! GPUI's legacy KDE Wayland integration, then KWin's X11 property.
+//! PaneFlow deliberately ships opaque Linux chrome. The Wayland and X11
+//! implementations remain isolated here so capability work can resume without
+//! leaking platform APIs through the app shell.
 
 use std::{
     cell::RefCell,
@@ -13,8 +13,6 @@ use std::{
 use anyhow::{Context as _, Result, anyhow};
 use gpui::{Decorations, Window, WindowBackgroundAppearance};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-
-const LINUX_NATIVE_BACKDROP_ENV: &str = "PANEFLOW_LINUX_NATIVE_BACKDROP";
 
 static NATIVE_BLUR_ACTIVE: AtomicBool = AtomicBool::new(false);
 
@@ -48,11 +46,6 @@ pub(crate) fn set_chrome_geometry(geometry: ChromeGeometry) {
     });
 }
 
-/// Whether PaneFlow can safely expose translucent application chrome.
-pub(crate) fn native_blur_active() -> bool {
-    NATIVE_BLUR_ACTIVE.load(Ordering::Relaxed)
-}
-
 fn native_blur_is_active(capability_available: bool, refresh_succeeded: bool) -> bool {
     capability_available && refresh_succeeded
 }
@@ -80,16 +73,11 @@ fn unblurred_window_appearance(window: &Window) -> WindowBackgroundAppearance {
 }
 
 fn native_backdrop_enabled() -> bool {
-    match std::env::var(LINUX_NATIVE_BACKDROP_ENV) {
-        Ok(value) => matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "yes" | "on"
-        ),
-        Err(_) => false,
-    }
+    false
 }
 
-/// Detects and installs the best native blur mechanism for the active session.
+/// Applies PaneFlow's Linux backdrop policy, clearing any retained material and
+/// restoring the correct opaque or CSD-compatible surface appearance.
 pub(crate) fn apply_subtle_chrome_material(window: &mut Window) {
     if !native_backdrop_enabled() {
         BACKDROP.with(|slot| {
@@ -122,8 +110,8 @@ fn ensure_backdrop(window: &Window) {
     });
 }
 
-/// Refreshes compositor regions after resize and processes Wayland capability
-/// changes. The blur is confined to the sidebar plus title bar.
+/// Refreshes the surface appearance after resize. Capability-specific code is
+/// retained below but remains dormant while Linux chrome is intentionally solid.
 pub(crate) fn refresh_blur_region(window: &mut Window) {
     if !native_backdrop_enabled() {
         BACKDROP.with(|slot| {

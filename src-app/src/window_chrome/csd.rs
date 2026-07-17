@@ -9,6 +9,10 @@ use gpui::{
     WindowControlArea, WindowControls, canvas, div, point, prelude::*, px, size, svg,
 };
 
+use crate::app::constants::{
+    TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SPACING, TITLE_BAR_EDGE_INSET,
+};
+
 /// Default button layout when the DE doesn't provide one.
 pub fn default_button_layout() -> WindowButtonLayout {
     WindowButtonLayout {
@@ -292,9 +296,13 @@ pub(crate) fn render_button_group(
             .flex_row()
             .items_center()
             // Windows: full-height, flush, zero-gap cluster (native Win11
-            // caption strip). Linux/macOS: compact pills with a 2px gap.
+            // caption strip). Linux mirrors Zed's GPUI title-bar geometry:
+            // compact 20px controls on a 12px internal rhythm, with 8px group
+            // edges aligned to the sidebar rows on either DE layout side.
             .when(cfg!(target_os = "windows"), |d| d.h(bar_height))
-            .when(!cfg!(target_os = "windows"), |d| d.gap(px(2.)))
+            .when(!cfg!(target_os = "windows"), |d| {
+                d.gap(TITLE_BAR_CONTROL_SPACING).px(TITLE_BAR_EDGE_INSET)
+            })
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .children(children)
             .into_any_element(),
@@ -335,8 +343,6 @@ pub(crate) fn render_window_button(
 
     let element_id = SharedString::from(format!("{id}-{side}"));
     let hover_group = SharedString::from(format!("{id}-{side}-hover"));
-    let is_left = side == "l";
-
     // Windows: native Win11 caption buttons - 46px wide, full title-bar
     // height, square + flush, with the system hover palette (subtle white
     // overlay for min/max, #c42b1c red on close, #c84c3f when pressed). The
@@ -349,10 +355,8 @@ pub(crate) fn render_window_button(
     let is_close = matches!(button, WindowButton::Close);
     let (button_width, button_height) = if is_windows {
         (px(46.), bar_height)
-    } else if is_left {
-        (px(22.), px(22.))
     } else {
-        (px(28.), px(22.))
+        (TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SIZE)
     };
 
     let btn = div()
@@ -364,7 +368,6 @@ pub(crate) fn render_window_button(
         .justify_center()
         .w(button_width)
         .h(button_height)
-        .cursor_pointer()
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(move |_: &ClickEvent, window, cx| {
             cx.stop_propagation();
@@ -385,8 +388,7 @@ pub(crate) fn render_window_button(
         }
     } else {
         let hover_bg = crate::theme::ui_colors().subtle;
-        btn.when(is_left, |s| s.rounded_full())
-            .when(!is_left, |s| s.rounded_sm())
+        btn.rounded_full()
             .hover(move |s| s.bg(hover_bg))
             .active(move |s| s.bg(hover_bg))
     };

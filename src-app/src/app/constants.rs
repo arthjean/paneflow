@@ -9,26 +9,32 @@ use gpui::{Hsla, Pixels, WindowBackgroundAppearance, px};
 
 /// Sidebar width in pixels - shared between sidebar and title bar for alignment.
 pub(crate) const SIDEBAR_WIDTH: f32 = 240.;
+/// Outer title-bar inset aligned with workspace rows and the sidebar footer.
+pub(crate) const TITLE_BAR_EDGE_INSET: Pixels = px(8.);
+/// Inter-button rhythm for compact title-bar controls.
+pub(crate) const TITLE_BAR_CONTROL_SPACING: Pixels = px(12.);
+/// Compact custom control size used by Linux CSD title bars.
+pub(crate) const TITLE_BAR_CONTROL_SIZE: Pixels = px(20.);
+/// Minimum title-bar height preserving an 8px inset around compact controls.
+pub(crate) const TITLE_BAR_MIN_HEIGHT: Pixels = px(36.);
+/// Inset between the window shell and the CLI sidebar card.
+pub(crate) const SIDEBAR_CARD_INSET: f32 = 4.;
+/// The CLI rail and main panel share the same structural corner language.
+pub(crate) const SIDEBAR_CARD_CORNER_RADIUS: Pixels = WINDOW_CORNER_RADIUS;
+/// Inner CLI content inset. Combined with the pane's reserved 1px border,
+/// this places tabs and terminal cells 4px from the main panel edge.
+pub(crate) const PANE_CONTENT_INSET: f32 = 3.;
+const SIDEBAR_CARD_MATERIAL_OPACITY: f32 = 0.84;
 
-/// Linux-only: opacity of a dark custom theme over native compositor blur.
-#[cfg(target_os = "linux")]
-const LINUX_CHROME_ACTIVE_OPACITY: f32 = 0.72;
-/// Linux blur protocols expose a region but no semantic light/dark material.
-/// Keep light themes nearly opaque so text remains readable over every wallpaper.
-#[cfg(target_os = "linux")]
-const LINUX_LIGHT_CHROME_OPACITY: f32 = 0.94;
-
-/// Selected/hovered rows use a translucent light lift in dark mode and a
-/// charcoal veil in light mode. The dark values are intentionally brighter
-/// than the old near-black fills so controls read like Codex's soft material
-/// highlights instead of opaque gray patches.
+/// Selected rows carry a stronger lift than hover rows so current navigation
+/// remains legible without a separate indicator. Linux precomposes these tints
+/// over the opaque chrome color; macOS and Windows keep their native material.
 const DARK_SIDEBAR_TAB_TINT: u32 = 0xffffff;
 const LIGHT_SIDEBAR_TAB_TINT: u32 = 0x25262b;
-const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.07;
+const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.11;
 const DARK_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.07;
-const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.06;
-const LIGHT_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.025;
-const DARK_RIGHT_PANEL_BORDER: u32 = 0x383838;
+const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.08;
+const LIGHT_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.04;
 
 /// Shared radius for the Agents search field and its primary navigation rows.
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
@@ -191,56 +197,51 @@ pub(crate) fn cockpit_chrome_background(
     gpui::transparent_black()
 }
 
-/// Window-level backdrop behind the translucent chrome.
+/// Fill for the inset CLI sidebar card.
+///
+/// Linux uses a fully opaque surface. macOS and Windows retain a restrained
+/// tint over their native material when enabled, with the same opaque fallback
+/// when the material is off.
+pub(crate) fn cli_sidebar_card_background(surface: Hsla, material_active: bool) -> Hsla {
+    let opaque_surface = Hsla { a: 1.0, ..surface };
+    if cfg!(target_os = "linux") || !material_active {
+        opaque_surface
+    } else {
+        opaque_surface.opacity(SIDEBAR_CARD_MATERIAL_OPACITY)
+    }
+}
+
+/// Window-level backdrop behind the application chrome.
 ///
 /// This is what the rounded panel corners reveal in their clip notch, so it MUST
 /// show through the transparent rail ([`cockpit_chrome_background`]) - otherwise
 /// the corner exposes a different surface and the radius reads as a square patch.
-/// Native semantic materials remain raw. Linux uses a theme-aware shell tint
-/// because its blur protocols do not expose light/dark appearances.
+/// Native semantic materials remain raw on macOS and Windows. Linux always
+/// resolves to the opaque theme color: wallpaper never participates in the UI.
 pub(crate) fn cockpit_backdrop_background(
     background: Hsla,
     is_window_active: bool,
     material_active: bool,
 ) -> Hsla {
-    #[cfg(not(target_os = "linux"))]
-    let _ = is_window_active;
-
-    if !material_active {
-        return background;
-    }
-
-    if cfg!(any(target_os = "windows", target_os = "macos")) {
-        return gpui::transparent_black();
-    }
-
     #[cfg(target_os = "linux")]
-    return linux_theme_backdrop_background(
-        background,
-        is_window_active,
-        crate::window_chrome::linux_backdrop::native_blur_active(),
-    );
-
-    #[cfg(not(target_os = "linux"))]
-    background
-}
-
-#[cfg(target_os = "linux")]
-fn linux_theme_backdrop_background(
-    background: Hsla,
-    is_window_active: bool,
-    native_blur_active: bool,
-) -> Hsla {
-    if !native_blur_active {
-        return background;
+    {
+        let _ = (is_window_active, material_active);
+        Hsla {
+            a: 1.0,
+            ..background
+        }
     }
 
-    if background.l > 0.5 {
-        background.opacity(LINUX_LIGHT_CHROME_OPACITY)
-    } else if is_window_active {
-        background.opacity(LINUX_CHROME_ACTIVE_OPACITY)
-    } else {
-        background
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = is_window_active;
+        if !material_active {
+            background
+        } else if cfg!(any(target_os = "windows", target_os = "macos")) {
+            gpui::transparent_black()
+        } else {
+            background
+        }
     }
 }
 
@@ -260,22 +261,27 @@ pub(crate) fn sidebar_tab_hover_background() -> Hsla {
     )
 }
 
-pub(crate) fn right_panel_border_color(background: Hsla, light_border: Hsla) -> Hsla {
-    if background.l > 0.5 {
-        light_border
-    } else {
-        Hsla::from(gpui::rgb(DARK_RIGHT_PANEL_BORDER))
-    }
-}
-
 fn sidebar_tab_background(light_opacity: f32, dark_opacity: f32) -> Hsla {
-    let is_light = crate::theme::active_theme().background.l > 0.5;
+    let theme = crate::theme::active_theme();
+    let is_light = theme.background.l > 0.5;
     let (tint, opacity) = if is_light {
         (LIGHT_SIDEBAR_TAB_TINT, light_opacity)
     } else {
         (DARK_SIDEBAR_TAB_TINT, dark_opacity)
     };
-    Hsla::from(gpui::rgb(tint)).opacity(opacity)
+    let tint = Hsla::from(gpui::rgb(tint)).opacity(opacity);
+
+    #[cfg(target_os = "linux")]
+    {
+        Hsla {
+            a: 1.0,
+            ..theme.title_bar_background
+        }
+        .blend(tint)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    tint
 }
 
 /// Toast animation durations (ms). The `hold_ms` carried on each `Toast`
@@ -356,18 +362,18 @@ mod material_tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_blur_preserves_custom_theme_colors() {
-        let dark = gpui::hsla(0.71, 0.62, 0.32, 1.0);
-        let light = gpui::hsla(0.09, 0.54, 0.78, 1.0);
+    fn linux_chrome_stays_opaque_when_material_is_requested() {
+        let dark = gpui::hsla(0.71, 0.62, 0.32, 0.42);
+        let light = gpui::hsla(0.09, 0.54, 0.78, 0.58);
 
-        assert_eq!(linux_theme_backdrop_background(dark, true, false), dark);
         assert_eq!(
-            linux_theme_backdrop_background(dark, true, true),
-            dark.opacity(LINUX_CHROME_ACTIVE_OPACITY)
+            cockpit_backdrop_background(dark, true, true),
+            Hsla { a: 1.0, ..dark }
         );
         assert_eq!(
-            linux_theme_backdrop_background(light, true, true),
-            light.opacity(LINUX_LIGHT_CHROME_OPACITY)
+            cockpit_backdrop_background(light, true, true),
+            Hsla { a: 1.0, ..light }
         );
+        assert_eq!(cli_sidebar_card_background(dark, true).a, 1.0);
     }
 }

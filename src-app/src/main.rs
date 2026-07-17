@@ -452,6 +452,8 @@ mod native_material_tests {
 enum PanelCorner {
     TopLeft,
     TopRight,
+    BottomLeft,
+    BottomRight,
 }
 
 fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> impl IntoElement {
@@ -487,6 +489,26 @@ fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> impl IntoEl
                         point(left, top),
                         point(right, bottom - k),
                         point(left + k, top),
+                    );
+                }
+                PanelCorner::BottomLeft => {
+                    builder.move_to(point(left, bottom));
+                    builder.line_to(point(right, bottom));
+                    builder.cubic_bezier_to(
+                        point(left, top),
+                        point(right - k, bottom),
+                        point(left, top + k),
+                    );
+                    builder.line_to(point(left, bottom));
+                }
+                PanelCorner::BottomRight => {
+                    builder.move_to(point(left, bottom));
+                    builder.line_to(point(right, bottom));
+                    builder.line_to(point(right, top));
+                    builder.cubic_bezier_to(
+                        point(left, bottom),
+                        point(right, top + k),
+                        point(left + k, bottom),
                     );
                 }
             }
@@ -1440,7 +1462,8 @@ impl Render for PaneFlowApp {
         // Every mode is cockpit now (Agents first, then Cli, then Diff): the
         // title bar floats above the full window and the right panel reserves
         // a matching strip so content clears window controls.
-        let title_bar_h = (1.75 * window.rem_size()).max(px(34.));
+        let title_bar_h =
+            (1.75 * window.rem_size()).max(crate::app::constants::TITLE_BAR_MIN_HEIGHT);
         let settings_open = self.settings_section.is_some();
         let sessions_sidebar_width = self.rendered_sessions_sidebar_width(window);
         let sessions_sidebar_mounted = self.agent_sessions.sessions_sidebar_open
@@ -1502,8 +1525,6 @@ impl Render for PaneFlowApp {
                 | paneflow_config::schema::AppMode::Agents => ui.base,
             }
         };
-        let panel_border =
-            crate::app::constants::right_panel_border_color(theme.background, ui.border);
         let panel_corner_mask_bg = crate::app::constants::cockpit_backdrop_background(
             shell_color,
             is_window_active,
@@ -1511,22 +1532,29 @@ impl Render for PaneFlowApp {
         );
         let panel_top = title_bar_h;
         let primary_sidebar_width = self.rendered_primary_sidebar_width(window);
+        let title_bar_rail_width = self.primary_sidebar_expanded_width();
         let primary_sidebar_mounted = self.settings_section.is_some()
             || self.primary_sidebar_visible
             || self.primary_sidebar_animation.is_some();
-        let client_tiling = match window.window_decorations() {
-            gpui::Decorations::Client { tiling } => Some(tiling),
-            gpui::Decorations::Server => None,
-        };
-        let round_panel_bottom_left = !primary_sidebar_mounted
-            && client_tiling.is_some_and(|tiling| !tiling.bottom && !tiling.left);
-        let round_panel_bottom_right = !secondary_sidebar_open
-            && client_tiling.is_some_and(|tiling| !tiling.bottom && !tiling.right);
         let primary_sidebar_opacity = if self.settings_section.is_some() {
             1.
         } else {
             (primary_sidebar_width / self.primary_sidebar_expanded_width().max(1.)).clamp(0., 1.)
         };
+        let cli_sidebar_card_mounted = !settings_open
+            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+            && primary_sidebar_mounted;
+        let cli_sidebar_card_horizontal_inset =
+            crate::app::constants::SIDEBAR_CARD_INSET.min(primary_sidebar_width / 2.);
+        let main_panel_left_inset = if cli_sidebar_card_mounted {
+            crate::app::constants::SIDEBAR_CARD_INSET - cli_sidebar_card_horizontal_inset
+        } else {
+            crate::app::constants::SIDEBAR_CARD_INSET
+        };
+        let cli_sidebar_card_width =
+            (primary_sidebar_width - cli_sidebar_card_horizontal_inset * 2.).max(0.);
+        let cli_sidebar_card_bg =
+            crate::app::constants::cli_sidebar_card_background(ui.surface, chrome_material_active);
         #[cfg(target_os = "linux")]
         {
             crate::window_chrome::linux_backdrop::set_chrome_geometry(
@@ -1655,6 +1683,7 @@ impl Render for PaneFlowApp {
         self.title_bar.update(cx, |tb, _| {
             tb.workspace_name = ws_name;
             tb.sidebar_visible = self.primary_sidebar_visible;
+            tb.left_rail_width = title_bar_rail_width;
             tb.files_menu_open = self.title_bar_files_menu_open.is_some();
             tb.help_menu_open = self.title_bar_help_menu_open.is_some();
             tb.update_available = update_info;
@@ -1835,6 +1864,25 @@ impl Render for PaneFlowApp {
                                 .bg(panel_corner_mask_bg),
                         )
                     })
+                    // One childless decorative layer spans the CLI rail and
+                    // the title-bar overlay. Keeping it absolute preserves the
+                    // 240px reflow width and follows the existing open/close
+                    // animation without introducing a second layout path.
+                    .when(cli_sidebar_card_mounted, |row| {
+                        row.child(
+                            div()
+                                .absolute()
+                                .left(px(cli_sidebar_card_horizontal_inset))
+                                .top(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                .bottom(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                .w(px(cli_sidebar_card_width))
+                                .rounded(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                .bg(cli_sidebar_card_bg)
+                                .border_1()
+                                .border_color(ui.border)
+                                .opacity(primary_sidebar_opacity),
+                        )
+                    })
                     // While settings is open the left rail becomes the Codex
                     // settings nav (kept visible even if the user had hidden the
                     // primary rail, so the back button is always reachable).
@@ -1908,14 +1956,11 @@ impl Render for PaneFlowApp {
                             .relative()
                             .flex()
                             .flex_col()
-                            // Codex cockpit: every mode renders the right area as a
-                            // floating panel - a slightly-lighter bg sitting on the
-                            // chrome-dark body row, with the rail-side top corner
-                            // rounded. GPUI clips the panel's bg fill to the radius
-                            // but NOT its children, so the 5px inset keeps opaque
-                            // content (terminal cells, diff rows, settings cards)
-                            // off the arc; the window backdrop then shows in the
-                            // corner notch (a clean radius on every platform).
+                            // Every mode renders the right area with the same
+                            // 10px corner language and 4px side/bottom inset as
+                            // the CLI sidebar card. The content remains flush at
+                            // the top; corner masks below preserve all four arcs
+                            // because GPUI does not clip children to the radius.
                             .child(div().h(title_bar_h).flex_none())
                             .child(
                                 div()
@@ -1926,66 +1971,59 @@ impl Render for PaneFlowApp {
                                     .flex_col()
                                     .overflow_hidden()
                                     .bg(panel_bg)
-                                    .rounded_tl(px(16.))
-                                    .when(secondary_sidebar_open, |d| d.rounded_tr(px(16.)))
-                                    .when(round_panel_bottom_left, |d| {
-                                        d.rounded_bl(crate::app::constants::WINDOW_CORNER_RADIUS)
-                                    })
-                                    .when(round_panel_bottom_right, |d| {
-                                        d.rounded_br(crate::app::constants::WINDOW_CORNER_RADIUS)
-                                    })
-                                    .p(px(5.))
+                                    .ml(px(main_panel_left_inset))
+                                    .mr(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                    .mb(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                    .rounded(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
                                     .child(main_content),
                             )
                             // GPUI clips overflow with a rectangular content
                             // mask, so rounded panel children can still paint
                             // square backgrounds in the corners. These masks
-                            // restore the visual radius by painting the
-                            // surrounding chrome over the top square corners.
+                            // restore the visual radius with surrounding chrome.
                             .child(
                                 div()
                                     .absolute()
-                                    .left_0()
+                                    .left(px(main_panel_left_inset))
                                     .top(panel_top)
-                                    .w(px(16.))
-                                    .h(px(16.))
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
                                     .child(panel_corner_mask(
                                         PanelCorner::TopLeft,
                                         panel_corner_mask_bg,
                                     )),
                             )
-                            .when(secondary_sidebar_open, |d| {
-                                d.child(
-                                    div()
-                                        .absolute()
-                                        .right_0()
-                                        .top(panel_top)
-                                        .w(px(16.))
-                                        .h(px(16.))
-                                        .child(panel_corner_mask(
-                                            PanelCorner::TopRight,
-                                            panel_corner_mask_bg,
-                                        )),
-                                )
-                            })
-                            // Draw the panel contour. The right edge joins the
-                            // contour only while a secondary sidebar is open,
-                            // giving the tabs/terminal matching top corners on both
-                            // sides without changing the normal full-width view.
                             .child(
                                 div()
                                     .absolute()
-                                    .left_0()
-                                    .right_0()
-                                    .bottom_0()
+                                    .right(px(crate::app::constants::SIDEBAR_CARD_INSET))
                                     .top(panel_top)
-                                    .rounded_tl(px(16.))
-                                    .border_t_1()
-                                    .border_l_1()
-                                    .when(secondary_sidebar_open, |d| {
-                                        d.rounded_tr(px(16.)).border_r_1()
-                                    })
-                                    .border_color(panel_border),
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .child(panel_corner_mask(
+                                        PanelCorner::TopRight,
+                                        panel_corner_mask_bg,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left(px(main_panel_left_inset))
+                                    .bottom(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .child(panel_corner_mask(
+                                        PanelCorner::BottomLeft,
+                                        panel_corner_mask_bg,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .right(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                    .bottom(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .child(panel_corner_mask(
+                                        PanelCorner::BottomRight,
+                                        panel_corner_mask_bg,
+                                    )),
                             ),
                     )
                     // Docked agent-sessions sidebar (right edge). A layout child
