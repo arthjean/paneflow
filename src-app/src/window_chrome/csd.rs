@@ -13,6 +13,14 @@ use crate::app::constants::{
     TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SPACING, TITLE_BAR_EDGE_INSET,
 };
 
+// A transparent GPUI shadow inset exposes wallpaper inside the native bounds on
+// Linux Wayland and X11. Keep the surface flush there; resize hit-testing stays
+// independently driven by `RESIZE_BORDER`.
+#[cfg(target_os = "linux")]
+const CLIENT_DECORATION_SHADOW_INSET: Pixels = px(0.0);
+#[cfg(not(target_os = "linux"))]
+const CLIENT_DECORATION_SHADOW_INSET: Pixels = crate::RESIZE_BORDER;
+
 /// Default button layout when the DE doesn't provide one.
 pub fn default_button_layout() -> WindowButtonLayout {
     WindowButtonLayout {
@@ -60,10 +68,11 @@ impl ClientDecorationGeometry {
 
 /// Wrap application content in a native-looking client-side decoration shell.
 ///
-/// The outer inset belongs to the compositor shadow and resize hitbox, so it
-/// must stay transparent. The themed application surface lives in the inner
-/// rounded element and drops its radius, border, and padding edge-by-edge when
-/// the compositor tiles or maximizes the window.
+/// The outer inset belongs to the compositor shadow and stays transparent where
+/// that shadow is enabled. Linux keeps the surface flush with the native bounds
+/// while retaining a separate resize hitbox. The themed application surface
+/// drops its radius, border, and padding edge-by-edge when the compositor tiles
+/// or maximizes the window.
 pub(crate) fn client_side_window_shell(
     content: impl IntoElement,
     window: &mut Window,
@@ -72,7 +81,7 @@ pub(crate) fn client_side_window_shell(
 ) -> impl IntoElement {
     let decorations = window.window_decorations();
     match decorations {
-        Decorations::Client { .. } => window.set_client_inset(crate::RESIZE_BORDER),
+        Decorations::Client { .. } => window.set_client_inset(CLIENT_DECORATION_SHADOW_INSET),
         Decorations::Server => window.set_client_inset(px(0.0)),
     }
 
@@ -114,19 +123,30 @@ pub(crate) fn client_side_window_shell(
                 .when(geometry.free_right, |surface| {
                     surface.border_r(crate::app::constants::WINDOW_BORDER_SIZE)
                 })
-                .when(geometry.draw_shadow, |surface| {
-                    surface.shadow(vec![
-                        gpui::BoxShadow::new(px(0.0), px(0.0), gpui::hsla(0.0, 0.0, 0.0, 0.4))
-                            .blur_radius(crate::RESIZE_BORDER / 2.0),
-                    ])
-                });
+                .when(
+                    geometry.draw_shadow && !cfg!(target_os = "linux"),
+                    |surface| {
+                        surface.shadow(vec![
+                            gpui::BoxShadow::new(px(0.0), px(0.0), gpui::hsla(0.0, 0.0, 0.0, 0.4))
+                                .blur_radius(CLIENT_DECORATION_SHADOW_INSET / 2.0),
+                        ])
+                    },
+                );
 
             outer = outer
                 .bg(gpui::transparent_black())
-                .when(geometry.free_top, |outer| outer.pt(crate::RESIZE_BORDER))
-                .when(geometry.free_bottom, |outer| outer.pb(crate::RESIZE_BORDER))
-                .when(geometry.free_left, |outer| outer.pl(crate::RESIZE_BORDER))
-                .when(geometry.free_right, |outer| outer.pr(crate::RESIZE_BORDER))
+                .when(geometry.free_top, |outer| {
+                    outer.pt(CLIENT_DECORATION_SHADOW_INSET)
+                })
+                .when(geometry.free_bottom, |outer| {
+                    outer.pb(CLIENT_DECORATION_SHADOW_INSET)
+                })
+                .when(geometry.free_left, |outer| {
+                    outer.pl(CLIENT_DECORATION_SHADOW_INSET)
+                })
+                .when(geometry.free_right, |outer| {
+                    outer.pr(CLIENT_DECORATION_SHADOW_INSET)
+                })
                 .on_mouse_move(move |event, window, _| {
                     let window_size = window.window_bounds().get_bounds().size;
                     if resize_edge(
