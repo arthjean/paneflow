@@ -25,6 +25,7 @@ use super::types::{
     TerminalWindowSize, terminal_metric_to_u16,
 };
 use crate::limits::MAX_OSC52_BYTES;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
 use super::ghostty_session::{GhosttySession, GhosttyStartError, SpawnedGhostty};
@@ -1289,6 +1290,11 @@ impl TerminalView {
 
         // Regex toggle (.*): active state reads as a pressed pill with an accent
         // hairline - a full accent fill would drop below 4.5:1 on the light theme.
+        let regex_background = if regex_active {
+            ui.subtle
+        } else {
+            ui.subtle.opacity(0.0)
+        };
         let regex_toggle = div()
             .id("search-regex-toggle")
             .flex()
@@ -1299,16 +1305,15 @@ impl TerminalView {
             .border_1()
             .text_size(px(12.))
             .font_weight(FontWeight::MEDIUM)
-            .when(regex_active, |el| {
-                el.bg(ui.subtle).border_color(ui.accent).text_color(ui.text)
+            .bg(regex_background)
+            .border_color(if regex_active {
+                ui.accent
+            } else {
+                hsla(0., 0., 0., 0.)
             })
-            .when(!regex_active, |el| {
-                el.border_color(hsla(0., 0., 0., 0.))
-                    .text_color(ui.muted)
-                    .hover(|s| {
-                        let ui = crate::theme::ui_colors();
-                        s.bg(ui.subtle)
-                    })
+            .text_color(if regex_active { ui.text } else { ui.muted })
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(regex_background, ui.subtle, delta));
             })
             .on_mouse_down(
                 MouseButton::Left,
@@ -1329,9 +1334,8 @@ impl TerminalView {
             .rounded(px(5.))
             .text_size(px(12.))
             .text_color(ui.muted)
-            .hover(|s| {
-                let ui = crate::theme::ui_colors();
-                s.bg(ui.subtle)
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
             })
             .child(
                 svg()
@@ -1355,9 +1359,8 @@ impl TerminalView {
                 .justify_center()
                 .size(px(22.))
                 .rounded(px(5.))
-                .hover(|s| {
-                    let ui = crate::theme::ui_colors();
-                    s.bg(ui.subtle)
+                .animated_hover(move |style, delta| {
+                    style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
                 })
                 .child(svg().size(px(14.)).flex_none().path(icon).text_color(color))
         };
