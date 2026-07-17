@@ -68,6 +68,7 @@ use gpui::{
 };
 
 use crate::theme::UiColors;
+use crate::ui_primitives::AnimatedHoverExt;
 
 /// Track + thumb width. Anything thinner is hard to grab.
 pub const SCROLLBAR_WIDTH: Pixels = px(6.);
@@ -219,7 +220,7 @@ pub fn render(
                     .h(px(thumb_h))
                     .rounded(px(3.))
                     .bg(thumb_bg)
-                    .hover(move |s| s.bg(thumb_hover_bg))
+                    .animated_hover_bg(thumb_bg, thumb_hover_bg)
                     .on_mouse_down(MouseButton::Left, on_thumb_down),
             )
             .into_any_element(),
