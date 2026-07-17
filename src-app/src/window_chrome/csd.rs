@@ -2,6 +2,11 @@
 //! settings window. Avoids duplicating resize-edge hit-testing and the default
 //! window-button layout across multiple files.
 
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicUsize, Ordering},
+};
+
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, CursorStyle, Decorations, HitboxBehavior, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, ResizeEdge,
@@ -20,6 +25,62 @@ use crate::app::constants::{
 const CLIENT_DECORATION_SHADOW_INSET: Pixels = px(0.0);
 #[cfg(not(target_os = "linux"))]
 const CLIENT_DECORATION_SHADOW_INSET: Pixels = crate::RESIZE_BORDER;
+
+const WINDOW_DIAGNOSTIC_SAMPLE_LIMIT: usize = 12;
+
+fn window_diagnostics_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PANEFLOW_WINDOW_DIAGNOSTICS")
+            .is_ok_and(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
+    })
+}
+
+fn log_window_diagnostics(
+    layout_bounds: Bounds<Pixels>,
+    window: &Window,
+    tiling: Tiling,
+    geometry: ClientDecorationGeometry,
+    background: Hsla,
+    border_color: Hsla,
+) {
+    static SAMPLE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    if !window_diagnostics_enabled() {
+        return;
+    }
+
+    let sample = SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
+    if sample >= WINDOW_DIAGNOSTIC_SAMPLE_LIMIT {
+        return;
+    }
+
+    let window_bounds = window.window_bounds().get_bounds();
+    let inner_bounds = window.inner_window_bounds().get_bounds();
+    let scale_factor = window.scale_factor();
+    let backend = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        "wayland"
+    } else if std::env::var_os("DISPLAY").is_some() {
+        "x11"
+    } else {
+        "unknown"
+    };
+
+    log::info!(
+        target: "paneflow::window_chrome::diagnostics",
+        "sample={sample} backend={backend} decorations={:?} client_inset={:?} \
+         tiling={tiling:?} geometry={geometry:?} layout_bounds={layout_bounds:?} \
+         window_bounds={window_bounds:?} inner_bounds={inner_bounds:?} \
+         scale_factor={scale_factor:.3} device_size={:.1}x{:.1} \
+         background_alpha={:.3} border_alpha={:.3}",
+        window.window_decorations(),
+        window.client_inset(),
+        f32::from(window_bounds.size.width) * scale_factor,
+        f32::from(window_bounds.size.height) * scale_factor,
+        background.a,
+        border_color.a,
+    );
+}
 
 /// Default button layout when the DE doesn't provide one.
 pub fn default_button_layout() -> WindowButtonLayout {
@@ -194,7 +255,15 @@ pub(crate) fn client_side_window_shell(
                 .child(surface)
                 .child(
                     canvas(
-                        |_bounds, window, _| {
+                        move |bounds, window, _| {
+                            log_window_diagnostics(
+                                bounds,
+                                window,
+                                tiling,
+                                geometry,
+                                background,
+                                border_color,
+                            );
                             window.insert_hitbox(
                                 Bounds::new(
                                     point(px(0.0), px(0.0)),
