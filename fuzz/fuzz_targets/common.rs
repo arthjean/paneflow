@@ -1,7 +1,7 @@
 use alacritty_terminal::Term;
 use alacritty_terminal::event::VoidListener;
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Point};
+use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Config;
 use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use paneflow_terminal_ghostty::{Content, DisplayTerminal, WideCell, WindowSize};
@@ -85,9 +85,15 @@ fn assert_cursor_in_bounds(content: &Content) {
 }
 
 fn normalized_alacritty_text(term: &Term<VoidListener>) -> String {
-    let start = Point::new(alacritty_terminal::index::Line(0), Column(0));
-    let end = Point::new(term.bottommost_line(), term.last_column());
-    normalize_text(term.bounds_to_string(start, end))
+    let mut lines = Vec::with_capacity(term.screen_lines());
+    for row in 0..term.screen_lines() {
+        let line = Line(row as i32);
+        lines.push(term.bounds_to_string(
+            Point::new(line, Column(0)),
+            Point::new(line, term.last_column()),
+        ));
+    }
+    normalize_text(lines.join("\n"))
 }
 
 fn normalized_ghostty_text(content: &Content) -> String {
