@@ -17,6 +17,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::pane::Pane;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 /// Hard cap on simultaneously defined groups - one per `UiColors` stripe
 /// slot (`group_1..group_8`). Creating a 9th is refused with an explicit
@@ -474,18 +475,25 @@ impl PaneFlowApp {
                 let is_selected = idx == self.broadcast_picker_selected;
                 let is_active = self.broadcast.active == Some(idx);
                 let member_count = group.members.iter().filter(|m| live.contains(m)).count();
-                let row_group: SharedString = format!("broadcast-picker-row-{idx}").into();
+                let stable_id = group.color_idx;
+                let resting_background = if is_selected {
+                    ui.subtle
+                } else {
+                    ui.subtle.opacity(0.0)
+                };
 
                 let rename_btn = div()
-                    .id(SharedString::from(format!("broadcast-rename-{idx}")))
+                    .id(SharedString::from(format!("broadcast-rename-{stable_id}")))
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(4.))
                     .text_size(px(10.))
                     .text_color(ui.muted)
-                    .hover(|s| s.bg(ui.subtle).text_color(ui.text))
-                    .opacity(0.)
-                    .group_hover(row_group.clone(), |s| s.opacity(1.))
+                    .animated_hover(move |style, delta| {
+                        style
+                            .bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta))
+                            .text_color(lerp_color(ui.muted, ui.text, delta));
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.broadcast_picker_renaming = Some(idx);
@@ -502,15 +510,17 @@ impl PaneFlowApp {
                     .child("Rename");
 
                 let delete_btn = div()
-                    .id(SharedString::from(format!("broadcast-delete-{idx}")))
+                    .id(SharedString::from(format!("broadcast-delete-{stable_id}")))
                     .px(px(6.))
                     .py(px(2.))
                     .rounded(px(4.))
                     .text_size(px(10.))
                     .text_color(ui.muted)
-                    .hover(|s| s.bg(ui.subtle).text_color(ui.vc_deleted))
-                    .opacity(0.)
-                    .group_hover(row_group.clone(), |s| s.opacity(1.))
+                    .animated_hover(move |style, delta| {
+                        style
+                            .bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta))
+                            .text_color(lerp_color(ui.muted, ui.vc_deleted, delta));
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.delete_broadcast_group(idx, cx);
@@ -520,8 +530,9 @@ impl PaneFlowApp {
 
                 card = card.child(
                     div()
-                        .id(SharedString::from(format!("broadcast-group-row-{idx}")))
-                        .group(row_group)
+                        .id(SharedString::from(format!(
+                            "broadcast-group-row-{stable_id}"
+                        )))
                         .flex()
                         .flex_row()
                         .items_center()
@@ -529,8 +540,7 @@ impl PaneFlowApp {
                         .px(px(14.))
                         .py(px(6.))
                         .text_size(px(13.))
-                        .when(is_selected, |d| d.bg(ui.subtle))
-                        .when(!is_selected, |d| d.hover(|s| s.bg(ui.subtle)))
+                        .bg(resting_background)
                         .text_color(if is_active { ui.accent } else { ui.text })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -560,8 +570,47 @@ impl PaneFlowApp {
                                     .child("active"),
                             )
                         })
-                        .child(rename_btn)
-                        .child(delete_btn),
+                        .animated_hover_element(move |row, delta| {
+                            row.style()
+                                .bg(lerp_color(resting_background, ui.subtle, delta));
+                            let placeholder = div()
+                                .flex()
+                                .flex_row()
+                                .gap(px(8.))
+                                .invisible()
+                                .child(
+                                    div()
+                                        .px(px(6.))
+                                        .py(px(2.))
+                                        .text_size(px(10.))
+                                        .child("Rename"),
+                                )
+                                .child(
+                                    div()
+                                        .px(px(6.))
+                                        .py(px(2.))
+                                        .text_size(px(10.))
+                                        .child("Delete"),
+                                );
+                            let actions = div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
+                                .flex()
+                                .flex_row()
+                                .gap(px(8.))
+                                .opacity(delta)
+                                .when(delta <= f32::EPSILON, |actions| actions.hidden())
+                                .child(rename_btn)
+                                .child(delete_btn);
+                            let actions_slot = div()
+                                .relative()
+                                .flex_none()
+                                .child(placeholder)
+                                .child(actions)
+                                .into_any_element();
+                            row.extend([actions_slot]);
+                        }),
                 );
             }
         }
