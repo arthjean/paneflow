@@ -1078,11 +1078,10 @@ impl Pane {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let ui = tab_colors();
-        self.command_button(
+        self.action_button_shell(
             SharedString::from(id),
-            SharedString::from(icon_path),
+            Self::command_icon(SharedString::from(icon_path), ui.muted, false),
             ui.muted,
-            false,
             Some(ui.text),
             handler,
             cx,
@@ -1271,29 +1270,6 @@ impl Pane {
         };
 
         button.child(visual).into_any_element()
-    }
-
-    /// Render a small icon button with a caller-supplied base tint. Generic
-    /// controls pass a hover tint; agent buttons pass `None` so monochrome
-    /// brand tints and native multi-color images stay unchanged.
-    fn command_button(
-        &self,
-        id: SharedString,
-        icon_path: SharedString,
-        tint: Hsla,
-        multicolor: bool,
-        hover_tint: Option<Hsla>,
-        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        self.action_button_shell(
-            id,
-            Self::command_icon(icon_path, tint, multicolor),
-            tint,
-            hover_tint,
-            handler,
-            cx,
-        )
     }
 
     /// Close a tab at the given index. Emits `PaneEvent::Remove` if the pane becomes empty.
@@ -2330,11 +2306,14 @@ impl Pane {
                 Some(c) => rgb(c).into(),
                 None => tab_colors().text,
             };
-            action_cluster = action_cluster.child(self.command_button(
+            action_cluster = action_cluster.child(self.action_button_shell(
                 SharedString::from(format!("pane-btn-{}", agent.tag())),
-                SharedString::from(agent.icon_path()),
+                Self::command_icon(
+                    SharedString::from(agent.icon_path()),
+                    tint,
+                    agent.icon_multicolor(),
+                ),
                 tint,
-                agent.icon_multicolor(),
                 None,
                 cx.listener(move |this, _, _window, cx| {
                     let Some(terminal) = this.active_terminal_opt() else {
@@ -2354,11 +2333,10 @@ impl Pane {
             let command = btn.command.clone();
             let id = SharedString::from(format!("pane-btn-custom-{}", btn.id));
             let icon = SharedString::from(btn.icon.clone());
-            action_cluster = action_cluster.child(self.command_button(
+            action_cluster = action_cluster.child(self.action_button_shell(
                 id,
-                icon,
+                Self::command_icon(icon, ui.muted, false),
                 ui.muted,
-                false,
                 Some(ui.text),
                 cx.listener(move |this, _, _window, cx| {
                     let Some(terminal) = this.active_terminal_opt() else {
