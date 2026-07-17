@@ -345,6 +345,7 @@ jobs:
         env:
           PANEFLOW_LIBGHOSTTY_DIR: ${{ github.workspace }}/target/libghostty/x86_64-unknown-linux-gnu
           FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '1800' || '60' }}
+          RUSTUP_TOOLCHAIN: nightly-2026-07-14
         run: cargo fuzz run "${{ matrix.target }}" -- -max_total_time="$FUZZ_SECONDS"
 
   distro-smoke:
