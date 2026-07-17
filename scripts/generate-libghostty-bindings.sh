@@ -48,12 +48,21 @@ OUTPUT="$(mktemp)"
 trap 'rm -f "$OUTPUT"' EXIT
 bindgen \
   --use-core \
+  --no-doc-comments \
+  --allowlist-function '^ghostty_.*' \
+  --allowlist-type '^Ghostty.*' \
+  --allowlist-var '^(GHOSTTY|Ghostty).*' \
   --formatter rustfmt \
   --rust-target 1.82 \
   --output "$OUTPUT" \
   "$HEADER" \
   -- \
   -I"$SOURCE_DIR/include"
+
+# Bindgen 0.72 qualifies core from the crate root. Keep the reviewed bindings
+# stable across the generator upgrade without changing their Rust semantics.
+sed -i 's/::core::ffi::/core::ffi::/g' "$OUTPUT"
+rustfmt --edition 2024 "$OUTPUT"
 
 if ! cmp -s "$OUTPUT" "$ROOT/$(manifest_string bindings_path)"; then
   diff -u "$ROOT/$(manifest_string bindings_path)" "$OUTPUT" || true
