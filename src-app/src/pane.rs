@@ -25,6 +25,7 @@ use gpui::{
 use paneflow_config::schema::ButtonCommand;
 
 use crate::settings::components::with_alpha;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 use crate::diff::DiffView;
 use crate::markdown::MarkdownView;
@@ -144,8 +145,8 @@ const LEADING_SLOT_SIZE: f32 = 15.0;
 const SECTION_PX: f32 = 6.0;
 /// Square size shared by tab-bar icon buttons.
 const ACTION_BUTTON_SIZE: f32 = 22.0;
-/// Full-distance duration for far-right action-button hover transitions.
-const ACTION_BUTTON_HOVER_MS: u64 = 120;
+/// Full-distance duration for every tab-bar hover transition.
+const TAB_BAR_HOVER_MS: u64 = 120;
 /// Square size of the new-tab affordance that trails the last tab chip.
 const ADD_TAB_BUTTON_SIZE: f32 = TAB_HEIGHT;
 /// Plus glyph size inside the new-tab affordance.
@@ -282,8 +283,8 @@ struct TabRename {
     buffer: String,
 }
 
-/// Reversible hover transition state for one far-right tab-bar action.
-struct ActionButtonHoverMotion {
+/// Reversible hover transition state for one tab-bar interactive surface.
+struct TabBarHoverMotion {
     /// Last progress painted by the animator, used to seed mid-flight reversals.
     live_progress: Rc<Cell<f32>>,
     from: f32,
@@ -292,7 +293,7 @@ struct ActionButtonHoverMotion {
     epoch: u64,
 }
 
-impl ActionButtonHoverMotion {
+impl TabBarHoverMotion {
     fn new(live_progress: Rc<Cell<f32>>) -> Self {
         Self {
             live_progress,
@@ -345,8 +346,8 @@ pub struct Pane {
     /// Incremented on every action-cluster toggle so the GPUI one-shot
     /// animation gets a fresh element id and replays both ways.
     tab_bar_actions_animation_epoch: u64,
-    /// Per-action hover progress for reversible background and tint fades.
-    action_button_hover_motion: std::collections::HashMap<SharedString, ActionButtonHoverMotion>,
+    /// Per-surface hover progress for reversible tab-bar fades and tint shifts.
+    tab_bar_hover_motion: std::collections::HashMap<SharedString, TabBarHoverMotion>,
     /// US-015: cached `paneflow.json` so `render_tab_bar` never calls the
     /// blocking `load_config()` per frame (the agent-button visibility gate and
     /// the launch command read it). Hydrated at creation, refreshed by
@@ -426,7 +427,7 @@ impl Pane {
             custom_buttons: Vec::new(),
             tab_bar_actions_collapsed: false,
             tab_bar_actions_animation_epoch: 0,
-            action_button_hover_motion: std::collections::HashMap::new(),
+            tab_bar_hover_motion: std::collections::HashMap::new(),
             // US-015: hydrate the tab-bar config cache once at creation (not
             // per frame); refreshed on ConfigWatcher reload via propagation.
             cached_config,
@@ -480,7 +481,7 @@ impl Pane {
             custom_buttons: Vec::new(),
             tab_bar_actions_collapsed: false,
             tab_bar_actions_animation_epoch: 0,
-            action_button_hover_motion: std::collections::HashMap::new(),
+            tab_bar_hover_motion: std::collections::HashMap::new(),
             // US-015: see `Pane::new`.
             cached_config,
             rename: None,
@@ -603,6 +604,13 @@ impl Pane {
         } else {
             "Single pane".into()
         };
+        let broadcast_bg = if slot.broadcast {
+            ui.accent.opacity(0.15)
+        } else {
+            ui.subtle
+        };
+        let broadcast_text = if slot.broadcast { ui.accent } else { ui.muted };
+        let broadcast_hover_text = if slot.broadcast { ui.accent } else { ui.text };
         header = header.child(
             div()
                 .id("composer-broadcast-toggle")
@@ -610,13 +618,10 @@ impl Pane {
                 .py(px(2.))
                 .rounded(px(4.))
                 .text_size(px(10.))
-                .when(slot.broadcast, |d| {
-                    d.bg(ui.accent.opacity(0.15)).text_color(ui.accent)
-                })
-                .when(!slot.broadcast, |d| {
-                    d.bg(ui.subtle)
-                        .text_color(ui.muted)
-                        .hover(|s| s.text_color(ui.text))
+                .bg(broadcast_bg)
+                .text_color(broadcast_text)
+                .animated_hover(move |style, delta| {
+                    style.text_color(lerp_color(broadcast_text, broadcast_hover_text, delta));
                 })
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(move |_, _, cx| {
@@ -652,7 +657,9 @@ impl Pane {
                     .text_size(px(10.))
                     .bg(ui.subtle)
                     .text_color(ui.muted)
-                    .hover(|s| s.text_color(ui.vc_deleted))
+                    .animated_hover(move |style, delta| {
+                        style.text_color(lerp_color(ui.muted, ui.vc_deleted, delta));
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
@@ -1089,31 +1096,28 @@ impl Pane {
     }
 
     /// Render the plus button that sits directly after the last tab chip.
-    fn new_tab_button(cx: &mut Context<Self>) -> impl IntoElement {
+    fn new_tab_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = tab_colors();
-        div()
-            .id("pane-btn-new-tab")
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .w(px(ADD_TAB_BUTTON_SIZE))
-            .h(px(ADD_TAB_BUTTON_SIZE))
-            .rounded(px(TAB_RADIUS))
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
-            .on_click(cx.listener(|_this, _e: &ClickEvent, _window, cx| {
+        self.tab_bar_button_shell(
+            SharedString::from("pane-btn-new-tab"),
+            svg()
+                .size(px(ADD_TAB_ICON_SIZE))
+                .flex_none()
+                .path("icons/plus.svg")
+                .text_color(ui.muted)
+                .into_any_element(),
+            ADD_TAB_BUTTON_SIZE,
+            TAB_RADIUS,
+            ui.muted,
+            Some(ui.text),
+            cx.listener(|_this, _e: &ClickEvent, _window, cx| {
                 // See `PaneEvent::NewTerminalTab`: spawning in the app gives
                 // the new terminal the workspace cwd + app-level subscriptions.
                 cx.emit(PaneEvent::NewTerminalTab);
                 cx.stop_propagation();
-            }))
-            .child(
-                svg()
-                    .size(px(ADD_TAB_ICON_SIZE))
-                    .flex_none()
-                    .path("icons/plus.svg")
-                    .text_color(ui.muted),
-            )
+            }),
+            cx,
+        )
     }
 
     /// A 14px tab-bar icon. Monochrome logos receive their tint directly:
@@ -1133,16 +1137,38 @@ impl Pane {
         }
     }
 
-    fn set_action_button_hover_target(
+    fn tab_hover_motion_id(tab_id: gpui::EntityId) -> SharedString {
+        SharedString::from(format!("pane-tab-motion-{}", tab_id.as_u64()))
+    }
+
+    fn close_hover_motion_id(tab_id: gpui::EntityId) -> SharedString {
+        SharedString::from(format!("pane-tab-close-motion-{}", tab_id.as_u64()))
+    }
+
+    fn hover_motion_snapshot(&self, id: &SharedString) -> (Rc<Cell<f32>>, f32, f32, u64) {
+        self.tab_bar_hover_motion
+            .get(id)
+            .map(|motion| {
+                (
+                    motion.live_progress.clone(),
+                    motion.from,
+                    motion.target,
+                    motion.epoch,
+                )
+            })
+            .unwrap_or_else(|| (Rc::new(Cell::new(0.0)), 0.0, 0.0, 0))
+    }
+
+    fn set_tab_bar_hover_target(
         &mut self,
         id: &SharedString,
         live_progress: &Rc<Cell<f32>>,
         target: f32,
     ) -> bool {
         let motion = self
-            .action_button_hover_motion
+            .tab_bar_hover_motion
             .entry(id.clone())
-            .or_insert_with(|| ActionButtonHoverMotion::new(live_progress.clone()));
+            .or_insert_with(|| TabBarHoverMotion::new(live_progress.clone()));
         if motion.target == target {
             return false;
         }
@@ -1153,30 +1179,29 @@ impl Pane {
         true
     }
 
-    /// Shared fixed-size shell for every far-right tab-bar action. The live
-    /// progress cell lets a rapid enter/exit reverse from the currently painted
-    /// value instead of snapping to an endpoint.
-    fn action_button_shell(
+    fn clear_tab_hover_motion(&mut self, tab_id: gpui::EntityId) {
+        self.tab_bar_hover_motion
+            .remove(&Self::tab_hover_motion_id(tab_id));
+        self.tab_bar_hover_motion
+            .remove(&Self::close_hover_motion_id(tab_id));
+    }
+
+    /// Shared shell for tab-bar icon buttons. The live progress cell lets a
+    /// rapid enter/exit reverse from the currently painted value instead of
+    /// snapping to an endpoint.
+    #[allow(clippy::too_many_arguments)]
+    fn tab_bar_button_shell(
         &self,
         id: SharedString,
         icon: AnyElement,
+        size: f32,
+        radius: f32,
         base_tint: Hsla,
         hover_tint: Option<Hsla>,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let (live_progress, from, target, epoch) = self
-            .action_button_hover_motion
-            .get(&id)
-            .map(|motion| {
-                (
-                    motion.live_progress.clone(),
-                    motion.from,
-                    motion.target,
-                    motion.epoch,
-                )
-            })
-            .unwrap_or_else(|| (Rc::new(Cell::new(0.0)), 0.0, 0.0, 0));
+        let (live_progress, from, target, epoch) = self.hover_motion_snapshot(&id);
 
         let hover_id = id.clone();
         let hover_live_progress = live_progress.clone();
@@ -1189,25 +1214,22 @@ impl Pane {
         let button = div()
             .id(id.clone())
             .flex()
+            .flex_none()
             .items_center()
             .justify_center()
-            .w(px(ACTION_BUTTON_SIZE))
-            .h(px(ACTION_BUTTON_SIZE))
-            .rounded(px(4.))
+            .w(px(size))
+            .h(px(size))
+            .rounded(px(radius))
             .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
                 let target = if *hovered { 1.0 } else { 0.0 };
-                if this.set_action_button_hover_target(&hover_id, &hover_live_progress, target) {
+                if this.set_tab_bar_hover_target(&hover_id, &hover_live_progress, target) {
                     cx.notify();
                 }
             }))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, cx| {
-                    if this.set_action_button_hover_target(
-                        &mouse_up_id,
-                        &mouse_up_live_progress,
-                        1.0,
-                    ) {
+                    if this.set_tab_bar_hover_target(&mouse_up_id, &mouse_up_live_progress, 1.0) {
                         cx.notify();
                     }
                 }),
@@ -1215,7 +1237,7 @@ impl Pane {
             .on_mouse_up_out(
                 MouseButton::Left,
                 cx.listener(move |this, _, _window, cx| {
-                    if this.set_action_button_hover_target(
+                    if this.set_tab_bar_hover_target(
                         &mouse_up_out_id,
                         &mouse_up_out_live_progress,
                         0.0,
@@ -1232,7 +1254,7 @@ impl Pane {
             .flex()
             .items_center()
             .justify_center()
-            .rounded(px(4.))
+            .rounded(px(radius))
             .text_color(base_tint)
             .child(icon);
 
@@ -1249,7 +1271,7 @@ impl Pane {
         } else {
             let animation_id = SharedString::from(format!("pane-action-hover-{id}-{epoch}"));
             let duration = Duration::from_secs_f32(
-                Duration::from_millis(ACTION_BUTTON_HOVER_MS).as_secs_f32() * distance,
+                Duration::from_millis(TAB_BAR_HOVER_MS).as_secs_f32() * distance,
             );
             visual
                 .with_animation(
@@ -1272,6 +1294,28 @@ impl Pane {
         button.child(visual).into_any_element()
     }
 
+    /// Fixed-size wrapper for the far-right tab-bar action cluster.
+    fn action_button_shell(
+        &self,
+        id: SharedString,
+        icon: AnyElement,
+        base_tint: Hsla,
+        hover_tint: Option<Hsla>,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.tab_bar_button_shell(
+            id,
+            icon,
+            ACTION_BUTTON_SIZE,
+            4.0,
+            base_tint,
+            hover_tint,
+            handler,
+            cx,
+        )
+    }
+
     /// Close a tab at the given index. Emits `PaneEvent::Remove` if the pane becomes empty.
     pub fn close_tab_at(&mut self, idx: usize, cx: &mut Context<Self>) {
         if idx >= self.tabs.len() {
@@ -1279,6 +1323,7 @@ impl Pane {
         }
         let selected_id = self.tabs.get(self.selected_idx).map(TabContent::entity_id);
         let removed_id = self.tabs[idx].entity_id();
+        self.clear_tab_hover_motion(removed_id);
         self.tabs.remove(idx);
         if self.tabs.is_empty() {
             cx.emit(PaneEvent::Remove);
@@ -1333,6 +1378,12 @@ impl Pane {
         let Some(dest) = reordered_index(from, to, self.tabs.len()) else {
             return;
         };
+        let moved_id = self.tabs[from].entity_id();
+        let displaced_id = self.tabs[dest].entity_id();
+        self.clear_tab_hover_motion(moved_id);
+        if displaced_id != moved_id {
+            self.clear_tab_hover_motion(displaced_id);
+        }
         let tab = self.tabs.remove(from);
         self.tabs.insert(dest, tab);
         self.selected_idx = dest;
@@ -1358,6 +1409,7 @@ impl Pane {
         }
         let selected_id = self.tabs.get(self.selected_idx).map(TabContent::entity_id);
         let removed_id = self.tabs[idx].entity_id();
+        self.clear_tab_hover_motion(removed_id);
         let tab = self.tabs.remove(idx);
         if !self.tabs.is_empty() {
             self.restore_selection_after_removal(idx, removed_id, selected_id);
@@ -1388,6 +1440,9 @@ impl Pane {
             Self::apply_terminal_render_config(t, &self.cached_config, cx);
         }
         let at = dest_idx.min(self.tabs.len());
+        if let Some(displaced_id) = self.tabs.get(at).map(TabContent::entity_id) {
+            self.clear_tab_hover_motion(displaced_id);
+        }
         self.tabs.insert(at, tab);
         self.selected_idx = at;
         self.focus_handle(cx).focus(window, cx);
@@ -1414,6 +1469,9 @@ impl Pane {
             Self::apply_terminal_render_config(t, &self.cached_config, cx);
         }
         let at = dest_idx.min(self.tabs.len());
+        if let Some(displaced_id) = self.tabs.get(at).map(TabContent::entity_id) {
+            self.clear_tab_hover_motion(displaced_id);
+        }
         self.tabs.insert(at, tab);
         self.selected_idx = at;
         cx.notify();
@@ -1650,7 +1708,7 @@ impl Pane {
         for i in 0..tab_count {
             tabs_row = tabs_row.child(self.render_tab(i, ui, cx));
         }
-        tabs_row = tabs_row.child(Self::new_tab_button(cx));
+        tabs_row = tabs_row.child(self.new_tab_button(cx));
 
         // Trailing drop zone (EP-001 US-002): the leftover strip space after
         // the last tab control. `flex_1` claims whatever width the tabs don't, so a
@@ -1832,10 +1890,13 @@ impl Pane {
             (pill, hits_badge)
         };
 
-        let tab_hover_group = SharedString::from(format!("pane-tab-hover-{i}"));
+        let tab_hover_id = Self::tab_hover_motion_id(tab_id);
+        let (tab_live_progress, tab_from, tab_target, tab_epoch) =
+            self.hover_motion_snapshot(&tab_hover_id);
+        let tab_hover_listener_id = tab_hover_id.clone();
+        let tab_hover_listener_progress = tab_live_progress.clone();
         let mut tab = div()
             .id(SharedString::from(format!("pane-tab-{i}")))
-            .group(tab_hover_group.clone())
             .relative()
             .flex()
             .flex_row()
@@ -1849,8 +1910,16 @@ impl Pane {
             .rounded(px(TAB_RADIUS))
             .text_size(px(12.5))
             .text_color(chip_fg)
-            .bg(chip_bg)
-            .hover(move |d| d.bg(chip_hover));
+            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                let target = if *hovered { 1.0 } else { 0.0 };
+                if this.set_tab_bar_hover_target(
+                    &tab_hover_listener_id,
+                    &tab_hover_listener_progress,
+                    target,
+                ) {
+                    cx.notify();
+                }
+            }));
 
         // EP-001 drag wiring. GPUI's managed drag applies its own movement
         // threshold before firing `on_drag`, so a plain click (select) and
@@ -1943,10 +2012,116 @@ impl Pane {
         // Leading slot swaps the normal tab icon for the close affordance on
         // tab hover. Keeping both in the same fixed box avoids fragile overlay
         // anchoring and keeps the label start stable.
-        let close_hover_group = SharedString::from(format!("pane-tab-close-hover-{i}"));
+        let close_hover_id = Self::close_hover_motion_id(tab_id);
+        let (close_live_progress, close_from, close_target, close_epoch) =
+            self.hover_motion_snapshot(&close_hover_id);
+        let close_hover_listener_id = close_hover_id.clone();
+        let close_hover_listener_progress = close_live_progress.clone();
+        let close_mouse_up_id = close_hover_id.clone();
+        let close_mouse_up_progress = close_live_progress.clone();
+        let close_mouse_up_out_id = close_hover_id.clone();
+        let close_mouse_up_out_progress = close_live_progress.clone();
+        let close_distance = (close_target - close_from).abs();
+        let close_duration = Duration::from_secs_f32(
+            Duration::from_millis(TAB_BAR_HOVER_MS).as_secs_f32() * close_distance,
+        );
+
+        let close_icon = svg()
+            .size(px(9.))
+            .flex_none()
+            .path("icons/close.svg")
+            .text_color(ui.text);
+        let close_icon = if close_epoch == 0 || close_distance <= f32::EPSILON {
+            close_icon
+                .text_color(ui.text.blend(close_hover_fg.opacity(close_target)))
+                .into_any_element()
+        } else {
+            close_icon
+                .with_animation(
+                    SharedString::from(format!(
+                        "pane-tab-close-icon-hover-{}-{close_epoch}",
+                        tab_id.as_u64()
+                    )),
+                    Animation::new(close_duration).with_easing(ease_out_quint()),
+                    move |icon, delta| {
+                        let progress =
+                            (close_from + (close_target - close_from) * delta).clamp(0.0, 1.0);
+                        icon.text_color(ui.text.blend(close_hover_fg.opacity(progress)))
+                    },
+                )
+                .into_any_element()
+        };
+
+        let close_visual = div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .shadow_lg()
+            .bg(close_base_bg)
+            .child(close_icon);
+        let close_visual = if close_epoch == 0 || close_distance <= f32::EPSILON {
+            close_live_progress.set(close_target);
+            close_visual
+                .bg(with_alpha(
+                    ui.text,
+                    close_base_bg.a + (close_hover_bg.a - close_base_bg.a) * close_target,
+                ))
+                .into_any_element()
+        } else {
+            let animation_progress = close_live_progress.clone();
+            close_visual
+                .with_animation(
+                    SharedString::from(format!(
+                        "pane-tab-close-background-hover-{}-{close_epoch}",
+                        tab_id.as_u64()
+                    )),
+                    Animation::new(close_duration).with_easing(ease_out_quint()),
+                    move |visual, delta| {
+                        let progress =
+                            (close_from + (close_target - close_from) * delta).clamp(0.0, 1.0);
+                        animation_progress.set(progress);
+                        visual.bg(with_alpha(
+                            ui.text,
+                            close_base_bg.a + (close_hover_bg.a - close_base_bg.a) * progress,
+                        ))
+                    },
+                )
+                .into_any_element()
+        };
+
+        let tab_distance = (tab_target - tab_from).abs();
+        let tab_duration = Duration::from_secs_f32(
+            Duration::from_millis(TAB_BAR_HOVER_MS).as_secs_f32() * tab_distance,
+        );
+        let close_reveal = div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded_full()
+            .child(close_visual);
+        let close_reveal = if tab_epoch == 0 || tab_distance <= f32::EPSILON {
+            close_reveal.opacity(tab_target).into_any_element()
+        } else {
+            close_reveal
+                .with_animation(
+                    SharedString::from(format!(
+                        "pane-tab-close-reveal-{}-{tab_epoch}",
+                        tab_id.as_u64()
+                    )),
+                    Animation::new(tab_duration).with_easing(ease_out_quint()),
+                    move |button, delta| {
+                        let progress = (tab_from + (tab_target - tab_from) * delta).clamp(0.0, 1.0);
+                        button.opacity(progress)
+                    },
+                )
+                .into_any_element()
+        };
+
         let close_btn = div()
             .id(SharedString::from(format!("pane-tab-close-{i}")))
-            .group(close_hover_group.clone())
             .absolute()
             .left_0()
             .top_0()
@@ -1955,11 +2130,40 @@ impl Pane {
             .items_center()
             .justify_center()
             .rounded_full()
-            .bg(close_base_bg)
-            .opacity(0.)
-            .group_hover(tab_hover_group.clone(), |s| s.opacity(1.))
-            .shadow_lg()
-            .hover(move |d| d.bg(close_hover_bg))
+            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                let target = if *hovered { 1.0 } else { 0.0 };
+                if this.set_tab_bar_hover_target(
+                    &close_hover_listener_id,
+                    &close_hover_listener_progress,
+                    target,
+                ) {
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    if this.set_tab_bar_hover_target(
+                        &close_mouse_up_id,
+                        &close_mouse_up_progress,
+                        1.0,
+                    ) {
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    if this.set_tab_bar_hover_target(
+                        &close_mouse_up_out_id,
+                        &close_mouse_up_out_progress,
+                        0.0,
+                    ) {
+                        cx.notify();
+                    }
+                }),
+            )
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(move |this, _, _window, cx| {
                 // US-020: resolve the live index by identity, not by the
@@ -1972,19 +2176,34 @@ impl Pane {
                 }
                 cx.stop_propagation();
             }))
-            .child(
-                svg()
-                    .size(px(9.))
-                    .flex_none()
-                    .path("icons/close.svg")
-                    .text_color(ui.text)
-                    .group_hover(close_hover_group, move |s| s.text_color(close_hover_fg)),
-            );
+            .child(close_reveal);
 
         // Inner content row: [icon] [label] [adornments] [close]. The icon
         // (terminal vs markdown vs diff) is a bare 13px glyph tinted to the
         // chip foreground, matching the Agents bottom-panel tab.
         let icon_path = Self::tab_icon(&self.tabs[i]);
+        let tab_icon = svg()
+            .size(px(13.))
+            .flex_none()
+            .path(icon_path)
+            .text_color(chip_fg);
+        let tab_icon = if tab_epoch == 0 || tab_distance <= f32::EPSILON {
+            tab_icon.opacity(1.0 - tab_target).into_any_element()
+        } else {
+            tab_icon
+                .with_animation(
+                    SharedString::from(format!(
+                        "pane-tab-icon-hide-{}-{tab_epoch}",
+                        tab_id.as_u64()
+                    )),
+                    Animation::new(tab_duration).with_easing(ease_out_quint()),
+                    move |icon, delta| {
+                        let progress = (tab_from + (tab_target - tab_from) * delta).clamp(0.0, 1.0);
+                        icon.opacity(1.0 - progress)
+                    },
+                )
+                .into_any_element()
+        };
         let leading_slot = div()
             .relative()
             .flex_none()
@@ -1992,17 +2211,11 @@ impl Pane {
             .flex()
             .items_center()
             .justify_center()
-            .child(
-                svg()
-                    .size(px(13.))
-                    .flex_none()
-                    .path(icon_path)
-                    .text_color(chip_fg)
-                    .group_hover(tab_hover_group.clone(), |s| s.opacity(0.)),
-            )
+            .child(tab_icon)
             .child(close_btn);
         let content = div()
             .id(SharedString::from(format!("pane-tab-content-{i}")))
+            .relative()
             .flex()
             .flex_row()
             .items_center()
@@ -2045,7 +2258,41 @@ impl Pane {
             .children(agent_pill)
             .children(match_badge);
 
-        tab.child(content).into_any_element()
+        let tab_background = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .rounded(px(TAB_RADIUS));
+        let tab_background = if tab_epoch == 0 || tab_distance <= f32::EPSILON {
+            tab_live_progress.set(tab_target);
+            tab_background
+                .bg(with_alpha(
+                    ui.text,
+                    chip_bg.a + (chip_hover.a - chip_bg.a) * tab_target,
+                ))
+                .into_any_element()
+        } else {
+            tab_background
+                .with_animation(
+                    SharedString::from(format!(
+                        "pane-tab-background-hover-{}-{tab_epoch}",
+                        tab_id.as_u64()
+                    )),
+                    Animation::new(tab_duration).with_easing(ease_out_quint()),
+                    move |background, delta| {
+                        let progress = (tab_from + (tab_target - tab_from) * delta).clamp(0.0, 1.0);
+                        tab_live_progress.set(progress);
+                        background.bg(with_alpha(
+                            ui.text,
+                            chip_bg.a + (chip_hover.a - chip_bg.a) * progress,
+                        ))
+                    },
+                )
+                .into_any_element()
+        };
+
+        tab.child(tab_background).child(content).into_any_element()
     }
 
     /// EP-005 US-013: compact agent identity pill for one tab. PID-sourced
