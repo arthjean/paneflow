@@ -18,6 +18,7 @@ use gpui::{
 use paneflow_config::schema::ButtonCommand;
 
 use crate::PaneFlowApp;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 use crate::widgets::scrollbar;
 use crate::widgets::text_input::TextInput;
 
@@ -382,7 +383,9 @@ impl PaneFlowApp {
                     .w(px(22.))
                     .h(px(22.))
                     .rounded(px(4.))
-                    .hover(|s| s.bg(ui.subtle))
+                    .animated_hover(move |style, delta| {
+                        style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
+                    })
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.close_custom_buttons_modal(cx);
                         cx.stop_propagation();
@@ -552,14 +555,53 @@ impl PaneFlowApp {
                 let icon_path = SharedString::from(btn.icon.clone());
                 let name = btn.name.clone();
                 let cmd_preview = btn.command.clone();
-                // Hover-reveal actions (Codex/Agents idiom): edit + delete stay
-                // `.invisible()` (in flow - zero layout shift) until the row is
-                // hovered.
-                let row_group = SharedString::from(format!("cbtn-row-g-{btn_id}"));
+                let edit_button = div()
+                    .id(SharedString::from(format!("cbtn-edit-{edit_id}")))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(24.))
+                    .h(px(24.))
+                    .rounded(px(4.))
+                    .animated_hover(move |style, delta| {
+                        style.bg(lerp_color(ui.surface.opacity(0.0), ui.surface, delta));
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.begin_edit_button(&edit_id, window, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        svg()
+                            .size(px(13.))
+                            .flex_none()
+                            .path("icons/edit.svg")
+                            .text_color(ui.muted),
+                    );
+                let delete_button = div()
+                    .id(SharedString::from(format!("cbtn-del-{del_id}")))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(24.))
+                    .h(px(24.))
+                    .rounded(px(4.))
+                    .animated_hover(move |style, delta| {
+                        style.bg(lerp_color(ui.surface.opacity(0.0), ui.surface, delta));
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.delete_button(&del_id, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        svg()
+                            .size(px(13.))
+                            .flex_none()
+                            .path("icons/trash.svg")
+                            .text_color(ui.muted),
+                    );
                 list = list.child(
                     div()
                         .id(SharedString::from(format!("cbtn-row-{btn_id}")))
-                        .group(row_group.clone())
                         .flex()
                         .flex_row()
                         .items_center()
@@ -567,7 +609,6 @@ impl PaneFlowApp {
                         .px(px(8.))
                         .py(px(8.))
                         .rounded(px(6.))
-                        .hover(|s| s.bg(ui.subtle))
                         .child(
                             div()
                                 .flex()
@@ -610,54 +651,29 @@ impl PaneFlowApp {
                                         .child(cmd_preview),
                                 ),
                         )
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("cbtn-edit-{edit_id}")))
-                                .invisible()
-                                .group_hover(row_group.clone(), |s| s.visible())
+                        .animated_hover_element(move |row, delta| {
+                            row.style()
+                                .bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
+                            let actions = div()
+                                .absolute()
+                                .top_0()
+                                .left_0()
                                 .flex()
-                                .items_center()
-                                .justify_center()
-                                .w(px(24.))
+                                .flex_row()
+                                .gap(px(10.))
+                                .opacity(delta)
+                                .when(delta <= f32::EPSILON, |actions| actions.hidden())
+                                .child(edit_button)
+                                .child(delete_button);
+                            let actions_slot = div()
+                                .relative()
+                                .flex_none()
+                                .w(px(58.))
                                 .h(px(24.))
-                                .rounded(px(4.))
-                                .hover(|s| s.bg(ui.surface))
-                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                    this.begin_edit_button(&edit_id, window, cx);
-                                    cx.stop_propagation();
-                                }))
-                                .child(
-                                    svg()
-                                        .size(px(13.))
-                                        .flex_none()
-                                        .path("icons/edit.svg")
-                                        .text_color(ui.muted),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(SharedString::from(format!("cbtn-del-{del_id}")))
-                                .invisible()
-                                .group_hover(row_group.clone(), |s| s.visible())
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .w(px(24.))
-                                .h(px(24.))
-                                .rounded(px(4.))
-                                .hover(|s| s.bg(ui.surface))
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.delete_button(&del_id, cx);
-                                    cx.stop_propagation();
-                                }))
-                                .child(
-                                    svg()
-                                        .size(px(13.))
-                                        .flex_none()
-                                        .path("icons/trash.svg")
-                                        .text_color(ui.muted),
-                                ),
-                        ),
+                                .child(actions)
+                                .into_any_element();
+                            row.extend([actions_slot]);
+                        }),
                 );
             }
         }
@@ -670,7 +686,9 @@ impl PaneFlowApp {
             .px(px(8.))
             .py(px(8.))
             .rounded(px(6.))
-            .hover(|s| s.bg(ui.subtle))
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
+            })
             .flex()
             .flex_row()
             .items_center()
@@ -769,44 +787,48 @@ impl PaneFlowApp {
         for &path in AVAILABLE_ICONS {
             let is_selected = path == icon;
             let path_owned = path.to_string();
-            icon_grid = icon_grid.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "cbtn-icon-{}",
-                        path.replace(['/', '.'], "-")
-                    )))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(32.))
-                    .h(px(32.))
-                    .rounded(px(6.))
-                    // Selection by fill, not border (Codex): the picked tile
-                    // gets the same brightest-neutral fill as every selected
-                    // surface in the app (#323232); the rest are bare and
-                    // fill on hover.
-                    .when(is_selected, |d| d.bg(gpui::rgb(0x323232)))
-                    .when(!is_selected, |d| d.hover(|s| s.bg(ui.subtle)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(modal) = this.custom_buttons_modal.as_mut()
-                            && let ModalView::Form {
-                                icon: ref mut cur_icon,
-                                ..
-                            } = modal.view
-                        {
-                            *cur_icon = path_owned.clone();
-                        }
-                        cx.notify();
-                        cx.stop_propagation();
-                    }))
-                    .child(
-                        svg()
-                            .size(px(16.))
-                            .flex_none()
-                            .path(path)
-                            .text_color(if is_selected { ui.text } else { ui.muted }),
-                    ),
-            );
+            let tile = div()
+                .id(SharedString::from(format!(
+                    "cbtn-icon-{}",
+                    path.replace(['/', '.'], "-")
+                )))
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(32.))
+                .h(px(32.))
+                .rounded(px(6.))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(modal) = this.custom_buttons_modal.as_mut()
+                        && let ModalView::Form {
+                            icon: ref mut cur_icon,
+                            ..
+                        } = modal.view
+                    {
+                        *cur_icon = path_owned.clone();
+                    }
+                    cx.notify();
+                    cx.stop_propagation();
+                }))
+                .child(
+                    svg()
+                        .size(px(16.))
+                        .flex_none()
+                        .path(path)
+                        .text_color(if is_selected { ui.text } else { ui.muted }),
+                );
+            // Selection by fill, not border (Codex): the picked tile gets the
+            // same brightest-neutral fill as every selected surface in the app
+            // (#323232); only unselected tiles animate on hover.
+            let tile = if is_selected {
+                tile.bg(gpui::rgb(0x323232)).into_any_element()
+            } else {
+                tile.animated_hover(move |style, delta| {
+                    style.bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta));
+                })
+                .into_any_element()
+            };
+            icon_grid = icon_grid.child(tile);
         }
 
         // Whether the primary button is enabled depends on both fields having
@@ -819,6 +841,34 @@ impl PaneFlowApp {
             "Save changes"
         } else {
             "Create"
+        };
+
+        let save_button = div()
+            .id("cbtn-form-save")
+            .px(px(14.))
+            .py(px(6.))
+            .rounded(px(6.))
+            .text_size(px(12.))
+            .font_weight(FontWeight::SEMIBOLD)
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.save_form(window, cx);
+                cx.stop_propagation();
+            }))
+            .child(save_label);
+        let save_button = if is_valid {
+            save_button
+                .bg(ui.text)
+                .text_color(ui.base)
+                .animated_hover(|style, delta| {
+                    style.opacity(1.0 - 0.15 * delta);
+                })
+                .into_any_element()
+        } else {
+            save_button
+                .bg(ui.subtle)
+                .text_color(ui.muted)
+                .cursor_default()
+                .into_any_element()
         };
 
         // Quiet form footer: no divider (separation by spacing), Cancel is a
@@ -850,33 +900,18 @@ impl PaneFlowApp {
                             .rounded(px(6.))
                             .text_size(px(12.))
                             .text_color(ui.muted)
-                            .hover(|s| s.bg(ui.subtle).text_color(ui.text))
+                            .animated_hover(move |style, delta| {
+                                style
+                                    .bg(lerp_color(ui.subtle.opacity(0.0), ui.subtle, delta))
+                                    .text_color(lerp_color(ui.muted, ui.text, delta));
+                            })
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                 this.cancel_form(window, cx);
                                 cx.stop_propagation();
                             }))
                             .child("Cancel"),
                     )
-                    .child(
-                        div()
-                            .id("cbtn-form-save")
-                            .px(px(14.))
-                            .py(px(6.))
-                            .rounded(px(6.))
-                            .text_size(px(12.))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .when(is_valid, |d| {
-                                d.bg(ui.text).text_color(ui.base).hover(|s| s.opacity(0.85))
-                            })
-                            .when(!is_valid, |d| {
-                                d.bg(ui.subtle).text_color(ui.muted).cursor_default()
-                            })
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                                this.save_form(window, cx);
-                                cx.stop_propagation();
-                            }))
-                            .child(save_label),
-                    ),
+                    .child(save_button),
             );
 
         let body = div()
