@@ -5,6 +5,7 @@
 //! - `chrome`     - the nav rail (`render_settings_nav`) + content panel
 //!   (`render_settings_content_panel`) + section dispatch, all on `PaneFlowApp`.
 //! - `components` - shared UI primitives (cards, toggles, section headers).
+//! - `nav_header` - fixed Settings title + close action for the nav rail.
 //! - `tabs`       - per-section bodies (`general`, `appearance`, `shortcuts`,
 //!   `terminal`, `ai_agent`, `mcp`), each `impl PaneFlowApp`.
 //!
@@ -15,4 +16,5 @@
 
 pub mod chrome;
 pub mod components;
+mod nav_header;
 pub mod tabs;

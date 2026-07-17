@@ -1898,7 +1898,7 @@ impl Render for PaneFlowApp {
                                     .flex_shrink_0()
                                     .overflow_hidden()
                                     // Clear the transparent title-bar overlay so the
-                                    // back button sits below the floating controls.
+                                    // settings header sits below the floating controls.
                                     .pt(title_bar_h)
                                     .child(self.render_settings_nav(window, cx))
                                     .into_any_element(),

@@ -2,8 +2,8 @@
 //!
 //! Two entry points, wired into the main window's `Render` impl (`main.rs`):
 //! - [`PaneFlowApp::render_settings_nav`] - the grouped left-rail navigation
-//!   (back-to-app button + search box + iconed sections), rendered in the
-//!   sidebar slot in place of the mode rail while settings are open.
+//!   (fixed header + search box + iconed sections), rendered in the sidebar
+//!   slot in place of the mode rail while settings are open.
 //! - [`PaneFlowApp::render_settings_content_panel`] - the right panel: a big
 //!   page title plus the scrollable section body.
 //!
@@ -35,9 +35,9 @@ pub(crate) const SETTINGS_NAV_WIDTH: f32 = 260.;
 /// Review / Agents content panels use. Deliberately *lighter* than the `#141414`
 /// rail/chrome so the rail-side corner masks (which paint the `#141414` chrome
 /// tint over the panel's square corner) actually read as rounded - a content
-/// fill equal to the mask color would show no rounding at all. The nav RAIL
-/// instead uses `cockpit_chrome_background()` (the platform-aware material /
-/// blur-veil treatment shared with the CLI / Review / Agents rails).
+/// fill equal to the mask color would show no rounding at all. The nav rail
+/// stays transparent over the shared inset-card layer, using the same
+/// platform-aware material treatment as CLI / Review / Agents.
 pub(crate) fn settings_chrome_bg() -> gpui::Hsla {
     crate::theme::ui_colors().base
 }
@@ -180,39 +180,7 @@ impl PaneFlowApp {
         let theme = crate::theme::active_theme();
         let active = self.settings_section.unwrap_or(SettingsSection::General);
         let query = self.settings_search_input.read(cx).value().to_lowercase();
-        let nav_hover_bg = crate::app::constants::sidebar_tab_hover_background();
-
-        // ── Back-to-app row ─────────────────────────────────────────────
-        let back = div()
-            .id("settings-back")
-            .mx(px(8.))
-            .mb(px(6.))
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(8.))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(8.))
-            .animated_hover_bg(nav_hover_bg.opacity(0.0), nav_hover_bg)
-            .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.close_settings(cx);
-                cx.notify();
-            }))
-            .child(
-                svg()
-                    .size(px(14.))
-                    .flex_none()
-                    .path("icons/arrow_left.svg")
-                    .text_color(ui.muted),
-            )
-            .child(
-                div()
-                    .text_size(px(13.))
-                    .font_weight(FontWeight::NORMAL)
-                    .text_color(ui.muted)
-                    .child("Back to app"),
-            );
+        let nav_row_background = crate::app::constants::sidebar_tab_active_background();
 
         // ── Search box ──────────────────────────────────────────────────
         let search = self.render_settings_search(ui, window, cx);
@@ -222,9 +190,13 @@ impl PaneFlowApp {
             .id("settings-nav-list")
             .flex_1()
             .min_h_0()
+            .min_w_0()
+            .overflow_x_hidden()
             .overflow_y_scroll()
             .flex()
             .flex_col()
+            .gap(px(4.))
+            .pt(px(4.))
             .pb(px(8.));
 
         let mut any_match = false;
@@ -244,13 +216,11 @@ impl PaneFlowApp {
             any_match = true;
             list = list.child(
                 div()
-                    .px(px(14.))
-                    .pt(px(14.))
-                    .pb(px(6.))
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(ui.muted)
-                    .child(group.label),
+                    .mt(px(8.))
+                    .pl(px(16.))
+                    .pr(px(8.))
+                    .py(px(2.))
+                    .child(crate::ui_primitives::section_eyebrow(group.label, ui)),
             );
             for it in items {
                 let section = it.section;
@@ -259,38 +229,50 @@ impl PaneFlowApp {
                 // active or not - Codex keeps all labels at one legible color
                 // and signals the active row through the pill fill + the medium
                 // font weight alone, not a muted/bright color split.
-                let fg = ui.text;
+                let resting_background = if is_active {
+                    nav_row_background
+                } else {
+                    nav_row_background.opacity(0.0)
+                };
                 let row = div()
                     .id(SharedString::from(format!("settings-nav-{}", it.label)))
                     .mx(px(8.))
-                    .my(px(1.))
                     .px(px(8.))
                     .py(px(6.))
                     .rounded(px(8.))
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(10.))
-                    .child(svg().size(px(15.)).flex_none().path(it.icon).text_color(fg))
+                    .gap(px(8.))
+                    .animated_hover_bg(resting_background, nav_row_background)
+                    .child(
+                        svg()
+                            .size(px(15.))
+                            .flex_none()
+                            .path(it.icon)
+                            .text_color(ui.muted),
+                    )
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
                             .text_size(px(13.))
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(fg)
+                            .font_weight(if is_active {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .text_color(ui.text)
                             .truncate()
                             .child(it.label),
                     );
                 let row = if is_active {
-                    row.bg(crate::app::constants::sidebar_tab_active_background())
-                        .into_any_element()
+                    row.into_any_element()
                 } else {
-                    row.animated_hover_bg(nav_hover_bg.opacity(0.0), nav_hover_bg)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.select_settings_section(section, window, cx);
-                        }))
-                        .into_any_element()
+                    row.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.select_settings_section(section, window, cx);
+                    }))
+                    .into_any_element()
                 };
                 list = list.child(row);
             }
@@ -299,8 +281,12 @@ impl PaneFlowApp {
         if !any_match {
             list = list.child(
                 div()
-                    .px(px(14.))
-                    .pt(px(14.))
+                    .mx(px(8.))
+                    .my(px(8.))
+                    .px(px(8.))
+                    .py(px(10.))
+                    .rounded(px(6.))
+                    .bg(ui.subtle)
                     .text_size(px(12.))
                     .text_color(ui.muted)
                     .child("No matching settings"),
@@ -323,9 +309,8 @@ impl PaneFlowApp {
                 window.is_window_active(),
                 self.cached_config.cockpit_chrome_material_enabled(),
             ))
-            .pt(px(6.))
-            .child(back)
-            .child(div().px(px(8.)).pb(px(10.)).child(search))
+            .child(self.render_settings_nav_header(ui, cx))
+            .child(div().mx(px(8.)).mt(px(4.)).child(search))
             .child(list)
     }
 
@@ -341,66 +326,49 @@ impl PaneFlowApp {
         // value does not capture `cx`'s borrow under edition-2024 RPIT - the
         // nav loop reborrows `cx` for its per-row `on_click` listeners.
     ) -> AnyElement {
-        // Codex-style search pill: a filled `ui.subtle` gray, borderless, and
-        // fully inert - nothing changes on focus or hover. Matches the select
-        // triggers so the settings chrome reads as one system; the blinking
-        // caret is the only focus cue.
-        div()
-            .id("settings-search")
-            .px(px(10.))
-            .py(px(6.))
-            .rounded(px(8.))
-            .bg(ui.subtle)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .cursor_text()
-            // Two-stage Escape (keyboard parity with the Back button): clear the
-            // query if any, otherwise - already empty - close settings outright.
-            // Cursor movement / Delete / Ctrl+A,C,V,X / mouse selection are
-            // handled inside the focused TextInput.
-            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
-                if ev.keystroke.key == "escape" {
-                    if this.settings_search_input.read(cx).value().is_empty() {
-                        this.close_settings(cx);
-                    } else {
-                        this.settings_search_input.update(cx, |inp, cx| {
-                            inp.clear(cx);
-                        });
-                    }
-                    cx.notify();
-                    cx.stop_propagation();
+        let show_clear = !self.settings_search_input.read(cx).value().is_empty();
+        crate::ui_primitives::filter_pill(
+            "settings-search",
+            "settings-search-clear",
+            ui,
+            self.settings_search_input.clone(),
+            show_clear,
+            cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.settings_search_input.update(cx, |input, cx| {
+                    input.clear(cx);
+                });
+            }),
+        )
+        // Two-stage Escape (keyboard parity with the header close action):
+        // clear the query if any, otherwise close settings outright.
+        // Cursor movement / Delete / Ctrl+A,C,V,X / mouse selection are
+        // handled inside the focused TextInput.
+        .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
+            if ev.keystroke.key == "escape" {
+                if this.settings_search_input.read(cx).value().is_empty() {
+                    this.close_settings(cx);
+                } else {
+                    this.settings_search_input.update(cx, |inp, cx| {
+                        inp.clear(cx);
+                    });
                 }
-            }))
-            // Clicking outside drops focus so the caret disappears.
-            .on_mouse_down_out(cx.listener(|this, _, window, cx| {
-                if this
-                    .settings_search_input
-                    .read(cx)
-                    .focus_handle
-                    .is_focused(window)
-                {
-                    window.blur();
-                    cx.notify();
-                }
-            }))
-            .child(
-                svg()
-                    .size(px(13.))
-                    .flex_none()
-                    .path("icons/tool_search.svg")
-                    .text_color(ui.muted),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(12.))
-                    .text_color(ui.text)
-                    .child(self.settings_search_input.clone()),
-            )
-            .into_any_element()
+                cx.notify();
+                cx.stop_propagation();
+            }
+        }))
+        // Clicking outside drops focus so the caret disappears.
+        .on_mouse_down_out(cx.listener(|this, _, window, cx| {
+            if this
+                .settings_search_input
+                .read(cx)
+                .focus_handle
+                .is_focused(window)
+            {
+                window.blur();
+                cx.notify();
+            }
+        }))
+        .into_any_element()
     }
 
     /// The right content panel: the section H1 title + the scrollable body.
