@@ -22,6 +22,7 @@ use crate::PaneFlowApp;
 use crate::ai_types::AgentState;
 use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 /// One row of the queue, derived live from `agent_sessions`.
 pub(crate) struct QueueRow {
@@ -256,6 +257,15 @@ impl PaneFlowApp {
                 let is_selected = idx == selected;
                 let navigable = row.surface_id.is_some();
                 let sid = row.surface_id;
+                let row_id: SharedString = sid
+                    .map(|surface_id| format!("attention-row-{surface_id}"))
+                    .unwrap_or_else(|| format!("attention-row-unmapped-{idx}"))
+                    .into();
+                let resting_background = if is_selected {
+                    ui.subtle
+                } else {
+                    ui.subtle.opacity(0.0)
+                };
                 // The question is inert untrusted text: one ellipsized line,
                 // no links, no ANSI (US-004 AC8).
                 let question: SharedString = row
@@ -264,7 +274,7 @@ impl PaneFlowApp {
                     .unwrap_or_else(|| "Needs input".to_string())
                     .into();
                 let mut r = div()
-                    .id(SharedString::from(format!("attention-row-{idx}")))
+                    .id(row_id)
                     .flex()
                     .flex_row()
                     .items_center()
@@ -272,7 +282,7 @@ impl PaneFlowApp {
                     .px(px(14.))
                     .py(px(7.))
                     .text_size(px(12.))
-                    .when(is_selected, |d| d.bg(ui.subtle))
+                    .bg(resting_background)
                     .child(
                         div()
                             .flex_none()
@@ -314,9 +324,11 @@ impl PaneFlowApp {
                             .child(wait_label(row.waiting_secs)),
                     );
                 if navigable {
-                    r = r
+                    let r = r
                         .cursor_pointer()
-                        .when(!is_selected, |d| d.hover(|s| s.bg(ui.subtle)))
+                        .animated_hover(move |style, delta| {
+                            style.bg(lerp_color(resting_background, ui.subtle, delta));
+                        })
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             if let Some(sid) = sid {
@@ -324,6 +336,7 @@ impl PaneFlowApp {
                             }
                             cx.stop_propagation();
                         }));
+                    card = card.child(r);
                 } else {
                     // AC4: unresolved sessions are visible but inert.
                     r = r.child(
@@ -333,8 +346,8 @@ impl PaneFlowApp {
                             .text_color(ui.muted)
                             .child("no pane"),
                     );
+                    card = card.child(r);
                 }
-                card = card.child(r);
             }
             card = card.child(
                 div()

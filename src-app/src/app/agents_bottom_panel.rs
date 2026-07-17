@@ -21,6 +21,7 @@ use paneflow_config::schema::TerminalSurfaceProfile;
 
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
+use crate::ui_primitives::AnimatedHoverExt;
 
 /// Initial panel height. Roughly a dozen rows of shell output - enough to be
 /// useful without swallowing the agent surface above it.
@@ -460,6 +461,9 @@ fn render_bottom_resize_handle(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let resting_background = with_alpha(ui.text, 0.0);
+    let hover_background = with_alpha(ui.text, 0.06);
+
     div()
         .id("agents-bottom-resize")
         .absolute()
@@ -468,7 +472,8 @@ fn render_bottom_resize_handle(
         .right_0()
         .h(px(7.))
         .cursor(CursorStyle::ResizeUpDown)
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.06)))
+        .bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, event: &MouseDownEvent, _w, cx| {
@@ -545,7 +550,7 @@ fn render_bottom_terminal_tab(
         .pr(px(5.))
         .rounded(px(8.))
         .bg(bg)
-        .hover(move |d| d.bg(hover_bg))
+        .animated_hover_bg(bg, hover_bg)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {
             this.select_bottom_terminal_tab(id, window, cx);
@@ -577,6 +582,9 @@ fn render_bottom_tab_close_button(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let resting_background = with_alpha(ui.text, 0.0);
+    let hover_background = with_alpha(ui.text, 0.14);
+
     div()
         .id(SharedString::from(format!("agents-bottom-tab-x-{id}")))
         .flex_none()
@@ -585,7 +593,8 @@ fn render_bottom_tab_close_button(
         .items_center()
         .justify_center()
         .rounded(px(5.))
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.14)))
+        .bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {
             this.close_bottom_terminal(id, window, cx);
@@ -604,6 +613,9 @@ fn render_bottom_restart_button(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let resting_background = with_alpha(ui.text, 0.0);
+    let hover_background = with_alpha(ui.text, 0.08);
+
     div()
         .id("agents-bottom-restart")
         .flex_none()
@@ -612,7 +624,8 @@ fn render_bottom_restart_button(
         .items_center()
         .justify_center()
         .rounded(px(7.))
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
+        .bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _e: &ClickEvent, window, cx| {
             this.restart_active_bottom_terminal(window, cx);
@@ -632,6 +645,9 @@ fn render_bottom_add_button(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let resting_background = with_alpha(ui.text, 0.0);
+    let hover_background = with_alpha(ui.text, 0.08);
+
     div()
         .id("agents-bottom-add")
         .flex_none()
@@ -640,7 +656,8 @@ fn render_bottom_add_button(
         .items_center()
         .justify_center()
         .rounded(px(7.))
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
+        .bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, _e: &ClickEvent, window, cx| {
             this.spawn_bottom_terminal(window, cx);
@@ -659,6 +676,9 @@ fn render_bottom_panel_close_button(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let resting_background = with_alpha(ui.text, 0.0);
+    let hover_background = with_alpha(ui.text, 0.08);
+
     div()
         .id("agents-bottom-close")
         .flex_none()
@@ -667,7 +687,8 @@ fn render_bottom_panel_close_button(
         .items_center()
         .justify_center()
         .rounded(px(7.))
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
+        .bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
             this.close_agents_bottom_panel(event, window, cx);
@@ -731,7 +752,7 @@ pub(crate) fn render_agents_bottom_toggle_button(
         .justify_center()
         .rounded(px(10.))
         .bg(fill)
-        .hover(move |d| d.bg(hover))
+        .animated_hover_bg(fill, hover)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             this.toggle_agents_bottom_panel(event, window, cx);

@@ -30,6 +30,7 @@ use crate::agent_launcher::TerminalAgent;
 use crate::layout::{MAX_PANES, SplitDirection};
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 use crate::widgets::text_area::TextArea;
 use crate::widgets::text_input::TextInput;
 use crate::workspace::worktree::{self, ManagedWorktree};
@@ -448,8 +449,16 @@ impl PaneFlowApp {
         for (idx, agent) in TerminalAgent::ALL.iter().enumerate() {
             let installed = agent.is_installed();
             let is_selected = idx == lp.agent_idx;
-            let mut row = div()
-                .id(SharedString::from(format!("launch-pad-agent-{idx}")))
+            let resting_background = if is_selected {
+                ui.subtle
+            } else {
+                ui.subtle.opacity(0.0)
+            };
+            let row = div()
+                .id(SharedString::from(format!(
+                    "launch-pad-agent-{}",
+                    agent.tag()
+                )))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -457,7 +466,7 @@ impl PaneFlowApp {
                 .px(px(10.))
                 .py(px(5.))
                 .text_size(px(12.))
-                .when(is_selected, |d| d.bg(ui.subtle))
+                .bg(resting_background)
                 // Multi-color logos render via `img()` (resvg keeps every
                 // native fill); monochrome logos stay a tinted `svg()` mask
                 // - same split as the agents-view launcher.
@@ -483,29 +492,33 @@ impl PaneFlowApp {
                         .child(agent.display_name()),
                 );
             if installed {
-                row = row
-                    .cursor_pointer()
-                    .when(!is_selected, |d| d.hover(|s| s.bg(ui.subtle)))
-                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        if let Some(lp) = this.launch_pad.as_mut()
-                            && !lp.running
-                        {
-                            lp.agent_idx = idx;
-                            cx.notify();
-                        }
-                        cx.stop_propagation();
-                    }));
+                agent_list = agent_list.child(
+                    row.cursor_pointer()
+                        .animated_hover(move |style, delta| {
+                            style.bg(lerp_color(resting_background, ui.subtle, delta));
+                        })
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                            if let Some(lp) = this.launch_pad.as_mut()
+                                && !lp.running
+                            {
+                                lp.agent_idx = idx;
+                                cx.notify();
+                            }
+                            cx.stop_propagation();
+                        })),
+                );
             } else {
-                row = row.child(
-                    div()
-                        .flex_none()
-                        .text_size(px(10.))
-                        .text_color(ui.muted)
-                        .child("not installed"),
+                agent_list = agent_list.child(
+                    row.child(
+                        div()
+                            .flex_none()
+                            .text_size(px(10.))
+                            .text_color(ui.muted)
+                            .child("not installed"),
+                    ),
                 );
             }
-            agent_list = agent_list.child(row);
         }
 
         let field_label =
@@ -556,6 +569,12 @@ impl PaneFlowApp {
         } else {
             "Create worktree + launch".into()
         };
+        let confirm_background = if running {
+            ui.subtle
+        } else {
+            ui.accent.opacity(0.15)
+        };
+        let confirm_text = if running { ui.muted } else { ui.accent };
         let footer = div()
             .flex()
             .flex_row()
@@ -578,13 +597,13 @@ impl PaneFlowApp {
                     .py(px(5.))
                     .rounded(px(5.))
                     .text_size(px(12.))
-                    .when(!running, |d| {
-                        d.bg(ui.accent.opacity(0.15))
-                            .text_color(ui.accent)
-                            .cursor_pointer()
-                            .hover(|s| s.opacity(0.8))
+                    .bg(confirm_background)
+                    .text_color(confirm_text)
+                    .when(!running, |d| d.cursor_pointer())
+                    .animated_hover(move |style, delta| {
+                        let hovered_opacity = if running { 1.0 } else { 0.8 };
+                        style.opacity(1.0 + (hovered_opacity - 1.0) * delta);
                     })
-                    .when(running, |d| d.bg(ui.subtle).text_color(ui.muted))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         this.launch_pad_confirm(cx);

@@ -34,6 +34,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 use super::agents_view_actions::AGENTS_SIDEBAR_WIDTH;
 
@@ -452,6 +453,8 @@ impl PaneFlowApp {
     /// old "New threads" row). Drops to the new-chat picker (cwd = home);
     /// picking an agent there creates a free chat. Styled like a list row.
     fn new_chat_row(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let resting_background = hover_background.opacity(0.0);
         div()
             .id("agents-sidebar-new-chat")
             .mx(px(6.))
@@ -462,7 +465,10 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(6.))
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .bg(resting_background)
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(resting_background, hover_background, delta));
+            })
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.start_new_chat(cx);
             }))
@@ -505,6 +511,8 @@ impl PaneFlowApp {
         } else {
             "icons/folder.svg"
         };
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let resting_background = hover_background.opacity(0.0);
 
         // Title element switches between read-only and inline-input
         // mode. The input is a full [`TextArea`] entity (cursor,
@@ -542,7 +550,10 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(6.))
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .bg(resting_background)
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(resting_background, hover_background, delta));
+            })
             .on_click(cx.listener(move |this, e: &ClickEvent, w, cx| {
                 this.close_agents_menu(cx);
                 let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count == 2);
@@ -661,14 +672,6 @@ impl PaneFlowApp {
         // in place of the trash icon) when its target matches the armed slot.
         let armed = self.agents_view.agents_delete_armed == Some(target);
 
-        // US-023: shared group name so the hover-only action cluster
-        // can listen for hover on the row container without listening
-        // on itself. Mirrors `pane.rs:401-464`. US-006: the scope prefix
-        // keeps element ids unique when a pinned thread renders BOTH in the
-        // PINNED section and in its own project/chat section (same
-        // `thread_id`, different rows) - duplicate GPUI ids would panic.
-        let row_group: SharedString = format!("agents-{row_scope}-row-{thread_id}").into();
-
         let title_el: gpui::AnyElement = if let Some(input) = rename_input {
             // Inline rename input -- full TextArea entity (same
             // widget the composer uses) so the user gets real cursor,
@@ -721,11 +724,24 @@ impl PaneFlowApp {
         // titles read as shifted because removing the child also
         // removed the `gap` slot. Reserving an invisible placeholder
         // restores pixel-for-pixel alignment with the project title.
-        let mut row = div()
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let active_background = crate::app::constants::sidebar_tab_active_background();
+        let resting_background = if is_active {
+            active_background
+        } else {
+            hover_background.opacity(0.0)
+        };
+        let hovered_background = if is_active {
+            active_background
+        } else {
+            hover_background
+        };
+        let hover_actions =
+            hover_actions_cluster(target, thread_id, is_pinned, row_scope, armed, ui, cx);
+        let row = div()
             .id(SharedString::from(format!(
                 "agents-{row_scope}-thread-{thread_id}"
             )))
-            .group(row_group.clone())
             .relative()
             .mx(px(6.))
             .px(px(8.))
@@ -734,20 +750,40 @@ impl PaneFlowApp {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(6.));
-
-        if is_active {
+            .gap(px(6.))
             // Codex-style selection: a neutral, slightly translucent light-gray
-            // overlay (a low-opacity white lift) against the rail's #141414
-            // cockpit color - not the theme's `ui.surface` (too close to read as
-            // selected) nor an opaque blue-gray fill. Shared tint with the
-            // workspace cards and settings nav (`sidebar_tab_active_background`).
-            row = row.bg(crate::app::constants::sidebar_tab_active_background());
-        } else {
-            row = row.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()));
-        }
+            // overlay against the rail's cockpit color. Selection remains
+            // immediate; only the inactive row's pointer hover interpolates.
+            .bg(resting_background)
+            .animated_hover_element(move |row, delta| {
+                row.style()
+                    .bg(lerp_color(resting_background, hovered_background, delta));
 
-        row = row
+                let right_slot_opacity = if armed { 0.0 } else { 1.0 - delta };
+                let right_slot = div()
+                    // Reserve a fixed 48px so the title always truncates
+                    // before the absolute hover-action cluster.
+                    .flex_none()
+                    .w(px(48.))
+                    .flex()
+                    .justify_end()
+                    .text_size(px(10.))
+                    .text_color(ui.muted)
+                    .child(
+                        div()
+                            .opacity(right_slot_opacity)
+                            .when(right_slot_opacity <= f32::EPSILON, |slot| slot.hidden())
+                            .child(right_slot),
+                    )
+                    .into_any_element();
+
+                let actions_opacity = if armed { 1.0 } else { delta };
+                let hover_actions = hover_actions
+                    .opacity(actions_opacity)
+                    .when(actions_opacity <= f32::EPSILON, |actions| actions.hidden())
+                    .into_any_element();
+                row.extend([right_slot, hover_actions]);
+            })
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.close_agents_menu(cx);
                 // While the row is in rename mode we let the click
@@ -777,26 +813,7 @@ impl PaneFlowApp {
             // with the project title's X-position one row up. Mirrors
             // Zed's `icon_container().when(!icon_visible, |this| this.invisible())`.
             .child(div().size(px(14.)).flex_none())
-            .child(title_el)
-            .child(
-                // Right slot reserves a fixed 48px so the title always
-                // truncates before the absolute hover-action cluster
-                // (2 × 20px buttons + 4px gap = 44px). Without this the
-                // cluster overlays the truncated title at hover-time
-                // because GPUI group_hover does not relayout siblings.
-                div()
-                    .flex_none()
-                    .w(px(48.))
-                    .flex()
-                    .justify_end()
-                    .text_size(px(10.))
-                    .text_color(ui.muted)
-                    .group_hover(row_group.clone(), |s| s.invisible())
-                    .child(right_slot),
-            )
-            .child(hover_actions_cluster(
-                target, thread_id, is_pinned, row_scope, row_group, armed, ui, cx,
-            ));
+            .child(title_el);
 
         row.into_any_element()
     }
@@ -1023,6 +1040,8 @@ fn section_eyebrow(
                 .truncate(),
         );
     if let Some(id) = add_button_id {
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let resting_background = hover_background.opacity(0.0);
         row = row.child(
             div()
                 .id(id)
@@ -1033,22 +1052,25 @@ fn section_eyebrow(
                 .items_center()
                 .justify_center()
                 .rounded(px(4.))
+                .bg(resting_background)
                 .text_color(ui.muted)
-                .hover(|s| {
-                    s.bg(crate::app::constants::sidebar_tab_hover_background())
-                        .text_color(ui.text)
+                .animated_hover_element(move |button, delta| {
+                    let icon_color = lerp_color(ui.muted, ui.text, delta);
+                    button
+                        .style()
+                        .bg(lerp_color(resting_background, hover_background, delta))
+                        .text_color(icon_color);
+                    button.extend([svg()
+                        .size(px(12.))
+                        .flex_none()
+                        .path("icons/plus.svg")
+                        .text_color(icon_color)
+                        .into_any_element()]);
                 })
                 .tooltip(crate::ui_primitives::text_tooltip("New project"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     this.create_agents_project_with_picker(cx);
-                }))
-                .child(
-                    svg()
-                        .size(px(12.))
-                        .flex_none()
-                        .path("icons/plus.svg")
-                        .text_color(ui.muted),
-                ),
+                })),
         );
     }
     row.into_any_element()
@@ -1184,28 +1206,27 @@ fn build_title_highlight_runs(
 }
 
 /// US-023: small h_flex cluster of per-row action buttons (currently
-/// just Delete). Hidden by default and revealed when the row's group
-/// is hovered -- mirrors Zed's `visible_on_hover` slot on `ThreadItem`
-/// (zero layout shift because `.invisible()` keeps the buttons in flow).
-// Render helper: every input (target/id/pin state/scope/group/armed + theme)
-// is genuinely needed per row; bundling into a struct would only move the
-// noise. 8 args is fine here.
+/// just Delete). Its parent row applies the shared hover progress to this
+/// cluster, preserving a reversible crossfade and zero layout shift.
+// Render helper: every input (target/id/pin state/scope/armed + theme) is
+// genuinely needed per row; bundling into a struct would only move the noise.
 #[allow(clippy::too_many_arguments)]
 fn hover_actions_cluster(
     target: crate::project::AgentsTarget,
     thread_id: u64,
     is_pinned: bool,
     row_scope: &'static str,
-    row_group: SharedString,
     armed: bool,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
-) -> gpui::AnyElement {
+) -> gpui::Div {
     // Inline delete-confirm (ergonomics): once the trash is clicked the row
     // arms - show a single red "Delete" button, always visible (the cursor has
     // left the trash icon), and run the delete on the next click. Clicking
     // elsewhere (selecting a row / opening a menu / arming another) cancels it.
     if armed {
+        let resting_background: Hsla = rgb(0xe5484d).into();
+        let hover_background: Hsla = rgb(0xc73d41).into();
         return div()
             .absolute()
             .top(px(0.))
@@ -1226,18 +1247,19 @@ fn hover_actions_cluster(
                     .items_center()
                     .justify_center()
                     .rounded(px(4.))
-                    .bg(rgb(0xe5484d))
+                    .bg(resting_background)
                     .text_color(rgb(0xffffff))
                     .text_size(px(11.))
                     .font_weight(FontWeight::MEDIUM)
-                    .hover(|s| s.bg(rgb(0xc73d41)))
+                    .animated_hover(move |style, delta| {
+                        style.bg(lerp_color(resting_background, hover_background, delta));
+                    })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.execute_armed_delete(cx);
                         cx.stop_propagation();
                     }))
                     .child("Delete"),
-            )
-            .into_any_element();
+            );
     }
 
     // US-006: pin / unpin toggle. A text glyph (★ filled = pinned, ☆ outline
@@ -1246,6 +1268,9 @@ fn hover_actions_cluster(
     // `toggle_pin_for_target` (flips `thread.pinned` + saves the session).
     let pin_glyph = if is_pinned { "★" } else { "☆" };
     let pin_tooltip = if is_pinned { "Unpin" } else { "Pin" };
+    let hover_background = crate::app::constants::sidebar_tab_hover_background();
+    let resting_background = hover_background.opacity(0.0);
+    let pin_resting_text = if is_pinned { ui.accent } else { ui.muted };
     let pin_btn = div()
         .id(SharedString::from(format!(
             "agents-{row_scope}-thread-{thread_id}-pin"
@@ -1260,10 +1285,12 @@ fn hover_actions_cluster(
         // Keep the glyph optically aligned with the neighboring 12px trash
         // icon inside the same 20px action box.
         .text_size(px(14.))
-        .text_color(if is_pinned { ui.accent } else { ui.muted })
-        .hover(|s| {
-            s.bg(crate::app::constants::sidebar_tab_hover_background())
-                .text_color(ui.text)
+        .bg(resting_background)
+        .text_color(pin_resting_text)
+        .animated_hover(move |style, delta| {
+            style
+                .bg(lerp_color(resting_background, hover_background, delta))
+                .text_color(lerp_color(pin_resting_text, ui.text, delta));
         })
         .tooltip(crate::ui_primitives::text_tooltip(pin_tooltip))
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -1283,10 +1310,12 @@ fn hover_actions_cluster(
         .items_center()
         .justify_center()
         .rounded(px(4.))
+        .bg(resting_background)
         .text_color(ui.muted)
-        .hover(|s| {
-            s.bg(crate::app::constants::sidebar_tab_hover_background())
-                .text_color(ui.text)
+        .animated_hover(move |style, delta| {
+            style
+                .bg(lerp_color(resting_background, hover_background, delta))
+                .text_color(lerp_color(ui.muted, ui.text, delta));
         })
         .tooltip(crate::ui_primitives::text_tooltip("Delete"))
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -1295,13 +1324,7 @@ fn hover_actions_cluster(
             this.arm_delete_for_target(target, cx);
             cx.stop_propagation();
         }))
-        .child(
-            svg()
-                .size(px(12.))
-                .flex_none()
-                .path("icons/trash.svg")
-                .text_color(ui.muted),
-        );
+        .child(svg().size(px(12.)).flex_none().path("icons/trash.svg"));
 
     div()
         .absolute()
@@ -1313,11 +1336,8 @@ fn hover_actions_cluster(
         .items_center()
         // Zed `gap_1` = 4px (4px grid base unit). US-023 AC #2.
         .gap(px(4.))
-        .invisible()
-        .group_hover(row_group, |s| s.visible())
         .child(pin_btn)
         .child(trash_btn)
-        .into_any_element()
 }
 
 #[cfg(test)]

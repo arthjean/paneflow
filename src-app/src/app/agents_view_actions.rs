@@ -14,6 +14,7 @@
 //! `self.mode == AppMode::Cli` -- main `render` only calls them on the
 //! Agents arm.
 
+use crate::ui_primitives::AnimatedHoverExt;
 use crate::{AgentsBranchMenuState, OpenAgentsView, PaneFlowApp};
 use gpui::{
     AppContext, ClickEvent, Context, CursorStyle, Focusable, FontWeight, InteractiveElement,
@@ -379,7 +380,7 @@ impl PaneFlowApp {
                     .rounded(px(10.))
                     .bg(ui.subtle)
                     .when(!installed, |d| d.opacity(0.58))
-                    .hover(move |s| s.bg(hover_bg))
+                    .animated_hover_bg(ui.subtle, hover_bg)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| {
                         cx.stop_propagation();
                     })
@@ -1577,6 +1578,7 @@ fn render_agents_editor_split_button(
     // No resting fill: the control reads as two bare sub-buttons sharing one
     // shell. Each half owns a rounded hover background that lights independently
     // - hovering the logo never tints the chevron, and vice-versa.
+    let resting_bg = crate::settings::components::with_alpha(ui.text, 0.0);
     let hover_bg = crate::settings::components::with_alpha(ui.text, 0.10);
     let open_cwd = cwd.clone();
     let open_editor = editor_value.clone();
@@ -1608,7 +1610,8 @@ fn render_agents_editor_split_button(
                 .justify_center()
                 .rounded_tl(px(9.))
                 .rounded_bl(px(9.))
-                .hover(move |d| d.bg(hover_bg))
+                .bg(resting_bg)
+                .animated_hover_bg(resting_bg, hover_bg)
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.open_agents_environment_in_editor(
                         open_cwd.clone(),
@@ -1631,7 +1634,8 @@ fn render_agents_editor_split_button(
                 .justify_center()
                 .rounded_tr(px(9.))
                 .rounded_br(px(9.))
-                .hover(move |d| d.bg(hover_bg))
+                .bg(resting_bg)
+                .animated_hover_bg(resting_bg, hover_bg)
                 .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                     this.toggle_agents_editor_menu(event, window, cx);
                 }))
@@ -1747,7 +1751,7 @@ fn render_agents_environment_toggle_button(
         .justify_center()
         .rounded(px(10.))
         .bg(fill)
-        .hover(move |d| d.bg(hover))
+        .animated_hover_bg(fill, hover)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             this.toggle_agents_environment_panel(event, window, cx);
@@ -1808,6 +1812,9 @@ fn render_agents_environment_header(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> gpui::AnyElement {
+    let resting_background = crate::settings::components::with_alpha(ui.text, 0.0);
+    let hover_background = crate::settings::components::with_alpha(ui.text, 0.08);
+
     div()
         .h(px(20.))
         .flex()
@@ -1829,7 +1836,8 @@ fn render_agents_environment_header(
                 .items_center()
                 .justify_center()
                 .rounded(px(6.))
-                .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.08)))
+                .bg(resting_background)
+                .animated_hover_bg(resting_background, hover_background)
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                     this.open_settings_window(window, cx);
@@ -1854,10 +1862,13 @@ fn render_agents_environment_changes_row(
     let insertions = summary.git_stats.insertions;
     let deletions = summary.git_stats.deletions;
     let is_repo = summary.is_repo;
+    let resting_background = crate::settings::components::with_alpha(ui.text, 0.0);
+    let hover_background =
+        crate::settings::components::with_alpha(ui.text, if is_repo { 0.06 } else { 0.0 });
     // Reuse the right diff panel's palette so the +/- counts match the washes
     // there (Codex green/red on dark themes, theme vc_* on light).
     let (added_color, deleted_color) = crate::app::agents_diff::agents_diff_count_colors(ui);
-    let mut row = div()
+    let row = div()
         .id("agents-env-changes-row")
         .relative()
         .w(px(AGENTS_ENVIRONMENT_PANEL_WIDTH - 16.0))
@@ -1870,15 +1881,15 @@ fn render_agents_environment_changes_row(
         .px(px(8.))
         .py(px(6.))
         .rounded(px(8.))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-    if is_repo {
-        row = row
-            .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+        .bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .when(is_repo, |row| {
+            row.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.spawn_agents_environment_git_refresh(cwd.clone(), cx);
                 this.open_agents_diff_panel(cwd.clone(), cx);
-            }));
-    }
+            }))
+        });
     row.child(render_agents_environment_label(
         "icons/file-text.svg",
         "Changes",
@@ -1917,6 +1928,9 @@ fn render_agents_environment_branch_row(
     let current = summary.branch.clone();
     let cwd = summary.cwd.clone();
     let files_changed = summary.git_stats.files_changed;
+    let resting_background = crate::settings::components::with_alpha(ui.text, 0.0);
+    let hover_background =
+        crate::settings::components::with_alpha(ui.text, if summary.is_repo { 0.06 } else { 0.0 });
     let mut row = div()
         .id("agents-env-branch-row")
         .relative()
@@ -1938,7 +1952,6 @@ fn render_agents_environment_branch_row(
         ));
     if summary.is_repo {
         row = row
-            .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.06)))
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.toggle_agents_branch_menu(cwd.clone(), current.clone(), event, window, cx);
             }))
@@ -1949,14 +1962,16 @@ fn render_agents_environment_branch_row(
                     .text_color(ui.muted),
             );
     }
-    row.when(menu_open && summary.is_repo, |row| {
-        if let Some(menu) = branch_menu {
-            row.child(render_agents_branch_menu(menu, files_changed, ui, cx))
-        } else {
-            row
-        }
-    })
-    .into_any_element()
+    row.bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
+        .when(menu_open && summary.is_repo, |row| {
+            if let Some(menu) = branch_menu {
+                row.child(render_agents_branch_menu(menu, files_changed, ui, cx))
+            } else {
+                row
+            }
+        })
+        .into_any_element()
 }
 
 fn render_agents_branch_menu(
@@ -2088,7 +2103,18 @@ fn render_agents_branch_item(
     cx: &mut Context<PaneFlowApp>,
 ) -> gpui::AnyElement {
     let item_branch = branch.clone();
-    let mut row = div()
+    let selected_background = crate::settings::components::with_alpha(ui.text, 0.10);
+    let resting_background = if selected {
+        selected_background
+    } else {
+        crate::settings::components::with_alpha(ui.text, 0.0)
+    };
+    let hover_background = if selected {
+        selected_background
+    } else {
+        crate::settings::components::with_alpha(ui.text, 0.05)
+    };
+    let row = div()
         .id(SharedString::from(format!("agents-env-branch-{idx}")))
         .flex()
         .flex_row()
@@ -2097,15 +2123,12 @@ fn render_agents_branch_item(
         .px(px(8.))
         .py(px(6.))
         .rounded(px(8.))
+        .bg(resting_background)
+        .animated_hover_bg(resting_background, hover_background)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             this.switch_agents_branch(cwd.clone(), item_branch.clone(), event, window, cx);
         }));
-    if selected {
-        row = row.bg(crate::settings::components::with_alpha(ui.text, 0.10));
-    } else {
-        row = row.hover(move |s| s.bg(crate::settings::components::with_alpha(ui.text, 0.05)));
-    }
     row.child(
         svg()
             .size(px(16.))

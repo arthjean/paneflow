@@ -5,7 +5,10 @@
 //! tab share the visual language of the Agents welcome page
 //! (`ui.surface` background, neutral border, 10 px radius).
 
-use crate::PaneFlowApp;
+use crate::{
+    PaneFlowApp,
+    ui_primitives::{AnimatedHoverExt, lerp_color},
+};
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, IntoElement, ParentElement, SharedString, Styled,
     div, prelude::*, px, svg,
@@ -196,6 +199,7 @@ fn render_refresh_button(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
+    let hover_background = crate::settings::components::with_alpha(ui.text, 0.08);
     div()
         .id("agents-skills-refresh")
         .flex_none()
@@ -205,7 +209,7 @@ fn render_refresh_button(
         .justify_center()
         .rounded(px(7.))
         .text_color(ui.muted)
-        .hover(move |d| d.bg(crate::settings::components::with_alpha(ui.text, 0.08)))
+        .animated_hover_bg(hover_background.opacity(0.0), hover_background)
         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
             this.refresh_agents_skills(cx);
         }))
@@ -229,29 +233,32 @@ fn render_tab_bar(
         let is_active = this_tab == active;
         let label = this_tab.label();
         let id: SharedString = format!("agents-skills-tab-{}", label.to_lowercase()).into();
-        let mut row = div()
+        let row = div()
             .id(id)
             .px(px(12.))
             .py(px(6.))
             .rounded(px(6.))
             .text_size(px(12.))
-            .font_weight(FontWeight::NORMAL);
+            .font_weight(FontWeight::NORMAL)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                if this.agents_view.agents_skills_tab != this_tab {
+                    this.agents_view.agents_skills_tab = this_tab;
+                    cx.notify();
+                }
+            }))
+            .child(label);
         if is_active {
-            row = row.bg(ui.subtle).text_color(ui.text);
+            row.bg(ui.subtle).text_color(ui.text).into_any_element()
         } else {
-            row = row.text_color(ui.muted).hover(|s| {
-                let ui = crate::theme::ui_colors();
-                s.bg(ui.subtle).text_color(ui.text)
-            });
+            let resting_background = ui.subtle.opacity(0.0);
+            row.text_color(ui.muted)
+                .animated_hover(move |style, delta| {
+                    style
+                        .bg(lerp_color(resting_background, ui.subtle, delta))
+                        .text_color(lerp_color(ui.muted, ui.text, delta));
+                })
+                .into_any_element()
         }
-        row.on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            if this.agents_view.agents_skills_tab != this_tab {
-                this.agents_view.agents_skills_tab = this_tab;
-                cx.notify();
-            }
-        }))
-        .child(label)
-        .into_any_element()
     };
 
     div()
@@ -276,57 +283,18 @@ fn render_skill_card(
     let id_for_mark = skill.id.clone();
     let copy_id: SharedString = format!("skill-copy-{skill_id}").into();
     let card_id: SharedString = format!("skill-card-{}", skill.id).into();
-    let group: SharedString = format!("skill-grp-{}", skill.id).into();
-
-    // Copy affordance. Hidden until the card is hovered (40 always-on "Copy"
-    // labels were the main source of visual noise), then brightens on its
-    // own hover. Once copied it stays lit with a check so the confirmation
-    // reads at a glance.
-    let mut copy_btn = div()
-        .id(copy_id)
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(4.))
-        .px(px(7.))
-        .py(px(3.))
-        .rounded(px(5.))
-        .text_size(px(11.))
-        .on_click(cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
-            cx.write_to_clipboard(gpui::ClipboardItem::new_string(name_for_copy.clone()));
-            this.mark_skill_copied(id_for_mark.clone(), cx);
-        }));
-    if is_copied {
-        copy_btn = copy_btn
-            .bg(ui.subtle)
-            .text_color(ui.text)
-            .child(
-                svg()
-                    .size(px(10.))
-                    .flex_none()
-                    .path("icons/check.svg")
-                    .text_color(ui.text),
-            )
-            .child("Copied");
-    } else {
-        copy_btn = copy_btn
-            .opacity(0.)
-            .text_color(ui.muted)
-            .group_hover(group.clone(), |s| s.opacity(1.))
-            .hover(|s| {
-                let ui = crate::theme::ui_colors();
-                s.text_color(ui.text)
-            })
-            .child("Copy");
-    }
+    let skill_name = SharedString::from(skill.name);
+    let skill_description = SharedString::from(skill.description);
+    let on_copy = cx.listener(move |this, _: &gpui::ClickEvent, _w, cx| {
+        cx.write_to_clipboard(gpui::ClipboardItem::new_string(name_for_copy.clone()));
+        this.mark_skill_copied(id_for_mark.clone(), cx);
+    });
 
     // Uniform-height card; hover amplifies an accent ring (no dimming of the
     // others) and reveals the Copy button. Background stays `ui.surface` so
     // the ring is the only emphasis - consistent with the active-pane cue.
     div()
         .id(card_id)
-        .group(group)
         .flex()
         .flex_col()
         .gap(px(7.))
@@ -342,41 +310,84 @@ fn render_skill_card(
         .bg(ui.surface)
         .border_1()
         .border_color(ui.border)
-        .hover(|s| {
-            let ui = crate::theme::ui_colors();
-            s.border_color(ui.accent.opacity(0.6))
-        })
-        .child(
-            div()
+        .animated_hover_element(move |element, delta| {
+            element
+                .style()
+                .border_color(lerp_color(ui.border, ui.accent.opacity(0.6), delta));
+
+            // The button always occupies its layout slot. Only its opacity is
+            // driven by the card, so revealing it cannot move the title.
+            let copy_button = div()
+                .id(copy_id)
+                .flex_none()
                 .flex()
                 .flex_row()
                 .items_center()
-                .justify_between()
-                .gap(px(8.))
-                .w_full()
-                .flex_none()
-                .child(
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(13.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(ui.text)
-                        .child(SharedString::from(skill.name.clone())),
-                )
-                .child(copy_btn),
-        )
-        .when(!skill.description.is_empty(), |d| {
-            d.child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_hidden()
-                    .text_size(px(12.))
-                    .line_height(px(16.))
+                .gap(px(4.))
+                .px(px(7.))
+                .py(px(3.))
+                .rounded(px(5.))
+                .text_size(px(11.))
+                .on_click(on_copy);
+            let copy_button = if is_copied {
+                copy_button
+                    .bg(ui.subtle)
+                    .text_color(ui.text)
+                    .child(
+                        svg()
+                            .size(px(10.))
+                            .flex_none()
+                            .path("icons/check.svg")
+                            .text_color(ui.text),
+                    )
+                    .child("Copied")
+                    .into_any_element()
+            } else {
+                copy_button
+                    .opacity(delta)
                     .text_color(ui.muted)
-                    .child(SharedString::from(skill.description)),
-            )
+                    .animated_hover(move |style, button_delta| {
+                        style.text_color(lerp_color(ui.muted, ui.text, button_delta));
+                    })
+                    .child("Copy")
+                    .into_any_element()
+            };
+
+            let mut children = vec![
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.))
+                    .w_full()
+                    .flex_none()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(ui.text)
+                            .child(skill_name),
+                    )
+                    .child(copy_button)
+                    .into_any_element(),
+            ];
+            if !skill_description.is_empty() {
+                children.push(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .overflow_hidden()
+                        .text_size(px(12.))
+                        .line_height(px(16.))
+                        .text_color(ui.muted)
+                        .child(skill_description)
+                        .into_any_element(),
+                );
+            }
+            element.extend(children);
         })
         .into_any_element()
 }

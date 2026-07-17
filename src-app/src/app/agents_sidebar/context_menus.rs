@@ -16,6 +16,7 @@ use super::state::{AgentsContextMenu, AgentsDeleteTarget};
 use crate::PaneFlowApp;
 use crate::app::sidebar::context_menu::{EDITOR_CONTEXT_MENU_ITEMS, clamped_context_menu_position};
 use crate::settings::components::{menu_divider_color, select_menu};
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 impl PaneFlowApp {
     /// Build the deferred element for the project-row right-click
@@ -354,6 +355,8 @@ impl PaneFlowApp {
                 )
             }
         };
+        let cancel_resting_background = ui.subtle;
+        let cancel_hover_background = ui.surface;
 
         let backdrop = div()
             .id("agents-confirm-backdrop")
@@ -408,13 +411,16 @@ impl PaneFlowApp {
                                     .px(px(14.))
                                     .py(px(7.))
                                     .rounded(px(6.))
-                                    .bg(ui.subtle)
+                                    .bg(cancel_resting_background)
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::MEDIUM)
                                     .text_color(ui.text)
-                                    .hover(|s| {
-                                        let ui = crate::theme::ui_colors();
-                                        s.bg(ui.surface)
+                                    .animated_hover(move |style, delta| {
+                                        style.bg(lerp_color(
+                                            cancel_resting_background,
+                                            cancel_hover_background,
+                                            delta,
+                                        ));
                                     })
                                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                                         this.cancel_agents_confirm_delete(cx);
@@ -431,7 +437,10 @@ impl PaneFlowApp {
                                     .text_size(px(12.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .text_color(ui.base)
-                                    .hover(|s| s.opacity(0.88))
+                                    .opacity(1.0)
+                                    .animated_hover(|style, delta| {
+                                        style.opacity(1.0 - 0.12 * delta);
+                                    })
                                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                                         this.execute_agents_confirm_delete(cx);
                                     }))
