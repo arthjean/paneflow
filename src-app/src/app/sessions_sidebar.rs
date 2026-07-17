@@ -25,6 +25,7 @@ use crate::agent_launcher::AgentCommandSpec;
 use crate::agent_sessions::{SessionAgent, SessionMeta, format_relative_time};
 use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::pane_drag::{SessionDrag, TabDragPreview};
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 /// Fixed sidebar width - between the CLI (220) and Agents (280) left sidebars,
 /// matching VS Code's secondary-bar default. Resizable width is deferred.
@@ -194,6 +195,7 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
         div()
             .flex()
             .flex_row()
@@ -248,9 +250,14 @@ impl PaneFlowApp {
                     .rounded(px(5.))
                     .text_size(px(14.))
                     .text_color(ui.muted)
-                    .hover(|s| {
-                        s.bg(crate::app::constants::sidebar_tab_hover_background())
-                            .text_color(ui.text)
+                    .animated_hover(move |style, delta| {
+                        style
+                            .bg(lerp_color(
+                                hover_background.opacity(0.0),
+                                hover_background,
+                                delta,
+                            ))
+                            .text_color(lerp_color(ui.muted, ui.text, delta));
                     })
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.close_sessions_sidebar(cx);
@@ -442,6 +449,7 @@ impl PaneFlowApp {
                 ));
             }
             if sessions.len() > CAP {
+                let hover_background = crate::app::constants::sidebar_tab_hover_background();
                 let label: SharedString = if show_all {
                     SharedString::from("Show less")
                 } else {
@@ -460,9 +468,14 @@ impl PaneFlowApp {
                         .text_size(px(11.))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(ui.muted)
-                        .hover(|s| {
-                            s.bg(crate::app::constants::sidebar_tab_hover_background())
-                                .text_color(ui.text)
+                        .animated_hover(move |style, delta| {
+                            style
+                                .bg(lerp_color(
+                                    hover_background.opacity(0.0),
+                                    hover_background,
+                                    delta,
+                                ))
+                                .text_color(lerp_color(ui.muted, ui.text, delta));
                         })
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.agent_sessions.sessions_focus.focus(window, cx);
@@ -512,6 +525,12 @@ impl PaneFlowApp {
         let agent = session.agent;
         let session_id = session.session_id.clone();
         let row_id = SharedString::from(format!("{}-session-{session_id}", agent_id_prefix(agent)));
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let resting_background = if selected {
+            hover_background
+        } else {
+            hover_background.opacity(0.0)
+        };
         let when = SharedString::from(format_relative_time(&session.timestamp));
         let title: SharedString = session
             .summary
@@ -548,11 +567,9 @@ impl PaneFlowApp {
                     icon: drag.icon.clone(),
                 })
             })
-            .when(selected, |d| {
-                d.bg(crate::app::constants::sidebar_tab_hover_background())
-            })
-            .when(!selected, |d| {
-                d.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .bg(resting_background)
+            .animated_hover(move |style, delta| {
+                style.bg(lerp_color(resting_background, hover_background, delta));
             })
             // US-007 (partial): resume into the bound pane; the docked sidebar
             // stays open (unlike the old popover).

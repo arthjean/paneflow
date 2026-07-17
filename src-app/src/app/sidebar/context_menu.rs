@@ -15,6 +15,7 @@ use gpui::{
 use crate::app::files_tree;
 use crate::pane::{Pane, TabContent};
 use crate::settings::components::{menu_divider_color, select_item, select_menu, with_alpha};
+use crate::ui_primitives::AnimatedHoverExt;
 use crate::{PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
 
 pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
@@ -94,10 +95,7 @@ impl PaneFlowApp {
             .rounded(px(4.))
             .text_size(px(11.))
             .text_color(ui.text)
-            .hover(|s| {
-                let ui = crate::theme::ui_colors();
-                s.bg(ui.subtle)
-            })
+            .animated_hover_bg(ui.subtle.opacity(0.0), ui.subtle)
             .on_click(on_click)
             .child(
                 div()
@@ -352,7 +350,13 @@ impl PaneFlowApp {
         let close_shortcut = self
             .shortcut_for_action("close_workspace")
             .map(|s| SharedString::from(s.to_string()));
-        context_menu = context_menu.child(
+        context_menu = context_menu.child({
+            let hover_bg = with_alpha(ui.text, 0.05);
+            let target_bg = if can_close {
+                hover_bg
+            } else {
+                hover_bg.opacity(0.0)
+            };
             div()
                 .id("workspace-context-close")
                 .h(px(28.))
@@ -365,9 +369,7 @@ impl PaneFlowApp {
                 .text_size(px(12.))
                 .text_color(ui.muted)
                 .when(can_close, |d| d.text_color(ui.text))
-                .when(can_close, |d| {
-                    d.hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
-                })
+                .animated_hover_bg(hover_bg.opacity(0.0), target_bg)
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
                     if can_close {
@@ -394,8 +396,8 @@ impl PaneFlowApp {
                             .text_color(ui.muted)
                             .child(shortcut),
                     )
-                }),
-        );
+                })
+        });
 
         deferred(context_menu).priority(3).into_any_element()
     }

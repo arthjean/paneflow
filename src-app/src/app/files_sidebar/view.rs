@@ -9,6 +9,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 struct FilesSidebarRenderTimeCanary {
     start: std::time::Instant,
@@ -56,6 +57,7 @@ impl PaneFlowApp {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| self.files_tree.root.to_string_lossy().into_owned())
             .into();
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
         div()
             .flex()
             .flex_row()
@@ -90,9 +92,14 @@ impl PaneFlowApp {
                     .rounded(px(5.))
                     .text_size(px(14.))
                     .text_color(ui.muted)
-                    .hover(|s| {
-                        s.bg(crate::app::constants::sidebar_tab_hover_background())
-                            .text_color(ui.text)
+                    .animated_hover(move |style, delta| {
+                        style
+                            .bg(lerp_color(
+                                hover_background.opacity(0.0),
+                                hover_background,
+                                delta,
+                            ))
+                            .text_color(lerp_color(ui.muted, ui.text, delta));
                     })
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.close_files_sidebar(cx);

@@ -16,6 +16,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::settings::components::{select_item, select_menu_surface, with_alpha};
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 use crate::window_chrome::title_bar::{SelfUpdatePillState, SystemPackageKind, UpdatePillKind};
 
 const SIDEBAR_UPDATE_SHIMMER_MS: u64 = 2600;
@@ -121,7 +122,9 @@ impl PaneFlowApp {
                     .text_color(muted)
                     .text_size(px(13.))
                     .font_weight(FontWeight::BOLD)
-                    .hover(move |s| s.text_color(text))
+                    .animated_hover(move |style, delta| {
+                        style.text_color(lerp_color(muted, text, delta));
+                    })
                     // stop_propagation on BOTH mouse-down and click so the
                     // press never reaches the banner's StartSelfUpdate
                     // dispatch - hitting × must not start the update it
@@ -135,14 +138,14 @@ impl PaneFlowApp {
             );
         }
 
-        if busy {
-            banner = banner.opacity(0.7);
+        let banner = if busy {
+            banner.opacity(0.7).into_any_element()
         } else {
-            banner = banner
-                .when(system_hint, |d| d.opacity(0.8))
-                .hover(move |s| {
-                    let s = s.bg(crate::app::constants::sidebar_tab_active_background());
-                    if system_hint { s.opacity(1.0) } else { s }
+            let resting_opacity = if system_hint { 0.8 } else { 1.0 };
+            banner
+                .opacity(resting_opacity)
+                .animated_hover(move |style, delta| {
+                    style.opacity(lerp(resting_opacity, 1.0, delta));
                 })
                 .on_mouse_down(
                     MouseButton::Left,
@@ -150,10 +153,11 @@ impl PaneFlowApp {
                         cx.stop_propagation();
                         this.handle_start_self_update(&crate::StartSelfUpdate, window, cx);
                     }),
-                );
-        }
+                )
+                .into_any_element()
+        };
 
-        Some(banner.into_any_element())
+        Some(banner)
     }
 
     /// "IPC offline" notice at the bottom of the sidebar - the cockpit home
@@ -216,6 +220,12 @@ impl PaneFlowApp {
         let settings_open = self.agents_view.sidebar_actions_menu_open;
         let mode = self.mode;
 
+        let settings_hover_bg = crate::app::constants::sidebar_tab_active_background();
+        let settings_resting_bg = if settings_open {
+            settings_hover_bg
+        } else {
+            settings_hover_bg.opacity(0.0)
+        };
         let settings_trigger = div()
             .id("sidebar-settings-trigger")
             .flex_none()
@@ -225,10 +235,7 @@ impl PaneFlowApp {
             .flex()
             .items_center()
             .justify_center()
-            .when(settings_open, |d| {
-                d.bg(crate::app::constants::sidebar_tab_active_background())
-            })
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
+            .animated_hover_bg(settings_resting_bg, settings_hover_bg)
             .tooltip(move |_window, cx| {
                 cx.new(|_| crate::app::sidebar::SidebarTooltip {
                     label: "Settings".into(),
@@ -297,7 +304,13 @@ impl PaneFlowApp {
             // Equal-width compact segments keep the three primary surfaces
             // visible without letting the Settings utility reclaim the row.
             let fg = if is_active { ui.text } else { ui.muted };
-            let mut button = div()
+            let hover_bg = crate::app::constants::sidebar_tab_active_background();
+            let resting_bg = if is_active {
+                hover_bg
+            } else {
+                hover_bg.opacity(0.0)
+            };
+            let button = div()
                 .id(id)
                 .flex_1()
                 .h(px(30.))
@@ -318,22 +331,22 @@ impl PaneFlowApp {
                         .text_color(fg)
                         .truncate()
                         .child(label),
-                );
+                )
+                .animated_hover_bg(resting_bg, hover_bg);
             // Same interaction tint as the workspace cards / thread tabs.
             // Active and hover deliberately match in dark mode.
             if is_active {
-                button = button.bg(crate::app::constants::sidebar_tab_active_background());
+                button.into_any_element()
             } else {
-                button = button
-                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
+                button
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         activate(this, window, cx);
                         this.agents_view.sidebar_actions_menu_open = false;
                         this.agents_view.sidebar_mode_picker_open = false;
                         cx.notify();
-                    }));
+                    }))
+                    .into_any_element()
             }
-            button.into_any_element()
         };
 
         let footer_row: AnyElement = div()

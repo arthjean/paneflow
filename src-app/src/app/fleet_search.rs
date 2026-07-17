@@ -22,6 +22,7 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 /// How long the per-tab match-count badges linger after a fan-out
 /// (US-018: "auto-dismiss 4 s ou à la fermeture de la recherche").
@@ -421,8 +422,13 @@ impl PaneFlowApp {
             for (idx, hit) in state.results.iter().enumerate() {
                 let is_selected = idx == selected;
                 let sid = hit.surface_id;
+                let resting_background = if is_selected {
+                    ui.subtle
+                } else {
+                    ui.subtle.opacity(0.0)
+                };
                 let row = div()
-                    .id(SharedString::from(format!("fleet-row-{idx}")))
+                    .id(SharedString::from(format!("fleet-row-{sid}")))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -430,9 +436,11 @@ impl PaneFlowApp {
                     .px(px(14.))
                     .py(px(7.))
                     .text_size(px(12.))
-                    .when(is_selected, |d| d.bg(ui.subtle))
+                    .bg(resting_background)
                     .cursor_pointer()
-                    .when(!is_selected, |d| d.hover(|s| s.bg(ui.subtle)))
+                    .animated_hover(move |style, delta| {
+                        style.bg(lerp_color(resting_background, ui.subtle, delta));
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         this.fleet_search_activate(sid, window, cx);

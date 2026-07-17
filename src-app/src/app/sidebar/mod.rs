@@ -17,7 +17,9 @@ use gpui::{
 
 use crate::{
     PaneFlowApp, SIDEBAR_WIDTH, WorkspaceContextMenu, WorkspaceDrag, WorkspaceDragPreview,
-    ai_types, workspace::Workspace,
+    ai_types,
+    ui_primitives::{AnimatedHoverExt, lerp_color},
+    workspace::Workspace,
 };
 
 /// Memoized sibling-worktree ordering. Group labels stay hidden, but sibling
@@ -355,7 +357,8 @@ impl PaneFlowApp {
                         .text_color(ui.text)
                         .child("Workspaces"),
                 )
-                .child(
+                .child({
+                    let hover_bg = crate::app::constants::sidebar_tab_active_background();
                     div()
                         .id("sidebar-new-workspace")
                         .size(px(28.))
@@ -363,7 +366,7 @@ impl PaneFlowApp {
                         .flex()
                         .items_center()
                         .justify_center()
-                        .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
+                        .animated_hover_bg(hover_bg.opacity(0.0), hover_bg)
                         .tooltip(move |_w, cx| {
                             cx.new(|_| SidebarTooltip {
                                 label: new_workspace_tooltip.clone().into(),
@@ -379,8 +382,8 @@ impl PaneFlowApp {
                                 .flex_none()
                                 .path("icons/plus.svg")
                                 .text_color(ui.muted),
-                        ),
-                ),
+                        )
+                }),
         );
 
         // Workspace list - scrollable area. Wheel-scroll comes from
@@ -416,7 +419,8 @@ impl PaneFlowApp {
                             .text_color(ui.muted)
                             .child("Open a project folder"),
                     )
-                    .child(
+                    .child({
+                        let hover_bg = crate::app::constants::sidebar_tab_active_background();
                         div()
                             .id("empty-new-ws")
                             .flex()
@@ -430,7 +434,7 @@ impl PaneFlowApp {
                             .text_color(ui.text)
                             .text_size(px(11.))
                             .font_weight(FontWeight::MEDIUM)
-                            .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
+                            .animated_hover_bg(ui.subtle, hover_bg)
                             .on_click(cx.listener(|this, _: &ClickEvent, w, cx| {
                                 this.create_workspace_with_picker(w, cx);
                             }))
@@ -441,8 +445,8 @@ impl PaneFlowApp {
                                     .path("icons/folder_open.svg")
                                     .text_color(ui.muted),
                             )
-                            .child("Open folder"),
-                    ),
+                            .child("Open folder")
+                    }),
             );
         }
 
@@ -489,21 +493,22 @@ impl PaneFlowApp {
         let idx = i;
         let ws_id = ws.id;
         let ws_title: SharedString = ws.title.clone().into();
+        let hover_bg = crate::app::constants::sidebar_tab_active_background();
+        let resting_bg = if is_active {
+            hover_bg
+        } else {
+            hover_bg.opacity(0.0)
+        };
 
         let mut row = div()
-            .id(SharedString::from(format!("ws-{i}")))
+            .id(SharedString::from(format!("ws-{ws_id}")))
             .mx(px(SIDEBAR_ROW_MARGIN_X))
             .px(px(SIDEBAR_ROW_PADDING_X))
             .py(px(4.))
             .min_h(px(44.))
             .rounded(px(8.))
             .overflow_x_hidden()
-            .when(is_active, |d| {
-                d.bg(crate::app::constants::sidebar_tab_active_background())
-            })
-            .when(!is_active, |d| {
-                d.hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
-            })
+            .animated_hover_bg(resting_bg, hover_bg)
             .on_drag(
                 WorkspaceDrag {
                     id: ws_id,
@@ -641,7 +646,7 @@ impl PaneFlowApp {
 
         row = row.child(title_row);
 
-        if let Some(meta_row) = self.render_workspace_meta_row(idx, ws, ui, cx) {
+        if let Some(meta_row) = self.render_workspace_meta_row(ws, ui, cx) {
             row = row.child(meta_row);
         }
 
@@ -657,7 +662,6 @@ impl PaneFlowApp {
 
     fn render_workspace_meta_row(
         &self,
-        idx: usize,
         ws: &Workspace,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
@@ -768,6 +772,7 @@ impl PaneFlowApp {
 
             if let Some(service) = service_summary {
                 let port = service.primary;
+                let workspace_id = ws.id;
                 let info = ws.service_labels.get(&port);
                 let is_frontend = info.is_some_and(|service| service.is_frontend);
                 let service_name = info
@@ -781,7 +786,7 @@ impl PaneFlowApp {
                         .unwrap_or_else(|| format!("http://localhost:{port}"));
                     meta_row = meta_row.child(
                         div()
-                            .id(SharedString::from(format!("port-{idx}-{port}")))
+                            .id(SharedString::from(format!("port-{workspace_id}-{port}")))
                             .flex()
                             .flex_row()
                             .items_center()
@@ -789,7 +794,9 @@ impl PaneFlowApp {
                             .text_size(px(10.))
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(ui.muted)
-                            .hover(|style| style.text_color(crate::theme::ui_colors().text))
+                            .animated_hover(move |style, delta| {
+                                style.text_color(lerp_color(ui.muted, ui.text, delta));
+                            })
                             .tooltip({
                                 let label = service_tooltip.clone();
                                 move |_w, cx| {
@@ -815,7 +822,9 @@ impl PaneFlowApp {
                 } else {
                     meta_row = meta_row.child(
                         div()
-                            .id(SharedString::from(format!("port-{idx}-{port}-info")))
+                            .id(SharedString::from(format!(
+                                "port-{workspace_id}-{port}-info"
+                            )))
                             .text_size(px(10.))
                             .text_color(ui.muted)
                             .tooltip({
@@ -835,7 +844,7 @@ impl PaneFlowApp {
                     let overflow = service.overflow;
                     meta_row = meta_row.child(
                         div()
-                            .id(SharedString::from(format!("ports-{idx}-overflow")))
+                            .id(SharedString::from(format!("ports-{workspace_id}-overflow")))
                             .flex_none()
                             .text_size(px(10.))
                             .font_weight(FontWeight::MEDIUM)

@@ -12,6 +12,7 @@ use super::{DIMMED_OPACITY, INDENT_STEP, ROW_HEIGHT};
 use crate::PaneFlowApp;
 use crate::app::files_tree::{self, VisibleRowRef};
 use crate::pane_drag::{MarkdownFileDrag, TabDragPreview};
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 impl PaneFlowApp {
     pub(super) fn files_row(
@@ -105,7 +106,6 @@ impl PaneFlowApp {
 
         if actionable {
             // Whole row toggles a directory (US-003) / opens a markdown (US-004).
-            el = el.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()));
             let click_path = path.clone();
             el = el.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.files_focus.focus(window, cx);
@@ -135,7 +135,8 @@ impl PaneFlowApp {
             });
         }
 
-        el.child(chevron)
+        let el = el
+            .child(chevron)
             .child(
                 svg()
                     .size(px(14.))
@@ -153,7 +154,21 @@ impl PaneFlowApp {
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .child(name),
-            )
+            );
+
+        if actionable {
+            let hover_background = crate::app::constants::sidebar_tab_hover_background();
+            let resting_background = if selected {
+                crate::app::constants::sidebar_tab_active_background()
+            } else {
+                hover_background.opacity(0.0)
+            };
+            el.animated_hover(move |style, delta| {
+                style.bg(lerp_color(resting_background, hover_background, delta));
+            })
             .into_any_element()
+        } else {
+            el.into_any_element()
+        }
     }
 }
