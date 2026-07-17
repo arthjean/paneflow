@@ -97,6 +97,11 @@ pub(crate) fn client_side_window_shell(
         Decorations::Server => outer.child(surface),
         Decorations::Client { tiling } => {
             let geometry = ClientDecorationGeometry::from_tiling(tiling);
+            let outer_background = if cfg!(target_os = "linux") {
+                background
+            } else {
+                gpui::transparent_black()
+            };
             surface = surface
                 .border_color(border_color)
                 .when(geometry.round_top_left, |surface| {
@@ -134,7 +139,21 @@ pub(crate) fn client_side_window_shell(
                 );
 
             outer = outer
-                .bg(gpui::transparent_black())
+                // Linux has no in-buffer shadow, so the root itself must cover
+                // the native bounds. Its radius retains transparent corner arcs.
+                .bg(outer_background)
+                .when(geometry.round_top_left, |outer| {
+                    outer.rounded_tl(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
+                .when(geometry.round_top_right, |outer| {
+                    outer.rounded_tr(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
+                .when(geometry.round_bottom_left, |outer| {
+                    outer.rounded_bl(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
+                .when(geometry.round_bottom_right, |outer| {
+                    outer.rounded_br(crate::app::constants::WINDOW_CORNER_RADIUS)
+                })
                 .when(geometry.free_top, |outer| {
                     outer.pt(CLIENT_DECORATION_SHADOW_INSET)
                 })
@@ -160,11 +179,15 @@ pub(crate) fn client_side_window_shell(
                         window.refresh();
                     }
                 })
-                .on_mouse_down(MouseButton::Left, move |event, window, _| {
+                .capture_any_mouse_down(move |event, window, cx| {
+                    if event.button != MouseButton::Left {
+                        return;
+                    }
                     let window_size = window.window_bounds().get_bounds().size;
                     if let Some(edge) =
                         resize_edge(event.position, crate::RESIZE_BORDER, window_size, tiling)
                     {
+                        cx.stop_propagation();
                         window.start_window_resize(edge);
                     }
                 })
