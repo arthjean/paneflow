@@ -4,7 +4,7 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Point};
 use alacritty_terminal::term::Config;
 use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
-use paneflow_terminal_ghostty::{Content, DisplayTerminal, WindowSize};
+use paneflow_terminal_ghostty::{Content, DisplayTerminal, WideCell, WindowSize};
 
 const MAX_FUZZ_BYTES: usize = 4_096;
 
@@ -92,18 +92,24 @@ fn normalized_alacritty_text(term: &Term<VoidListener>) -> String {
 
 fn normalized_ghostty_text(content: &Content) -> String {
     let mut lines = vec![String::new(); content.rows];
-    for cell in &content.cells {
+    for cell in content.cells.iter() {
         let Ok(line) = usize::try_from(cell.point.line) else {
             continue;
         };
         if line >= lines.len() || cell.point.column >= content.cols {
             continue;
         }
+        if matches!(cell.wide, WideCell::SpacerHead | WideCell::SpacerTail) {
+            continue;
+        }
         let line = &mut lines[line];
         if line.len() < cell.point.column {
             line.extend(std::iter::repeat_n(' ', cell.point.column - line.len()));
         }
-        line.push_str(&cell.grapheme);
+        line.push(cell.character);
+        if let Some(zerowidth) = &cell.zerowidth {
+            line.extend(zerowidth.iter().copied());
+        }
     }
     normalize_text(lines.join("\n"))
 }
