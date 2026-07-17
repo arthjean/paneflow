@@ -2,11 +2,6 @@
 //! settings window. Avoids duplicating resize-edge hit-testing and the default
 //! window-button layout across multiple files.
 
-use std::sync::{
-    OnceLock,
-    atomic::{AtomicUsize, Ordering},
-};
-
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, CursorStyle, Decorations, HitboxBehavior, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, ResizeEdge,
@@ -17,70 +12,6 @@ use gpui::{
 use crate::app::constants::{
     TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SPACING, TITLE_BAR_EDGE_INSET,
 };
-
-// A transparent GPUI shadow inset exposes wallpaper inside the native bounds on
-// Linux Wayland and X11. Keep the surface flush there; resize hit-testing stays
-// independently driven by `RESIZE_BORDER`.
-#[cfg(target_os = "linux")]
-const CLIENT_DECORATION_SHADOW_INSET: Pixels = px(0.0);
-#[cfg(not(target_os = "linux"))]
-const CLIENT_DECORATION_SHADOW_INSET: Pixels = crate::RESIZE_BORDER;
-
-const WINDOW_DIAGNOSTIC_SAMPLE_LIMIT: usize = 12;
-
-fn window_diagnostics_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("PANEFLOW_WINDOW_DIAGNOSTICS")
-            .is_ok_and(|value| value != "0" && !value.eq_ignore_ascii_case("false"))
-    })
-}
-
-fn log_window_diagnostics(
-    layout_bounds: Bounds<Pixels>,
-    window: &Window,
-    tiling: Tiling,
-    geometry: ClientDecorationGeometry,
-    background: Hsla,
-    border_color: Hsla,
-) {
-    static SAMPLE_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-    if !window_diagnostics_enabled() {
-        return;
-    }
-
-    let sample = SAMPLE_COUNT.fetch_add(1, Ordering::Relaxed);
-    if sample >= WINDOW_DIAGNOSTIC_SAMPLE_LIMIT {
-        return;
-    }
-
-    let window_bounds = window.window_bounds().get_bounds();
-    let inner_bounds = window.inner_window_bounds().get_bounds();
-    let scale_factor = window.scale_factor();
-    let backend = if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        "wayland"
-    } else if std::env::var_os("DISPLAY").is_some() {
-        "x11"
-    } else {
-        "unknown"
-    };
-
-    log::info!(
-        target: "paneflow::window_chrome::diagnostics",
-        "sample={sample} backend={backend} decorations={:?} client_inset={:?} \
-         tiling={tiling:?} geometry={geometry:?} layout_bounds={layout_bounds:?} \
-         window_bounds={window_bounds:?} inner_bounds={inner_bounds:?} \
-         scale_factor={scale_factor:.3} device_size={:.1}x{:.1} \
-         background_alpha={:.3} border_alpha={:.3}",
-        window.window_decorations(),
-        window.client_inset(),
-        f32::from(window_bounds.size.width) * scale_factor,
-        f32::from(window_bounds.size.height) * scale_factor,
-        background.a,
-        border_color.a,
-    );
-}
 
 /// Default button layout when the DE doesn't provide one.
 pub fn default_button_layout() -> WindowButtonLayout {
@@ -129,11 +60,10 @@ impl ClientDecorationGeometry {
 
 /// Wrap application content in a native-looking client-side decoration shell.
 ///
-/// The outer inset belongs to the compositor shadow and stays transparent where
-/// that shadow is enabled. Linux keeps the surface flush with the native bounds
-/// while retaining a separate resize hitbox. The themed application surface
-/// drops its radius, border, and padding edge-by-edge when the compositor tiles
-/// or maximizes the window.
+/// The outer inset belongs to the compositor shadow and resize hitbox, so it
+/// must stay transparent. The themed application surface lives in the inner
+/// rounded element and drops its radius, border, and padding edge-by-edge when
+/// the compositor tiles or maximizes the window.
 pub(crate) fn client_side_window_shell(
     content: impl IntoElement,
     window: &mut Window,
@@ -142,7 +72,7 @@ pub(crate) fn client_side_window_shell(
 ) -> impl IntoElement {
     let decorations = window.window_decorations();
     match decorations {
-        Decorations::Client { .. } => window.set_client_inset(CLIENT_DECORATION_SHADOW_INSET),
+        Decorations::Client { .. } => window.set_client_inset(crate::RESIZE_BORDER),
         Decorations::Server => window.set_client_inset(px(0.0)),
     }
 
@@ -158,11 +88,6 @@ pub(crate) fn client_side_window_shell(
         Decorations::Server => outer.child(surface),
         Decorations::Client { tiling } => {
             let geometry = ClientDecorationGeometry::from_tiling(tiling);
-            let outer_background = if cfg!(target_os = "linux") {
-                background
-            } else {
-                gpui::transparent_black()
-            };
             surface = surface
                 .border_color(border_color)
                 .when(geometry.round_top_left, |surface| {
@@ -189,44 +114,19 @@ pub(crate) fn client_side_window_shell(
                 .when(geometry.free_right, |surface| {
                     surface.border_r(crate::app::constants::WINDOW_BORDER_SIZE)
                 })
-                .when(
-                    geometry.draw_shadow && !cfg!(target_os = "linux"),
-                    |surface| {
-                        surface.shadow(vec![
-                            gpui::BoxShadow::new(px(0.0), px(0.0), gpui::hsla(0.0, 0.0, 0.0, 0.4))
-                                .blur_radius(CLIENT_DECORATION_SHADOW_INSET / 2.0),
-                        ])
-                    },
-                );
+                .when(geometry.draw_shadow, |surface| {
+                    surface.shadow(vec![
+                        gpui::BoxShadow::new(px(0.0), px(0.0), gpui::hsla(0.0, 0.0, 0.0, 0.4))
+                            .blur_radius(crate::RESIZE_BORDER / 2.0),
+                    ])
+                });
 
             outer = outer
-                // Linux has no in-buffer shadow, so the root itself must cover
-                // the native bounds. Its radius retains transparent corner arcs.
-                .bg(outer_background)
-                .when(geometry.round_top_left, |outer| {
-                    outer.rounded_tl(crate::app::constants::WINDOW_CORNER_RADIUS)
-                })
-                .when(geometry.round_top_right, |outer| {
-                    outer.rounded_tr(crate::app::constants::WINDOW_CORNER_RADIUS)
-                })
-                .when(geometry.round_bottom_left, |outer| {
-                    outer.rounded_bl(crate::app::constants::WINDOW_CORNER_RADIUS)
-                })
-                .when(geometry.round_bottom_right, |outer| {
-                    outer.rounded_br(crate::app::constants::WINDOW_CORNER_RADIUS)
-                })
-                .when(geometry.free_top, |outer| {
-                    outer.pt(CLIENT_DECORATION_SHADOW_INSET)
-                })
-                .when(geometry.free_bottom, |outer| {
-                    outer.pb(CLIENT_DECORATION_SHADOW_INSET)
-                })
-                .when(geometry.free_left, |outer| {
-                    outer.pl(CLIENT_DECORATION_SHADOW_INSET)
-                })
-                .when(geometry.free_right, |outer| {
-                    outer.pr(CLIENT_DECORATION_SHADOW_INSET)
-                })
+                .bg(gpui::transparent_black())
+                .when(geometry.free_top, |outer| outer.pt(crate::RESIZE_BORDER))
+                .when(geometry.free_bottom, |outer| outer.pb(crate::RESIZE_BORDER))
+                .when(geometry.free_left, |outer| outer.pl(crate::RESIZE_BORDER))
+                .when(geometry.free_right, |outer| outer.pr(crate::RESIZE_BORDER))
                 .on_mouse_move(move |event, window, _| {
                     let window_size = window.window_bounds().get_bounds().size;
                     if resize_edge(
@@ -240,30 +140,18 @@ pub(crate) fn client_side_window_shell(
                         window.refresh();
                     }
                 })
-                .capture_any_mouse_down(move |event, window, cx| {
-                    if event.button != MouseButton::Left {
-                        return;
-                    }
+                .on_mouse_down(MouseButton::Left, move |event, window, _| {
                     let window_size = window.window_bounds().get_bounds().size;
                     if let Some(edge) =
                         resize_edge(event.position, crate::RESIZE_BORDER, window_size, tiling)
                     {
-                        cx.stop_propagation();
                         window.start_window_resize(edge);
                     }
                 })
                 .child(surface)
                 .child(
                     canvas(
-                        move |bounds, window, _| {
-                            log_window_diagnostics(
-                                bounds,
-                                window,
-                                tiling,
-                                geometry,
-                                background,
-                                border_color,
-                            );
+                        |_bounds, window, _| {
                             window.insert_hitbox(
                                 Bounds::new(
                                     point(px(0.0), px(0.0)),
