@@ -14,6 +14,7 @@ use gpui::{
 use super::model::AgentsDiffData;
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
+use crate::ui_primitives::AnimatedHoverExt;
 
 /// The thin, column-resize hit target straddling the panel's left border.
 /// Captures the drag anchor `(cursor_x, width_at_grab)`; the actual resize math
@@ -31,7 +32,7 @@ pub(super) fn render_diff_resize_handle(
         .bottom_0()
         .w(px(7.))
         .cursor(CursorStyle::ResizeLeftRight)
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.06)))
+        .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.06))
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, event: &MouseDownEvent, _w, cx| {
@@ -64,7 +65,7 @@ pub(crate) fn render_agents_diff_toggle_button(
         .justify_center()
         .rounded(px(10.))
         .bg(fill)
-        .hover(move |d| d.bg(hover))
+        .animated_hover_bg(fill, hover)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
             this.toggle_agents_diff_panel(event, window, cx);
@@ -194,7 +195,7 @@ fn render_diff_header_icon_button(
         .items_center()
         .justify_center()
         .rounded(px(6.))
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
+        .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.08))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(on_click)
         .child(svg().size(px(15.)).flex_none().path(icon).text_color(color))
@@ -225,7 +226,7 @@ fn render_diff_split_button(
         .justify_center()
         .rounded(px(6.))
         .bg(rest)
-        .hover(move |d| d.bg(hover))
+        .animated_hover_bg(rest, hover)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.set_agents_diff_split(!split, cx);
@@ -283,7 +284,7 @@ pub(super) fn render_diff_files_toolbar(
                 .h(px(24.))
                 .px(px(8.))
                 .rounded(px(6.))
-                .hover(move |d| d.bg(with_alpha(ui.text, 0.08)))
+                .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.08))
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .on_click(
                     move |_e: &ClickEvent, _w: &mut Window, cx: &mut gpui::App| {

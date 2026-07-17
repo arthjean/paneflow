@@ -12,6 +12,7 @@
 use crate::PaneFlowApp;
 use crate::diff::DiffScope;
 use crate::settings::components::{menu_surface, select_item};
+use crate::ui_primitives::AnimatedHoverExt;
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, ParentElement,
     SharedString, Styled, deferred, div, prelude::*, px, svg,
@@ -22,6 +23,11 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let active = self.diff_mode.diff_scope;
         let open = self.diff_mode.diff_scope_picker_open;
+        let trigger_bg = if open {
+            ui.subtle
+        } else {
+            ui.subtle.opacity(0.0)
+        };
 
         let trigger = div()
             .id("diff-scope-trigger")
@@ -33,13 +39,10 @@ impl PaneFlowApp {
             .h(px(22.))
             .px(px(7.))
             .rounded(px(5.))
-            .when(open, |d| d.bg(ui.subtle))
+            .bg(trigger_bg)
             .text_size(crate::ui_primitives::BODY)
             .text_color(ui.text)
-            .hover(|s| {
-                let ui = crate::theme::ui_colors();
-                s.bg(ui.subtle)
-            })
+            .animated_hover_bg(trigger_bg, ui.subtle)
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.diff_mode.diff_scope_picker_open = !this.diff_mode.diff_scope_picker_open;
                 this.diff_mode.diff_project_picker_open = false;
@@ -131,6 +134,11 @@ impl PaneFlowApp {
         // stuck on whatever workspace happened to be active on entry.
         let show_project = active != DiffScope::MultiProject;
         let project_open = self.diff_mode.diff_project_picker_open;
+        let project_trigger_bg = if project_open {
+            ui.subtle
+        } else {
+            ui.subtle.opacity(0.0)
+        };
         let project_label = self
             .workspaces
             .get(self.active_idx)
@@ -149,15 +157,12 @@ impl PaneFlowApp {
             .h(px(22.))
             .px(px(7.))
             .rounded(px(5.))
-            .when(project_open, |d| d.bg(ui.subtle))
+            .bg(project_trigger_bg)
             .text_size(crate::ui_primitives::BODY)
             // EP-003 US-012: secondary context label - muted, demoted under the
             // primary scope chip in the `scope › project › branches` hierarchy.
             .text_color(ui.muted)
-            .hover(|s| {
-                let ui = crate::theme::ui_colors();
-                s.bg(ui.subtle)
-            })
+            .animated_hover_bg(project_trigger_bg, ui.subtle)
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.diff_mode.diff_project_picker_open = !this.diff_mode.diff_project_picker_open;
                 this.diff_mode.diff_scope_picker_open = false;
@@ -296,6 +301,11 @@ impl PaneFlowApp {
                         (None, None) => "All branches".to_string(),
                     };
                     let trig_root = root.clone();
+                    let trigger_bg = if branches_open {
+                        ui.subtle
+                    } else {
+                        ui.subtle.opacity(0.0)
+                    };
                     let trigger = div()
                         .id("diff-branches-trigger")
                         .flex_none()
@@ -306,14 +316,11 @@ impl PaneFlowApp {
                         .h(px(22.))
                         .px(px(7.))
                         .rounded(px(5.))
-                        .when(branches_open, |d| d.bg(ui.subtle))
+                        .bg(trigger_bg)
                         .text_size(crate::ui_primitives::BODY)
                         // EP-003 US-012: secondary context label - muted, demoted.
                         .text_color(ui.muted)
-                        .hover(|s| {
-                            let ui = crate::theme::ui_colors();
-                            s.bg(ui.subtle)
-                        })
+                        .animated_hover_bg(trigger_bg, ui.subtle)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                             this.diff_mode.diff_worktree_picker_open =
                                 !this.diff_mode.diff_worktree_picker_open;

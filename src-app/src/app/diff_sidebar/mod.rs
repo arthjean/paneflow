@@ -15,6 +15,7 @@ use crate::PaneFlowApp;
 use crate::app::diff_view_actions::DIFF_SIDEBAR_WIDTH;
 use crate::diff::{FileEntry, FileListState, aggregate_file_lists};
 use crate::theme::UiColors;
+use crate::ui_primitives::AnimatedHoverExt;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, SharedString, Styled, Window, div, prelude::*, px,
@@ -165,6 +166,8 @@ impl PaneFlowApp {
             .to_lowercase();
         let filtering = !filter_lc.is_empty();
 
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let transparent_background = hover_background.opacity(0.0);
         let header = div()
             .id("diff-files-header")
             .flex_none()
@@ -175,7 +178,7 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(6.))
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .animated_hover_bg(transparent_background, hover_background)
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                 this.diff_mode.diff_files_collapsed = !this.diff_mode.diff_files_collapsed;
                 cx.notify();
@@ -200,7 +203,7 @@ impl PaneFlowApp {
                     .justify_center()
                     .size(px(20.))
                     .rounded(px(4.))
-                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+                    .animated_hover_bg(transparent_background, hover_background)
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                         this.diff_mode.diff_files_tree = !this.diff_mode.diff_files_tree;
                         cx.stop_propagation();
@@ -484,6 +487,7 @@ impl PaneFlowApp {
     ) -> AnyElement {
         const INDENT: f32 = 12.0;
         let key = format!("{col_idx}\u{0}{full}");
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
         div()
             .id(SharedString::from(format!("diff-dir-{col_idx}-{full}")))
             .flex_none()
@@ -496,7 +500,7 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(5.))
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .animated_hover_bg(hover_background.opacity(0.0), hover_background)
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if !this.diff_mode.diff_collapsed_dirs.remove(&key) {
                     this.diff_mode.diff_collapsed_dirs.insert(key.clone());
@@ -564,6 +568,12 @@ impl PaneFlowApp {
             _ => (0, 0, 0),
         };
         let key_owned = collapse_key.to_string();
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let resting_background = if is_active {
+            crate::app::constants::sidebar_tab_active_background()
+        } else {
+            hover_background.opacity(0.0)
+        };
         let sub_header = div()
             .id(SharedString::from(format!("diff-branch-{col_idx}")))
             .flex_none()
@@ -574,10 +584,8 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(5.))
-            .when(is_active, |d| {
-                d.bg(crate::app::constants::sidebar_tab_active_background())
-            })
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .bg(resting_background)
+            .animated_hover_bg(resting_background, hover_background)
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if !this.diff_mode.diff_collapsed_branches.remove(&key_owned) {
                     this.diff_mode

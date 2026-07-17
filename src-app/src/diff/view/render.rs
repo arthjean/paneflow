@@ -1,7 +1,9 @@
 //! Render-oriented helpers shared by the DiffView host and its column model.
 
 use super::*;
-use crate::ui_primitives::{BODY, LABEL_SM, LABEL_XS, panel_empty_state};
+use crate::ui_primitives::{
+    AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, lerp_color, panel_empty_state,
+};
 use crate::widgets::callout::{Callout, CalloutIcon, CalloutSeverity};
 
 impl DiffView {
@@ -315,6 +317,11 @@ impl DiffView {
         } else {
             eff_base
         };
+        let base_chip_bg = if overridden {
+            ui.accent.opacity(0.18)
+        } else {
+            ui.subtle.opacity(0.0)
+        };
         let base_chip = div()
             .id(SharedString::from(format!("diff-col-base-{idx}")))
             .flex_none()
@@ -325,11 +332,8 @@ impl DiffView {
             .px(px(5.))
             .py(px(1.))
             .rounded(px(4.))
-            .when(overridden, |d| d.bg(ui.accent.opacity(0.18)))
-            .hover(|s| {
-                let ui = crate::theme::ui_colors();
-                s.bg(ui.subtle)
-            })
+            .bg(base_chip_bg)
+            .animated_hover_bg(base_chip_bg, ui.subtle)
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 this.toggle_column_base(idx, cx);
             }))
@@ -465,10 +469,7 @@ impl DiffView {
                     .justify_center()
                     .size(px(18.))
                     .rounded(px(4.))
-                    .hover(|s| {
-                        let ui = crate::theme::ui_colors();
-                        s.bg(ui.text.opacity(0.12))
-                    })
+                    .animated_hover_bg(ui.text.opacity(0.0), ui.text.opacity(0.12))
                     .tooltip(crate::ui_primitives::text_tooltip(
                         "Open a shell here to run git commands in this worktree",
                     ))
@@ -490,9 +491,8 @@ impl DiffView {
                     .px(px(4.))
                     .text_size(BODY)
                     .text_color(ui.muted)
-                    .hover(|s| {
-                        let ui = crate::theme::ui_colors();
-                        s.text_color(ui.text)
+                    .animated_hover(move |style, delta| {
+                        style.text_color(lerp_color(ui.muted, ui.text, delta));
                     })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         // Worktree scope: deselect the branch from the scope (the
@@ -720,7 +720,12 @@ impl DiffView {
         // click is attached by the caller for the inactive segment only.
         let seg =
             |id: &'static str, label: &'static str, icon_path: &'static str, is_active: bool| {
-                let mut s = div()
+                let resting_text = if is_active {
+                    ui.text
+                } else {
+                    ui.text.opacity(0.5)
+                };
+                div()
                     .id(id)
                     .flex()
                     .flex_row()
@@ -729,30 +734,23 @@ impl DiffView {
                     .h(px(20.))
                     .px(px(8.))
                     .rounded(px(4.))
-                    .text_size(BODY);
-                if is_active {
-                    s = s
-                        .bg(ui.text.opacity(0.10))
-                        .text_color(ui.text)
-                        .font_weight(FontWeight::SEMIBOLD);
-                } else {
-                    s = s.text_color(ui.text.opacity(0.5)).hover(|st| {
-                        let ui = crate::theme::ui_colors();
-                        st.text_color(ui.text)
-                    });
-                }
-                s.child(
-                    gpui::svg()
-                        .size(px(12.))
-                        .flex_none()
-                        .path(icon_path)
-                        .text_color(if is_active {
-                            ui.text
-                        } else {
-                            ui.text.opacity(0.5)
-                        }),
-                )
-                .child(label)
+                    .text_size(BODY)
+                    .text_color(resting_text)
+                    .when(is_active, |s| {
+                        s.bg(ui.text.opacity(0.10))
+                            .font_weight(FontWeight::SEMIBOLD)
+                    })
+                    .animated_hover(move |style, delta| {
+                        style.text_color(lerp_color(resting_text, ui.text, delta));
+                    })
+                    .child(
+                        gpui::svg()
+                            .size(px(12.))
+                            .flex_none()
+                            .path(icon_path)
+                            .text_color(resting_text),
+                    )
+                    .child(label)
             };
 
         div()

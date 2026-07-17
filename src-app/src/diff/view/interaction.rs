@@ -2,6 +2,7 @@
 //! (US-004 code-motion). See [`super`] for the `DiffView` definition.
 
 use super::*;
+use crate::ui_primitives::AnimatedHoverExt;
 
 impl DiffView {
     /// Select the column whose changed-file list feeds the sidebar and whose
@@ -328,6 +329,29 @@ impl DiffView {
         };
         let col_idx = menu.col_idx;
         let scope = menu.scope;
+        let copy_hunk_item = div()
+            .id("diff-menu-copy-hunk")
+            .h(px(28.))
+            .px(px(8.))
+            .rounded(px(7.))
+            .flex()
+            .flex_row()
+            .items_center()
+            .text_size(crate::ui_primitives::BODY)
+            .text_color(if has_hunk { ui.text } else { ui.muted })
+            .child(copy_hunk_label);
+        let copy_hunk_item = if has_hunk {
+            copy_hunk_item
+                .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.05))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    this.body_menu = None;
+                    this.copy_scope(col_idx, scope, true, cx);
+                    cx.stop_propagation();
+                }))
+                .into_any_element()
+        } else {
+            copy_hunk_item.into_any_element()
+        };
         let panel = menu_surface(div().id("diff-body-context-menu"), ui)
             .occlude()
             .w(px(230.))
@@ -341,30 +365,10 @@ impl DiffView {
             }))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
-            .child(
-                // Conditionally disabled, so kept as a bespoke row (matching the
-                // `select_item` geometry) rather than `select_item` itself, which
-                // always advertises a hover/cursor affordance.
-                div()
-                    .id("diff-menu-copy-hunk")
-                    .h(px(28.))
-                    .px(px(8.))
-                    .rounded(px(7.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .text_size(crate::ui_primitives::BODY)
-                    .text_color(if has_hunk { ui.text } else { ui.muted })
-                    .when(has_hunk, |d| {
-                        d.hover(move |s| s.bg(with_alpha(ui.text, 0.05)))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                                this.body_menu = None;
-                                this.copy_scope(col_idx, scope, true, cx);
-                                cx.stop_propagation();
-                            }))
-                    })
-                    .child(copy_hunk_label),
-            )
+            // Conditionally disabled, so kept as a bespoke row (matching the
+            // `select_item` geometry) rather than `select_item` itself, which
+            // always advertises a hover/cursor affordance.
+            .child(copy_hunk_item)
             .child(
                 select_item("diff-menu-copy-file", false, ui)
                     .cursor(CursorStyle::Arrow)

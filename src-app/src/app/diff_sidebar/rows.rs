@@ -5,6 +5,7 @@
 use crate::PaneFlowApp;
 use crate::diff::{FileChange, FileEntry};
 use crate::theme::UiColors;
+use crate::ui_primitives::AnimatedHoverExt;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
     SharedString, Styled, div, prelude::*, px,
@@ -59,6 +60,12 @@ impl PaneFlowApp {
             is_active && self.diff_mode.diff_selected_file.as_deref() == Some(entry.path.as_str());
         let path = entry.path.clone();
         let show_counts = !entry.is_binary && (entry.added > 0 || entry.removed > 0);
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let resting_background = if selected {
+            crate::app::constants::sidebar_tab_active_background()
+        } else {
+            hover_background.opacity(0.0)
+        };
 
         div()
             // Include `col_idx` so the same file path in two branch sections
@@ -75,10 +82,8 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(8.))
-            .when(selected, |d| {
-                d.bg(crate::app::constants::sidebar_tab_active_background())
-            })
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .bg(resting_background)
+            .animated_hover_bg(resting_background, hover_background)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.diff_mode.diff_selected_file = Some(path.clone());
                 // Select that branch's column AND scroll its body to this file.

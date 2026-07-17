@@ -19,6 +19,7 @@ use gpui::{
 use super::DiffWorktree;
 use super::scope::RepoGroup;
 use super::view::{DiffView, FileListState};
+use crate::ui_primitives::AnimatedHoverExt;
 
 struct Group {
     repo_root: PathBuf,
@@ -201,6 +202,7 @@ impl Render for MultiRepoDiffView {
 
         for (i, g) in self.groups.iter().enumerate() {
             let active = i == self.selected;
+            let resting_bg = ui.subtle.opacity(0.0);
             tabs = tabs.child(
                 // Flat browser-style tab: accent underline + content-bg + bold
                 // when active; muted + transparent (border blends into the bar)
@@ -221,10 +223,8 @@ impl Render for MultiRepoDiffView {
                     } else {
                         gpui::transparent_black()
                     })
-                    .hover(|s| {
-                        let ui = crate::theme::ui_colors();
-                        s.bg(ui.subtle)
-                    })
+                    .bg(resting_bg)
+                    .animated_hover_bg(resting_bg, ui.subtle)
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                         this.select(i, cx);
                     }))

@@ -2,6 +2,7 @@
 //! for the Review view (US-004 code-motion). See [`super`] for `DiffView`.
 
 use super::*;
+use crate::ui_primitives::AnimatedHoverExt;
 use paneflow_config::schema::TerminalSurfaceProfile;
 
 impl DiffView {
@@ -347,7 +348,7 @@ impl DiffView {
             .right_0()
             .h(px(7.))
             .cursor(CursorStyle::ResizeUpDown)
-            .hover(move |s| s.bg(with_alpha(ui.text, 0.06)))
+            .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.06))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, ev: &MouseDownEvent, _w, cx| {
@@ -453,13 +454,9 @@ impl DiffView {
                 .justify_center()
                 .py(px(5.))
                 .rounded(px(5.))
-                .bg(ui.accent.opacity(0.15))
                 .text_size(crate::ui_primitives::BODY)
                 .text_color(ui.accent)
-                .hover(|s| {
-                    let ui = crate::theme::ui_colors();
-                    s.bg(ui.accent.opacity(0.25))
-                })
+                .animated_hover_bg(ui.accent.opacity(0.15), ui.accent.opacity(0.25))
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     this.launch_review(col_idx, window, cx);
                 }))
@@ -492,8 +489,7 @@ fn render_review_terminal_tab(
         .pl(px(11.))
         .pr(px(5.))
         .rounded(px(8.))
-        .bg(bg)
-        .hover(move |d| d.bg(hover_bg))
+        .animated_hover_bg(bg, hover_bg)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {
             this.select_review_terminal(col_idx, term_idx, window, cx);
@@ -536,7 +532,7 @@ fn render_review_tab_close_button(
         .items_center()
         .justify_center()
         .rounded(px(5.))
-        .hover(move |d| d.bg(with_alpha(ui.text, 0.14)))
+        .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.14))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .on_click(cx.listener(move |this, _e: &ClickEvent, window, cx| {
             this.close_review_terminal(col_idx, term_idx, window, cx);
