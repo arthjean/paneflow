@@ -749,8 +749,9 @@ impl TerminalElement {
         let dims = self.frame_metrics.dimensions;
         let theme = crate::theme::active_theme();
 
-        // Compute desired terminal grid size from pixel bounds (accounting for left gutter)
-        let gutter = dims.cell_width;
+        // Keep the terminal grid aligned with the tab strip. The Pane's
+        // reserved 1px border completes the shared 8px visual inset.
+        let gutter = px(crate::app::constants::PANE_CONTENT_INSET);
         let available_width = (bounds.size.width - gutter).max(px(0.0));
         // `next_up().floor()` guards against f32 rounding error: when pixel
         // bounds are an exact multiple of the cell metric (24 lines × 16 px),
@@ -1555,9 +1556,10 @@ impl Element for TerminalElement {
         };
 
         let cell_width = layout.dimensions.cell_width;
-        // Offset origin by left gutter (1 cell width)
+        let gutter = px(crate::app::constants::PANE_CONTENT_INSET);
+        // Offset the grid origin by the same fixed inset reserved in layout.
         let mut origin = Point {
-            x: bounds.origin.x + cell_width,
+            x: bounds.origin.x + gutter,
             y: bounds.origin.y,
         };
         // US-017: snap the origin to physical-pixel boundaries so the grid

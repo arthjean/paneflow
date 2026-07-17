@@ -156,10 +156,10 @@ pub(crate) fn scrollbar_metrics(
     }
     let strip_width = px(4.0);
     // Sit against the element's right edge. Use `bounds.origin.x` (NOT
-    // `geom.origin.x`, which is shifted right by the 1-cell left gutter) so the
-    // strip lands `strip_width` inside the right edge instead of `cell_width`
-    // past it - past the edge it gets scissored away by the `bounds` content
-    // mask, making both the painted thumb and the hit zone invisible.
+    // `geom.origin.x`, which is shifted right by the fixed content inset) so
+    // the strip lands `strip_width` inside the right edge instead of past it.
+    // Past the edge it gets scissored away by the `bounds` content mask, making
+    // both the painted thumb and the hit zone invisible.
     let strip_left = bounds.origin.x + bounds.size.width - strip_width;
     let track_height = bounds.size.height;
     let visible_ratio = visible_rows as f32 / total_lines as f32;

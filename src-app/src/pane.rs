@@ -117,13 +117,12 @@ fn peek_badge_line(message: &str) -> String {
     line
 }
 
-/// Tab bar total height. Matches the Agents bottom-panel strip so the CLI and
-/// Agents views speak one tab language: rounded chips floating with even
-/// breathing room above the terminal body.
-const TAB_BAR_HEIGHT: f32 = 40.0;
-/// Chip height inside the bar. The slack on each side (bar 40 vs chip 28) is the
-/// vertical float gap that makes a tab read as a chip, not a full-height slab.
+/// Chip height inside the bar.
 const TAB_HEIGHT: f32 = 28.0;
+/// Bar height derived from the shared content inset. Centering the chip leaves
+/// 3px above and below it; the pane's reserved 1px border completes the same
+/// 4px visual inset used on the left edge.
+const TAB_BAR_HEIGHT: f32 = TAB_HEIGHT + crate::app::constants::PANE_CONTENT_INSET * 2.0;
 /// Chip corner radius (rounded chip, not a square editor tab).
 const TAB_RADIUS: f32 = 8.0;
 /// Leading inner padding of a chip, before the icon.
@@ -134,8 +133,6 @@ const TAB_PR: f32 = 5.0;
 const TAB_GAP: f32 = 7.0;
 /// Gap between adjacent chips in the strip.
 const STRIP_GAP: f32 = 4.0;
-/// Leading inset of the strip so the first chip isn't flush to the edge.
-const STRIP_PL: f32 = 8.0;
 /// Fixed chip width. Longer labels get truncated with ellipsis inside this box.
 const TAB_WIDTH: f32 = 140.0;
 /// Approximate title capacity inside `TAB_WIDTH` after the leading slot, gaps,
@@ -1505,7 +1502,7 @@ impl Pane {
             .items_center()
             .h_full()
             .gap(px(STRIP_GAP))
-            .pl(px(STRIP_PL))
+            .pl(px(crate::app::constants::PANE_CONTENT_INSET))
             .overflow_x_scroll();
 
         for i in 0..tab_count {

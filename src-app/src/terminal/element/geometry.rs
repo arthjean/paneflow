@@ -13,7 +13,7 @@ use gpui::{Bounds, Pixels, Point, px};
 #[derive(Clone, Copy)]
 pub(super) struct CellGeometry {
     /// Top-left corner of the usable grid in window coordinates (includes the
-    /// 1-cell left gutter offset applied in `paint()`).
+    /// fixed left content inset applied in `paint()`).
     pub origin: Point<Pixels>,
     pub cell_width: Pixels,
     pub line_height: Pixels,
