@@ -47,9 +47,10 @@ fn main() -> BuildResult<()> {
     )?;
 
     let bundled = workspace.join("native/libghostty/prebuilt").join(&target);
-    let prepared = std::env::var_os("PANEFLOW_LIBGHOSTTY_DIR")
-        .map(PathBuf::from)
-        .unwrap_or(bundled);
+    let (prepared, uses_bundled_archive) = match std::env::var_os("PANEFLOW_LIBGHOSTTY_DIR") {
+        Some(path) => (PathBuf::from(path), false),
+        None => (bundled, true),
+    };
     let archive = prepared.join("lib/libghostty-vt.a");
     let header = prepared.join("include/ghostty/vt.h");
     let bindings = prepared.join("bindings.rs");
@@ -69,6 +70,21 @@ fn main() -> BuildResult<()> {
     verify_hash(&bindings, manifest_value(&manifest, "bindings_sha256")?)?;
     let info = fs::read_to_string(&build_info)
         .map_err(|error| build_error(format!("cannot read {}: {error}", build_info.display())))?;
+    let (archive_hash_key, zig_target) = match target.as_str() {
+        "x86_64-unknown-linux-gnu" => (
+            "archive_sha256_x86_64_unknown_linux_gnu",
+            "x86_64-linux-gnu",
+        ),
+        "aarch64-unknown-linux-gnu" => (
+            "archive_sha256_aarch64_unknown_linux_gnu",
+            "aarch64-linux-gnu",
+        ),
+        _ => {
+            return Err(build_error(format!(
+                "libghostty has no reviewed static archive for Linux target {target}"
+            )));
+        }
+    };
     for (key, value) in [
         ("source_sha", manifest_value(&manifest, "source_sha")?),
         ("zig_version", manifest_value(&manifest, "zig_version")?),
@@ -78,6 +94,16 @@ fn main() -> BuildResult<()> {
             manifest_value(&manifest, "bindings_sha256")?,
         ),
         ("rust_target", target.as_str()),
+        ("zig_target", zig_target),
+        ("optimize", manifest_value(&manifest, "build_mode")?),
+        (
+            "archive_normalization",
+            manifest_value(&manifest, "archive_normalization")?,
+        ),
+        (
+            "build_info_symbol",
+            manifest_value(&manifest, "build_info_symbol")?,
+        ),
     ] {
         if info_value(&info, key)? != value {
             return Err(build_error(format!(
@@ -87,23 +113,24 @@ fn main() -> BuildResult<()> {
         }
     }
 
-    let archive_hash_key = match target.as_str() {
-        "x86_64-unknown-linux-gnu" => "archive_sha256_x86_64_unknown_linux_gnu",
-        "aarch64-unknown-linux-gnu" => "archive_sha256_aarch64_unknown_linux_gnu",
-        _ => {
-            return Err(build_error(format!(
-                "libghostty has no reviewed static archive for Linux target {target}"
-            )));
-        }
-    };
     let expected_archive_hash = manifest_value(&manifest, archive_hash_key)?;
-    if info_value(&info, "archive_sha256")? != expected_archive_hash {
+    let prepared_archive_hash = info_value(&info, "archive_sha256")?;
+    if uses_bundled_archive && prepared_archive_hash != expected_archive_hash {
         return Err(build_error(format!(
             "libghostty build info archive checksum mismatch in {}: expected `{expected_archive_hash}`",
             build_info.display()
         )));
     }
-    verify_hash(&archive, expected_archive_hash)?;
+    // Bundled archives are reviewed byte-for-byte in the manifest. An explicit
+    // prepared directory is rebuilt from the pinned source and toolchain, so
+    // verify its build-info hash instead; object normalization can differ
+    // across host elfutils versions even when the rebuild is reproducible.
+    let archive_hash = if uses_bundled_archive {
+        expected_archive_hash
+    } else {
+        prepared_archive_hash
+    };
+    verify_hash(&archive, archive_hash)?;
 
     let link_dir = archive
         .parent()
