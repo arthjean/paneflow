@@ -144,6 +144,8 @@ const LEADING_SLOT_SIZE: f32 = 15.0;
 const SECTION_PX: f32 = 6.0;
 /// Square size shared by tab-bar icon buttons.
 const ACTION_BUTTON_SIZE: f32 = 22.0;
+/// Full-distance duration for far-right action-button hover transitions.
+const ACTION_BUTTON_HOVER_MS: u64 = 120;
 /// Square size of the new-tab affordance that trails the last tab chip.
 const ADD_TAB_BUTTON_SIZE: f32 = TAB_HEIGHT;
 /// Plus glyph size inside the new-tab affordance.
@@ -280,6 +282,27 @@ struct TabRename {
     buffer: String,
 }
 
+/// Reversible hover transition state for one far-right tab-bar action.
+struct ActionButtonHoverMotion {
+    /// Last progress painted by the animator, used to seed mid-flight reversals.
+    live_progress: Rc<Cell<f32>>,
+    from: f32,
+    target: f32,
+    /// Restarts GPUI's one-shot animation whenever the hover target changes.
+    epoch: u64,
+}
+
+impl ActionButtonHoverMotion {
+    fn new(live_progress: Rc<Cell<f32>>) -> Self {
+        Self {
+            live_progress,
+            from: 0.0,
+            target: 0.0,
+            epoch: 0,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Pane - tabbed terminal container
 // ---------------------------------------------------------------------------
@@ -322,6 +345,8 @@ pub struct Pane {
     /// Incremented on every action-cluster toggle so the GPUI one-shot
     /// animation gets a fresh element id and replays both ways.
     tab_bar_actions_animation_epoch: u64,
+    /// Per-action hover progress for reversible background and tint fades.
+    action_button_hover_motion: std::collections::HashMap<SharedString, ActionButtonHoverMotion>,
     /// US-015: cached `paneflow.json` so `render_tab_bar` never calls the
     /// blocking `load_config()` per frame (the agent-button visibility gate and
     /// the launch command read it). Hydrated at creation, refreshed by
@@ -401,6 +426,7 @@ impl Pane {
             custom_buttons: Vec::new(),
             tab_bar_actions_collapsed: false,
             tab_bar_actions_animation_epoch: 0,
+            action_button_hover_motion: std::collections::HashMap::new(),
             // US-015: hydrate the tab-bar config cache once at creation (not
             // per frame); refreshed on ConfigWatcher reload via propagation.
             cached_config,
@@ -454,6 +480,7 @@ impl Pane {
             custom_buttons: Vec::new(),
             tab_bar_actions_collapsed: false,
             tab_bar_actions_animation_epoch: 0,
+            action_button_hover_motion: std::collections::HashMap::new(),
             // US-015: see `Pane::new`.
             cached_config,
             rename: None,
@@ -583,7 +610,6 @@ impl Pane {
                 .py(px(2.))
                 .rounded(px(4.))
                 .text_size(px(10.))
-                .cursor_pointer()
                 .when(slot.broadcast, |d| {
                     d.bg(ui.accent.opacity(0.15)).text_color(ui.accent)
                 })
@@ -626,7 +652,6 @@ impl Pane {
                     .text_size(px(10.))
                     .bg(ui.subtle)
                     .text_color(ui.muted)
-                    .cursor_pointer()
                     .hover(|s| s.text_color(ui.vc_deleted))
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |_, _, cx| {
@@ -1046,16 +1071,21 @@ impl Pane {
 
     /// Render a small icon button for the tab bar end section.
     fn action_button(
+        &self,
         id: &'static str,
         icon_path: &'static str,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        Self::command_button(
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let ui = tab_colors();
+        self.command_button(
             SharedString::from(id),
             SharedString::from(icon_path),
-            tab_colors().muted,
+            ui.muted,
             false,
+            Some(ui.text),
             handler,
+            cx,
         )
     }
 
@@ -1071,7 +1101,6 @@ impl Pane {
             .w(px(ADD_TAB_BUTTON_SIZE))
             .h(px(ADD_TAB_BUTTON_SIZE))
             .rounded(px(TAB_RADIUS))
-            .cursor_pointer()
             .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
             .on_click(cx.listener(|_this, _e: &ClickEvent, _window, cx| {
                 // See `PaneEvent::NewTerminalTab`: spawning in the app gives
@@ -1088,10 +1117,10 @@ impl Pane {
             )
     }
 
-    /// A 14px tab-bar icon. Monochrome logos render as a `text_color`-tinted
-    /// `svg()` mask; multi-color logos render via `img()`, which rasterizes
-    /// the SVG (resvg) and keeps every native fill/gradient - a `text_color`
-    /// tint has no effect there, so `tint` is ignored when `multicolor`.
+    /// A 14px tab-bar icon. Monochrome logos receive their tint directly:
+    /// GPUI does not preserve inherited text color through every `AnyElement`
+    /// and animation boundary. Multi-color logos render via `img()`, which
+    /// keeps every native fill and gradient.
     fn command_icon(icon_path: SharedString, tint: Hsla, multicolor: bool) -> AnyElement {
         if multicolor {
             img(icon_path).size(px(14.)).flex_none().into_any_element()
@@ -1105,29 +1134,166 @@ impl Pane {
         }
     }
 
-    /// Render a small icon button with a caller-supplied tint colour. Used
-    /// for most built-in agent buttons and for user-defined `custom_buttons`
-    /// (muted, matching the other controls). `multicolor` switches the icon
-    /// to native-color `img()` rendering (see [`Self::command_icon`]).
-    fn command_button(
+    fn set_action_button_hover_target(
+        &mut self,
+        id: &SharedString,
+        live_progress: &Rc<Cell<f32>>,
+        target: f32,
+    ) -> bool {
+        let motion = self
+            .action_button_hover_motion
+            .entry(id.clone())
+            .or_insert_with(|| ActionButtonHoverMotion::new(live_progress.clone()));
+        if motion.target == target {
+            return false;
+        }
+
+        motion.from = motion.live_progress.get();
+        motion.target = target;
+        motion.epoch = motion.epoch.saturating_add(1);
+        true
+    }
+
+    /// Shared fixed-size shell for every far-right tab-bar action. The live
+    /// progress cell lets a rapid enter/exit reverse from the currently painted
+    /// value instead of snapping to an endpoint.
+    fn action_button_shell(
+        &self,
         id: SharedString,
-        icon_path: SharedString,
-        tint: Hsla,
-        multicolor: bool,
+        icon: AnyElement,
+        base_tint: Hsla,
+        hover_tint: Option<Hsla>,
         handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    ) -> impl IntoElement {
-        div()
-            .id(id)
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let (live_progress, from, target, epoch) = self
+            .action_button_hover_motion
+            .get(&id)
+            .map(|motion| {
+                (
+                    motion.live_progress.clone(),
+                    motion.from,
+                    motion.target,
+                    motion.epoch,
+                )
+            })
+            .unwrap_or_else(|| (Rc::new(Cell::new(0.0)), 0.0, 0.0, 0));
+
+        let hover_id = id.clone();
+        let hover_live_progress = live_progress.clone();
+        let mouse_up_id = id.clone();
+        let mouse_up_live_progress = live_progress.clone();
+        let mouse_up_out_id = id.clone();
+        let mouse_up_out_live_progress = live_progress.clone();
+        let hover_background = crate::app::constants::sidebar_tab_hover_background();
+        let active_background = crate::app::constants::sidebar_tab_active_background();
+        let button = div()
+            .id(id.clone())
             .flex()
             .items_center()
             .justify_center()
             .w(px(ACTION_BUTTON_SIZE))
             .h(px(ACTION_BUTTON_SIZE))
             .rounded(px(4.))
-            .cursor_pointer()
-            .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
+            .on_hover(cx.listener(move |this, hovered: &bool, _window, cx| {
+                let target = if *hovered { 1.0 } else { 0.0 };
+                if this.set_action_button_hover_target(&hover_id, &hover_live_progress, target) {
+                    cx.notify();
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    if this.set_action_button_hover_target(
+                        &mouse_up_id,
+                        &mouse_up_live_progress,
+                        1.0,
+                    ) {
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(move |this, _, _window, cx| {
+                    if this.set_action_button_hover_target(
+                        &mouse_up_out_id,
+                        &mouse_up_out_live_progress,
+                        0.0,
+                    ) {
+                        cx.notify();
+                    }
+                }),
+            )
             .on_click(move |e, w, cx| handler(e, w, cx))
-            .child(Self::command_icon(icon_path, tint, multicolor))
+            .active(move |style| style.bg(active_background).opacity(0.82));
+
+        let visual = div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(4.))
+            .text_color(base_tint)
+            .child(icon);
+
+        let distance = (target - from).abs();
+        let visual = if epoch == 0 || distance <= f32::EPSILON {
+            live_progress.set(target);
+            let tint = hover_tint
+                .map(|hover_tint| base_tint.blend(hover_tint.opacity(target)))
+                .unwrap_or(base_tint);
+            visual
+                .bg(hover_background.opacity(target))
+                .text_color(tint)
+                .into_any_element()
+        } else {
+            let animation_id = SharedString::from(format!("pane-action-hover-{id}-{epoch}"));
+            let duration = Duration::from_secs_f32(
+                Duration::from_millis(ACTION_BUTTON_HOVER_MS).as_secs_f32() * distance,
+            );
+            visual
+                .with_animation(
+                    animation_id,
+                    Animation::new(duration).with_easing(ease_out_quint()),
+                    move |visual, delta| {
+                        let progress = (from + (target - from) * delta).clamp(0.0, 1.0);
+                        live_progress.set(progress);
+                        let tint = hover_tint
+                            .map(|hover_tint| base_tint.blend(hover_tint.opacity(progress)))
+                            .unwrap_or(base_tint);
+                        visual
+                            .bg(hover_background.opacity(progress))
+                            .text_color(tint)
+                    },
+                )
+                .into_any_element()
+        };
+
+        button.child(visual).into_any_element()
+    }
+
+    /// Render a small icon button with a caller-supplied base tint. Generic
+    /// controls pass a hover tint; agent buttons pass `None` so monochrome
+    /// brand tints and native multi-color images stay unchanged.
+    fn command_button(
+        &self,
+        id: SharedString,
+        icon_path: SharedString,
+        tint: Hsla,
+        multicolor: bool,
+        hover_tint: Option<Hsla>,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        self.action_button_shell(
+            id,
+            Self::command_icon(icon_path, tint, multicolor),
+            tint,
+            hover_tint,
+            handler,
+            cx,
+        )
     }
 
     /// Close a tab at the given index. Emits `PaneEvent::Remove` if the pane becomes empty.
@@ -1705,7 +1871,6 @@ impl Pane {
             // ellipsis and keeps a stable right padding.
             .overflow_x_hidden()
             .rounded(px(TAB_RADIUS))
-            .cursor_pointer()
             .text_size(px(12.5))
             .text_color(chip_fg)
             .bg(chip_bg)
@@ -1817,7 +1982,6 @@ impl Pane {
             .bg(close_base_bg)
             .opacity(0.)
             .group_hover(tab_hover_group.clone(), |s| s.opacity(1.))
-            .cursor_pointer()
             .shadow_lg()
             .hover(move |d| d.bg(close_hover_bg))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -2028,37 +2192,33 @@ impl Pane {
                 )
                 .into_any_element()
         };
-        end_section = end_section.child(
-            div()
-                .id("pane-btn-toggle-actions")
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(ACTION_BUTTON_SIZE))
-                .h(px(ACTION_BUTTON_SIZE))
-                .rounded(px(4.))
-                .cursor_pointer()
-                .hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
-                .on_click(cx.listener(|this, _e: &ClickEvent, _window, cx| {
-                    this.tab_bar_actions_collapsed = !this.tab_bar_actions_collapsed;
-                    this.tab_bar_actions_animation_epoch =
-                        this.tab_bar_actions_animation_epoch.saturating_add(1);
-                    cx.notify();
-                    cx.stop_propagation();
-                }))
-                .child(toggle_icon),
-        );
+        end_section = end_section.child(self.action_button_shell(
+            SharedString::from("pane-btn-toggle-actions"),
+            toggle_icon,
+            ui.muted,
+            Some(ui.text),
+            cx.listener(|this, _e: &ClickEvent, _window, cx| {
+                this.tab_bar_actions_collapsed = !this.tab_bar_actions_collapsed;
+                this.tab_bar_actions_animation_epoch =
+                    this.tab_bar_actions_animation_epoch.saturating_add(1);
+                cx.notify();
+                cx.stop_propagation();
+            }),
+            cx,
+        ));
 
         let config = &self.cached_config;
         let visible_agents = crate::agent_launcher::TerminalAgent::visible(config);
+        let visible_agent_count = visible_agents.len();
+        let custom_button_count = self.custom_buttons.len();
         let show_sessions_button =
             !crate::agent_sessions::enabled_session_agents_from_config(config).is_empty();
         let fixed_button_count = 4 + usize::from(show_sessions_button);
         let action_cluster_width = Self::tab_bar_action_cluster_width(
             self.zoomed,
             fixed_button_count,
-            visible_agents.len(),
-            self.custom_buttons.len(),
+            visible_agent_count,
+            custom_button_count,
         );
 
         let mut action_cluster = div()
@@ -2093,7 +2253,7 @@ impl Pane {
             // US-010: fallback affordance for when semantic disambiguation by
             // the agent isn't enough. Emits the surface_id; the app resolves
             // the disambiguated name so the copied value matches `list_panes`.
-            .child(Self::action_button(
+            .child(self.action_button(
                 "pane-btn-copy-ref",
                 "icons/link.svg",
                 cx.listener(|this, _, _window, cx| {
@@ -2103,35 +2263,39 @@ impl Pane {
                     let surface_id = terminal.entity_id().as_u64();
                     cx.emit(PaneEvent::CopySurfaceRef(surface_id));
                 }),
+                cx,
             ))
             // Split vertical (panes side by side)
-            .child(Self::action_button(
+            .child(self.action_button(
                 "pane-btn-split-v",
                 "icons/split_vertical.svg",
                 cx.listener(|_this, _, _window, cx| {
                     cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Vertical));
                 }),
+                cx,
             ))
             // Split horizontal (panes top/bottom)
-            .child(Self::action_button(
+            .child(self.action_button(
                 "pane-btn-split-h",
                 "icons/split_horizontal.svg",
                 cx.listener(|_this, _, _window, cx| {
                     cx.emit(PaneEvent::Split(crate::layout::SplitDirection::Horizontal));
                 }),
+                cx,
             ))
             // Toggle the docked Files sidebar (PRD files-tree EP-001): a tree
             // of the active workspace's folder, replacing the former native
             // markdown picker. Markdown rows there are click-to-open into the
             // active pane (and drag-to-pane in EP-003). The Cmd/Ctrl-click `.md`
             // hyperlink path (`TerminalEvent::OpenMarkdownPath`) is untouched.
-            .child(Self::action_button(
+            .child(self.action_button(
                 "pane-btn-files",
                 "icons/folder.svg",
                 cx.listener(|_this, _e: &ClickEvent, _window, cx| {
                     cx.emit(PaneEvent::ToggleFilesSidebar);
                     cx.stop_propagation();
                 }),
+                cx,
             ))
             // Agent session history for the active terminal's cwd. The cwd
             // lookup + filesystem scan happens in
@@ -2143,13 +2307,14 @@ impl Pane {
             // empty, so the icon itself is suppressed for symmetry with the
             // launcher buttons below.
             .when(show_sessions_button, |s| {
-                s.child(Self::action_button(
+                s.child(self.action_button(
                     "pane-btn-claude-sessions",
                     "icons/sessions.svg",
                     cx.listener(|_this, _e: &ClickEvent, _window, cx| {
                         cx.emit(PaneEvent::ToggleAgentSessions);
                         cx.stop_propagation();
                     }),
+                    cx,
                 ))
             });
 
@@ -2165,11 +2330,12 @@ impl Pane {
                 Some(c) => rgb(c).into(),
                 None => tab_colors().text,
             };
-            action_cluster = action_cluster.child(Self::command_button(
+            action_cluster = action_cluster.child(self.command_button(
                 SharedString::from(format!("pane-btn-{}", agent.tag())),
                 SharedString::from(agent.icon_path()),
                 tint,
                 agent.icon_multicolor(),
+                None,
                 cx.listener(move |this, _, _window, cx| {
                     let Some(terminal) = this.active_terminal_opt() else {
                         return;
@@ -2179,6 +2345,7 @@ impl Pane {
                     let cmd = agent.launch_command(&this.cached_config);
                     terminal.read(cx).send_command(&cmd);
                 }),
+                cx,
             ));
         }
 
@@ -2187,17 +2354,19 @@ impl Pane {
             let command = btn.command.clone();
             let id = SharedString::from(format!("pane-btn-custom-{}", btn.id));
             let icon = SharedString::from(btn.icon.clone());
-            action_cluster = action_cluster.child(Self::command_button(
+            action_cluster = action_cluster.child(self.command_button(
                 id,
                 icon,
                 ui.muted,
                 false,
+                Some(ui.text),
                 cx.listener(move |this, _, _window, cx| {
                     let Some(terminal) = this.active_terminal_opt() else {
                         return;
                     };
                     terminal.read(cx).send_command(&command);
                 }),
+                cx,
             ));
         }
 
