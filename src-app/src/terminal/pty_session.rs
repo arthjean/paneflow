@@ -4259,7 +4259,6 @@ mod tests {
     }
 
     /// Dump the viewport grid to a string for the live smoke test.
-    #[cfg(unix)]
     fn grid_to_string(term: &Arc<FairMutex<Term<ZedListener>>>) -> String {
         let term = term.lock();
         let grid = term.grid();
