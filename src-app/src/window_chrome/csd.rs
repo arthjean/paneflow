@@ -12,6 +12,7 @@ use gpui::{
 use crate::app::constants::{
     TITLE_BAR_CONTROL_SIZE, TITLE_BAR_CONTROL_SPACING, TITLE_BAR_EDGE_INSET,
 };
+use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 /// Default button layout when the DE doesn't provide one.
 pub fn default_button_layout() -> WindowButtonLayout {
@@ -342,7 +343,6 @@ pub(crate) fn render_window_button(
     };
 
     let element_id = SharedString::from(format!("{id}-{side}"));
-    let hover_group = SharedString::from(format!("{id}-{side}-hover"));
     // Windows: native Win11 caption buttons - 46px wide, full title-bar
     // height, square + flush, with the system hover palette (subtle white
     // overlay for min/max, #c42b1c red on close, #c84c3f when pressed). The
@@ -361,7 +361,6 @@ pub(crate) fn render_window_button(
 
     let btn = div()
         .id(element_id)
-        .group(hover_group.clone())
         .window_control_area(control_area)
         .flex()
         .items_center()
@@ -378,38 +377,41 @@ pub(crate) fn render_window_button(
             }
         });
 
-    let btn = if is_windows {
-        if is_close {
-            btn.hover(|s| s.bg(gpui::rgb(0xc42b1c)))
-                .active(|s| s.bg(gpui::rgb(0xc84c3f)))
-        } else {
-            btn.hover(|s| s.bg(crate::app::constants::sidebar_tab_hover_background()))
-                .active(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
-        }
+    let ui = crate::theme::ui_colors();
+    let (hover_bg, pressed_bg, hover_text) = if is_windows && is_close {
+        (
+            Hsla::from(gpui::rgb(0xc42b1c)),
+            Hsla::from(gpui::rgb(0xc84c3f)),
+            Hsla::from(gpui::rgb(0xffffff)),
+        )
+    } else if is_windows {
+        (
+            crate::app::constants::sidebar_tab_hover_background(),
+            crate::app::constants::sidebar_tab_active_background(),
+            ui.text,
+        )
     } else {
-        let hover_bg = crate::theme::ui_colors().subtle;
-        btn.rounded_full()
-            .hover(move |s| s.bg(hover_bg))
-            .active(move |s| s.bg(hover_bg))
+        (ui.subtle, ui.subtle, ui.text)
     };
 
-    btn.child({
-        let ui = crate::theme::ui_colors();
-        let icon = svg()
-            .size(if is_windows { px(12.) } else { px(16.) })
-            .flex_none()
-            .path(icon_path)
-            .text_color(ui.text);
-
-        // Windows paints the close glyph white over its native red hover and
-        // pressed states. All other states inherit the active theme's text
-        // color, yielding dark controls in light mode and light controls in
-        // dark mode across both the main and Settings title bars.
-        icon.when(is_windows && is_close, |icon| {
-            icon.group_hover(hover_group, |s| s.text_color(gpui::rgb(0xffffff)))
+    let icon_size = if is_windows { px(12.) } else { px(16.) };
+    btn.when(!is_windows, |btn| btn.rounded_full())
+        .text_color(ui.text)
+        .animated_hover_element(move |button_element, delta| {
+            button_element
+                .style()
+                .bg(lerp_color(hover_bg.opacity(0.0), hover_bg, delta))
+                .text_color(lerp_color(ui.text, hover_text, delta));
+            let icon = svg()
+                .size(icon_size)
+                .flex_none()
+                .path(icon_path)
+                .text_color(lerp_color(ui.text, hover_text, delta))
+                .into_any_element();
+            button_element.extend([icon]);
         })
-    })
-    .into_any_element()
+        .active(move |style| style.bg(pressed_bg).text_color(hover_text))
+        .into_any_element()
 }
 
 #[cfg(test)]

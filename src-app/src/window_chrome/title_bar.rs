@@ -7,8 +7,11 @@ use gpui::{
 };
 
 use super::csd::default_button_layout;
-use crate::app::constants::{
-    SIDEBAR_WIDTH, TITLE_BAR_CONTROL_SIZE, TITLE_BAR_EDGE_INSET, TITLE_BAR_MIN_HEIGHT,
+use crate::{
+    app::constants::{
+        SIDEBAR_WIDTH, TITLE_BAR_CONTROL_SIZE, TITLE_BAR_EDGE_INSET, TITLE_BAR_MIN_HEIGHT,
+    },
+    ui_primitives::{AnimatedHoverExt, lerp_color},
 };
 
 pub struct TitleBar {
@@ -262,6 +265,32 @@ impl Render for TitleBar {
         let toggle_sidebar_handle = cx.entity().downgrade();
         let toggle_files_menu_handle = cx.entity().downgrade();
         let toggle_help_menu_handle = cx.entity().downgrade();
+        let control_hover_bg = crate::app::constants::sidebar_tab_active_background();
+        let toggle_sidebar_resting_bg = if self.sidebar_visible {
+            control_hover_bg.opacity(0.0)
+        } else {
+            control_hover_bg
+        };
+        let files_menu_resting_bg = if self.files_menu_open {
+            control_hover_bg
+        } else {
+            control_hover_bg.opacity(0.0)
+        };
+        let files_menu_resting_text = if self.files_menu_open {
+            ui.text
+        } else {
+            ui.muted
+        };
+        let help_menu_resting_bg = if self.help_menu_open {
+            control_hover_bg
+        } else {
+            control_hover_bg.opacity(0.0)
+        };
+        let help_menu_resting_text = if self.help_menu_open {
+            ui.text
+        } else {
+            ui.muted
+        };
         let sidebar_tooltip: gpui::SharedString = if self.sidebar_visible {
             "Hide sidebar"
         } else {
@@ -287,10 +316,13 @@ impl Render for TitleBar {
                     .items_center()
                     .justify_center()
                     .rounded(px(5.))
-                    .when(!self.sidebar_visible, |d| {
-                        d.bg(crate::app::constants::sidebar_tab_active_background())
+                    .animated_hover(move |style, delta| {
+                        style.bg(lerp_color(
+                            toggle_sidebar_resting_bg,
+                            control_hover_bg,
+                            delta,
+                        ));
                     })
-                    .hover(|s| s.bg(crate::app::constants::sidebar_tab_active_background()))
                     .tooltip(move |_window, cx| {
                         let label = sidebar_tooltip.clone();
                         cx.new(|_| crate::app::sidebar::SidebarTooltip { label })
@@ -322,17 +354,11 @@ impl Render for TitleBar {
                     .rounded(px(8.))
                     .text_size(px(12.))
                     .font_weight(gpui::FontWeight::NORMAL)
-                    .text_color(if self.files_menu_open {
-                        ui.text
-                    } else {
-                        ui.muted
-                    })
-                    .when(self.files_menu_open, |d| {
-                        d.bg(crate::app::constants::sidebar_tab_active_background())
-                    })
-                    .hover(|s| {
-                        s.bg(crate::app::constants::sidebar_tab_active_background())
-                            .text_color(ui.text)
+                    .text_color(files_menu_resting_text)
+                    .animated_hover(move |style, delta| {
+                        style
+                            .bg(lerp_color(files_menu_resting_bg, control_hover_bg, delta))
+                            .text_color(lerp_color(files_menu_resting_text, ui.text, delta));
                     })
                     .on_mouse_down(MouseButton::Left, move |event, _, cx| {
                         cx.stop_propagation();
@@ -356,17 +382,11 @@ impl Render for TitleBar {
                     .rounded(px(8.))
                     .text_size(px(12.))
                     .font_weight(gpui::FontWeight::NORMAL)
-                    .text_color(if self.help_menu_open {
-                        ui.text
-                    } else {
-                        ui.muted
-                    })
-                    .when(self.help_menu_open, |d| {
-                        d.bg(crate::app::constants::sidebar_tab_active_background())
-                    })
-                    .hover(|s| {
-                        s.bg(crate::app::constants::sidebar_tab_active_background())
-                            .text_color(ui.text)
+                    .text_color(help_menu_resting_text)
+                    .animated_hover(move |style, delta| {
+                        style
+                            .bg(lerp_color(help_menu_resting_bg, control_hover_bg, delta))
+                            .text_color(lerp_color(help_menu_resting_text, ui.text, delta));
                     })
                     .on_mouse_down(MouseButton::Left, move |event, _, cx| {
                         cx.stop_propagation();
@@ -442,9 +462,14 @@ impl Render for TitleBar {
                         .rounded(px(5.))
                         .text_color(ui.muted)
                         .text_size(px(15.))
-                        .hover(|s| {
-                            s.bg(crate::app::constants::sidebar_tab_active_background())
-                                .text_color(ui.text)
+                        .animated_hover(move |style, delta| {
+                            style
+                                .bg(lerp_color(
+                                    control_hover_bg.opacity(0.0),
+                                    control_hover_bg,
+                                    delta,
+                                ))
+                                .text_color(lerp_color(ui.muted, ui.text, delta));
                         })
                         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                             cx.stop_propagation();
@@ -646,7 +671,9 @@ impl Render for TitleBar {
                             .text_color(muted)
                             .text_size(px(13.))
                             .font_weight(gpui::FontWeight::BOLD)
-                            .hover(move |s| s.text_color(text))
+                            .animated_hover(move |style, delta| {
+                                style.text_color(lerp_color(muted, text, delta));
+                            })
                             // stop_propagation on BOTH mouse-down and click
                             // so the click never reaches the parent pill's
                             // `on_click` handler that dispatches
@@ -676,37 +703,35 @@ impl Render for TitleBar {
                     // both races and matches the title-bar button idiom in
                     // Zed/VS Code/Discord. The pkexec modal confirms the
                     // action, so we don't lose "drag-out to cancel".
-                    PillStyle::Clickable => {
-                        pill = pill
-                            .hover(|s| {
-                                let ui = crate::theme::ui_colors();
-                                s.bg(ui.surface).border_color(ui.muted)
-                            })
-                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                                cx.stop_propagation();
-                                window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
-                            });
-                    }
-                    PillStyle::Busy => {
-                        pill = pill.opacity(0.7);
-                    }
+                    PillStyle::Clickable => pill
+                        .animated_hover(move |style, delta| {
+                            style
+                                .bg(lerp_color(ui.subtle, ui.surface, delta))
+                                .border_color(lerp_color(ui.border, ui.muted, delta));
+                        })
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
+                        })
+                        .into_any_element(),
+                    PillStyle::Busy => pill.opacity(0.7).into_any_element(),
                     // SystemHint copies the upgrade command to the clipboard
                     // through a toast. It remains clickable with the default
                     // cursor, consistent with the Review/Diff chrome.
-                    PillStyle::SystemHint => {
-                        pill = pill
-                            .opacity(0.8)
-                            .hover(|s| {
-                                let ui = crate::theme::ui_colors();
-                                s.bg(ui.surface).border_color(ui.muted).opacity(1.0)
-                            })
-                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                                cx.stop_propagation();
-                                window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
-                            });
-                    }
+                    PillStyle::SystemHint => pill
+                        .opacity(0.8)
+                        .animated_hover(move |style, delta| {
+                            style
+                                .bg(lerp_color(ui.subtle, ui.surface, delta))
+                                .border_color(lerp_color(ui.border, ui.muted, delta))
+                                .opacity(0.8 + 0.2 * delta);
+                        })
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            cx.stop_propagation();
+                            window.dispatch_action(Box::new(crate::StartSelfUpdate), cx);
+                        })
+                        .into_any_element(),
                 }
-                pill
             });
         // Cockpit modes: same rail-confinement story as the update pill - the
         // notice lives in the sidebar (`render_sidebar_ipc_banner`). Diff
