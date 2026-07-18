@@ -17,10 +17,10 @@
     {
       "id": "EP-002",
       "title": "Porter le host Ghostty sur ConPTY et sécuriser son lifecycle",
-      "status": "IN_PROGRESS",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-003",
@@ -106,59 +106,59 @@
       "id": "US-005",
       "title": "Généraliser la session Ghostty et créer le host ConPTY",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-003"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-18",
+      "reviewed_at": "2026-07-18"
     },
     {
       "id": "US-006",
       "title": "Implémenter l’observation et l’arrêt de processus Windows",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-18",
+      "reviewed_at": "2026-07-18"
     },
     {
       "id": "US-007",
       "title": "Garantir drain final, backpressure et resize déterministe",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-005",
         "US-006"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-18",
+      "reviewed_at": "2026-07-18"
     },
     {
       "id": "US-008",
       "title": "Couvrir stress multi-pane, crash et ressources Windows",
       "epic": "EP-002",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-006",
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-18",
+      "reviewed_at": "2026-07-18"
     },
     {
       "id": "US-009",

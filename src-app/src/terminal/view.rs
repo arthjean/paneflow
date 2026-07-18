@@ -27,39 +27,141 @@ use super::types::{
 use crate::limits::MAX_OSC52_BYTES;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 use super::ghostty_session::{GhosttySession, GhosttyStartError, SpawnedGhostty};
 
-#[cfg(any(test, all(target_os = "linux", feature = "libghostty-linux")))]
+#[cfg(any(
+    test,
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn should_start_ghostty_for_policy(
+    requested: TerminalBackendConfig,
+    available: bool,
+    auto_selects: bool,
+) -> bool {
+    available
+        && match requested {
+            TerminalBackendConfig::Auto => auto_selects,
+            TerminalBackendConfig::Ghostty => true,
+            TerminalBackendConfig::Alacritty => false,
+        }
+}
+
+#[cfg(any(
+    test,
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 fn should_start_ghostty(requested: TerminalBackendConfig) -> bool {
-    cfg!(all(target_os = "linux", feature = "libghostty-linux"))
-        && requested != TerminalBackendConfig::Alacritty
+    should_start_ghostty_for_policy(
+        requested,
+        cfg!(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        )),
+        cfg!(all(target_os = "linux", feature = "libghostty-linux")),
+    )
 }
 
 enum BackgroundSpawnOutcome {
     Alacritty(anyhow::Result<super::pty_session::SpawnedPty>),
-    #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
     Ghostty(SpawnedGhostty),
-    #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
     GhosttyFallback {
         spawned: anyhow::Result<super::pty_session::SpawnedPty>,
         reason: String,
     },
-    #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
-    GhosttyPtyFailed(String),
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    GhosttyPostSpawnFailed {
+        child_pid: u32,
+        reason: String,
+    },
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 fn event_uses_ghostty_backend(event: &TerminalBackendEvent) -> bool {
     matches!(event, TerminalBackendEvent::Ghostty(_))
 }
 
-#[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+#[cfg(not(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+)))]
 fn event_uses_ghostty_backend(_event: &TerminalBackendEvent) -> bool {
     false
 }
 
-#[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+#[cfg(not(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+)))]
 fn warn_ghostty_unavailable_once() {
     static WARNED: std::sync::Once = std::sync::Once::new();
     WARNED.call_once(|| {
@@ -68,6 +170,26 @@ fn warn_ghostty_unavailable_once() {
             "Ghostty backend requested but unavailable on this platform/build; using Alacritty"
         );
     });
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+)))]
+fn ghostty_unavailable_reason() -> &'static str {
+    #[cfg(target_os = "windows")]
+    {
+        "ghostty backend requires Windows x86_64 MSVC and the libghostty-windows feature"
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "ghostty backend requires Linux and the libghostty-linux feature"
+    }
 }
 
 fn log_backend_diagnostics(terminal: &TerminalState) {
@@ -465,7 +587,15 @@ impl TerminalView {
             .backend;
         terminal.set_backend_request(requested_backend, None);
 
-        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
         let ghostty_spawn = if should_start_ghostty(requested_backend) {
             let initial_window_size = TerminalWindowSize::new(params.cols, params.rows, 0, 0);
             let (ghostty, runtime_pending, events_rx) =
@@ -476,9 +606,17 @@ impl TerminalView {
             None
         };
 
-        #[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+        #[cfg(not(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        )))]
         if requested_backend == TerminalBackendConfig::Ghostty {
-            let reason = "ghostty backend requires Linux and the libghostty-linux feature";
+            let reason = ghostty_unavailable_reason();
             warn_ghostty_unavailable_once();
             terminal.set_backend_request(requested_backend, Some(reason.into()));
         }
@@ -501,7 +639,15 @@ impl TerminalView {
                 // Blocking PTY open (`tty::new` forks) runs off the render thread.
                 let outcome = executor
                     .spawn(async move {
-                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+                        #[cfg(any(
+                            all(target_os = "linux", feature = "libghostty-linux"),
+                            all(
+                                target_os = "windows",
+                                target_arch = "x86_64",
+                                target_env = "msvc",
+                                feature = "libghostty-windows"
+                            )
+                        ))]
                         if let Some((ghostty, runtime_pending)) = ghostty_spawn {
                             let max_scrollback = paneflow_config::loader::load_config()
                                 .terminal
@@ -522,11 +668,36 @@ impl TerminalView {
                                     );
                                     BackgroundSpawnOutcome::GhosttyFallback {
                                         spawned,
-                                        reason: format!("{error:#}"),
+                                        reason: format!("ghostty_initialization_failed: {error:#}"),
                                     }
                                 }
-                                Err(GhosttyStartError::Pty(error)) => {
-                                    BackgroundSpawnOutcome::GhosttyPtyFailed(format!("{error:#}"))
+                                Err(GhosttyStartError::OpenPty(error)) => {
+                                    let spawned = TerminalState::open_pty_and_eventloop(
+                                        params,
+                                        pending,
+                                        signal_mask,
+                                    );
+                                    BackgroundSpawnOutcome::GhosttyFallback {
+                                        spawned,
+                                        reason: format!("ghostty_pty_open_failed: {error:#}"),
+                                    }
+                                }
+                                Err(GhosttyStartError::Spawn(error)) => {
+                                    let spawned = TerminalState::open_pty_and_eventloop(
+                                        params,
+                                        pending,
+                                        signal_mask,
+                                    );
+                                    BackgroundSpawnOutcome::GhosttyFallback {
+                                        spawned,
+                                        reason: format!("ghostty_child_spawn_failed: {error:#}"),
+                                    }
+                                }
+                                Err(GhosttyStartError::PostSpawn { child_pid, error }) => {
+                                    BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
+                                        child_pid,
+                                        reason: format!("{error:#}"),
+                                    }
                                 }
                             }
                         } else {
@@ -538,7 +709,15 @@ impl TerminalView {
                                 ),
                             )
                         }
-                        #[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+                        #[cfg(not(any(
+                            all(target_os = "linux", feature = "libghostty-linux"),
+                            all(
+                                target_os = "windows",
+                                target_arch = "x86_64",
+                                target_env = "msvc",
+                                feature = "libghostty-windows"
+                            )
+                        )))]
                         {
                             BackgroundSpawnOutcome::Alacritty(
                                 TerminalState::open_pty_and_eventloop(
@@ -568,22 +747,36 @@ impl TerminalView {
                             view.terminal
                                 .write_output(spawn_error_message(&error).as_bytes());
                         }
-                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+                        #[cfg(any(
+                            all(target_os = "linux", feature = "libghostty-linux"),
+                            all(
+                                target_os = "windows",
+                                target_arch = "x86_64",
+                                target_env = "msvc",
+                                feature = "libghostty-windows"
+                            )
+                        ))]
                         BackgroundSpawnOutcome::Ghostty(spawned) => {
                             view.terminal.promote_ghostty(spawned);
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
                         }
-                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+                        #[cfg(any(
+                            all(target_os = "linux", feature = "libghostty-linux"),
+                            all(
+                                target_os = "windows",
+                                target_arch = "x86_64",
+                                target_env = "msvc",
+                                feature = "libghostty-windows"
+                            )
+                        ))]
                         BackgroundSpawnOutcome::GhosttyFallback { spawned, reason } => {
                             log::warn!(
                                 target: "paneflow::terminal::backend",
-                                "Ghostty initialization failed before spawn; using Alacritty: {reason}"
+                                "Ghostty startup failed before child creation; using Alacritty: {reason}"
                             );
-                            view.terminal.abandon_ghostty(format!(
-                                "ghostty_initialization_failed: {reason}"
-                            ));
+                            view.terminal.abandon_ghostty(reason);
                             match spawned {
                                 Ok(spawned) => {
                                     view.terminal.promote(spawned);
@@ -602,14 +795,22 @@ impl TerminalView {
                                 }
                             }
                         }
-                        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
-                        BackgroundSpawnOutcome::GhosttyPtyFailed(reason) => {
+                        #[cfg(any(
+                            all(target_os = "linux", feature = "libghostty-linux"),
+                            all(
+                                target_os = "windows",
+                                target_arch = "x86_64",
+                                target_env = "msvc",
+                                feature = "libghostty-windows"
+                            )
+                        ))]
+                        BackgroundSpawnOutcome::GhosttyPostSpawnFailed { child_pid, reason } => {
                             log::error!(
                                 target: "paneflow::terminal::backend",
-                                "Ghostty PTY failed after engine initialization; refusing child fallback"
+                                "Ghostty startup failed after child creation (pid={child_pid}); refusing Alacritty child fallback: {reason}"
                             );
                             view.terminal
-                                .abandon_ghostty("ghostty_pty_failed_after_initialization");
+                                .abandon_ghostty(format!("ghostty_post_spawn_failed: {reason}"));
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             view.terminal.write_output(
@@ -1712,17 +1913,44 @@ mod tests {
 
     #[test]
     fn terminal_backend_policy_keeps_alacritty_as_explicit_rollback() {
-        let ghostty_available = cfg!(all(target_os = "linux", feature = "libghostty-linux"));
+        let ghostty_available = cfg!(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ));
 
         assert_eq!(
             should_start_ghostty(TerminalBackendConfig::Auto),
-            ghostty_available
+            cfg!(all(target_os = "linux", feature = "libghostty-linux"))
         );
         assert_eq!(
             should_start_ghostty(TerminalBackendConfig::Ghostty),
             ghostty_available
         );
         assert!(!should_start_ghostty(TerminalBackendConfig::Alacritty));
+    }
+
+    #[test]
+    fn windows_qualification_requires_an_explicit_ghostty_request() {
+        assert!(!should_start_ghostty_for_policy(
+            TerminalBackendConfig::Auto,
+            true,
+            false,
+        ));
+        assert!(should_start_ghostty_for_policy(
+            TerminalBackendConfig::Ghostty,
+            true,
+            false,
+        ));
+        assert!(!should_start_ghostty_for_policy(
+            TerminalBackendConfig::Alacritty,
+            true,
+            false,
+        ));
     }
 
     // --- send_keystroke submission guard (US-005, orchestration-v2) ---

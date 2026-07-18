@@ -1,4 +1,4 @@
-//! Linux-only Ghostty runtime adapter.
+//! Cross-platform Ghostty runtime adapter for native PTYs.
 //!
 //! The libghostty engine is owned by one worker thread. PTY bytes, protocol
 //! replies, input, resize, search, selection, persistence, and shutdown all
@@ -7,12 +7,20 @@
 
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+use paneflow_terminal_ghostty as ghostty;
+#[cfg(all(
+    target_os = "windows",
+    target_arch = "x86_64",
+    target_env = "msvc",
+    feature = "libghostty-windows"
+))]
 use paneflow_terminal_ghostty as ghostty;
 use parking_lot::RwLock;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
@@ -29,13 +37,22 @@ use super::types::{
 const CONTROL_CAPACITY: usize = 256;
 const OUTPUT_BUFFER_COUNT: usize = 4;
 const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
+const OUTPUT_POOL_BYTES: usize = OUTPUT_BUFFER_COUNT * OUTPUT_CHUNK_BYTES;
 const OUTPUT_BATCH_MAX_BYTES: usize = 128 * 1024;
 const OUTPUT_BATCH_MAX_TIME: Duration = Duration::from_millis(1);
 const MAX_QUEUED_INPUT_BYTES: usize = 64 * 1024;
+const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
+const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
 const FINAL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(target_os = "linux")]
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
+#[cfg(target_os = "windows")]
+const WINDOWS_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_CLIPBOARD_EVENTS: usize = 8;
+
+const _: () = assert!(OUTPUT_POOL_BYTES <= NFR_005_MAX_PENDING_OUTPUT_BYTES);
+const _: () = assert!(MAX_QUEUED_INPUT_BYTES <= NFR_005_MAX_QUEUED_INPUT_BYTES);
 
 #[derive(Debug)]
 pub(crate) enum GhosttyUiEvent {
@@ -140,7 +157,12 @@ pub(super) struct SpawnedGhostty {
 #[derive(Debug)]
 pub(super) enum GhosttyStartError {
     Initialization(anyhow::Error),
-    Pty(anyhow::Error),
+    OpenPty(anyhow::Error),
+    Spawn(anyhow::Error),
+    PostSpawn {
+        child_pid: u32,
+        error: anyhow::Error,
+    },
 }
 
 impl std::fmt::Display for GhosttyStartError {
@@ -149,7 +171,12 @@ impl std::fmt::Display for GhosttyStartError {
             Self::Initialization(error) => {
                 write!(formatter, "Ghostty initialization failed: {error:#}")
             }
-            Self::Pty(error) => write!(formatter, "Ghostty PTY failed: {error:#}"),
+            Self::OpenPty(error) => write!(formatter, "Ghostty PTY open failed: {error:#}"),
+            Self::Spawn(error) => write!(formatter, "Ghostty child spawn failed: {error:#}"),
+            Self::PostSpawn { child_pid, error } => write!(
+                formatter,
+                "Ghostty startup failed after creating child {child_pid}: {error:#}"
+            ),
         }
     }
 }
@@ -192,6 +219,11 @@ struct SessionInner {
     command_backpressure: AtomicBool,
     promoted: AtomicBool,
     shutdown_sent: AtomicBool,
+    exit_published: AtomicBool,
+    #[cfg(test)]
+    processed_output_bytes: AtomicUsize,
+    #[cfg(test)]
+    worker_crash_injected: AtomicBool,
     resize: Mutex<ResizeState>,
     selection_anchor: Mutex<Option<(SelectionKind, Point)>>,
     selection_update: Mutex<SelectionUpdateState>,
@@ -226,6 +258,8 @@ enum RuntimeMessage {
     },
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
     RestoreScrollback(String),
+    #[cfg(test)]
+    SimulateWorkerCrash,
     Shutdown,
 }
 
@@ -235,6 +269,8 @@ struct MailboxState {
     control_count: usize,
     output_count: usize,
     available_output_buffers: Vec<Vec<u8>>,
+    accepting_input: bool,
+    accepting_output: bool,
     closed: bool,
 }
 
@@ -258,6 +294,8 @@ impl RuntimeMailbox {
         Self {
             state: Mutex::new(MailboxState {
                 available_output_buffers,
+                accepting_input: true,
+                accepting_output: true,
                 ..MailboxState::default()
             }),
             ready: Condvar::new(),
@@ -278,6 +316,9 @@ impl RuntimeMailbox {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if state.closed {
+            return Err(TrySendError::Disconnected(message));
+        }
+        if !state.accepting_input && matches!(&message, RuntimeMessage::Input(_)) {
             return Err(TrySendError::Disconnected(message));
         }
         if let RuntimeMessage::ScrollToViewportRow(row) = &message
@@ -302,12 +343,12 @@ impl RuntimeMailbox {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
+            if state.closed || !state.accepting_output {
+                return None;
+            }
             if let Some(mut buffer) = state.available_output_buffers.pop() {
                 buffer.resize(OUTPUT_CHUNK_BYTES, 0);
                 return Some(buffer);
-            }
-            if state.closed {
-                return None;
             }
             state = self
                 .output_buffer_ready
@@ -335,7 +376,7 @@ impl RuntimeMailbox {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if state.closed || state.output_count >= OUTPUT_BUFFER_COUNT {
+        if state.closed || !state.accepting_output || state.output_count >= OUTPUT_BUFFER_COUNT {
             return false;
         }
         state.output_count += 1;
@@ -412,11 +453,55 @@ impl RuntimeMailbox {
         Some(bytes)
     }
 
+    fn pending_output_count(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .output_count
+    }
+
+    fn stop_accepting_input(&self) -> usize {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.accepting_input = false;
+        let mut discarded_input_bytes = 0usize;
+        let mut retained = VecDeque::with_capacity(state.queue.len());
+        while let Some(message) = state.queue.pop_front() {
+            if let RuntimeMessage::Input(bytes) = message {
+                discarded_input_bytes = discarded_input_bytes.saturating_add(bytes.len());
+                state.control_count = state.control_count.saturating_sub(1);
+            } else {
+                retained.push_back(message);
+            }
+        }
+        state.queue = retained;
+        drop(state);
+        self.ready.notify_all();
+        discarded_input_bytes
+    }
+
+    /// Seal the producer side at the bounded drain deadline. The mailbox lock
+    /// makes this atomic with `send_output`: every buffer admitted before the
+    /// seal remains queued, while no later read can race exit publication.
+    fn stop_accepting_output(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.accepting_output = false;
+        drop(state);
+        self.output_buffer_ready.notify_all();
+    }
+
     fn close(&self) {
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.accepting_input = false;
+        state.accepting_output = false;
         state.closed = true;
         drop(state);
         self.ready.notify_all();
@@ -459,7 +544,353 @@ impl Drop for MailboxCloseGuard {
 enum StartupReport {
     Started(SpawnedGhostty),
     InitializationFailed(String),
-    PtyFailed(String),
+    OpenPtyFailed(String),
+    SpawnFailed(String),
+    PostSpawnFailed { child_pid: u32, error: String },
+}
+
+#[derive(Default)]
+struct StartupState {
+    child_spawned: AtomicBool,
+    child_pid: AtomicU32,
+    runtime_started: AtomicBool,
+}
+
+impl StartupState {
+    fn mark_child_spawned(&self, child_pid: u32) {
+        self.child_pid.store(child_pid, Ordering::Relaxed);
+        self.child_spawned.store(true, Ordering::Release);
+    }
+
+    fn child_pid_if_spawned(&self) -> Option<u32> {
+        self.child_spawned
+            .load(Ordering::Acquire)
+            .then(|| self.child_pid.load(Ordering::Relaxed))
+    }
+
+    fn mark_runtime_started(&self) {
+        self.runtime_started.store(true, Ordering::Release);
+    }
+
+    fn clear_runtime_started(&self) {
+        self.runtime_started.store(false, Ordering::Release);
+    }
+
+    fn runtime_started(&self) -> bool {
+        self.runtime_started.load(Ordering::Acquire)
+    }
+}
+
+struct StartupChildGuard {
+    child: Option<Box<dyn portable_pty::Child + Send + Sync>>,
+    termination_target: ChildTerminationTarget,
+}
+
+impl StartupChildGuard {
+    fn new(
+        child: Box<dyn portable_pty::Child + Send + Sync>,
+        termination_target: ChildTerminationTarget,
+    ) -> Self {
+        Self {
+            child: Some(child),
+            termination_target,
+        }
+    }
+
+    fn terminate(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            terminate_child(&mut *child, self.termination_target);
+        }
+    }
+
+    fn take_child(&mut self) -> Option<Box<dyn portable_pty::Child + Send + Sync>> {
+        self.child.take()
+    }
+}
+
+impl Drop for StartupChildGuard {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+
+struct RuntimeChildCleanupGuard {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    termination_target: ChildTerminationTarget,
+    armed: bool,
+}
+
+impl RuntimeChildCleanupGuard {
+    fn new(
+        child: Box<dyn portable_pty::Child + Send + Sync>,
+        termination_target: ChildTerminationTarget,
+    ) -> Self {
+        Self {
+            child,
+            termination_target,
+            armed: true,
+        }
+    }
+
+    fn child_mut(&mut self) -> &mut dyn portable_pty::Child {
+        &mut *self.child
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RuntimeChildCleanupGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            // A second panic while unwinding the runtime would abort the whole
+            // process. Cleanup is best effort and the outer boundary publishes
+            // a deterministic terminal failure even if a third-party child
+            // implementation panics here.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                terminate_child(&mut *self.child, self.termination_target);
+            }));
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChildExitReport {
+    code: i32,
+    signal: Option<String>,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuntimeLifecyclePhase {
+    Running,
+    Draining,
+    Published,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+struct RuntimeLifecycle {
+    phase: RuntimeLifecyclePhase,
+    eof: bool,
+    output_sealed: bool,
+    exit: Option<ChildExitReport>,
+    drain_deadline: Option<Instant>,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+impl RuntimeLifecycle {
+    fn new() -> Self {
+        Self {
+            phase: RuntimeLifecyclePhase::Running,
+            eof: false,
+            output_sealed: false,
+            exit: None,
+            drain_deadline: None,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.phase == RuntimeLifecyclePhase::Running
+    }
+
+    fn record_eof(&mut self) {
+        self.eof = true;
+        self.output_sealed = true;
+    }
+
+    fn start_draining(&mut self, exit: ChildExitReport, now: Instant) -> bool {
+        if !self.is_running() {
+            return false;
+        }
+        self.phase = RuntimeLifecyclePhase::Draining;
+        self.exit = Some(exit);
+        self.drain_deadline = now.checked_add(FINAL_DRAIN_TIMEOUT);
+        true
+    }
+
+    fn replace_exit(&mut self, exit: ChildExitReport) {
+        if self.phase == RuntimeLifecyclePhase::Draining {
+            self.exit = Some(exit);
+        }
+    }
+
+    fn drain_deadline_reached(&self, now: Instant) -> bool {
+        self.phase == RuntimeLifecyclePhase::Draining
+            && !self.output_sealed
+            && self.drain_deadline.is_none_or(|deadline| now >= deadline)
+    }
+
+    fn seal_output(&mut self) {
+        self.output_sealed = true;
+    }
+
+    fn take_ready_exit(
+        &mut self,
+        _now: Instant,
+        pending_output_count: usize,
+    ) -> Option<ChildExitReport> {
+        if self.phase != RuntimeLifecyclePhase::Draining {
+            return None;
+        }
+        if pending_output_count > 0 || !self.output_sealed {
+            return None;
+        }
+        self.phase = RuntimeLifecyclePhase::Published;
+        self.exit.take()
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+struct PtyCloser<M: Send + 'static> {
+    sender: Option<std::sync::mpsc::Sender<M>>,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+impl<M: Send + 'static> PtyCloser<M> {
+    fn new(thread_name: &str) -> std::io::Result<Self> {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name(thread_name.to_owned())
+            .spawn(move || {
+                if let Ok(master) = receiver.recv() {
+                    drop(master);
+                }
+            })?;
+        Ok(Self {
+            sender: Some(sender),
+            worker: Some(worker),
+        })
+    }
+
+    fn submit(&mut self, master: M) -> Result<(), M> {
+        let Some(sender) = self.sender.take() else {
+            return Err(master);
+        };
+        sender.send(master).map_err(|error| error.0)
+    }
+
+    fn join_until(&mut self, deadline: Instant) -> bool {
+        loop {
+            let Some(worker) = self.worker.as_ref() else {
+                return true;
+            };
+            if worker.is_finished() {
+                return self
+                    .worker
+                    .take()
+                    .is_none_or(|worker| worker.join().is_ok());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(1)));
+        }
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+impl<M: Send + 'static> Drop for PtyCloser<M> {
+    fn drop(&mut self) {
+        drop(self.sender.take());
+        if self
+            .worker
+            .as_ref()
+            .is_some_and(std::thread::JoinHandle::is_finished)
+        {
+            let _ = self.worker.take().and_then(|worker| worker.join().ok());
+        }
+    }
+}
+
+/// Own the ConPTY master and guarantee that even a runtime unwind transfers
+/// `ClosePseudoConsole` to a dedicated thread. The runtime must remain free to
+/// consume its fixed output pool while that API drains the output pipe.
+#[cfg(any(test, target_os = "windows"))]
+struct DrainablePtyMaster<M: Send + 'static> {
+    master: Option<M>,
+    closer: PtyCloser<M>,
+}
+
+#[cfg(any(test, target_os = "windows"))]
+impl<M: Send + 'static> DrainablePtyMaster<M> {
+    fn new(master: M, closer: PtyCloser<M>) -> Self {
+        Self {
+            master: Some(master),
+            closer,
+        }
+    }
+
+    fn get(&self) -> Option<&M> {
+        self.master.as_ref()
+    }
+
+    fn close_async(&mut self) -> bool {
+        let Some(master) = self.master.take() else {
+            return true;
+        };
+        match self.closer.submit(master) {
+            Ok(()) => true,
+            Err(master) => {
+                // A dead closer thread is already a fatal invariant failure.
+                // Leaking the handle here preserves bounded shutdown instead
+                // of risking a synchronous ClosePseudoConsole deadlock.
+                std::mem::forget(master);
+                false
+            }
+        }
+    }
+
+    fn join_until(&mut self, deadline: Instant) -> bool {
+        self.closer.join_until(deadline)
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+impl<M: Send + 'static> Drop for DrainablePtyMaster<M> {
+    fn drop(&mut self) {
+        let _ = self.close_async();
+    }
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn close_pty_for_final_drain<W, M: Send + 'static>(
+    writer: &mut Option<W>,
+    master: &mut DrainablePtyMaster<M>,
+) -> bool {
+    drop(writer.take());
+    master.close_async()
+}
+
+fn publish_child_exit_once(inner: &SessionInner, code: i32, signal: Option<String>) {
+    if inner
+        .exit_published
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_ok()
+    {
+        let _ = inner
+            .events_tx
+            .unbounded_send(GhosttyUiEvent::ChildExited { code, signal });
+    }
+}
+
+fn release_queued_input_bytes(inner: &SessionInner, released: usize) {
+    if released == 0 {
+        return;
+    }
+    let _ = inner
+        .queued_input_bytes
+        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |queued| {
+            Some(queued.saturating_sub(released))
+        });
+}
+
+fn stop_session_input(inner: &SessionInner) {
+    let discarded = inner.mailbox.stop_accepting_input();
+    release_queued_input_bytes(inner, discarded);
 }
 
 impl GhosttySession {
@@ -487,6 +918,11 @@ impl GhosttySession {
                 command_backpressure: AtomicBool::new(false),
                 promoted: AtomicBool::new(false),
                 shutdown_sent: AtomicBool::new(false),
+                exit_published: AtomicBool::new(false),
+                #[cfg(test)]
+                processed_output_bytes: AtomicUsize::new(0),
+                #[cfg(test)]
+                worker_crash_injected: AtomicBool::new(false),
                 resize: Mutex::new(ResizeState {
                     requested: size,
                     submitted: None,
@@ -509,19 +945,36 @@ impl GhosttySession {
         max_scrollback: usize,
     ) -> Result<SpawnedGhostty, GhosttyStartError> {
         let (startup_tx, startup_rx) = sync_channel(1);
+        let startup_state = Arc::new(StartupState::default());
         let inner = self.inner.clone();
         let runtime_mailbox = pending.mailbox.clone();
+        let runtime_startup_state = startup_state.clone();
         if let Err(error) = std::thread::Builder::new()
             .name("paneflow-ghostty-runtime".into())
             .spawn(move || {
-                run_runtime(
-                    inner,
-                    runtime_mailbox,
-                    params,
-                    signal_mask,
-                    max_scrollback,
-                    startup_tx,
-                );
+                let boundary_inner = inner.clone();
+                let boundary_startup_state = runtime_startup_state.clone();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_runtime(
+                        inner,
+                        runtime_mailbox,
+                        params,
+                        signal_mask,
+                        max_scrollback,
+                        startup_tx,
+                        runtime_startup_state,
+                    );
+                }));
+                if result.is_err() && boundary_startup_state.runtime_started() {
+                    boundary_inner.shutdown_sent.store(true, Ordering::Release);
+                    stop_session_input(&boundary_inner);
+                    let _ = boundary_inner
+                        .events_tx
+                        .unbounded_send(GhosttyUiEvent::RuntimeFailed(
+                            "Ghostty runtime worker terminated unexpectedly".to_owned(),
+                        ));
+                    publish_child_exit_once(&boundary_inner, -1, None);
+                }
             })
         {
             pending.mailbox.close();
@@ -535,12 +988,27 @@ impl GhosttySession {
             Ok(StartupReport::InitializationFailed(error)) => {
                 Err(GhosttyStartError::Initialization(anyhow::anyhow!(error)))
             }
-            Ok(StartupReport::PtyFailed(error)) => {
-                Err(GhosttyStartError::Pty(anyhow::anyhow!(error)))
+            Ok(StartupReport::OpenPtyFailed(error)) => {
+                Err(GhosttyStartError::OpenPty(anyhow::anyhow!(error)))
             }
-            Err(error) => Err(GhosttyStartError::Initialization(anyhow::anyhow!(
-                "Ghostty runtime exited before startup completed: {error}"
-            ))),
+            Ok(StartupReport::SpawnFailed(error)) => {
+                Err(GhosttyStartError::Spawn(anyhow::anyhow!(error)))
+            }
+            Ok(StartupReport::PostSpawnFailed { child_pid, error }) => {
+                Err(GhosttyStartError::PostSpawn {
+                    child_pid,
+                    error: anyhow::anyhow!(error),
+                })
+            }
+            Err(error) => {
+                let error =
+                    anyhow::anyhow!("Ghostty runtime exited before startup completed: {error}");
+                if let Some(child_pid) = startup_state.child_pid_if_spawned() {
+                    Err(GhosttyStartError::PostSpawn { child_pid, error })
+                } else {
+                    Err(GhosttyStartError::Initialization(error))
+                }
+            }
         }
     }
 
@@ -559,6 +1027,9 @@ impl GhosttySession {
     pub(super) fn write(&self, bytes: Vec<u8>) -> bool {
         if bytes.is_empty() {
             return true;
+        }
+        if self.inner.shutdown_sent.load(Ordering::Acquire) {
+            return false;
         }
         let len = bytes.len();
         let reserved = self.inner.queued_input_bytes.fetch_update(
@@ -606,6 +1077,9 @@ impl GhosttySession {
     }
 
     pub(super) fn resize(&self, size: TerminalWindowSize) {
+        if self.inner.shutdown_sent.load(Ordering::Acquire) {
+            return;
+        }
         let size = normalized_window_size(size);
         let mut resize = self
             .inner
@@ -634,6 +1108,9 @@ impl GhosttySession {
     }
 
     fn submit_requested_resize(&self, resize: &mut ResizeState) {
+        if self.inner.shutdown_sent.load(Ordering::Acquire) {
+            return;
+        }
         if resize.submitted.is_some()
             || (resize.applied == Some(resize.requested) && !resize.clear_initial_requested)
         {
@@ -776,6 +1253,11 @@ impl GhosttySession {
 
     pub(super) fn recent_output_lines(&self) -> Arc<[String]> {
         self.inner.recent_output_lines.read().clone()
+    }
+
+    #[cfg(test)]
+    pub(super) fn processed_output_bytes_for_test(&self) -> usize {
+        self.inner.processed_output_bytes.load(Ordering::Acquire)
     }
 
     pub(super) fn grid_metrics(&self) -> GridMetrics {
@@ -970,8 +1452,35 @@ impl GhosttySession {
             .try_send_control(RuntimeMessage::RestoreScrollback(text.to_owned()));
     }
 
+    #[cfg(test)]
+    pub(super) fn simulate_worker_crash_for_test(&self) -> bool {
+        if self.inner.shutdown_sent.load(Ordering::Acquire)
+            || self
+                .inner
+                .worker_crash_injected
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return false;
+        }
+        if self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::SimulateWorkerCrash)
+            .is_ok()
+        {
+            true
+        } else {
+            self.inner
+                .worker_crash_injected
+                .store(false, Ordering::Release);
+            false
+        }
+    }
+
     pub(super) fn shutdown(&self) {
         if !self.inner.shutdown_sent.swap(true, Ordering::AcqRel) {
+            stop_session_input(&self.inner);
             let _ = self
                 .inner
                 .mailbox
@@ -996,6 +1505,7 @@ fn run_runtime(
     signal_mask: Option<ForegroundSignalMask>,
     max_scrollback: usize,
     startup_tx: SyncSender<StartupReport>,
+    startup_state: Arc<StartupState>,
 ) {
     let _mailbox_close = MailboxCloseGuard(mailbox.clone());
     let initial_size = inner
@@ -1033,12 +1543,30 @@ fn run_runtime(
     let pair = match native_pty_system().openpty(pty_size(initial_size)) {
         Ok(pair) => pair,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::PtyFailed(format!(
+            let _ = startup_tx.send(StartupReport::OpenPtyFailed(format!(
                 "failed to open native PTY: {error:#}"
             )));
             return;
         }
     };
+    #[cfg(target_os = "linux")]
+    let master = pair.master;
+    #[cfg(target_os = "windows")]
+    let master_closer = match PtyCloser::<Box<dyn portable_pty::MasterPty + Send>>::new(
+        "paneflow-ghostty-pty-closer",
+    ) {
+        Ok(closer) => closer,
+        Err(error) => {
+            let _ = startup_tx.send(StartupReport::OpenPtyFailed(format!(
+                "failed to start ConPTY close worker (kind={:?}, os_error={:?})",
+                error.kind(),
+                error.raw_os_error(),
+            )));
+            return;
+        }
+    };
+    #[cfg(target_os = "windows")]
+    let mut master = DrainablePtyMaster::new(pair.master, master_closer);
     let mut command = CommandBuilder::new(&params.shell);
     command.args(&params.extra_args);
     command.cwd(&params.cwd);
@@ -1050,37 +1578,64 @@ fn run_runtime(
     command.env("TERM_PROGRAM", "ghostty");
     command.env("TERM_PROGRAM_VERSION", ghostty::GHOSTTY_APP_VERSION);
 
-    let restore_mask = super::pty_session::apply_thread_signal_mask(signal_mask);
-    let child = pair.slave.spawn_command(command);
-    super::pty_session::restore_thread_signal_mask(restore_mask);
-    let mut child = match child {
+    #[cfg(unix)]
+    let child = {
+        let restore_mask = super::pty_session::apply_thread_signal_mask(signal_mask);
+        let child = pair.slave.spawn_command(command);
+        super::pty_session::restore_thread_signal_mask(restore_mask);
+        child
+    };
+    #[cfg(not(unix))]
+    let child = {
+        let _ = signal_mask;
+        pair.slave.spawn_command(command)
+    };
+    let child = match child {
         Ok(child) => child,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::PtyFailed(format!(
+            let _ = startup_tx.send(StartupReport::SpawnFailed(format!(
                 "failed to spawn shell in PTY: {error:#}"
             )));
             return;
         }
     };
     let child_pid = child.process_id().unwrap_or(0);
-    let process_group_id = verified_process_group(child_pid);
-    let reader = match pair.master.try_clone_reader() {
+    startup_state.mark_child_spawned(child_pid);
+    let termination_target = child_termination_target(child_pid);
+    let mut startup_child = StartupChildGuard::new(child, termination_target);
+    #[cfg(target_os = "linux")]
+    let reader = master.try_clone_reader();
+    #[cfg(target_os = "windows")]
+    let reader = master
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("ConPTY master unavailable before reader clone"))
+        .and_then(|master| master.try_clone_reader());
+    let reader = match reader {
         Ok(reader) => reader,
         Err(error) => {
-            terminate_child(&mut *child, process_group_id);
-            let _ = startup_tx.send(StartupReport::PtyFailed(format!(
-                "failed to clone PTY reader: {error:#}"
-            )));
+            startup_child.terminate();
+            let _ = startup_tx.send(StartupReport::PostSpawnFailed {
+                child_pid,
+                error: format!("failed to clone PTY reader: {error:#}"),
+            });
             return;
         }
     };
-    let mut writer = match pair.master.take_writer() {
+    #[cfg(target_os = "linux")]
+    let writer = master.take_writer();
+    #[cfg(target_os = "windows")]
+    let writer = master
+        .get()
+        .ok_or_else(|| anyhow::anyhow!("ConPTY master unavailable before writer take"))
+        .and_then(|master| master.take_writer());
+    let writer = match writer {
         Ok(writer) => writer,
         Err(error) => {
-            terminate_child(&mut *child, process_group_id);
-            let _ = startup_tx.send(StartupReport::PtyFailed(format!(
-                "failed to take PTY writer: {error:#}"
-            )));
+            startup_child.terminate();
+            let _ = startup_tx.send(StartupReport::PostSpawnFailed {
+                child_pid,
+                error: format!("failed to take PTY writer: {error:#}"),
+            });
             return;
         }
     };
@@ -1089,14 +1644,16 @@ fn run_runtime(
         .name("paneflow-ghostty-pty-reader".into())
         .spawn(move || read_pty(reader, output_mailbox))
     {
-        terminate_child(&mut *child, process_group_id);
-        let _ = startup_tx.send(StartupReport::PtyFailed(format!(
-            "failed to start PTY reader: {error}"
-        )));
+        startup_child.terminate();
+        let _ = startup_tx.send(StartupReport::PostSpawnFailed {
+            child_pid,
+            error: format!("failed to start PTY reader: {error}"),
+        });
         return;
     }
 
     drop(pair.slave);
+    startup_state.mark_runtime_started();
     if startup_tx
         .send(StartupReport::Started(SpawnedGhostty {
             child_pid,
@@ -1104,23 +1661,64 @@ fn run_runtime(
         }))
         .is_err()
     {
-        terminate_child(&mut *child, process_group_id);
+        startup_state.clear_runtime_started();
+        startup_child.terminate();
         return;
     }
+    let Some(child) = startup_child.take_child() else {
+        return;
+    };
+    let mut child = RuntimeChildCleanupGuard::new(child, termination_target);
+    let mut writer = Some(writer);
 
     let mut marks_scanner = Osc133Scanner::default();
     let mut service_output_tail = ServiceOutputTail::default();
     let mut last_recent_output_refresh = None;
     let mut recent_output_pending = false;
+    #[cfg(target_os = "linux")]
     let mut eof = false;
+    #[cfg(target_os = "linux")]
     let mut exit = None;
+    #[cfg(target_os = "linux")]
     let mut exit_seen_at = None;
+    #[cfg(target_os = "linux")]
+    let mut child_cleaned = false;
+    #[cfg(target_os = "windows")]
+    let mut lifecycle = RuntimeLifecycle::new();
+    #[cfg(target_os = "windows")]
+    let mut shutdown_requested = false;
+    #[cfg(target_os = "windows")]
+    let mut child_reaped = false;
+    #[cfg(target_os = "windows")]
+    let mut child_wait_failure_reported = false;
     let mut runtime_failed = false;
 
     loop {
         if inner.shutdown_sent.load(Ordering::Acquire) {
-            terminate_child(&mut *child, process_group_id);
-            break;
+            #[cfg(target_os = "linux")]
+            {
+                if exit.is_none() {
+                    terminate_child(child.child_mut(), termination_target);
+                    child.disarm();
+                    break;
+                }
+            }
+            #[cfg(target_os = "windows")]
+            {
+                shutdown_requested = true;
+            }
+        }
+        #[cfg(target_os = "windows")]
+        if shutdown_requested && lifecycle.is_running() {
+            begin_windows_shutdown(
+                &inner,
+                &mut writer,
+                child.child_mut(),
+                child_pid,
+                &mut lifecycle,
+                &mut child_reaped,
+                &mut master,
+            );
         }
         match mailbox.recv_timeout(Duration::from_millis(10)) {
             Ok(RuntimeMessage::Output(bytes)) => {
@@ -1135,72 +1733,108 @@ fn run_runtime(
                     &mut recent_output_pending,
                     bytes,
                 ) {
-                    let _ = inner
-                        .events_tx
-                        .unbounded_send(GhosttyUiEvent::RuntimeFailed(error));
+                    if !runtime_failed {
+                        let _ = inner
+                            .events_tx
+                            .unbounded_send(GhosttyUiEvent::RuntimeFailed(error));
+                    }
                     runtime_failed = true;
                 }
             }
-            Ok(RuntimeMessage::Eof) => eof = true,
+            Ok(RuntimeMessage::Eof) => {
+                #[cfg(target_os = "linux")]
+                {
+                    eof = true;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    lifecycle.record_eof();
+                }
+            }
             Ok(RuntimeMessage::Input(bytes)) => {
-                inner
-                    .queued_input_bytes
-                    .fetch_sub(bytes.len(), Ordering::AcqRel);
-                if let Err(error) = writer.write_all(&bytes).and_then(|()| writer.flush())
-                    && !matches!(
+                release_queued_input_bytes(&inner, bytes.len());
+                if let Some(active_writer) = writer.as_mut()
+                    && let Err(error) = active_writer
+                        .write_all(&bytes)
+                        .and_then(|()| active_writer.flush())
+                {
+                    let expected_close = matches!(
                         error.kind(),
                         ErrorKind::BrokenPipe | ErrorKind::NotConnected
-                    )
-                {
-                    let _ = inner
-                        .events_tx
-                        .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
-                            "Ghostty PTY write failed: {error}"
-                        )));
-                    runtime_failed = true;
+                    );
+                    if !expected_close {
+                        let _ = inner
+                            .events_tx
+                            .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
+                                "Ghostty PTY write failed: {error}"
+                            )));
+                    }
+                    #[cfg(target_os = "linux")]
+                    {
+                        runtime_failed = !expected_close;
+                    }
+                    #[cfg(target_os = "windows")]
+                    {
+                        runtime_failed = true;
+                    }
                 }
                 notify_command_capacity(&inner);
             }
             Ok(RuntimeMessage::Resize(command)) => {
                 let size = command.size;
-                let resized = window_size(size)
-                    .map_err(|error| error.to_string())
-                    .and_then(|ghostty_size| {
-                        terminal
-                            .resize(ghostty_size)
-                            .map_err(|error| error.to_string())
-                    })
-                    .and_then(|()| {
-                        if command.clear_initial {
+                #[cfg(target_os = "linux")]
+                let resize_allowed = true;
+                #[cfg(target_os = "windows")]
+                let resize_allowed = lifecycle.is_running();
+                if !resize_allowed {
+                    complete_resize_during_drain(&inner);
+                } else {
+                    let resized = window_size(size)
+                        .map_err(|error| error.to_string())
+                        .and_then(|ghostty_size| {
                             terminal
-                                .clear_screen_and_scrollback()
-                                .map_err(|error| error.to_string())?;
+                                .resize(ghostty_size)
+                                .map_err(|error| error.to_string())
+                        })
+                        .and_then(|()| {
+                            if command.clear_initial {
+                                terminal
+                                    .clear_screen_and_scrollback()
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            Ok(())
+                        })
+                        .and_then(|()| {
+                            #[cfg(target_os = "linux")]
+                            let active_master = Some(master.as_ref());
+                            #[cfg(target_os = "windows")]
+                            let active_master = master.get().map(|master| master.as_ref());
+                            active_master
+                                .ok_or_else(|| {
+                                    "Ghostty PTY master closed during resize".to_owned()
+                                })?
+                                .resize(pty_size(size))
+                                .map_err(|error| error.to_string())
+                        })
+                        .and_then(|()| {
+                            update_shared_state(&inner, &mut terminal)?;
+                            queue_wakeup(&inner);
+                            Ok(())
+                        });
+                    let resize_succeeded = match resized {
+                        Ok(()) => true,
+                        Err(error) => {
+                            log::warn!(
+                                target: "paneflow::terminal::ghostty",
+                                "Ghostty resize to {}x{} failed: {error}",
+                                size.cols,
+                                size.rows,
+                            );
+                            false
                         }
-                        Ok(())
-                    })
-                    .and_then(|()| {
-                        pair.master
-                            .resize(pty_size(size))
-                            .map_err(|error| error.to_string())
-                    })
-                    .and_then(|()| {
-                        update_shared_state(&inner, &mut terminal)?;
-                        queue_wakeup(&inner);
-                        Ok(())
-                    });
-                let resize_succeeded = match resized {
-                    Ok(()) => true,
-                    Err(error) => {
-                        log::warn!(
-                            target: "paneflow::terminal::ghostty",
-                            "Ghostty resize to {}x{} failed: {error}",
-                            size.cols,
-                            size.rows,
-                        );
-                        false
-                    }
-                };
-                complete_resize(&inner, command, resize_succeeded);
+                    };
+                    complete_resize(&inner, command, resize_succeeded);
+                }
             }
             Ok(RuntimeMessage::Scroll(scroll)) => {
                 terminal.scroll(scroll);
@@ -1353,9 +1987,39 @@ fn run_runtime(
                 let _ = terminal.restore_scrollback(&text);
                 let _ = refresh_shared_state(&inner, &mut terminal);
             }
-            Ok(RuntimeMessage::Shutdown) | Err(MailboxRecvError::Disconnected) => {
-                terminate_child(&mut *child, process_group_id);
-                break;
+            #[cfg(test)]
+            Ok(RuntimeMessage::SimulateWorkerCrash) => {
+                panic!("Ghostty runtime worker failure injected for test");
+            }
+            Ok(RuntimeMessage::Shutdown) => {
+                #[cfg(target_os = "linux")]
+                {
+                    if exit.is_none() {
+                        terminate_child(child.child_mut(), termination_target);
+                        child.disarm();
+                        break;
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    shutdown_requested = true;
+                }
+            }
+            Err(MailboxRecvError::Disconnected) => {
+                #[cfg(target_os = "linux")]
+                {
+                    if exit.is_none() {
+                        terminate_child(child.child_mut(), termination_target);
+                        child.disarm();
+                        break;
+                    }
+                    eof = true;
+                }
+                #[cfg(target_os = "windows")]
+                {
+                    lifecycle.record_eof();
+                    shutdown_requested = true;
+                }
             }
             Err(MailboxRecvError::Timeout) => {}
         }
@@ -1371,47 +2035,182 @@ fn run_runtime(
 
         notify_command_capacity(&inner);
 
-        if runtime_failed {
-            terminate_child(&mut *child, process_group_id);
-            break;
+        #[cfg(target_os = "linux")]
+        {
+            if runtime_failed && exit.is_none() {
+                inner.shutdown_sent.store(true, Ordering::Release);
+                stop_session_input(&inner);
+                drop(writer.take());
+                terminate_child(child.child_mut(), termination_target);
+                child_cleaned = true;
+                exit_seen_at = Some(Instant::now());
+                exit = Some(portable_pty::ExitStatus::with_exit_code(u32::MAX));
+            }
+
+            if exit.is_none() {
+                match observe_child_exit(child.child_mut(), child_pid) {
+                    Ok(Some(status)) => {
+                        exit_seen_at = Some(Instant::now());
+                        exit = Some(status);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        let _ = inner
+                            .events_tx
+                            .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
+                                "Ghostty child wait failed: {error}"
+                            )));
+                        terminate_child(child.child_mut(), termination_target);
+                        child.disarm();
+                        break;
+                    }
+                }
+            }
+            if let Some(status) = &exit
+                && (eof
+                    || (exit_seen_at.is_some_and(|seen| seen.elapsed() >= FINAL_DRAIN_TIMEOUT)
+                        && mailbox.pending_output_count() == 0))
+            {
+                if recent_output_pending {
+                    publish_recent_output_lines(
+                        &inner,
+                        &service_output_tail,
+                        &mut recent_output_pending,
+                    );
+                    queue_service_output_ready(&inner);
+                }
+                let code = i32::try_from(status.exit_code()).unwrap_or(-1);
+                let signal = status.signal().map(str::to_owned);
+                if !child_cleaned {
+                    terminate_child(child.child_mut(), termination_target);
+                }
+                child.disarm();
+                publish_child_exit_once(&inner, code, signal);
+                break;
+            }
         }
 
-        if exit.is_none() {
-            match observe_child_exit(child_pid) {
-                Ok(Some(status)) => {
-                    exit_seen_at = Some(Instant::now());
-                    exit = Some(status);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    let _ = inner
-                        .events_tx
-                        .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
-                            "Ghostty child wait failed: {error}"
-                        )));
-                    terminate_child(&mut *child, process_group_id);
-                    break;
-                }
-            }
-        }
-        if let Some(status) = &exit
-            && (eof || exit_seen_at.is_some_and(|seen| seen.elapsed() >= FINAL_DRAIN_TIMEOUT))
+        #[cfg(target_os = "windows")]
         {
-            if recent_output_pending {
-                publish_recent_output_lines(
-                    &inner,
-                    &service_output_tail,
-                    &mut recent_output_pending,
-                );
-                queue_service_output_ready(&inner);
+            if runtime_failed && lifecycle.is_running() {
+                let _ = refresh_shared_state(&inner, &mut terminal);
+                shutdown_requested = true;
             }
-            let code = i32::try_from(status.exit_code()).unwrap_or(-1);
-            let signal = status.signal().map(str::to_owned);
-            terminate_child(&mut *child, process_group_id);
-            let _ = inner
-                .events_tx
-                .unbounded_send(GhosttyUiEvent::ChildExited { code, signal });
-            break;
+            if lifecycle.is_running() {
+                match observe_windows_child_exit(child.child_mut()) {
+                    Ok(Some(exit)) => {
+                        child_reaped = true;
+                        inner.shutdown_sent.store(true, Ordering::Release);
+                        stop_session_input(&inner);
+                        let started = Instant::now();
+                        let deadline = started
+                            .checked_add(
+                                super::pty_session::WINDOWS_PROCESS_TREE_TERMINATION_BUDGET,
+                            )
+                            .unwrap_or(started);
+                        let tree =
+                            super::pty_session::terminate_windows_process_tree(child_pid, deadline);
+                        if tree.failures > 0 || tree.timed_out > 0 || tree.deadline_exhausted {
+                            log::warn!(
+                                target: "paneflow::terminal::ghostty",
+                                "Ghostty Windows descendant cleanup incomplete (targeted={}, terminate_requested={}, already_exited={}, failures={}, timed_out={}, deadline_exhausted={})",
+                                tree.targeted,
+                                tree.terminate_requested,
+                                tree.already_exited,
+                                tree.failures,
+                                tree.timed_out,
+                                tree.deadline_exhausted,
+                            );
+                        }
+                        if !close_pty_for_final_drain(&mut writer, &mut master) {
+                            let _ = inner
+                                .events_tx
+                                .unbounded_send(GhosttyUiEvent::RuntimeFailed(
+                                    "Ghostty ConPTY close worker disconnected".to_owned(),
+                                ));
+                        }
+                        lifecycle.start_draining(exit, Instant::now());
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        if !child_wait_failure_reported {
+                            let _ = inner
+                                .events_tx
+                                .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
+                                    "Ghostty child wait failed: {error}"
+                                )));
+                            child_wait_failure_reported = true;
+                        }
+                        shutdown_requested = true;
+                    }
+                }
+            }
+            if lifecycle.is_running() && lifecycle.eof {
+                shutdown_requested = true;
+            }
+            if shutdown_requested && lifecycle.is_running() {
+                begin_windows_shutdown(
+                    &inner,
+                    &mut writer,
+                    child.child_mut(),
+                    child_pid,
+                    &mut lifecycle,
+                    &mut child_reaped,
+                    &mut master,
+                );
+            }
+            if !child_reaped && !lifecycle.is_running() {
+                match observe_windows_child_exit(child.child_mut()) {
+                    Ok(Some(exit)) => {
+                        child_reaped = true;
+                        lifecycle.replace_exit(exit);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        if !child_wait_failure_reported {
+                            log::warn!(
+                                target: "paneflow::terminal::ghostty",
+                                "Ghostty Windows child reap failed (kind={:?}, os_error={:?})",
+                                error.kind(),
+                                error.raw_os_error(),
+                            );
+                            child_wait_failure_reported = true;
+                        }
+                    }
+                }
+            }
+            let now = Instant::now();
+            if lifecycle.drain_deadline_reached(now) {
+                mailbox.stop_accepting_output();
+                lifecycle.seal_output();
+                let _ = inner
+                    .events_tx
+                    .unbounded_send(GhosttyUiEvent::RuntimeFailed(
+                        "Ghostty final drain timed out before PTY EOF".to_owned(),
+                    ));
+            }
+            if let Some(exit) = lifecycle.take_ready_exit(now, mailbox.pending_output_count()) {
+                if recent_output_pending {
+                    publish_recent_output_lines(
+                        &inner,
+                        &service_output_tail,
+                        &mut recent_output_pending,
+                    );
+                    queue_service_output_ready(&inner);
+                }
+                if child_reaped {
+                    child.disarm();
+                }
+                if lifecycle.eof {
+                    let _ = master.join_until(
+                        Instant::now()
+                            .checked_add(Duration::from_millis(100))
+                            .unwrap_or_else(Instant::now),
+                    );
+                }
+                publish_child_exit_once(&inner, exit.code, exit.signal);
+                break;
+            }
         }
     }
 }
@@ -1423,7 +2222,7 @@ fn process_output_batch(
     inner: &SessionInner,
     mailbox: &RuntimeMailbox,
     terminal: &mut ghostty::DisplayTerminal,
-    writer: &mut Box<dyn Write + Send>,
+    writer: &mut Option<Box<dyn Write + Send>>,
     marks_scanner: &mut Osc133Scanner,
     service_output_tail: &mut ServiceOutputTail,
     last_recent_output_refresh: &mut Option<Instant>,
@@ -1449,6 +2248,10 @@ fn process_output_batch(
             service_output_tail.advance(bytes);
             let emitted_mark = scan_chunk_for_marks(marks_scanner, bytes, &mut raw_marks);
             handle_engine_events(inner, terminal, writer)?;
+            #[cfg(test)]
+            inner
+                .processed_output_bytes
+                .fetch_add(bytes.len(), Ordering::AcqRel);
 
             // A command mark is positioned against the snapshot immediately
             // following its PTY chunk. Continuing the batch would attach it to
@@ -1577,6 +2380,17 @@ fn complete_resize(inner: &SessionInner, command: ResizeCommand, succeeded: bool
     notify_command_capacity(inner);
 }
 
+fn complete_resize_during_drain(inner: &SessionInner) {
+    let mut resize = inner
+        .resize
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    resize.submitted = None;
+    resize.clear_initial_requested = false;
+    drop(resize);
+    notify_command_capacity(inner);
+}
+
 fn queue_wakeup(inner: &SessionInner) {
     if !inner.ui_events.wakeup_queued.swap(true, Ordering::AcqRel) {
         let _ = inner
@@ -1667,14 +2481,18 @@ fn read_pty(mut reader: Box<dyn Read + Send>, mailbox: Arc<RuntimeMailbox>) {
 fn handle_engine_events(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
-    writer: &mut Box<dyn Write + Send>,
+    writer: &mut Option<Box<dyn Write + Send>>,
 ) -> Result<(), String> {
     for event in terminal.drain_events() {
         match event {
-            ghostty::BackendEvent::WritePty(bytes) => writer
-                .write_all(&bytes)
-                .and_then(|()| writer.flush())
-                .map_err(|error| format!("Ghostty protocol reply failed: {error}"))?,
+            ghostty::BackendEvent::WritePty(bytes) => {
+                if let Some(active_writer) = writer.as_mut() {
+                    active_writer
+                        .write_all(&bytes)
+                        .and_then(|()| active_writer.flush())
+                        .map_err(|error| format!("Ghostty protocol reply failed: {error}"))?;
+                }
+            }
             ghostty::BackendEvent::ClipboardStore(text) => queue_clipboard(inner, text),
             ghostty::BackendEvent::Title(title) => queue_title(inner, title),
             ghostty::BackendEvent::WorkingDirectory(cwd) => {
@@ -1740,6 +2558,23 @@ fn ghostty_rgb(color: gpui::Hsla) -> ghostty::Rgb {
     }
 }
 
+#[cfg(target_os = "linux")]
+type ChildTerminationTarget = Option<i32>;
+
+#[cfg(target_os = "windows")]
+type ChildTerminationTarget = u32;
+
+#[cfg(target_os = "linux")]
+fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
+    verified_process_group(child_pid)
+}
+
+#[cfg(target_os = "windows")]
+fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
+    child_pid
+}
+
+#[cfg(target_os = "linux")]
 fn verified_process_group(child_pid: u32) -> Option<i32> {
     let pid = i32::try_from(child_pid).ok().filter(|pid| *pid > 0)?;
     // SAFETY: getpgid only observes the freshly-spawned child. portable-pty
@@ -1748,7 +2583,11 @@ fn verified_process_group(child_pid: u32) -> Option<i32> {
     (unsafe { libc::getpgid(pid) } == pid).then_some(pid)
 }
 
-fn observe_child_exit(child_pid: u32) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+#[cfg(target_os = "linux")]
+fn observe_child_exit(
+    _child: &mut dyn portable_pty::Child,
+    child_pid: u32,
+) -> std::io::Result<Option<portable_pty::ExitStatus>> {
     let pid = i32::try_from(child_pid)
         .ok()
         .filter(|pid| *pid > 0)
@@ -1798,7 +2637,38 @@ fn observe_child_exit(child_pid: u32) -> std::io::Result<Option<portable_pty::Ex
     Ok(Some(exit))
 }
 
-fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: Option<i32>) {
+#[cfg(target_os = "windows")]
+fn child_exit_report(status: &portable_pty::ExitStatus) -> ChildExitReport {
+    ChildExitReport {
+        code: i32::try_from(status.exit_code()).unwrap_or(-1),
+        signal: status.signal().map(str::to_owned),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn observe_windows_child_exit(
+    child: &mut dyn portable_pty::Child,
+) -> std::io::Result<Option<ChildExitReport>> {
+    let Some(observed) = child.try_wait()? else {
+        return Ok(None);
+    };
+    let exit = match child.wait() {
+        Ok(waited) => child_exit_report(&waited),
+        Err(error) => {
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "Ghostty Windows child wait after observed exit failed (kind={:?}, os_error={:?})",
+                error.kind(),
+                error.raw_os_error(),
+            );
+            child_exit_report(&observed)
+        }
+    };
+    Ok(Some(exit))
+}
+
+#[cfg(target_os = "linux")]
+fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: ChildTerminationTarget) {
     if let Some(pid) = process_group_id {
         unsafe {
             libc::kill(-pid, libc::SIGTERM);
@@ -1828,6 +2698,117 @@ fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: Option
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsChildTerminationOutcome {
+    exit: ChildExitReport,
+    reaped: bool,
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_windows_child_until(
+    child: &mut dyn portable_pty::Child,
+    child_pid: u32,
+    deadline: Instant,
+) -> WindowsChildTerminationOutcome {
+    let tree = super::pty_session::terminate_windows_process_tree(child_pid, deadline);
+    match observe_windows_child_exit(child) {
+        Ok(Some(exit)) => return WindowsChildTerminationOutcome { exit, reaped: true },
+        Ok(None) => {}
+        Err(error) => log::warn!(
+            target: "paneflow::terminal::ghostty",
+            "Ghostty Windows child pre-kill observation failed (kind={:?}, os_error={:?})",
+            error.kind(),
+            error.raw_os_error(),
+        ),
+    }
+
+    if let Err(error) = child.kill() {
+        log::warn!(
+            target: "paneflow::terminal::ghostty",
+            "Ghostty Windows portable child kill failed (kind={:?}, os_error={:?})",
+            error.kind(),
+            error.raw_os_error(),
+        );
+    }
+    loop {
+        match observe_windows_child_exit(child) {
+            Ok(Some(exit)) => return WindowsChildTerminationOutcome { exit, reaped: true },
+            Ok(None) => {}
+            Err(error) => {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty Windows child post-kill observation failed (kind={:?}, os_error={:?})",
+                    error.kind(),
+                    error.raw_os_error(),
+                );
+                break;
+            }
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        std::thread::sleep(remaining.min(WINDOWS_CHILD_POLL_INTERVAL));
+    }
+    log::warn!(
+        target: "paneflow::terminal::ghostty",
+        "Ghostty Windows child cleanup reached its deadline (targeted={}, terminate_requested={}, already_exited={}, failures={}, timed_out={}, deadline_exhausted={})",
+        tree.targeted,
+        tree.terminate_requested,
+        tree.already_exited,
+        tree.failures,
+        tree.timed_out,
+        tree.deadline_exhausted,
+    );
+    WindowsChildTerminationOutcome {
+        exit: ChildExitReport {
+            code: -1,
+            signal: None,
+        },
+        reaped: false,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn begin_windows_shutdown(
+    inner: &SessionInner,
+    writer: &mut Option<Box<dyn Write + Send>>,
+    child: &mut dyn portable_pty::Child,
+    child_pid: u32,
+    lifecycle: &mut RuntimeLifecycle,
+    child_reaped: &mut bool,
+    master: &mut DrainablePtyMaster<Box<dyn portable_pty::MasterPty + Send>>,
+) {
+    if !lifecycle.is_running() {
+        return;
+    }
+    inner.shutdown_sent.store(true, Ordering::Release);
+    stop_session_input(inner);
+    let started = Instant::now();
+    let deadline = started
+        .checked_add(super::pty_session::WINDOWS_PROCESS_TREE_TERMINATION_BUDGET)
+        .unwrap_or(started);
+    let outcome = terminate_windows_child_until(child, child_pid, deadline);
+    if !close_pty_for_final_drain(writer, master) {
+        let _ = inner
+            .events_tx
+            .unbounded_send(GhosttyUiEvent::RuntimeFailed(
+                "Ghostty ConPTY close worker disconnected".to_owned(),
+            ));
+    }
+    *child_reaped = outcome.reaped;
+    lifecycle.start_draining(outcome.exit, Instant::now());
+}
+
+#[cfg(target_os = "windows")]
+fn terminate_child(child: &mut dyn portable_pty::Child, child_pid: ChildTerminationTarget) {
+    let started = Instant::now();
+    let deadline = started
+        .checked_add(super::pty_session::WINDOWS_PROCESS_TREE_TERMINATION_BUDGET)
+        .unwrap_or(started);
+    let _ = terminate_windows_child_until(child, child_pid, deadline);
 }
 
 fn pty_size(size: TerminalWindowSize) -> PtySize {
@@ -2118,6 +3099,76 @@ mod tests {
     use paneflow_config::schema::TerminalSurfaceProfile;
 
     #[test]
+    fn nfr_005_terminal_queue_caps_stay_below_budget() {
+        assert_eq!(OUTPUT_POOL_BYTES, 128 * 1024);
+        assert_eq!(MAX_QUEUED_INPUT_BYTES, 64 * 1024);
+    }
+
+    #[test]
+    fn slow_output_consumer_cannot_grow_the_fixed_buffer_pool() {
+        let mailbox = Arc::new(RuntimeMailbox::new());
+        for index in 0..OUTPUT_BUFFER_COUNT {
+            let mut buffer = mailbox
+                .take_output_buffer()
+                .expect("fixed output buffer must be available");
+            buffer[0] = index as u8;
+            buffer.truncate(1);
+            assert!(mailbox.send_output(buffer));
+        }
+        assert_eq!(mailbox.pending_output_count(), OUTPUT_BUFFER_COUNT);
+
+        let waiting_mailbox = mailbox.clone();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let waiting_barrier = barrier.clone();
+        let (available_tx, available_rx) = sync_channel(1);
+        let waiter = std::thread::spawn(move || {
+            waiting_barrier.wait();
+            let length = waiting_mailbox
+                .take_output_buffer()
+                .map(|buffer| buffer.len());
+            let _ = available_tx.send(length);
+        });
+        barrier.wait();
+        assert!(matches!(
+            available_rx.recv_timeout(Duration::from_millis(20)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        let RuntimeMessage::Output(buffer) = mailbox
+            .recv_timeout(Duration::ZERO)
+            .expect("slow consumer must release one queued buffer")
+        else {
+            panic!("expected queued output");
+        };
+        mailbox.recycle_output_buffer(buffer);
+        assert_eq!(
+            available_rx
+                .recv_timeout(Duration::from_secs(1))
+                .expect("blocked reader must receive the recycled buffer"),
+            Some(OUTPUT_CHUNK_BYTES)
+        );
+        mailbox.close();
+        waiter.join().expect("buffer waiter must exit");
+    }
+
+    #[test]
+    fn sealing_output_preserves_admitted_buffers_and_rejects_late_producers() {
+        let mailbox = RuntimeMailbox::new();
+        assert!(mailbox.send_output(vec![1, 2, 3]));
+
+        mailbox.stop_accepting_output();
+
+        assert!(mailbox.take_output_buffer().is_none());
+        assert!(!mailbox.send_output(vec![4, 5, 6]));
+        assert_eq!(mailbox.pending_output_count(), 1);
+        assert!(matches!(
+            mailbox.recv_timeout(Duration::ZERO),
+            Ok(RuntimeMessage::Output(bytes)) if bytes == [1, 2, 3]
+        ));
+        assert_eq!(mailbox.pending_output_count(), 0);
+    }
+
+    #[test]
     fn mailbox_bounds_output_without_blocking_control_admission() {
         let mailbox = RuntimeMailbox::new();
         for index in 0..OUTPUT_BUFFER_COUNT {
@@ -2384,17 +3435,12 @@ mod tests {
 
         let queued = pending.mailbox.drain();
         assert_eq!(queued.len(), 1);
-        assert!(matches!(
-            queued[0],
-            RuntimeMessage::Resize(ResizeCommand {
-                size: TerminalWindowSize {
-                    cols: 1,
-                    rows: 1,
-                    ..
-                },
-                clear_initial: false,
-            })
-        ));
+        let first = match &queued[0] {
+            RuntimeMessage::Resize(command) => *command,
+            _ => panic!("expected coalesced resize"),
+        };
+        assert_eq!(first.size, TerminalWindowSize::new(1, 1, 8, 16));
+        assert!(!first.clear_initial);
         let resize = session
             .inner
             .resize
@@ -2402,6 +3448,45 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         assert_eq!(resize.requested.cols, 199);
         assert_eq!(resize.requested.rows, 199);
+        assert_eq!(resize.requested.cell_width, 8);
+        assert_eq!(resize.requested.cell_height, 16);
+        drop(resize);
+
+        complete_resize(&session.inner, first, true);
+        session.retry_backpressured_commands();
+        assert!(matches!(
+            pending.mailbox.drain().as_slice(),
+            [RuntimeMessage::Resize(command)]
+                if command.size == TerminalWindowSize::new(199, 199, 8, 16)
+                    && !command.clear_initial
+        ));
+    }
+
+    #[test]
+    fn resize_during_drain_is_completed_without_apply_or_requeue() {
+        let initial = TerminalWindowSize::new(80, 24, 8, 16);
+        let requested = TerminalWindowSize::new(100, 30, 9, 18);
+        let (session, pending, _events_rx) = GhosttySession::pending(initial);
+        session.resize(requested);
+        let command = match pending.mailbox.try_recv().unwrap() {
+            RuntimeMessage::Resize(command) => command,
+            _ => panic!("expected queued resize"),
+        };
+
+        session.inner.shutdown_sent.store(true, Ordering::Release);
+        complete_resize_during_drain(&session.inner);
+        session.resize(TerminalWindowSize::new(120, 40, 10, 20));
+        session.retry_backpressured_commands();
+
+        assert!(pending.mailbox.drain().is_empty());
+        let resize = session
+            .inner
+            .resize
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(resize.submitted, None);
+        assert_eq!(resize.applied, Some(initial));
+        assert_eq!(resize.requested, command.size);
     }
 
     #[test]
@@ -2566,12 +3651,24 @@ mod tests {
     }
 
     #[test]
-    fn live_runtime_drains_final_output_and_reaps_child_once() {
+    fn live_runtime_runs_platform_shell_and_reports_one_exit() {
         let cwd = std::env::current_dir().unwrap();
+        #[cfg(target_os = "linux")]
+        let (shell, shell_quoting, extra_args) = (
+            "/bin/sh".into(),
+            super::super::types::ShellQuoting::Posix,
+            Vec::new(),
+        );
+        #[cfg(target_os = "windows")]
+        let (shell, shell_quoting, extra_args) = (
+            "cmd.exe".into(),
+            super::super::types::ShellQuoting::Cmd,
+            vec!["/D".into(), "/Q".into()],
+        );
         let params = SpawnParams {
-            shell: "/bin/sh".into(),
-            shell_quoting: super::super::types::ShellQuoting::Posix,
-            extra_args: Vec::new(),
+            shell,
+            shell_quoting,
+            extra_args,
             env: std::collections::HashMap::from([
                 ("TERM".into(), "xterm-256color".into()),
                 ("COLORTERM".into(), "truecolor".into()),
@@ -2589,15 +3686,17 @@ mod tests {
             .start(pending, params, None, 1_000)
             .expect("Ghostty runtime must spawn a portable PTY shell");
         assert!(spawned.child_pid > 0);
+        #[cfg(target_os = "linux")]
         let child_pid = spawned.child_pid;
         session.promote();
         session.resize(TerminalWindowSize::new(100, 30, 8, 16));
-        assert!(
-            session.write(
-                b"printf 'PANEFLOW_GHOSTTY_RUNTIME_OK:%s\\n' \"$TERM_PROGRAM\"; stty size; exit\n"
-                    .to_vec()
-            )
-        );
+        #[cfg(target_os = "linux")]
+        let command =
+            b"printf 'PANEFLOW_GHOSTTY_RUNTIME_OK:%s\\n' \"$TERM_PROGRAM\"; stty size; exit\n"
+                .to_vec();
+        #[cfg(target_os = "windows")]
+        let command = b"echo PANEFLOW_GHOSTTY_RUNTIME_OK:%TERM_PROGRAM%& exit\r\n".to_vec();
+        assert!(session.write(command));
 
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut exits = 0;
@@ -2631,15 +3730,181 @@ mod tests {
             rendered.contains("PANEFLOW_GHOSTTY_RUNTIME_OK:ghostty"),
             "Ghostty runtime must identify itself to terminal applications; rendered={rendered:?}; runtime_failures={runtime_failures:?}"
         );
+        #[cfg(target_os = "linux")]
         assert!(
             rendered.contains("30 100"),
             "resize must reach the child PTY; rendered={rendered:?}; runtime_failures={runtime_failures:?}"
         );
         assert_eq!(exits, 1, "child exit must be published exactly once");
-        assert_eq!(unsafe { libc::kill(child_pid as i32, 0) }, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(unsafe { libc::kill(child_pid as i32, 0) }, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+        }
+    }
+
+    #[test]
+    fn stopping_input_discards_queued_bytes_and_rejects_new_input() {
+        let mailbox = RuntimeMailbox::new();
+        assert!(
+            mailbox
+                .try_send_control(RuntimeMessage::Input(b"first".to_vec()))
+                .is_ok()
         );
+        assert!(
+            mailbox
+                .try_send_control(RuntimeMessage::ClearSelection)
+                .is_ok()
+        );
+        assert!(
+            mailbox
+                .try_send_control(RuntimeMessage::Input(b"second".to_vec()))
+                .is_ok()
+        );
+
+        assert_eq!(mailbox.stop_accepting_input(), 11);
+        assert!(matches!(
+            mailbox.try_send_control(RuntimeMessage::Input(b"late".to_vec())),
+            Err(TrySendError::Disconnected(RuntimeMessage::Input(bytes))) if bytes == b"late"
+        ));
+        assert!(matches!(
+            mailbox.drain().as_slice(),
+            [RuntimeMessage::ClearSelection]
+        ));
+    }
+
+    #[test]
+    fn simulated_worker_crash_is_admitted_once_and_rejected_after_shutdown() {
+        let (session, pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        assert!(session.simulate_worker_crash_for_test());
+        assert!(!session.simulate_worker_crash_for_test());
+        assert!(matches!(
+            pending.mailbox.try_recv(),
+            Ok(RuntimeMessage::SimulateWorkerCrash)
+        ));
+
+        let (shutdown_session, shutdown_pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        shutdown_session.shutdown();
+        assert!(!shutdown_session.simulate_worker_crash_for_test());
+        assert!(matches!(
+            shutdown_pending.mailbox.try_recv(),
+            Ok(RuntimeMessage::Shutdown)
+        ));
+    }
+
+    #[test]
+    fn lifecycle_publishes_once_after_eof() {
+        let now = Instant::now();
+        let exit = ChildExitReport {
+            code: 7,
+            signal: None,
+        };
+        let mut lifecycle = RuntimeLifecycle::new();
+
+        assert!(lifecycle.start_draining(exit.clone(), now));
+        assert!(!lifecycle.start_draining(
+            ChildExitReport {
+                code: 99,
+                signal: None,
+            },
+            now,
+        ));
+        assert_eq!(lifecycle.take_ready_exit(now, 0), None);
+        lifecycle.record_eof();
+        assert_eq!(lifecycle.take_ready_exit(now, 1), None);
+        assert_eq!(lifecycle.take_ready_exit(now, 0), Some(exit));
+        assert_eq!(lifecycle.take_ready_exit(now, 0), None);
+    }
+
+    #[test]
+    fn lifecycle_deadline_and_early_eof_converge() {
+        let now = Instant::now();
+        let deadline = now.checked_add(FINAL_DRAIN_TIMEOUT).unwrap_or(now);
+        let mut timed = RuntimeLifecycle::new();
+        assert!(timed.start_draining(
+            ChildExitReport {
+                code: -1,
+                signal: None,
+            },
+            now,
+        ));
+        assert_eq!(timed.take_ready_exit(now, 0), None);
+        assert!(timed.drain_deadline_reached(deadline));
+        assert_eq!(timed.take_ready_exit(deadline, 0), None);
+        timed.seal_output();
+        assert_eq!(timed.take_ready_exit(deadline, 1), None);
+        assert_eq!(
+            timed.take_ready_exit(deadline, 0),
+            Some(ChildExitReport {
+                code: -1,
+                signal: None,
+            })
+        );
+
+        let mut eof_first = RuntimeLifecycle::new();
+        eof_first.record_eof();
+        assert!(eof_first.start_draining(
+            ChildExitReport {
+                code: 0,
+                signal: None,
+            },
+            now,
+        ));
+        assert_eq!(
+            eof_first.take_ready_exit(now, 0),
+            Some(ChildExitReport {
+                code: 0,
+                signal: None,
+            })
+        );
+    }
+
+    #[test]
+    fn final_drain_closes_writer_and_master_before_reader_eof() {
+        struct DropProbe {
+            dropped: Arc<AtomicBool>,
+        }
+
+        impl Drop for DropProbe {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::Release);
+            }
+        }
+
+        let writer_dropped = Arc::new(AtomicBool::new(false));
+        let master_dropped = Arc::new(AtomicBool::new(false));
+        let mut writer = Some(DropProbe {
+            dropped: writer_dropped.clone(),
+        });
+        let closer = PtyCloser::new("paneflow-ghostty-test-pty-closer")
+            .expect("test closer thread must start");
+        let mut master = DrainablePtyMaster::new(
+            DropProbe {
+                dropped: master_dropped.clone(),
+            },
+            closer,
+        );
+        assert!(close_pty_for_final_drain(&mut writer, &mut master));
+        assert!(writer_dropped.load(Ordering::Acquire));
+        assert!(master.join_until(Instant::now() + Duration::from_secs(1)));
+        assert!(master_dropped.load(Ordering::Acquire));
+
+        let now = Instant::now();
+        let mut lifecycle = RuntimeLifecycle::new();
+        assert!(lifecycle.start_draining(
+            ChildExitReport {
+                code: 0,
+                signal: None,
+            },
+            now,
+        ));
+        assert_eq!(lifecycle.take_ready_exit(now, 0), None);
+        lifecycle.record_eof();
+        assert!(lifecycle.take_ready_exit(now, 0).is_some());
     }
 }

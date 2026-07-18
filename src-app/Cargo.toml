@@ -23,11 +23,13 @@ libghostty-linux = [
     "dep:portable-pty",
     "paneflow-terminal-ghostty/native",
 ]
-# Windows qualification feature. It links and validates the pinned native
-# wrapper without selecting it as a session backend before EP-002 lands.
+# Windows qualification feature. It links the pinned native wrapper and ConPTY
+# host; explicit `terminal.backend = "ghostty"` selects it while `auto` stays
+# on Alacritty until the later promotion story.
 libghostty-windows = [
-    "dep:paneflow-terminal-ghostty-windows",
-    "paneflow-terminal-ghostty-windows/native",
+    "dep:paneflow-terminal-ghostty",
+    "dep:portable-pty",
+    "paneflow-terminal-ghostty/native",
 ]
 
 [[bin]]
@@ -323,7 +325,8 @@ objc = "0.2"
 #     walks the process tree via CreateToolhelp32Snapshot / Process32{First,Next}W.
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-paneflow-terminal-ghostty-windows = { package = "paneflow-terminal-ghostty", path = "../crates/paneflow-terminal-ghostty", optional = true }
+paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", optional = true }
+portable-pty = { version = "0.9.0", optional = true }
 windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_Foundation",
@@ -332,6 +335,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Diagnostics",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ProcessStatus",
     "Win32_System_Kernel",
     # Workspace/sidebar dev-server detection on Windows: GetExtendedTcpTable
     # returns LISTEN sockets with owner PIDs, and WinSock provides AF_INET(6).
