@@ -8,6 +8,8 @@
 
 ## Project story
 
+**Built during OpenAI Build Week:** I used Codex with GPT-5.6 Sol to move Paneflow's Linux terminals from Alacritty to `libghostty-vt`. I made Ghostty the default Linux backend, added differential tests and fuzzing, and made the native builds reproducible. Every terminal pane shown in the submission screenshots is running on that new Ghostty backend. Alacritty is still available as a rollback.
+
 ### Inspiration
 
 I usually have several coding agents running at the same time. Starting them is easy. Remembering which one is waiting, which branch it touched, what failed, and whether two agents are about to work on the same thing gets messy fast.
