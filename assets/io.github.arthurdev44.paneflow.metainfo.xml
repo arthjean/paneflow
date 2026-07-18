@@ -63,6 +63,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.8.0" date="2026-07-18">
+      <description>
+        <p>Linux Ghostty terminal engine and interaction polish.</p>
+        <ul>
+          <li>Standard Linux builds now use the pinned libghostty-vt engine, with Alacritty available as an explicit per-session rollback</li>
+          <li>Official x86_64 and ARM64 Linux packages statically link verified native archives and require neither Ghostty nor Zig at runtime</li>
+          <li>Differential, fuzz, ABI, stress, packaging, and supply-chain checks protect the new terminal path</li>
+          <li>Hover feedback, fixed sidebar headers, pane geometry, terminal alignment, and desktop chrome are more consistent</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.7.11" date="2026-07-14">
       <description>
         <p>Workspace navigation and terminal legibility update.</p>
