@@ -38,6 +38,20 @@ Electron. No WSL required. No hosted agent runtime.
   <sub>Several coding agents running in parallel panes, with live status for who is thinking, running, waiting, or done.</sub>
 </p>
 
+## OpenAI Build Week
+
+For OpenAI Build Week, I used Codex with GPT-5.6 Sol to migrate Paneflow's
+Linux terminal stack to `libghostty-vt`. Codex helped me implement the
+backend-neutral session layer, safe Rust wrappers over Ghostty's C API, the
+Linux PTY lifecycle, differential and fuzz tests, reproducible native builds,
+and CI verification.
+
+I used Paneflow itself to run and supervise multiple Codex sessions side by
+side while reviewing changes, diagnosing failures, and taking over individual
+terminal panes when needed. The full scope, pre-event baseline, technical
+decisions, challenges, and lessons are documented in the
+[Build Week engineering story](BUILD_WEEK.md).
+
 ## Install
 
 Release builds are attached to the

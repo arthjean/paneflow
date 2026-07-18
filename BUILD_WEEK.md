@@ -80,7 +80,7 @@ The migration also reinforced why Paneflow exists. Once several agents are worki
 
 ### What's next
 
-I plan to keep deepening Conductor, agent observability, and worktree review. The Ghostty backend will stay Linux-first while I collect more real-world usage before expanding it to additional platforms.
+I plan to keep deepening Conductor, agent observability, and worktree review. My next goal is to bring the Ghostty backend to Windows, then macOS, and fully replace Alacritty in Paneflow.
 
 Repo: https://github.com/arthjean/paneflow
 
