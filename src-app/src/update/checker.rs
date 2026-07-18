@@ -25,7 +25,7 @@ const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 /// effective URL is resolved by [`update_feed_url`] which lets the e2e
 /// harness (US-005) point the checker at a localhost fixture without
 /// patching the binary.
-const DEFAULT_FEED_URL: &str = "https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest";
+const DEFAULT_FEED_URL: &str = "https://api.github.com/repos/arthjean/paneflow/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Hosts the update flow is allowed to talk to (US-007). GitHub serves the
@@ -507,7 +507,7 @@ pub(crate) fn check_github_release(
             log::warn!("update check: PANEFLOW_DEV_FORCE_UPDATE active, faking v{version}");
             return UpdateStatus::Available {
                 version,
-                url: "https://github.com/ArthurDEV44/paneflow/releases".to_string(),
+                url: "https://github.com/arthjean/paneflow/releases".to_string(),
                 asset_url: None,
                 asset_format: None,
             };
@@ -620,7 +620,7 @@ mod tests {
             // accepts these fixtures (real release assets live under
             // github.com/.../releases/download/).
             browser_download_url: format!(
-                "https://github.com/ArthurDEV44/paneflow/releases/download/v0/{name}"
+                "https://github.com/arthjean/paneflow/releases/download/v0/{name}"
             ),
         }
     }
@@ -684,15 +684,15 @@ mod tests {
     fn https_allowlisted_host_allowed_in_release() {
         // `false` == release build (no debug assertions).
         assert!(is_allowed_update_url_impl(
-            "https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest",
+            "https://api.github.com/repos/arthjean/paneflow/releases/latest",
             false
         ));
         assert!(is_allowed_update_url_impl(
-            "HTTPS://API.GITHUB.COM/repos/ArthurDEV44/paneflow/releases/latest",
+            "HTTPS://API.GITHUB.COM/repos/arthjean/paneflow/releases/latest",
             false
         ));
         assert!(is_allowed_update_url_impl(
-            "https://github.com/ArthurDEV44/paneflow/releases/download/v1/x.tar.gz",
+            "https://github.com/arthjean/paneflow/releases/download/v1/x.tar.gz",
             false
         ));
     }

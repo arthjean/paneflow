@@ -36,7 +36,7 @@ below for the exception.
 ### Direct MSI download
 
 Download `paneflow-<version>-x86_64-pc-windows-msvc.msi` from the
-[latest GitHub Release](https://github.com/ArthurDEV44/paneflow/releases/latest)
+[latest GitHub Release](https://github.com/arthjean/paneflow/releases/latest)
 and double-click to install. The installer is signed via Azure
 Artifact Signing under the **Strivex** certificate profile -
 SmartScreen may show "Windows protected your PC" with publisher
@@ -189,7 +189,7 @@ so users know what to expect.
 Windows bugs use a dedicated issue template so the first responders
 get the runtime context they need without a back-and-forth:
 
-- **Template:** [`Windows bug report`](https://github.com/ArthurDEV44/paneflow/issues/new?template=windows-bug-report.md)
+- **Template:** [`Windows bug report`](https://github.com/arthjean/paneflow/issues/new?template=windows-bug-report.md)
   (`.github/ISSUE_TEMPLATE/windows-bug-report.md`). Includes fields
   for Windows version + build, architecture, install format, and
   an embedded logs block.

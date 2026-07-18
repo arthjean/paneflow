@@ -3,7 +3,7 @@
 ## Supported versions
 
 Security fixes land on the latest release. Always run the most recent version
-from the [releases page](https://github.com/ArthurDEV44/paneflow/releases/latest)
+from the [releases page](https://github.com/arthjean/paneflow/releases/latest)
 or your package manager.
 
 ## Reporting a vulnerability

@@ -8,7 +8,7 @@ Canonical: https://paneflow.dev/docs/configuration/schema
 
 Every key Paneflow recognises today, grouped by what it controls. All
 keys are optional unless noted. The authoritative machine-readable source is
-the [JSON Schema](https://github.com/ArthurDEV44/paneflow/raw/main/schemas/paneflow.schema.json)
+the [JSON Schema](https://github.com/arthjean/paneflow/raw/main/schemas/paneflow.schema.json)
 shipped with each release.
 
 ## File location [#file-location]
@@ -245,7 +245,7 @@ unconditionally.
 
 ```json
 {
-  "$schema": "https://github.com/ArthurDEV44/paneflow/raw/main/schemas/paneflow.schema.json",
+  "$schema": "https://github.com/arthjean/paneflow/raw/main/schemas/paneflow.schema.json",
   "$schemaVersion": "1.0.0",
   "default_shell": null,
   "theme": "One Dark",

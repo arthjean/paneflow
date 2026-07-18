@@ -172,7 +172,7 @@ paneflow --version
 Or install the cask:
 
 ```bash
-brew tap arthurdev44/paneflow
+brew tap arthjean/paneflow
 brew install --cask paneflow
 ```
 
@@ -198,7 +198,7 @@ xattr -d com.apple.quarantine /Applications/PaneFlow.app
 
 Fresh publisher reputation can still trigger SmartScreen. Confirm the
 installer came from the
-[latest release](https://github.com/ArthurDEV44/paneflow/releases/latest),
+[latest release](https://github.com/arthjean/paneflow/releases/latest),
 then choose **More info** -> **Run anyway**.
 
 For a signature check:
@@ -216,8 +216,8 @@ does not match the release asset, download the MSI again from GitHub.
 
 Use the platform template:
 
-- [Linux or macOS bug](https://github.com/ArthurDEV44/paneflow/issues/new?template=bug_report.md): OS, architecture, display server, install format, reproduction, and logs.
-- [Windows bug](https://github.com/ArthurDEV44/paneflow/issues/new?template=windows-bug-report.md): Windows build, CPU, GPU driver, install format, display environment, logs, and backtrace.
+- [Linux or macOS bug](https://github.com/arthjean/paneflow/issues/new?template=bug_report.md): OS, architecture, display server, install format, reproduction, and logs.
+- [Windows bug](https://github.com/arthjean/paneflow/issues/new?template=windows-bug-report.md): Windows build, CPU, GPU driver, install format, display environment, logs, and backtrace.
 
 For Linux or macOS:
 

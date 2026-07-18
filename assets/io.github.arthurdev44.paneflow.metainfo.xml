@@ -33,7 +33,7 @@
   <launchable type="desktop-id">paneflow.desktop</launchable>
 
   <url type="homepage">https://paneflow.dev</url>
-  <url type="bugtracker">https://github.com/ArthurDEV44/paneflow/issues</url>
+  <url type="bugtracker">https://github.com/arthjean/paneflow/issues</url>
   <!-- vcs-browser URL type is flagged url-invalid-type by the
        appstream package on ubuntu-22.04; homepage already points at
        the repo so no information is lost. -->

@@ -123,6 +123,6 @@ not load `theme.json`, and there is no custom palette format in
 `paneflow.json` today.
 
 If you want a specific palette, open a
-[GitHub issue](https://github.com/ArthurDEV44/paneflow/issues) with
+[GitHub issue](https://github.com/arthjean/paneflow/issues) with
 the use case and palette. Bundled themes are tuned in
 `src-app/src/theme/builtin.rs` and ship with each release.

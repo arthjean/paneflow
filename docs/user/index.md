@@ -78,7 +78,7 @@ includes terminal contents, prompts, or paths, and
 `PANEFLOW_NO_TELEMETRY=1` disables it unconditionally. The project is
 funded out of pocket by its creator as a developer tool, not a product.
 Pricing is not on the roadmap; the source lives at
-[github.com/ArthurDEV44/paneflow](https://github.com/ArthurDEV44/paneflow).
+[github.com/arthjean/paneflow](https://github.com/arthjean/paneflow).
 
 ### Why pick Paneflow if I already use tmux? [#why-pick-paneflow-if-i-already-use-tmux]
 
@@ -120,6 +120,6 @@ WSL2 + WSLg if you prefer. See the
 
 ## Help and feedback [#help-and-feedback]
 
-* File a bug or feature request on [GitHub Issues](https://github.com/ArthurDEV44/paneflow/issues).
+* File a bug or feature request on [GitHub Issues](https://github.com/arthjean/paneflow/issues).
 * Browse all release artifacts on the [download page](/download).
-* Source code: [github.com/ArthurDEV44/paneflow](https://github.com/ArthurDEV44/paneflow).
+* Source code: [github.com/arthjean/paneflow](https://github.com/arthjean/paneflow).

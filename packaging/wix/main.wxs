@@ -197,7 +197,7 @@
         <Icon Id='PaneflowICO' SourceFile='packaging/wix/paneflow.ico'/>
         <Property Id='ARPPRODUCTICON' Value='PaneflowICO'/>
 
-        <Property Id='ARPHELPLINK' Value='https://github.com/ArthurDEV44/paneflow'/>
+        <Property Id='ARPHELPLINK' Value='https://github.com/arthjean/paneflow'/>
         <Property Id='ARPURLINFOABOUT' Value='https://paneflow.dev'/>
 
         <UI>

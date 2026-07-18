@@ -8,8 +8,8 @@ on Zed's GPUI. Issues, fixes, and well-scoped features are all welcome.
 
 - For anything larger than a small fix, **open an issue or a discussion first**
   so we can agree on the approach before you invest time.
-- Browse [open issues](https://github.com/ArthurDEV44/paneflow/issues) and
-  [Discussions](https://github.com/ArthurDEV44/paneflow/discussions) to see what
+- Browse [open issues](https://github.com/arthjean/paneflow/issues) and
+  [Discussions](https://github.com/arthjean/paneflow/discussions) to see what
   is already in flight.
 
 ## Development setup

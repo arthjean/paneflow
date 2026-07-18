@@ -77,7 +77,7 @@ Fetch the four aarch64 artifacts from the candidate release. Replace
 
 ```bash
 TAG=v0.2.0-rc.1
-base=https://github.com/ArthurDEV44/paneflow/releases/download/${TAG}
+base=https://github.com/arthjean/paneflow/releases/download/${TAG}
 for f in "paneflow-${TAG}-aarch64.tar.gz" \
          "paneflow-${TAG}-aarch64.deb" \
          "paneflow-${TAG}-aarch64.rpm" \

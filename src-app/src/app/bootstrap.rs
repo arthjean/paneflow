@@ -1341,7 +1341,7 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
     cx.on_action(|_: &OpenHelp, cx| {
         with_active_paneflow_window(cx, |app, _window, cx| {
             if let Err(e) =
-                crate::external_open::open_url("https://github.com/ArthurDEV44/paneflow#readme")
+                crate::external_open::open_url("https://github.com/arthjean/paneflow#readme")
             {
                 log::warn!("Help > PaneFlow Help: could not open browser: {e}");
                 app.show_toast(format!("Could not open help: {e}"), cx);
@@ -1389,7 +1389,7 @@ pub(crate) fn warn_if_rosetta_translated() {
         log::warn!(
             "running under Rosetta 2 translation - GPU rendering will be \
              degraded. For best performance, download the matching \
-             architecture from https://github.com/ArthurDEV44/paneflow/releases"
+             architecture from https://github.com/arthjean/paneflow/releases"
         );
     }
 }

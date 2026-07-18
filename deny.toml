@@ -80,7 +80,7 @@ ignore = [
     # Why ignored:
     #   * The only remaining vulnerable quick-xml instances after the
     #     notify-rust refresh are transitive:
-    #       - quick-xml 0.38.4 via ArthurDEV44/zed mermaid_render,
+    #       - quick-xml 0.38.4 via arthjean/zed mermaid_render,
     #       - quick-xml 0.39.2 via syntect/plist and Linux Wayland/zbus tooling.
     #   * Paneflow has no direct quick_xml usage (`rg 'quick_xml|quick-xml'
     #     src-app crates -g '*.rs'` returns no Rust call sites), so the app
@@ -103,7 +103,7 @@ ignore = [
     # NOTE (2026-05-28, prd-cli-hardening-followup-2026-Q3 US-027):
     # a preemptive ignore for RUSTSEC-2025-0052 (async-std
     # discontinued) was removed -- `async-std` is NOT in the current
-    # Cargo.lock (the ArthurDEV44/zed fork pin does not pull
+    # Cargo.lock (the arthjean/zed fork pin does not pull
     # zed/http_client → async-tar → async-std). cargo-deny rejects
     # an `ignore` entry that matches no crate (`unmatched-skip`), so
     # the dead entry was failing the `security_audit` PR gate AND the

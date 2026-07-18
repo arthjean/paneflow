@@ -148,7 +148,7 @@ shred -u /tmp/paneflow-release-private.asc
 ```
 
 Substitute `<owner>/<repo>` for the repository slug (e.g.,
-`ArthurDEV44/paneflow`). If you run `gh secret set` from inside a
+`arthjean/paneflow`). If you run `gh secret set` from inside a
 checked-out clone, the `-R` flag is optional - `gh` auto-detects the
 repo from `.git` config.
 

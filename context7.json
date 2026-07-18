@@ -36,6 +36,6 @@
     "Paneflow ships native builds for Linux, macOS Apple Silicon, and Windows x64. Windows ARM64 and macOS Intel are not shipped today.",
     "The live documentation is at https://paneflow.dev/docs. Raw Markdown twins of every docs page are served at the page URL plus .md (e.g. https://paneflow.dev/docs/installation/linux.md)."
   ],
-  "url": "https://context7.com/arthurdev44/paneflow",
+  "url": "https://context7.com/arthjean/paneflow",
   "public_key": "pk_akUTOuCOJmCgVquLtFJRo"
 }

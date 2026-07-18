@@ -1,11 +1,11 @@
 # Paneflow
 
 <p align="center">
-  <a href="https://github.com/ArthurDEV44/paneflow"><img alt="Paneflow" src="assets/badges/paneflow.svg?v=2"></a>
-  <a href="https://github.com/ArthurDEV44/paneflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/ArthurDEV44/paneflow?sort=semver"></a>
-  <a href="https://github.com/ArthurDEV44/paneflow/actions/workflows/run_tests.yml"><img alt="Tests" src="https://github.com/ArthurDEV44/paneflow/actions/workflows/run_tests.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/ArthurDEV44/paneflow"></a>
-  <a href="https://github.com/ArthurDEV44/paneflow/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/ArthurDEV44/paneflow/total"></a>
+  <a href="https://github.com/arthjean/paneflow"><img alt="Paneflow" src="assets/badges/paneflow.svg?v=2"></a>
+  <a href="https://github.com/arthjean/paneflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/arthjean/paneflow?sort=semver"></a>
+  <a href="https://github.com/arthjean/paneflow/actions/workflows/run_tests.yml"><img alt="Tests" src="https://github.com/arthjean/paneflow/actions/workflows/run_tests.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/arthjean/paneflow"></a>
+  <a href="https://github.com/arthjean/paneflow/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/arthjean/paneflow/total"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-1.96.1-orange?logo=rust">
 </p>
@@ -55,7 +55,7 @@ decisions, challenges, and lessons are documented in the
 ## Install
 
 Release builds are attached to the
-[latest GitHub release](https://github.com/ArthurDEV44/paneflow/releases/latest).
+[latest GitHub release](https://github.com/arthjean/paneflow/releases/latest).
 You do not need Rust unless you are building from source.
 Asset filenames use the version without the leading `v` from the Git tag
 (`paneflow-0.7.2-x86_64.AppImage`, not `paneflow-v0.7.2-...`).
@@ -71,10 +71,10 @@ Asset filenames use the version without the leading `v` from the Git tag
 ### Linux quickstart
 
 ```bash
-VER=$(curl -fsSL https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest \
+VER=$(curl -fsSL https://api.github.com/repos/arthjean/paneflow/releases/latest \
       | grep -oE '"tag_name":\s*"v[^"]+"' | cut -d\" -f4 | sed 's/^v//')
 ARCH=$(uname -m)
-curl -LO "https://github.com/ArthurDEV44/paneflow/releases/latest/download/paneflow-${VER}-${ARCH}.AppImage"
+curl -LO "https://github.com/arthjean/paneflow/releases/latest/download/paneflow-${VER}-${ARCH}.AppImage"
 chmod +x "paneflow-${VER}-${ARCH}.AppImage"
 ./paneflow-${VER}-${ARCH}.AppImage
 ```
@@ -87,13 +87,13 @@ release.
 ### macOS
 
 Download `paneflow-X.Y.Z-aarch64-apple-darwin.dmg` from the
-[latest release](https://github.com/ArthurDEV44/paneflow/releases/latest), open
+[latest release](https://github.com/arthjean/paneflow/releases/latest), open
 it, and drag `PaneFlow.app` into `/Applications`.
 
 A Homebrew tap is available:
 
 ```bash
-brew tap arthurdev44/paneflow
+brew tap arthjean/paneflow
 brew install --cask paneflow
 ```
 
@@ -102,7 +102,7 @@ If the cask lags a fresh release, use the DMG directly.
 ### Windows
 
 Download `paneflow-X.Y.Z-x86_64-pc-windows-msvc.msi` from the
-[latest release](https://github.com/ArthurDEV44/paneflow/releases/latest) and
+[latest release](https://github.com/arthjean/paneflow/releases/latest) and
 double-click it. The MSI is signed; verify it with:
 
 ```powershell
@@ -217,7 +217,7 @@ Paneflow is intentionally local-first.
 Paneflow pins Rust 1.96.1 through [rust-toolchain.toml](rust-toolchain.toml).
 
 ```bash
-git clone https://github.com/ArthurDEV44/paneflow.git
+git clone https://github.com/arthjean/paneflow.git
 cd paneflow
 cargo build --release -p paneflow-app
 cargo run -p paneflow-app

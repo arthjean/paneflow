@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://github.com/ArthurDEV44/paneflow/raw/main/schemas/paneflow.schema.json",
+  "$id": "https://github.com/arthjean/paneflow/raw/main/schemas/paneflow.schema.json",
   "title": "Paneflow configuration",
   "description": "Schema for paneflow.json. Lives at ~/.config/paneflow/paneflow.json on Linux, ~/Library/Application Support/paneflow/paneflow.json on macOS, and %APPDATA%\\paneflow\\paneflow.json on Windows. The runtime is lenient: unknown top-level keys are ignored, so the schema's `additionalProperties: false` is an editor-side aid, not a runtime constraint.",
   "type": "object",

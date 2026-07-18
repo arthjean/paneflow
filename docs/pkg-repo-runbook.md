@@ -123,7 +123,7 @@ sudo apt install paneflow
 # Bootstrap: download any released .rpm once, install it locally - its
 # %post scriptlet drops /etc/yum.repos.d/paneflow.repo pointing at
 # pkg.paneflow.dev (US-016). Subsequent upgrades are automatic.
-curl -fsSLO https://github.com/ArthurDEV44/paneflow/releases/latest/download/paneflow-vX.Y.Z-x86_64.rpm
+curl -fsSLO https://github.com/arthjean/paneflow/releases/latest/download/paneflow-vX.Y.Z-x86_64.rpm
 sudo dnf install -y ./paneflow-vX.Y.Z-x86_64.rpm
 sudo dnf check-update paneflow   # should show pkg.paneflow.dev as a source
 sudo dnf upgrade paneflow

@@ -13,7 +13,7 @@ works as an alternative if you already live inside WSL2.
 
   **TL;DR.** Download `paneflow-<version>-x86_64-pc-windows-msvc.msi`
   from the [download page](/download) or the
-  [GitHub releases](https://github.com/ArthurDEV44/paneflow/releases),
+  [GitHub releases](https://github.com/arthjean/paneflow/releases),
   run it, and launch Paneflow from the Start menu. New terminals default
   to PowerShell.
 
@@ -23,7 +23,7 @@ works as an alternative if you already live inside WSL2.
 
 1. Open the [download page](/download) and pick the Windows build, or
    grab the `.msi` directly from the
-   [latest release](https://github.com/ArthurDEV44/paneflow/releases/latest):
+   [latest release](https://github.com/arthjean/paneflow/releases/latest):
 
    ```text
    paneflow-<version>-x86_64-pc-windows-msvc.msi
@@ -67,10 +67,10 @@ inside WSL2. The Linux build runs there unchanged.
 3. **Install Paneflow's Linux `.deb`** inside the WSL2 distribution:
 
    ```bash
-   VERSION=$(curl -fsSL https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest \
+   VERSION=$(curl -fsSL https://api.github.com/repos/arthjean/paneflow/releases/latest \
      | grep -oE '"tag_name":\s*"v[^"]+"' | cut -d\" -f4 | sed 's/^v//')
    ARCH=$(uname -m)
-   curl -fLO "https://github.com/ArthurDEV44/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.deb"
+   curl -fLO "https://github.com/arthjean/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.deb"
    sudo apt install "./paneflow-${VERSION}-${ARCH}.deb"
    paneflow
    ```

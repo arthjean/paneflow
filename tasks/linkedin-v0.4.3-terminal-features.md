@@ -27,7 +27,7 @@ Nouveautés de la release :
 
 Vidéo démo (quelques secondes) qui montre les deux en action.
 
-0.4.3 est dispo (Linux/macOS, Windows en cours). Releases + changelog : https://github.com/ArthurDEV44/paneflow/releases
+0.4.3 est dispo (Linux/macOS, Windows en cours). Releases + changelog : https://github.com/arthjean/paneflow/releases
 
 ---
 

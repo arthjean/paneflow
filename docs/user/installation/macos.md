@@ -22,7 +22,7 @@ The macOS release asset is a signed and notarized `.dmg`. The bundle
 Install the Paneflow cask from the public tap:
 
 ```bash
-brew install --cask arthurdev44/paneflow/paneflow
+brew install --cask arthjean/paneflow/paneflow
 ```
 
 Homebrew mounts the DMG, copies `PaneFlow.app` into Applications, and
@@ -37,7 +37,7 @@ Open the latest GitHub release, download the Apple Silicon asset named
 `paneflow-<version>-aarch64-apple-darwin.dmg`, then open it:
 
 ```bash
-open https://github.com/ArthurDEV44/paneflow/releases/latest
+open https://github.com/arthjean/paneflow/releases/latest
 ```
 
 Finder mounts the disk image with `PaneFlow.app` and an `Applications`

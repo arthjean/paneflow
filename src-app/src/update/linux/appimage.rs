@@ -571,7 +571,7 @@ mod tests {
         // fetch, so the asset URL is never consumed here.
         let r = run_update(
             Path::new(""),
-            "https://github.com/ArthurDEV44/paneflow/releases/download/v0/x.AppImage",
+            "https://github.com/arthjean/paneflow/releases/download/v0/x.AppImage",
         );
         let err = r.unwrap_err().to_string();
         assert!(
@@ -584,7 +584,7 @@ mod tests {
     fn nonexistent_source_path_errors() {
         let r = run_update(
             Path::new("/tmp/paneflow-does-not-exist-xyz.AppImage"),
-            "https://github.com/ArthurDEV44/paneflow/releases/download/v0/x.AppImage",
+            "https://github.com/arthjean/paneflow/releases/download/v0/x.AppImage",
         );
         let err = r.unwrap_err().to_string();
         assert!(
@@ -709,7 +709,7 @@ mod tests {
         // Unsigned test build → fetch_and_verify fails closed before any HTTP.
         let verify = super::super::super::signature::fetch_and_verify(
             &candidate,
-            "https://github.com/ArthurDEV44/paneflow/releases/download/v0/x.AppImage",
+            "https://github.com/arthjean/paneflow/releases/download/v0/x.AppImage",
         );
         assert!(verify.is_err(), "unsigned build must fail closed");
         // run_update's failure arm: delete the candidate, never rename.

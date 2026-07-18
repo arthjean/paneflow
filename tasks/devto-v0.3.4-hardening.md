@@ -44,7 +44,7 @@ markdown_append/pre_fix_concat     ~94.4 us
 markdown_append/post_fix_buffered  ~2.44 us
 ```
 
-About 38x on that path. Nine downstream Zed consumers of the widget compile unchanged. Paneflow builds against `ArthurDEV44/zed@paneflow/markdown-append-fix` (pinned by exact sha in `Cargo.lock`, see `src-app/Cargo.toml:47-55`) and reverts to upstream the moment the PR merges.
+About 38x on that path. Nine downstream Zed consumers of the widget compile unchanged. Paneflow builds against `arthjean/zed@paneflow/markdown-append-fix` (pinned by exact sha in `Cargo.lock`, see `src-app/Cargo.toml:47-55`) and reverts to upstream the moment the PR merges.
 
 **Part 2, bound the call rate, in app code.** Even with an O(1) append, calling it at 60 Hz for a long response is wasteful. The streaming tick is now adaptive (`src-app/src/agents/thread_view.rs:44-66`):
 
@@ -173,4 +173,4 @@ So this does not regress next month:
 
 "Leaner than the wrapper" is a marketing line until it survives a real workday. The work in v0.3.4 is what turns it into a property you can measure: bounded memory on long sessions, no main thread panic under resource exhaustion, a locked down IPC surface, and a streaming path that does not melt a core.
 
-Paneflow is free and open source: [github.com/ArthurDEV44/paneflow](https://github.com/ArthurDEV44/paneflow).
+Paneflow is free and open source: [github.com/arthjean/paneflow](https://github.com/arthjean/paneflow).

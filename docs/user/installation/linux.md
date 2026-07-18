@@ -34,8 +34,8 @@ and no files written outside the directory where you place it.
 ```bash
 ARCH="$(uname -m)"
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
-VERSION="$(curl -fsSL https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
-curl -fLO "https://github.com/ArthurDEV44/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.AppImage"
+VERSION="$(curl -fsSL https://api.github.com/repos/arthjean/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
+curl -fLO "https://github.com/arthjean/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.AppImage"
 chmod +x "paneflow-${VERSION}-${ARCH}.AppImage"
 ./"paneflow-${VERSION}-${ARCH}.AppImage"
 ```
@@ -72,8 +72,8 @@ case "$DEB_ARCH" in
   arm64) ARCH="aarch64" ;;
   *) echo "Unsupported architecture: $DEB_ARCH" >&2; exit 1 ;;
 esac
-VERSION="$(curl -fsSL https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
-curl -fLO "https://github.com/ArthurDEV44/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.deb"
+VERSION="$(curl -fsSL https://api.github.com/repos/arthjean/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
+curl -fLO "https://github.com/arthjean/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.deb"
 sudo apt install "./paneflow-${VERSION}-${ARCH}.deb"
 ```
 
@@ -91,8 +91,8 @@ later updates.
 ```bash
 ARCH="$(uname -m)"
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
-VERSION="$(curl -fsSL https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
-curl -fLO "https://github.com/ArthurDEV44/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.rpm"
+VERSION="$(curl -fsSL https://api.github.com/repos/arthjean/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
+curl -fLO "https://github.com/arthjean/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.rpm"
 sudo dnf install "./paneflow-${VERSION}-${ARCH}.rpm"
 ```
 
@@ -111,8 +111,8 @@ with `bin/paneflow`, desktop metadata, icons, and an installer script.
 ```bash
 ARCH="$(uname -m)"
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
-VERSION="$(curl -fsSL https://api.github.com/repos/ArthurDEV44/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
-curl -fLO "https://github.com/ArthurDEV44/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.tar.gz"
+VERSION="$(curl -fsSL https://api.github.com/repos/arthjean/paneflow/releases/latest | sed -nE 's/.*"tag_name": "v([^"]+)".*/\1/p')"
+curl -fLO "https://github.com/arthjean/paneflow/releases/download/v${VERSION}/paneflow-${VERSION}-${ARCH}.tar.gz"
 tar -xzf "paneflow-${VERSION}-${ARCH}.tar.gz"
 cd paneflow.app
 ./install.sh

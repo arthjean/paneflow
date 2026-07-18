@@ -21,19 +21,19 @@ For CLI fields, events, config keys, and exit codes, keep the [Conductor referen
 Install the conductor skill before asking Codex, Claude Code, OpenCode, or another CLI agent to coordinate panes:
 
 ```bash
-bunx skills add https://github.com/ArthurDEV44/paneflow/tree/main/skills/paneflow-conductor
+bunx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor
 ```
 
 ```bash
-npx skills add https://github.com/ArthurDEV44/paneflow/tree/main/skills/paneflow-conductor
+npx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor
 ```
 
 ```bash
-pnpm dlx skills add https://github.com/ArthurDEV44/paneflow/tree/main/skills/paneflow-conductor
+pnpm dlx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor
 ```
 
 ```bash
-yarn dlx skills add https://github.com/ArthurDEV44/paneflow/tree/main/skills/paneflow-conductor
+yarn dlx skills add https://github.com/arthjean/paneflow/tree/main/skills/paneflow-conductor
 ```
 
 Add `-a codex`, `-a claude-code`, or another supported agent flag when you want to install it for one runtime only. Restart that agent session after installation so it reloads its skill catalog.

@@ -10,7 +10,7 @@ Canonical: https://paneflow.dev/blog/paneflow-conductor
 
 Running one coding agent is easy. Running several at once turns into a coordination problem: which agent is working, which one is waiting, which branch is changing, and which result should feed the next step?
 
-Paneflow Conductor ships in [Paneflow 0.6.0](https://github.com/ArthurDEV44/paneflow/releases/tag/v0.6.0) to make that coordination explicit. One agent can discover its peers, read their output, send the next prompt, and wait for the turn to finish through the public `paneflow` CLI.
+Paneflow Conductor ships in [Paneflow 0.6.0](https://github.com/arthjean/paneflow/releases/tag/v0.6.0) to make that coordination explicit. One agent can discover its peers, read their output, send the next prompt, and wait for the turn to finish through the public `paneflow` CLI.
 
 ## One CLI for the whole fleet [#one-cli-for-the-whole-fleet]
 

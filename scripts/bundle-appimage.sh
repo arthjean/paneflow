@@ -123,7 +123,7 @@ install -m 644 "$REPO_ROOT/native/libghostty/THIRD_PARTY_NOTICES.md" \
 # NOTE: UPDATE_INFORMATION must be set in the environment BEFORE linuxdeploy
 # runs so the string is embedded at the fixed ELF offset recognised by
 # AppImageUpdate / appimageupdatetool.
-export UPDATE_INFORMATION="gh-releases-zsync|ArthurDEV44|paneflow|latest|paneflow-*-${ARCH}.AppImage.zsync"
+export UPDATE_INFORMATION="gh-releases-zsync|arthjean|paneflow|latest|paneflow-*-${ARCH}.AppImage.zsync"
 
 # Force linuxdeploy to use extract-and-run mode so FUSE 2 isn't required on
 # build hosts that don't have libfuse2 (Fedora 43, Ubuntu 24.04, etc.).

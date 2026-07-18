@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and ideas
-    url: https://github.com/ArthurDEV44/paneflow/discussions
+    url: https://github.com/arthjean/paneflow/discussions
     about: Use Discussions for support questions, roadmap ideas, and early feature proposals.
   - name: Latest release
-    url: https://github.com/ArthurDEV44/paneflow/releases/latest
+    url: https://github.com/arthjean/paneflow/releases/latest
     about: Check the newest release before filing a bug.

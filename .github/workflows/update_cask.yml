@@ -4,10 +4,10 @@ name: update_cask
 # workflow_run): grabs the freshly-attached .dmg assets, computes their
 # SHA-256, renders Casks/paneflow.rb from the canonical template at
 # packaging/homebrew/paneflow.rb, and pushes the result into the external
-# tap repo https://github.com/ArthurDEV44/homebrew-paneflow.
+# tap repo https://github.com/arthjean/homebrew-paneflow.
 #
 # Prereqs (one-time, manual):
-#   - ArthurDEV44/homebrew-paneflow exists (empty Casks/ dir).
+#   - arthjean/homebrew-paneflow exists (empty Casks/ dir).
 #   - Repo secret HOMEBREW_TAP_DEPLOY_KEY holds the PRIVATE half of an
 #     ed25519 SSH deploy key whose PUBLIC half is registered as a
 #     write-enabled deploy key on the tap repo. A deploy key is
@@ -171,7 +171,7 @@ jobs:
 
       - name: Push to tap repo
         env:
-          # SSH deploy key for ArthurDEV44/homebrew-paneflow (write). A
+          # SSH deploy key for arthjean/homebrew-paneflow (write). A
           # deploy key is repo-scoped and NON-EXPIRING - unlike a PAT it
           # never silently lapses, and it carries no personal-account
           # coupling. This is the durable auth for cross-repo push from CI.
@@ -198,7 +198,7 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i $keyfile -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null"
 
           tmp="$(mktemp -d)"
-          git clone --depth=1 git@github.com:ArthurDEV44/homebrew-paneflow.git "$tmp"
+          git clone --depth=1 git@github.com:arthjean/homebrew-paneflow.git "$tmp"
           mkdir -p "$tmp/Casks"
           cp /tmp/paneflow.rb "$tmp/Casks/paneflow.rb"
           cd "$tmp"
@@ -211,5 +211,5 @@ jobs:
             echo "Cask already up-to-date for v${VERSION} - nothing to commit."
             exit 0
           fi
-          git commit -m "paneflow ${VERSION}" -m "Automated update from ArthurDEV44/paneflow release v${VERSION}."
+          git commit -m "paneflow ${VERSION}" -m "Automated update from arthjean/paneflow release v${VERSION}."
           git push origin HEAD

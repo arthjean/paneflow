@@ -362,7 +362,7 @@ Suggested structure:
 
 ## Install
 
-See the [Installation section in the README](https://github.com/ArthurDEV44/paneflow#install).
+See the [Installation section in the README](https://github.com/arthjean/paneflow#install).
 
 ## Validation
 

@@ -500,7 +500,7 @@ impl PaneFlowApp {
         if self.self_update.update_attempt_count >= 3 {
             let releases_url = match &self.self_update.update_status {
                 Some(update::checker::UpdateStatus::Available { url, .. }) => url.clone(),
-                _ => "https://github.com/ArthurDEV44/paneflow/releases".to_string(),
+                _ => "https://github.com/arthjean/paneflow/releases".to_string(),
             };
             self.push_toast(
                 "Update keeps failing. Download manually from the releases page.".to_string(),
@@ -539,7 +539,7 @@ impl PaneFlowApp {
             self.push_toast(
                 "This build can't self-update (unsigned). Download the latest version from the releases page.".to_string(),
                 vec![ToastAction::OpenReleasesPage(
-                    "https://github.com/ArthurDEV44/paneflow/releases".to_string(),
+                    "https://github.com/arthjean/paneflow/releases".to_string(),
                 )],
                 TOAST_HOLD_MS * 4,
                 cx,

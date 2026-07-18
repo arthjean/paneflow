@@ -37,7 +37,7 @@ Gratuit et open source (GPL-3.0-or-later), pensé pour les power users qui pilot
 Demo: https://www.youtube.com/watch?v=hElqzB2XMn0
 Download: https://paneflow.dev/download
 Longer write-up: https://paneflow.dev/blog/show-hn-launch
-Repo: https://github.com/ArthurDEV44/paneflow
+Repo: https://github.com/arthjean/paneflow
 
 ### Version EN (à poster)
 
@@ -63,7 +63,7 @@ Free and open source (GPL-3.0-or-later).
 Demo: https://www.youtube.com/watch?v=hElqzB2XMn0
 Download: https://paneflow.dev/download
 Longer write-up: https://paneflow.dev/blog/show-hn-launch
-Repo: https://github.com/ArthurDEV44/paneflow
+Repo: https://github.com/arthjean/paneflow
 
 ### Notes de mesure RAM (méthode + mesures)
 
@@ -186,7 +186,7 @@ Raison : voix off anglaise non-native = risque downside élevé sur HN (lecture 
 
 ### Déroulé de soumission
 
-1. Sur news.ycombinator.com/submit : **title** = `Show HN: Paneflow - cross-platform GPUI app for parallel coding agents`, **url** = `https://github.com/ArthurDEV44/paneflow` (le repo : stars + audience dev), **text** = vide (si l'URL est remplie, le champ texte n'est pas utilisé).
+1. Sur news.ycombinator.com/submit : **title** = `Show HN: Paneflow - cross-platform GPUI app for parallel coding agents`, **url** = `https://github.com/arthjean/paneflow` (le repo : stars + audience dev), **text** = vide (si l'URL est remplie, le champ texte n'est pas utilisé).
 2. **Juste après**, poster la **Version EN (à poster)** en **premier commentaire** d'auteur, avec le lien démo YouTube + le lien download dedans.
 3. Le post arrive dans /newest, invisible du grand public à ce stade.
 4. Monter en front page (home, top ~30, le trafic) = upvotes rapides + peu de flags. L'algo favorise la vélocité des 1-2 premières heures, pas le total. D'où le créneau.

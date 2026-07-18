@@ -28,4 +28,4 @@ no background processes.
 
 For Linux PATH issues, jump to the [Linux troubleshooting section](/docs/installation/linux#what-if-paneflow-is-not-found-in-my-path).
 For Gatekeeper blocks on macOS, see the [macOS Gatekeeper section](/docs/installation/macos#what-if-macos-gatekeeper-blocks-the-app).
-For any other issue, file a [GitHub issue](https://github.com/ArthurDEV44/paneflow/issues).
+For any other issue, file a [GitHub issue](https://github.com/arthjean/paneflow/issues).

@@ -52,7 +52,7 @@ any import command from §2.
 
 ```bash
 # Fingerprint of the repo-committed copy
-curl -fsSL https://raw.githubusercontent.com/ArthurDEV44/paneflow/main/keys/paneflow-release.asc \
+curl -fsSL https://raw.githubusercontent.com/arthjean/paneflow/main/keys/paneflow-release.asc \
   | gpg --with-fingerprint --with-colons \
   | awk -F: '/^fpr:/ {print $10; exit}'
 # Expected: 9809948F4433CF93DD1329449A252F0C183F2711
@@ -93,7 +93,7 @@ equivalent (same key, same fingerprint).
 
 ```bash
 sudo apt-get install -y curl
-curl -fsSL https://raw.githubusercontent.com/ArthurDEV44/paneflow/main/keys/paneflow-release.asc \
+curl -fsSL https://raw.githubusercontent.com/arthjean/paneflow/main/keys/paneflow-release.asc \
   | sudo tee /usr/share/keyrings/paneflow-archive.asc >/dev/null
 ```
 
@@ -107,7 +107,7 @@ deprecated `apt-key add` pattern).
 
 ```bash
 sudo rpm --import \
-  https://raw.githubusercontent.com/ArthurDEV44/paneflow/main/keys/paneflow-release.asc
+  https://raw.githubusercontent.com/arthjean/paneflow/main/keys/paneflow-release.asc
 ```
 
 `rpm --import` deduplicates, so re-running it across releases is safe.
@@ -279,7 +279,7 @@ apt-get update && apt-get install -y curl gnupg dpkg-sig
 
 # 2. Fetch the key, print its fingerprint, and verify against the §1
 #    expected value BEFORE importing into the trust store.
-curl -fsSL https://raw.githubusercontent.com/ArthurDEV44/paneflow/main/keys/paneflow-release.asc \
+curl -fsSL https://raw.githubusercontent.com/arthjean/paneflow/main/keys/paneflow-release.asc \
   -o /tmp/paneflow-release.asc
 gpg --with-fingerprint --with-colons /tmp/paneflow-release.asc \
   | awk -F: '/^fpr:/ {print $10; exit}'
@@ -288,7 +288,7 @@ gpg --with-fingerprint --with-colons /tmp/paneflow-release.asc \
 gpg --import /tmp/paneflow-release.asc
 
 # 3. Download a release artifact
-curl -fsSLO https://github.com/ArthurDEV44/paneflow/releases/download/vX.Y.Z/paneflow-vX.Y.Z-x86_64.deb
+curl -fsSLO https://github.com/arthjean/paneflow/releases/download/vX.Y.Z/paneflow-vX.Y.Z-x86_64.deb
 
 # 4. Verify
 dpkg-sig --verify paneflow-vX.Y.Z-x86_64.deb
@@ -297,7 +297,7 @@ dpkg-sig --verify paneflow-vX.Y.Z-x86_64.deb
 
 If the GOODSIG line appears, the artifact is genuine and unmodified.
 If it does not, file an issue at
-<https://github.com/ArthurDEV44/paneflow/issues> with the full output -
+<https://github.com/arthjean/paneflow/issues> with the full output -
 do not install the package.
 
 ## 8. Failure modes

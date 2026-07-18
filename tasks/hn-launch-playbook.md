@@ -197,7 +197,7 @@ Réponds à toute issue entrante en < 24 h pendant le mois post-lancement.
 - PostHog (paneflow.dev) : segment referrer `news.ycombinator.com` ;
   conversion = clic vers /releases ou GitHub. Pas de funnel avec events
   desktop (cf. règle no-app_started-metric).
-- Stars : https://star-history.com/#ArthurDEV44/paneflow&Date pour le graph.
+- Stars : https://star-history.com/#arthjean/paneflow&Date pour le graph.
 
 ## 6. Après le pic
 
