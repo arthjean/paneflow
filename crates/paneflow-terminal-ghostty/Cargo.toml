@@ -16,7 +16,7 @@ regex = "1"
 serde_json.workspace = true
 thiserror.workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "windows"))'.dependencies]
 paneflow-libghostty-sys = { path = "../paneflow-libghostty-sys", optional = true }
 
 [lints]

@@ -108,7 +108,7 @@ impl DisplayTerminal {
                 i32::from(y) - if in_viewport { display_offset } else { 0 },
                 usize::from(x),
             ),
-            shape: cursor_shape(shape),
+            shape: cursor_shape(shape)?,
             visible,
             blinking,
             wide_tail,

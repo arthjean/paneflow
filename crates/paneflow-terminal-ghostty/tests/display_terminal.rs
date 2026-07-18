@@ -1,4 +1,4 @@
-#![cfg(all(target_os = "linux", feature = "native"))]
+#![cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
 
 use paneflow_terminal_ghostty::{
     BackendEvent, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput, Modifiers,
@@ -311,4 +311,64 @@ fn dimensions_reject_zero_and_values_above_u16() {
     assert!(WindowSize::new(0, 24, 8, 16).is_err());
     assert!(WindowSize::new(80, 0, 8, 16).is_err());
     assert!(WindowSize::new(usize::from(u16::MAX) + 1, 24, 8, 16).is_err());
+}
+
+#[test]
+fn repeated_headless_contract_survives_malformed_input_and_releases_every_terminal() {
+    let size = WindowSize::new(40, 6, 8, 16).unwrap();
+    assert!(DisplayTerminal::new(size, usize::MAX).is_err());
+
+    for iteration in 0..64 {
+        let mut terminal = DisplayTerminal::new(size, 2_000).unwrap();
+        terminal
+            .set_default_colors(
+                Rgb {
+                    r: 0xdd,
+                    g: 0xdd,
+                    b: 0xdd,
+                },
+                Rgb {
+                    r: 0x11,
+                    g: 0x11,
+                    b: 0x11,
+                },
+                Rgb {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                },
+            )
+            .unwrap();
+        terminal.feed(b"\x1b]52;c;@@@\x07\xff").unwrap();
+        terminal
+            .feed(format!("\x1b[?1049h\x1b[2J\x1b[H\x1b[48;5;42mWIN-{iteration:02}-Ω").as_bytes())
+            .unwrap();
+        terminal
+            .resize(WindowSize::new(41, 7, 8, 16).unwrap())
+            .unwrap();
+
+        let snapshot = terminal.snapshot().unwrap();
+        assert_eq!((snapshot.cols, snapshot.rows), (41, 7));
+        assert!(snapshot.cells.iter().any(|cell| cell.character == 'Ω'));
+        assert!(
+            snapshot
+                .cells
+                .iter()
+                .any(|cell| cell.background == Color::Palette(42))
+        );
+        assert!(terminal.modes().unwrap().alternate_screen);
+
+        let encoded = terminal
+            .encode_key(&KeyInput {
+                key: Key::Enter,
+                action: KeyAction::Press,
+                modifiers: Modifiers::empty(),
+                consumed_modifiers: Modifiers::empty(),
+                text: String::new(),
+                unshifted_codepoint: None,
+                composing: false,
+            })
+            .unwrap();
+        assert_eq!(encoded, b"\r");
+    }
 }

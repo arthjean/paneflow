@@ -32,23 +32,25 @@ impl<T: Copy> Drop for OwnedHandle<T> {
     }
 }
 
-/// Create and uniquely own a libghostty handle using its default allocator.
+/// Create and uniquely own a libghostty handle using the given allocator.
 ///
 /// # Safety
 ///
-/// `create` must initialize an out-parameter of exactly type `T` and allocate
-/// the resulting handle with libghostty's default allocator. `free` must be
-/// the exact matching destructor for every non-null handle produced by
-/// `create`, and the caller must not retain another owner of that handle.
+/// `allocator` must be null or remain valid until the returned handle is
+/// dropped. `create` must initialize an out-parameter of exactly type `T` and
+/// use that allocator. `free` must be the exact matching destructor for every
+/// non-null handle produced by `create`, and the caller must not retain
+/// another owner of that handle.
 pub(crate) unsafe fn create<T: Copy + Default + PartialEq>(
     operation: &'static str,
+    allocator: *const sys::GhosttyAllocator,
     create: unsafe extern "C" fn(*const sys::GhosttyAllocator, *mut T) -> sys::GhosttyResult,
     free: unsafe extern "C" fn(T),
 ) -> Result<OwnedHandle<T>> {
     let mut raw = T::default();
-    // SAFETY: `raw` is valid writable storage, and a null allocator selects
-    // libghostty's default allocator for both construction and destruction.
-    let result = unsafe { create(std::ptr::null(), &mut raw) };
+    // SAFETY: `raw` is valid writable storage, and the caller guarantees that
+    // `allocator` is null or valid for the lifetime of the returned handle.
+    let result = unsafe { create(allocator, &mut raw) };
     check(operation, result)?;
     if raw == T::default() {
         return Err(GhosttyError::AbiMismatch(format!(
@@ -127,7 +129,7 @@ mod tests {
         // SAFETY: `create_null` has the expected `*mut usize` out-parameter,
         // and any non-null handle it could return would come from `Box` and
         // therefore have the matching `record_drop` destructor.
-        let result = unsafe { create("fake_new", create_null, record_drop) };
+        let result = unsafe { create("fake_new", std::ptr::null(), create_null, record_drop) };
         assert!(matches!(result, Err(GhosttyError::AbiMismatch(_))));
     }
 }

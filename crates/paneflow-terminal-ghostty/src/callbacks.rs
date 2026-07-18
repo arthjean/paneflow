@@ -10,6 +10,15 @@ use crate::{BackendEvent, Result, WindowSize};
 
 const MAX_EVENTS: usize = 256;
 
+const _: sys::GhosttyTerminalWritePtyFn = Some(crate::callback_ffi::write_pty);
+const _: sys::GhosttyTerminalBellFn = Some(crate::callback_ffi::bell);
+const _: sys::GhosttyTerminalEnquiryFn = Some(crate::callback_ffi::enquiry);
+const _: sys::GhosttyTerminalXtversionFn = Some(crate::callback_ffi::xtversion);
+const _: sys::GhosttyTerminalTitleChangedFn = Some(crate::callback_ffi::title_changed);
+const _: sys::GhosttyTerminalSizeFn = Some(crate::callback_ffi::size);
+const _: sys::GhosttyTerminalColorSchemeFn = Some(crate::callback_ffi::color_scheme);
+const _: sys::GhosttyTerminalDeviceAttributesFn = Some(crate::callback_ffi::device_attributes);
+
 pub(crate) struct CallbackState {
     events: RefCell<VecDeque<BackendEvent>>,
     size: Cell<WindowSize>,

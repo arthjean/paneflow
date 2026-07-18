@@ -100,9 +100,9 @@ impl DisplayTerminal {
                 invisible: style.invisible,
                 strikethrough: style.strikethrough,
                 overline: style.overline,
-                underline: underline(style.underline),
+                underline: underline(style.underline)?,
             },
-            wide: wide_cell(wide),
+            wide: wide_cell(wide)?,
             selected,
             hyperlink: has_hyperlink,
         })

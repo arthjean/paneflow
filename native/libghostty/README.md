@@ -1,47 +1,111 @@
 # libghostty-vt native input
 
-`manifest.toml` is the single source of truth for the Linux native backend. The
-source repository itself is not fetched by Cargo. Verified static archives for
-x86_64 and ARM64 are stored under `prebuilt/`, so a standard Linux `cargo run`
-works from a clean clone without Zig or a Ghostty checkout.
+`manifest.toml` is the single source of truth for Paneflow's native
+libghostty-vt inputs. Cargo never fetches Ghostty, runs bindgen, invokes Zig,
+or mutates an artifact. Reviewed archives live under `prebuilt/<rust-target>/`,
+so a standard checkout only verifies and links repository content.
 
-To update the bundled inputs, prepare both Linux archives explicitly:
+The pinned source is Ghostty
+`ae52f97dcac558735cfa916ea3965f247e5c6e9e` built with Zig 0.15.2 in
+`ReleaseFast`. `bindings.rs` is pregenerated from the pinned C header. Its
+normalized UTF-8 checksum is verified both in the workspace and in every
+prepared artifact. Regenerate bindings only from that exact header, then
+update `bindings_sha256` and every reviewed target.
+
+## Linux archives
+
+Prepare both reviewed Linux targets from a clean pinned checkout:
 
 ```sh
 PANEFLOW_GHOSTTY_SOURCE_DIR=/path/to/ghostty scripts/build-libghostty-linux.sh
 ```
 
-The source checkout must be clean and exactly at the recorded SHA, and
-`zig version` must be exactly 0.15.2. Outputs live under
-`target/libghostty/<rust-target>/`, including the stripped, path-normalized
-static archive, installed headers and `build-info.txt`. Cargo prefers that
-generated directory only when `PANEFLOW_LIBGHOSTTY_DIR` explicitly selects it;
-otherwise it uses the bundled archive. `cargo build` only verifies and links
-those inputs. The manifest pins the archive hash for each supported target, so
-an unreviewed file under `target/` cannot change a standard build.
+Outputs are written below `target/libghostty/<rust-target>/`. Cargo uses one
+only when `PANEFLOW_LIBGHOSTTY_DIR` explicitly selects it; otherwise it uses
+the repository artifact. `--verify-reproducible` builds from two clean Zig
+caches and compares the normalized archive, header, bindings, and build info.
+Zig cache paths are removed from ELF debug data with `eu-strip`, then members
+are repacked with deterministic `ar` mode.
 
-The manifest also records the complete archive-member license inventory and
-pins `THIRD_PARTY_NOTICES.md` by SHA-256. The package verifier rejects a Linux
-artifact when its notice differs from that reviewed file, including truncated
-or stale copies.
+## Windows x64 MSVC archive
 
-`bindings.rs` is the complete pregenerated bindgen output for the pinned
-header. Its checksum is recorded in `manifest.toml`, copied into every
-prepared target and verified before Cargo links the archive. The
-`paneflow-libghostty-sys` crate is the only raw ABI surface. The
-`paneflow-terminal-ghostty` crate owns every native handle, copies all borrowed
-data before returning it, releases libghostty allocations with `ghostty_free`,
-contains callback panics and checks the runtime API version plus C layout
-sizes, alignments and field offsets before constructing a terminal.
+The production Windows input is the SIMD-enabled static archive
+`prebuilt/x86_64-pc-windows-msvc/lib/ghostty-vt-static.lib`. Rebuild it from a
+clean pinned checkout in an x64 Visual Studio environment:
 
-Regenerate the bindings only from the pinned header, then update
-`bindings_sha256` and rebuild both prepared targets. Cargo never runs bindgen,
-downloads Ghostty or mutates the prepared artifacts.
+```powershell
+.\scripts\build-libghostty-windows.ps1 `
+  -SourceDir C:\path\to\ghostty `
+  -Zig C:\path\to\zig-0.15.2\zig.exe `
+  -VerifyReproducible
+```
 
-For a reproducibility proof, run the script twice from separate clean Zig
-caches and compare the normalized archive, installed header, bindings and
-generated build info. Zig 0.15.2 records ephemeral cache paths in debug data
-and archive member names, so architecture-neutral `eu-strip --strip-debug`
-plus deterministic `ar` repacking runs before hashing. The script requires
-`elfutils` and binutils-compatible `ar`; its `--verify-reproducible` mode
-performs the comparison.
+The reviewed recipe requires:
+
+| Input | Pinned value |
+|---|---|
+| Rust target | `x86_64-pc-windows-msvc` |
+| Zig target | `x86_64-windows-msvc` |
+| Zig | `0.15.2` |
+| MSVC toolset | `14.38.33130` |
+| Windows SDK | `10.0.26100.0` |
+| Visual Studio LLVM tools | `19.1.5` |
+| Optimization | `ReleaseFast` |
+| SIMD | `true` |
+| Build seed and jobs | `--seed 0 -j1` |
+
+The upstream preparation command is:
+
+```text
+zig build --verbose --seed 0 -j1 -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dsimd=true --prefix <fixed-prefix>
+```
+
+Zig 0.15.2 does not forward the build runner's `-j1` to the static
+`build-lib` child. The script therefore replays the exact emitted
+`ghostty-vt-static` compiler command with `-j1 -fno-incremental`, at fixed
+source, cache, and prefix paths. Its members replace the corresponding
+members in Ghostty's fat archive. LLVM then strips debug data, zeros each COFF
+timestamp, and repacks ordinally sorted members with deterministic
+`llvm-ar rcD` mode. Header and symbol inventories use the same ordinal,
+case-sensitive ordering, so hashes do not depend on the Windows locale. Two
+complete builds start from empty caches at the same canonical paths and must
+match byte for byte before publication. The fixed
+`C:\Users\Public\paneflow-libghostty-ae52f97d` source path is part of the hash
+contract; the build aborts if that path is unavailable or already occupied.
+
+The fat archive contains Ghostty's Zig objects, Zig `compiler_rt`, simdutf,
+and Highway. COFF directives record `RuntimeLibrary=MT_StaticRelease` and
+`/DEFAULTLIB:libcpmt.lib`. Consumers link `ntdll.lib` and `kernel32.lib`.
+There is no `ghostty-vt.dll`; C consumers of the static header must define
+`GHOSTTY_STATIC`.
+
+`windows-smoke.c` is the minimal MSVC reproducer. The build script compiles it
+with `/MT /W4 /WX`, initializes a terminal, parses a deterministic VT fixture,
+and releases the terminal through Ghostty. It also verifies x64 COFF headers,
+the required C symbol inventory, CRT directives, and the executable's DLL
+dependencies. A missing SIMD object, unresolved system symbol, wrong
+architecture, hash drift, or dynamic Ghostty dependency aborts the build and
+preserves the temporary evidence directory.
+
+The prepared Windows directory includes the archive, installed headers,
+normalized bindings, `headers.sha256`, `symbols.txt`, and `build-info.txt`.
+Each top-level input is pinned by `manifest.toml`; the header index covers all
+installed headers. Publication replaces the complete previous target tree by
+an atomic same-volume rename, so stale DLLs or metadata cannot survive a
+rebuild. `paneflow-libghostty-sys/build.rs` selects this directory only for
+`x86_64-pc-windows-msvc`, requires its exact file inventory, rejects incomplete
+or incoherent metadata with an actionable rebuild command, and emits only
+static plus reviewed system link directives.
+
+## ABI and licensing
+
+`paneflow-libghostty-sys` is the only raw ABI surface. The safe wrapper owns
+every native handle, copies borrowed callback data before returning, releases
+Ghostty allocations through their matching Ghostty destructor, catches Rust
+panics inside callbacks, and validates API version, discriminants, callback
+signatures, sizes, alignments, and field offsets before constructing a
+terminal.
+
+The manifest records the archive-member license inventory and pins
+`THIRD_PARTY_NOTICES.md`. Packaging must reject an artifact whose reviewed
+notice is absent, truncated, or stale.

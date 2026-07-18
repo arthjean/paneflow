@@ -5,7 +5,34 @@ use paneflow_libghostty_sys as sys;
 use crate::handles::check;
 use crate::{GhosttyError, Result};
 
+type TerminalNewFn = unsafe extern "C" fn(
+    *const sys::GhosttyAllocator,
+    *mut sys::GhosttyTerminal,
+    sys::GhosttyTerminalOptions,
+) -> sys::GhosttyResult;
+type TerminalResizeFn =
+    unsafe extern "C" fn(sys::GhosttyTerminal, u16, u16, u32, u32) -> sys::GhosttyResult;
+type TerminalWriteFn = unsafe extern "C" fn(sys::GhosttyTerminal, *const u8, usize);
+type RenderUpdateFn =
+    unsafe extern "C" fn(sys::GhosttyRenderState, sys::GhosttyTerminal) -> sys::GhosttyResult;
+type KeyEncodeFn = unsafe extern "C" fn(
+    sys::GhosttyKeyEncoder,
+    sys::GhosttyKeyEvent,
+    *mut std::ffi::c_char,
+    usize,
+    *mut usize,
+) -> sys::GhosttyResult;
+
+const _: TerminalNewFn = sys::ghostty_terminal_new;
+const _: unsafe extern "C" fn(sys::GhosttyTerminal) = sys::ghostty_terminal_free;
+const _: TerminalResizeFn = sys::ghostty_terminal_resize;
+const _: TerminalWriteFn = sys::ghostty_terminal_vt_write;
+const _: RenderUpdateFn = sys::ghostty_render_state_update;
+const _: KeyEncodeFn = sys::ghostty_key_encoder_encode;
+const _: unsafe extern "C" fn(*const sys::GhosttyAllocator, *mut u8, usize) = sys::ghostty_free;
+
 pub(crate) fn validate() -> Result<()> {
+    validate_discriminants()?;
     let actual = (
         build_info_u32(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MAJOR)?,
         build_info_u32(sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_MINOR)?,
@@ -32,6 +59,58 @@ pub(crate) fn validate() -> Result<()> {
     let layouts: serde_json::Value = serde_json::from_str(json)
         .map_err(|error| GhosttyError::AbiMismatch(format!("invalid layout JSON: {error}")))?;
     crate::abi_layout::validate(&layouts)
+}
+
+fn validate_discriminants() -> Result<()> {
+    for (name, actual, expected) in [
+        (
+            "GHOSTTY_SUCCESS",
+            sys::GhosttyResult_GHOSTTY_SUCCESS as i64,
+            0,
+        ),
+        (
+            "GHOSTTY_INVALID_VALUE",
+            sys::GhosttyResult_GHOSTTY_INVALID_VALUE as i64,
+            -2,
+        ),
+        (
+            "GHOSTTY_OPTIMIZE_RELEASE_FAST",
+            sys::GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_FAST as i64,
+            3,
+        ),
+        (
+            "GHOSTTY_BUILD_INFO_SIMD",
+            sys::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_SIMD as i64,
+            1,
+        ),
+        (
+            "GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES",
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES as i64,
+            8,
+        ),
+        (
+            "GHOSTTY_POINT_TAG_HISTORY",
+            sys::GhosttyPointTag_GHOSTTY_POINT_TAG_HISTORY as i64,
+            3,
+        ),
+        (
+            "GHOSTTY_STYLE_COLOR_RGB",
+            sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_RGB as i64,
+            2,
+        ),
+        (
+            "GHOSTTY_CELL_WIDE_SPACER_TAIL",
+            sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL as i64,
+            2,
+        ),
+    ] {
+        if actual != expected {
+            return Err(GhosttyError::AbiMismatch(format!(
+                "{name} discriminant expected {expected}, got {actual}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn build_info_u32(kind: sys::GhosttyBuildInfo) -> Result<u32> {

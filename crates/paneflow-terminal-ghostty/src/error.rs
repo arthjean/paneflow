@@ -1,6 +1,6 @@
 #[derive(Debug, thiserror::Error)]
 pub enum GhosttyError {
-    #[error("libghostty is available only on Linux with the `native` feature")]
+    #[error("libghostty is available only on Linux or Windows with the `native` feature")]
     UnsupportedPlatform,
     #[error("terminal dimensions must be within 1..={max}: got {cols}x{rows}")]
     InvalidDimensions { cols: usize, rows: usize, max: u16 },

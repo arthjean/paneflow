@@ -41,7 +41,7 @@ impl WindowSize {
         })
     }
 
-    #[cfg(all(target_os = "linux", feature = "native"))]
+    #[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
     pub(crate) fn validate(self) -> Result<Self> {
         if self.cols == 0 || self.rows == 0 {
             return Err(GhosttyError::InvalidDimensions {

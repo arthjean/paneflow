@@ -222,37 +222,62 @@ impl From<sys::GhosttyColorRgb> for Rgb {
     }
 }
 
-pub(crate) fn wide_cell(value: sys::GhosttyCellWide) -> WideCell {
+pub(crate) fn wide_cell(value: sys::GhosttyCellWide) -> Result<WideCell> {
     match value {
-        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_WIDE => WideCell::Wide,
-        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL => WideCell::SpacerTail,
-        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_HEAD => WideCell::SpacerHead,
-        _ => WideCell::Narrow,
+        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW => Ok(WideCell::Narrow),
+        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_WIDE => Ok(WideCell::Wide),
+        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL => Ok(WideCell::SpacerTail),
+        sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_HEAD => Ok(WideCell::SpacerHead),
+        _ => Err(GhosttyError::AbiMismatch(format!(
+            "unknown Ghostty cell width discriminant {value}"
+        ))),
     }
 }
 
-pub(crate) fn underline(value: i32) -> UnderlineStyle {
+pub(crate) fn underline(value: i32) -> Result<UnderlineStyle> {
     match value {
-        1 => UnderlineStyle::Single,
-        2 => UnderlineStyle::Double,
-        3 => UnderlineStyle::Curly,
-        4 => UnderlineStyle::Dotted,
-        5 => UnderlineStyle::Dashed,
-        _ => UnderlineStyle::None,
+        0 => Ok(UnderlineStyle::None),
+        1 => Ok(UnderlineStyle::Single),
+        2 => Ok(UnderlineStyle::Double),
+        3 => Ok(UnderlineStyle::Curly),
+        4 => Ok(UnderlineStyle::Dotted),
+        5 => Ok(UnderlineStyle::Dashed),
+        _ => Err(GhosttyError::AbiMismatch(format!(
+            "unknown Ghostty underline discriminant {value}"
+        ))),
     }
 }
 
-pub(crate) fn cursor_shape(value: sys::GhosttyRenderStateCursorVisualStyle) -> crate::CursorShape {
+pub(crate) fn cursor_shape(
+    value: sys::GhosttyRenderStateCursorVisualStyle,
+) -> Result<crate::CursorShape> {
     match value {
         sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR => {
-            crate::CursorShape::Bar
+            Ok(crate::CursorShape::Bar)
+        }
+        sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK => {
+            Ok(crate::CursorShape::Block)
         }
         sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE => {
-            crate::CursorShape::Underline
+            Ok(crate::CursorShape::Underline)
         }
         sys::GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW => {
-            crate::CursorShape::HollowBlock
+            Ok(crate::CursorShape::HollowBlock)
         }
-        _ => crate::CursorShape::Block,
+        _ => Err(GhosttyError::AbiMismatch(format!(
+            "unknown Ghostty cursor shape discriminant {value}"
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod discriminant_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_native_discriminants_are_rejected() {
+        assert!(wide_cell(u32::MAX).is_err());
+        assert!(underline(i32::MAX).is_err());
+        assert!(cursor_shape(u32::MAX).is_err());
     }
 }

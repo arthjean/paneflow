@@ -127,6 +127,83 @@ mod linux {
     }
 }
 
+#[cfg(target_os = "windows")]
+mod windows {
+    use anyhow::{Result, bail};
+    use paneflow_terminal_ghostty::{
+        Color, DisplayTerminal, Key, KeyAction, KeyInput, Modifiers, Rgb, WindowSize,
+    };
+
+    const MARKER: &str = "PANEFLOW_GHOSTTY_WINDOWS_HEADLESS_OK";
+
+    pub(super) fn run() -> Result<()> {
+        let initial_size = WindowSize::new(80, 24, 8, 16)?;
+        for iteration in 0..32 {
+            let mut terminal = DisplayTerminal::new(initial_size, 4_000)?;
+            terminal.set_default_colors(
+                Rgb {
+                    r: 0xdd,
+                    g: 0xdd,
+                    b: 0xdd,
+                },
+                Rgb {
+                    r: 0x11,
+                    g: 0x11,
+                    b: 0x11,
+                },
+                Rgb {
+                    r: 0xff,
+                    g: 0xff,
+                    b: 0xff,
+                },
+            )?;
+            terminal.feed(b"\x1b]52;c;not-base64!\x07\xff")?;
+            terminal.feed(
+                format!(
+                    "\x1b[?1049h\x1b[2J\x1b[H\x1b[38;5;196m\x1b[48;5;42m{MARKER}-{iteration:02}-Ω"
+                )
+                .as_bytes(),
+            )?;
+            terminal.resize(WindowSize::new(101, 41, 8, 16)?)?;
+
+            let snapshot = terminal.snapshot()?;
+            let rendered = snapshot
+                .cells
+                .iter()
+                .map(|cell| cell.character)
+                .collect::<String>();
+            if !rendered.contains(MARKER)
+                || !snapshot.cells.iter().any(|cell| cell.character == 'Ω')
+                || !snapshot
+                    .cells
+                    .iter()
+                    .any(|cell| cell.background == Color::Palette(42))
+                || !terminal.modes()?.alternate_screen
+            {
+                bail!("headless snapshot did not preserve the deterministic VT fixture")
+            }
+
+            let encoded = terminal.encode_key(&KeyInput {
+                key: Key::Enter,
+                action: KeyAction::Press,
+                modifiers: Modifiers::empty(),
+                consumed_modifiers: Modifiers::empty(),
+                text: String::new(),
+                unshifted_codepoint: None,
+                composing: false,
+            })?;
+            if encoded != b"\r" {
+                bail!("headless key encoder returned unexpected bytes")
+            }
+        }
+
+        if DisplayTerminal::new(WindowSize::new(80, 24, 8, 16)?, usize::MAX).is_ok() {
+            bail!("headless constructor accepted an intentionally invalid scrollback limit")
+        }
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn main() {
     if let Err(error) = linux::run() {
@@ -136,8 +213,17 @@ fn main() {
     println!("libghostty package smoke passed");
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
 fn main() {
-    eprintln!("libghostty package smoke is Linux-only");
+    if let Err(error) = windows::run() {
+        eprintln!("libghostty Windows headless smoke failed: {error:#}");
+        std::process::exit(1);
+    }
+    println!("libghostty Windows headless smoke passed");
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+fn main() {
+    eprintln!("libghostty package smoke is available only on Linux or Windows");
     std::process::exit(2);
 }
