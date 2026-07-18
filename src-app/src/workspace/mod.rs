@@ -42,17 +42,18 @@ pub fn next_workspace_id() -> u64 {
 
 /// Runtime-only notification state for a completed agent turn.
 ///
-/// A natural `ai.stop` marks the completion unread. It stays unread even after
-/// the transient `AgentState::Finished` session is auto-cleared, and only a
-/// direct click on the workspace card acknowledges it.
+/// A natural `ai.stop` marks the completion unread only while this workspace is
+/// not visible in the active Paneflow window. It survives the transient
+/// `AgentState::Finished` session auto-clear until the user interacts with the
+/// workspace card or its pane area.
 #[derive(Debug, Default)]
 pub(crate) struct AgentCompletionNotification {
     unread: bool,
 }
 
 impl AgentCompletionNotification {
-    pub(crate) fn mark_finished(&mut self) {
-        self.unread = true;
+    pub(crate) fn record_finished(&mut self, workspace_visible: bool) {
+        self.unread = !workspace_visible;
     }
 
     pub(crate) fn acknowledge(&mut self) {
@@ -118,7 +119,7 @@ pub struct Workspace {
     /// in `event_handlers::sweep_stale_pids`.
     pub agent_sessions: std::collections::HashMap<u32, AgentSession>,
     /// Persistent-in-session completion notification shown as a blue dot in
-    /// the Workspaces sidebar until the user clicks this workspace card.
+    /// the Workspaces sidebar until the user interacts with this workspace.
     pub(crate) agent_completion_notification: AgentCompletionNotification,
     /// AI agent process basenames detected by walking the workspace's
     /// PTY descendants (Linux `/proc/<pid>/comm`, macOS `libproc::name`).
@@ -373,13 +374,17 @@ mod tests {
     use super::AgentCompletionNotification;
 
     #[test]
-    fn agent_completion_stays_unread_until_acknowledged() {
+    fn agent_completion_is_unread_only_while_workspace_is_not_visible() {
         let mut notification = AgentCompletionNotification::default();
         assert!(!notification.is_unread());
 
-        notification.mark_finished();
+        notification.record_finished(false);
         assert!(notification.is_unread());
 
+        notification.record_finished(true);
+        assert!(!notification.is_unread());
+
+        notification.record_finished(false);
         notification.acknowledge();
         assert!(!notification.is_unread());
     }

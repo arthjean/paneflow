@@ -3302,10 +3302,18 @@ impl PaneFlowApp {
                 };
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
                 let notify_config = self.cached_config.clone();
+                let workspace_visible = self.settings_section.is_none()
+                    && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+                    && self
+                        .workspaces
+                        .get(self.active_idx)
+                        .is_some_and(|ws| ws.id == workspace_id)
+                    && desktop_notifications::window_active();
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     let interrupt_stop = is_interrupt_lifecycle_event(params);
                     if !interrupt_stop {
-                        ws.agent_completion_notification.mark_finished();
+                        ws.agent_completion_notification
+                            .record_finished(workspace_visible);
                     }
                     // U-014: key the auto-clear on the RESOLVED session key, not
                     // the raw `pid`. A legacy no-pid frame is stored under a

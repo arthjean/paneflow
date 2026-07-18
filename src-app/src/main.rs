@@ -1976,6 +1976,26 @@ impl Render for PaneFlowApp {
                                     .mr(px(crate::app::constants::SIDEBAR_CARD_INSET))
                                     .mb(px(crate::app::constants::SIDEBAR_CARD_INSET))
                                     .rounded(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .capture_any_mouse_down(cx.listener(
+                                        |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                            if event.button == gpui::MouseButton::Left
+                                                && this.settings_section.is_none()
+                                                && matches!(
+                                                    this.mode,
+                                                    paneflow_config::schema::AppMode::Cli
+                                                )
+                                                && let Some(workspace) = this.active_workspace_mut()
+                                                && workspace
+                                                    .agent_completion_notification
+                                                    .is_unread()
+                                            {
+                                                workspace
+                                                    .agent_completion_notification
+                                                    .acknowledge();
+                                                cx.notify();
+                                            }
+                                        },
+                                    ))
                                     .child(main_content),
                             )
                             // GPUI clips overflow with a rectangular content

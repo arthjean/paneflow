@@ -102,7 +102,7 @@ impl SidebarAgentSummary {
                 agent_status_sentence(self.count, "thinking", "thinking")
             }
             SidebarAgentState::Finished => {
-                "Agent finished · Click workspace to dismiss".to_string()
+                "Agent finished · Click workspace or pane to dismiss".to_string()
             }
         }
     }
