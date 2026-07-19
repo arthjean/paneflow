@@ -18,7 +18,10 @@ use paneflow_config::schema::{TerminalBackendConfig, TerminalConfig, TerminalSur
 
 use super::TerminalState;
 use super::element::TerminalElement;
-use super::pty_session::{ClipboardOp, TerminalBackendEvent};
+use super::pty_session::{
+    ClipboardOp, TerminalBackendEvent, TerminalBackendFailureDiagnostics,
+    TerminalBackendFailurePhase, raw_os_error_from_anyhow,
+};
 use super::service_detector::ServiceInfo;
 use super::types::{
     CopyModeCursorState, CursorShape, HyperlinkZone, Line, Modes, Point, SearchHighlight,
@@ -110,7 +113,7 @@ enum BackgroundSpawnOutcome {
     ))]
     GhosttyFallback {
         spawned: anyhow::Result<super::pty_session::SpawnedPty>,
-        reason: String,
+        failure: TerminalBackendFailureDiagnostics,
     },
     #[cfg(any(
         all(target_os = "linux", feature = "libghostty-linux"),
@@ -123,7 +126,7 @@ enum BackgroundSpawnOutcome {
     ))]
     GhosttyPostSpawnFailed {
         child_pid: u32,
-        reason: String,
+        failure: TerminalBackendFailureDiagnostics,
     },
 }
 
@@ -172,52 +175,12 @@ fn warn_ghostty_unavailable_once() {
     });
 }
 
-#[cfg(not(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-)))]
-fn ghostty_unavailable_reason() -> &'static str {
-    #[cfg(target_os = "windows")]
-    {
-        "ghostty backend requires Windows x86_64 MSVC and the libghostty-windows feature"
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        "ghostty backend requires Linux and the libghostty-linux feature"
-    }
-}
-
 fn log_backend_diagnostics(terminal: &TerminalState) {
     let diagnostics = terminal.backend_diagnostics();
-    let fallback_reason = diagnostics.fallback_reason.as_deref().unwrap_or("none");
-
-    if let Some(ghostty) = diagnostics.ghostty.as_ref() {
-        log::info!(
-            target: "paneflow::terminal::backend",
-            "Terminal backend selected: requested={:?} resolved={} fallback_reason={} ghostty_source_sha={} ghostty_api_version={} zig_version={} optimization={} simd={}",
-            diagnostics.requested,
-            diagnostics.resolved,
-            fallback_reason,
-            ghostty.source_sha,
-            ghostty.api_version,
-            ghostty.zig_version,
-            ghostty.optimization,
-            ghostty.simd,
-        );
-    } else {
-        log::info!(
-            target: "paneflow::terminal::backend",
-            "Terminal backend selected: requested={:?} resolved={} fallback_reason={}",
-            diagnostics.requested,
-            diagnostics.resolved,
-            fallback_reason,
-        );
-    }
+    log::info!(
+        target: "paneflow::terminal::backend",
+        "Terminal backend selected: {diagnostics}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -615,7 +578,7 @@ impl TerminalView {
             .terminal
             .unwrap_or_default()
             .backend;
-        terminal.set_backend_request(requested_backend, None);
+        terminal.set_backend_request(requested_backend);
 
         #[cfg(any(
             all(target_os = "linux", feature = "libghostty-linux"),
@@ -648,9 +611,12 @@ impl TerminalView {
             )
         )))]
         if requested_backend == TerminalBackendConfig::Ghostty {
-            let reason = ghostty_unavailable_reason();
             warn_ghostty_unavailable_once();
-            terminal.set_backend_request(requested_backend, Some(reason.into()));
+            terminal.record_backend_failure(TerminalBackendFailureDiagnostics::new(
+                TerminalBackendFailurePhase::Availability,
+                TerminalBackendFailureDiagnostics::GHOSTTY_UNAVAILABLE,
+                None,
+            ));
         }
         // Route the Drop-time force-kill timer through GPUI's background
         // executor instead of a detached OS thread (Zed parity, prevents a
@@ -693,6 +659,11 @@ impl TerminalView {
                             ) {
                                 Ok(spawned) => BackgroundSpawnOutcome::Ghostty(spawned),
                                 Err(GhosttyStartError::Initialization(error)) => {
+                                    let failure = TerminalBackendFailureDiagnostics::new(
+                                        TerminalBackendFailurePhase::Initialization,
+                                        TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+                                        raw_os_error_from_anyhow(&error),
+                                    );
                                     let spawned = TerminalState::open_pty_and_eventloop(
                                         params,
                                         pending,
@@ -700,10 +671,15 @@ impl TerminalView {
                                     );
                                     BackgroundSpawnOutcome::GhosttyFallback {
                                         spawned,
-                                        reason: format!("ghostty_initialization_failed: {error:#}"),
+                                        failure,
                                     }
                                 }
                                 Err(GhosttyStartError::OpenPty(error)) => {
+                                    let failure = TerminalBackendFailureDiagnostics::new(
+                                        TerminalBackendFailurePhase::OpenPty,
+                                        TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
+                                        raw_os_error_from_anyhow(&error),
+                                    );
                                     let spawned = TerminalState::open_pty_and_eventloop(
                                         params,
                                         pending,
@@ -711,10 +687,15 @@ impl TerminalView {
                                     );
                                     BackgroundSpawnOutcome::GhosttyFallback {
                                         spawned,
-                                        reason: format!("ghostty_pty_open_failed: {error:#}"),
+                                        failure,
                                     }
                                 }
                                 Err(GhosttyStartError::Spawn(error)) => {
+                                    let failure = TerminalBackendFailureDiagnostics::new(
+                                        TerminalBackendFailurePhase::Spawn,
+                                        TerminalBackendFailureDiagnostics::GHOSTTY_SPAWN_FAILED,
+                                        raw_os_error_from_anyhow(&error),
+                                    );
                                     let spawned = TerminalState::open_pty_and_eventloop(
                                         params,
                                         pending,
@@ -722,13 +703,17 @@ impl TerminalView {
                                     );
                                     BackgroundSpawnOutcome::GhosttyFallback {
                                         spawned,
-                                        reason: format!("ghostty_child_spawn_failed: {error:#}"),
+                                        failure,
                                     }
                                 }
                                 Err(GhosttyStartError::PostSpawn { child_pid, error }) => {
                                     BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
                                         child_pid,
-                                        reason: format!("{error:#}"),
+                                        failure: TerminalBackendFailureDiagnostics::new(
+                                            TerminalBackendFailurePhase::PostSpawn,
+                                            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
+                                            raw_os_error_from_anyhow(&error),
+                                        ),
                                     }
                                 }
                             }
@@ -773,7 +758,11 @@ impl TerminalView {
                             // Spawn failed: keep the display-only placeholder and
                             // surface the error in-pane (no orphan, no panic - same
                             // outcome as the old synchronous fallback).
-                            log::error!("PTY creation failed: {error:#}");
+                            log::error!(
+                                target: "paneflow::terminal::backend",
+                                "Alacritty startup failed: reason_code=alacritty_startup_failed os_error={:?}",
+                                raw_os_error_from_anyhow(&error),
+                            );
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             view.terminal
@@ -803,12 +792,15 @@ impl TerminalView {
                                 feature = "libghostty-windows"
                             )
                         ))]
-                        BackgroundSpawnOutcome::GhosttyFallback { spawned, reason } => {
+                        BackgroundSpawnOutcome::GhosttyFallback { spawned, failure } => {
                             log::warn!(
                                 target: "paneflow::terminal::backend",
-                                "Ghostty startup failed before child creation; using Alacritty: {reason}"
+                                "Ghostty startup failed before child creation; using Alacritty: failure_phase={} reason_code={} os_error={:?}",
+                                failure.phase.as_str(),
+                                failure.reason_code,
+                                failure.os_error,
                             );
-                            view.terminal.abandon_ghostty(reason);
+                            view.terminal.fallback_from_ghostty(failure);
                             match spawned {
                                 Ok(spawned) => {
                                     view.terminal.promote(spawned);
@@ -817,7 +809,11 @@ impl TerminalView {
                                     }
                                 }
                                 Err(error) => {
-                                    log::error!("PTY creation failed after Ghostty fallback: {error:#}");
+                                    log::error!(
+                                        target: "paneflow::terminal::backend",
+                                        "Alacritty startup failed after Ghostty fallback: reason_code=alacritty_startup_failed os_error={:?}",
+                                        raw_os_error_from_anyhow(&error),
+                                    );
                                     view.needs_initial_clear.store(
                                         false,
                                         std::sync::atomic::Ordering::Relaxed,
@@ -836,17 +832,25 @@ impl TerminalView {
                                 feature = "libghostty-windows"
                             )
                         ))]
-                        BackgroundSpawnOutcome::GhosttyPostSpawnFailed { child_pid, reason } => {
+                        BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
+                            child_pid,
+                            failure,
+                        } => {
                             log::error!(
                                 target: "paneflow::terminal::backend",
-                                "Ghostty startup failed after child creation (pid={child_pid}); refusing Alacritty child fallback: {reason}"
+                                "Ghostty startup failed after child creation (pid={child_pid}); refusing Alacritty child fallback: failure_phase={} reason_code={} os_error={:?}",
+                                failure.phase.as_str(),
+                                failure.reason_code,
+                                failure.os_error,
                             );
-                            view.terminal
-                                .abandon_ghostty(format!("ghostty_post_spawn_failed: {reason}"));
+                            view.terminal.fail_ghostty_after_spawn(failure);
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
                             view.terminal.write_output(
-                                spawn_error_message(&anyhow::anyhow!(reason)).as_bytes(),
+                                spawn_error_message(&anyhow::anyhow!(
+                                    "ghostty_post_spawn_failed"
+                                ))
+                                .as_bytes(),
                             );
                         }
                     }

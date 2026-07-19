@@ -1013,6 +1013,7 @@ pub(super) fn hsla_to_alac_rgb(hsla: gpui::Hsla) -> AlacRgb {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GhosttyBuildDiagnostics {
+    pub version: &'static str,
     pub source_sha: &'static str,
     pub api_version: &'static str,
     pub zig_version: &'static str,
@@ -1020,12 +1021,110 @@ pub struct GhosttyBuildDiagnostics {
     pub simd: &'static str,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TerminalBackendFailurePhase {
+    // Constructed only by builds where the selected native backend is absent.
+    #[allow(dead_code)]
+    Availability,
+    Initialization,
+    OpenPty,
+    Spawn,
+    PostSpawn,
+}
+
+impl TerminalBackendFailurePhase {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Availability => "availability",
+            Self::Initialization => "initialization",
+            Self::OpenPty => "open_pty",
+            Self::Spawn => "spawn",
+            Self::PostSpawn => "post_spawn",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalBackendFailureDiagnostics {
+    pub phase: TerminalBackendFailurePhase,
+    pub reason_code: &'static str,
+    pub os_error: Option<i32>,
+}
+
+impl TerminalBackendFailureDiagnostics {
+    // Used by the cfg branch compiled when no native Ghostty backend is present.
+    #[allow(dead_code)]
+    pub(super) const GHOSTTY_UNAVAILABLE: &'static str = "ghostty_unavailable";
+    pub(super) const GHOSTTY_INITIALIZATION_FAILED: &'static str = "ghostty_initialization_failed";
+    pub(super) const GHOSTTY_OPEN_PTY_FAILED: &'static str = "ghostty_open_pty_failed";
+    pub(super) const GHOSTTY_SPAWN_FAILED: &'static str = "ghostty_spawn_failed";
+    pub(super) const GHOSTTY_POST_SPAWN_FAILED: &'static str = "ghostty_post_spawn_failed";
+
+    pub(super) fn new(
+        phase: TerminalBackendFailurePhase,
+        reason_code: &'static str,
+        os_error: Option<i32>,
+    ) -> Self {
+        Self {
+            phase,
+            reason_code,
+            os_error,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalBackendDiagnostics {
     pub requested: TerminalBackendConfig,
-    pub resolved: &'static str,
-    pub fallback_reason: Option<String>,
+    pub effective: &'static str,
+    pub failure: Option<TerminalBackendFailureDiagnostics>,
+    pub target_triple: &'static str,
     pub ghostty: Option<GhosttyBuildDiagnostics>,
+}
+
+impl std::fmt::Display for TerminalBackendDiagnostics {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (failure_phase, reason_code, os_error) =
+            self.failure
+                .as_ref()
+                .map_or(("none", "none", None), |failure| {
+                    (
+                        failure.phase.as_str(),
+                        failure.reason_code,
+                        failure.os_error,
+                    )
+                });
+        write!(
+            formatter,
+            "requested={:?} effective={} failure_phase={} reason_code={} target={} os_error=",
+            self.requested, self.effective, failure_phase, reason_code, self.target_triple
+        )?;
+        match os_error {
+            Some(code) => write!(formatter, "{code}")?,
+            None => formatter.write_str("none")?,
+        }
+        if let Some(ghostty) = self.ghostty.as_ref() {
+            write!(
+                formatter,
+                " ghostty_version={} ghostty_source_sha={} ghostty_api_version={} zig_version={} optimization={} simd={}",
+                ghostty.version,
+                ghostty.source_sha,
+                ghostty.api_version,
+                ghostty.zig_version,
+                ghostty.optimization,
+                ghostty.simd,
+            )?;
+        }
+        Ok(())
+    }
+}
+
+pub(super) fn raw_os_error_from_anyhow(error: &anyhow::Error) -> Option<i32> {
+    error.chain().find_map(|source| {
+        source
+            .downcast_ref::<io::Error>()
+            .and_then(io::Error::raw_os_error)
+    })
 }
 
 #[derive(Clone)]
@@ -1351,8 +1450,8 @@ pub struct TerminalState {
     ))]
     ghostty_events_rx: Option<UnboundedReceiver<GhosttyUiEvent>>,
     requested_backend: TerminalBackendConfig,
-    resolved_backend: &'static str,
-    fallback_reason: Option<String>,
+    effective_backend: &'static str,
+    backend_failure: Option<TerminalBackendFailureDiagnostics>,
     cwd_rx: Option<UnboundedReceiver<String>>,
     marks_rx: Option<std::sync::mpsc::Receiver<RawMark>>,
     pub(crate) marks: SharedMarkRing,
@@ -2107,7 +2206,7 @@ impl TerminalState {
         ghostty: GhosttySession,
         events_rx: UnboundedReceiver<GhosttyUiEvent>,
     ) {
-        self.resolved_backend = "ghostty";
+        self.effective_backend = "ghostty";
         self.marks = ghostty.marks();
         self.ghostty = Some(ghostty);
         self.ghostty_events_rx = Some(events_rx);
@@ -2187,21 +2286,39 @@ impl TerminalState {
             feature = "libghostty-windows"
         )
     ))]
-    pub(super) fn abandon_ghostty(&mut self, reason: impl Into<String>) {
+    pub(super) fn fallback_from_ghostty(&mut self, failure: TerminalBackendFailureDiagnostics) {
         if let Some(ghostty) = self.ghostty.take() {
             ghostty.shutdown();
         }
-        self.resolved_backend = "alacritty";
-        self.fallback_reason = Some(reason.into());
+        self.effective_backend = "alacritty";
+        self.backend_failure = Some(failure);
     }
 
-    pub(super) fn set_backend_request(
-        &mut self,
-        requested: TerminalBackendConfig,
-        fallback_reason: Option<String>,
-    ) {
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) fn fail_ghostty_after_spawn(&mut self, failure: TerminalBackendFailureDiagnostics) {
+        if let Some(ghostty) = self.ghostty.take() {
+            ghostty.shutdown();
+        }
+        self.backend_failure = Some(failure);
+    }
+
+    pub(super) fn set_backend_request(&mut self, requested: TerminalBackendConfig) {
         self.requested_backend = requested;
-        self.fallback_reason = fallback_reason;
+        self.backend_failure = None;
+    }
+
+    // Used by the cfg branch compiled when no native Ghostty backend is present.
+    #[allow(dead_code)]
+    pub(super) fn record_backend_failure(&mut self, failure: TerminalBackendFailureDiagnostics) {
+        self.backend_failure = Some(failure);
     }
 
     pub fn backend_diagnostics(&self) -> TerminalBackendDiagnostics {
@@ -2214,16 +2331,17 @@ impl TerminalState {
                 feature = "libghostty-windows"
             )
         ))]
-        let ghostty = (self.resolved_backend == "ghostty").then(|| {
+        let ghostty = {
             let identity = paneflow_terminal_ghostty::build_identity();
-            GhosttyBuildDiagnostics {
+            Some(GhosttyBuildDiagnostics {
+                version: paneflow_terminal_ghostty::GHOSTTY_APP_VERSION,
                 source_sha: identity.source_sha,
                 api_version: identity.api_version,
                 zig_version: identity.zig_version,
                 optimization: identity.optimization,
                 simd: identity.simd,
-            }
-        });
+            })
+        };
         #[cfg(not(any(
             all(target_os = "linux", feature = "libghostty-linux"),
             all(
@@ -2237,8 +2355,9 @@ impl TerminalState {
 
         TerminalBackendDiagnostics {
             requested: self.requested_backend,
-            resolved: self.resolved_backend,
-            fallback_reason: self.fallback_reason.clone(),
+            effective: self.effective_backend,
+            failure: self.backend_failure.clone(),
+            target_triple: env!("PANEFLOW_TARGET_TRIPLE"),
             ghostty,
         }
     }
@@ -2708,8 +2827,8 @@ impl TerminalState {
             ))]
             ghostty_events_rx: None,
             requested_backend: TerminalBackendConfig::Auto,
-            resolved_backend: "alacritty",
-            fallback_reason: None,
+            effective_backend: "alacritty",
+            backend_failure: None,
             cwd_rx: None,
             marks_rx: None,
             marks: Arc::new(std::sync::Mutex::new(Default::default())),
@@ -4777,20 +4896,112 @@ mod tests {
         )
     ))]
     #[test]
-    fn ghostty_fallback_preserves_the_auto_request_in_diagnostics() {
+    fn ghostty_fallback_preserves_the_auto_request_in_structured_diagnostics() {
         let mut state = TerminalState::new_display_only(24, 80);
-        state.set_backend_request(TerminalBackendConfig::Auto, None);
-        state.resolved_backend = "ghostty";
+        state.set_backend_request(TerminalBackendConfig::Auto);
+        state.effective_backend = "ghostty";
 
-        state.abandon_ghostty("native initialization failed");
+        state.fallback_from_ghostty(TerminalBackendFailureDiagnostics::new(
+            TerminalBackendFailurePhase::Initialization,
+            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+            Some(5),
+        ));
 
         let diagnostics = state.backend_diagnostics();
         assert_eq!(diagnostics.requested, TerminalBackendConfig::Auto);
-        assert_eq!(diagnostics.resolved, "alacritty");
+        assert_eq!(diagnostics.effective, "alacritty");
         assert_eq!(
-            diagnostics.fallback_reason.as_deref(),
-            Some("native initialization failed")
+            diagnostics.failure,
+            Some(TerminalBackendFailureDiagnostics::new(
+                TerminalBackendFailurePhase::Initialization,
+                TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+                Some(5),
+            ))
         );
+    }
+
+    #[test]
+    fn backend_diagnostics_extract_os_codes_without_sensitive_error_text() {
+        const CANARY: &str =
+            r#"C:\Users\synthetic-user\private\launch.ps1 --token super-secret-canary"#;
+        let error = anyhow::Error::new(io::Error::from_raw_os_error(5)).context(CANARY);
+        let os_error = raw_os_error_from_anyhow(&error);
+        assert_eq!(os_error, Some(5));
+
+        let mut state = TerminalState::new_display_only(24, 80);
+        state.set_backend_request(TerminalBackendConfig::Ghostty);
+        state.record_backend_failure(TerminalBackendFailureDiagnostics::new(
+            TerminalBackendFailurePhase::OpenPty,
+            TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
+            os_error,
+        ));
+
+        let formatted = state.backend_diagnostics().to_string();
+        assert!(formatted.contains("failure_phase=open_pty"));
+        assert!(formatted.contains("reason_code=ghostty_open_pty_failed"));
+        assert!(formatted.contains("os_error=5"));
+        assert!(!formatted.contains(CANARY));
+        assert!(!formatted.contains("private"));
+        assert!(!formatted.contains("super-secret-canary"));
+    }
+
+    #[test]
+    fn backend_failure_phases_and_reason_codes_are_stable() {
+        assert_eq!(
+            TerminalBackendFailurePhase::Availability.as_str(),
+            "availability"
+        );
+        assert_eq!(
+            TerminalBackendFailurePhase::Initialization.as_str(),
+            "initialization"
+        );
+        assert_eq!(TerminalBackendFailurePhase::OpenPty.as_str(), "open_pty");
+        assert_eq!(TerminalBackendFailurePhase::Spawn.as_str(), "spawn");
+        assert_eq!(
+            TerminalBackendFailurePhase::PostSpawn.as_str(),
+            "post_spawn"
+        );
+        assert_eq!(
+            TerminalBackendFailureDiagnostics::GHOSTTY_UNAVAILABLE,
+            "ghostty_unavailable"
+        );
+        assert_eq!(
+            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
+            "ghostty_post_spawn_failed"
+        );
+    }
+
+    #[test]
+    fn backend_diagnostics_expose_target_triple() {
+        let diagnostics = TerminalState::new_display_only(24, 80).backend_diagnostics();
+        assert_eq!(diagnostics.target_triple, env!("PANEFLOW_TARGET_TRIPLE"));
+        #[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
+        assert_eq!(diagnostics.target_triple, "x86_64-pc-windows-msvc");
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    #[test]
+    fn backend_diagnostics_expose_pinned_ghostty_build_identity() {
+        let diagnostics = TerminalState::new_display_only(24, 80).backend_diagnostics();
+        let ghostty = diagnostics.ghostty.expect("Ghostty build identity");
+        let identity = paneflow_terminal_ghostty::build_identity();
+        assert_eq!(
+            ghostty.version,
+            paneflow_terminal_ghostty::GHOSTTY_APP_VERSION
+        );
+        assert_eq!(ghostty.source_sha, identity.source_sha);
+        assert_eq!(ghostty.api_version, identity.api_version);
+        assert_eq!(ghostty.zig_version, identity.zig_version);
+        assert_eq!(ghostty.optimization, identity.optimization);
+        assert_eq!(ghostty.simd, identity.simd);
     }
 
     #[test]
@@ -4956,7 +5167,11 @@ mod tests {
             BackendInputResult::Accepted
         );
 
-        state.abandon_ghostty("test fallback");
+        state.fallback_from_ghostty(TerminalBackendFailureDiagnostics::new(
+            TerminalBackendFailurePhase::Initialization,
+            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+            None,
+        ));
         let legacy: Vec<Vec<u8>> = state
             .drain_pending_legacy_input()
             .into_iter()

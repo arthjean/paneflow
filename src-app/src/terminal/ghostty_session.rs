@@ -172,15 +172,12 @@ pub(super) enum GhosttyStartError {
 impl std::fmt::Display for GhosttyStartError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Initialization(error) => {
-                write!(formatter, "Ghostty initialization failed: {error:#}")
+            Self::Initialization(_) => formatter.write_str("Ghostty initialization failed"),
+            Self::OpenPty(_) => formatter.write_str("Ghostty PTY open failed"),
+            Self::Spawn(_) => formatter.write_str("Ghostty child spawn failed"),
+            Self::PostSpawn { .. } => {
+                formatter.write_str("Ghostty startup failed after child creation")
             }
-            Self::OpenPty(error) => write!(formatter, "Ghostty PTY open failed: {error:#}"),
-            Self::Spawn(error) => write!(formatter, "Ghostty child spawn failed: {error:#}"),
-            Self::PostSpawn { child_pid, error } => write!(
-                formatter,
-                "Ghostty startup failed after creating child {child_pid}: {error:#}"
-            ),
         }
     }
 }
@@ -536,6 +533,7 @@ impl RuntimeMailbox {
     /// Seal the producer side at the bounded drain deadline. The mailbox lock
     /// makes this atomic with `send_output`: every buffer admitted before the
     /// seal remains queued, while no later read can race exit publication.
+    #[cfg(any(target_os = "windows", test))]
     fn stop_accepting_output(&self) {
         let mut state = self
             .state
@@ -594,10 +592,13 @@ impl Drop for MailboxCloseGuard {
 
 enum StartupReport {
     Started(SpawnedGhostty),
-    InitializationFailed(String),
-    OpenPtyFailed(String),
-    SpawnFailed(String),
-    PostSpawnFailed { child_pid: u32, error: String },
+    InitializationFailed(anyhow::Error),
+    OpenPtyFailed(anyhow::Error),
+    SpawnFailed(anyhow::Error),
+    PostSpawnFailed {
+        child_pid: u32,
+        error: anyhow::Error,
+    },
 }
 
 #[derive(Default)]
@@ -1042,27 +1043,20 @@ impl GhosttySession {
             })
         {
             pending.mailbox.close();
-            return Err(GhosttyStartError::Initialization(anyhow::anyhow!(
-                "could not start Ghostty runtime thread: {error}"
-            )));
+            return Err(GhosttyStartError::Initialization(
+                anyhow::Error::new(error).context("could not start Ghostty runtime thread"),
+            ));
         }
 
         match startup_rx.recv() {
             Ok(StartupReport::Started(spawned)) => Ok(spawned),
             Ok(StartupReport::InitializationFailed(error)) => {
-                Err(GhosttyStartError::Initialization(anyhow::anyhow!(error)))
+                Err(GhosttyStartError::Initialization(error))
             }
-            Ok(StartupReport::OpenPtyFailed(error)) => {
-                Err(GhosttyStartError::OpenPty(anyhow::anyhow!(error)))
-            }
-            Ok(StartupReport::SpawnFailed(error)) => {
-                Err(GhosttyStartError::Spawn(anyhow::anyhow!(error)))
-            }
+            Ok(StartupReport::OpenPtyFailed(error)) => Err(GhosttyStartError::OpenPty(error)),
+            Ok(StartupReport::SpawnFailed(error)) => Err(GhosttyStartError::Spawn(error)),
             Ok(StartupReport::PostSpawnFailed { child_pid, error }) => {
-                Err(GhosttyStartError::PostSpawn {
-                    child_pid,
-                    error: anyhow::anyhow!(error),
-                })
+                Err(GhosttyStartError::PostSpawn { child_pid, error })
             }
             Err(error) => {
                 let error =
@@ -1673,14 +1667,18 @@ fn run_runtime(
     let ghostty_size = match window_size(initial_size) {
         Ok(size) => size,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::InitializationFailed(error.to_string()));
+            let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(
+                error.to_string()
+            )));
             return;
         }
     };
     let mut terminal = match ghostty::DisplayTerminal::new(ghostty_size, max_scrollback) {
         Ok(terminal) => terminal,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::InitializationFailed(error.to_string()));
+            let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(
+                error.to_string()
+            )));
             return;
         }
     };
@@ -1689,20 +1687,22 @@ fn run_runtime(
     let background = ghostty_rgb(theme.ansi_background);
     let cursor = ghostty_rgb(theme.cursor);
     if let Err(error) = terminal.set_default_colors(foreground, background, cursor) {
-        let _ = startup_tx.send(StartupReport::InitializationFailed(error.to_string()));
+        let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(
+            error.to_string()
+        )));
         return;
     }
     if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
-        let _ = startup_tx.send(StartupReport::InitializationFailed(error));
+        let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(error)));
         return;
     }
 
     let pair = match native_pty_system().openpty(pty_size(initial_size)) {
         Ok(pair) => pair,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::OpenPtyFailed(format!(
-                "failed to open native PTY: {error:#}"
-            )));
+            let _ = startup_tx.send(StartupReport::OpenPtyFailed(
+                error.context("failed to open native PTY"),
+            ));
             return;
         }
     };
@@ -1714,11 +1714,9 @@ fn run_runtime(
     ) {
         Ok(closer) => closer,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::OpenPtyFailed(format!(
-                "failed to start ConPTY close worker (kind={:?}, os_error={:?})",
-                error.kind(),
-                error.raw_os_error(),
-            )));
+            let _ = startup_tx.send(StartupReport::OpenPtyFailed(
+                anyhow::Error::new(error).context("failed to start ConPTY close worker"),
+            ));
             return;
         }
     };
@@ -1750,9 +1748,9 @@ fn run_runtime(
     let child = match child {
         Ok(child) => child,
         Err(error) => {
-            let _ = startup_tx.send(StartupReport::SpawnFailed(format!(
-                "failed to spawn shell in PTY: {error:#}"
-            )));
+            let _ = startup_tx.send(StartupReport::SpawnFailed(
+                error.context("failed to spawn shell in PTY"),
+            ));
             return;
         }
     };
@@ -1773,7 +1771,7 @@ fn run_runtime(
             startup_child.terminate();
             let _ = startup_tx.send(StartupReport::PostSpawnFailed {
                 child_pid,
-                error: format!("failed to clone PTY reader: {error:#}"),
+                error: error.context("failed to clone PTY reader"),
             });
             return;
         }
@@ -1791,7 +1789,7 @@ fn run_runtime(
             startup_child.terminate();
             let _ = startup_tx.send(StartupReport::PostSpawnFailed {
                 child_pid,
-                error: format!("failed to take PTY writer: {error:#}"),
+                error: error.context("failed to take PTY writer"),
             });
             return;
         }
@@ -1804,7 +1802,7 @@ fn run_runtime(
         startup_child.terminate();
         let _ = startup_tx.send(StartupReport::PostSpawnFailed {
             child_pid,
-            error: format!("failed to start PTY reader: {error}"),
+            error: anyhow::Error::new(error).context("failed to start PTY reader"),
         });
         return;
     }
