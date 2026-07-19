@@ -96,7 +96,7 @@ ICNS_SRC="$REPO_ROOT/assets/PaneFlow.icns"
 # found, so a failing CI log tells you exactly what to check.
 [ -f "$BIN" ]              || die "release binary not found at $BIN (did you run 'cargo build --release --target $TRIPLE -p paneflow-app'?)"
 [ -f "$INFO_PLIST_SRC" ]   || die "Info.plist template not found at $INFO_PLIST_SRC"
-[ -f "$ICNS_SRC" ]         || die "PaneFlow.icns not found at $ICNS_SRC (US-014 generates this from assets/icons/*.png)"
+[ -f "$ICNS_SRC" ]         || die "PaneFlow.icns not found at $ICNS_SRC (scripts/build-icons.sh generates it from the macOS icon master)"
 
 # --- Assemble bundle ------------------------------------------------------
 APP="$REPO_ROOT/dist/PaneFlow.app"

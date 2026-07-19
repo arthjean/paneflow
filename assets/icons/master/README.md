@@ -7,11 +7,16 @@ commit the regenerated outputs under `assets/icons/`, `assets/PaneFlow.icns`,
 
 | File | Required | Used for |
 |---|---|---|
-| `paneflow-icon-1024.png` | yes | All output sizes >= 128. Chrome render on `#f7f7f4` squircle, 22.37% radius + 60% smoothing. |
-| `paneflow-icon-1024-simplified.png` | no | Sizes <= 64. Same silhouette but simplified chrome (2-stop linear gradient, no detailed reflections) so 16/24/32 don't turn into mush. |
+| `paneflow-icon-1024.png` | yes | Transparent portable mark for Linux hicolor, Windows ICO, and the GPUI runtime icon. |
+| `paneflow-icon-macos-1024.png` | yes | Plated macOS artwork. The legacy ICNS fallback applies the Apple-style inset and rounded mask only to this source. |
+| `paneflow-icon-1024-simplified.png` | no | Transparent simplified mark for sizes <= 64. When absent, the portable master is downscaled directly. |
 | `paneflow-icon-template-1024.png` | no | macOS menubar Template image. Pure black silhouette on alpha, no chrome, no fill. AppKit applies the system tint at runtime. |
 
 ## Regenerating
+
+The complete cross-platform pipeline requires ImageMagick 6 or 7. It validates
+the binary before writing any output, so Windows' unrelated `convert.exe`
+cannot be selected accidentally.
 
 ```bash
 bash scripts/build-icons.sh

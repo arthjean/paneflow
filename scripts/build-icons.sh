@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Generate every Paneflow icon asset from a single master PNG.
+# Generate every Paneflow icon asset from platform-specific master PNGs.
 #
 # Inputs (in assets/icons/master/):
-#   paneflow-icon-1024.png              required to regenerate; if absent, script no-ops
-#   paneflow-icon-1024-simplified.png   optional; used for sizes <=64 to avoid muddy chrome at small px
-#   paneflow-icon-template-1024.png     optional; macOS menubar Template image (black silhouette + alpha)
+#   paneflow-icon-1024.png              required transparent master for Linux + Windows
+#   paneflow-icon-macos-1024.png        required plated macOS artwork
+#   paneflow-icon-1024-simplified.png   optional transparent master for sizes <=64
+#   paneflow-icon-template-1024.png     optional macOS menubar Template image (black silhouette + alpha)
 #
 # Outputs:
 #   assets/icons/paneflow-{16,24,32,48,64,128,256,512}.png   hicolor sizes for cargo-deb / cargo-generate-rpm
@@ -73,6 +74,7 @@ resolve_master() {
 }
 
 MASTER="$(resolve_master "paneflow-icon-1024"             || true)"
+MASTER_MACOS="$(resolve_master "paneflow-icon-macos-1024" || true)"
 MASTER_SIMPLE="$(resolve_master   "paneflow-icon-1024-simplified" || true)"
 MASTER_TEMPLATE="$(resolve_master "paneflow-icon-template-1024"   || true)"
 
@@ -85,45 +87,42 @@ if [ -z "$MASTER" ]; then
     exit 0
 fi
 
-# --- Resolve a resize tool ----------------------------------------------
+# A dedicated macOS master prevents the portable transparent mark from leaking
+# into the Apple bundle when the release pipeline regenerates every platform.
+[ -n "$MASTER_MACOS" ] || die "missing macOS master at $MASTER_DIR/paneflow-icon-macos-1024.{png,jpg,jpeg}"
+
+# --- Resolve ImageMagick before writing any output -----------------------
+# build-icons.sh always assembles a multi-resolution Windows ICO, so sips
+# alone can never complete the full pipeline. Resolve and validate the tool
+# once up front to avoid partial outputs and to reject Windows' unrelated
+# System32/convert.exe binary.
+IM_BIN=""
+if command -v magick >/dev/null 2>&1; then
+    IM_BIN="magick"
+elif command -v convert >/dev/null 2>&1 \
+    && convert -version 2>&1 | grep -qi "ImageMagick"; then
+    IM_BIN="convert"
+else
+    die "need ImageMagick 6 or 7 to regenerate the complete icon set"
+fi
+
 # Lanczos is the best general-purpose resampling filter for icon downscaling.
-# `magick` is ImageMagick 7 (Linux/Windows CI); `convert` is IM6 fallback;
-# `sips` is built into macOS.
 #
-# Two flavours:
-#   resize_png            -- raw resize, no mask. Used for the macOS Template
-#                            silhouette which must preserve its alpha shape.
-#   resize_and_mask_png   -- resize + apply a rounded-rect corner mask at
-#                            ~22.37% radius. Matches the Apple icon convention
-#                            (also adopted by GNOME and modern launchers): the
-#                            file ships with transparent corners so dock /
-#                            launcher tiles render as squircles, not as a flat
-#                            #f7f7f4 square next to other apps.
+# Platform geometry is intentionally split:
 #
-# True G2 squircle (continuous-curvature superellipse) would require a
-# precomputed SVG path; the difference vs a regular rounded-rect at <=512px
-# is visually indistinguishable, and at 1024px barely so. Skip the
-# complexity until someone needs pixel-perfect Apple parity.
-
-# 22.37% expressed as basis points of 10000 for integer arithmetic
-# (matches Apple's documented icon mask ratio). NOTE: this is the corner
-# radius of the squircle BODY, applied relative to the body size (the inset
-# artwork), not the full canvas -- see ICON_BODY_PCT below.
-MASK_RADIUS_PCT=2237
-
-# Keyline padding: the squircle body occupies this fraction of the canvas,
-# with transparent margin around it. 80.47% (≈10% margin each side) is the
-# value GNOME and macOS independently converge on:
-#   - GNOME HIG square keyline: 103/128 = 80.47%  (developer.gnome.org/hig
-#     /guidelines/app-icons.html - "drawn within 128px but shouldn't fill it")
-#   - macOS Big Sur grid:       824/1024 = 80.47% (Apple rounded-rect body)
-#   - KDE Breeze is close (40/48 = 83%); freedesktop mandates no padding.
-# Without this inset the icon is FULL-BLEED and renders ~23% larger than
-# spec-compliant peers in the GNOME Shell dash / dock, which scale every PNG
-# to fill a fixed cell and ignore internal padding. Insetting fixes GNOME and
-# makes the macOS .icns (sourced from these same PNGs) more correct too.
-# Set to 10000 to restore the old full-bleed behaviour.
-ICON_BODY_PCT=8047
+#   Linux + Windows
+#     Keep the app mark transparent. Windows recommends transparent product
+#     icons and does not impose a universal outer tile. KDE's 48 px colorful
+#     grid reserves 4 px per side, so an 83.33% body is a neutral hicolor
+#     fallback that also lands inside GNOME's 128 px app-icon canvas.
+#
+#   macOS
+#     Legacy .icns bundles still need a plated fallback. Keep the traditional
+#     824/1024 body and rounded mask isolated to that output. Current Apple
+#     system masking is not applied to the Windows or Linux assets.
+PORTABLE_BODY_PCT=8333
+MACOS_BODY_PCT=8047
+MACOS_MASK_RADIUS_PCT=2237
 
 # Run a `magick` (or `convert`) invocation with up to 3 attempts.
 # ImageMagick 7.1.2-23 (the current Homebrew bottle on macos-14-arm64,
@@ -166,73 +165,38 @@ run_magick() {
 
 resize_png() {
     local src="$1" dst="$2" size="$3"
-    if command -v magick >/dev/null 2>&1; then
-        run_magick magick "$src" -filter Lanczos -resize "${size}x${size}" -strip "$dst"
-    elif command -v convert >/dev/null 2>&1; then
-        run_magick convert "$src" -filter Lanczos -resize "${size}x${size}" -strip "$dst"
-    elif command -v sips >/dev/null 2>&1; then
-        sips -Z "$size" "$src" --out "$dst" >/dev/null
-    else
-        die "need ImageMagick (magick/convert) or sips to resize PNGs"
-    fi
+    run_magick "$IM_BIN" "$src" -filter Lanczos -resize "${size}x${size}" -strip "$dst"
 }
 
-resize_and_mask_png() {
-    local src="$1" dst="$2" size="$3"
-    # Inset: the masked squircle body is rendered at `body` px, then centered
-    # on a transparent `size` px canvas. Mask radius is relative to the BODY
-    # (so the squircle's corner curvature scales with the body, not the
-    # padded canvas). At ICON_BODY_PCT=10000 (full-bleed) body==size and the
-    # extent is a no-op, preserving the legacy behaviour exactly.
-    local body=$(( size * ICON_BODY_PCT / 10000 ))
+resize_with_inset_png() {
+    local src="$1" dst="$2" size="$3" body_pct="$4"
+    local body=$(( size * body_pct / 10000 ))
     [ "$body" -lt 1 ] && body=1
-    local radius=$(( body * MASK_RADIUS_PCT / 10000 ))
+    run_magick "$IM_BIN" \
+        \( "$src" -filter Lanczos -resize "${body}x${body}" -alpha On \) \
+        +repage -compose Over -background none -gravity center \
+        -extent "${size}x${size}" \
+        -strip "PNG32:$dst"
+}
+
+resize_macos_png() {
+    local src="$1" dst="$2" size="$3"
+    local body=$(( size * MACOS_BODY_PCT / 10000 ))
+    [ "$body" -lt 1 ] && body=1
+    local radius=$(( body * MACOS_MASK_RADIUS_PCT / 10000 ))
     local edge=$(( body - 1 ))
-    if command -v magick >/dev/null 2>&1; then
-        # 3-element pipeline in a single invocation (fast, no temp files):
-        #   1. resized source with `-alpha On` to ensure the alpha channel is
-        #      active. `On` (vs `Set`) PRESERVES existing alpha values when
-        #      the source already has them (PNG masters from Figma with
-        #      transparent corners baked in) AND creates an opaque alpha
-        #      channel when the source has none (raw JPG render). `-alpha
-        #      Set` would force alpha=255 everywhere and destroy the
-        #      master's transparency.
-        #   2. rounded-rect mask drawn fresh at the target size (compose src)
-        #   3. -compose DstIn -composite -> intersect alpha: result is
-        #      transparent wherever EITHER the source or the mask is
-        #      transparent. So master's existing transparent regions stay,
-        #      and the mask additionally rounds the outer tile corners.
-        #   4. `PNG32:` output prefix forces RGBA encoding -- otherwise IM
-        #      may opportunistically downgrade to palette PNG when the alpha
-        #      channel has only 2 distinct values (fully opaque + fully
-        #      transparent), which strips the alpha back out.
-        run_magick magick \
-            \( "$src" -filter Lanczos -resize "${body}x${body}" -alpha On \) \
-            \( -size "${body}x${body}" xc:none -fill white \
-                -draw "roundrectangle 0,0 ${edge},${edge} ${radius},${radius}" \) \
-            -compose DstIn -composite \
-            +repage -compose Over -background none -gravity center \
-            -extent "${size}x${size}" \
-            -strip "PNG32:$dst"
-    elif command -v convert >/dev/null 2>&1; then
-        run_magick convert \
-            \( "$src" -filter Lanczos -resize "${body}x${body}" -alpha On \) \
-            \( -size "${body}x${body}" xc:none -fill white \
-                -draw "roundrectangle 0,0 ${edge},${edge} ${radius},${radius}" \) \
-            -compose DstIn -composite \
-            +repage -compose Over -background none -gravity center \
-            -extent "${size}x${size}" \
-            -strip "PNG32:$dst"
-    elif command -v sips >/dev/null 2>&1; then
-        # sips can resize but cannot draw arbitrary masks or center-inset onto
-        # a transparent canvas. Degrade to a raw full-bleed resize with a
-        # visible warning so the user knows both the mask AND the keyline
-        # padding were skipped on this leg.
-        warn "sips fallback: produced ${dst} full-bleed, without squircle mask or keyline padding (install ImageMagick for spec-correct output)"
-        sips -Z "$size" "$src" --out "$dst" >/dev/null
-    else
-        die "need ImageMagick (magick/convert) or sips to resize PNGs"
-    fi
+    # 3-element pipeline in a single invocation (fast, no temp files):
+    #   1. resize while preserving or creating alpha;
+    #   2. draw the legacy macOS rounded mask at the body size;
+    #   3. intersect alpha, then center the plated body on the icon canvas.
+    run_magick "$IM_BIN" \
+        \( "$src" -filter Lanczos -resize "${body}x${body}" -alpha On \) \
+        \( -size "${body}x${body}" xc:none -fill white \
+            -draw "roundrectangle 0,0 ${edge},${edge} ${radius},${radius}" \) \
+        -compose DstIn -composite \
+        +repage -compose Over -background none -gravity center \
+        -extent "${size}x${size}" \
+        -strip "PNG32:$dst"
 }
 
 # Source picker: small sizes (<=64) prefer the simplified master to avoid muddy
@@ -254,7 +218,7 @@ for size in 16 24 32 48 64 128 256 512; do
     src="$(src_for_size "$size")"
     dst="$OUT_ICONS_DIR/paneflow-${size}.png"
     log "  $dst  <- $(basename "$src")"
-    resize_and_mask_png "$src" "$dst" "$size"
+    resize_with_inset_png "$src" "$dst" "$size" "$PORTABLE_BODY_PCT"
 done
 
 # Alias paneflow.png at 128 (used by some packaging paths as the canonical
@@ -267,10 +231,18 @@ cp "$OUT_ICONS_DIR/paneflow-128.png" "$OUT_ICONS_DIR/paneflow.png"
 mkdir -p "$(dirname "$OUT_RUNTIME_ICON")"
 cp "$OUT_ICONS_DIR/paneflow-128.png" "$OUT_RUNTIME_ICON"
 
+# One shared temporary root keeps native ImageMagick paths valid under Git
+# Bash and gives the EXIT trap a single target for both platform pipelines.
+TMP_ASSETS="$(mktemp -d)"
+if command -v cygpath >/dev/null 2>&1; then
+    TMP_ASSETS="$(cygpath -m "$TMP_ASSETS")"
+fi
+trap 'rm -rf "$TMP_ASSETS"' EXIT
+
 # --- macOS .icns ---------------------------------------------------------
-# Delegate to generate-icns.sh which already has the iconutil/png2icns/
-# icnsutil/python3 fallback chain (US-014). It reads the hicolor PNGs we
-# just wrote.
+# Generate a dedicated plated iconset, then delegate packing to the existing
+# iconutil/png2icns/icnsutil/python3 fallback chain. The hicolor PNGs above
+# remain transparent and never leak into the macOS bundle.
 #
 # Skip on Windows Git Bash: generate-icns.sh requires python3 or one of the
 # native packers, and the .icns is only ever consumed by the macOS leg --
@@ -281,37 +253,29 @@ case "$(uname -s)" in
         warn "skipping .icns regeneration on Windows (keeps the committed copy; macOS leg regenerates its own)"
         ;;
     *)
+        TMP_MACOS="$TMP_ASSETS/macos"
+        mkdir -p "$TMP_MACOS"
+        for size in 16 32 64 128 256 512 1024; do
+            resize_macos_png "$MASTER_MACOS" "$TMP_MACOS/paneflow-${size}.png" "$size"
+        done
         log "  $OUT_ICNS  (via generate-icns.sh)"
-        bash "$SCRIPT_DIR/generate-icns.sh" >&2
+        PANEFLOW_ICNS_SOURCE_DIR="$TMP_MACOS" bash "$SCRIPT_DIR/generate-icns.sh" >&2
         ;;
 esac
 
 # --- Windows .ico (multi-resolution) -------------------------------------
 log "  $OUT_ICO"
-TMP_ICO="$(mktemp -d)"
-# Same MSYS->Windows conversion as REPO_ROOT above: mktemp yields /tmp/tmp.XXXX
-# under Git Bash, which native magick.exe can't open. Convert so the .ico
-# assembly resolves; the trap still removes it fine via the Windows path.
-# No-op on Linux/macOS (cygpath absent).
-if command -v cygpath >/dev/null 2>&1; then
-    TMP_ICO="$(cygpath -m "$TMP_ICO")"
-fi
-trap 'rm -rf "$TMP_ICO"' EXIT
+TMP_ICO="$TMP_ASSETS/ico"
+mkdir -p "$TMP_ICO"
 for size in 16 24 32 48 64 128 256; do
     src="$(src_for_size "$size")"
-    resize_and_mask_png "$src" "$TMP_ICO/${size}.png" "$size"
+    resize_with_inset_png "$src" "$TMP_ICO/${size}.png" "$size" "$PORTABLE_BODY_PCT"
 done
 
 # .ico is a multi-image container. ImageMagick assembles it natively and
 # automatically PNG-compresses the 256px frame inside the .ico envelope (the
 # rest stay BMP) for Vista+ ProgramsAndFeatures compatibility.
-if command -v magick >/dev/null 2>&1; then
-    run_magick magick "$TMP_ICO"/{16,24,32,48,64,128,256}.png "$OUT_ICO"
-elif command -v convert >/dev/null 2>&1; then
-    run_magick convert "$TMP_ICO"/{16,24,32,48,64,128,256}.png "$OUT_ICO"
-else
-    die "need ImageMagick to assemble $OUT_ICO"
-fi
+run_magick "$IM_BIN" "$TMP_ICO"/{16,24,32,48,64,128,256}.png "$OUT_ICO"
 
 # Mirror the multi-res .ico into the WiX packaging dir. cargo-wix's
 # main.wxs sources the installer / Start-Menu shortcut / Add-or-Remove-
@@ -336,6 +300,7 @@ if [ -f "$MASTER_TEMPLATE" ]; then
 fi
 
 log ""
-log "icons regenerated from $(basename "$MASTER")"
-[ -f "$MASTER_SIMPLE" ]   || warn "no simplified master -- sizes <=64 use full chrome render and will look muddy"
+log "portable icons regenerated from $(basename "$MASTER")"
+log "macOS icon source: $(basename "$MASTER_MACOS")"
+[ -f "$MASTER_SIMPLE" ]   || log  "no simplified master -- sizes <=64 use the transparent portable master"
 [ -f "$MASTER_TEMPLATE" ] || log  "no template master  -- skipping menubar Template PNGs"

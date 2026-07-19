@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Generate assets/PaneFlow.icns from the PNG sources in assets/icons/.
+# Generate assets/PaneFlow.icns from a prepared PNG iconset.
 #
 # US-014. The `.icns` file is consumed by `scripts/bundle-macos.sh`
 # (US-013), which copies it into `Contents/Resources/` of the .app bundle.
 #
-# This script is idempotent and arg-less - paths are fixed relative to the
-# repo root. Run it whenever the PNG sources change, then commit the
-# regenerated `assets/PaneFlow.icns`.
+# build-icons.sh passes a prepared plated source directory through
+# PANEFLOW_ICNS_SOURCE_DIR. Requiring it prevents a direct invocation from
+# accidentally rebuilding the Apple bundle from Linux's transparent assets.
 #
 # Tool selection cascades at runtime (first available wins):
 #   1. iconutil        (macOS, Apple-blessed, best quality)
@@ -25,7 +25,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
 
-SRC_DIR="$REPO_ROOT/assets/icons"
+SRC_DIR="${PANEFLOW_ICNS_SOURCE_DIR:-}"
 OUT="$REPO_ROOT/assets/PaneFlow.icns"
 
 die() {
@@ -33,9 +33,12 @@ die() {
     exit 1
 }
 
+[ -n "$SRC_DIR" ] || die "PANEFLOW_ICNS_SOURCE_DIR is required; run scripts/build-icons.sh"
+
 # --- Validate sources -----------------------------------------------------
-# The Apple iconset spec needs: 16, 32, 64, 128, 256, 512, 1024. The existing
-# Linux hicolor sizes cover 16/32/128/256/512; 64 and 1024 are derived below.
+# The Apple iconset spec needs 16, 32, 64, 128, 256, 512, and 1024 px. The
+# five baseline sizes are required here; 64 and 1024 are derived only when the
+# caller did not prepare them explicitly.
 for size in 16 32 128 256 512; do
     src="$SRC_DIR/paneflow-$size.png"
     [ -f "$src" ] || die "missing source PNG: $src"
@@ -51,7 +54,8 @@ resize_png() {
         sips -Z "$size" "$src" --out "$dst" >/dev/null
     elif command -v magick >/dev/null 2>&1; then
         magick "$src" -filter Lanczos -resize "${size}x${size}" "$dst"
-    elif command -v convert >/dev/null 2>&1; then
+    elif command -v convert >/dev/null 2>&1 \
+        && convert -version 2>&1 | grep -qi "ImageMagick"; then
         convert "$src" -filter Lanczos -resize "${size}x${size}" "$dst"
     else
         die "need sips (macOS) or magick/convert (ImageMagick) to resize PNGs"
@@ -64,11 +68,18 @@ trap 'rm -rf "$STAGING"' EXIT
 ICONSET="$STAGING/PaneFlow.iconset"
 mkdir -p "$ICONSET"
 
-# Generate 64 px from the 128 px source (downscale = sharper than upscaling
-# the 32 px). 1024 px is the only real upscale - from 512 - and is
-# permitted by AC1.
-resize_png "$SRC_DIR/paneflow-128.png" "$STAGING/paneflow-64.png"   64
-resize_png "$SRC_DIR/paneflow-512.png" "$STAGING/paneflow-1024.png" 1024
+# Prefer explicit sources prepared by build-icons.sh. Keep a derivation
+# fallback for callers that provide a valid iconset without 64/1024 sources.
+SRC_64="$SRC_DIR/paneflow-64.png"
+if [ ! -f "$SRC_64" ]; then
+    SRC_64="$STAGING/paneflow-64.png"
+    resize_png "$SRC_DIR/paneflow-128.png" "$SRC_64" 64
+fi
+SRC_1024="$SRC_DIR/paneflow-1024.png"
+if [ ! -f "$SRC_1024" ]; then
+    SRC_1024="$STAGING/paneflow-1024.png"
+    resize_png "$SRC_DIR/paneflow-512.png" "$SRC_1024" 1024
+fi
 
 # Apple iconset filename convention (iconutil(1)):
 #   icon_<base>[@2x].png, where base ∈ {16x16, 32x32, 128x128, 256x256, 512x512}
@@ -76,13 +87,13 @@ resize_png "$SRC_DIR/paneflow-512.png" "$STAGING/paneflow-1024.png" 1024
 cp "$SRC_DIR/paneflow-16.png"           "$ICONSET/icon_16x16.png"
 cp "$SRC_DIR/paneflow-32.png"           "$ICONSET/icon_16x16@2x.png"
 cp "$SRC_DIR/paneflow-32.png"           "$ICONSET/icon_32x32.png"
-cp "$STAGING/paneflow-64.png"           "$ICONSET/icon_32x32@2x.png"
+cp "$SRC_64"                            "$ICONSET/icon_32x32@2x.png"
 cp "$SRC_DIR/paneflow-128.png"          "$ICONSET/icon_128x128.png"
 cp "$SRC_DIR/paneflow-256.png"          "$ICONSET/icon_128x128@2x.png"
 cp "$SRC_DIR/paneflow-256.png"          "$ICONSET/icon_256x256.png"
 cp "$SRC_DIR/paneflow-512.png"          "$ICONSET/icon_256x256@2x.png"
 cp "$SRC_DIR/paneflow-512.png"          "$ICONSET/icon_512x512.png"
-cp "$STAGING/paneflow-1024.png"         "$ICONSET/icon_512x512@2x.png"
+cp "$SRC_1024"                          "$ICONSET/icon_512x512@2x.png"
 
 # --- Pack .icns -----------------------------------------------------------
 if command -v iconutil >/dev/null 2>&1; then
