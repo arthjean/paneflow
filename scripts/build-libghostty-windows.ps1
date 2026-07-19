@@ -80,6 +80,15 @@ function Assert-NonRootDirectory {
 }
 
 function Import-MsvcEnvironment {
+    param(
+        [string]$MsvcToolset,
+        [string]$WindowsSdk
+    )
+
+    if ($MsvcToolset -notmatch '^[0-9]+(?:\.[0-9]+)+$' -or $WindowsSdk -notmatch '^[0-9]+(?:\.[0-9]+)+$') {
+        throw "manifest-pinned MSVC toolset and Windows SDK versions must contain only digits and dots"
+    }
+
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
     if (-not (Test-Path -LiteralPath $vswhere)) {
         throw "Visual Studio Installer vswhere.exe is required for the x64 MSVC build"
@@ -89,9 +98,11 @@ function Import-MsvcEnvironment {
         throw "Visual Studio 2022 with the x64 C++ toolchain is required"
     }
     $vsDevCmd = Join-Path $installation "Common7\Tools\VsDevCmd.bat"
-    $environment = & $env:ComSpec /d /s /c "`"$vsDevCmd`" -no_logo -arch=x64 -host_arch=x64 && set"
-    if ($LASTEXITCODE -ne 0) {
-        throw "VsDevCmd.bat failed with exit code $LASTEXITCODE"
+    $vsDevCmdCommand = '"{0}" -no_logo -arch=x64 -host_arch=x64 -vcvars_ver={1} -winsdk={2} && set' -f $vsDevCmd, $MsvcToolset, $WindowsSdk
+    $environment = @(& $env:ComSpec /d /s /c $vsDevCmdCommand 2>&1 | ForEach-Object { $_.ToString() })
+    $vsDevCmdExitCode = $LASTEXITCODE
+    if ($vsDevCmdExitCode -ne 0) {
+        throw "VsDevCmd.bat failed to select manifest-pinned MSVC toolset $MsvcToolset and Windows SDK $WindowsSdk (exit code $vsDevCmdExitCode)`n$($environment -join "`n")"
     }
     foreach ($line in $environment) {
         if ($line -match '^([^=]+)=(.*)$') {
@@ -277,7 +288,7 @@ if ((Get-NormalizedTextSha256 $bindings) -ne $BindingsSha) {
     throw "Paneflow bindings checksum mismatch at $bindings"
 }
 
-$vsInstallation = Import-MsvcEnvironment
+$vsInstallation = Import-MsvcEnvironment -MsvcToolset $MsvcToolset -WindowsSdk $WindowsSdk
 $llvmRoot = Join-Path $vsInstallation "VC\Tools\Llvm\x64\bin"
 $clExe = Resolve-Tool "cl.exe"
 $dumpbinExe = Resolve-Tool "dumpbin.exe"

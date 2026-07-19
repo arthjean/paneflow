@@ -1,9 +1,10 @@
 # Native third-party notices
 
-PaneFlow Linux builds statically link the reviewed `libghostty-vt` archive.
+PaneFlow Linux and Windows x64 builds statically link a reviewed
+`libghostty-vt` archive.
 This notice covers every archive member, compiler-support object, bundled
 dataset, and generated template distributed through that archive. It is
-included in the tar, AppImage, deb, and rpm packages.
+included in the tar, AppImage, deb, rpm, and MSI packages.
 
 Pinned Ghostty source:
 `ae52f97dcac558735cfa916ea3965f247e5c6e9e`.
@@ -12,26 +13,30 @@ Reviewed archive fingerprints:
 
 - `x86_64-unknown-linux-gnu`: `0d3e8fad7503658cb1fca3f1d78f2dc725dd3650264cebaa4ee30af9be619916`
 - `aarch64-unknown-linux-gnu`: `183c81ca54681587e79bceb4cee7751df35db7a0c3e55dd95a608d14b981fc87`
+- `x86_64-pc-windows-msvc`: `69d3676b4dce995c72b60c9a5b1b0a260e2c1778f623dab82835aa484dd04ac3`
 
 ## Artifact member inventory
 
-Both reviewed archives contain the same members in the following order.
+The reviewed archives contain equivalent compiled components. Linux uses
+`.o` members while the normalized MSVC archive uses `.obj`; the Zig-generated
+Highway member is named `libhighway_zcu.o` on Linux and `highway_zcu.obj` on
+Windows.
 Ghostty modifications and generated glue remain covered by Ghostty's MIT
 license in addition to the upstream components identified below.
 
 | Archive member | Bundled code or data | Applicable license expression |
 |---|---|---|
-| `base64.o` | Ghostty, simdutf, LLVM libc++ headers | MIT; (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
-| `codepoint_width.o` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
-| `index_of.o` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
-| `vt.o` | Ghostty, Highway, simdutf, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
-| `libghostty-vt-static_zcu.o` | Ghostty, Zig, uucode, Unicode Character Database, Bjoern Hoehrmann UTF-8 DFA, X.Org rgb data, foot kitty keymap | MIT; Unicode-3.0 |
-| `compiler_rt.o` | Zig compiler runtime | MIT |
-| `simdutf.o` | simdutf, LLVM libc++ headers | (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
-| `abort.o` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
-| `per_target.o` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
-| `targets.o` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
-| `libhighway_zcu.o` | Ghostty, Zig, Highway | MIT; Apache-2.0 OR BSD-3-Clause |
+| `base64.o` / `base64.obj` | Ghostty, simdutf, LLVM libc++ headers | MIT; (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
+| `codepoint_width.o` / `codepoint_width.obj` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
+| `index_of.o` / `index_of.obj` | Ghostty, Highway, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
+| `vt.o` / `vt.obj` | Ghostty, Highway, simdutf, LLVM libc++ headers | MIT; Apache-2.0 OR BSD-3-Clause; (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
+| `libghostty-vt-static_zcu.o` / `ghostty-vt-static_zcu.obj` | Ghostty, Zig, uucode, Unicode Character Database, Bjoern Hoehrmann UTF-8 DFA, X.Org rgb data, foot kitty keymap | MIT; Unicode-3.0 |
+| `compiler_rt.o` / `compiler_rt.obj` | Zig compiler runtime | MIT |
+| `simdutf.o` / `simdutf.obj` | simdutf, LLVM libc++ headers | (Apache-2.0 OR MIT) AND BSD-3-Clause; Apache-2.0 WITH LLVM-exception |
+| `abort.o` / `abort.obj` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
+| `per_target.o` / `per_target.obj` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
+| `targets.o` / `targets.obj` | Highway with Ghostty modifications, LLVM libc++ headers | Apache-2.0 OR BSD-3-Clause; MIT; Apache-2.0 WITH LLVM-exception |
+| `libhighway_zcu.o` / `highway_zcu.obj` | Ghostty, Zig, Highway | MIT; Apache-2.0 OR BSD-3-Clause |
 
 ## Component license inventory
 
@@ -86,8 +91,8 @@ SOFTWARE.
 
 Source: <https://github.com/ziglang/zig/tree/0.15.2>
 
-Ghostty enables `bundle_compiler_rt`, which places `compiler_rt.o` in each
-distributed archive.
+Ghostty enables `bundle_compiler_rt`, which places `compiler_rt.o` or
+`compiler_rt.obj` in each distributed archive.
 
 ```text
 The MIT License (Expat)

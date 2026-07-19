@@ -1,0 +1,184 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:4d5095de-df50-4d58-bda5-7102569eca0a",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-07-19T00:00:00Z",
+    "authors": [
+      {
+        "name": "Strivex"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "paneflow-libghostty-windows",
+      "name": "Paneflow libghostty Windows integration",
+      "version": "0.1.0-dev+ae52f97dc",
+      "properties": [
+        {
+          "name": "paneflow:rust-target",
+          "value": "x86_64-pc-windows-msvc"
+        },
+        {
+          "name": "paneflow:linkage",
+          "value": "static"
+        },
+        {
+          "name": "paneflow:zig-version",
+          "value": "0.15.2"
+        }
+      ]
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "libghostty-vt@ae52f97dcac558735cfa916ea3965f247e5c6e9e",
+      "name": "libghostty-vt",
+      "version": "0.1.0-dev+ae52f97dc",
+      "purl": "pkg:github/ghostty-org/ghostty@ae52f97dcac558735cfa916ea3965f247e5c6e9e",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "69d3676b4dce995c72b60c9a5b1b0a260e2c1778f623dab82835aa484dd04ac3"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "properties": [
+        {
+          "name": "paneflow:source-repository",
+          "value": "https://github.com/ghostty-org/ghostty.git"
+        },
+        {
+          "name": "paneflow:optimization",
+          "value": "ReleaseFast"
+        },
+        {
+          "name": "paneflow:simd",
+          "value": "upstream-default"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "bom-ref": "zig-runtime@0.15.2",
+      "name": "Zig compiler runtime",
+      "version": "0.15.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "uucode@54d650cf37948552f0c3d8168903e5e8a16901b8",
+      "name": "uucode",
+      "version": "0.2.0+54d650cf",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "unicode-character-database@17.0.0",
+      "name": "Unicode Character Database",
+      "version": "17.0.0",
+      "licenses": [
+        {
+          "expression": "Unicode-3.0"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "bjoern-hoehmann-utf8-dfa@uucode-0.2.0",
+      "name": "Bjoern Hoehrmann UTF-8 DFA",
+      "version": "uucode-0.2.0-bundled",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "xorg-rgb@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e",
+      "name": "X.Org rgb data",
+      "version": "rgb-1.1.1+f4fdceb8",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ]
+    },
+    {
+      "type": "data",
+      "bom-ref": "foot-kitty-keymap@c13495e26ef7c239b330dccf1afef44430b15543",
+      "name": "foot kitty keymap",
+      "version": "c13495e26ef7c239b330dccf1afef44430b15543",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "simdutf@9.0.0",
+      "name": "simdutf",
+      "version": "9.0.0",
+      "licenses": [
+        {
+          "expression": "(Apache-2.0 OR MIT) AND BSD-3-Clause"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "highway@66486a10623fa0d72fe91260f96c892e41aceb06",
+      "name": "highway",
+      "version": "1.2.0+66486a10",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR BSD-3-Clause"
+        }
+      ]
+    },
+    {
+      "type": "framework",
+      "bom-ref": "llvm-libcxx-headers@zig-0.15.2",
+      "name": "LLVM libc++ headers",
+      "version": "zig-0.15.2-bundled",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 WITH LLVM-exception"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "paneflow-libghostty-windows",
+      "dependsOn": [
+        "libghostty-vt@ae52f97dcac558735cfa916ea3965f247e5c6e9e",
+        "zig-runtime@0.15.2",
+        "uucode@54d650cf37948552f0c3d8168903e5e8a16901b8",
+        "unicode-character-database@17.0.0",
+        "bjoern-hoehmann-utf8-dfa@uucode-0.2.0",
+        "xorg-rgb@f4fdceb8edc4d706e26fb6340d1c9dee8cbec78e",
+        "foot-kitty-keymap@c13495e26ef7c239b330dccf1afef44430b15543",
+        "simdutf@9.0.0",
+        "highway@66486a10623fa0d72fe91260f96c892e41aceb06",
+        "llvm-libcxx-headers@zig-0.15.2"
+      ]
+    }
+  ]
+}
