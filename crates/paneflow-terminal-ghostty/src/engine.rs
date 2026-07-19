@@ -303,7 +303,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        assert_eq!(directories, [r"C:\dev\path with space\é"]);
+        let expected = if cfg!(windows) {
+            r"C:\dev\path with space\é"
+        } else {
+            "/C:/dev/path with space/é"
+        };
+        assert_eq!(directories, [expected]);
     }
 
     #[test]
@@ -324,6 +329,11 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(directories, [r"C:\dev\recovered"]);
+        let expected = if cfg!(windows) {
+            r"C:\dev\recovered"
+        } else {
+            "/C:/dev/recovered"
+        };
+        assert_eq!(directories, [expected]);
     }
 }
