@@ -8,7 +8,7 @@
 
 ## Histoire du projet
 
-**Développé pendant l'OpenAI Build Week :** J'ai utilisé Codex avec GPT-5.6 Sol pour faire migrer les terminaux Linux de Paneflow d'Alacritty vers `libghostty-vt`. J'ai fait de Ghostty le backend Linux par défaut, ajouté des tests différentiels et du fuzzing, et rendu les builds natifs reproductibles. Tous les panneaux de terminal visibles dans les captures d'écran de la soumission utilisent ce nouveau backend Ghostty. Alacritty reste disponible comme solution de repli.
+**Développé pendant l'OpenAI Build Week :** J'ai utilisé Codex avec GPT-5.6 Sol pour faire migrer les terminaux Linux de Paneflow d'Alacritty vers `libghostty-vt`. J'ai fait de Ghostty le backend Linux par défaut, ajouté des tests différentiels et du fuzzing, et rendu reproductibles les archives épinglées de `libghostty-vt`. Tous les panneaux de terminal visibles dans les captures d'écran de la soumission utilisent ce nouveau backend Ghostty. Alacritty reste disponible comme solution de repli. J'ai également refondu l'UX/UI de l'ensemble de l'application ; la refonte correspondante de `paneflow.dev` est encore en cours.
 
 ### Inspiration
 
@@ -40,9 +40,13 @@ L'application est distribuée sous forme de paquets natifs et ne nécessite ni E
 
 ### Ce que j'ai développé pendant l'OpenAI Build Week
 
-Paneflow existait avant la Build Week. J'utilise donc le commit `e82b3da` du 10 juillet comme référence antérieure à l'événement. Le travail décrit ci-dessous a commencé après l'ouverture de la période de soumission et peut être distingué grâce à des commits datés et des sessions Codex horodatées.
+Paneflow existait avant la Build Week. J'utilise donc le commit `e82b3da` du 10 juillet comme référence antérieure à l'événement. La soumission Devpost contient l'identifiant `/feedback` de la session principale de build, tandis que les commits datés après `e82b3da` séparent ce travail du produit existant.
 
 Pendant la Build Week, j'ai utilisé Codex avec GPT-5.6 Sol pour migrer la stack de terminal Linux de Paneflow vers `libghostty-vt`.
+
+La migration a commencé par une étude d'architecture. J'ai utilisé GPT-5.6 Sol avec le niveau de raisonnement Ultra pour explorer Ghostty et Ghostling en profondeur, trouver les parties que Paneflow pouvait réutiliser sans risque et déterminer si une trajectoire multiplateforme était réaliste. J'ai choisi Linux comme première cible afin de valider le moteur et le packaging avant de m'attaquer à Windows et macOS.
+
+Après cette première phase de recherche, j'ai demandé à Codex de transformer les résultats en une [PRD de migration](tasks/prd-linux-libghostty-backend-2026-Q3.md) complète et ordonnée selon les dépendances. Elle commence par un smoke test, puis couvre l'abstraction de session, l'implémentation, le passage au backend par défaut, les tests différentiels et le pipeline de release. J'ai fourni les skills d'implémentation et de review que j'avais écrits pour ce type de travail, puis utilisé GPT-5.6 Sol pour les auditer avant de lancer les epics.
 
 La migration comprend :
 
@@ -52,19 +56,25 @@ La migration comprend :
 - Ghostty comme backend Linux par défaut, avec Alacritty conservé comme solution de repli explicite.
 - Des tests différentiels déterministes qui transmettent les mêmes flux de terminal aux deux backends et comparent leurs sorties normalisées.
 - Des cibles de fuzzing pour le rendu, les entrées, le reflow, les séquences malformées et les limites entre fragments.
-- Des builds statiques reproductibles pour Linux x86_64 et ARM64.
+- Des archives statiques `libghostty-vt`, épinglées et reproductibles, pour Linux x86_64 et ARM64.
 - Des vérifications CI portant sur les bindings générés, les sources des dépendances, le contenu des paquets, les licences natives et l'isolation multiplateforme.
-- Une passe d'amélioration de l'interface couvrant la barre latérale, la barre d'onglets, les surfaces de review, le chrome des fenêtres et le feedback des interactions.
-
-Codex m'a aidé à retracer les comportements à travers Paneflow, Ghostty, Ghostling et Zed. Je l'ai utilisé pour implémenter les lots de la PRD de migration dans l'ordre de leurs dépendances, générer des tests ciblés, diagnostiquer les bugs de redimensionnement et de reflow, examiner les frontières FFI et corriger les échecs du pipeline CI natif.
+- Une refonte plus large de l'UX/UI de l'application, notamment la barre latérale, la barre d'onglets, les vues Review et Settings, le chrome des fenêtres et le feedback des interactions.
 
 J'ai pris les décisions d'architecture en amont : GPUI reste responsable du rendu, Ghostty est épinglé et lié statiquement, `cargo build` ne télécharge jamais de code natif, les accès unsafe restent confinés dans de petits wrappers, Linux reçoit le nouveau backend en premier et Alacritty demeure disponible comme solution de repli. Codex a travaillé dans le cadre de ces contraintes.
+
+Codex m'a ensuite aidé à retracer les comportements à travers Paneflow, Ghostty, Ghostling et Zed. Je l'ai utilisé pour implémenter la PRD un lot à la fois dans l'ordre des dépendances, générer des tests ciblés, diagnostiquer les bugs de redimensionnement et de reflow, examiner les frontières FFI et corriger les échecs du pipeline CI natif.
+
+J'utilise Codex CLI quotidiennement sous Linux, mais j'ai aussi travaillé depuis Codex App sous Windows pour les validations manuelles. J'ai utilisé Computer Use pour observer Paneflow, tandis que les outils CLI, les harnesses de test et PowerShell pilotaient les scénarios autour du lancement des terminaux, du changement de backend et du redimensionnement de la fenêtre ou des panneaux. Cela a permis de trouver des problèmes d'intégration que des tests limités à la bibliothèque n'auraient pas montrés.
+
+En parallèle, j'ai repris la hiérarchie visuelle, les espacements, la navigation, les vues Review, le chrome des fenêtres et le feedback des interactions dans l'ensemble de l'application. La refonte de `paneflow.dev` suit la même direction et est encore en cours. Je ne la compterai comme travail Build Week terminé qu'une fois le nouveau site finalisé et en ligne avant la date limite.
 
 ### Difficultés rencontrées
 
 `libghostty-vt` expose des données de rendu empruntées au travers d'une API C. Une mutation du terminal peut invalider ces données. Aucun pointeur ni slice emprunté ne peut donc franchir la limite d'un verrou ou d'une frame. Le wrapper Rust copie les données dont Paneflow a besoin pendant que le terminal est verrouillé et n'expose au moteur de rendu GPUI que des instantanés possédés.
 
 Ghostty fournit le moteur de terminal, tandis que Paneflow reste responsable du PTY, du cycle de vie des processus, du moteur de rendu, de la persistance, des événements produit et de l'intégration aux différentes plateformes. Les bugs les plus visibles apparaissaient pendant le redimensionnement, le reflow et le déplacement de la barre de défilement : le terminal pouvait sembler correct au repos, puis sauter lorsque ses dimensions changeaient.
+
+Un bug de redimensionnement a demandé plus d'une heure d'allers-retours dans la même session Codex. Nous avons redimensionné la fenêtre de Paneflow, observé le comportement du terminal Ghostty, modifié l'implémentation et recommencé jusqu'à ce que le terminal reste aligné. C'était un débogage lent et concret, et c'est l'un des exemples les plus clairs de ma façon de travailler avec GPT-5.6 pendant la migration.
 
 Le packaging a représenté une autre partie importante du travail. Un build Paneflow standard doit fonctionner sans Zig ni checkout local de Ghostty. Le pipeline de release produit donc à l'avance des archives statiques épinglées et vérifie leurs headers, bindings, sommes de contrôle, symboles et licences.
 
@@ -82,7 +92,9 @@ Cette migration a également confirmé la raison d'être de Paneflow. Dès que p
 
 ### Prochaines étapes
 
-Je compte continuer à approfondir Conductor, l'observabilité des agents et la review des worktrees. Mon prochain objectif est de porter le backend Ghostty sur Windows, puis sur macOS, afin de remplacer entièrement Alacritty dans Paneflow.
+Je compte continuer à approfondir Conductor, l'observabilité des agents et la review des worktrees. Le port de Ghostty sur Windows est maintenant en cours avec la même frontière de backend et la même stratégie de repli. Ce travail n'est pas encore terminé : la v0.8.0 et cette soumission revendiquent uniquement la migration Linux achevée.
+
+macOS viendra ensuite. Le port reprendra lorsque je pourrai louer une vraie machine de test macOS et valider le backend Ghostty en conditions réelles.
 
 Dépôt : https://github.com/arthjean/paneflow
 
@@ -93,7 +105,7 @@ Site web : https://paneflow.dev
 - Rust
 - GPUI
 - Codex
-- GPT-5.6 Sol
+- GPT-5.6 Sol (niveau de raisonnement Ultra)
 - libghostty-vt
 - Tokio
 - portable-pty
