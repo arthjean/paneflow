@@ -18,8 +18,26 @@ pub(crate) const CORPUS_SEED: u64 = 0x5041_4e45_464c_4f57;
 const CORPUS_FAMILIES: usize = 27;
 const CORPUS_VARIANTS: usize = 5;
 const CORPUS_SIZE: usize = CORPUS_FAMILIES * CORPUS_VARIANTS;
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
-const PERFORMANCE_ROUNDS: usize = 5;
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+const PERFORMANCE_WARMUP_ROUNDS: usize = 2;
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+const PERFORMANCE_ROUNDS: usize = 20;
 
 struct CorpusCase {
     name: String,
@@ -1022,7 +1040,15 @@ fn alacritty_eight_pane_baseline() {
     );
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 #[derive(Debug, Default)]
 struct BackendPerformance {
     wall: Duration,
@@ -1033,7 +1059,15 @@ struct BackendPerformance {
     snapshot_durations: Vec<Duration>,
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 impl BackendPerformance {
     fn absorb(&mut self, mut sample: Self) {
         self.wall = self.wall.saturating_add(sample.wall);
@@ -1046,7 +1080,33 @@ impl BackendPerformance {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn absorb_performance_round(
+    aggregate: &mut BackendPerformance,
+    round_feed_durations: &mut Vec<Duration>,
+    sample: BackendPerformance,
+) {
+    round_feed_durations.push(sample.feed_durations.iter().sum());
+    aggregate.absorb(sample);
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 fn measure_alacritty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     let mut panes = (0..8).map(|_| Harness::new()).collect::<Vec<_>>();
     let rss_start = resident_set_bytes();
@@ -1096,7 +1156,15 @@ fn measure_alacritty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 fn measure_ghostty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     let mut panes = (0..8).map(|_| GhosttyHarness::new()).collect::<Vec<_>>();
     let rss_start = resident_set_bytes();
@@ -1150,28 +1218,71 @@ fn measure_ghostty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 #[test]
-#[ignore = "EP-005 promotion gate: release-only relative parser and snapshot benchmark"]
+#[ignore = "EP-004 promotion gate: release-only relative parser and snapshot benchmark"]
+#[allow(
+    clippy::assertions_on_constants,
+    reason = "the ignored performance gate must reject accidental debug-profile execution"
+)]
 fn ghostty_parser_and_snapshot_performance_gate() {
     assert!(
         !cfg!(debug_assertions),
         "run the performance gate in release"
     );
     let cases = corpus();
+    for round in 0..PERFORMANCE_WARMUP_ROUNDS {
+        // Warm both implementations with the same corpus while alternating
+        // order. Warmup samples are deliberately excluded from the report.
+        if round % 2 == 0 {
+            std::hint::black_box(measure_alacritty_performance(&cases));
+            std::hint::black_box(measure_ghostty_performance(&cases));
+        } else {
+            std::hint::black_box(measure_ghostty_performance(&cases));
+            std::hint::black_box(measure_alacritty_performance(&cases));
+        }
+    }
     let mut alacritty = BackendPerformance::default();
     let mut ghostty = BackendPerformance::default();
+    let mut alacritty_round_feed_durations = Vec::with_capacity(PERFORMANCE_ROUNDS);
+    let mut ghostty_round_feed_durations = Vec::with_capacity(PERFORMANCE_ROUNDS);
     for round in 0..PERFORMANCE_ROUNDS {
         // Alternate order so CPU-frequency and allocator state do not
         // systematically favor the backend measured second.
         if round % 2 == 0 {
-            alacritty.absorb(measure_alacritty_performance(&cases));
-            ghostty.absorb(measure_ghostty_performance(&cases));
+            absorb_performance_round(
+                &mut alacritty,
+                &mut alacritty_round_feed_durations,
+                measure_alacritty_performance(&cases),
+            );
+            absorb_performance_round(
+                &mut ghostty,
+                &mut ghostty_round_feed_durations,
+                measure_ghostty_performance(&cases),
+            );
         } else {
-            ghostty.absorb(measure_ghostty_performance(&cases));
-            alacritty.absorb(measure_alacritty_performance(&cases));
+            absorb_performance_round(
+                &mut ghostty,
+                &mut ghostty_round_feed_durations,
+                measure_ghostty_performance(&cases),
+            );
+            absorb_performance_round(
+                &mut alacritty,
+                &mut alacritty_round_feed_durations,
+                measure_alacritty_performance(&cases),
+            );
         }
     }
+    alacritty_round_feed_durations.sort_unstable();
+    ghostty_round_feed_durations.sort_unstable();
     alacritty.feed_durations.sort_unstable();
     alacritty.input_to_snapshot.sort_unstable();
     alacritty.snapshot_durations.sort_unstable();
@@ -1182,6 +1293,18 @@ fn ghostty_parser_and_snapshot_performance_gate() {
     let alacritty_feed = alacritty.feed_durations.iter().sum::<Duration>();
     let ghostty_feed = ghostty.feed_durations.iter().sum::<Duration>();
     let parser_ratio = alacritty_feed.as_secs_f64() / ghostty_feed.as_secs_f64();
+    let alacritty_round_feed_median = percentile_duration(&alacritty_round_feed_durations, 50);
+    let ghostty_round_feed_median = percentile_duration(&ghostty_round_feed_durations, 50);
+    let parser_median_ratio = alacritty_round_feed_median.as_secs_f64()
+        / ghostty_round_feed_median
+            .max(Duration::from_nanos(1))
+            .as_secs_f64();
+    let alacritty_feed_sample_median = percentile_duration(&alacritty.feed_durations, 50);
+    let ghostty_feed_sample_median = percentile_duration(&ghostty.feed_durations, 50);
+    let alacritty_input_median = percentile_duration(&alacritty.input_to_snapshot, 50);
+    let ghostty_input_median = percentile_duration(&ghostty.input_to_snapshot, 50);
+    let alacritty_snapshot_median = percentile_duration(&alacritty.snapshot_durations, 50);
+    let ghostty_snapshot_median = percentile_duration(&ghostty.snapshot_durations, 50);
     let alacritty_p95 = percentile_duration(&alacritty.input_to_snapshot, 95);
     let ghostty_p95 = percentile_duration(&ghostty.input_to_snapshot, 95);
     let latency_regression =
@@ -1197,7 +1320,16 @@ fn ghostty_parser_and_snapshot_performance_gate() {
     let alacritty_snapshot_p95_us = alacritty_snapshot_p95.as_secs_f64() * 1_000_000.0;
     let ghostty_snapshot_p95_us = ghostty_snapshot_p95.as_secs_f64() * 1_000_000.0;
     println!(
-        "{{\"parser_ratio\":{parser_ratio:.4},\"input_to_snapshot_p95_regression\":{latency_regression:.4},\"alacritty_input_to_snapshot_p95_us\":{alacritty_p95_us:.3},\"ghostty_input_to_snapshot_p95_us\":{ghostty_p95_us:.3},\"alacritty_feed_p95_us\":{alacritty_feed_p95_us:.3},\"ghostty_feed_p95_us\":{ghostty_feed_p95_us:.3},\"alacritty_snapshot_p95_us\":{alacritty_snapshot_p95_us:.3},\"ghostty_snapshot_p95_us\":{ghostty_snapshot_p95_us:.3},\"alacritty_wall_ms\":{},\"ghostty_wall_ms\":{},\"alacritty_cpu_ms\":{},\"ghostty_cpu_ms\":{},\"alacritty_rss_growth\":{},\"ghostty_rss_growth\":{},\"panes\":8,\"streams_per_pane\":{},\"measurement_rounds\":{PERFORMANCE_ROUNDS},\"profile\":\"release\"}}",
+        "{{\"target_os\":{:?},\"parser_ratio\":{parser_ratio:.4},\"parser_median_ratio\":{parser_median_ratio:.4},\"input_to_snapshot_p95_regression\":{latency_regression:.4},\"alacritty_round_feed_median_us\":{:.3},\"ghostty_round_feed_median_us\":{:.3},\"alacritty_feed_sample_median_us\":{:.3},\"alacritty_feed_p95_us\":{alacritty_feed_p95_us:.3},\"ghostty_feed_sample_median_us\":{:.3},\"ghostty_feed_p95_us\":{ghostty_feed_p95_us:.3},\"alacritty_input_to_snapshot_median_us\":{:.3},\"alacritty_input_to_snapshot_p95_us\":{alacritty_p95_us:.3},\"ghostty_input_to_snapshot_median_us\":{:.3},\"ghostty_input_to_snapshot_p95_us\":{ghostty_p95_us:.3},\"alacritty_snapshot_median_us\":{:.3},\"alacritty_snapshot_p95_us\":{alacritty_snapshot_p95_us:.3},\"ghostty_snapshot_median_us\":{:.3},\"ghostty_snapshot_p95_us\":{ghostty_snapshot_p95_us:.3},\"alacritty_wall_ms\":{},\"ghostty_wall_ms\":{},\"alacritty_cpu_ms\":{},\"ghostty_cpu_ms\":{},\"alacritty_rss_growth\":{},\"ghostty_rss_growth\":{},\"panes\":8,\"streams_per_pane\":{},\"warmup_rounds\":{PERFORMANCE_WARMUP_ROUNDS},\"measurement_rounds\":{PERFORMANCE_ROUNDS},\"profile\":\"release\"}}",
+        std::env::consts::OS,
+        duration_us(alacritty_round_feed_median),
+        duration_us(ghostty_round_feed_median),
+        duration_us(alacritty_feed_sample_median),
+        duration_us(ghostty_feed_sample_median),
+        duration_us(alacritty_input_median),
+        duration_us(ghostty_input_median),
+        duration_us(alacritty_snapshot_median),
+        duration_us(ghostty_snapshot_median),
         alacritty.wall.as_millis(),
         ghostty.wall.as_millis(),
         alacritty.cpu.as_millis(),
@@ -1206,23 +1338,44 @@ fn ghostty_parser_and_snapshot_performance_gate() {
         ghostty.rss_growth,
         cases.len() * PERFORMANCE_ROUNDS,
     );
+    #[cfg(target_os = "windows")]
+    assert!(
+        parser_median_ratio >= 0.90,
+        "Ghostty median parser ratio {parser_median_ratio:.4} is below 0.90"
+    );
+    #[cfg(target_os = "linux")]
     assert!(
         parser_ratio >= 0.95,
         "Ghostty parser ratio {parser_ratio:.4} is below 0.95"
     );
+    #[cfg(target_os = "linux")]
     assert!(
         latency_regression <= 0.05,
         "Ghostty input-to-snapshot p95 regression {latency_regression:.4} exceeds 0.05"
     );
+    #[cfg(target_os = "linux")]
     assert!(
         ghostty_snapshot_p95 < Duration::from_millis(2),
         "Ghostty native snapshot p95 {ghostty_snapshot_p95_us:.3} us exceeds 2 ms"
     );
 }
 
-fn percentile_duration(values: &[Duration], percentile: usize) -> Duration {
+pub(crate) fn percentile_duration(values: &[Duration], percentile: usize) -> Duration {
     let index = values.len().saturating_sub(1).saturating_mul(percentile) / 100;
     values.get(index).copied().unwrap_or_default()
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn duration_us(value: Duration) -> f64 {
+    value.as_secs_f64() * 1_000_000.0
 }
 
 pub(crate) fn percentile_us(values: &[Duration], percentile: usize) -> u128 {
@@ -1241,7 +1394,31 @@ pub(crate) fn resident_set_bytes() -> u64 {
     resident_pages.saturating_mul(page_size)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+pub(crate) fn resident_set_bytes() -> u64 {
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    // SAFETY: zeroed C POD with its byte size set before the current-process query.
+    let mut memory: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
+    memory.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+    // SAFETY: the current-process pseudo handle and writable counter buffer are valid.
+    let result = unsafe {
+        GetProcessMemoryInfo(
+            GetCurrentProcess(),
+            &mut memory,
+            std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        )
+    };
+    if result == 0 {
+        return 0;
+    }
+    u64::try_from(memory.WorkingSetSize).unwrap_or(u64::MAX)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub(crate) fn resident_set_bytes() -> u64 {
     0
 }
@@ -1266,7 +1443,39 @@ pub(crate) fn process_cpu_time() -> Duration {
     Duration::from_secs_f64((user_ticks + system_ticks) as f64 / ticks_per_second as f64)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+pub(crate) fn process_cpu_time() -> Duration {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    // SAFETY: FILETIME is a C POD and all four buffers are initialized before use.
+    let mut creation: FILETIME = unsafe { std::mem::zeroed() };
+    let mut exit: FILETIME = unsafe { std::mem::zeroed() };
+    let mut kernel: FILETIME = unsafe { std::mem::zeroed() };
+    let mut user: FILETIME = unsafe { std::mem::zeroed() };
+    // SAFETY: the current-process pseudo handle and writable FILETIME buffers are valid.
+    let result = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if result == 0 {
+        return Duration::ZERO;
+    }
+    let ticks =
+        |value: FILETIME| (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime);
+    Duration::from_nanos(
+        ticks(kernel)
+            .saturating_add(ticks(user))
+            .saturating_mul(100),
+    )
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub(crate) fn process_cpu_time() -> Duration {
     Duration::ZERO
 }

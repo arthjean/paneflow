@@ -1,0 +1,198 @@
+name: libghostty Windows
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/libghostty-windows.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/run_tests.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/paneflow-ghostty-smoke/**"
+      - "crates/paneflow-libghostty-sys/**"
+      - "crates/paneflow-terminal-ghostty/**"
+      - "native/libghostty/**"
+      - "packaging/wix/**"
+      - "scripts/*libghostty*"
+      - "src-app/Cargo.toml"
+      - "src-app/src/**"
+      - "src-app/tests/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/libghostty-windows.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/run_tests.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/paneflow-ghostty-smoke/**"
+      - "crates/paneflow-libghostty-sys/**"
+      - "crates/paneflow-terminal-ghostty/**"
+      - "native/libghostty/**"
+      - "packaging/wix/**"
+      - "scripts/*libghostty*"
+      - "src-app/Cargo.toml"
+      - "src-app/src/**"
+      - "src-app/tests/**"
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  GHOSTTY_SHA: ae52f97dcac558735cfa916ea3965f247e5c6e9e
+  ZIG_VERSION: 0.15.2
+  TARGET: x86_64-pc-windows-msvc
+  NATIVE_PROFILE: ReleaseFast-simd-seed0-j1
+
+jobs:
+  native-rebuild:
+    name: Rebuild pinned native archive
+    runs-on: windows-2022
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Checkout pinned Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ env.GHOSTTY_SHA }}
+          path: .ghostty-source
+          fetch-depth: 1
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # The rebuild deliberately has no native object cache. The canonical
+      # source/cache paths are part of the reproducibility contract, and the
+      # script performs two independent clean builds before publication.
+      - name: Rebuild and compare canonical archive
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
+          EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:EVIDENCE_DIR | Out-Null
+          $log = Join-Path $env:EVIDENCE_DIR 'native-rebuild.log'
+          & ./scripts/build-libghostty-windows.ps1 `
+            -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
+            -OutputDir "target\libghostty\$env:TARGET" `
+            -VerifyReproducible *>&1 | Tee-Object -FilePath $log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify repository consumer inputs and publish provenance
+        env:
+          EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
+        run: |
+          $prepared = "target\libghostty\$env:TARGET"
+          $report = Join-Path $env:EVIDENCE_DIR 'repository-provenance.json'
+          & ./scripts/verify-libghostty-windows.ps1 -ReportPath $report
+
+          Copy-Item -LiteralPath 'native\libghostty\manifest.toml' -Destination $env:EVIDENCE_DIR
+          Copy-Item -LiteralPath 'native\libghostty\THIRD_PARTY_NOTICES.md' -Destination $env:EVIDENCE_DIR
+          Copy-Item -LiteralPath 'native\libghostty\sbom.cdx.json' -Destination $env:EVIDENCE_DIR
+          Copy-Item -LiteralPath '.ghostty-source\build.zig.zon' -Destination $env:EVIDENCE_DIR
+
+          $native = [ordered]@{
+            schema_version = 1
+            commit = $env:GITHUB_SHA
+            source_sha = $env:GHOSTTY_SHA
+            zig_version = $env:ZIG_VERSION
+            target = $env:TARGET
+            profile = $env:NATIVE_PROFILE
+            archive_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\lib\ghostty-vt-static.lib").Hash.ToLowerInvariant()
+            build_info_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\build-info.txt").Hash.ToLowerInvariant()
+            symbols_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\symbols.txt").Hash.ToLowerInvariant()
+            headers_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\headers.sha256").Hash.ToLowerInvariant()
+            source_manifest_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath '.ghostty-source\build.zig.zon').Hash.ToLowerInvariant()
+          }
+          $native | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $env:EVIDENCE_DIR 'native-provenance.json') -Encoding utf8
+
+      - name: Upload native evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-windows-native-${{ github.sha }}
+          path: |
+            target/libghostty/x86_64-pc-windows-msvc
+            ${{ runner.temp }}/libghostty-native-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  consumer-qualification:
+    name: Repository consumer and release budgets
+    runs-on: windows-2022
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Setup MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: x64
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.96.1"
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: v1-libghostty-windows-consumer
+          key: ${{ env.TARGET }}-${{ env.GHOSTTY_SHA }}-${{ env.ZIG_VERSION }}-${{ env.NATIVE_PROFILE }}-${{ hashFiles('Cargo.lock', 'native/libghostty/manifest.toml') }}
+
+      - name: Check workspace formatting
+        run: cargo fmt --all --check
+
+      - name: Lint all Windows targets against the repository artifact
+        run: cargo clippy --workspace --all-targets --locked --features paneflow-app/libghostty-windows --target $env:TARGET -- -D warnings
+
+      - name: Test the Windows workspace against the repository artifact
+        run: cargo test --workspace --locked --features paneflow-app/libghostty-windows --target $env:TARGET
+
+      - name: Qualify repository artifact on the controlled runner
+        env:
+          QUALIFICATION_DIR: ${{ runner.temp }}\libghostty-windows-qualification
+        run: |
+          Remove-Item Env:PANEFLOW_LIBGHOSTTY_DIR -ErrorAction SilentlyContinue
+          & ./scripts/qualify-libghostty-windows.ps1 -OutputDir $env:QUALIFICATION_DIR
+
+      - name: Upload commit-scoped qualification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-windows-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/libghostty-windows-qualification
+          if-no-files-found: error
+          retention-days: 30
+
+  validation-summary:
+    name: libghostty Windows validation
+    if: always()
+    needs: [native-rebuild, consumer-qualification]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require native and consumer lanes
+        env:
+          NATIVE: ${{ needs.native-rebuild.result }}
+          CONSUMER: ${{ needs.consumer-qualification.result }}
+        run: |
+          test "$NATIVE" = success
+          test "$CONSUMER" = success
+          echo "All automated libghostty Windows checks passed."

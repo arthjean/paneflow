@@ -3,6 +3,7 @@ param(
     [string]$Target = "x86_64-pc-windows-msvc",
     [string]$Binary,
     [string]$PackageRoot,
+    [string]$RuntimeEvidence,
     [string]$ReportPath
 )
 
@@ -248,7 +249,7 @@ if ($LASTEXITCODE -ne 0 -or -not ($ArchiveHeaders -match '8664 machine \(x64\)')
 
 $BinaryHash = $null
 $BinaryImports = @()
-$BinaryLinkWitnesses = @()
+$BinaryIdentityWitnesses = @()
 if (-not [string]::IsNullOrWhiteSpace($Binary)) {
     $Binary = (Resolve-Path -LiteralPath $Binary).Path
     $BinaryHeaders = @(& $Dumpbin /headers $Binary 2>&1 | ForEach-Object { $_.ToString() })
@@ -281,12 +282,38 @@ if (-not [string]::IsNullOrWhiteSpace($Binary)) {
     $BinaryAscii = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Binary))
     foreach ($witness in @($SourceSha, $GhosttyVersion)) {
         if (-not $BinaryAscii.Contains($witness)) {
-            throw "Paneflow release binary is missing pinned libghostty link witness $witness"
+            throw "Paneflow release binary is missing pinned libghostty identity witness $witness"
         }
-        $BinaryLinkWitnesses += $witness
+        $BinaryIdentityWitnesses += $witness
     }
     $BinaryAscii = $null
     $BinaryHash = Get-Sha256 $Binary
+}
+
+$RuntimeSmokeVerified = $false
+$RuntimeEvidenceSha = $null
+if (-not [string]::IsNullOrWhiteSpace($RuntimeEvidence)) {
+    if ([string]::IsNullOrWhiteSpace($Binary) -or $null -eq $BinaryHash) {
+        throw "runtime evidence requires the exact PaneFlow binary it exercised"
+    }
+    $RuntimeEvidence = (Resolve-Path -LiteralPath $RuntimeEvidence).Path
+    $RuntimeDocument = Get-Content -LiteralPath $RuntimeEvidence -Raw | ConvertFrom-Json
+    foreach ($expectation in @(
+        @{ Key = "binary_sha256"; Value = $BinaryHash },
+        @{ Key = "requested"; Value = "Ghostty" },
+        @{ Key = "effective"; Value = "ghostty" },
+        @{ Key = "source_sha"; Value = $SourceSha },
+        @{ Key = "ghostty_version"; Value = $GhosttyVersion },
+        @{ Key = "status"; Value = "passed" }
+    )) {
+        $property = $RuntimeDocument.PSObject.Properties[$expectation.Key]
+        if ($null -eq $property -or [string]$property.Value -ne $expectation.Value) {
+            $actual = if ($null -eq $property) { "<missing>" } else { [string]$property.Value }
+            throw "runtime evidence drift for $($expectation.Key): expected $($expectation.Value), got $actual"
+        }
+    }
+    $RuntimeSmokeVerified = $true
+    $RuntimeEvidenceSha = Get-Sha256 $RuntimeEvidence
 }
 
 $PackageFiles = @()
@@ -318,23 +345,34 @@ $Commit = (& git -C $Root rev-parse HEAD).Trim()
 if ($Commit -notmatch '^[0-9a-f]{40}$') {
     throw "libghostty provenance requires a full checked-out Git commit SHA"
 }
+$WorktreeChanges = @(& git -C $Root status --porcelain --untracked-files=all -- `
+        . ':(exclude).ghostty-source' ':(exclude).ghostty-source/**')
+if ($LASTEXITCODE -ne 0) {
+    throw "could not inspect the libghostty provenance worktree"
+}
+if ($WorktreeChanges.Count -ne 0) {
+    throw "libghostty provenance requires a clean worktree outside the explicit .ghostty-source checkout: $($WorktreeChanges -join ', ')"
+}
 
 $Report = [ordered]@{
     schema_version = 1
     commit = $Commit
-    worktree_dirty = @(& git -C $Root status --porcelain).Count -ne 0
+    worktree_dirty = $false
     target = $Target
     source_sha = $SourceSha
+    ghostty_version = $GhosttyVersion
     zig_version = $ZigVersion
     archive_sha256 = $ArchiveSha
     manifest_sha256 = Get-NormalizedTextSha256 $ManifestPath
     notice_sha256 = $NoticeSha
     sbom_sha256 = $SbomSha
     symbol_count = [int]$BuildValues["symbol_count"]
-    linkage = "static"
+    linkage = if ($RuntimeSmokeVerified) { "static" } else { "static-candidate" }
+    runtime_smoke_verified = $RuntimeSmokeVerified
+    runtime_evidence_sha256 = $RuntimeEvidenceSha
     binary_sha256 = $BinaryHash
     binary_imports = $BinaryImports
-    binary_link_witnesses = $BinaryLinkWitnesses
+    binary_identity_witnesses = $BinaryIdentityWitnesses
     package_files = $PackageFiles
 }
 

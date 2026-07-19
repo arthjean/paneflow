@@ -12,7 +12,16 @@ const CYCLES: usize = 200;
 const WARMUP_CYCLES: usize = 5;
 #[cfg(target_os = "windows")]
 const PANES: usize = 32;
+// QG-007 fixes one release sample set at five warmups followed by 100
+// sequential host creations on the same controlled runner.
+#[cfg(target_os = "windows")]
+const HOST_CREATION_WARMUP_SAMPLES: usize = 5;
+#[cfg(target_os = "windows")]
+const HOST_CREATION_SAMPLES: usize = 100;
+#[cfg(target_os = "windows")]
+const HOST_CREATION_P95_LIMIT: Duration = Duration::from_millis(500);
 const RESIZES_PER_CYCLE: usize = 200;
+const RESOURCE_LIMIT_PERCENT: usize = 5;
 const CYCLE_TIMEOUT: Duration = Duration::from_secs(8);
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
@@ -71,7 +80,7 @@ struct ExitObservation {
 #[derive(Clone, Copy, Debug)]
 struct ResourceSnapshot {
     handles: u64,
-    rss: usize,
+    rss: u64,
 }
 
 struct StressPane {
@@ -365,6 +374,20 @@ fn run_cycle(surface_id: u64) -> (Duration, usize) {
 }
 
 #[cfg(target_os = "windows")]
+fn measure_host_creation(surface_id: u64) -> Duration {
+    let started = Instant::now();
+    let mut pane = StressPane::spawn(surface_id, blocked_spec());
+    let elapsed = started.elapsed();
+    // End the shell through its PTY so cleanup observes a normal child exit.
+    // Forcing shutdown here can race the reader and misclassify our own
+    // teardown as a runtime failure after a valid host-creation sample.
+    pane.write(b"exit\r".to_vec());
+    pane.wait_for_exit(CYCLE_TIMEOUT, false)
+        .unwrap_or_else(|failure| panic!("scenario=host_creation failure={failure}"));
+    elapsed
+}
+
+#[cfg(target_os = "windows")]
 fn process_active(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::{CloseHandle, WAIT_OBJECT_0};
     use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
@@ -519,7 +542,7 @@ fn resource_snapshot() -> ResourceSnapshot {
     );
     ResourceSnapshot {
         handles: u64::from(handles),
-        rss: memory.WorkingSetSize,
+        rss: u64::try_from(memory.WorkingSetSize).unwrap_or(u64::MAX),
     }
 }
 
@@ -534,13 +557,19 @@ fn resource_snapshot() -> ResourceSnapshot {
 }
 
 fn resources_within_budget(baseline: ResourceSnapshot, current: ResourceSnapshot) -> bool {
-    let allowed_handles = baseline
-        .handles
-        .saturating_add(baseline.handles.saturating_sub(1) / 20);
-    let allowed_rss = baseline
-        .rss
-        .saturating_add(baseline.rss.saturating_sub(1) / 20);
-    current.handles <= allowed_handles && current.rss <= allowed_rss
+    let limits = resource_limits(baseline);
+    current.handles <= limits.handles && current.rss <= limits.rss
+}
+
+fn resource_limits(baseline: ResourceSnapshot) -> ResourceSnapshot {
+    ResourceSnapshot {
+        handles: baseline
+            .handles
+            .saturating_add(baseline.handles.saturating_sub(1) / 20),
+        rss: baseline
+            .rss
+            .saturating_add(baseline.rss.saturating_sub(1) / 20),
+    }
 }
 
 fn wait_for_resource_recovery(baseline: ResourceSnapshot) -> ResourceSnapshot {
@@ -558,6 +587,7 @@ fn assert_resource_recovery(
     baseline: ResourceSnapshot,
     current: ResourceSnapshot,
 ) {
+    let limits = resource_limits(baseline);
     assert!(
         resources_within_budget(baseline, current),
         "scenario={scenario} phase=resources handles_start={} handles_end={} rss_start={} rss_end={} handle_limit={} rss_limit={}",
@@ -565,17 +595,51 @@ fn assert_resource_recovery(
         current.handles,
         baseline.rss,
         current.rss,
-        baseline
-            .handles
-            .saturating_add(baseline.handles.saturating_sub(1) / 20),
-        baseline
-            .rss
-            .saturating_add(baseline.rss.saturating_sub(1) / 20),
+        limits.handles,
+        limits.rss,
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore = "EP-004 performance gate: 5 warmups and 100 sequential ConPTY host creations"]
+#[allow(
+    clippy::assertions_on_constants,
+    reason = "the ignored performance gate must reject accidental debug-profile execution"
+)]
+fn windows_ghostty_host_creation_performance_gate() {
+    assert!(
+        !cfg!(debug_assertions),
+        "run the host creation performance gate in release"
+    );
+    for warmup in 0..HOST_CREATION_WARMUP_SAMPLES {
+        let _ = measure_host_creation(40_000 + warmup as u64);
+    }
+    let mut durations = Vec::with_capacity(HOST_CREATION_SAMPLES);
+    for sample in 0..HOST_CREATION_SAMPLES {
+        durations.push(measure_host_creation(
+            40_000 + HOST_CREATION_WARMUP_SAMPLES as u64 + sample as u64,
+        ));
+    }
+    durations.sort_unstable();
+    let median = super::backend_corpus::percentile_duration(&durations, 50);
+    let p95 = super::backend_corpus::percentile_duration(&durations, 95);
+    println!(
+        "{{\"scenario\":\"windows_ghostty_host_creation\",\"warmup_samples\":{HOST_CREATION_WARMUP_SAMPLES},\"samples\":{HOST_CREATION_SAMPLES},\"median_us\":{},\"p95_us\":{},\"p95_limit_ms\":{},\"profile\":\"release\"}}",
+        median.as_micros(),
+        p95.as_micros(),
+        HOST_CREATION_P95_LIMIT.as_millis(),
+    );
+    assert!(
+        p95 < HOST_CREATION_P95_LIMIT,
+        "Ghostty host creation p95 {} ms must remain below {} ms",
+        p95.as_secs_f64() * 1_000.0,
+        HOST_CREATION_P95_LIMIT.as_millis(),
     );
 }
 
 #[test]
-#[ignore = "EP-005 promotion gate: 200 PTY cycles with 200 resizes each"]
+#[ignore = "EP-004 promotion gate: 200 PTY cycles with 200 resizes each"]
 fn ghostty_spawn_resize_close_stress_has_no_residual_growth() {
     for warmup in 0..WARMUP_CYCLES {
         let _ = run_cycle(warmup as u64);
@@ -583,27 +647,49 @@ fn ghostty_spawn_resize_close_stress_has_no_residual_growth() {
     let baseline = resource_snapshot();
     let started = Instant::now();
     let mut max_cycle = Duration::ZERO;
+    let mut cycle_durations = Vec::with_capacity(CYCLES);
     let mut descendants_observed = 0usize;
     for cycle in 0..CYCLES {
         let (duration, descendants) = run_cycle((cycle + WARMUP_CYCLES) as u64);
         max_cycle = max_cycle.max(duration);
+        cycle_durations.push(duration);
         descendants_observed = descendants_observed.saturating_add(descendants);
     }
     let recovered = wait_for_resource_recovery(baseline);
+    let elapsed = started.elapsed();
+    let limits = resource_limits(baseline);
+    cycle_durations.sort_unstable();
+    println!(
+        "{{\"scenario\":\"ghostty_spawn_resize_close\",\"warmup_cycles\":{WARMUP_CYCLES},\"cycles\":{CYCLES},\"resizes_per_cycle\":{RESIZES_PER_CYCLE},\"descendants_observed\":{descendants_observed},\"campaign_ms\":{},\"cycle_median_us\":{},\"cycle_p95_us\":{},\"max_cycle_ms\":{},\"handles_baseline\":{},\"handles_end\":{},\"handles_limit\":{},\"rss_baseline_bytes\":{},\"rss_end_bytes\":{},\"rss_limit_bytes\":{},\"resource_limit_percent\":{RESOURCE_LIMIT_PERCENT}}}",
+        elapsed.as_millis(),
+        super::backend_corpus::percentile_us(&cycle_durations, 50),
+        super::backend_corpus::percentile_us(&cycle_durations, 95),
+        max_cycle.as_millis(),
+        baseline.handles,
+        recovered.handles,
+        limits.handles,
+        baseline.rss,
+        recovered.rss,
+        limits.rss,
+    );
     assert_resource_recovery("cycles", baseline, recovered);
     assert!(
         max_cycle <= CYCLE_TIMEOUT,
         "scenario=cycles phase=duration total_ms={} max_cycle_ms={} descendants={descendants_observed}",
-        started.elapsed().as_millis(),
+        elapsed.as_millis(),
         max_cycle.as_millis(),
     );
 }
 
 #[cfg(target_os = "windows")]
 #[test]
-#[ignore = "EP-005 promotion gate: 32 concurrent ConPTY panes"]
+#[ignore = "EP-004 promotion gate: 32 concurrent ConPTY panes"]
 fn windows_ghostty_32_pane_resize_and_close_orders_are_bounded() {
+    for warmup in 0..WARMUP_CYCLES {
+        let _ = run_cycle(30_000 + warmup as u64);
+    }
     let baseline = resource_snapshot();
+    let started = Instant::now();
     let mut panes = (0..PANES)
         .map(|index| StressPane::spawn(10_000 + index as u64, burst_spec()))
         .collect::<Vec<_>>();
@@ -611,6 +697,8 @@ fn windows_ghostty_32_pane_resize_and_close_orders_are_bounded() {
         .iter()
         .flat_map(|pane| descendant_pids(pane.pid))
         .collect::<Vec<_>>();
+    let descendants_observed = descendants.len();
+    let mut close_durations = Vec::with_capacity(PANES);
     for pane in &panes {
         pane.resize_storm();
     }
@@ -620,9 +708,10 @@ fn windows_ghostty_32_pane_resize_and_close_orders_are_bounded() {
         panes[*index].session.shutdown();
     }
     for index in first_close_order {
-        panes[index]
+        let observation = panes[index]
             .wait_for_exit(CYCLE_TIMEOUT, false)
             .unwrap_or_else(|failure| panic!("scenario=panes32 failure={failure}"));
+        close_durations.push(observation.elapsed);
     }
     for index in &survivor_close_order {
         assert!(
@@ -636,9 +725,10 @@ fn windows_ghostty_32_pane_resize_and_close_orders_are_bounded() {
         panes[*index].session.shutdown();
     }
     for index in survivor_close_order {
-        panes[index]
+        let observation = panes[index]
             .wait_for_exit(CYCLE_TIMEOUT, false)
             .unwrap_or_else(|failure| panic!("scenario=panes32 failure={failure}"));
+        close_durations.push(observation.elapsed);
     }
     drop(panes);
     for pid in descendants {
@@ -648,12 +738,27 @@ fn windows_ghostty_32_pane_resize_and_close_orders_are_bounded() {
         );
     }
     let recovered = wait_for_resource_recovery(baseline);
+    let elapsed = started.elapsed();
+    let limits = resource_limits(baseline);
+    close_durations.sort_unstable();
+    println!(
+        "{{\"scenario\":\"windows_ghostty_32_panes\",\"warmup_cycles\":{WARMUP_CYCLES},\"panes\":{PANES},\"resizes_per_pane\":{RESIZES_PER_CYCLE},\"descendants_observed\":{descendants_observed},\"campaign_ms\":{},\"close_median_us\":{},\"close_p95_us\":{},\"handles_baseline\":{},\"handles_end\":{},\"handles_limit\":{},\"rss_baseline_bytes\":{},\"rss_end_bytes\":{},\"rss_limit_bytes\":{},\"resource_limit_percent\":{RESOURCE_LIMIT_PERCENT}}}",
+        elapsed.as_millis(),
+        super::backend_corpus::percentile_us(&close_durations, 50),
+        super::backend_corpus::percentile_us(&close_durations, 95),
+        baseline.handles,
+        recovered.handles,
+        limits.handles,
+        baseline.rss,
+        recovered.rss,
+        limits.rss,
+    );
     assert_resource_recovery("panes32", baseline, recovered);
 }
 
 #[cfg(target_os = "windows")]
 #[test]
-#[ignore = "EP-005 promotion gate: Windows lifecycle scenario matrix"]
+#[ignore = "EP-004 promotion gate: Windows lifecycle scenario matrix"]
 fn windows_ghostty_lifecycle_scenario_matrix_is_bounded() {
     let mut immediate = StressPane::spawn(20_001, immediate_exit_spec());
     let immediate_exit = immediate
@@ -745,7 +850,7 @@ fn ghostty_job_object_abort_helper() {
 
 #[cfg(target_os = "windows")]
 #[test]
-#[ignore = "EP-005 promotion gate: abrupt app close cleans ConPTY Job Object"]
+#[ignore = "EP-004 promotion gate: abrupt app close cleans ConPTY Job Object"]
 fn windows_ghostty_job_object_abrupt_cleanup() {
     use std::process::{Command, Stdio};
 

@@ -35,7 +35,7 @@ fn available_main_axis_px(container_px: f32, child_count: usize) -> f32 {
 
 #[cfg(test)]
 fn with_debug_selector_for_test(div: gpui::Div, selector: String) -> gpui::Div {
-    div.debug_selector(move || selector.clone().into())
+    div.debug_selector(move || selector.clone())
 }
 
 impl LayoutTree {
@@ -384,8 +384,14 @@ mod tests {
     }
 
     #[gpui::test]
-    #[ignore = "captures the machine-specific EP-001 GPUI input-to-paint baseline"]
-    fn alacritty_eight_pane_gpui_input_to_paint_baseline(cx: &mut TestAppContext) {
+    #[ignore = "EP-004 performance gate: eight-pane GPUI input-to-paint P95"]
+    #[allow(
+        clippy::assertions_on_constants,
+        reason = "the ignored benchmark must reject accidental debug-profile execution"
+    )]
+    fn eight_pane_gpui_input_to_paint_performance_gate(cx: &mut TestAppContext) {
+        const INPUT_TO_FRAME_P95_LIMIT_US: u128 = 16_700;
+
         assert!(
             !cfg!(debug_assertions),
             "run this baseline with cargo test --release"
@@ -425,8 +431,14 @@ mod tests {
         let cpu_start = process_cpu_time();
         let wall_start = Instant::now();
 
-        for stream in &streams {
+        for (index, stream) in streams.iter().enumerate() {
             let frame_start = Instant::now();
+            let window_size = if index % 2 == 0 {
+                size(px(1584.0), px(984.0))
+            } else {
+                size(px(1600.0), px(1000.0))
+            };
+            cx.simulate_resize(window_size);
             for terminal in &terminals {
                 terminal.update(cx, |view, cx| {
                     view.terminal.write_output(stream);
@@ -456,11 +468,12 @@ mod tests {
         input_to_frame.sort_unstable();
         render_content_lock.sort_unstable();
         let throughput = total_bytes as f64 / wall.as_secs_f64() / (1024.0 * 1024.0);
+        let input_to_frame_p95_us = percentile_us(&input_to_frame, 95);
         println!(
-            "{{\"seed\":\"0x{CORPUS_SEED:016x}\",\"panes\":8,\"streams_per_pane\":{},\"bytes\":{total_bytes},\"throughput_mib_s\":{throughput:.3},\"input_to_frame_p50_us\":{},\"input_to_frame_p95_us\":{},\"render_content_lock_samples\":{},\"render_content_lock_held_p50_us\":{},\"render_content_lock_held_p95_us\":{},\"wall_ms\":{},\"cpu_ms\":{},\"rss_start_bytes\":{rss_start},\"rss_peak_bytes\":{rss_peak},\"rss_end_bytes\":{rss_end},\"hardware\":{:?},\"platform\":{:?},\"profile\":\"release\",\"measurement_boundary\":\"byte injection through GPUI dispatcher parked after TerminalElement::paint\",\"lock_measurement\":\"all render_content terminal-lock hold durations from the measured GPUI paints\",\"presentation_scope\":\"GPUI test-platform scene generation; excludes Window::present, GPU submission, compositor, and display scanout\"}}",
+            "{{\"seed\":\"0x{CORPUS_SEED:016x}\",\"panes\":8,\"streams_per_pane\":{},\"resize_events\":{},\"bytes\":{total_bytes},\"throughput_mib_s\":{throughput:.3},\"input_to_frame_p50_us\":{},\"input_to_frame_p95_us\":{input_to_frame_p95_us},\"input_to_frame_p95_limit_us\":{INPUT_TO_FRAME_P95_LIMIT_US},\"render_content_lock_samples\":{},\"render_content_lock_held_p50_us\":{},\"render_content_lock_held_p95_us\":{},\"wall_ms\":{},\"cpu_ms\":{},\"rss_start_bytes\":{rss_start},\"rss_peak_bytes\":{rss_peak},\"rss_end_bytes\":{rss_end},\"hardware\":{:?},\"platform\":{:?},\"profile\":\"release\",\"measurement_boundary\":\"window resize plus byte injection through GPUI dispatcher parked after TerminalElement::paint\",\"backend_scope\":\"backend-neutral GPUI renderer; Ghostty parser and host are covered by separate qualification gates\",\"lock_measurement\":\"all render_content terminal-lock hold durations from the measured GPUI paints\",\"presentation_scope\":\"GPUI test-platform scene generation; excludes Window::present, GPU submission, compositor, and display scanout\"}}",
+            streams.len(),
             streams.len(),
             percentile_us(&input_to_frame, 50),
-            percentile_us(&input_to_frame, 95),
             render_content_lock.len(),
             percentile_us(&render_content_lock, 50),
             percentile_us(&render_content_lock, 95),
@@ -468,6 +481,10 @@ mod tests {
             cpu.as_millis(),
             cpu_model(),
             format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+        );
+        assert!(
+            input_to_frame_p95_us <= INPUT_TO_FRAME_P95_LIMIT_US,
+            "eight-pane GPUI input-to-paint p95 {input_to_frame_p95_us} us exceeds {INPUT_TO_FRAME_P95_LIMIT_US} us"
         );
     }
 
