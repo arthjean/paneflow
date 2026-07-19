@@ -2380,6 +2380,14 @@ fn run_runtime(
                         "Ghostty final drain timed out before PTY EOF".to_owned(),
                     ));
             }
+            if lifecycle.eof {
+                let closer_deadline = Instant::now()
+                    .checked_add(Duration::from_millis(100))
+                    .unwrap_or_else(Instant::now);
+                if !master.join_until(closer_deadline) {
+                    continue;
+                }
+            }
             if let Some(exit) = lifecycle.take_ready_exit(now, mailbox.pending_output_count()) {
                 if recent_output_pending {
                     publish_recent_output_lines(
@@ -2392,15 +2400,13 @@ fn run_runtime(
                 if child_reaped {
                     child.disarm();
                 }
-                if lifecycle.eof {
-                    let _ = master.join_until(
-                        Instant::now()
-                            .checked_add(Duration::from_millis(100))
-                            .unwrap_or_else(Instant::now),
-                    );
-                }
+                // `ChildExited` is the externally observable teardown barrier.
+                // Release the ConPTY and child process handles before publishing
+                // it so rapid host churn cannot accumulate still-live resources.
+                drop(child);
+                drop(master);
                 publish_child_exit_once(&inner, exit.code, exit.signal);
-                break;
+                return;
             }
         }
     }
