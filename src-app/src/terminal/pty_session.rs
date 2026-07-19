@@ -1022,9 +1022,11 @@ pub struct GhosttyBuildDiagnostics {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "native backend failure phases are cfg-dependent across the target matrix"
+)]
 pub enum TerminalBackendFailurePhase {
-    // Constructed only by builds where the selected native backend is absent.
-    #[allow(dead_code)]
     Availability,
     Initialization,
     OpenPty,
@@ -1051,9 +1053,11 @@ pub struct TerminalBackendFailureDiagnostics {
     pub os_error: Option<i32>,
 }
 
+#[allow(
+    dead_code,
+    reason = "native backend reason codes are cfg-dependent across the target matrix"
+)]
 impl TerminalBackendFailureDiagnostics {
-    // Used by the cfg branch compiled when no native Ghostty backend is present.
-    #[allow(dead_code)]
     pub(super) const GHOSTTY_UNAVAILABLE: &'static str = "ghostty_unavailable";
     pub(super) const GHOSTTY_INITIALIZATION_FAILED: &'static str = "ghostty_initialization_failed";
     pub(super) const GHOSTTY_OPEN_PTY_FAILED: &'static str = "ghostty_open_pty_failed";
