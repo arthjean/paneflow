@@ -76,6 +76,60 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
+      - name: Install manifest-pinned MSVC toolset and Windows SDK
+        env:
+          MSVC_COMPONENT: Microsoft.VisualStudio.Component.VC.14.38.17.8.x86.x64
+          WINDOWS_SDK_COMPONENT: Microsoft.VisualStudio.Component.Windows11SDK.26100
+        run: |
+          $installerRoot = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+          $vswhere = Join-Path $installerRoot 'vswhere.exe'
+          $setup = Join-Path $installerRoot 'setup.exe'
+          $installationPath = (& $vswhere -latest -products * -property installationPath | Select-Object -First 1)
+          if ([string]::IsNullOrWhiteSpace($installationPath)) {
+            throw 'Visual Studio 2022 is not installed on the runner.'
+          }
+
+          $requiredComponents = @($env:MSVC_COMPONENT, $env:WINDOWS_SDK_COMPONENT)
+          $missingComponents = @(
+            foreach ($component in $requiredComponents) {
+              $installedAt = (& $vswhere -latest -products * -requires $component -property installationPath | Select-Object -First 1)
+              if ([string]::IsNullOrWhiteSpace($installedAt)) {
+                $component
+              }
+            }
+          )
+
+          if ($missingComponents.Count -gt 0) {
+            if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
+              throw "Visual Studio Installer was not found at $setup."
+            }
+
+            $arguments = @(
+              'modify',
+              '--installPath', "`"$installationPath`"",
+              '--quiet',
+              '--norestart'
+            )
+            foreach ($component in $missingComponents) {
+              $arguments += @('--add', $component)
+            }
+
+            Write-Host "Installing Visual Studio components: $($missingComponents -join ', ')"
+            $process = Start-Process -FilePath $setup -ArgumentList $arguments -Wait -PassThru
+            if ($process.ExitCode -notin @(0, 3010)) {
+              throw "Visual Studio Installer exited with code $($process.ExitCode)."
+            }
+          }
+
+          $msvcPath = Join-Path $installationPath 'VC\Tools\MSVC\14.38.33130'
+          $sdkPath = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib\10.0.26100.0'
+          if (-not (Test-Path -LiteralPath $msvcPath -PathType Container)) {
+            throw "The manifest-pinned MSVC toolset was not found at $msvcPath."
+          }
+          if (-not (Test-Path -LiteralPath $sdkPath -PathType Container)) {
+            throw "The manifest-pinned Windows SDK was not found at $sdkPath."
+          }
+
       # The rebuild deliberately has no native object cache. The canonical
       # source/cache paths are part of the reproducibility contract, and the
       # script performs two independent clean builds before publication.
