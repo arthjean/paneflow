@@ -1585,8 +1585,9 @@ impl Render for PaneFlowApp {
             }
         }
         #[cfg(target_os = "macos")]
-        crate::window_chrome::macos_backdrop::sync_subtle_sidebar_material_theme(
+        crate::window_chrome::macos_backdrop::sync_subtle_sidebar_material(
             theme.background.l > 0.5,
+            self.cached_config.macos_chrome_material_enabled(),
         );
         // Every mode is cockpit now (Agents first, then Cli, then Diff): the
         // title bar floats above the full window and the right panel reserves
@@ -3050,6 +3051,7 @@ fn main() {
                         crate::window_chrome::macos_backdrop::apply_subtle_sidebar_material(
                             window,
                             crate::theme::active_theme().background.l > 0.5,
+                            config.macos_chrome_material_enabled(),
                         );
                     }
                     #[cfg(target_os = "linux")]

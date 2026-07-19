@@ -40,7 +40,8 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `window_decorations` | string or null | `client` | `client` for Paneflow chrome, `server` for OS/compositor chrome. Read at startup. |
 | `window_backdrop` | string or null | `auto` | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. Read at startup. |
 | `windows_terminal_material` | boolean or null | `false` | Windows-only terminal background transparency for Mica/blur materials. |
-| `windows_chrome_material` | boolean or null | `false` | Windows-only transparent sidebars and title bar around the terminal. |
+| `windows_chrome_material` | boolean or null | `false` | Windows-only native material in the primary navigation card. |
+| `macos_chrome_material` | boolean or null | `true` | macOS-only native Sidebar material in the primary navigation card. |
 | `option_as_meta` | boolean or null | `true` | Sends Alt/Option as ESC prefix. On macOS, set `false` if you need Option Unicode input. |
 | `shell_integration` | boolean or null | enabled | Master switch for shell rc injection: OSC 7 CWD reporting and OSC 133 command marks. |
 | `agent_stall_detection` | boolean or null | `true` | Enables stalled-agent detection. |
@@ -260,6 +261,7 @@ unconditionally.
   "window_backdrop": "auto",
   "windows_terminal_material": false,
   "windows_chrome_material": false,
+  "macos_chrome_material": true,
   "option_as_meta": true,
   "shell_integration": true,
   "agent_stall_detection": true,

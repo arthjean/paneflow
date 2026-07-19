@@ -87,8 +87,13 @@
     },
     "windows_chrome_material": {
       "type": ["boolean", "null"],
-      "description": "Windows-only. When true, sidebars and the title bar are transparent so the active native window backdrop (Mica, blur, or transparent) can show through around the terminal. Other platforms ignore this field.",
+      "description": "Windows-only. When true, the primary sidebar card reveals the active native window backdrop (Mica, blur, or transparent). Other platforms ignore this field.",
       "default": false
+    },
+    "macos_chrome_material": {
+      "type": ["boolean", "null"],
+      "description": "macOS-only. When true, the primary sidebar card reveals AppKit's native Sidebar material. Other platforms ignore this field.",
+      "default": true
     },
     "option_as_meta": {
       "type": ["boolean", "null"],

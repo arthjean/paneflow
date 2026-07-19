@@ -260,6 +260,7 @@ pub fn try_parse_and_validate(json: &str) -> Result<PaneFlowConfig, serde_json::
     set_field!(window_backdrop);
     set_field!(windows_terminal_material);
     set_field!(windows_chrome_material);
+    set_field!(macos_chrome_material);
     set_field!(line_height);
     set_field!(cell_width);
     set_field!(font_family);
@@ -1044,6 +1045,7 @@ mod tests {
             window_backdrop: None,
             windows_terminal_material: None,
             windows_chrome_material: None,
+            macos_chrome_material: None,
             line_height: None,
             cell_width: None,
             font_family: None,

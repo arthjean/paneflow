@@ -145,7 +145,7 @@ impl PaneFlowApp {
                 .child(setting_text(
                     ui,
                     "Chrome material",
-                    "Let Mica or blur show through sidebars and the title bar.",
+                    "Let Mica show through the navigation card.",
                 ))
                 .child(
                     div()
@@ -171,6 +171,49 @@ impl PaneFlowApp {
                 .child(div().h(px(18.)).flex_none())
                 .child(crate::settings::components::section_header(ui, "Windows"))
                 .child(windows_card)
+        };
+
+        #[cfg(target_os = "macos")]
+        let content = {
+            let sidebar_material = self.cached_config.macos_chrome_material_enabled();
+            let sidebar_material_row = div()
+                .id("row-macos-chrome-material")
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(16.))
+                .px(px(12.))
+                .py(px(10.))
+                .child(setting_text(
+                    ui,
+                    "Sidebar transparency",
+                    "Show the native macOS Sidebar material in the navigation card.",
+                ))
+                .child(
+                    div()
+                        .id("macos-chrome-material-toggle")
+                        .flex_shrink_0()
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.persist_setting(
+                                false,
+                                "macos_chrome_material",
+                                serde_json::Value::Bool(!sidebar_material),
+                                cx,
+                            );
+                        }))
+                        .child(crate::settings::components::toggle_pill(
+                            sidebar_material,
+                            ui,
+                        )),
+                );
+
+            let macos_card = setting_card(ui).child(sidebar_material_row);
+
+            content
+                .child(div().h(px(18.)).flex_none())
+                .child(crate::settings::components::section_header(ui, "macOS"))
+                .child(macos_card)
         };
 
         content

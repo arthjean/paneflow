@@ -7,7 +7,7 @@ use cocoa::{
         NSViewHeightSizable, NSViewWidthSizable, NSVisualEffectBlendingMode,
         NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
     },
-    base::{id, nil},
+    base::{NO, YES, id, nil},
 };
 use gpui::WindowBackgroundAppearance;
 use objc::{msg_send, sel, sel_impl};
@@ -21,20 +21,26 @@ thread_local! {
 struct SidebarMaterial {
     effect_view: id,
     is_light: bool,
+    is_enabled: bool,
 }
 
 /// Installs AppKit's semantic sidebar material below GPUI's renderer.
 ///
 /// The material spans the full content view, including the transparent native
-/// title bar. PaneFlow's opaque terminal surface hides it everywhere except the
-/// navigation chrome. AppKit owns focus dimming and accessibility adaptation.
-pub(crate) fn apply_subtle_sidebar_material(window: &gpui::Window, is_light: bool) {
-    match try_apply_subtle_sidebar_material(window, is_light) {
+/// title bar. PaneFlow's opaque shell mask hides it everywhere except the inset
+/// primary sidebar card. AppKit owns focus dimming and accessibility adaptation.
+pub(crate) fn apply_subtle_sidebar_material(
+    window: &gpui::Window,
+    is_light: bool,
+    is_enabled: bool,
+) {
+    match try_apply_subtle_sidebar_material(window, is_light, is_enabled) {
         Ok(effect_view) => {
             SIDEBAR_MATERIAL.with(|slot| {
                 *slot.borrow_mut() = Some(SidebarMaterial {
                     effect_view,
                     is_light,
+                    is_enabled,
                 });
             });
         }
@@ -45,25 +51,28 @@ pub(crate) fn apply_subtle_sidebar_material(window: &gpui::Window, is_light: boo
     }
 }
 
-/// Keeps AppKit vibrancy aligned with PaneFlow rather than macOS's appearance.
-pub(crate) fn sync_subtle_sidebar_material_theme(is_light: bool) {
+/// Keeps AppKit vibrancy and visibility aligned with PaneFlow's live settings.
+pub(crate) fn sync_subtle_sidebar_material(is_light: bool, is_enabled: bool) {
     SIDEBAR_MATERIAL.with(|slot| {
         let mut slot = slot.borrow_mut();
         let Some(material) = slot.as_mut() else {
             return;
         };
-        if material.is_light == is_light {
-            return;
+        if material.is_light != is_light {
+            set_material_appearance(material.effect_view, is_light);
+            material.is_light = is_light;
         }
-
-        set_material_appearance(material.effect_view, is_light);
-        material.is_light = is_light;
+        if material.is_enabled != is_enabled {
+            set_material_enabled(material.effect_view, is_enabled);
+            material.is_enabled = is_enabled;
+        }
     });
 }
 
 fn try_apply_subtle_sidebar_material(
     window: &gpui::Window,
     is_light: bool,
+    is_enabled: bool,
 ) -> Result<id, &'static str> {
     let window_handle = HasWindowHandle::window_handle(window)
         .map_err(|_| "GPUI did not expose an AppKit window handle")?;
@@ -93,6 +102,7 @@ fn try_apply_subtle_sidebar_material(
         NSVisualEffectView::setBlendingMode_(effect_view, NSVisualEffectBlendingMode::BehindWindow);
         NSVisualEffectView::setState_(effect_view, NSVisualEffectState::FollowsWindowActiveState);
         set_material_appearance(effect_view, is_light);
+        set_material_enabled(effect_view, is_enabled);
 
         let _: () = msg_send![
             content_view,
@@ -103,6 +113,15 @@ fn try_apply_subtle_sidebar_material(
         let _: () = msg_send![effect_view, release];
 
         Ok(effect_view)
+    }
+}
+
+fn set_material_enabled(effect_view: id, is_enabled: bool) {
+    // SAFETY: `effect_view` remains installed in the content view and all
+    // calls run on AppKit's main thread. Hidden NSViews are not drawn.
+    unsafe {
+        let hidden = if is_enabled { NO } else { YES };
+        let _: () = msg_send![effect_view, setHidden: hidden];
     }
 }
 

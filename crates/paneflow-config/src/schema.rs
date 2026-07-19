@@ -55,9 +55,12 @@ pub struct PaneFlowConfig {
     /// Windows-only: when enabled, the CLI terminal's default background cells
     /// are transparent so the active native backdrop can show through.
     pub windows_terminal_material: Option<bool>,
-    /// Windows-only: when enabled, sidebars/title bar use transparent chrome so
-    /// the active native backdrop can show through around the terminal.
+    /// Windows-only: when enabled, the primary sidebar card reveals the active
+    /// native backdrop.
     pub windows_chrome_material: Option<bool>,
+    /// macOS-only: when enabled (default), the primary sidebar card reveals
+    /// AppKit's native Sidebar material. Other platforms ignore this field.
+    pub macos_chrome_material: Option<bool>,
     /// Terminal line height multiplier (default: 1.2, valid range: 1.0-2.5).
     pub line_height: Option<f32>,
     /// Terminal cell width multiplier (default: 0.6, valid range: 0.3-2.0).
@@ -307,16 +310,34 @@ impl PaneFlowConfig {
         cfg!(target_os = "windows") && self.windows_terminal_material.unwrap_or(false)
     }
 
-    /// Resolve the desktop chrome material switch. `window_backdrop = "opaque"`
-    /// or `"off"` disables transparent chrome on every platform.
-    pub fn cockpit_chrome_material_enabled(&self) -> bool {
-        if self.window_backdrop.as_deref().is_some_and(|value| {
+    fn window_backdrop_disables_chrome_material(&self) -> bool {
+        self.window_backdrop.as_deref().is_some_and(|value| {
             let value = value.trim();
             value.eq_ignore_ascii_case("opaque") || value.eq_ignore_ascii_case("off")
-        }) {
+        })
+    }
+
+    /// Resolve the macOS Sidebar material switch. Missing values default ON;
+    /// the global opaque backdrop remains the master off switch.
+    pub fn macos_chrome_material_enabled(&self) -> bool {
+        !self.window_backdrop_disables_chrome_material()
+            && self.macos_chrome_material.unwrap_or(true)
+    }
+
+    /// Resolve the desktop chrome material switch for the current platform.
+    /// Linux keeps its existing platform policy and has no settings toggle.
+    pub fn cockpit_chrome_material_enabled(&self) -> bool {
+        if self.window_backdrop_disables_chrome_material() {
             return false;
         }
-        !cfg!(target_os = "windows") || self.windows_chrome_material.unwrap_or(false)
+
+        if cfg!(target_os = "windows") {
+            self.windows_chrome_material.unwrap_or(false)
+        } else if cfg!(target_os = "macos") {
+            self.macos_chrome_material.unwrap_or(true)
+        } else {
+            true
+        }
     }
 
     /// Resolve `agent_stall_threshold_secs`: default 60, clamped to
@@ -1595,6 +1616,7 @@ mod tests {
             window_backdrop: Some("auto".to_string()),
             windows_terminal_material: Some(true),
             windows_chrome_material: Some(true),
+            macos_chrome_material: Some(true),
             line_height: Some(1.2),
             cell_width: Some(0.6),
             font_family: Some("Geist Mono".to_string()),
@@ -1894,7 +1916,7 @@ mod tests {
     }
 
     #[test]
-    fn cockpit_chrome_material_respects_windows_switch_only() {
+    fn cockpit_chrome_material_respects_current_platform_switch() {
         let cfg = PaneFlowConfig::default();
         assert_eq!(
             cfg.cockpit_chrome_material_enabled(),
@@ -1922,6 +1944,24 @@ mod tests {
             ..Default::default()
         };
         assert!(!cfg.cockpit_chrome_material_enabled());
+    }
+
+    #[test]
+    fn macos_chrome_material_defaults_on_and_respects_switches() {
+        assert!(PaneFlowConfig::default().macos_chrome_material_enabled());
+
+        let disabled = PaneFlowConfig {
+            macos_chrome_material: Some(false),
+            ..Default::default()
+        };
+        assert!(!disabled.macos_chrome_material_enabled());
+
+        let globally_opaque = PaneFlowConfig {
+            window_backdrop: Some("opaque".to_string()),
+            macos_chrome_material: Some(true),
+            ..Default::default()
+        };
+        assert!(!globally_opaque.macos_chrome_material_enabled());
     }
 
     #[test]
