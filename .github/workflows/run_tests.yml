@@ -833,7 +833,7 @@ jobs:
   # slots don't collide); actions/cache covers WiX's ~10 MB global tool
   # install. `timeout-minutes: 30` is a runaway guard, not the SLA.
   windows_check:
-    name: Windows x86_64 smoke check
+    name: Windows x86_64 libghostty check
     # Runs for Rust, CI, and release-packaging changes so Windows MSVC
     # regressions are caught before a tag cut.
     needs: orchestrate
@@ -918,6 +918,11 @@ jobs:
           prefix-key: "v1-rust"
           key: x86_64-pc-windows-msvc
 
+      # Enabling the app feature makes every relevant Cargo command compile
+      # the Windows Ghostty host and link the reviewed static archive from
+      # native/libghostty/prebuilt. The sys build script validates that native
+      # inventory, including the absence of a ghostty-vt DLL, before linking.
+
       # Note: WiX toolset is NOT installed in this PR gate. The MSI build
       # lives in release.yml only (US-016), which uses WiX v3 (candle.exe +
       # light.exe) via the windows-2022 preinstalled toolset paired with
@@ -948,16 +953,13 @@ jobs:
       # promotes every clippy lint + unused-import warning to an error,
       # matching the Linux `check` job pattern (line 74) and the release
       # pipeline's clippy gate.
-      - name: cargo clippy --target x86_64-pc-windows-msvc
-        run: cargo clippy --workspace --locked --target x86_64-pc-windows-msvc -- -D warnings
+      - name: cargo clippy --target x86_64-pc-windows-msvc (libghostty-windows)
+        run: cargo clippy --workspace --locked --features paneflow-app/libghostty-windows --target x86_64-pc-windows-msvc -- -D warnings
 
-      # AC-2 step 3/4: tests. Currently all 39 tests live in paneflow-config
-      # (platform-neutral: JSON schema, file watcher, keybinding parser);
-      # the app crate has no tests per the project convention. Running
-      # `--target x86_64-pc-windows-msvc` builds + runs the test binaries
-      # as native x86_64 PE executables, proving the Windows test runner
-      # picks up the same test set and nothing regresses on the MSVC toolchain.
-      - name: cargo test --workspace --target x86_64-pc-windows-msvc
+      # AC-2 step 3/4: tests. The app feature includes the native Windows
+      # Ghostty harness, so the workspace run executes the Windows differential
+      # backend corpus instead of exercising only the Alacritty baseline.
+      - name: cargo test --workspace --target x86_64-pc-windows-msvc (libghostty-windows corpus)
         # PTY/process/IO tests (PowerShell cold start, embedded-binary
         # extraction, etc.) are timing-sensitive and flake intermittently on a
         # loaded Windows runner - a different single test each run
@@ -968,7 +970,7 @@ jobs:
         run: |
           $ok = $false
           foreach ($attempt in 1..3) {
-            cargo test --workspace --locked --target x86_64-pc-windows-msvc
+            cargo test --workspace --locked --features paneflow-app/libghostty-windows --target x86_64-pc-windows-msvc
             if ($LASTEXITCODE -eq 0) { $ok = $true; break }
             Write-Warning "cargo test attempt $attempt failed (likely a flaky PTY/IO test on a loaded runner); retrying"
           }
@@ -981,8 +983,8 @@ jobs:
       # when the problem is a pure compile error (missing API, linker
       # symbol, etc.) rather than a lint. No `continue-on-error` anymore
       # (US-003 set it; EP-W2/W3 landing made it unnecessary).
-      - name: cargo check --workspace --target x86_64-pc-windows-msvc
-        run: cargo check --workspace --locked --target x86_64-pc-windows-msvc
+      - name: cargo check --workspace --target x86_64-pc-windows-msvc (libghostty-windows)
+        run: cargo check --workspace --locked --features paneflow-app/libghostty-windows --target x86_64-pc-windows-msvc
 
       # US-012 (prd-ai-hooks-cross-platform.md) AC - the matrix requires
       # `cargo build --workspace --release` on every leg. On Windows this
@@ -990,7 +992,7 @@ jobs:
       # `paneflow-shim` + `paneflow-ai-hook`, ensuring their PE binaries
       # embed cleanly via rust-embed and the AI-hook pipeline compiles
       # end-to-end on MSVC.
-      - name: cargo build --workspace --release
+      - name: cargo build --workspace --release (libghostty-windows)
         # LTO ("thin") + codegen-units=1 from [profile.release] are runtime-perf
         # knobs, irrelevant to a CI compile gate, and roughly double the link
         # time. From a cold cache the release build blew past the 30-min timeout
@@ -1000,7 +1002,7 @@ jobs:
         env:
           CARGO_PROFILE_RELEASE_LTO: "false"
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
-        run: cargo build --workspace --release --locked --target x86_64-pc-windows-msvc
+        run: cargo build --workspace --release --locked --features paneflow-app/libghostty-windows --target x86_64-pc-windows-msvc
 
       # Mirror of the macos_check `Upload aarch64 binary artifact` step:
       # exposes the just-built `paneflow.exe` as a workflow artifact so
