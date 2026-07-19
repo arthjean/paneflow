@@ -1142,13 +1142,12 @@ mod tests {
     ///
     /// The write is an explicit `File::create + write_all + sync_all
     /// + drop` rather than the terser `fs::write`, and permissions
-    /// are set AFTER the handle is fully closed. On Linux, `exec(2)`
-    /// returns `ETXTBSY` ("Text file busy", OS error 26) if any
-    /// process has a write handle open to the target file - with
-    /// cargo's parallel test harness, two stub-pkexec tests racing
-    /// their write+exec windows can trip this intermittently. An
-    /// explicit sync + drop sequence closes the handle
-    /// deterministically before `chmod`.
+    /// are set AFTER the parent handle is fully closed. On Linux,
+    /// `exec(2)` returns `ETXTBSY` ("Text file busy", OS error 26) if
+    /// any process has a write handle open to the target file. A spawn
+    /// concurrent with this write window can fork and inherit that
+    /// handle until its own exec, even after the parent drops its copy.
+    /// The harness therefore retries this transient at the spawn seam.
     fn make_stub_pkexec(exit_code: i32) -> (tempfile::TempDir, PathBuf) {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
@@ -1170,42 +1169,48 @@ mod tests {
         (dir, script_path)
     }
 
-    /// Wrapper around `run_update_impl` that tolerates the transient
-    /// `ETXTBSY` exec race described in [`make_stub_pkexec`]. A
-    /// single retry after a brief back-off is enough to clear the
-    /// race in practice. Non-ETXTBSY errors are passed through
-    /// unchanged on the first attempt.
-    ///
-    /// Detection walks the anyhow chain for a `std::io::Error` with
-    /// `raw_os_error() == Some(26)` (ETXTBSY) rather than
-    /// substring-matching the formatted error. The formatted-message
-    /// approach happens to work because the stub script redirects
-    /// stdout/stderr to `/dev/null` and the only source of the
-    /// "Text file busy" string is the kernel's own strerror, but
-    /// downcasting is both more precise and self-documenting.
+    /// Retry a test-harness operation only when its anyhow chain contains
+    /// `std::io::Error` 26 (`ETXTBSY`). A fixed deadline bounds contention
+    /// from the parallel test runner without hiding unrelated failures.
+    fn retry_etxtbsy<T>(mut operation: impl FnMut() -> Result<T>) -> Result<T> {
+        const ETXTBSY: i32 = 26;
+        const RETRY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+        const RETRY_POLL: std::time::Duration = std::time::Duration::from_millis(5);
+
+        let deadline = std::time::Instant::now() + RETRY_TIMEOUT;
+        loop {
+            let result = operation();
+            let should_retry = result.as_ref().err().is_some_and(|err| {
+                err.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.raw_os_error() == Some(ETXTBSY))
+                })
+            });
+            if !should_retry {
+                return result;
+            }
+
+            let now = std::time::Instant::now();
+            if now >= deadline {
+                return result;
+            }
+            std::thread::sleep(RETRY_POLL.min(deadline.saturating_duration_since(now)));
+            if std::time::Instant::now() >= deadline {
+                return result;
+            }
+        }
+    }
+
+    /// Keep the pkexec integration cases focused on exit classification while
+    /// [`retry_etxtbsy`] owns the transient executable-stub race.
     fn run_update_impl_retry(
         manager: &PackageManager,
         version: &str,
         pkexec_installed: bool,
         pkexec_spawn_path: &Path,
     ) -> Result<()> {
-        const ETXTBSY: i32 = 26;
-        for attempt in 0..3 {
-            let result = run_update_impl(manager, version, pkexec_installed, pkexec_spawn_path);
-            if let Err(err) = &result
-                && attempt < 2
-                && err.chain().any(|cause| {
-                    cause
-                        .downcast_ref::<std::io::Error>()
-                        .is_some_and(|io| io.raw_os_error() == Some(ETXTBSY))
-                })
-            {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                continue;
-            }
-            return result;
-        }
-        unreachable!("retry loop exhausted without returning")
+        retry_etxtbsy(|| run_update_impl(manager, version, pkexec_installed, pkexec_spawn_path))
     }
 
     #[test]
