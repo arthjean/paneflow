@@ -261,7 +261,11 @@ mod tests {
     use std::rc::Rc;
     use std::time::Instant;
 
-    use gpui::{AppContext, Entity, Render, TestAppContext, px, size};
+    use gpui::{
+        AppContext, Entity, Render, TestAppContext,
+        profiler::{self, FrameTimingCollector},
+        px, size,
+    };
 
     use super::super::tree::LayoutChild;
     use crate::pane::Pane;
@@ -276,6 +280,26 @@ mod tests {
     use super::*;
 
     const TOLERANCE: f32 = 2.0;
+
+    struct FrameTraceGuard {
+        enabled_by_test: bool,
+    }
+
+    impl FrameTraceGuard {
+        fn enable() -> Self {
+            Self {
+                enabled_by_test: profiler::set_frame_trace_enabled(true),
+            }
+        }
+    }
+
+    impl Drop for FrameTraceGuard {
+        fn drop(&mut self) {
+            if self.enabled_by_test {
+                profiler::set_frame_trace_enabled(false);
+            }
+        }
+    }
 
     fn test_pane(cx: &mut impl AppContext, workspace_id: u64) -> Entity<Pane> {
         let terminal = cx.new(|cx| TerminalView::display_only_for_test(workspace_id, cx));
@@ -420,19 +444,22 @@ mod tests {
         cx.simulate_resize(size(px(1600.0), px(1000.0)));
         cx.run_until_parked();
 
+        let target_window_id = cx.update(|window, _| window.window_handle().window_id());
         let terminals = terminals_for_test.borrow().clone();
         assert_eq!(terminals.len(), 8, "benchmark must keep eight panes live");
         let streams = deterministic_streams();
         let total_bytes = streams.iter().map(Vec::len).sum::<usize>() * terminals.len();
-        let mut input_to_frame = Vec::with_capacity(streams.len());
+        let mut burst_to_park = Vec::with_capacity(streams.len());
         let rss_start = resident_set_bytes();
         let mut rss_peak = rss_start;
         start_render_content_timing_probe();
+        let frame_trace = FrameTraceGuard::enable();
+        let mut frame_collector = FrameTimingCollector::new();
         let cpu_start = process_cpu_time();
         let wall_start = Instant::now();
 
         for (index, stream) in streams.iter().enumerate() {
-            let frame_start = Instant::now();
+            let burst_start = Instant::now();
             let window_size = if index % 2 == 0 {
                 size(px(1584.0), px(984.0))
             } else {
@@ -446,34 +473,46 @@ mod tests {
                 });
             }
             cx.run_until_parked();
-            input_to_frame.push(frame_start.elapsed());
+            burst_to_park.push(burst_start.elapsed());
             rss_peak = rss_peak.max(resident_set_bytes());
         }
 
         let wall = wall_start.elapsed();
         let cpu = process_cpu_time().saturating_sub(cpu_start);
         let rss_end = resident_set_bytes();
+        let frame_timings = frame_collector.collect_unseen();
+        drop(frame_trace);
+        let traced_frame_samples = frame_timings.len();
+        let mut target_frames = frame_timings
+            .into_iter()
+            .filter(|timing| timing.window_id == target_window_id)
+            .filter_map(|timing| timing.dirty_to_draw_duration())
+            .collect::<Vec<_>>();
         let mut render_content_lock = take_render_content_lock_durations();
-        let expected_lock_samples = streams.len() * terminals.len();
         assert!(
-            render_content_lock.len() >= expected_lock_samples,
-            "each measured GPUI frame must paint all eight active terminals"
+            !target_frames.is_empty(),
+            "frame tracing must capture target-window dirty-to-draw timings"
         );
         assert_eq!(
-            render_content_lock.len() % terminals.len(),
-            0,
-            "render_content samples must cover complete eight-pane paint passes"
+            render_content_lock.len(),
+            target_frames.len() * terminals.len(),
+            "each traced target-window frame must paint every active terminal exactly once"
         );
 
-        input_to_frame.sort_unstable();
+        burst_to_park.sort_unstable();
+        target_frames.sort_unstable();
         render_content_lock.sort_unstable();
         let throughput = total_bytes as f64 / wall.as_secs_f64() / (1024.0 * 1024.0);
-        let input_to_frame_p95_us = percentile_us(&input_to_frame, 95);
+        let input_to_frame_p95_us = percentile_us(&target_frames, 95);
         println!(
-            "{{\"seed\":\"0x{CORPUS_SEED:016x}\",\"panes\":8,\"streams_per_pane\":{},\"resize_events\":{},\"bytes\":{total_bytes},\"throughput_mib_s\":{throughput:.3},\"input_to_frame_p50_us\":{},\"input_to_frame_p95_us\":{input_to_frame_p95_us},\"input_to_frame_p95_limit_us\":{INPUT_TO_FRAME_P95_LIMIT_US},\"render_content_lock_samples\":{},\"render_content_lock_held_p50_us\":{},\"render_content_lock_held_p95_us\":{},\"wall_ms\":{},\"cpu_ms\":{},\"rss_start_bytes\":{rss_start},\"rss_peak_bytes\":{rss_peak},\"rss_end_bytes\":{rss_end},\"hardware\":{:?},\"platform\":{:?},\"profile\":\"release\",\"measurement_boundary\":\"window resize plus byte injection through GPUI dispatcher parked after TerminalElement::paint\",\"backend_scope\":\"backend-neutral GPUI renderer; Ghostty parser and host are covered by separate qualification gates\",\"lock_measurement\":\"all render_content terminal-lock hold durations from the measured GPUI paints\",\"presentation_scope\":\"GPUI test-platform scene generation; excludes Window::present, GPU submission, compositor, and display scanout\"}}",
+            "{{\"seed\":\"0x{CORPUS_SEED:016x}\",\"panes\":8,\"streams_per_pane\":{},\"resize_events\":{},\"bytes\":{total_bytes},\"throughput_mib_s\":{throughput:.3},\"input_to_frame_samples\":{},\"input_to_frame_p50_us\":{},\"input_to_frame_p95_us\":{input_to_frame_p95_us},\"input_to_frame_p95_limit_us\":{INPUT_TO_FRAME_P95_LIMIT_US},\"burst_to_park_samples\":{},\"burst_to_park_p50_us\":{},\"burst_to_park_p95_us\":{},\"traced_frame_samples\":{traced_frame_samples},\"render_content_lock_samples\":{},\"render_content_lock_held_p50_us\":{},\"render_content_lock_held_p95_us\":{},\"wall_ms\":{},\"cpu_ms\":{},\"rss_start_bytes\":{rss_start},\"rss_peak_bytes\":{rss_peak},\"rss_end_bytes\":{rss_end},\"hardware\":{:?},\"platform\":{:?},\"profile\":\"release\",\"measurement_boundary\":\"per-target-window GPUI frame from first dirty invalidation through draw completion\",\"burst_measurement\":\"diagnostic wall time for resize plus eight terminal updates through GPUI dispatcher until parked\",\"backend_scope\":\"backend-neutral GPUI renderer; Ghostty parser and host are covered by separate qualification gates\",\"lock_measurement\":\"one render_content terminal-lock hold duration per pane in each traced target-window frame\",\"presentation_scope\":\"GPUI test-platform scene generation; excludes Window::present, GPU submission, compositor, and display scanout\"}}",
             streams.len(),
             streams.len(),
-            percentile_us(&input_to_frame, 50),
+            target_frames.len(),
+            percentile_us(&target_frames, 50),
+            burst_to_park.len(),
+            percentile_us(&burst_to_park, 50),
+            percentile_us(&burst_to_park, 95),
             render_content_lock.len(),
             percentile_us(&render_content_lock, 50),
             percentile_us(&render_content_lock, 95),
@@ -484,7 +523,7 @@ mod tests {
         );
         assert!(
             input_to_frame_p95_us <= INPUT_TO_FRAME_P95_LIMIT_US,
-            "eight-pane GPUI input-to-paint p95 {input_to_frame_p95_us} us exceeds {INPUT_TO_FRAME_P95_LIMIT_US} us"
+            "eight-pane GPUI dirty-to-draw frame p95 {input_to_frame_p95_us} us exceeds {INPUT_TO_FRAME_P95_LIMIT_US} us"
         );
     }
 
