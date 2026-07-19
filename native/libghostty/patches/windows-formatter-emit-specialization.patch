@@ -240,7 +240,7 @@ index a375b4dd7..d54db4285 100644
 @@ -1346 +1286 @@ pub const PageFormatter = struct {
 -        if (self.opts.emit == .html) {
 +        if (emit == .html) {
-@@ -1363,0 +1304,129 @@ pub const PageFormatter = struct {
+@@ -1363,0 +1304,141 @@ pub const PageFormatter = struct {
 +    fn formatHeaderForEmit(
 +        self: PageFormatter,
 +        writer: *std.Io.Writer,
@@ -274,11 +274,11 @@ index a375b4dd7..d54db4285 100644
 +
 +                const header = stream.getWritten();
 +                try writer.writeAll(header);
-+                if (self.point_map) |*map| map.map.appendNTimes(
-+                    map.alloc,
-+                    .{ .x = 0, .y = 0 },
-+                    header.len,
-+                ) catch return error.WriteFailed;
++                if (self.point_map) |*map| try @call(
++                    .never_inline,
++                    PageFormatter.appendHeaderPointMap,
++                    .{ map.map, map.alloc, header.len },
++                );
 +            },
 +
 +            .vt => {
@@ -301,13 +301,25 @@ index a375b4dd7..d54db4285 100644
 +
 +                const header = stream.getWritten();
 +                try writer.writeAll(header);
-+                if (self.point_map) |*map| map.map.appendNTimes(
-+                    map.alloc,
-+                    .{ .x = 0, .y = 0 },
-+                    header.len,
-+                ) catch return error.WriteFailed;
++                if (self.point_map) |*map| try @call(
++                    .never_inline,
++                    PageFormatter.appendHeaderPointMap,
++                    .{ map.map, map.alloc, header.len },
++                );
 +            },
 +        }
++    }
++
++    fn appendHeaderPointMap(
++        map: *std.ArrayList(Coordinate),
++        alloc: Allocator,
++        count: usize,
++    ) std.Io.Writer.Error!void {
++        map.appendNTimes(
++            alloc,
++            .{ .x = 0, .y = 0 },
++            count,
++        ) catch return error.WriteFailed;
 +    }
 +
 +    fn formatBlankRowsForEmit(
