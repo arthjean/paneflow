@@ -1,2 +1,5 @@
 # Generated verbatim from the pinned Ghostty source; preserve upstream bytes.
 native/libghostty/prebuilt/*/include/ghostty/vt.h -whitespace
+
+# Git patches are applied verbatim on Linux and Windows runners.
+*.patch text eol=lf
