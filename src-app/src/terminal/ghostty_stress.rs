@@ -146,6 +146,7 @@ impl StressPane {
         );
     }
 
+    #[cfg(target_os = "windows")]
     fn output_contains(&self, marker: &str) -> bool {
         self.session
             .recent_output_lines()

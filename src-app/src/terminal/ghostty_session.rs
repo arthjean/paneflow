@@ -762,6 +762,7 @@ impl RuntimeLifecycle {
         true
     }
 
+    #[cfg(target_os = "windows")]
     fn replace_exit(&mut self, exit: ChildExitReport) {
         if self.phase == RuntimeLifecyclePhase::Draining {
             self.exit = Some(exit);
@@ -876,6 +877,7 @@ impl<M: Send + 'static> DrainablePtyMaster<M> {
         }
     }
 
+    #[cfg(target_os = "windows")]
     fn get(&self) -> Option<&M> {
         self.master.as_ref()
     }
