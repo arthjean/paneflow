@@ -28,7 +28,19 @@ pub(crate) fn key_code(key: Key) -> sys::GhosttyKey {
         Key::PageDown => sys::GhosttyKey_GHOSTTY_KEY_PAGE_DOWN,
         Key::Insert => sys::GhosttyKey_GHOSTTY_KEY_INSERT,
         Key::Function(number @ 1..=25) => sys::GhosttyKey_GHOSTTY_KEY_F1 + u32::from(number - 1),
-        Key::Function(_) | Key::Unidentified => sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED,
+        Key::NumpadDigit(number @ 0..=9) => {
+            sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_0 + u32::from(number)
+        }
+        Key::NumpadAdd => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_ADD,
+        Key::NumpadSubtract => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_SUBTRACT,
+        Key::NumpadMultiply => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_MULTIPLY,
+        Key::NumpadDivide => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_DIVIDE,
+        Key::NumpadDecimal => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_DECIMAL,
+        Key::NumpadEnter => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_ENTER,
+        Key::NumpadEqual => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_EQUAL,
+        Key::Function(_) | Key::NumpadDigit(_) | Key::Unidentified => {
+            sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED
+        }
     }
 }
 

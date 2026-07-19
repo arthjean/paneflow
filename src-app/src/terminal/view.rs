@@ -391,6 +391,36 @@ pub struct TerminalView {
     pub(super) copy_mode_frozen_offset: usize,
     /// Previous focus state, used to detect focus transitions for DEC 1004 events.
     was_focused: bool,
+    /// Focus subscriptions update the clipboard gate at event time, before
+    /// queued terminal output can reach the GPUI event drain.
+    focus_subscriptions: Option<(gpui::Subscription, gpui::Subscription)>,
+    /// Key presses accepted by Ghostty and therefore eligible for a matching
+    /// release event. Prevents app-consumed shortcuts from leaking key-up data.
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) ghostty_pressed_keys:
+        std::collections::HashMap<String, paneflow_terminal_ghostty::KeyInput>,
+    /// Printable key metadata held until GPUI commits the final text. This
+    /// keeps IME as the single text source while still giving Kitty encoding
+    /// the logical key, modifiers, repeat action, and matching release.
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) ghostty_pending_text_key:
+        Option<(gpui::Keystroke, paneflow_terminal_ghostty::KeyAction, bool)>,
     /// Last hovered cell position for URL regex detection (US-015).
     pub(super) hovered_cell: Option<Point>,
     /// Active hyperlink under Ctrl+hover - drives underline rendering and Ctrl+click.
@@ -598,8 +628,10 @@ impl TerminalView {
         ))]
         let ghostty_spawn = if should_start_ghostty(requested_backend) {
             let initial_window_size = TerminalWindowSize::new(params.cols, params.rows, 0, 0);
-            let (ghostty, runtime_pending, events_rx) =
-                GhosttySession::pending(initial_window_size);
+            let (ghostty, runtime_pending, events_rx) = GhosttySession::pending_with_clipboard_gate(
+                initial_window_size,
+                terminal.clipboard_gate(),
+            );
             terminal.attach_ghostty(ghostty.clone(), events_rx);
             Some((ghostty, runtime_pending))
         } else {
@@ -1109,6 +1141,27 @@ impl TerminalView {
             copy_cursor: Point::new(0, 0),
             copy_mode_frozen_offset: 0,
             was_focused: false,
+            focus_subscriptions: None,
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            ghostty_pressed_keys: std::collections::HashMap::new(),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            ghostty_pending_text_key: None,
             hovered_cell: None,
             ctrl_hovered_link: None,
             hover_link_cache: None,
@@ -1134,6 +1187,18 @@ impl TerminalView {
     /// Set preedit text during IME composition.
     pub fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
         self.ime_marked_text = text;
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        {
+            self.ghostty_pending_text_key = None;
+        }
         cx.notify();
     }
 
@@ -1145,6 +1210,68 @@ impl TerminalView {
 
     /// Commit composed text to the PTY.
     pub fn commit_text(&mut self, text: &str, _cx: &mut Context<Self>) {
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        let was_composing = !self.ime_marked_text.is_empty();
+        self.ime_marked_text.clear();
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        {
+            let pending = if was_composing {
+                self.ghostty_pending_text_key.take();
+                None
+            } else {
+                self.ghostty_pending_text_key.take()
+            };
+            let release_id = pending
+                .as_ref()
+                .map(|(keystroke, _, _)| keystroke.key.clone());
+            let input = pending
+                .as_ref()
+                .map(|(keystroke, action, prefer_character_input)| {
+                    super::input::ghostty_text_key_input(
+                        keystroke,
+                        *action,
+                        *prefer_character_input,
+                        text,
+                    )
+                })
+                .unwrap_or_else(|| paneflow_terminal_ghostty::KeyInput {
+                    key: paneflow_terminal_ghostty::Key::Unidentified,
+                    action: paneflow_terminal_ghostty::KeyAction::Press,
+                    modifiers: paneflow_terminal_ghostty::Modifiers::empty(),
+                    consumed_modifiers: paneflow_terminal_ghostty::Modifiers::empty(),
+                    text: text.to_string(),
+                    unshifted_codepoint: None,
+                    composing: false,
+                });
+            let mut release = input.clone();
+            release.action = paneflow_terminal_ghostty::KeyAction::Release;
+            release.text.clear();
+            let result = self.terminal.write_ghostty_key(input, None);
+            if result == super::pty_session::BackendInputResult::Accepted
+                && let Some(release_id) = release_id
+            {
+                self.ghostty_pressed_keys.insert(release_id, release);
+            }
+            if result.is_handled() {
+                return;
+            }
+        }
         self.terminal.write_to_pty(text.as_bytes().to_vec());
     }
 
@@ -1639,27 +1766,88 @@ impl TerminalView {
     }
 }
 
+impl TerminalView {
+    fn apply_terminal_focus(&mut self, focused: bool) {
+        if focused == self.was_focused {
+            return;
+        }
+
+        self.terminal.set_terminal_focused(focused);
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        if !focused {
+            self.release_ghostty_pressed_keys();
+        }
+        let reports_focus = self
+            .terminal
+            .session_backend()
+            .modes()
+            .contains(Modes::FOCUS_IN_OUT);
+        if reports_focus {
+            // This protocol write is not user input. It must not mark a failed
+            // spawn as interactive merely because its pane received focus.
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            let ghostty_encoded = self
+                .terminal
+                .write_ghostty_focus(if focused {
+                    paneflow_terminal_ghostty::FocusEvent::Gained
+                } else {
+                    paneflow_terminal_ghostty::FocusEvent::Lost
+                })
+                .is_handled();
+            #[cfg(not(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            )))]
+            let ghostty_encoded = false;
+            if !ghostty_encoded {
+                let report = if focused { b"\x1b[I" } else { b"\x1b[O" };
+                self.terminal.write_to_pty_silent(report.to_vec());
+            }
+        }
+        self.was_focused = focused;
+    }
+}
+
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus_subscriptions.is_none() {
+            let focus_handle = self.focus_handle.clone();
+            let focus_in = cx.on_focus_in(&focus_handle, window, |view, _window, cx| {
+                view.apply_terminal_focus(true);
+                cx.notify();
+            });
+            let focus_out = cx.on_focus_out(&focus_handle, window, |view, _event, _window, cx| {
+                view.apply_terminal_focus(false);
+                cx.notify();
+            });
+            self.focus_subscriptions = Some((focus_in, focus_out));
+        }
+
         let focused = self.focus_handle.is_focused(window);
+        self.apply_terminal_focus(focused);
         let backend = self.terminal.session_backend();
         let terminal_mode = backend.modes();
-
-        // DEC 1004: send focus in/out events on focus transitions
-        if focused != self.was_focused {
-            if terminal_mode.contains(Modes::FOCUS_IN_OUT) {
-                // Automated protocol write, NOT user input - go through the
-                // notifier directly so US-002's keyboard_input_sent flag is not
-                // tripped by a mere focus change (a failed-spawn pane that gets
-                // focused must still count as "no input" and stay open).
-                if focused {
-                    self.terminal.write_to_pty_silent(b"\x1b[I".to_vec());
-                } else {
-                    self.terminal.write_to_pty_silent(b"\x1b[O".to_vec());
-                }
-            }
-            self.was_focused = focused;
-        }
 
         // Update cell dimensions for mouse → grid mapping
         let frame_metrics = crate::terminal::element::resolve_frame_metrics(
@@ -1776,6 +1964,7 @@ impl Render for TerminalView {
             // released over a stationary cursor (no mouse move required).
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_key_down(cx.listener(Self::handle_key_down))
+            .on_key_up(cx.listener(Self::handle_key_up))
             .on_any_mouse_down(cx.listener(Self::handle_mouse_down))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))

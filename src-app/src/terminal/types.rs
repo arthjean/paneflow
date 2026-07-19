@@ -434,6 +434,7 @@ impl Modes {
     pub const MOUSE_REPORT_CLICK: Self = Self(1 << 8);
     pub const MOUSE_DRAG: Self = Self(1 << 9);
     pub const MOUSE_MOTION: Self = Self(1 << 10);
+    pub const KITTY_KEYBOARD: Self = Self(1 << 11);
     pub const MOUSE_MODE: Self =
         Self(Self::MOUSE_REPORT_CLICK.0 | Self::MOUSE_DRAG.0 | Self::MOUSE_MOTION.0);
 
@@ -497,6 +498,9 @@ impl From<AlacTermMode> for Modes {
         }
         if m.contains(AlacTermMode::MOUSE_MOTION) {
             out = out | Modes::MOUSE_MOTION;
+        }
+        if m.contains(AlacTermMode::KITTY_KEYBOARD_PROTOCOL) {
+            out = out | Modes::KITTY_KEYBOARD;
         }
         out
     }

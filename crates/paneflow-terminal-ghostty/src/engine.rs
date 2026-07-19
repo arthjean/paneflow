@@ -6,11 +6,11 @@ use paneflow_libghostty_sys as sys;
 use crate::callbacks::CallbackState;
 use crate::color_query::ColorQueryResponder;
 use crate::handles::{OwnedHandle, check};
-use crate::osc52::Osc52Scanner;
+use crate::osc7::Osc7Scanner;
+use crate::osc52::{BoundedOscFilter, Osc52Scanner};
 use crate::snapshot::SnapshotCache;
-use crate::{BackendEvent, GhosttyError, Modes, Result, Scroll, WindowSize};
+use crate::{BackendEvent, Modes, Result, Scroll, WindowSize};
 
-const MAX_METADATA_BYTES: usize = 4096;
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 
 pub struct DisplayTerminal {
@@ -25,6 +25,8 @@ pub struct DisplayTerminal {
     pub(crate) snapshot_cache: SnapshotCache,
     pub(crate) callbacks: Box<CallbackState>,
     pub(crate) color_queries: ColorQueryResponder,
+    pub(crate) osc_filter: BoundedOscFilter,
+    pub(crate) osc7: Osc7Scanner,
     pub(crate) osc52: Osc52Scanner,
     pub(crate) last_pwd: Option<String>,
     pub(crate) _not_send_or_sync: PhantomData<Rc<()>>,
@@ -34,21 +36,28 @@ impl DisplayTerminal {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         let callbacks = &self.callbacks;
         let terminal = self.terminal.raw();
+        let osc_filter = &mut self.osc_filter;
+        let osc7 = &mut self.osc7;
         let osc52 = &mut self.osc52;
+        let last_pwd = &mut self.last_pwd;
         self.color_queries.feed(
             bytes,
             &mut |input| {
-                if input.is_empty() {
-                    return;
-                }
-                osc52.feed(input, &mut |text| {
-                    callbacks.push(BackendEvent::ClipboardStore(text));
+                osc_filter.feed(input, &mut |bounded| {
+                    osc7.feed(bounded, &mut |pwd| {
+                        push_working_directory(callbacks, last_pwd, pwd);
+                    });
+                    osc52.feed(bounded, &mut |text| {
+                        callbacks.push(BackendEvent::ClipboardStore(text));
+                    });
+                    unsafe {
+                        sys::ghostty_terminal_vt_write(terminal, bounded.as_ptr(), bounded.len())
+                    };
                 });
-                unsafe { sys::ghostty_terminal_vt_write(terminal, input.as_ptr(), input.len()) };
             },
             &mut |reply| callbacks.push(BackendEvent::WritePty(reply.to_vec())),
         );
-        self.capture_pwd()
+        Ok(())
     }
 
     pub fn resize(&mut self, size: WindowSize) -> Result<()> {
@@ -75,6 +84,9 @@ impl DisplayTerminal {
 
     pub fn reset(&mut self) {
         unsafe { sys::ghostty_terminal_reset(self.terminal.raw()) };
+        self.osc_filter = BoundedOscFilter::default();
+        self.osc7 = Osc7Scanner::default();
+        self.osc52 = Osc52Scanner::default();
         self.snapshot_cache.invalidate();
     }
 
@@ -151,40 +163,12 @@ impl DisplayTerminal {
         }
         Ok(value)
     }
+}
 
-    fn capture_pwd(&mut self) -> Result<()> {
-        let mut value = sys::GhosttyString {
-            ptr: std::ptr::null(),
-            len: 0,
-        };
-        // SAFETY: `self.terminal` owns a live terminal handle, and the PWD
-        // selector writes a `GhosttyString` that borrows terminal-owned data.
-        unsafe {
-            get_terminal(
-                self.terminal.raw(),
-                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_PWD,
-                &mut value,
-            )?;
-        }
-        if value.len > MAX_METADATA_BYTES || (value.len > 0 && value.ptr.is_null()) {
-            return Err(GhosttyError::LimitExceeded {
-                resource: "working directory",
-                limit: MAX_METADATA_BYTES,
-            });
-        }
-        let bytes = if value.len == 0 {
-            &[][..]
-        } else {
-            unsafe { std::slice::from_raw_parts(value.ptr, value.len) }
-        };
-        if !bytes.is_empty() && self.last_pwd.as_deref().map(str::as_bytes) != Some(bytes) {
-            let pwd = std::str::from_utf8(bytes)
-                .map_err(|_| GhosttyError::InvalidUtf8("working directory"))?
-                .to_owned();
-            self.last_pwd = Some(pwd.clone());
-            self.callbacks.push(BackendEvent::WorkingDirectory(pwd));
-        }
-        Ok(())
+fn push_working_directory(callbacks: &CallbackState, last_pwd: &mut Option<String>, pwd: String) {
+    if last_pwd.as_deref() != Some(&pwd) {
+        *last_pwd = Some(pwd.clone());
+        callbacks.push(BackendEvent::WorkingDirectory(pwd));
     }
 }
 
@@ -254,5 +238,92 @@ mod tests {
         assert!(content.cells.iter().all(|cell| cell.character == ' '));
         assert_eq!(content.cursor.point, crate::Point::new(0, 0));
         assert!(terminal.modes().expect("modes after clear").bracketed_paste);
+    }
+
+    #[test]
+    fn oversized_c1_osc_tail_is_dropped_and_native_parser_recovers() {
+        let size = WindowSize::new(80, 24, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100).expect("terminal must initialize");
+        terminal.feed(b"\x1b[\xd1\x9d52;c;").expect("OSC prefix");
+        terminal
+            .feed(&vec![b'A'; crate::osc52::MAX_OSC_SEQUENCE_BYTES + 1])
+            .expect("oversized OSC body");
+        terminal.feed(b"\x9cignored").expect("C1 ST tail");
+        terminal
+            .feed(&vec![b'B'; crate::osc52::MAX_OSC_SEQUENCE_BYTES + 1])
+            .expect("discarded OSC tail");
+        terminal.feed(b"\x07SAFE").expect("OSC recovery");
+
+        let content = terminal.snapshot().expect("snapshot after recovery");
+        let visible: String = content.cells.iter().map(|cell| cell.character).collect();
+        assert!(visible.contains("SAFE"));
+        assert!(!visible.contains('B'));
+        assert!(
+            terminal
+                .drain_events()
+                .iter()
+                .all(|event| !matches!(event, BackendEvent::ClipboardStore(_)))
+        );
+    }
+
+    #[test]
+    fn non_ground_c1_osc52_emits_clipboard_event() {
+        let size = WindowSize::new(80, 24, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100).expect("terminal must initialize");
+        terminal
+            .feed(b"\x1b]52;c;b3duZWQ=\x1b[\x9d52;c;b2s=\x07")
+            .expect("C1 OSC52 must parse");
+
+        assert!(
+            terminal
+                .drain_events()
+                .iter()
+                .any(|event| matches!(event, BackendEvent::ClipboardStore(text) if text == "ok"))
+        );
+    }
+
+    #[test]
+    fn osc7_working_directory_is_decoded_once() {
+        let size = WindowSize::new(80, 24, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100).expect("terminal must initialize");
+        let report = b"\x1b]7;file:///C:/dev/path%20with%20space/%C3%A9\x07";
+
+        terminal
+            .feed(&report[..18])
+            .expect("fragmented OSC 7 prefix");
+        terminal.feed(&report[18..]).expect("fragmented OSC 7 tail");
+        terminal.feed(report).expect("duplicate OSC 7 report");
+
+        let directories = terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                BackendEvent::WorkingDirectory(cwd) => Some(cwd),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(directories, [r"C:\dev\path with space\é"]);
+    }
+
+    #[test]
+    fn oversized_osc7_cannot_publish_a_truncated_directory() {
+        let size = WindowSize::new(80, 24, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100).expect("terminal must initialize");
+        let mut reports = b"\x1b]7;file:///C:/".to_vec();
+        reports.extend(std::iter::repeat_n(b'a', 4097));
+        reports.extend_from_slice(b"\x07\x1b]7;file:///C:/dev/recovered\x07");
+
+        terminal.feed(&reports).expect("OSC 7 stream must parse");
+
+        let directories = terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                BackendEvent::WorkingDirectory(cwd) => Some(cwd),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(directories, [r"C:\dev\recovered"]);
     }
 }

@@ -17,6 +17,8 @@ mod limits;
 mod model;
 #[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
 mod osc52;
+#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+mod osc7;
 
 #[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
 mod abi;

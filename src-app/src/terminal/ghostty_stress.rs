@@ -130,7 +130,7 @@ impl StressPane {
 
     fn write(&self, bytes: Vec<u8>) {
         assert!(
-            self.session.write(bytes),
+            self.session.write(bytes).is_sent(),
             "scenario=write surface={} pid={} phase=admission",
             self.surface_id,
             self.pid,

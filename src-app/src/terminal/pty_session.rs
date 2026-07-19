@@ -29,7 +29,7 @@ use alacritty_terminal::vte::ansi::Rgb as AlacRgb;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
 
 use super::element::color::palette_color_at;
-use super::listener::{SpikeTermSize, ZedListener};
+use super::listener::{ClipboardGate, SpikeTermSize, ZedListener};
 use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
 use super::shell::{resolve_default_shell, setup_shell_integration};
@@ -50,7 +50,9 @@ use paneflow_config::schema::{TerminalBackendConfig, TerminalConfig, TerminalSur
         feature = "libghostty-windows"
     )
 ))]
-use super::ghostty_session::{GhosttySession, GhosttyUiEvent, SpawnedGhostty};
+use super::ghostty_session::{
+    GhosttyInputSendResult, GhosttySession, GhosttyUiEvent, SpawnedGhostty,
+};
 
 /// Default scrollback history length, in lines. Paneflow keeps this standard
 /// for predictable terminal memory use. `TermConfig::default()` is `0`, which
@@ -380,6 +382,7 @@ impl futures::stream::FusedStream for TerminalBackendEvents {
 pub(crate) struct PendingTerminalBackend {
     term: SharedTerm,
     events_tx: UnboundedSender<AlacEvent>,
+    clipboard_gate: Arc<ClipboardGate>,
 }
 
 #[cfg(test)]
@@ -1025,6 +1028,304 @@ pub struct TerminalBackendDiagnostics {
     pub ghostty: Option<GhosttyBuildDiagnostics>,
 }
 
+#[derive(Clone)]
+enum PendingTerminalInput {
+    Raw(Cow<'static, [u8]>),
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    Key {
+        input: paneflow_terminal_ghostty::KeyInput,
+        legacy: Option<Cow<'static, [u8]>>,
+    },
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    Mouse {
+        input: paneflow_terminal_ghostty::MouseInput,
+        repeat: usize,
+        legacy: Option<Vec<u8>>,
+    },
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    Focus(paneflow_terminal_ghostty::FocusEvent),
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    Paste {
+        text: String,
+        allow_unsafe: bool,
+        legacy_bracketed: bool,
+    },
+}
+
+impl PendingTerminalInput {
+    fn queued_bytes(&self) -> usize {
+        match self {
+            Self::Raw(bytes) => bytes.len(),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Key { input, legacy } => {
+                std::mem::size_of::<paneflow_terminal_ghostty::KeyInput>()
+                    .saturating_add(input.text.len())
+                    .saturating_add(legacy.as_ref().map_or(0, |bytes| bytes.len()))
+            }
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Mouse { repeat, legacy, .. } => {
+                std::mem::size_of::<paneflow_terminal_ghostty::MouseInput>()
+                    .saturating_add(*repeat)
+                    .saturating_add(legacy.as_ref().map_or(0, Vec::len))
+            }
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Focus(_) => std::mem::size_of::<paneflow_terminal_ghostty::FocusEvent>(),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Paste { text, .. } => text.len(),
+        }
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    fn queue_limit(&self) -> usize {
+        match self {
+            Self::Raw(_) => MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES,
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Paste { .. } => MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES,
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Key { input, .. }
+                if input.action == paneflow_terminal_ghostty::KeyAction::Release =>
+            {
+                MAX_PENDING_INPUT_BYTES
+            }
+            Self::Mouse { input, .. }
+                if input.action == paneflow_terminal_ghostty::MouseAction::Release =>
+            {
+                MAX_PENDING_INPUT_BYTES
+            }
+            Self::Focus(_) => MAX_PENDING_INPUT_BYTES,
+            Self::Key { .. } | Self::Mouse { .. } => {
+                MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES
+            }
+        }
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    fn fits_after(&self, queued_bytes: usize) -> bool {
+        queued_bytes.saturating_add(self.queued_bytes()) <= self.queue_limit()
+    }
+
+    fn into_legacy_bytes(self) -> Option<Cow<'static, [u8]>> {
+        match self {
+            Self::Raw(bytes) => Some(bytes),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Key { input, legacy } => legacy
+                .or_else(|| (!input.text.is_empty()).then(|| Cow::Owned(input.text.into_bytes()))),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Mouse { repeat, legacy, .. } => legacy.map(|bytes| {
+                if repeat == 1 {
+                    return Cow::Owned(bytes);
+                }
+                let mut repeated = Vec::with_capacity(bytes.len().saturating_mul(repeat));
+                for _ in 0..repeat {
+                    repeated.extend_from_slice(&bytes);
+                }
+                Cow::Owned(repeated)
+            }),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Focus(event) => Some(Cow::Borrowed(match event {
+                paneflow_terminal_ghostty::FocusEvent::Gained => b"\x1b[I",
+                paneflow_terminal_ghostty::FocusEvent::Lost => b"\x1b[O",
+            })),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            Self::Paste {
+                text,
+                legacy_bracketed,
+                ..
+            } => {
+                if legacy_bracketed {
+                    let mut bytes = Vec::with_capacity(text.len().saturating_add(12));
+                    bytes.extend_from_slice(b"\x1b[200~");
+                    bytes.extend_from_slice(text.as_bytes());
+                    bytes.extend_from_slice(b"\x1b[201~");
+                    Some(Cow::Owned(bytes))
+                } else {
+                    Some(Cow::Owned(text.into_bytes()))
+                }
+            }
+        }
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    fn try_send(&self, ghostty: &GhosttySession) -> GhosttyInputSendResult {
+        match self {
+            Self::Raw(bytes) => ghostty.write(bytes.clone().into_owned()),
+            Self::Key { input, .. } => ghostty.write_key(input.clone()),
+            Self::Mouse { input, repeat, .. } => ghostty.write_mouse(*input, *repeat),
+            Self::Focus(event) => ghostty.write_focus(*event),
+            Self::Paste {
+                text, allow_unsafe, ..
+            } => ghostty.write_paste(text.clone(), *allow_unsafe),
+        }
+    }
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BackendInputResult {
+    NotHandled,
+    Accepted,
+    Rejected,
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+impl BackendInputResult {
+    pub(super) fn is_handled(self) -> bool {
+        self != Self::NotHandled
+    }
+}
+
 pub struct TerminalState {
     term: Arc<FairMutex<Term<ZedListener>>>,
     notifier: PtyNotifier,
@@ -1123,6 +1424,12 @@ pub struct TerminalState {
     pub(super) cursor_color_override: Option<gpui::Hsla>,
     /// OSC 52 clipboard access mode (default: copy-only for security).
     pub osc52_mode: Osc52Mode,
+    /// OSC 52 is accepted only while this terminal owns focus. Updated from
+    /// the GPUI focus transition before any focus protocol report is queued.
+    terminal_focused: bool,
+    /// Shared with both parser backends so focus and policy are checked when
+    /// OSC 52 is emitted, before the asynchronous UI event queue.
+    clipboard_gate: Arc<ClipboardGate>,
     /// Shell syntax used when Paneflow inserts OS file paths into the PTY.
     pub(super) shell_quoting: ShellQuoting,
     /// Deferred clipboard operations from sync() - drained in the poll loop
@@ -1187,14 +1494,24 @@ pub struct TerminalState {
     /// flushes it in order. `Mutex` (not `RefCell`) keeps `TerminalState`
     /// `Send` and matches the crate's interior-mutability idiom; the lock is
     /// uncontended (main thread only).
-    pending_input: std::sync::Mutex<VecDeque<Cow<'static, [u8]>>>,
+    pending_input: std::sync::Mutex<VecDeque<PendingTerminalInput>>,
 }
 
 /// Cap on input buffered during the pre-promotion window. Generous for a
 /// launch command plus a burst of typing, tight enough that a terminal that
 /// never promotes (spawn failure - `promote` is never called) cannot
 /// accumulate input without bound.
-const MAX_PENDING_INPUT_BYTES: usize = 64 * 1024;
+const MAX_PENDING_INPUT_BYTES: usize = 1024 * 1024;
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+const INPUT_CONTROL_RESERVE_BYTES: usize = 64 * 1024;
 
 /// The cheap, render-thread-safe half of a spawn: resolved shell, assembled
 /// child env, cwd, and grid size. Produced by
@@ -1235,6 +1552,87 @@ pub(super) struct SpawnedPty {
 }
 
 const OSC7_MAX_PAYLOAD: usize = 4096;
+// VTE's std parser uses an unbounded Vec for OSC bytes. Hold each OSC before
+// that parser and drop it once it exceeds the largest valid OSC 52 payload
+// plus protocol overhead. This bounds every OSC family, not only clipboard.
+const MAX_OSC_SEQUENCE_BYTES: usize = MAX_OSC52_BYTES.div_ceil(3) * 4 + 64;
+
+#[derive(Debug, Default)]
+enum BoundedOscState {
+    #[default]
+    Ground,
+    Esc,
+    Collect(Vec<u8>),
+    Drop,
+}
+
+#[derive(Debug, Default)]
+struct BoundedOscFilter {
+    state: BoundedOscState,
+    pending: VecDeque<u8>,
+}
+
+impl BoundedOscFilter {
+    fn advance(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            let state = std::mem::take(&mut self.state);
+            self.state = match state {
+                BoundedOscState::Ground if byte == 0x1b => BoundedOscState::Esc,
+                BoundedOscState::Ground => {
+                    self.pending.push_back(byte);
+                    BoundedOscState::Ground
+                }
+                BoundedOscState::Esc if byte == b']' => BoundedOscState::Collect(vec![0x1b, b']']),
+                BoundedOscState::Esc if byte == 0x1b => {
+                    self.pending.push_back(0x1b);
+                    BoundedOscState::Esc
+                }
+                BoundedOscState::Esc => {
+                    self.pending.extend([0x1b, byte]);
+                    BoundedOscState::Ground
+                }
+                BoundedOscState::Collect(buffer) if byte == 0x1b => {
+                    self.pending.extend(buffer);
+                    BoundedOscState::Esc
+                }
+                BoundedOscState::Collect(mut buffer) => {
+                    buffer.push(byte);
+                    if buffer.len() > MAX_OSC_SEQUENCE_BYTES {
+                        BoundedOscState::Drop
+                    // vte 0.15 treats raw C1 ST (0x9c) as OSC payload.
+                    // Only BEL, CAN/SUB, or the ESC-based ST can end it.
+                    } else if matches!(byte, 0x07 | 0x18 | 0x1a) {
+                        self.pending.extend(buffer);
+                        BoundedOscState::Ground
+                    } else {
+                        BoundedOscState::Collect(buffer)
+                    }
+                }
+                BoundedOscState::Drop if byte == 0x1b => {
+                    self.pending.push_back(0x18);
+                    BoundedOscState::Esc
+                }
+                BoundedOscState::Drop if matches!(byte, 0x07 | 0x18 | 0x1a) => {
+                    self.pending.push_back(0x18);
+                    BoundedOscState::Ground
+                }
+                BoundedOscState::Drop => BoundedOscState::Drop,
+            };
+        }
+    }
+
+    fn drain_into(&mut self, output: &mut [u8]) -> usize {
+        let mut written = 0;
+        while written < output.len() {
+            let Some(byte) = self.pending.pop_front() else {
+                break;
+            };
+            output[written] = byte;
+            written += 1;
+        }
+        written
+    }
+}
 
 #[derive(Debug, Default)]
 enum Osc7ScanState {
@@ -1243,6 +1641,8 @@ enum Osc7ScanState {
     Esc,
     Osc,
     OscEsc,
+    Discard,
+    DiscardEscape,
 }
 
 #[derive(Debug, Default)]
@@ -1273,32 +1673,47 @@ impl Osc7Scanner {
                 }
                 Osc7ScanState::Osc => match byte {
                     0x07 => self.finish(&mut emit),
+                    0x18 | 0x1a => self.reset(),
                     0x1b => self.state = Osc7ScanState::OscEsc,
-                    _ => self.push_payload_byte(byte),
+                    _ => {
+                        self.push_payload_byte(byte);
+                    }
                 },
-                Osc7ScanState::OscEsc => {
-                    if byte == b'\\' {
-                        self.finish(&mut emit);
-                    } else {
-                        self.push_payload_byte(0x1b);
-                        if byte == 0x1b {
-                            self.state = Osc7ScanState::OscEsc;
-                        } else {
-                            self.push_payload_byte(byte);
-                            self.state = Osc7ScanState::Osc;
+                Osc7ScanState::OscEsc => match byte {
+                    b'\\' => self.finish(&mut emit),
+                    0x18 | 0x1a => self.reset(),
+                    _ => {
+                        if self.push_payload_byte(0x1b) {
+                            if byte == 0x1b {
+                                self.state = Osc7ScanState::OscEsc;
+                            } else if self.push_payload_byte(byte) {
+                                self.state = Osc7ScanState::Osc;
+                            }
                         }
                     }
-                }
+                },
+                Osc7ScanState::Discard => match byte {
+                    0x07 | 0x18 | 0x1a => self.reset(),
+                    0x1b => self.state = Osc7ScanState::DiscardEscape,
+                    _ => {}
+                },
+                Osc7ScanState::DiscardEscape => match byte {
+                    b'\\' | 0x07 | 0x18 | 0x1a => self.reset(),
+                    0x1b => {}
+                    _ => self.state = Osc7ScanState::Discard,
+                },
             }
         }
     }
 
-    fn push_payload_byte(&mut self, byte: u8) {
+    fn push_payload_byte(&mut self, byte: u8) -> bool {
         if self.payload.len() < OSC7_MAX_PAYLOAD {
             self.payload.push(byte);
+            true
         } else {
-            self.state = Osc7ScanState::Ground;
             self.payload.clear();
+            self.state = Osc7ScanState::Discard;
+            false
         }
     }
 
@@ -1311,6 +1726,10 @@ impl Osc7Scanner {
         {
             emit(cwd);
         }
+        self.reset();
+    }
+
+    fn reset(&mut self) {
         self.state = Osc7ScanState::Ground;
         self.payload.clear();
     }
@@ -1318,6 +1737,7 @@ impl Osc7Scanner {
 
 struct Osc7Pty<T: tty::EventedPty> {
     inner: T,
+    osc_filter: BoundedOscFilter,
     scanner: Osc7Scanner,
     marks_scanner: Osc133Scanner,
     cwd_tx: UnboundedSender<String>,
@@ -1332,6 +1752,7 @@ impl<T: tty::EventedPty> Osc7Pty<T> {
     ) -> Self {
         Self {
             inner,
+            osc_filter: BoundedOscFilter::default(),
             scanner: Osc7Scanner::default(),
             marks_scanner: Osc133Scanner::default(),
             cwd_tx,
@@ -1342,16 +1763,30 @@ impl<T: tty::EventedPty> Osc7Pty<T> {
 
 impl<T: tty::EventedPty> Read for Osc7Pty<T> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let read = self.inner.reader().read(buf)?;
-        let cwd_tx = self.cwd_tx.clone();
-        self.scanner.advance(&buf[..read], |cwd| {
-            let _ = cwd_tx.unbounded_send(cwd);
-        });
-        let marks_tx = &self.marks_tx;
-        self.marks_scanner.feed(&buf[..read], &mut |mark| {
-            let _ = marks_tx.try_send(mark);
-        });
-        Ok(read)
+        let pending = self.osc_filter.drain_into(buf);
+        if pending > 0 || buf.is_empty() {
+            return Ok(pending);
+        }
+
+        loop {
+            let read = self.inner.reader().read(buf)?;
+            if read == 0 {
+                return Ok(0);
+            }
+            let cwd_tx = self.cwd_tx.clone();
+            self.scanner.advance(&buf[..read], |cwd| {
+                let _ = cwd_tx.unbounded_send(cwd);
+            });
+            let marks_tx = &self.marks_tx;
+            self.marks_scanner.feed(&buf[..read], &mut |mark| {
+                let _ = marks_tx.try_send(mark);
+            });
+            self.osc_filter.advance(&buf[..read]);
+            let filtered = self.osc_filter.drain_into(buf);
+            if filtered > 0 {
+                return Ok(filtered);
+            }
+        }
     }
 }
 
@@ -1428,15 +1863,15 @@ fn cwd_from_osc7_payload(payload: &str) -> Option<String> {
     if let Some(msys_path) = msys_path_to_windows_path(&decoded) {
         return Some(msys_path);
     }
+    #[cfg(windows)]
     if decoded.len() >= 3
         && decoded.as_bytes()[0] == b'/'
         && decoded.as_bytes()[1].is_ascii_alphabetic()
         && decoded.as_bytes()[2] == b':'
     {
-        Some(decoded[1..].replace('/', "\\"))
-    } else {
-        Some(decoded)
+        return Some(decoded[1..].replace('/', "\\"));
     }
+    Some(decoded)
 }
 
 #[cfg(windows)]
@@ -1698,7 +2133,7 @@ impl TerminalState {
         {
             self.pty_guard = crate::agents::parent_guard::spawn_pty_guard(spawned.child_pid);
         }
-        self.osc52_mode = Osc52Mode::CopyOnly;
+        self.set_osc52_mode(Osc52Mode::CopyOnly);
         self.cursor_blinking = true;
         self.dirty = true;
         self.flush_ghostty_pending_input();
@@ -1724,11 +2159,22 @@ impl TerminalState {
         let Ok(mut pending) = self.pending_input.lock() else {
             return;
         };
-        while let Some(input) = pending.front() {
-            if !ghostty.write(input.clone().into_owned()) {
-                break;
+        while let Some(input) = pending.front().cloned() {
+            match input.try_send(ghostty) {
+                GhosttyInputSendResult::Sent => {
+                    pending.pop_front();
+                }
+                GhosttyInputSendResult::Full => break,
+                GhosttyInputSendResult::Closed => {
+                    let discarded = pending.len();
+                    pending.clear();
+                    log::warn!(
+                        target: "paneflow::terminal::ghostty",
+                        "Ghostty input closed with {discarded} deferred events"
+                    );
+                    break;
+                }
             }
-            pending.pop_front();
         }
     }
 
@@ -1945,7 +2391,12 @@ impl TerminalState {
         // prepend, user-env merge with protected keys). Pure function so the env
         // contract stays unit-testable (the mockable `PtyBackend::spawn` seam is
         // gone - EP-002 US-004).
-        let env = assemble_pty_env(env, workspace_id, surface_id, merged_env);
+        let mut env = assemble_pty_env(env, workspace_id, surface_id, merged_env);
+        // Keep terminal.env and identity propagation independent from shell
+        // integration: opting out disables rc hooks, not the terminal env contract.
+        if is_wsl_shell(&shell) {
+            augment_wslenv(&mut env);
+        }
         // U-026 + issue #11: when no cwd is explicit, avoid inheriting a GUI
         // launch cwd that is the filesystem root. Explicit root cwd requests
         // still arrive through `working_directory` and are preserved.
@@ -2009,8 +2460,12 @@ impl TerminalState {
         pending: PendingTerminalBackend,
         signal_mask: Option<ForegroundSignalMask>,
     ) -> anyhow::Result<SpawnedPty> {
-        let PendingTerminalBackend { term, events_tx } = pending;
-        let listener = ZedListener(events_tx);
+        let PendingTerminalBackend {
+            term,
+            events_tx,
+            clipboard_gate,
+        } = pending;
+        let listener = ZedListener::with_clipboard_gate(events_tx, clipboard_gate);
         let (cwd_tx, cwd_rx) = unbounded();
         let (marks_tx, marks_rx) = std::sync::mpsc::sync_channel(256);
         // Pixel size unknown at spawn (apps use the char grid); the live size is
@@ -2141,18 +2596,26 @@ impl TerminalState {
             self.pty_master_fd = spawned.pty_master_fd;
         }
         // Interactive defaults (a display-only terminal had these off).
-        self.osc52_mode = Osc52Mode::CopyOnly;
+        self.set_osc52_mode(Osc52Mode::CopyOnly);
         self.cursor_blinking = true;
         self.dirty = true;
         // Flush input queued while display-only (US-012): the launch command
         // an Agents-view thread issues the instant it mounts, plus any
         // keystrokes typed before the off-thread fork resolved. Order is
         // preserved; the now-live `Pty` notifier delivers each to the child.
-        if let Ok(mut pending) = self.pending_input.lock() {
-            for input in pending.drain(..) {
-                self.notifier.notify(input);
-            }
+        for input in self.drain_pending_legacy_input() {
+            self.notifier.notify(input);
         }
+    }
+
+    fn drain_pending_legacy_input(&self) -> Vec<Cow<'static, [u8]>> {
+        let Ok(mut pending) = self.pending_input.lock() else {
+            return Vec::new();
+        };
+        pending
+            .drain(..)
+            .filter_map(PendingTerminalInput::into_legacy_bytes)
+            .collect()
     }
 
     /// Wire a GPUI background executor for the grace-period force-kill
@@ -2195,9 +2658,10 @@ impl TerminalState {
         shell_quoting: ShellQuoting,
     ) -> (Self, PendingTerminalBackend) {
         let (events_tx, events_rx) = unbounded();
+        let clipboard_gate = Arc::new(ClipboardGate::default());
         // The Term keeps one clone (emits Wakeup after VTE mutations); the
         // returned clone is for a later `EventLoop` on promotion.
-        let listener = ZedListener(events_tx.clone());
+        let listener = ZedListener::with_clipboard_gate(events_tx.clone(), clipboard_gate.clone());
 
         let config = TermConfig {
             scrolling_history: resolved_scrollback_lines(profile),
@@ -2215,6 +2679,7 @@ impl TerminalState {
         let pending = PendingTerminalBackend {
             term: term.clone(),
             events_tx,
+            clipboard_gate: clipboard_gate.clone(),
         };
         let state = Self {
             term,
@@ -2264,6 +2729,8 @@ impl TerminalState {
             font_size_override: None,
             cursor_color_override: resolved_cursor_color_override(),
             osc52_mode: Osc52Mode::Disabled,
+            terminal_focused: false,
+            clipboard_gate,
             shell_quoting,
             pending_clipboard_ops: Vec::new(),
             cached_foreground_command: None,
@@ -2496,14 +2963,15 @@ impl TerminalState {
             }
             AlacEvent::ClipboardStore(_selection, text) => {
                 // Cap to prevent memory DoS from malicious programs (crate::limits).
-                let within_cap =
-                    self.osc52_mode != Osc52Mode::Disabled && text.len() <= MAX_OSC52_BYTES;
+                let within_cap = self.terminal_focused
+                    && self.osc52_mode != Osc52Mode::Disabled
+                    && text.len() <= MAX_OSC52_BYTES;
                 if within_cap {
                     self.queue_clipboard_op(ClipboardOp::Store(text));
                 }
             }
             AlacEvent::ClipboardLoad(_selection, format_fn)
-                if self.osc52_mode == Osc52Mode::CopyPaste =>
+                if self.terminal_focused && self.osc52_mode == Osc52Mode::CopyPaste =>
             {
                 self.queue_clipboard_op(ClipboardOp::Load(format_fn));
             }
@@ -2587,7 +3055,10 @@ impl TerminalState {
             }
             GhosttyUiEvent::Clipboard(events) => {
                 for text in events.take_clipboard() {
-                    if self.osc52_mode != Osc52Mode::Disabled && text.len() <= MAX_OSC52_BYTES {
+                    if self.terminal_focused
+                        && self.osc52_mode != Osc52Mode::Disabled
+                        && text.len() <= MAX_OSC52_BYTES
+                    {
                         self.queue_clipboard_op(ClipboardOp::Store(text));
                     }
                 }
@@ -2609,6 +3080,9 @@ impl TerminalState {
                 {
                     self.pty_guard = None;
                 }
+            }
+            GhosttyUiEvent::InputRejected(error) => {
+                log::warn!(target: "paneflow::terminal::ghostty", "{error}");
             }
             GhosttyUiEvent::RuntimeFailed(error) => {
                 log::error!(target: "paneflow::terminal::ghostty", "{error}");
@@ -2804,6 +3278,168 @@ impl TerminalState {
         self.notify_or_buffer(input);
     }
 
+    pub(super) fn set_terminal_focused(&mut self, focused: bool) {
+        self.terminal_focused = focused;
+        self.clipboard_gate.set_focused(focused);
+    }
+
+    fn set_osc52_mode(&mut self, mode: Osc52Mode) {
+        self.osc52_mode = mode;
+        self.clipboard_gate
+            .set_policy(mode != Osc52Mode::Disabled, mode == Osc52Mode::CopyPaste);
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) fn clipboard_gate(&self) -> Arc<ClipboardGate> {
+        self.clipboard_gate.clone()
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    fn dispatch_ghostty_input(
+        &self,
+        input: PendingTerminalInput,
+        user_initiated: bool,
+    ) -> BackendInputResult {
+        let Some(ghostty) = self.ghostty.as_ref() else {
+            return BackendInputResult::NotHandled;
+        };
+        let Ok(mut pending) = self.pending_input.lock() else {
+            return BackendInputResult::Rejected;
+        };
+        let pending_bytes = pending.iter().fold(0usize, |total, item| {
+            total.saturating_add(item.queued_bytes())
+        });
+        let total = pending_bytes.saturating_add(ghostty.queued_input_bytes());
+        let queue_limit = input.queue_limit();
+        if !input.fits_after(total) {
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "Ghostty input rejected at the {} byte queue limit",
+                queue_limit
+            );
+            return BackendInputResult::Rejected;
+        }
+
+        if ghostty.is_promoted() && pending.is_empty() {
+            match input.try_send(ghostty) {
+                GhosttyInputSendResult::Sent => {
+                    if user_initiated {
+                        self.keyboard_input_sent
+                            .store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    return BackendInputResult::Accepted;
+                }
+                GhosttyInputSendResult::Full => {}
+                GhosttyInputSendResult::Closed => return BackendInputResult::Rejected,
+            }
+        }
+
+        pending.push_back(input);
+        if user_initiated {
+            self.keyboard_input_sent
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        BackendInputResult::Accepted
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) fn write_ghostty_key(
+        &self,
+        input: paneflow_terminal_ghostty::KeyInput,
+        legacy: Option<Cow<'static, [u8]>>,
+    ) -> BackendInputResult {
+        self.dispatch_ghostty_input(PendingTerminalInput::Key { input, legacy }, true)
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) fn write_ghostty_mouse(
+        &self,
+        input: paneflow_terminal_ghostty::MouseInput,
+        repeat: usize,
+        legacy: Option<Vec<u8>>,
+    ) -> BackendInputResult {
+        self.dispatch_ghostty_input(
+            PendingTerminalInput::Mouse {
+                input,
+                repeat,
+                legacy,
+            },
+            true,
+        )
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) fn write_ghostty_focus(
+        &self,
+        event: paneflow_terminal_ghostty::FocusEvent,
+    ) -> BackendInputResult {
+        self.dispatch_ghostty_input(PendingTerminalInput::Focus(event), false)
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) fn write_ghostty_paste(
+        &self,
+        text: String,
+        legacy_bracketed: bool,
+    ) -> BackendInputResult {
+        self.dispatch_ghostty_input(
+            PendingTerminalInput::Paste {
+                text,
+                allow_unsafe: true,
+                legacy_bracketed,
+            },
+            true,
+        )
+    }
+
     /// Send input to the live PTY, or queue it when the terminal is still
     /// display-only (US-012 pre-promotion window). The display-only notifier
     /// drops every write, so an auto-launch command (Agents view) or a
@@ -2822,27 +3458,9 @@ impl TerminalState {
             )
         ))]
         if let Some(ghostty) = &self.ghostty {
-            if ghostty.is_promoted() {
-                if input.is_empty() {
-                    return;
-                }
-                if let Ok(mut pending) = self.pending_input.lock() {
-                    let pending_bytes: usize = pending.iter().map(|value| value.len()).sum();
-                    let total = pending_bytes.saturating_add(ghostty.queued_input_bytes());
-                    if pending.is_empty() && ghostty.write(input.clone().into_owned()) {
-                        return;
-                    }
-                    if total.saturating_add(input.len()) <= MAX_PENDING_INPUT_BYTES {
-                        pending.push_back(input);
-                    }
-                }
-            } else if !input.is_empty()
-                && let Ok(mut pending) = self.pending_input.lock()
-            {
-                let queued: usize = pending.iter().map(|value| value.len()).sum();
-                if queued + input.len() <= MAX_PENDING_INPUT_BYTES {
-                    pending.push_back(input);
-                }
+            if !input.is_empty() {
+                let _ = ghostty;
+                self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false);
             }
             return;
         }
@@ -2854,9 +3472,9 @@ impl TerminalState {
             return;
         }
         if let Ok(mut pending) = self.pending_input.lock() {
-            let queued: usize = pending.iter().map(|c| c.len()).sum();
+            let queued: usize = pending.iter().map(PendingTerminalInput::queued_bytes).sum();
             if queued + input.len() <= MAX_PENDING_INPUT_BYTES {
-                pending.push_back(input);
+                pending.push_back(PendingTerminalInput::Raw(input));
             }
         }
     }
@@ -2974,8 +3592,9 @@ impl TerminalState {
     /// Search the scrollback for `pattern` (plain-text, case-insensitive) and
     /// return matching lines as `(grid_line, text)` pairs, deduped by line and
     /// capped at `max_matches`. The bool is `true` when the cap truncated the
-    /// result. Backs the `surface.search` IPC method (US-004). The grid lock
-    /// is held only for text extraction, never across an await.
+    /// result. Backs the `surface.search` IPC method (US-004). Alacritty holds
+    /// its grid lock only for text extraction; Ghostty performs search and
+    /// matched-line extraction atomically on its runtime thread.
     pub fn search_scrollback(
         &self,
         pattern: &str,
@@ -2983,6 +3602,18 @@ impl TerminalState {
     ) -> (Vec<(i32, String)>, bool) {
         if pattern.is_empty() || max_matches == 0 {
             return (Vec::new(), false);
+        }
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        if let Some(ghostty) = &self.ghostty {
+            return ghostty.search_scrollback(pattern, max_matches);
         }
         let result = crate::search::search_term(&self.term, pattern, false);
 
@@ -3001,7 +3632,6 @@ impl TerminalState {
             }
         }
 
-        // Extract each matched line's text under a single read lock.
         let term = self.term.lock_unfair();
         let cols = term.last_column();
         let out: Vec<(i32, String)> = rows
@@ -3311,6 +3941,78 @@ fn is_forbidden_child_env_key(key: &str) -> bool {
 /// keys.
 fn is_valid_env_name(key: &str) -> bool {
     !key.is_empty() && !key.contains('=') && !key.contains('\0')
+}
+
+fn is_wsl_shell(shell: &str) -> bool {
+    let executable = shell.rsplit(['/', '\\']).next().unwrap_or(shell);
+    executable.eq_ignore_ascii_case("wsl.exe") || executable.eq_ignore_ascii_case("wsl")
+}
+
+fn is_wslenv_identifier(key: &str) -> bool {
+    let mut bytes = key.bytes();
+    matches!(bytes.next(), Some(b'A'..=b'Z' | b'a'..=b'z' | b'_'))
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
+fn wslenv_entry_covers(entry: &str, key: &str, requires_path_translation: bool) -> bool {
+    let (name, flags) = entry.split_once('/').unwrap_or((entry, ""));
+    name == key
+        && (!flags.contains('w') || flags.contains('u'))
+        && (!requires_path_translation || flags.contains('p'))
+}
+
+fn merge_wslenv<'a>(
+    initial: Option<&str>,
+    env_keys: impl IntoIterator<Item = &'a str>,
+) -> Option<String> {
+    let existing_entries = initial
+        .map(|value| value.split(':').collect::<Vec<_>>())
+        .unwrap_or_default();
+    let mut keys = env_keys
+        .into_iter()
+        .filter(|key| {
+            is_wslenv_identifier(key) && !matches!(*key, "PATH" | "WSLENV" | "SHLVL" | "LANG")
+        })
+        .collect::<Vec<_>>();
+    keys.sort_unstable();
+    keys.dedup();
+
+    let additions = keys
+        .into_iter()
+        .filter_map(|key| {
+            let requires_path_translation = matches!(key, "PANEFLOW_BIN_DIR" | "PANEFLOW_HOOK_LOG");
+            if existing_entries
+                .iter()
+                .any(|entry| wslenv_entry_covers(entry, key, requires_path_translation))
+            {
+                None
+            } else if requires_path_translation {
+                Some(format!("{key}/up"))
+            } else {
+                Some(format!("{key}/u"))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if additions.is_empty() {
+        return initial.map(str::to_owned);
+    }
+
+    let additions = additions.join(":");
+    Some(match initial.filter(|value| !value.is_empty()) {
+        Some(initial) => format!("{initial}:{additions}"),
+        None => additions,
+    })
+}
+
+fn augment_wslenv(env: &mut std::collections::HashMap<String, String>) {
+    let initial = env
+        .get("WSLENV")
+        .cloned()
+        .or_else(|| std::env::var("WSLENV").ok());
+    if let Some(merged) = merge_wslenv(initial.as_deref(), env.keys().map(String::as_str)) {
+        env.insert("WSLENV".into(), merged);
+    }
 }
 
 /// True for an OSC 0/2 title that is merely an absolute path to an `.exe` - the
@@ -4101,12 +4803,11 @@ mod tests {
         let (state, _events_tx) = TerminalState::new_pending(80, 24);
         assert!(!state.notifier.0.is_pty());
         state.write_to_pty(b"claude\r".to_vec());
-        let queued = state
-            .pending_input
-            .lock()
-            .expect("pending_input lock")
-            .clone();
-        assert_eq!(queued, VecDeque::from([Cow::from(b"claude\r".to_vec())]));
+        let queued = state.pending_input.lock().expect("pending_input lock");
+        assert_eq!(queued.len(), 1);
+        assert!(
+            matches!(&queued[0], PendingTerminalInput::Raw(bytes) if bytes.as_ref() == b"claude\r")
+        );
     }
 
     #[test]
@@ -4115,7 +4816,7 @@ mod tests {
         // input without bound: writes past the cap are dropped, not queued.
         let (state, _events_tx) = TerminalState::new_pending(80, 24);
         let chunk = vec![b'x'; 8 * 1024];
-        for _ in 0..16 {
+        for _ in 0..(MAX_PENDING_INPUT_BYTES / chunk.len() + 2) {
             state.write_to_pty(chunk.clone());
         }
         let queued: usize = state
@@ -4123,11 +4824,152 @@ mod tests {
             .lock()
             .expect("pending_input lock")
             .iter()
-            .map(|c| c.len())
+            .map(PendingTerminalInput::queued_bytes)
             .sum();
         assert!(
             queued <= MAX_PENDING_INPUT_BYTES,
             "buffered {queued} bytes exceeds the {MAX_PENDING_INPUT_BYTES} cap"
+        );
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    fn test_key_input(
+        action: paneflow_terminal_ghostty::KeyAction,
+    ) -> paneflow_terminal_ghostty::KeyInput {
+        paneflow_terminal_ghostty::KeyInput {
+            key: paneflow_terminal_ghostty::Key::Function(5),
+            action,
+            modifiers: paneflow_terminal_ghostty::Modifiers::CONTROL,
+            consumed_modifiers: paneflow_terminal_ghostty::Modifiers::empty(),
+            text: String::new(),
+            unshifted_codepoint: None,
+            composing: false,
+        }
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    fn test_mouse_input(
+        action: paneflow_terminal_ghostty::MouseAction,
+    ) -> paneflow_terminal_ghostty::MouseInput {
+        paneflow_terminal_ghostty::MouseInput {
+            action,
+            button: Some(paneflow_terminal_ghostty::MouseButton::Left),
+            modifiers: paneflow_terminal_ghostty::Modifiers::empty(),
+            x: 8.0,
+            y: 16.0,
+            screen_width: 640,
+            screen_height: 384,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+            any_button_pressed: action != paneflow_terminal_ghostty::MouseAction::Release,
+        }
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    #[test]
+    fn control_releases_fit_after_general_input_saturates() {
+        let general_limit = MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES;
+        let press = PendingTerminalInput::Key {
+            input: test_key_input(paneflow_terminal_ghostty::KeyAction::Press),
+            legacy: None,
+        };
+        let key_release = PendingTerminalInput::Key {
+            input: test_key_input(paneflow_terminal_ghostty::KeyAction::Release),
+            legacy: None,
+        };
+        let mouse_release = PendingTerminalInput::Mouse {
+            input: test_mouse_input(paneflow_terminal_ghostty::MouseAction::Release),
+            repeat: 1,
+            legacy: Some(b"mouse-up".to_vec()),
+        };
+        let focus = PendingTerminalInput::Focus(paneflow_terminal_ghostty::FocusEvent::Lost);
+
+        assert!(!press.fits_after(general_limit));
+        assert!(key_release.fits_after(general_limit));
+        assert!(mouse_release.fits_after(general_limit));
+        assert!(focus.fits_after(general_limit));
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    #[test]
+    fn ghostty_startup_fallback_preserves_structured_input_in_order() {
+        let (mut state, _alacritty_pending) = TerminalState::new_pending(80, 24);
+        let (ghostty, _runtime_pending, events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 0, 0));
+        state.attach_ghostty(ghostty, events_rx);
+
+        assert_eq!(
+            state.write_ghostty_key(
+                test_key_input(paneflow_terminal_ghostty::KeyAction::Press),
+                Some(Cow::Borrowed(b"\x1b[15~")),
+            ),
+            BackendInputResult::Accepted
+        );
+        assert_eq!(
+            state.write_ghostty_mouse(
+                test_mouse_input(paneflow_terminal_ghostty::MouseAction::Press),
+                2,
+                Some(b"M".to_vec()),
+            ),
+            BackendInputResult::Accepted
+        );
+        assert_eq!(
+            state.write_ghostty_focus(paneflow_terminal_ghostty::FocusEvent::Gained),
+            BackendInputResult::Accepted
+        );
+        assert_eq!(
+            state.write_ghostty_paste("paste".to_string(), true),
+            BackendInputResult::Accepted
+        );
+
+        state.abandon_ghostty("test fallback");
+        let legacy: Vec<Vec<u8>> = state
+            .drain_pending_legacy_input()
+            .into_iter()
+            .map(Cow::into_owned)
+            .collect();
+        assert_eq!(
+            legacy,
+            vec![
+                b"\x1b[15~".to_vec(),
+                b"MM".to_vec(),
+                b"\x1b[I".to_vec(),
+                b"\x1b[200~paste\x1b[201~".to_vec(),
+            ]
         );
     }
 
@@ -4506,6 +5348,75 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
+    fn wslenv_merge_preserves_existing_entries_and_deduplicates() {
+        let merged = merge_wslenv(
+            Some("EXISTING/p:ALREADY/u:CUSTOM/uw"),
+            ["ZED", "ALREADY", "EXISTING", "ZED", "PANEFLOW_BIN_DIR"],
+        );
+
+        assert_eq!(
+            merged.as_deref(),
+            Some("EXISTING/p:ALREADY/u:CUSTOM/uw:PANEFLOW_BIN_DIR/up:ZED/u")
+        );
+    }
+
+    #[test]
+    fn wslenv_merge_adds_u_when_w_is_one_way() {
+        let merged = merge_wslenv(
+            Some("FORWARD_ONLY/w:UNCHANGED/l"),
+            ["FORWARD_ONLY", "UNCHANGED"],
+        );
+
+        assert_eq!(
+            merged.as_deref(),
+            Some("FORWARD_ONLY/w:UNCHANGED/l:FORWARD_ONLY/u")
+        );
+    }
+
+    #[test]
+    fn wslenv_merge_adds_up_when_paneflow_paths_lack_path_flag() {
+        let merged = merge_wslenv(
+            Some("PANEFLOW_HOOK_LOG/u:PANEFLOW_BIN_DIR/u"),
+            ["PANEFLOW_HOOK_LOG", "PANEFLOW_BIN_DIR"],
+        );
+
+        assert_eq!(
+            merged.as_deref(),
+            Some("PANEFLOW_HOOK_LOG/u:PANEFLOW_BIN_DIR/u:PANEFLOW_BIN_DIR/up:PANEFLOW_HOOK_LOG/up")
+        );
+    }
+
+    #[test]
+    fn wslenv_merge_skips_excluded_and_invalid_names() {
+        let merged = merge_wslenv(
+            None,
+            [
+                "PATH",
+                "WSLENV",
+                "SHLVL",
+                "LANG",
+                "9INVALID",
+                "HAS-DASH",
+                "NON_ASCII_é",
+                "",
+                "_ALSO_2",
+                "GOOD_VAR",
+            ],
+        );
+
+        assert_eq!(merged.as_deref(), Some("GOOD_VAR/u:_ALSO_2/u"));
+    }
+
+    #[test]
+    fn wslenv_shell_detection_is_exact() {
+        assert!(is_wsl_shell("wsl"));
+        assert!(is_wsl_shell("WSL.EXE"));
+        assert!(is_wsl_shell(r"C:\Windows\System32\wsl.exe"));
+        assert!(!is_wsl_shell("pwsh.exe"));
+        assert!(!is_wsl_shell("my-wsl.exe"));
+    }
+
+    #[test]
     fn pty_spawn_injects_paneflow_bin_dir_and_prepends_path() {
         // Skip where the cache dir is unresolvable - the helper silent-fails
         // (correct behavior), but then there's nothing to assert on.
@@ -4755,6 +5666,23 @@ mod tests {
         );
     }
 
+    #[test]
+    fn search_scrollback_returns_unique_lines_and_preserves_cap() {
+        let state = TerminalState::new_display_only(5, 80);
+        state.write_output(b"first needle needle\nsecond needle\nthird needle\nwithout marker");
+
+        let (limited, hit_cap) = state.search_scrollback("needle", 2);
+        assert_eq!(limited.len(), 2);
+        assert!(hit_cap);
+        assert!(limited[0].1.contains("first needle needle"));
+        assert!(limited[1].1.contains("second needle"));
+
+        let (all, hit_cap) = state.search_scrollback("needle", 8);
+        assert_eq!(all.len(), 3);
+        assert!(!hit_cap);
+        assert!(all[2].1.contains("third needle"));
+    }
+
     // A display-only terminal (child_pid == 0, no real PTY) must resolve no CWD
     // and, critically, must NOT reach the platform process-table FFI: on macOS
     // `proc_pidinfo(0, …)` targets the kernel swapper, fails with EPERM, and
@@ -4767,6 +5695,141 @@ mod tests {
             state.cwd_now().is_none(),
             "display-only terminal has no shell CWD to resolve"
         );
+    }
+
+    fn drain_osc_filter(filter: &mut BoundedOscFilter) -> Vec<u8> {
+        let mut output = vec![0; MAX_OSC_SEQUENCE_BYTES + 256];
+        let written = filter.drain_into(&mut output);
+        output.truncate(written);
+        output
+    }
+
+    struct ChunkedTestPty {
+        chunks: VecDeque<Vec<u8>>,
+        writes: Vec<u8>,
+        read_calls: usize,
+    }
+
+    impl Read for ChunkedTestPty {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.read_calls += 1;
+            let Some(chunk) = self.chunks.pop_front() else {
+                return Err(io::ErrorKind::WouldBlock.into());
+            };
+            let written = chunk.len().min(buf.len());
+            buf[..written].copy_from_slice(&chunk[..written]);
+            if written < chunk.len() {
+                self.chunks.push_front(chunk[written..].to_vec());
+            }
+            Ok(written)
+        }
+    }
+
+    impl Write for ChunkedTestPty {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl tty::EventedReadWrite for ChunkedTestPty {
+        type Reader = Self;
+        type Writer = Self;
+
+        unsafe fn register(
+            &mut self,
+            _poller: &Arc<polling::Poller>,
+            _event: polling::Event,
+            _mode: polling::PollMode,
+        ) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn reregister(
+            &mut self,
+            _poller: &Arc<polling::Poller>,
+            _event: polling::Event,
+            _mode: polling::PollMode,
+        ) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn deregister(&mut self, _poller: &Arc<polling::Poller>) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn reader(&mut self) -> &mut Self::Reader {
+            self
+        }
+
+        fn writer(&mut self) -> &mut Self::Writer {
+            self
+        }
+    }
+
+    impl tty::EventedPty for ChunkedTestPty {
+        fn next_child_event(&mut self) -> Option<tty::ChildEvent> {
+            None
+        }
+    }
+
+    #[test]
+    fn osc_filter_read_continues_after_a_fully_buffered_fragment() {
+        let inner = ChunkedTestPty {
+            chunks: VecDeque::from([b"\x1b]52;c;SGV".to_vec(), b"sbG8=\x07after".to_vec()]),
+            writes: Vec::new(),
+            read_calls: 0,
+        };
+        let (cwd_tx, _cwd_rx) = unbounded();
+        let (marks_tx, _marks_rx) = std::sync::mpsc::sync_channel(4);
+        let mut pty = Osc7Pty::new(inner, cwd_tx, marks_tx);
+        let mut output = [0; 64];
+
+        let read = pty.read(&mut output).expect("filtered PTY read");
+
+        assert_eq!(&output[..read], b"\x1b]52;c;SGVsbG8=\x07after");
+        assert_eq!(pty.inner.read_calls, 2);
+    }
+
+    #[test]
+    fn bounded_osc_filter_preserves_fragmented_sequences_exactly() {
+        let mut filter = BoundedOscFilter::default();
+        let mut output = Vec::new();
+
+        filter.advance(b"before\x1b]52;c;SGV");
+        output.extend(drain_osc_filter(&mut filter));
+        filter.advance(b"sbG8=\x1b");
+        output.extend(drain_osc_filter(&mut filter));
+        filter.advance(b"\\after");
+        output.extend(drain_osc_filter(&mut filter));
+
+        assert_eq!(output, b"before\x1b]52;c;SGVsbG8=\x1b\\after");
+    }
+
+    #[test]
+    fn bounded_osc_filter_drops_oversized_sequences_before_vte() {
+        let mut filter = BoundedOscFilter::default();
+        filter.advance(b"before\x1b]0;");
+        filter.advance(&vec![b'x'; MAX_OSC_SEQUENCE_BYTES + 1]);
+        assert!(matches!(filter.state, BoundedOscState::Drop));
+        filter.advance(b"\x07after");
+
+        assert_eq!(drain_osc_filter(&mut filter), b"before\x18after");
+        assert!(matches!(filter.state, BoundedOscState::Ground));
+    }
+
+    #[test]
+    fn bounded_osc_filter_preserves_raw_c1_for_vte_7_bit_parser() {
+        let input = b"\x1b[\xd1\x9dtext\x9c";
+        let mut filter = BoundedOscFilter::default();
+        for chunk in input.chunks(1) {
+            filter.advance(chunk);
+        }
+        assert_eq!(drain_osc_filter(&mut filter), input);
     }
 
     #[test]
@@ -4786,6 +5849,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn osc7_scanner_discards_oversized_payload_through_nested_sequence() {
+        let mut scanner = Osc7Scanner::default();
+        let mut seen = Vec::new();
+        let mut input = b"\x1b]7;file:///tmp/".to_vec();
+        input.extend(std::iter::repeat_n(b'a', OSC7_MAX_PAYLOAD + 1));
+        input.extend_from_slice(b"\x1b]7;file:///tmp/nested\x07");
+        input.extend_from_slice(b"\x1b]7;file:///tmp/recovered\x07");
+
+        scanner.advance(&input, |cwd| seen.push(cwd));
+
+        assert_eq!(seen, ["/tmp/recovered"]);
+    }
+
+    #[test]
+    fn osc7_scanner_cancels_sequences_on_can_and_sub() {
+        let mut scanner = Osc7Scanner::default();
+        let mut seen = Vec::new();
+
+        scanner.advance(
+            b"\x1b]7;file:///tmp/can\x18\x1b]7;file:///tmp/sub\x1a\x1b]7;file:///tmp/recovered\x07",
+            |cwd| seen.push(cwd),
+        );
+
+        assert_eq!(seen, ["/tmp/recovered"]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn osc7_payload_preserves_drive_like_posix_path() {
+        assert_eq!(
+            cwd_from_osc7_payload("7;file:///C:/dev/path%20with%20space"),
+            Some("/C:/dev/path with space".to_string())
+        );
+    }
+
+    #[cfg(windows)]
     #[test]
     fn osc7_payload_decodes_windows_file_uri() {
         assert_eq!(
@@ -4840,6 +5940,41 @@ mod tests {
             ClipboardOp::Store(text) => assert_eq!(text, "op-2"),
             ClipboardOp::Load(_) => panic!("expected store op"),
         }
+    }
+
+    #[test]
+    fn osc52_store_requires_focus_and_respects_the_shared_cap() {
+        let mut state = TerminalState::new_display_only(5, 20);
+        state.set_osc52_mode(Osc52Mode::CopyOnly);
+
+        state.process_event(AlacEvent::ClipboardStore(
+            alacritty_terminal::term::ClipboardType::Clipboard,
+            "unfocused".into(),
+        ));
+        assert!(state.pending_clipboard_ops.is_empty());
+
+        state.set_terminal_focused(true);
+        state.process_event(AlacEvent::ClipboardStore(
+            alacritty_terminal::term::ClipboardType::Clipboard,
+            "focused".into(),
+        ));
+        assert!(matches!(
+            state.pending_clipboard_ops.as_slice(),
+            [ClipboardOp::Store(text)] if text == "focused"
+        ));
+
+        state.process_event(AlacEvent::ClipboardStore(
+            alacritty_terminal::term::ClipboardType::Clipboard,
+            "x".repeat(MAX_OSC52_BYTES + 1),
+        ));
+        assert_eq!(state.pending_clipboard_ops.len(), 1);
+
+        state.set_terminal_focused(false);
+        state.process_event(AlacEvent::ClipboardStore(
+            alacritty_terminal::term::ClipboardType::Clipboard,
+            "lost-focus".into(),
+        ));
+        assert_eq!(state.pending_clipboard_ops.len(), 1);
     }
 
     #[test]

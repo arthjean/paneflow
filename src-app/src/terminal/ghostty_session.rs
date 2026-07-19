@@ -25,6 +25,7 @@ use paneflow_terminal_ghostty as ghostty;
 use parking_lot::RwLock;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
+use super::listener::ClipboardGate;
 use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
 use super::pty_session::{ForegroundSignalMask, SpawnParams};
 use super::service_detector::ServiceOutputTail;
@@ -40,7 +41,7 @@ const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
 const OUTPUT_POOL_BYTES: usize = OUTPUT_BUFFER_COUNT * OUTPUT_CHUNK_BYTES;
 const OUTPUT_BATCH_MAX_BYTES: usize = 128 * 1024;
 const OUTPUT_BATCH_MAX_TIME: Duration = Duration::from_millis(1);
-const MAX_QUEUED_INPUT_BYTES: usize = 64 * 1024;
+const MAX_QUEUED_INPUT_BYTES: usize = NFR_005_MAX_QUEUED_INPUT_BYTES;
 const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
@@ -54,6 +55,8 @@ const MAX_CLIPBOARD_EVENTS: usize = 8;
 const _: () = assert!(OUTPUT_POOL_BYTES <= NFR_005_MAX_PENDING_OUTPUT_BYTES);
 const _: () = assert!(MAX_QUEUED_INPUT_BYTES <= NFR_005_MAX_QUEUED_INPUT_BYTES);
 
+type SearchScrollbackReply = SyncSender<Result<(Vec<(i32, String)>, bool), String>>;
+
 #[derive(Debug)]
 pub(crate) enum GhosttyUiEvent {
     Wakeup(Arc<UiEventState>),
@@ -62,6 +65,7 @@ pub(crate) enum GhosttyUiEvent {
     Clipboard(Arc<UiEventState>),
     ServiceOutputReady(Arc<UiEventState>),
     ChildExited { code: i32, signal: Option<String> },
+    InputRejected(String),
     RuntimeFailed(String),
 }
 
@@ -213,6 +217,7 @@ struct SessionInner {
     mailbox: Arc<RuntimeMailbox>,
     events_tx: UnboundedSender<GhosttyUiEvent>,
     ui_events: Arc<UiEventState>,
+    clipboard_gate: Arc<ClipboardGate>,
     state: RwLock<SharedState>,
     recent_output_lines: RwLock<Arc<[String]>>,
     queued_input_bytes: AtomicUsize,
@@ -239,6 +244,16 @@ enum RuntimeMessage {
     Output(Vec<u8>),
     Eof,
     Input(Vec<u8>),
+    KeyInput(ghostty::KeyInput),
+    MouseInput {
+        input: ghostty::MouseInput,
+        repeat: usize,
+    },
+    FocusInput(ghostty::FocusEvent),
+    PasteInput {
+        text: String,
+        allow_unsafe: bool,
+    },
     Resize(ResizeCommand),
     Scroll(ghostty::Scroll),
     ScrollToViewportRow(usize),
@@ -251,6 +266,11 @@ enum RuntimeMessage {
         regex: bool,
         reply: SyncSender<Result<ghostty::SearchResult, String>>,
     },
+    SearchScrollback {
+        query: String,
+        max_matches: usize,
+        reply: SearchScrollbackReply,
+    },
     SelectionText(SyncSender<Result<Option<String>, String>>),
     Hyperlink {
         point: ghostty::Point,
@@ -261,6 +281,37 @@ enum RuntimeMessage {
     #[cfg(test)]
     SimulateWorkerCrash,
     Shutdown,
+}
+
+impl RuntimeMessage {
+    fn queued_input_bytes(&self) -> Option<usize> {
+        match self {
+            Self::Input(bytes) => Some(bytes.len()),
+            Self::KeyInput(input) => {
+                Some(std::mem::size_of::<ghostty::KeyInput>().saturating_add(input.text.len()))
+            }
+            Self::MouseInput { repeat, .. } => {
+                Some(std::mem::size_of::<ghostty::MouseInput>().saturating_add(*repeat))
+            }
+            Self::FocusInput(_) => Some(std::mem::size_of::<ghostty::FocusEvent>()),
+            Self::PasteInput { text, .. } => Some(text.len()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GhosttyInputSendResult {
+    Sent,
+    Full,
+    Closed,
+}
+
+impl GhosttyInputSendResult {
+    #[cfg(test)]
+    pub(super) fn is_sent(self) -> bool {
+        self == Self::Sent
+    }
 }
 
 #[derive(Default)]
@@ -318,7 +369,7 @@ impl RuntimeMailbox {
         if state.closed {
             return Err(TrySendError::Disconnected(message));
         }
-        if !state.accepting_input && matches!(&message, RuntimeMessage::Input(_)) {
+        if !state.accepting_input && message.queued_input_bytes().is_some() {
             return Err(TrySendError::Disconnected(message));
         }
         if let RuntimeMessage::ScrollToViewportRow(row) = &message
@@ -469,8 +520,8 @@ impl RuntimeMailbox {
         let mut discarded_input_bytes = 0usize;
         let mut retained = VecDeque::with_capacity(state.queue.len());
         while let Some(message) = state.queue.pop_front() {
-            if let RuntimeMessage::Input(bytes) = message {
-                discarded_input_bytes = discarded_input_bytes.saturating_add(bytes.len());
+            if let Some(bytes) = message.queued_input_bytes() {
+                discarded_input_bytes = discarded_input_bytes.saturating_add(bytes);
                 state.control_count = state.control_count.saturating_sub(1);
             } else {
                 retained.push_back(message);
@@ -894,8 +945,20 @@ fn stop_session_input(inner: &SessionInner) {
 }
 
 impl GhosttySession {
+    #[cfg(test)]
     pub(super) fn pending(
         size: TerminalWindowSize,
+    ) -> (
+        Self,
+        GhosttyRuntimePending,
+        UnboundedReceiver<GhosttyUiEvent>,
+    ) {
+        Self::pending_with_clipboard_gate(size, Arc::new(ClipboardGate::default()))
+    }
+
+    pub(super) fn pending_with_clipboard_gate(
+        size: TerminalWindowSize,
+        clipboard_gate: Arc<ClipboardGate>,
     ) -> (
         Self,
         GhosttyRuntimePending,
@@ -908,6 +971,7 @@ impl GhosttySession {
                 mailbox: mailbox.clone(),
                 events_tx,
                 ui_events: Arc::new(UiEventState::default()),
+                clipboard_gate,
                 state: RwLock::new(SharedState {
                     content: blank_content(size.cols.max(1), size.rows.max(1)),
                     modes: Modes::empty(),
@@ -1024,14 +1088,46 @@ impl GhosttySession {
         self.inner.marks.clone()
     }
 
-    pub(super) fn write(&self, bytes: Vec<u8>) -> bool {
+    pub(super) fn write(&self, bytes: Vec<u8>) -> GhosttyInputSendResult {
         if bytes.is_empty() {
-            return true;
+            return GhosttyInputSendResult::Sent;
         }
+        self.enqueue_input(RuntimeMessage::Input(bytes))
+    }
+
+    pub(super) fn write_key(&self, input: ghostty::KeyInput) -> GhosttyInputSendResult {
+        self.enqueue_input(RuntimeMessage::KeyInput(input))
+    }
+
+    pub(super) fn write_mouse(
+        &self,
+        input: ghostty::MouseInput,
+        repeat: usize,
+    ) -> GhosttyInputSendResult {
+        if repeat == 0 {
+            return GhosttyInputSendResult::Sent;
+        }
+        self.enqueue_input(RuntimeMessage::MouseInput { input, repeat })
+    }
+
+    pub(super) fn write_focus(&self, event: ghostty::FocusEvent) -> GhosttyInputSendResult {
+        self.enqueue_input(RuntimeMessage::FocusInput(event))
+    }
+
+    pub(super) fn write_paste(&self, text: String, allow_unsafe: bool) -> GhosttyInputSendResult {
+        if text.is_empty() {
+            return GhosttyInputSendResult::Sent;
+        }
+        self.enqueue_input(RuntimeMessage::PasteInput { text, allow_unsafe })
+    }
+
+    fn enqueue_input(&self, message: RuntimeMessage) -> GhosttyInputSendResult {
         if self.inner.shutdown_sent.load(Ordering::Acquire) {
-            return false;
+            return GhosttyInputSendResult::Closed;
         }
-        let len = bytes.len();
+        let len = message
+            .queued_input_bytes()
+            .expect("enqueue_input only accepts input messages");
         let reserved = self.inner.queued_input_bytes.fetch_update(
             Ordering::AcqRel,
             Ordering::Acquire,
@@ -1045,30 +1141,31 @@ impl GhosttySession {
             self.inner
                 .command_backpressure
                 .store(true, Ordering::Release);
-            return false;
+            return GhosttyInputSendResult::Full;
         }
-        match self
-            .inner
-            .mailbox
-            .try_send_control(RuntimeMessage::Input(bytes))
-        {
-            Ok(()) => true,
-            Err(TrySendError::Full(RuntimeMessage::Input(bytes))) => {
+        match self.inner.mailbox.try_send_control(message) {
+            Ok(()) => GhosttyInputSendResult::Sent,
+            Err(TrySendError::Full(message)) => {
+                let released = message
+                    .queued_input_bytes()
+                    .expect("try_send returns the submitted input message");
                 self.inner
                     .queued_input_bytes
-                    .fetch_sub(bytes.len(), Ordering::AcqRel);
+                    .fetch_sub(released, Ordering::AcqRel);
                 self.inner
                     .command_backpressure
                     .store(true, Ordering::Release);
-                false
+                GhosttyInputSendResult::Full
             }
-            Err(TrySendError::Disconnected(RuntimeMessage::Input(bytes))) => {
+            Err(TrySendError::Disconnected(message)) => {
+                let released = message
+                    .queued_input_bytes()
+                    .expect("try_send returns the submitted input message");
                 self.inner
                     .queued_input_bytes
-                    .fetch_sub(bytes.len(), Ordering::AcqRel);
-                false
+                    .fetch_sub(released, Ordering::AcqRel);
+                GhosttyInputSendResult::Closed
             }
-            Err(_) => unreachable!("try_send returns the submitted message"),
         }
     }
 
@@ -1439,6 +1536,20 @@ impl GhosttySession {
         }
     }
 
+    pub(super) fn search_scrollback(
+        &self,
+        query: &str,
+        max_matches: usize,
+    ) -> (Vec<(i32, String)>, bool) {
+        self.request(|reply| RuntimeMessage::SearchScrollback {
+            query: query.to_owned(),
+            max_matches,
+            reply,
+        })
+        .and_then(Result::ok)
+        .unwrap_or_default()
+    }
+
     pub(super) fn extract_scrollback(&self) -> Option<String> {
         self.request(RuntimeMessage::ExtractScrollback)
             .and_then(Result::ok)
@@ -1495,6 +1606,52 @@ impl GhosttySession {
             .try_send_control(command(reply_tx))
             .ok()?;
         reply_rx.recv_timeout(Duration::from_secs(1)).ok()
+    }
+}
+
+fn reject_input(inner: &SessionInner, input_kind: &'static str, error: impl std::fmt::Display) {
+    let _ = inner
+        .events_tx
+        .unbounded_send(GhosttyUiEvent::InputRejected(format!(
+            "Ghostty {input_kind} encoder rejected input: {error}"
+        )));
+}
+
+fn write_input_bytes<W: Write>(
+    inner: &SessionInner,
+    writer: &mut Option<W>,
+    bytes: &[u8],
+    runtime_failed: &mut bool,
+) {
+    if bytes.is_empty() {
+        return;
+    }
+    let Some(active_writer) = writer.as_mut() else {
+        return;
+    };
+    if let Err(error) = active_writer
+        .write_all(bytes)
+        .and_then(|()| active_writer.flush())
+    {
+        let expected_close = matches!(
+            error.kind(),
+            ErrorKind::BrokenPipe | ErrorKind::NotConnected
+        );
+        if !expected_close {
+            let _ = inner
+                .events_tx
+                .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
+                    "Ghostty PTY write failed: {error}"
+                )));
+        }
+        #[cfg(target_os = "linux")]
+        {
+            *runtime_failed = !expected_close;
+        }
+        #[cfg(target_os = "windows")]
+        {
+            *runtime_failed = true;
+        }
     }
 }
 
@@ -1753,30 +1910,57 @@ fn run_runtime(
             }
             Ok(RuntimeMessage::Input(bytes)) => {
                 release_queued_input_bytes(&inner, bytes.len());
-                if let Some(active_writer) = writer.as_mut()
-                    && let Err(error) = active_writer
-                        .write_all(&bytes)
-                        .and_then(|()| active_writer.flush())
-                {
-                    let expected_close = matches!(
-                        error.kind(),
-                        ErrorKind::BrokenPipe | ErrorKind::NotConnected
-                    );
-                    if !expected_close {
-                        let _ = inner
-                            .events_tx
-                            .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
-                                "Ghostty PTY write failed: {error}"
-                            )));
+                write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed);
+                notify_command_capacity(&inner);
+            }
+            Ok(RuntimeMessage::KeyInput(input)) => {
+                release_queued_input_bytes(
+                    &inner,
+                    std::mem::size_of::<ghostty::KeyInput>().saturating_add(input.text.len()),
+                );
+                match terminal.encode_key(&input) {
+                    Ok(bytes) => {
+                        write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed)
                     }
-                    #[cfg(target_os = "linux")]
-                    {
-                        runtime_failed = !expected_close;
+                    Err(error) => reject_input(&inner, "key", error),
+                }
+                notify_command_capacity(&inner);
+            }
+            Ok(RuntimeMessage::MouseInput { input, repeat }) => {
+                release_queued_input_bytes(
+                    &inner,
+                    std::mem::size_of::<ghostty::MouseInput>().saturating_add(repeat),
+                );
+                for _ in 0..repeat {
+                    match terminal.encode_mouse(input) {
+                        Ok(bytes) => {
+                            write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed)
+                        }
+                        Err(error) => {
+                            reject_input(&inner, "mouse", error);
+                            break;
+                        }
                     }
-                    #[cfg(target_os = "windows")]
-                    {
-                        runtime_failed = true;
+                }
+                notify_command_capacity(&inner);
+            }
+            Ok(RuntimeMessage::FocusInput(event)) => {
+                release_queued_input_bytes(&inner, std::mem::size_of::<ghostty::FocusEvent>());
+                match terminal.encode_focus(event) {
+                    Ok(bytes) => {
+                        write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed)
                     }
+                    Err(error) => reject_input(&inner, "focus", error),
+                }
+                notify_command_capacity(&inner);
+            }
+            Ok(RuntimeMessage::PasteInput { text, allow_unsafe }) => {
+                release_queued_input_bytes(&inner, text.len());
+                match terminal.encode_paste(&text, allow_unsafe) {
+                    Ok(bytes) => {
+                        write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed)
+                    }
+                    Err(error) => reject_input(&inner, "paste", error),
                 }
                 notify_command_capacity(&inner);
             }
@@ -1965,6 +2149,13 @@ fn run_runtime(
                         .search(&query, regex)
                         .map_err(|error| error.to_string()),
                 );
+            }
+            Ok(RuntimeMessage::SearchScrollback {
+                query,
+                max_matches,
+                reply,
+            }) => {
+                let _ = reply.send(search_scrollback_lines(&terminal, &query, max_matches));
             }
             Ok(RuntimeMessage::SelectionText(reply)) => {
                 let _ = reply.send(terminal.selection_text().map_err(|error| error.to_string()));
@@ -2215,6 +2406,39 @@ fn run_runtime(
     }
 }
 
+fn search_scrollback_lines(
+    terminal: &ghostty::DisplayTerminal,
+    query: &str,
+    max_matches: usize,
+) -> Result<(Vec<(i32, String)>, bool), String> {
+    if query.is_empty() || max_matches == 0 {
+        return Ok((Vec::new(), false));
+    }
+    let search = terminal
+        .search(query, false)
+        .map_err(|error| error.to_string())?;
+    let mut seen = std::collections::HashSet::new();
+    let mut rows = Vec::new();
+    let mut hit_cap = false;
+    for found in &search.matches {
+        if seen.insert(found.start.line) {
+            rows.push(found.start.line);
+            if rows.len() >= max_matches {
+                hit_cap = true;
+                break;
+            }
+        }
+    }
+    let mut lines = terminal
+        .line_texts(&rows)
+        .map_err(|error| error.to_string())?;
+    for (_, text) in &mut lines {
+        let trimmed_len = text.trim_end().len();
+        text.truncate(trimmed_len);
+    }
+    Ok((lines, hit_cap))
+}
+
 // These parameters are the mutable runtime-loop state. Grouping them would add
 // a second state container without improving ownership or call-site clarity.
 #[allow(clippy::too_many_arguments)]
@@ -2428,6 +2652,9 @@ fn queue_working_directory(inner: &SessionInner, cwd: String) {
 }
 
 fn queue_clipboard(inner: &SessionInner, text: String) {
+    if !inner.clipboard_gate.allows_store() {
+        return;
+    }
     let mut slot = inner
         .ui_events
         .clipboard
@@ -2907,6 +3134,9 @@ pub(super) fn modes_from_ghostty(modes: ghostty::Modes) -> Modes {
     if modes.mouse_motion {
         result = result | Modes::MOUSE_MOTION;
     }
+    if modes.kitty_keyboard {
+        result = result | Modes::KITTY_KEYBOARD;
+    }
     result
 }
 
@@ -3094,14 +3324,39 @@ fn grid_metrics_from_ghostty(content: &ghostty::Content) -> GridMetrics {
 
 #[cfg(test)]
 mod tests {
-    use super::super::pty_session::TerminalState;
+    use super::super::pty_session::{BackendInputResult, TerminalState};
     use super::*;
     use paneflow_config::schema::TerminalSurfaceProfile;
 
     #[test]
     fn nfr_005_terminal_queue_caps_stay_below_budget() {
         assert_eq!(OUTPUT_POOL_BYTES, 128 * 1024);
-        assert_eq!(MAX_QUEUED_INPUT_BYTES, 64 * 1024);
+        assert_eq!(MAX_QUEUED_INPUT_BYTES, 1024 * 1024);
+    }
+
+    #[test]
+    fn clipboard_store_is_filtered_at_the_ghostty_source() {
+        let gate = Arc::new(ClipboardGate::default());
+        let (session, _pending, mut events_rx) = GhosttySession::pending_with_clipboard_gate(
+            TerminalWindowSize::new(80, 24, 8, 16),
+            gate.clone(),
+        );
+
+        queue_clipboard(&session.inner, "unfocused".into());
+        assert!(events_rx.try_recv().is_err());
+
+        gate.set_policy(true, false);
+        gate.set_focused(true);
+        queue_clipboard(&session.inner, "focused".into());
+        let event_state = match events_rx.try_recv() {
+            Ok(GhosttyUiEvent::Clipboard(state)) => state,
+            other => panic!("expected a focused clipboard event, got {other:?}"),
+        };
+        assert_eq!(event_state.take_clipboard(), ["focused"]);
+
+        gate.set_focused(false);
+        queue_clipboard(&session.inner, "lost-focus".into());
+        assert!(events_rx.try_recv().is_err());
     }
 
     #[test]
@@ -3651,6 +3906,238 @@ mod tests {
     }
 
     #[test]
+    fn command_backpressure_retries_structured_key_without_raw_fallback() {
+        let (mut state, _alacritty_pending) = TerminalState::new_pending(80, 24);
+        let (session, runtime_pending, events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 0, 0));
+        state.attach_ghostty(session.clone(), events_rx);
+        state.promote_ghostty(SpawnedGhostty {
+            child_pid: 0,
+            cwd: std::env::current_dir().unwrap(),
+        });
+        for _ in 0..CONTROL_CAPACITY {
+            assert!(session.write(vec![b'x']).is_sent());
+        }
+
+        let key = ghostty::KeyInput {
+            key: ghostty::Key::Function(5),
+            action: ghostty::KeyAction::Press,
+            modifiers: ghostty::Modifiers::CONTROL,
+            consumed_modifiers: ghostty::Modifiers::empty(),
+            text: String::new(),
+            unshifted_codepoint: None,
+            composing: false,
+        };
+        assert_eq!(
+            state.write_ghostty_key(key.clone(), None),
+            BackendInputResult::Accepted
+        );
+        let saturated = runtime_pending.mailbox.drain();
+        assert_eq!(saturated.len(), CONTROL_CAPACITY);
+        assert!(
+            saturated
+                .iter()
+                .all(|message| matches!(message, RuntimeMessage::Input(bytes) if bytes == b"x"))
+        );
+
+        state.process_backend_wakeup();
+        assert!(matches!(
+            runtime_pending.mailbox.try_recv(),
+            Ok(RuntimeMessage::KeyInput(retried)) if retried == key
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    fn windows_executable(name: &str) -> Option<String> {
+        let output = std::process::Command::new("where.exe")
+            .arg(name)
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .find(|path| !path.is_empty())
+            .map(str::to_owned)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn wsl_has_distribution() -> bool {
+        let Some(wsl) = windows_executable("wsl.exe") else {
+            return false;
+        };
+        std::process::Command::new(wsl)
+            .args(["--list", "--quiet"])
+            .output()
+            .is_ok_and(|output| {
+                output.status.success()
+                    && output
+                        .stdout
+                        .chunks_exact(2)
+                        .any(|pair| u16::from_le_bytes([pair[0], pair[1]]) > 0x20)
+            })
+    }
+
+    #[cfg(target_os = "windows")]
+    fn run_windows_shell_case(
+        name: &str,
+        shell: String,
+        shell_quoting: super::super::types::ShellQuoting,
+        extra_args: Vec<String>,
+        cwd: &std::path::Path,
+    ) -> String {
+        let params = SpawnParams {
+            shell,
+            shell_quoting,
+            extra_args,
+            env: std::collections::HashMap::from([
+                ("TERM".into(), "xterm-256color".into()),
+                ("COLORTERM".into(), "truecolor".into()),
+                ("TERM_PROGRAM".into(), "paneflow".into()),
+                ("PANEFLOW_MATRIX".into(), "matrix-é中".into()),
+                (
+                    "WSLENV".into(),
+                    "PANEFLOW_MATRIX/u:TERM/u:COLORTERM/u:TERM_PROGRAM/u".into(),
+                ),
+            ]),
+            cwd: cwd.to_path_buf(),
+            cols: 100,
+            rows: 30,
+            profile: TerminalSurfaceProfile::Normal,
+            surface_id: 1,
+        };
+        let (session, pending, mut events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(100, 30, 8, 16));
+        let spawned = session
+            .start(pending, params, None, 1_000)
+            .unwrap_or_else(|error| panic!("{name} must spawn through ConPTY: {error}"));
+        assert!(spawned.child_pid > 0, "{name} child PID");
+        session.promote();
+        session.resize(TerminalWindowSize::new(120, 36, 8, 16));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut exit = None;
+        let mut failures = Vec::new();
+        while Instant::now() < deadline {
+            while let Ok(event) = events_rx.try_recv() {
+                match event {
+                    GhosttyUiEvent::ChildExited { code, .. } => exit = Some(code),
+                    GhosttyUiEvent::RuntimeFailed(error) => failures.push(error),
+                    _ => {}
+                }
+            }
+            if exit.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(exit, Some(0), "{name} exit; failures={failures:?}");
+        assert!(failures.is_empty(), "{name} runtime failures: {failures:?}");
+        let (content, _) =
+            session.render_content(TerminalWindowSize::new(120, 36, 8, 16), -100, 100, false);
+        content.cells.iter().map(|cell| cell.c).collect()
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_shell_matrix_preserves_unicode_environment_and_cwd() {
+        use super::super::types::ShellQuoting;
+
+        let cwd = tempfile::Builder::new()
+            .prefix("paneflow shell é ")
+            .tempdir()
+            .expect("create Unicode shell-matrix cwd");
+        let mut cases = Vec::new();
+        cases.push((
+            "cmd",
+            windows_executable("cmd.exe").expect("cmd.exe is required on Windows"),
+            ShellQuoting::Cmd,
+            vec![
+                "/D".into(),
+                "/Q".into(),
+                "/C".into(),
+                "chcp 65001>nul & echo PANEFLOW_SHELL:cmd:%PANEFLOW_MATRIX% & echo %CD% & echo \x1b[38;2;1;2;3mCOLOR\x1b[0m"
+                    .into(),
+            ],
+        ));
+        cases.push((
+            "powershell",
+            windows_executable("powershell.exe")
+                .expect("Windows PowerShell 5.1 is required on Windows"),
+            ShellQuoting::PowerShell,
+            vec![
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                "[Console]::OutputEncoding=[Text.UTF8Encoding]::new(); Write-Output \"PANEFLOW_SHELL:powershell:$env:PANEFLOW_MATRIX\"; Write-Output (Get-Location).Path; Write-Output \"$([char]27)[38;2;1;2;3mCOLOR$([char]27)[0m\""
+                    .into(),
+            ],
+        ));
+        cases.push((
+            "pwsh",
+            windows_executable("pwsh.exe").expect("PowerShell 7 is required on Windows CI"),
+            ShellQuoting::PowerShell,
+            vec![
+                "-NoLogo".into(),
+                "-NoProfile".into(),
+                "-NonInteractive".into(),
+                "-Command".into(),
+                "Write-Output \"PANEFLOW_SHELL:pwsh:$env:PANEFLOW_MATRIX\"; Write-Output (Get-Location).Path; Write-Output \"$([char]27)[38;2;1;2;3mCOLOR$([char]27)[0m\""
+                    .into(),
+            ],
+        ));
+        let git_bash = std::path::PathBuf::from(r"C:\Program Files\Git\bin\bash.exe");
+        assert!(git_bash.is_file(), "Git Bash is required on Windows CI");
+        cases.push((
+            "git-bash",
+            git_bash.to_string_lossy().into_owned(),
+            ShellQuoting::Posix,
+            vec![
+                "--noprofile".into(),
+                "--norc".into(),
+                "-lc".into(),
+                "printf 'PANEFLOW_SHELL:git-bash:%s\\n%s\\n\\033[38;2;1;2;3mCOLOR\\033[0m\\n' \"$PANEFLOW_MATRIX\" \"$PWD\""
+                    .into(),
+            ],
+        ));
+        if wsl_has_distribution() {
+            cases.push((
+                "wsl",
+                windows_executable("wsl.exe").expect("wsl.exe was detected"),
+                ShellQuoting::Posix,
+                vec![
+                    "--cd".into(),
+                    cwd.path().to_string_lossy().into_owned(),
+                    "--exec".into(),
+                    "sh".into(),
+                    "-lc".into(),
+                    "printf 'PANEFLOW_SHELL:wsl:%s\\n%s\\n\\033[38;2;1;2;3mCOLOR\\033[0m\\n' \"$PANEFLOW_MATRIX\" \"$PWD\""
+                        .into(),
+                ],
+            ));
+        }
+
+        for (name, shell, quoting, args) in cases {
+            let rendered = run_windows_shell_case(name, shell, quoting, args, cwd.path());
+            assert!(
+                rendered.contains(&format!("PANEFLOW_SHELL:{name}:matrix-é中")),
+                "{name} lost Unicode or env propagation: {rendered:?}"
+            );
+            assert!(
+                rendered.contains("COLOR"),
+                "{name} lost truecolor output: {rendered:?}"
+            );
+            assert!(
+                rendered.contains("paneflow shell é"),
+                "{name} lost cwd with spaces/non-ASCII: {rendered:?}"
+            );
+        }
+    }
+
+    #[test]
     fn live_runtime_runs_platform_shell_and_reports_one_exit() {
         let cwd = std::env::current_dir().unwrap();
         #[cfg(target_os = "linux")]
@@ -3695,8 +4182,12 @@ mod tests {
             b"printf 'PANEFLOW_GHOSTTY_RUNTIME_OK:%s\\n' \"$TERM_PROGRAM\"; stty size; exit\n"
                 .to_vec();
         #[cfg(target_os = "windows")]
-        let command = b"echo PANEFLOW_GHOSTTY_RUNTIME_OK:%TERM_PROGRAM%& exit\r\n".to_vec();
-        assert!(session.write(command));
+        let command = {
+            let mut command = br#"powershell.exe -NoLogo -NoProfile -NonInteractive -Command "Write-Output ('PANEFLOW_GHOSTTY_RUNTIME_OK:' + $env:TERM_PROGRAM); Write-Output ('PANEFLOW_SIZE:' + [Console]::WindowHeight + 'x' + [Console]::WindowWidth)" & exit"#.to_vec();
+            command.extend_from_slice(b"\r\n");
+            command
+        };
+        assert!(session.write(command).is_sent());
 
         let deadline = Instant::now() + Duration::from_secs(8);
         let mut exits = 0;
@@ -3734,6 +4225,11 @@ mod tests {
         assert!(
             rendered.contains("30 100"),
             "resize must reach the child PTY; rendered={rendered:?}; runtime_failures={runtime_failures:?}"
+        );
+        #[cfg(target_os = "windows")]
+        assert!(
+            rendered.contains("PANEFLOW_SIZE:30x100"),
+            "resize must reach ConPTY; rendered={rendered:?}; runtime_failures={runtime_failures:?}"
         );
         assert_eq!(exits, 1, "child exit must be published exactly once");
         #[cfg(target_os = "linux")]

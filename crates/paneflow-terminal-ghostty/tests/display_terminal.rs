@@ -112,6 +112,134 @@ fn encoders_follow_live_terminal_modes() {
         })
         .unwrap();
     assert!(mouse.starts_with(b"\x1b[<"));
+
+    let wheel = terminal
+        .encode_mouse(MouseInput {
+            action: MouseAction::Press,
+            button: Some(MouseButton::Four),
+            modifiers: Modifiers::empty(),
+            x: 8.0,
+            y: 16.0,
+            screen_width: 640,
+            screen_height: 384,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+            any_button_pressed: false,
+        })
+        .unwrap();
+    assert!(wheel.starts_with(b"\x1b[<64;"));
+}
+
+#[test]
+fn bracketed_paste_preserves_payload_at_the_old_64_kib_boundary() {
+    let mut terminal = terminal(80, 24);
+    terminal.feed(b"\x1b[?2004h").unwrap();
+    let paste = "x".repeat(64 * 1024);
+
+    let encoded = terminal.encode_paste(&paste, true).unwrap();
+
+    assert!(encoded.starts_with(b"\x1b[200~"));
+    assert!(encoded.ends_with(b"\x1b[201~"));
+    assert_eq!(&encoded[6..encoded.len() - 6], paste.as_bytes());
+}
+
+#[test]
+fn keyboard_matrix_covers_modifiers_repeat_text_and_numpad() {
+    let mut terminal = terminal(80, 24);
+    let ctrl_a = terminal
+        .encode_key(&KeyInput {
+            key: Key::Character('a'),
+            action: KeyAction::Press,
+            modifiers: Modifiers::CONTROL,
+            consumed_modifiers: Modifiers::empty(),
+            text: String::new(),
+            unshifted_codepoint: Some('a'),
+            composing: false,
+        })
+        .unwrap();
+    assert_eq!(ctrl_a, b"\x01");
+
+    let altgr = terminal
+        .encode_key(&KeyInput {
+            key: Key::Character('@'),
+            action: KeyAction::Press,
+            modifiers: Modifiers::CONTROL | Modifiers::ALT,
+            consumed_modifiers: Modifiers::CONTROL | Modifiers::ALT,
+            text: "@".into(),
+            unshifted_codepoint: Some('0'),
+            composing: false,
+        })
+        .unwrap();
+    assert_eq!(altgr, b"@");
+
+    let ime_commit = terminal
+        .encode_key(&KeyInput {
+            key: Key::Unidentified,
+            action: KeyAction::Press,
+            modifiers: Modifiers::empty(),
+            consumed_modifiers: Modifiers::empty(),
+            text: "日本語".into(),
+            unshifted_codepoint: None,
+            composing: false,
+        })
+        .unwrap();
+    assert_eq!(ime_commit, "日本語".as_bytes());
+
+    terminal.feed(b"\x1b[>3u").unwrap();
+    let press = terminal
+        .encode_key(&KeyInput {
+            key: Key::Function(5),
+            action: KeyAction::Press,
+            modifiers: Modifiers::SHIFT | Modifiers::CONTROL,
+            consumed_modifiers: Modifiers::empty(),
+            text: String::new(),
+            unshifted_codepoint: None,
+            composing: false,
+        })
+        .unwrap();
+    let repeat = terminal
+        .encode_key(&KeyInput {
+            key: Key::Function(5),
+            action: KeyAction::Repeat,
+            modifiers: Modifiers::SHIFT | Modifiers::CONTROL,
+            consumed_modifiers: Modifiers::empty(),
+            text: String::new(),
+            unshifted_codepoint: None,
+            composing: false,
+        })
+        .unwrap();
+    let release = terminal
+        .encode_key(&KeyInput {
+            key: Key::Function(5),
+            action: KeyAction::Release,
+            modifiers: Modifiers::SHIFT | Modifiers::CONTROL,
+            consumed_modifiers: Modifiers::empty(),
+            text: String::new(),
+            unshifted_codepoint: None,
+            composing: false,
+        })
+        .unwrap();
+    assert!(!press.is_empty());
+    assert_ne!(repeat, press);
+    assert_ne!(release, press);
+    assert_ne!(repeat, release);
+
+    terminal.feed(b"\x1b[?66h").unwrap();
+    assert!(terminal.modes().unwrap().application_keypad);
+    let numpad = terminal
+        .encode_key(&KeyInput {
+            key: Key::NumpadDigit(1),
+            action: KeyAction::Press,
+            modifiers: Modifiers::empty(),
+            consumed_modifiers: Modifiers::empty(),
+            text: String::new(),
+            unshifted_codepoint: Some('1'),
+            composing: false,
+        })
+        .unwrap();
+    assert!(!numpad.is_empty());
 }
 
 #[test]
@@ -154,6 +282,28 @@ fn search_selection_links_and_scrollback_use_fresh_owned_data() {
     assert!(scrollback.contains("second"));
     assert!(!scrollback.contains("fifth"));
     assert!(!scrollback.contains("sixth"));
+}
+
+#[test]
+fn batched_line_texts_read_matches_from_real_history() {
+    let mut terminal = terminal(32, 2);
+    terminal
+        .feed("EP003-HISTORY-é\r\nviewport-one\r\nviewport-two\r\nviewport-three".as_bytes())
+        .unwrap();
+
+    let search = terminal.search("EP003-HISTORY-é", false).unwrap();
+    let rows: Vec<i32> = search
+        .matches
+        .iter()
+        .map(|found| found.start.line)
+        .collect();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0] < 0, "fixture marker must be in real history");
+
+    let lines = terminal.line_texts(&rows).unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].0, rows[0]);
+    assert_eq!(lines[0].1.trim_end(), "EP003-HISTORY-é");
 }
 
 #[test]

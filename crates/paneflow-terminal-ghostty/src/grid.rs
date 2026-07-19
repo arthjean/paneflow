@@ -41,6 +41,45 @@ impl DisplayTerminal {
         Ok(reference)
     }
 
+    /// Read multiple logical grid lines from the live terminal in one call.
+    /// Logical line zero is the first viewport row and negative lines address
+    /// scrollback, matching the coordinates returned by [`Self::search`].
+    pub fn line_texts(&self, lines: &[i32]) -> Result<Vec<(i32, String)>> {
+        if lines.is_empty() {
+            return Ok(Vec::new());
+        }
+        let total_rows = self.total_rows()?;
+        let scrollback = self.scrollback_rows()?;
+        let cols = self.cols()?;
+        check_grid_cell_count(lines.len(), cols)?;
+        let total_rows = i64::try_from(total_rows)
+            .map_err(|_| GhosttyError::AbiMismatch("total rows do not fit i64".into()))?;
+        let scrollback_i64 = i64::try_from(scrollback)
+            .map_err(|_| GhosttyError::AbiMismatch("scrollback does not fit i64".into()))?;
+        let scrollback = i32::try_from(scrollback)
+            .map_err(|_| GhosttyError::AbiMismatch("scrollback does not fit i32".into()))?;
+        let mut result = Vec::with_capacity(lines.len());
+        for &line in lines {
+            let screen_y = i64::from(line)
+                .checked_add(scrollback_i64)
+                .ok_or_else(|| GhosttyError::AbiMismatch("grid line overflow".into()))?;
+            if screen_y < 0 || screen_y >= total_rows {
+                return Err(GhosttyError::Ffi {
+                    operation: "grid_line_out_of_bounds",
+                    code: sys::GhosttyResult_GHOSTTY_INVALID_VALUE,
+                });
+            }
+            let grid_line = self.grid_line_at_screen_row(
+                usize::try_from(screen_y)
+                    .map_err(|_| GhosttyError::AbiMismatch("negative grid line".into()))?,
+                scrollback,
+                cols,
+            )?;
+            result.push((grid_line.line, grid_line.text));
+        }
+        Ok(result)
+    }
+
     pub(crate) fn grid_lines(
         &self,
         range: Option<std::ops::Range<usize>>,
@@ -55,65 +94,57 @@ impl DisplayTerminal {
                 code: sys::GhosttyResult_GHOSTTY_INVALID_VALUE,
             });
         }
-        let cell_count = range
-            .len()
-            .checked_mul(cols)
-            .ok_or_else(|| GhosttyError::AbiMismatch("grid cell count overflow".into()))?;
-        if cell_count > MAX_GRID_CELLS {
-            return Err(GhosttyError::LimitExceeded {
-                resource: "grid cells per call",
-                limit: MAX_GRID_CELLS,
-            });
-        }
+        check_grid_cell_count(range.len(), cols)?;
         let scrollback = i32::try_from(scrollback)
             .map_err(|_| GhosttyError::AbiMismatch("scrollback does not fit i32".into()))?;
         let mut lines = Vec::with_capacity(range.len());
         for y in range {
-            let mut text = String::with_capacity(cols);
-            let mut char_to_column = Vec::with_capacity(cols);
-            for column in 0..cols {
-                let point =
-                    ghostty_point(sys::GhosttyPointTag_GHOSTTY_POINT_TAG_SCREEN, y, column)?;
-                let mut reference: sys::GhosttyGridRef = unsafe { std::mem::zeroed() };
-                reference.size = std::mem::size_of::<sys::GhosttyGridRef>();
-                let result = unsafe {
-                    sys::ghostty_terminal_grid_ref(self.terminal.raw(), point, &mut reference)
-                };
-                check("terminal_grid_ref", result)?;
-                let mut cell = 0u64;
-                let result = unsafe { sys::ghostty_grid_ref_cell(&reference, &mut cell) };
-                check("grid_ref_cell", result)?;
-                let mut wide = sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW;
-                // SAFETY: `cell` was returned by `ghostty_grid_ref_cell` for
-                // this live reference, and WIDE writes a GhosttyCellWide.
-                unsafe {
-                    raw_cell_get(cell, sys::GhosttyCellData_GHOSTTY_CELL_DATA_WIDE, &mut wide)
-                }?;
-                if wide == sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL {
-                    continue;
-                }
-                let grapheme = grid_ref_grapheme(&reference)?;
-                let grapheme = if grapheme.is_empty() {
-                    " ".to_owned()
-                } else {
-                    grapheme
-                };
-                for character in grapheme.chars() {
-                    char_to_column.push(column);
-                    text.push(character);
-                }
-            }
-            let line = i32::try_from(y)
-                .ok()
-                .and_then(|y| y.checked_sub(scrollback))
-                .ok_or_else(|| GhosttyError::AbiMismatch("grid line overflow".into()))?;
-            lines.push(GridLine {
-                line,
-                text,
-                char_to_column,
-            });
+            lines.push(self.grid_line_at_screen_row(y, scrollback, cols)?);
         }
         Ok(lines)
+    }
+
+    fn grid_line_at_screen_row(&self, y: usize, scrollback: i32, cols: usize) -> Result<GridLine> {
+        let mut text = String::with_capacity(cols);
+        let mut char_to_column = Vec::with_capacity(cols);
+        for column in 0..cols {
+            let point = ghostty_point(sys::GhosttyPointTag_GHOSTTY_POINT_TAG_SCREEN, y, column)?;
+            let mut reference: sys::GhosttyGridRef = unsafe { std::mem::zeroed() };
+            reference.size = std::mem::size_of::<sys::GhosttyGridRef>();
+            let result = unsafe {
+                sys::ghostty_terminal_grid_ref(self.terminal.raw(), point, &mut reference)
+            };
+            check("terminal_grid_ref", result)?;
+            let mut cell = 0u64;
+            let result = unsafe { sys::ghostty_grid_ref_cell(&reference, &mut cell) };
+            check("grid_ref_cell", result)?;
+            let mut wide = sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW;
+            // SAFETY: `cell` was returned by `ghostty_grid_ref_cell` for this
+            // live reference, and WIDE writes a GhosttyCellWide.
+            unsafe { raw_cell_get(cell, sys::GhosttyCellData_GHOSTTY_CELL_DATA_WIDE, &mut wide) }?;
+            if wide == sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL {
+                continue;
+            }
+            let grapheme = grid_ref_grapheme(&reference)?;
+            let grapheme = if grapheme.is_empty() {
+                " ".to_owned()
+            } else {
+                grapheme
+            };
+            for character in grapheme.chars() {
+                char_to_column.push(column);
+                text.push(character);
+            }
+        }
+        let line = i32::try_from(y)
+            .ok()
+            .and_then(|y| y.checked_sub(scrollback))
+            .ok_or_else(|| GhosttyError::AbiMismatch("grid line overflow".into()))?;
+        Ok(GridLine {
+            line,
+            text,
+            char_to_column,
+        })
     }
 
     pub(crate) fn total_rows(&self) -> Result<usize> {
@@ -174,6 +205,19 @@ impl DisplayTerminal {
         }
         Ok(usize::from(value))
     }
+}
+
+fn check_grid_cell_count(rows: usize, cols: usize) -> Result<()> {
+    let cell_count = rows
+        .checked_mul(cols)
+        .ok_or_else(|| GhosttyError::AbiMismatch("grid cell count overflow".into()))?;
+    if cell_count > MAX_GRID_CELLS {
+        return Err(GhosttyError::LimitExceeded {
+            resource: "grid cells per call",
+            limit: MAX_GRID_CELLS,
+        });
+    }
+    Ok(())
 }
 
 fn grid_ref_grapheme(reference: &sys::GhosttyGridRef) -> Result<String> {

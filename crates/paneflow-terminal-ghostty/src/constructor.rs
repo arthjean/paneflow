@@ -142,6 +142,8 @@ impl DisplayTerminal {
             snapshot_cache: Default::default(),
             callbacks,
             color_queries: Default::default(),
+            osc_filter: Default::default(),
+            osc7: Default::default(),
             osc52: Default::default(),
             last_pwd: None,
             _not_send_or_sync: PhantomData,

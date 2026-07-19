@@ -89,6 +89,15 @@ upstream risks in §4 below.
   for panes where you rely on
   split-from-same-cwd or workspace-directory hints.
 
+- **Integrated WSL shells use interactive non-login startup.** When
+  `default_shell` points to `wsl.exe` and shell integration is enabled,
+  PaneFlow resolves the default Linux Bash, Zsh, or Fish and loads its
+  interactive startup file (`.bashrc`, `.zshrc`, or `config.fish`). This
+  matches PaneFlow's native shell behavior, but does not evaluate login-only
+  files such as `.profile`, `.bash_profile`, or `.zprofile`. Put environment
+  required by interactive terminals in the corresponding interactive startup
+  file, or disable shell integration to keep the unmodified `wsl.exe` launch.
+
 - **CJK IME input is fragile on some Windows / GPUI combinations.**
   See [IME CJK panic](#ime-cjk-panic) in §4. Basic CJK input works
   in PaneFlow v1 smoke testing, but composition-heavy workflows

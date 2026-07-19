@@ -16,6 +16,14 @@ pub enum Key {
     PageDown,
     Insert,
     Function(u8),
+    NumpadDigit(u8),
+    NumpadAdd,
+    NumpadSubtract,
+    NumpadMultiply,
+    NumpadDivide,
+    NumpadDecimal,
+    NumpadEnter,
+    NumpadEqual,
     Unidentified,
 }
 
@@ -43,6 +51,14 @@ impl Modifiers {
 
     pub const fn bits(self) -> u16 {
         self.0
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
     }
 }
 

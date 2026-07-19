@@ -15,7 +15,7 @@ use super::listener::{SpikeTermSize, ZedListener};
 use super::types::{Content, Modes, Point, SelectionRange, content_from_term};
 
 pub(crate) const CORPUS_SEED: u64 = 0x5041_4e45_464c_4f57;
-const CORPUS_FAMILIES: usize = 26;
+const CORPUS_FAMILIES: usize = 27;
 const CORPUS_VARIANTS: usize = 5;
 const CORPUS_SIZE: usize = CORPUS_FAMILIES * CORPUS_VARIANTS;
 #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
@@ -26,17 +26,35 @@ struct CorpusCase {
     bytes: Vec<u8>,
     resize_after_feed: Option<(usize, usize)>,
     selection_after_feed: Option<SelectionRange>,
-    #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+    search_after_feed: Option<&'static str>,
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
     comparison: SnapshotComparison,
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 #[derive(Clone, Copy)]
 enum SnapshotComparison {
     Exact,
     ReflowViewportAnchor,
     EraseDisplayScrollback,
     InvalidUtf8Replacement,
+    TabExpansion,
 }
 
 struct Harness {
@@ -50,16 +68,59 @@ struct NormalizedSnapshot {
     logical_text: String,
     modes: String,
     events: Vec<String>,
+    search: Option<SearchObservation>,
+    resize_damage: Option<ResizeDamageObservation>,
     history_size: usize,
     cell_count: usize,
     absolute_cursor_line: i64,
     cursor_column: usize,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct SearchObservation {
+    matches: Vec<(i32, usize, i32, usize)>,
+    regex_error: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ResizeDamageObservation {
+    before_dimensions: (usize, usize),
+    after_dimensions: (usize, usize),
+    before_cell_count: usize,
+    after_cell_count: usize,
+    snapshot_changed: bool,
+}
+
+struct ResizeBefore {
+    dimensions: (usize, usize),
+    cell_count: usize,
+    content: String,
+}
+
+impl ResizeBefore {
+    fn capture(content: &Content) -> Self {
+        Self {
+            dimensions: (content.cols, content.rows),
+            cell_count: content.cells.len(),
+            content: normalize_content(content.clone()),
+        }
+    }
+
+    fn complete(self, content: &Content) -> ResizeDamageObservation {
+        ResizeDamageObservation {
+            before_dimensions: self.dimensions,
+            after_dimensions: (content.cols, content.rows),
+            before_cell_count: self.cell_count,
+            after_cell_count: content.cells.len(),
+            snapshot_changed: self.content != normalize_content(content.clone()),
+        }
+    }
+}
+
 impl Harness {
     fn new() -> Self {
         let (events_tx, events) = unbounded();
-        let listener = ZedListener(events_tx);
+        let listener = ZedListener::new(events_tx);
         let dimensions = SpikeTermSize {
             columns: 80,
             screen_lines: 24,
@@ -87,18 +148,29 @@ impl Harness {
             processor.advance(&mut *self.term.lock(), &case.bytes[offset..]);
         }
 
-        if let Some((columns, screen_lines)) = case.resize_after_feed {
+        let resize_before = if let Some((columns, screen_lines)) = case.resize_after_feed {
+            let before = {
+                let term = self.term.lock_unfair();
+                ResizeBefore::capture(&content_from_term(&term))
+            };
             self.term.lock().resize(SpikeTermSize {
                 columns,
                 screen_lines,
             });
-        }
+            Some(before)
+        } else {
+            None
+        };
         if let Some(range) = case.selection_after_feed {
             let mut selection =
                 AlacSelection::new(SelectionType::Simple, range.start.into(), AlacSide::Left);
             selection.update(range.end.into(), AlacSide::Right);
             self.term.lock().selection = Some(selection);
         }
+
+        let search = case.search_after_feed.map(|query| {
+            normalize_alacritty_search(crate::search::search_term(&self.term, query, false))
+        });
 
         let (content, logical_text, modes, history_size, cell_count) = {
             let term = self.term.lock_unfair();
@@ -113,6 +185,7 @@ impl Harness {
                 cell_count,
             )
         };
+        let resize_damage = resize_before.map(|before| before.complete(&content));
         let absolute_cursor_line = history_size as i64 + i64::from(content.cursor.point.line.0);
         let cursor_column = content.cursor.point.column.0;
         let mut events = Vec::new();
@@ -126,6 +199,8 @@ impl Harness {
             logical_text,
             modes,
             events,
+            search,
+            resize_damage,
             history_size,
             cell_count,
             absolute_cursor_line,
@@ -179,12 +254,46 @@ fn normalize_pty_write(text: &str) -> String {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+fn normalize_alacritty_search(result: crate::search::SearchResult) -> SearchObservation {
+    SearchObservation {
+        matches: result
+            .matches
+            .into_iter()
+            .map(|found| {
+                (
+                    found.start.line.0,
+                    found.start.column.0,
+                    found.end.line.0,
+                    found.end.column.0,
+                )
+            })
+            .collect(),
+        regex_error: result.regex_error,
+    }
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 struct GhosttyHarness {
     terminal: paneflow_terminal_ghostty::DisplayTerminal,
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 impl GhosttyHarness {
     fn new() -> Self {
         let size = paneflow_terminal_ghostty::WindowSize::new(80, 24, 0, 0)
@@ -212,11 +321,22 @@ impl GhosttyHarness {
                 .feed(&case.bytes[offset..])
                 .expect("Ghostty accepts corpus tail");
         }
-        if let Some((columns, rows)) = case.resize_after_feed {
+        let resize_before = if let Some((columns, rows)) = case.resize_after_feed {
+            // Initialize the native snapshot cache before resize so the second
+            // snapshot must consume Ghostty's resize damage, not a cold cache.
+            let before = super::ghostty_session::content_from_ghostty(
+                self.terminal
+                    .snapshot()
+                    .expect("Ghostty pre-resize snapshot"),
+            );
+            let before = ResizeBefore::capture(&before);
             let size = paneflow_terminal_ghostty::WindowSize::new(columns, rows, 0, 0)
                 .expect("corpus resize dimensions are valid");
             self.terminal.resize(size).expect("Ghostty corpus resize");
-        }
+            Some(before)
+        } else {
+            None
+        };
         if let Some(range) = case.selection_after_feed {
             self.terminal
                 .set_selection(paneflow_terminal_ghostty::SelectionRange {
@@ -233,6 +353,14 @@ impl GhosttyHarness {
                 .expect("Ghostty corpus selection");
         }
 
+        let search = case.search_after_feed.map(|query| {
+            normalize_ghostty_search(
+                self.terminal
+                    .search(query, false)
+                    .expect("Ghostty corpus search"),
+            )
+        });
+
         let modes = super::ghostty_session::modes_from_ghostty(
             self.terminal.modes().expect("Ghostty modes"),
         );
@@ -245,6 +373,7 @@ impl GhosttyHarness {
             self.terminal.snapshot().expect("Ghostty snapshot"),
         );
         let logical_text = normalize_ghostty_grid(&scrollback, &content);
+        let resize_damage = resize_before.map(|before| before.complete(&content));
         let history_size = content.history_size;
         let cell_count = content.cells.len();
         let absolute_cursor_line = history_size as i64 + i64::from(content.cursor.point.line.0);
@@ -260,6 +389,8 @@ impl GhosttyHarness {
             logical_text,
             modes: format!("{modes:?}"),
             events,
+            search,
+            resize_damage,
             history_size,
             cell_count,
             absolute_cursor_line,
@@ -268,7 +399,15 @@ impl GhosttyHarness {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 fn normalize_ghostty_grid(scrollback: &str, content: &Content) -> String {
     let mut lines = if scrollback.is_empty() {
         Vec::new()
@@ -301,7 +440,15 @@ fn normalize_ghostty_grid(scrollback: &str, content: &Content) -> String {
     lines.join("\n")
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Option<String> {
     match event {
         paneflow_terminal_ghostty::BackendEvent::WritePty(bytes) => {
@@ -317,6 +464,33 @@ fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Op
         }
         paneflow_terminal_ghostty::BackendEvent::CallbackPanicked
         | paneflow_terminal_ghostty::BackendEvent::InputDropped { .. } => None,
+    }
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn normalize_ghostty_search(result: paneflow_terminal_ghostty::SearchResult) -> SearchObservation {
+    SearchObservation {
+        matches: result
+            .matches
+            .into_iter()
+            .map(|found| {
+                (
+                    found.start.line,
+                    found.start.column,
+                    found.end.line,
+                    found.end.column,
+                )
+            })
+            .collect(),
+        regex_error: result.regex_error,
     }
 }
 
@@ -404,23 +578,34 @@ fn corpus() -> Vec<CorpusCase> {
                 bytes.extend_from_slice(&[0xf0, 0x28, 0x8c, 0x28, b'\r', b'\n']);
                 (bytes, None)
             }
-            25 => (format!("selection-{variant}-target").into_bytes(), None),
+            25 => (format!("tabs-{variant}:\talpha\t中\tomega\r\n").into_bytes(), None),
+            26 => (format!("selection-{variant}-target").into_bytes(), None),
             _ => unreachable!(),
         };
         cases.push(CorpusCase {
             name: format!("family-{family:02}-variant-{variant}"),
             bytes,
             resize_after_feed,
-            selection_after_feed: (family == 25).then_some(SelectionRange {
+            selection_after_feed: (family == 26).then_some(SelectionRange {
                 start: Point::new(0, 0),
                 end: Point::new(0, 8),
                 is_block: false,
             }),
-            #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+            search_after_feed: (family == 26).then_some("target"),
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
             comparison: match family {
                 8 => SnapshotComparison::ReflowViewportAnchor,
                 16 => SnapshotComparison::EraseDisplayScrollback,
                 24 => SnapshotComparison::InvalidUtf8Replacement,
+                25 => SnapshotComparison::TabExpansion,
                 _ => SnapshotComparison::Exact,
             },
         });
@@ -458,13 +643,27 @@ fn alacritty_corpus_is_chunk_invariant() {
     }
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
 #[test]
 fn ghostty_corpus_matches_alacritty() {
     for (index, case) in corpus().iter().enumerate() {
         let chunks = seeded_chunks(case.bytes.len(), CORPUS_SEED ^ index as u64);
         let ghostty = GhosttyHarness::new().replay(case, &chunks);
         let alacritty = Harness::new().replay(case, &chunks);
+        assert_eq!(ghostty.search, alacritty.search, "search in {}", case.name);
+        assert_eq!(
+            ghostty.resize_damage, alacritty.resize_damage,
+            "resize damage in {}",
+            case.name
+        );
         match case.comparison {
             SnapshotComparison::Exact => {
                 assert_eq!(ghostty, alacritty, "backend divergence in {}", case.name)
@@ -586,7 +785,124 @@ fn ghostty_corpus_matches_alacritty() {
                     case.name
                 );
             }
+            SnapshotComparison::TabExpansion => {
+                // Both engines advance through the same tab stops. Ghostty
+                // materializes the tab origins as spaces, while Alacritty keeps
+                // a literal tab in those cells, so pin that representation only.
+                assert_eq!(
+                    ghostty.content,
+                    alacritty.content.replace("'\\t'", "' '"),
+                    "tab-expanded cells in {}",
+                    case.name
+                );
+                let variant = case.name.rsplit('-').next().expect("corpus variant suffix");
+                assert_eq!(
+                    ghostty.logical_text,
+                    format!("tabs-{variant}: alpha   中      omega")
+                );
+                assert_eq!(
+                    alacritty.logical_text,
+                    format!("tabs-{variant}:\talpha\t中\tomega")
+                );
+                assert_eq!(ghostty.modes, alacritty.modes, "modes in {}", case.name);
+                assert_eq!(ghostty.events, alacritty.events, "events in {}", case.name);
+                assert_eq!(
+                    ghostty.history_size, alacritty.history_size,
+                    "history in {}",
+                    case.name
+                );
+                assert_eq!(
+                    ghostty.cell_count, alacritty.cell_count,
+                    "viewport dimensions in {}",
+                    case.name
+                );
+                assert_eq!(
+                    ghostty.absolute_cursor_line, alacritty.absolute_cursor_line,
+                    "absolute cursor line in {}",
+                    case.name
+                );
+                assert_eq!(
+                    ghostty.cursor_column, alacritty.cursor_column,
+                    "cursor column in {}",
+                    case.name
+                );
+            }
         }
+    }
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+#[test]
+fn corpus_observes_search_and_resize_damage() {
+    let cases = corpus();
+    let search_case = cases
+        .iter()
+        .find(|case| case.name == "family-26-variant-0")
+        .expect("search corpus case");
+    let search_chunks = seeded_chunks(search_case.bytes.len(), CORPUS_SEED);
+    for (backend, snapshot) in [
+        (
+            "Alacritty",
+            Harness::new().replay(search_case, &search_chunks),
+        ),
+        (
+            "Ghostty",
+            GhosttyHarness::new().replay(search_case, &search_chunks),
+        ),
+    ] {
+        let search = snapshot.search.expect("search observation");
+        assert_eq!(
+            search.matches,
+            vec![(0, 12, 0, 17)],
+            "{backend} search coordinates"
+        );
+        assert_eq!(search.regex_error, None, "{backend} search error");
+    }
+
+    let resize_case = cases
+        .iter()
+        .find(|case| case.name == "family-08-variant-0")
+        .expect("resize corpus case");
+    let resize_chunks = seeded_chunks(resize_case.bytes.len(), CORPUS_SEED);
+    for (backend, snapshot) in [
+        (
+            "Alacritty",
+            Harness::new().replay(resize_case, &resize_chunks),
+        ),
+        (
+            "Ghostty",
+            GhosttyHarness::new().replay(resize_case, &resize_chunks),
+        ),
+    ] {
+        let damage = snapshot.resize_damage.expect("resize damage observation");
+        assert_eq!(
+            damage.before_dimensions,
+            (80, 24),
+            "{backend} before resize"
+        );
+        assert_eq!(damage.after_dimensions, (41, 18), "{backend} after resize");
+        assert_eq!(
+            damage.before_cell_count,
+            80 * 24,
+            "{backend} cells before resize"
+        );
+        assert_eq!(
+            damage.after_cell_count,
+            41 * 18,
+            "{backend} cells after resize"
+        );
+        assert!(
+            damage.snapshot_changed,
+            "{backend} resize produced no damage"
+        );
     }
 }
 
@@ -601,7 +917,16 @@ fn malformed_and_oversized_streams_are_deterministic() {
         bytes: hostile,
         resize_after_feed: None,
         selection_after_feed: None,
-        #[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+        search_after_feed: None,
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
         comparison: SnapshotComparison::Exact,
     };
     let first = Harness::new().replay(&case, &fixed_chunks(case.bytes.len(), 4096));
@@ -612,6 +937,24 @@ fn malformed_and_oversized_streams_are_deterministic() {
         first.cell_count <= 80 * 24,
         "snapshot escaped the viewport bound"
     );
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    {
+        let ghostty_first =
+            GhosttyHarness::new().replay(&case, &seeded_chunks(case.bytes.len(), CORPUS_SEED));
+        let ghostty_second =
+            GhosttyHarness::new().replay(&case, &seeded_chunks(case.bytes.len(), CORPUS_SEED));
+        assert_eq!(ghostty_first, ghostty_second);
+        assert!(ghostty_first.history_size <= 10_000);
+        assert!(ghostty_first.cell_count <= 80 * 24);
+    }
 }
 
 #[test]

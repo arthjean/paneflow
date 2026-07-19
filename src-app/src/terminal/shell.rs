@@ -116,6 +116,48 @@ if status is-interactive
 end
 "#;
 
+/// WSL bootstrap for the configured default distribution. `wsl.exe` only
+/// identifies the Windows launcher, so the Linux login shell is resolved
+/// inside the distribution. Integration paths stay positional arguments:
+/// no user-controlled path is interpolated into this script.
+///
+/// The integrated shell is deliberately interactive and non-login, matching
+/// PaneFlow's native Bash/Zsh/Fish launch contract. This preserves `.bashrc`,
+/// `.zshrc`, and `config.fish`; login-only profile files are not evaluated.
+const WSL_SHELL_BOOTSTRAP: &str = r#"uid="$(id -u 2>/dev/null)" || uid=
+shell=
+if [ -n "$uid" ] && command -v getent >/dev/null 2>&1; then
+    shell="$(getent passwd "$uid" 2>/dev/null | cut -d: -f7)"
+fi
+[ -n "$shell" ] || shell="${SHELL:-/bin/sh}"
+[ -x "$shell" ] || shell=/bin/sh
+
+case "${shell##*/}" in
+    bash)
+        rcfile="$(wslpath -u -- "$1" 2>/dev/null)" || exec "$shell"
+        exec "$shell" --rcfile "$rcfile"
+        ;;
+    zsh)
+        zdotdir="$(wslpath -u -- "$2" 2>/dev/null)" || exec "$shell"
+        if [ "${ZDOTDIR+x}" = x ]; then
+            export PANEFLOW_ORIG_ZDOTDIR="$ZDOTDIR"
+        else
+            unset PANEFLOW_ORIG_ZDOTDIR
+        fi
+        export ZDOTDIR="$zdotdir"
+        exec "$shell"
+        ;;
+    fish)
+        initfile="$(wslpath -u -- "$3" 2>/dev/null)" || exec "$shell"
+        export PANEFLOW_WSL_FISH_INIT="$initfile"
+        exec "$shell" --init-command 'source "$PANEFLOW_WSL_FISH_INIT"'
+        ;;
+    *)
+        exec "$shell"
+        ;;
+esac
+"#;
+
 /// PowerShell 5.1 / 7 (pwsh): dot-sourced via `-NoExit -Command ". <path>"`,
 /// which runs AFTER the user's `$PROFILE`, so any `prompt` function they
 /// defined is already in place. We capture it as a ScriptBlock and wrap it
@@ -559,6 +601,8 @@ fn to_shell_path(p: &std::path::Path) -> String {
 ///
 /// Supported shells:
 /// - **zsh, bash, fish** - BEL-terminated OSC 7 via per-prompt hooks.
+/// - **WSL** - resolves the distribution's Bash/Zsh/Fish login shell and
+///   activates the matching integration without modifying Linux dotfiles.
 /// - **PowerShell 5.1 / pwsh 7** (US-012) - `prompt` function wrapper,
 ///   dot-sourced so the user's `$PROFILE`-defined prompt still renders.
 /// - **cmd.exe** - `info!` log only; cmd has no per-prompt scripting hook,
@@ -637,6 +681,7 @@ pub(super) fn setup_shell_integration(
                 format!("source {}", quote_fish_arg(&to_shell_path(&initfile))),
             ]
         }
+        "wsl" => setup_wsl_shell_integration(&base),
         // US-012 - PowerShell 7 (pwsh) and Windows PowerShell 5.1 share
         // the same `function prompt { ... }` hook mechanism, so one
         // script serves both. `-NoExit` keeps the shell interactive after
@@ -677,6 +722,51 @@ pub(super) fn setup_shell_integration(
     }
 }
 
+fn setup_wsl_shell_integration(base: &std::path::Path) -> Vec<String> {
+    let bashrc = base.join("bash").join("bashrc");
+    let zshenv = base.join("zsh").join(".zshenv");
+    let fish_init = base.join("fish").join("osc7.fish");
+
+    for (path, contents) in [
+        (&bashrc, BASH_OSC7),
+        (&zshenv, ZSH_OSC7),
+        (&fish_init, FISH_OSC7),
+    ] {
+        let Some(parent) = path.parent() else {
+            return vec![];
+        };
+        if std::fs::create_dir_all(parent).is_err() || std::fs::write(path, contents).is_err() {
+            log::warn!(
+                "paneflow: could not materialize WSL shell integration at {}",
+                path.display()
+            );
+            return vec![];
+        }
+    }
+
+    wsl_startup_args(
+        bashrc.display().to_string(),
+        zshenv
+            .parent()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
+        fish_init.display().to_string(),
+    )
+}
+
+fn wsl_startup_args(bashrc: String, zdotdir: String, fish_init: String) -> Vec<String> {
+    vec![
+        "--exec".into(),
+        "/bin/sh".into(),
+        "-c".into(),
+        WSL_SHELL_BOOTSTRAP.into(),
+        "paneflow-wsl-bootstrap".into(),
+        bashrc,
+        zdotdir,
+        fish_init,
+    ]
+}
+
 fn powershell_startup_args(profile: TerminalSurfaceProfile, init_command: String) -> Vec<String> {
     let mut args = Vec::new();
     if matches!(profile, TerminalSurfaceProfile::Agent) {
@@ -704,7 +794,7 @@ fn quote_fish_arg(arg: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{clear_then_for_shell, powershell_startup_args};
+    use super::{clear_then_for_shell, powershell_startup_args, wsl_startup_args};
     use paneflow_config::schema::TerminalSurfaceProfile;
 
     // (B) Unix well-known-dir shell lookup: a bare name not on PATH still
@@ -753,6 +843,37 @@ mod tests {
             super::quote_fish_arg("/tmp/$USER/osc7\"hook\".fish"),
             "\"/tmp/\\$USER/osc7\\\"hook\\\".fish\""
         );
+    }
+
+    #[test]
+    fn wsl_bootstrap_passes_integration_paths_positionally() {
+        let bashrc = r"C:\Users\O'Brien\App Data\$(touch nope)\bashrc";
+        let zdotdir = r"C:\Users\O'Brien\App Data\zsh";
+        let fish_init = r"C:\Users\O'Brien\App Data\fish\osc7.fish";
+        let args = wsl_startup_args(bashrc.into(), zdotdir.into(), fish_init.into());
+
+        assert_eq!(&args[..3], ["--exec", "/bin/sh", "-c"]);
+        assert_eq!(args[4], "paneflow-wsl-bootstrap");
+        assert_eq!(&args[5..], [bashrc, zdotdir, fish_init]);
+        assert!(!args[3].contains(bashrc));
+        assert!(!args[3].contains(zdotdir));
+        assert!(!args[3].contains(fish_init));
+    }
+
+    #[test]
+    fn wsl_bootstrap_integrates_known_shells_and_falls_back_safely() {
+        let script = super::WSL_SHELL_BOOTSTRAP;
+        for shell in ["bash)", "zsh)", "fish)"] {
+            assert!(
+                script.contains(shell),
+                "missing WSL integration for {shell}"
+            );
+        }
+        assert!(script.contains("*)\n        exec \"$shell\""));
+        assert!(!script.contains("eval "));
+        assert!(script.contains("wslpath -u -- \"$1\""));
+        assert!(script.contains("wslpath -u -- \"$2\""));
+        assert!(script.contains("wslpath -u -- \"$3\""));
     }
 
     #[test]

@@ -9,9 +9,21 @@
 use std::borrow::Cow;
 
 use gpui::{
-    ClipboardEntry, ClipboardItem, Context, ExternalPaths, Focusable, KeyDownEvent, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, TouchPhase, Window,
+    ClipboardEntry, ClipboardItem, Context, ExternalPaths, Focusable, KeyDownEvent, KeyUpEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ScrollWheelEvent, TouchPhase,
+    Window,
 };
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+use paneflow_terminal_ghostty as ghostty;
 
 use crate::mouse;
 use crate::terminal::types::{
@@ -20,6 +32,16 @@ use crate::terminal::types::{
 
 #[cfg(debug_assertions)]
 use super::probe_enabled;
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+use super::pty_session::BackendInputResult;
 use super::{TerminalEvent, TerminalView};
 
 /// Returns true when the platform-appropriate "open link" modifier is held:
@@ -36,6 +58,35 @@ fn open_link_modifier_held(modifiers: &gpui::Modifiers) -> bool {
     }
 }
 
+fn key_escape_sequence(
+    keystroke: &gpui::Keystroke,
+    mode: &Modes,
+    option_as_meta: bool,
+    prefer_character_input: bool,
+) -> Option<Cow<'static, str>> {
+    if prefer_character_input {
+        None
+    } else {
+        crate::keys::to_esc_str(keystroke, mode, option_as_meta)
+    }
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn legacy_key_bytes(sequence: Cow<'static, str>) -> Cow<'static, [u8]> {
+    match sequence {
+        Cow::Borrowed(value) => Cow::Borrowed(value.as_bytes()),
+        Cow::Owned(value) => Cow::Owned(value.as_bytes().to_vec()),
+    }
+}
+
 /// Sanitize and wrap `text` for a single bracketed-paste PTY write
 /// (`ESC[200~` … `ESC[201~`). ESC and C1 control bytes (U+0080..=U+009F) are
 /// stripped so the payload cannot close the paste early or smuggle a CSI
@@ -44,13 +95,208 @@ fn open_link_modifier_held(modifiers: &gpui::Modifiers) -> bool {
 /// reads a burst as an unconfirmed paste never swallows the Enter. Embedded
 /// newlines are kept literal on purpose: that is the whole point of bracketed
 /// paste (the agent's input editor receives them as text, not as submit).
-pub(super) fn wrap_bracketed_paste(text: &str) -> String {
+pub(super) fn sanitize_bracketed_paste(text: &str) -> String {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-    let sanitized: String = normalized
+    normalized
         .chars()
         .filter(|&c| c != '\x1b' && !(('\u{0080}'..='\u{009f}').contains(&c)))
-        .collect();
-    format!("\x1b[200~{sanitized}\x1b[201~")
+        .collect()
+}
+
+#[cfg(test)]
+pub(super) fn wrap_bracketed_paste(text: &str) -> String {
+    format!("\x1b[200~{}\x1b[201~", sanitize_bracketed_paste(text))
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
+    let mut result = ghostty::Modifiers::empty();
+    if modifiers.shift {
+        result = result | ghostty::Modifiers::SHIFT;
+    }
+    if modifiers.control {
+        result = result | ghostty::Modifiers::CONTROL;
+    }
+    if modifiers.alt {
+        result = result | ghostty::Modifiers::ALT;
+    }
+    if modifiers.platform {
+        result = result | ghostty::Modifiers::SUPER;
+    }
+    result
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn ghostty_key(key: &str, key_char: Option<&str>) -> Option<ghostty::Key> {
+    let named = match key {
+        "enter" => Some(ghostty::Key::Enter),
+        "tab" => Some(ghostty::Key::Tab),
+        "backspace" => Some(ghostty::Key::Backspace),
+        "delete" => Some(ghostty::Key::Delete),
+        "escape" => Some(ghostty::Key::Escape),
+        "up" => Some(ghostty::Key::Up),
+        "down" => Some(ghostty::Key::Down),
+        "left" => Some(ghostty::Key::Left),
+        "right" => Some(ghostty::Key::Right),
+        "home" => Some(ghostty::Key::Home),
+        "end" => Some(ghostty::Key::End),
+        "pageup" => Some(ghostty::Key::PageUp),
+        "pagedown" => Some(ghostty::Key::PageDown),
+        "insert" => Some(ghostty::Key::Insert),
+        "space" => Some(ghostty::Key::Character(' ')),
+        _ => None,
+    };
+    if named.is_some() {
+        return named;
+    }
+    if let Some(number) = key.strip_prefix('f').and_then(|value| value.parse().ok())
+        && (1..=25).contains(&number)
+    {
+        return Some(ghostty::Key::Function(number));
+    }
+    key.chars()
+        .next()
+        .filter(|_| key.chars().count() == 1)
+        .or_else(|| {
+            let value = key_char?;
+            value.chars().next().filter(|_| value.chars().count() == 1)
+        })
+        .map(ghostty::Key::Character)
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn ghostty_key_input(
+    keystroke: &gpui::Keystroke,
+    action: ghostty::KeyAction,
+) -> Option<ghostty::KeyInput> {
+    let key = ghostty_key(&keystroke.key, keystroke.key_char.as_deref())?;
+    let unshifted_codepoint = keystroke
+        .key
+        .chars()
+        .next()
+        .filter(|_| keystroke.key.chars().count() == 1);
+    Some(ghostty::KeyInput {
+        key,
+        action,
+        modifiers: ghostty_modifiers(keystroke.modifiers),
+        consumed_modifiers: ghostty::Modifiers::empty(),
+        text: String::new(),
+        unshifted_codepoint,
+        composing: false,
+    })
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+pub(super) fn ghostty_text_key_input(
+    keystroke: &gpui::Keystroke,
+    action: ghostty::KeyAction,
+    prefer_character_input: bool,
+    text: &str,
+) -> ghostty::KeyInput {
+    let mut input = ghostty_key_input(keystroke, action).unwrap_or(ghostty::KeyInput {
+        key: ghostty::Key::Unidentified,
+        action,
+        modifiers: ghostty_modifiers(keystroke.modifiers),
+        consumed_modifiers: ghostty::Modifiers::empty(),
+        text: String::new(),
+        unshifted_codepoint: None,
+        composing: false,
+    });
+    let mut consumed = ghostty::Modifiers::empty();
+    if keystroke.modifiers.shift {
+        consumed = consumed | ghostty::Modifiers::SHIFT;
+    }
+    if prefer_character_input && keystroke.modifiers.control && keystroke.modifiers.alt {
+        consumed = consumed | ghostty::Modifiers::CONTROL | ghostty::Modifiers::ALT;
+    }
+    input.consumed_modifiers = consumed;
+    input.text = text.to_owned();
+    input
+}
+
+#[cfg(any(
+    all(target_os = "linux", feature = "libghostty-linux"),
+    all(
+        target_os = "windows",
+        target_arch = "x86_64",
+        target_env = "msvc",
+        feature = "libghostty-windows"
+    )
+))]
+fn ghostty_release_id(keystroke: &gpui::Keystroke) -> String {
+    keystroke.key.clone()
+}
+
+#[derive(Clone, Copy)]
+enum ReportedMouseAction {
+    Press,
+    Release,
+    Motion,
+}
+
+#[derive(Clone, Copy)]
+enum ReportedMouseButton {
+    Left,
+    Middle,
+    Right,
+    WheelUp,
+    WheelDown,
+}
+
+struct ReportedMouseInput {
+    position: gpui::Point<gpui::Pixels>,
+    point: Point,
+    button: u8,
+    pressed: bool,
+    mode: Modes,
+    action: ReportedMouseAction,
+    reported_button: Option<ReportedMouseButton>,
+    modifiers: gpui::Modifiers,
+    any_button_pressed: bool,
+    repeat: usize,
+}
+
+impl ReportedMouseButton {
+    fn from_gpui(button: MouseButton) -> Option<Self> {
+        match button {
+            MouseButton::Left => Some(Self::Left),
+            MouseButton::Middle => Some(Self::Middle),
+            MouseButton::Right => Some(Self::Right),
+            MouseButton::Navigate(_) => None,
+        }
+    }
 }
 
 /// Convert a slice of OS paths to a single space-joined, shell-quoted string
@@ -230,12 +476,30 @@ impl TerminalView {
         // Get current TermMode for key mapping (APP_CURSOR, etc.)
         let mode = self.terminal.session_backend().modes();
 
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        {
+            self.ghostty_pending_text_key = None;
+        }
+
         // Special keys / modifiers → write the escape sequence directly.
         // Printable characters are NOT handled here: GPUI's InputHandler
         // (replace_text_in_range) is the single source of truth for them on
         // both normal and alt screens. Writing them here as well caused
         // character doubling in ALT_SCREEN mode (e.g. Claude Code fullscreen TUI).
-        if let Some(seq) = crate::keys::to_esc_str(keystroke, &mode, self.option_as_meta) {
+        if let Some(seq) = key_escape_sequence(
+            keystroke,
+            &mode,
+            self.option_as_meta,
+            event.prefer_character_input,
+        ) {
             // Snap to bottom on input. Matches Zed `terminal.rs:input()` - if
             // the user is scrolled back in the history and types, the shell's
             // echo would otherwise be invisible.
@@ -247,13 +511,78 @@ impl TerminalView {
                     self.scroll_remainder = 0.0;
                 }
             }
-            match seq {
-                Cow::Borrowed(s) => {
-                    self.terminal.write_to_pty(Cow::Borrowed(s.as_bytes()));
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            let ghostty_encoded = ghostty_key_input(
+                keystroke,
+                if event.is_held {
+                    ghostty::KeyAction::Repeat
+                } else {
+                    ghostty::KeyAction::Press
+                },
+            )
+            .map(|input| {
+                let mut release = input.clone();
+                release.action = ghostty::KeyAction::Release;
+                release.text.clear();
+                release.composing = false;
+                let result = self
+                    .terminal
+                    .write_ghostty_key(input, Some(legacy_key_bytes(seq.clone())));
+                if result == BackendInputResult::Accepted {
+                    self.ghostty_pressed_keys
+                        .insert(ghostty_release_id(keystroke), release);
                 }
-                Cow::Owned(s) => {
-                    self.terminal.write_to_pty(s.into_bytes());
+                result.is_handled()
+            })
+            .unwrap_or(false);
+            #[cfg(not(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            )))]
+            let ghostty_encoded = false;
+            if !ghostty_encoded {
+                match seq {
+                    Cow::Borrowed(s) => {
+                        self.terminal.write_to_pty(Cow::Borrowed(s.as_bytes()));
+                    }
+                    Cow::Owned(s) => {
+                        self.terminal.write_to_pty(s.into_bytes());
+                    }
                 }
+            }
+        } else {
+            #[cfg(any(
+                all(target_os = "linux", feature = "libghostty-linux"),
+                all(
+                    target_os = "windows",
+                    target_arch = "x86_64",
+                    target_env = "msvc",
+                    feature = "libghostty-windows"
+                )
+            ))]
+            if ghostty_key(&keystroke.key, keystroke.key_char.as_deref()).is_some() {
+                self.ghostty_pending_text_key = Some((
+                    keystroke.clone(),
+                    if event.is_held {
+                        ghostty::KeyAction::Repeat
+                    } else {
+                        ghostty::KeyAction::Press
+                    },
+                    event.prefer_character_input,
+                ));
             }
         }
 
@@ -266,6 +595,69 @@ impl TerminalView {
                 log::warn!(
                     "[latency] keystroke→PTY: {:.2}ms",
                     elapsed.as_secs_f64() * 1000.0
+                );
+            }
+        }
+    }
+
+    pub(super) fn handle_key_up(
+        &mut self,
+        event: &KeyUpEvent,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        if self.search_active || self.copy_mode_active {
+            return;
+        }
+        #[cfg(not(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        )))]
+        let _ = event;
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        {
+            let release_id = ghostty_release_id(&event.keystroke);
+            if let Some(input) = self.ghostty_pressed_keys.remove(&release_id) {
+                let result = self.terminal.write_ghostty_key(input, None);
+                if result == BackendInputResult::Rejected {
+                    log::warn!(
+                        target: "paneflow::terminal::ghostty",
+                        "Ghostty rejected a key release"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    pub(super) fn release_ghostty_pressed_keys(&mut self) {
+        self.ghostty_pending_text_key = None;
+        for (_, input) in std::mem::take(&mut self.ghostty_pressed_keys) {
+            if self.terminal.write_ghostty_key(input, None) == BackendInputResult::Rejected {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty rejected a key release during focus loss"
                 );
             }
         }
@@ -322,20 +714,111 @@ impl TerminalView {
     }
 
     /// Write a mouse report to the PTY using the appropriate encoding format.
-    pub(super) fn write_mouse_report(&self, point: Point, button: u8, pressed: bool, mode: Modes) {
+    fn write_mouse_report(&self, report: ReportedMouseInput) {
+        let ReportedMouseInput {
+            position,
+            point,
+            button,
+            pressed,
+            mode,
+            action,
+            reported_button,
+            modifiers,
+            any_button_pressed,
+            repeat,
+        } = report;
         let format = mouse::MouseFormat::from_mode(mode);
-        let bytes = match format {
-            mouse::MouseFormat::Sgr => mouse::sgr_mouse_report(point, button, pressed).into_bytes(),
+        let legacy = match format {
+            mouse::MouseFormat::Sgr => {
+                Some(mouse::sgr_mouse_report(point, button, pressed).into_bytes())
+            }
             mouse::MouseFormat::Normal { utf8 } => {
                 // Normal/UTF-8 encoding: release always uses button code 3 (no per-button release)
                 let btn = if pressed { button } else { 3 };
-                match mouse::normal_mouse_report(point, btn, utf8) {
-                    Some(b) => b,
-                    None => return, // position exceeds encoding limits
-                }
+                mouse::normal_mouse_report(point, btn, utf8)
             }
         };
-        self.terminal.write_to_pty(bytes);
+        #[cfg(not(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        )))]
+        let _ = (
+            position,
+            action,
+            reported_button,
+            modifiers,
+            any_button_pressed,
+        );
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        {
+            let origin = *self
+                .element_origin
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let metrics = self.terminal.session_backend().grid_metrics();
+            let screen_width = (metrics.columns as f32 * self.cell_width.as_f32())
+                .max(1.0)
+                .min(u32::MAX as f32) as u32;
+            let screen_height = (metrics.screen_lines as f32 * self.line_height.as_f32())
+                .max(1.0)
+                .min(u32::MAX as f32) as u32;
+            let input = ghostty::MouseInput {
+                action: match action {
+                    ReportedMouseAction::Press => ghostty::MouseAction::Press,
+                    ReportedMouseAction::Release => ghostty::MouseAction::Release,
+                    ReportedMouseAction::Motion => ghostty::MouseAction::Motion,
+                },
+                button: reported_button.map(|button| match button {
+                    ReportedMouseButton::Left => ghostty::MouseButton::Left,
+                    ReportedMouseButton::Middle => ghostty::MouseButton::Middle,
+                    ReportedMouseButton::Right => ghostty::MouseButton::Right,
+                    ReportedMouseButton::WheelUp => ghostty::MouseButton::Four,
+                    ReportedMouseButton::WheelDown => ghostty::MouseButton::Five,
+                }),
+                modifiers: ghostty_modifiers(modifiers),
+                x: (position.x - origin.x).max(gpui::px(0.0)).as_f32(),
+                y: (position.y - origin.y).max(gpui::px(0.0)).as_f32(),
+                screen_width,
+                screen_height,
+                padding_top: 0,
+                padding_bottom: 0,
+                padding_left: 0,
+                padding_right: 0,
+                any_button_pressed,
+            };
+            if self
+                .terminal
+                .write_ghostty_mouse(input, repeat, legacy.clone())
+                .is_handled()
+            {
+                return;
+            }
+        }
+        let Some(bytes) = legacy else {
+            return;
+        };
+        if repeat == 1 {
+            self.terminal.write_to_pty(bytes);
+        } else {
+            let mut repeated = Vec::with_capacity(bytes.len().saturating_mul(repeat));
+            for _ in 0..repeat {
+                repeated.extend_from_slice(&bytes);
+            }
+            self.terminal.write_to_pty(repeated);
+        }
     }
 
     // --- Mouse selection handlers ---
@@ -461,7 +944,18 @@ impl TerminalView {
             // skip them instead of injecting a phantom Left click.
             if let Some(button) = mouse::mouse_button_code(event.button, event.modifiers) {
                 let point = self.pixel_to_viewport(event.position);
-                self.write_mouse_report(point, button, true, mode);
+                self.write_mouse_report(ReportedMouseInput {
+                    position: event.position,
+                    point,
+                    button,
+                    pressed: true,
+                    mode,
+                    action: ReportedMouseAction::Press,
+                    reported_button: ReportedMouseButton::from_gpui(event.button),
+                    modifiers: event.modifiers,
+                    any_button_pressed: true,
+                    repeat: 1,
+                });
             }
             return;
         }
@@ -536,7 +1030,20 @@ impl TerminalView {
             let point = self.pixel_to_viewport(event.position);
             // Motion events add +32 to the button code per protocol spec
             let button = button_base + 32;
-            self.write_mouse_report(point, button, true, mode);
+            self.write_mouse_report(ReportedMouseInput {
+                position: event.position,
+                point,
+                button,
+                pressed: true,
+                mode,
+                action: ReportedMouseAction::Motion,
+                reported_button: event
+                    .pressed_button
+                    .and_then(ReportedMouseButton::from_gpui),
+                modifiers: event.modifiers,
+                any_button_pressed: event.pressed_button.is_some(),
+                repeat: 1,
+            });
             return;
         }
 
@@ -702,7 +1209,18 @@ impl TerminalView {
             self.mouse_down_link = None;
             if let Some(button) = mouse::mouse_button_code(event.button, event.modifiers) {
                 let point = self.pixel_to_viewport(event.position);
-                self.write_mouse_report(point, button, false, mode);
+                self.write_mouse_report(ReportedMouseInput {
+                    position: event.position,
+                    point,
+                    button,
+                    pressed: false,
+                    mode,
+                    action: ReportedMouseAction::Release,
+                    reported_button: ReportedMouseButton::from_gpui(event.button),
+                    modifiers: event.modifiers,
+                    any_button_pressed: false,
+                    repeat: 1,
+                });
             }
             return;
         }
@@ -823,11 +1341,40 @@ impl TerminalView {
     }
 
     pub(super) fn write_paste_text(&self, text: &str, mode: Modes) {
-        let paste_text = if mode.contains(Modes::BRACKETED_PASTE) {
-            wrap_bracketed_paste(text)
+        let (paste_payload, paste_text) = if mode.contains(Modes::BRACKETED_PASTE) {
+            let payload = sanitize_bracketed_paste(text);
+            let wrapped = format!("\x1b[200~{payload}\x1b[201~");
+            (payload, wrapped)
         } else {
-            text.replace("\r\n", "\r").replace('\n', "\r")
+            let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
+            (normalized.clone(), normalized)
         };
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        if self
+            .terminal
+            .write_ghostty_paste(paste_payload, mode.contains(Modes::BRACKETED_PASTE))
+            .is_handled()
+        {
+            return;
+        }
+        #[cfg(not(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        )))]
+        let _ = paste_payload;
         self.terminal.write_to_pty(paste_text.into_bytes());
     }
 
@@ -881,24 +1428,23 @@ impl TerminalView {
                 mouse::ScrollDirection::Down
             };
             let button = mouse::scroll_button_code(direction, event.modifiers);
-            let format = mouse::MouseFormat::from_mode(mode);
-            let report = match format {
-                mouse::MouseFormat::Sgr => {
-                    mouse::sgr_mouse_report(point, button, true).into_bytes()
-                }
-                mouse::MouseFormat::Normal { utf8 } => {
-                    match mouse::normal_mouse_report(point, button, utf8) {
-                        Some(bytes) => bytes,
-                        None => return,
-                    }
-                }
-            };
             let count = lines.unsigned_abs() as usize;
-            let mut buf = Vec::with_capacity(report.len() * count);
-            for _ in 0..lines.unsigned_abs() {
-                buf.extend_from_slice(&report);
-            }
-            self.terminal.write_to_pty(buf);
+            self.write_mouse_report(ReportedMouseInput {
+                position: event.position,
+                point,
+                button,
+                pressed: true,
+                mode,
+                action: ReportedMouseAction::Press,
+                reported_button: Some(if lines > 0 {
+                    ReportedMouseButton::WheelUp
+                } else {
+                    ReportedMouseButton::WheelDown
+                }),
+                modifiers: event.modifiers,
+                any_button_pressed: false,
+                repeat: count,
+            });
             return;
         }
 
@@ -1043,8 +1589,53 @@ impl TerminalView {
 #[cfg(test)]
 mod tests {
     use super::{paths_to_pty_text, wrap_bracketed_paste};
-    use crate::terminal::types::ShellQuoting;
+    use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
+
+    #[cfg(any(
+        all(target_os = "linux", feature = "libghostty-linux"),
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc",
+            feature = "libghostty-windows"
+        )
+    ))]
+    #[test]
+    fn printable_altgr_commit_preserves_key_metadata_and_consumes_ctrl_alt() {
+        let keystroke = gpui::Keystroke::parse("ctrl-alt-0").unwrap();
+        let input = super::ghostty_text_key_input(
+            &keystroke,
+            paneflow_terminal_ghostty::KeyAction::Press,
+            true,
+            "@",
+        );
+
+        assert_eq!(input.key, paneflow_terminal_ghostty::Key::Character('0'));
+        assert!(input.modifiers.contains(
+            paneflow_terminal_ghostty::Modifiers::CONTROL
+                | paneflow_terminal_ghostty::Modifiers::ALT
+        ));
+        assert!(input.consumed_modifiers.contains(
+            paneflow_terminal_ghostty::Modifiers::CONTROL
+                | paneflow_terminal_ghostty::Modifiers::ALT
+        ));
+        assert_eq!(input.text, "@");
+    }
+
+    #[test]
+    fn character_preferred_altgr_bypasses_control_escape_routing() {
+        let keystroke = gpui::Keystroke::parse("ctrl-alt-q").unwrap();
+        assert_eq!(
+            crate::keys::to_esc_str(&keystroke, &Modes::empty(), false).as_deref(),
+            Some("\x11"),
+            "without the character-input signal, Ctrl+Q maps to DC1"
+        );
+        assert!(
+            super::key_escape_sequence(&keystroke, &Modes::empty(), false, true).is_none(),
+            "AltGr character input must wait for the text commit"
+        );
+    }
 
     // EP-001 US-001 (agent-control-plane-hardening): the wrap is the burst that
     // reaches an agent; the `\r` must NEVER ride inside it.
