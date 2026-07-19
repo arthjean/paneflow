@@ -522,6 +522,135 @@ fn panel_corner_mask(corner: PanelCorner, background: gpui::Hsla) -> impl IntoEl
     .size_full()
 }
 
+/// Paints the opaque window shell around the one inset card that is allowed to
+/// reveal native material. Windows DWM backdrops and macOS AppKit effect views
+/// span the host window, so the card is isolated by covering every pixel
+/// outside its rounded contour.
+fn sidebar_card_backdrop_mask(
+    sidebar_width: f32,
+    card_horizontal_inset: f32,
+    card_width: f32,
+    card_vertical_inset: f32,
+    title_bar_height: Pixels,
+    background: gpui::Hsla,
+    preserve_terminal_material: bool,
+) -> impl IntoElement {
+    let card_right = card_horizontal_inset + card_width;
+    let sidebar_right_gap = (sidebar_width - card_right).max(0.);
+
+    div()
+        .absolute()
+        .left_0()
+        .right_0()
+        .top_0()
+        .bottom_0()
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .bottom_0()
+                .w(px(card_horizontal_inset))
+                .bg(background),
+        )
+        .when(card_width > 0., |mask| {
+            mask.child(
+                div()
+                    .absolute()
+                    .left(px(card_horizontal_inset))
+                    .top_0()
+                    .w(px(card_width))
+                    .h(px(card_vertical_inset))
+                    .bg(background),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(card_horizontal_inset))
+                    .bottom_0()
+                    .w(px(card_width))
+                    .h(px(card_vertical_inset))
+                    .bg(background),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(card_horizontal_inset))
+                    .top(px(card_vertical_inset))
+                    .bottom(px(card_vertical_inset))
+                    .w(px(card_width))
+                    .child(
+                        div()
+                            .relative()
+                            .size_full()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .top_0()
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .child(panel_corner_mask(PanelCorner::TopLeft, background)),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .right_0()
+                                    .top_0()
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .child(panel_corner_mask(PanelCorner::TopRight, background)),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .left_0()
+                                    .bottom_0()
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .child(panel_corner_mask(PanelCorner::BottomLeft, background)),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .right_0()
+                                    .bottom_0()
+                                    .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
+                                    .child(panel_corner_mask(PanelCorner::BottomRight, background)),
+                            ),
+                    ),
+            )
+        })
+        .when(preserve_terminal_material, |mask| {
+            mask.child(
+                div()
+                    .absolute()
+                    .left(px(card_right))
+                    .top_0()
+                    .right_0()
+                    .h(title_bar_height)
+                    .bg(background),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(card_right))
+                    .top_0()
+                    .bottom_0()
+                    .w(px(sidebar_right_gap))
+                    .bg(background),
+            )
+        })
+        .when(!preserve_terminal_material, |mask| {
+            mask.child(
+                div()
+                    .absolute()
+                    .left(px(card_right))
+                    .top_0()
+                    .right_0()
+                    .bottom_0()
+                    .bg(background),
+            )
+        })
+}
+
 fn startup_splash_letter(
     label: &'static str,
     index: usize,
@@ -1508,6 +1637,10 @@ impl Render for PaneFlowApp {
         } else {
             theme.title_bar_inactive_background
         };
+        let opaque_shell_bg = gpui::Hsla {
+            a: 1.,
+            ..shell_color
+        };
         let app_backdrop_bg = crate::app::constants::cockpit_backdrop_background(
             shell_color,
             is_window_active,
@@ -1556,6 +1689,8 @@ impl Render for PaneFlowApp {
             ui.surface,
             chrome_material_active,
         );
+        let isolate_primary_sidebar_material =
+            cfg!(any(target_os = "windows", target_os = "macos")) && chrome_material_active;
         #[cfg(target_os = "linux")]
         {
             crate::window_chrome::linux_backdrop::set_chrome_geometry(
@@ -1862,8 +1997,28 @@ impl Render for PaneFlowApp {
                                 } else {
                                     files_sidebar_width
                                 }))
-                                .bg(panel_corner_mask_bg),
+                                .bg(if isolate_primary_sidebar_material {
+                                    opaque_shell_bg
+                                } else {
+                                    panel_corner_mask_bg
+                                }),
                         )
+                    })
+                    // Native sidebar material belongs visually to the inset
+                    // navigation card only. The platform backdrop still spans
+                    // the host window, so this opaque mask covers the rest of
+                    // the shell. A separately enabled Windows terminal material
+                    // keeps its transparent panel while the chrome stays opaque.
+                    .when(isolate_primary_sidebar_material, |row| {
+                        row.child(sidebar_card_backdrop_mask(
+                            primary_sidebar_width,
+                            primary_sidebar_card_horizontal_inset,
+                            primary_sidebar_card_width,
+                            crate::app::constants::SIDEBAR_CARD_INSET,
+                            title_bar_h,
+                            opaque_shell_bg,
+                            terminal_material_visible,
+                        ))
                     })
                     // One childless decorative layer spans every primary rail
                     // and the title-bar overlay. Keeping it absolute preserves

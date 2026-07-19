@@ -24,6 +24,12 @@ pub(crate) const SIDEBAR_CARD_CORNER_RADIUS: Pixels = WINDOW_CORNER_RADIUS;
 /// Inner CLI content inset. Combined with the pane's reserved 1px border,
 /// this places tabs and terminal cells 4px from the main panel edge.
 pub(crate) const PANE_CONTENT_INSET: f32 = 3.;
+/// Windows Mica and macOS Sidebar material already supply theme-aware tints.
+/// The card remains fully transparent there so the material stays perceptible;
+/// its border still defines the inset surface.
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+const SIDEBAR_CARD_MATERIAL_OPACITY: f32 = 0.;
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 const SIDEBAR_CARD_MATERIAL_OPACITY: f32 = 0.84;
 
 /// Selected rows carry a stronger lift than hover rows so current navigation
@@ -199,9 +205,8 @@ pub(crate) fn cockpit_chrome_background(
 
 /// Fill for the inset primary navigation card.
 ///
-/// Linux uses a fully opaque surface. macOS and Windows retain a restrained
-/// tint over their native material when enabled, with the same opaque fallback
-/// when the material is off.
+/// Linux uses a fully opaque surface. Windows and macOS expose their raw native
+/// materials, with the same opaque fallback when the material is off.
 pub(crate) fn primary_sidebar_card_background(surface: Hsla, material_active: bool) -> Hsla {
     let opaque_surface = Hsla { a: 1.0, ..surface };
     if cfg!(target_os = "linux") || !material_active {
@@ -358,6 +363,15 @@ mod material_tests {
             cockpit_backdrop_background(background, true, false),
             background
         );
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[test]
+    fn native_sidebar_card_exposes_raw_material() {
+        let surface = Hsla::from(gpui::rgb(0x212122));
+        let card = primary_sidebar_card_background(surface, true);
+
+        assert_eq!(card.a, 0., "the sidebar must not veil native material");
     }
 
     #[cfg(target_os = "linux")]
