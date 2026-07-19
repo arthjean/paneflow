@@ -47,6 +47,11 @@ The reviewed recipe requires:
 | Rust target | `x86_64-pc-windows-msvc` |
 | Zig target | `x86_64-windows-msvc` |
 | Zig | `0.15.2` |
+| Zig distribution | official x64 Windows ZIP, SHA-256 `3a0ed1e8799a2f8ce2a6e6290a9ff22e6906f8227865911fb7ddedc3cc14cb0c` |
+| Zig executable SHA-256 | `d408dd38eed3e5204af841bcebf70502a4dbbb8399a3a3262be55059370bc018` |
+| Fixed-base Zig SHA-256 | `12008340dc78408813f04589c668c933a9d7f7ac4f96a02ade2c266aea2a93ae` |
+| Zig codegen image base | `0x0000000140000000` |
+| Zig PE DLL characteristics | `0x8160` to `0x8100` |
 | MSVC toolset | `14.38.33130` |
 | Windows SDK | `10.0.26100.0` |
 | Visual Studio LLVM tools | `19.1.5` |
@@ -57,21 +62,29 @@ The reviewed recipe requires:
 The upstream preparation command is:
 
 ```text
-zig build --verbose --seed 0 -j1 -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dsimd=true --prefix <fixed-prefix>
+zig-fixed-base.exe build --zig-lib-dir <official-zig-lib> --verbose --seed 0 -j1 -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dsimd=true --prefix <fixed-prefix>
 ```
 
-The script builds at fixed source, cache, and prefix paths. LLVM then strips
-debug data from every member of Ghostty's emitted fat archive, zeros each
-COFF timestamp, and repacks ordinally sorted members with deterministic
-`llvm-ar rcD` mode. It deliberately does not replay the emitted `build-lib`
-command: Zig 0.15.2 can assign registers differently across isolated direct
-replays even when the upstream archive is byte-stable. Header and symbol
-inventories use the same ordinal, case-sensitive ordering, so hashes do not
-depend on the Windows locale. Two complete builds start from empty caches at
-the same canonical paths and must match byte for byte before publication. The
-fixed `C:\Users\Public\paneflow-libghostty-ae52f97d` source path is part of the
-hash contract; the build aborts if that path is unavailable or already
-occupied.
+The CI downloads the manifest-pinned official Zig ZIP and verifies its hash.
+The script then verifies the exact Zig executable, creates a disposable copy,
+and clears only the PE `HIGH_ENTROPY_VA` and `DYNAMIC_BASE` flags. It verifies
+the original and derived executable hashes, preserves the other PE mitigations,
+passes the official Zig library explicitly, and removes the copy after the
+build. This fixed-base process is required because Zig 0.15.2's
+ReleaseFast codegen can assign registers differently when ASLR changes the
+compiler's address layout. The compiler still processes only the pinned,
+clean Ghostty source.
+
+The script then builds at fixed source, cache, and prefix paths. LLVM strips
+debug data from every member of Ghostty's emitted fat archive, zeros each COFF
+timestamp, and repacks ordinally sorted members with deterministic `llvm-ar
+rcD` mode. It deliberately does not replay the emitted `build-lib` command.
+Header and symbol inventories use the same ordinal, case-sensitive ordering,
+so hashes do not depend on the Windows locale. Two complete builds start from
+empty caches at the same canonical paths and must match byte for byte before
+publication. The fixed `C:\Users\Public\paneflow-libghostty-ae52f97d` source
+path is part of the hash contract; the build aborts if that path is unavailable
+or already occupied.
 
 The fat archive contains Ghostty's Zig objects, Zig `compiler_rt`, simdutf,
 and Highway. COFF directives record `RuntimeLibrary=MT_StaticRelease` and

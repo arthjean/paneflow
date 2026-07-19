@@ -141,6 +141,13 @@ if ($Target -ne "x86_64-pc-windows-msvc") {
 $SourceSha = Get-ManifestString "source_sha"
 $GhosttyVersion = Get-ManifestString "ghostty_app_version"
 $ZigVersion = Get-ManifestString "zig_version"
+$ZigArchiveUrl = Get-ManifestString "windows_zig_archive_url"
+$ZigArchiveSha = Get-ManifestString "windows_zig_archive_sha256"
+$ZigExecutableSha = Get-ManifestString "windows_zig_executable_sha256"
+$ZigFixedBaseExecutableSha = Get-ManifestString "windows_zig_fixed_base_executable_sha256"
+$ZigImageBase = Get-ManifestString "windows_zig_image_base"
+$ZigDllCharacteristics = Get-ManifestString "windows_zig_dll_characteristics"
+$ZigFixedBaseDllCharacteristics = Get-ManifestString "windows_zig_fixed_base_dll_characteristics"
 $BindingsSha = Get-ManifestString "bindings_sha256"
 $NoticeSha = Get-ManifestString "notice_sha256"
 $SbomSha = Get-ManifestString "sbom_sha256"
@@ -182,6 +189,13 @@ $BuildValues = Get-KeyValueFile $BuildInfo
 foreach ($expectation in @(
     @{ Key = "source_sha"; Value = $SourceSha },
     @{ Key = "zig_version"; Value = $ZigVersion },
+    @{ Key = "zig_archive_url"; Value = $ZigArchiveUrl },
+    @{ Key = "zig_archive_sha256"; Value = $ZigArchiveSha },
+    @{ Key = "zig_executable_sha256"; Value = $ZigExecutableSha },
+    @{ Key = "zig_fixed_base_executable_sha256"; Value = $ZigFixedBaseExecutableSha },
+    @{ Key = "zig_image_base"; Value = $ZigImageBase },
+    @{ Key = "zig_dll_characteristics"; Value = $ZigDllCharacteristics },
+    @{ Key = "zig_fixed_base_dll_characteristics"; Value = $ZigFixedBaseDllCharacteristics },
     @{ Key = "rust_target"; Value = $Target },
     @{ Key = "archive_sha256"; Value = $ArchiveSha },
     @{ Key = "bindings_sha256"; Value = $BindingsSha },
@@ -389,6 +403,15 @@ $Report = [ordered]@{
     source_sha = $SourceSha
     ghostty_version = $GhosttyVersion
     zig_version = $ZigVersion
+    zig_codegen = [ordered]@{
+        archive_url = $ZigArchiveUrl
+        archive_sha256 = $ZigArchiveSha
+        executable_sha256 = $ZigExecutableSha
+        fixed_base_executable_sha256 = $ZigFixedBaseExecutableSha
+        image_base = $ZigImageBase
+        dll_characteristics = $ZigDllCharacteristics
+        fixed_base_dll_characteristics = $ZigFixedBaseDllCharacteristics
+    }
     archive_sha256 = $ArchiveSha
     manifest_sha256 = Get-NormalizedTextSha256 $ManifestPath
     notice_sha256 = $NoticeSha

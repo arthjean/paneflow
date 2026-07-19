@@ -142,6 +142,34 @@ fn main() -> BuildResult<()> {
                 "source_date_epoch",
                 manifest_value(&manifest, "windows_source_date_epoch")?,
             ),
+            (
+                "zig_archive_url",
+                manifest_value(&manifest, "windows_zig_archive_url")?,
+            ),
+            (
+                "zig_archive_sha256",
+                manifest_value(&manifest, "windows_zig_archive_sha256")?,
+            ),
+            (
+                "zig_executable_sha256",
+                manifest_value(&manifest, "windows_zig_executable_sha256")?,
+            ),
+            (
+                "zig_fixed_base_executable_sha256",
+                manifest_value(&manifest, "windows_zig_fixed_base_executable_sha256")?,
+            ),
+            (
+                "zig_image_base",
+                manifest_value(&manifest, "windows_zig_image_base")?,
+            ),
+            (
+                "zig_dll_characteristics",
+                manifest_value(&manifest, "windows_zig_dll_characteristics")?,
+            ),
+            (
+                "zig_fixed_base_dll_characteristics",
+                manifest_value(&manifest, "windows_zig_fixed_base_dll_characteristics")?,
+            ),
             ("simd", "true"),
             (
                 "build_seed",
