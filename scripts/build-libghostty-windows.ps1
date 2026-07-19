@@ -3,6 +3,7 @@ param(
     [string]$SourceDir = $env:PANEFLOW_GHOSTTY_SOURCE_DIR,
     [string]$OutputDir,
     [string]$Zig = "zig",
+    [string]$EvidenceDir = $env:EVIDENCE_DIR,
     [switch]$VerifyReproducible
 )
 
@@ -218,6 +219,196 @@ function Normalize-CoffArchive {
     Remove-Item -LiteralPath $work -Recurse -Force
 }
 
+function Write-Utf8Json {
+    param(
+        [string]$Path,
+        [object]$Value
+    )
+
+    $json = ConvertTo-Json -InputObject $Value -Depth 8
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($Path, $json + "`n", $encoding)
+}
+
+function Reset-EvidenceSubdirectory {
+    param(
+        [string]$EvidenceRoot,
+        [string]$Name
+    )
+
+    $resolvedRoot = [IO.Path]::GetFullPath($EvidenceRoot).TrimEnd('\', '/')
+    $destination = [IO.Path]::GetFullPath((Join-Path $resolvedRoot $Name))
+    if (-not $destination.StartsWith($resolvedRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "refusing to reset evidence outside $resolvedRoot`: $destination"
+    }
+    if (Test-Path -LiteralPath $destination) {
+        Remove-Item -LiteralPath $destination -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $destination | Out-Null
+    return $destination
+}
+
+function Export-FinalArchiveMembers {
+    param(
+        [string]$Archive,
+        [string]$Destination,
+        [string]$InventoryPath,
+        [string]$LlvmAr
+    )
+
+    $memberOutput = @(& $LlvmAr t $Archive)
+    $memberExitCode = $LASTEXITCODE
+    if ($memberExitCode -ne 0 -or $memberOutput.Count -eq 0) {
+        throw "cannot enumerate final COFF members in $Archive"
+    }
+    $memberNames = @($memberOutput | ForEach-Object { $_.ToString() })
+    $memberSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($memberName in $memberNames) {
+        $leaf = Split-Path $memberName -Leaf
+        if ([string]::IsNullOrWhiteSpace($leaf) -or $leaf -ne $memberName) {
+            throw "final COFF archive contains an unsafe member name: $memberName"
+        }
+        if (-not $memberSet.Add($memberName)) {
+            throw "final COFF archive contains a duplicate member name: $memberName"
+        }
+    }
+
+    New-Item -ItemType Directory -Path $Destination | Out-Null
+    Push-Location $Destination
+    try {
+        $null = & $LlvmAr x $Archive
+        $extractExitCode = $LASTEXITCODE
+        if ($extractExitCode -ne 0) {
+            throw "cannot extract final COFF members from $Archive"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+
+    $inventoryMembers = @()
+    for ($index = 0; $index -lt $memberNames.Count; $index++) {
+        $memberName = $memberNames[$index]
+        $memberPath = Join-Path $Destination $memberName
+        if (-not (Test-Path -LiteralPath $memberPath -PathType Leaf)) {
+            throw "final COFF member was not extracted: $memberName"
+        }
+        $member = Get-Item -LiteralPath $memberPath
+        $inventoryMembers += [pscustomobject][ordered]@{
+            ordinal = $index + 1
+            name = $memberName
+            size = [int64]$member.Length
+            sha256 = Get-Sha256 $member.FullName
+        }
+    }
+    $archiveFile = Get-Item -LiteralPath $Archive
+    Write-Utf8Json $InventoryPath ([ordered]@{
+        schema_version = 1
+        archive = $archiveFile.Name
+        archive_size = [int64]$archiveFile.Length
+        archive_sha256 = Get-Sha256 $archiveFile.FullName
+        members = [object[]]$inventoryMembers
+    })
+}
+
+function Export-BuildEvidence {
+    param(
+        [string]$Label,
+        [string]$Prepared,
+        [string]$EvidenceRoot,
+        [string]$LlvmAr
+    )
+
+    $buildEvidence = Reset-EvidenceSubdirectory $EvidenceRoot $Label
+    $preparedEvidence = Join-Path $buildEvidence "prepared"
+    New-Item -ItemType Directory -Path $preparedEvidence | Out-Null
+    Get-ChildItem -LiteralPath $Prepared -Force | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $preparedEvidence -Recurse -Force
+    }
+
+    $buildRoot = Split-Path $Prepared -Parent
+    $rawArchive = Join-Path $buildRoot "raw\lib\ghostty-vt-static.lib"
+    $replacementArchive = Join-Path $buildRoot "deterministic\ghostty-vt-static.lib"
+    $finalArchive = Join-Path $Prepared "lib\ghostty-vt-static.lib"
+    foreach ($archive in @($rawArchive, $replacementArchive, $finalArchive)) {
+        if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
+            throw "cannot collect reproducibility evidence because archive is missing: $archive"
+        }
+    }
+
+    $rawEvidence = Join-Path $buildEvidence "archives\raw"
+    $replacementEvidence = Join-Path $buildEvidence "archives\replacement"
+    New-Item -ItemType Directory -Force -Path $rawEvidence, $replacementEvidence | Out-Null
+    Copy-Item -LiteralPath $rawArchive -Destination (Join-Path $rawEvidence "ghostty-vt-static.lib")
+    Copy-Item -LiteralPath $replacementArchive -Destination (Join-Path $replacementEvidence "ghostty-vt-static.lib")
+
+    $membersEvidence = Join-Path $buildEvidence "final-members"
+    $inventoryPath = Join-Path $buildEvidence "final-members.json"
+    Export-FinalArchiveMembers $finalArchive $membersEvidence $inventoryPath $LlvmAr
+}
+
+function Export-ReproducibilityEvidence {
+    param(
+        [string]$FirstPrepared,
+        [string]$SecondPrepared,
+        [string]$EvidenceRoot,
+        [string[]]$ComparedPaths,
+        [string]$LlvmAr
+    )
+
+    Assert-NonRootDirectory $EvidenceRoot "libghostty reproducibility evidence"
+    New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
+    $comparisonPath = Join-Path $EvidenceRoot "comparison.json"
+    if (Test-Path -LiteralPath $comparisonPath) {
+        Remove-Item -LiteralPath $comparisonPath -Force
+    }
+
+    Export-BuildEvidence "build-1" $FirstPrepared $EvidenceRoot $LlvmAr
+    Export-BuildEvidence "build-2" $SecondPrepared $EvidenceRoot $LlvmAr
+
+    $comparisons = @(
+        foreach ($relative in $ComparedPaths) {
+            $left = Get-Item -LiteralPath (Join-Path $FirstPrepared $relative)
+            $right = Get-Item -LiteralPath (Join-Path $SecondPrepared $relative)
+            $leftSha = Get-Sha256 $left.FullName
+            $rightSha = Get-Sha256 $right.FullName
+            [pscustomobject][ordered]@{
+                path = $relative.Replace('\', '/')
+                left_size = [int64]$left.Length
+                left_sha256 = $leftSha
+                right_size = [int64]$right.Length
+                right_sha256 = $rightSha
+                equal = $leftSha -eq $rightSha
+            }
+        }
+    )
+    Write-Utf8Json $comparisonPath ([ordered]@{
+        schema_version = 1
+        target = $Target
+        source_sha = $SourceSha
+        source_date_epoch = $SourceDateEpoch
+        toolchain = [ordered]@{
+            zig_version = $ZigVersion
+            msvc_toolset = $MsvcToolset
+            windows_sdk = $WindowsSdk
+            llvm_version = $LlvmVersion
+        }
+        build = [ordered]@{
+            mode = $BuildMode
+            seed = $BuildSeed
+            jobs = $BuildJobs
+            canonical_source_path = $CanonicalSourcePath
+            canonical_cache_path = "$CanonicalSourcePath/.paneflow-zig-cache"
+            canonical_prefix_path = "$CanonicalSourcePath/.paneflow-zig-output"
+            archive_normalization = $Normalization
+        }
+        left = "build-1"
+        right = "build-2"
+        files = [object[]]$comparisons
+    })
+    return $comparisons
+}
+
 if ([string]::IsNullOrWhiteSpace($SourceDir)) {
     throw "PANEFLOW_GHOSTTY_SOURCE_DIR or -SourceDir must point to the pinned Ghostty checkout"
 }
@@ -325,6 +516,12 @@ $requiredSymbols = @(
 )
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("paneflow-libghostty-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
+if ([string]::IsNullOrWhiteSpace($EvidenceDir)) {
+    $EvidenceDir = Join-Path $tempRoot "reproducibility-evidence"
+}
+else {
+    $EvidenceDir = [IO.Path]::GetFullPath($EvidenceDir)
+}
 $succeeded = $false
 $fixedSourceCreated = $false
 $canonicalSource = [IO.Path]::GetFullPath($CanonicalSourcePath)
@@ -556,12 +753,12 @@ try {
     $first = Invoke-NativeBuild "build-1"
     if ($VerifyReproducible) {
         $second = Invoke-NativeBuild "build-2"
-        foreach ($relative in @("lib\ghostty-vt-static.lib", "headers.sha256", "bindings.rs", "symbols.txt", "build-info.txt")) {
-            $left = Join-Path $first $relative
-            $right = Join-Path $second $relative
-            if ((Get-Sha256 $left) -ne (Get-Sha256 $right)) {
-                throw "reproducibility mismatch for $relative between clean builds"
-            }
+        $comparedPaths = @("lib\ghostty-vt-static.lib", "headers.sha256", "bindings.rs", "symbols.txt", "build-info.txt")
+        $comparisons = @(Export-ReproducibilityEvidence $first $second $EvidenceDir $comparedPaths $llvmAr)
+        $mismatches = @($comparisons | Where-Object { -not $_.equal })
+        if ($mismatches.Count -ne 0) {
+            $mismatch = $mismatches[0]
+            throw "reproducibility mismatch for $($mismatch.path) between clean builds (left sha256 $($mismatch.left_sha256), right sha256 $($mismatch.right_sha256)); evidence is $EvidenceDir"
         }
     }
 
