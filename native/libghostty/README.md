@@ -60,18 +60,18 @@ The upstream preparation command is:
 zig build --verbose --seed 0 -j1 -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dsimd=true --prefix <fixed-prefix>
 ```
 
-Zig 0.15.2 does not forward the build runner's `-j1` to the static
-`build-lib` child. The script therefore replays the exact emitted
-`ghostty-vt-static` compiler command with `-j1 -fno-incremental`, at fixed
-source, cache, and prefix paths. Its members replace the corresponding
-members in Ghostty's fat archive. LLVM then strips debug data, zeros each COFF
-timestamp, and repacks ordinally sorted members with deterministic
-`llvm-ar rcD` mode. Header and symbol inventories use the same ordinal,
-case-sensitive ordering, so hashes do not depend on the Windows locale. Two
-complete builds start from empty caches at the same canonical paths and must
-match byte for byte before publication. The fixed
-`C:\Users\Public\paneflow-libghostty-ae52f97d` source path is part of the hash
-contract; the build aborts if that path is unavailable or already occupied.
+The script builds at fixed source, cache, and prefix paths. LLVM then strips
+debug data from every member of Ghostty's emitted fat archive, zeros each
+COFF timestamp, and repacks ordinally sorted members with deterministic
+`llvm-ar rcD` mode. It deliberately does not replay the emitted `build-lib`
+command: Zig 0.15.2 can assign registers differently across isolated direct
+replays even when the upstream archive is byte-stable. Header and symbol
+inventories use the same ordinal, case-sensitive ordering, so hashes do not
+depend on the Windows locale. Two complete builds start from empty caches at
+the same canonical paths and must match byte for byte before publication. The
+fixed `C:\Users\Public\paneflow-libghostty-ae52f97d` source path is part of the
+hash contract; the build aborts if that path is unavailable or already
+occupied.
 
 The fat archive contains Ghostty's Zig objects, Zig `compiler_rt`, simdutf,
 and Highway. COFF directives record `RuntimeLibrary=MT_StaticRelease` and

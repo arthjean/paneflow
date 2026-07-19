@@ -134,7 +134,6 @@ function Resolve-Tool {
 function Normalize-CoffArchive {
     param(
         [string]$Archive,
-        [string]$ReplacementArchive,
         [string]$Destination,
         [string]$LlvmObjcopy,
         [string]$LlvmAr
@@ -145,10 +144,6 @@ function Normalize-CoffArchive {
     $archiveMembers = @(& $LlvmAr t $Archive)
     if ($LASTEXITCODE -ne 0 -or $archiveMembers.Count -eq 0) {
         throw "cannot enumerate COFF members in $Archive"
-    }
-    $replacementMembers = @(& $LlvmAr t $ReplacementArchive)
-    if ($LASTEXITCODE -ne 0 -or $replacementMembers.Count -eq 0) {
-        throw "cannot enumerate deterministic COFF members in $ReplacementArchive"
     }
     $names = @($archiveMembers | ForEach-Object { Split-Path $_ -Leaf })
     $nameSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
@@ -161,21 +156,12 @@ function Normalize-CoffArchive {
     if ($duplicates.Count -ne 0) {
         throw "COFF normalization found duplicate member names: $([string]::Join(', ', $duplicates))"
     }
-    $replacementNames = @($replacementMembers | ForEach-Object { Split-Path $_ -Leaf })
-    $unknownReplacements = @(Sort-Ordinal @($replacementNames | Where-Object { -not $nameSet.Contains($_) }))
-    if ($unknownReplacements.Count -ne 0) {
-        throw "deterministic archive contains unexpected members: $($unknownReplacements -join ', ')"
-    }
 
     Push-Location $work
     try {
         $null = & $LlvmAr x $Archive
         if ($LASTEXITCODE -ne 0) {
             throw "llvm-ar failed to extract $Archive"
-        }
-        $null = & $LlvmAr x $ReplacementArchive
-        if ($LASTEXITCODE -ne 0) {
-            throw "llvm-ar failed to overlay $ReplacementArchive"
         }
     }
     finally {
@@ -328,19 +314,16 @@ function Export-BuildEvidence {
 
     $buildRoot = Split-Path $Prepared -Parent
     $rawArchive = Join-Path $buildRoot "raw\lib\ghostty-vt-static.lib"
-    $replacementArchive = Join-Path $buildRoot "deterministic\ghostty-vt-static.lib"
     $finalArchive = Join-Path $Prepared "lib\ghostty-vt-static.lib"
-    foreach ($archive in @($rawArchive, $replacementArchive, $finalArchive)) {
+    foreach ($archive in @($rawArchive, $finalArchive)) {
         if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
             throw "cannot collect reproducibility evidence because archive is missing: $archive"
         }
     }
 
     $rawEvidence = Join-Path $buildEvidence "archives\raw"
-    $replacementEvidence = Join-Path $buildEvidence "archives\replacement"
-    New-Item -ItemType Directory -Force -Path $rawEvidence, $replacementEvidence | Out-Null
+    New-Item -ItemType Directory -Force -Path $rawEvidence | Out-Null
     Copy-Item -LiteralPath $rawArchive -Destination (Join-Path $rawEvidence "ghostty-vt-static.lib")
-    Copy-Item -LiteralPath $replacementArchive -Destination (Join-Path $replacementEvidence "ghostty-vt-static.lib")
 
     $membersEvidence = Join-Path $buildEvidence "final-members"
     $inventoryPath = Join-Path $buildEvidence "final-members.json"
@@ -500,7 +483,7 @@ if ($LASTEXITCODE -ne 0 -or -not ($llvmVersionOutput -match "LLVM version $([reg
     throw "libghostty requires LLVM normalization tools $LlvmVersion"
 }
 
-if ($Normalization -ne "fixed-zig-paths+build-lib-j1-no-incremental+fat-member-overlay+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
+if ($Normalization -ne "fixed-zig-paths+zig-build-seed0-j1+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
     throw "unsupported Windows archive normalization: $Normalization"
 }
 
@@ -558,18 +541,16 @@ function Invoke-NativeBuild {
     $buildRoot = Join-Path $tempRoot $Label
     $raw = Join-Path $buildRoot "raw"
     $prepared = Join-Path $buildRoot "prepared"
-    $deterministicDir = Join-Path $buildRoot "deterministic"
     $cacheRoot = Join-Path $buildSource ".paneflow-zig-cache"
     $zigPrefix = Join-Path $buildSource ".paneflow-zig-output"
     $globalCache = Join-Path $cacheRoot "global"
     $localCache = Join-Path $cacheRoot "local"
-    $compilerCache = Join-Path $cacheRoot "compiler"
     foreach ($fixedPath in @($cacheRoot, $zigPrefix)) {
         if (Test-Path -LiteralPath $fixedPath) {
             throw "fixed reproducibility path is already in use: $fixedPath"
         }
     }
-    New-Item -ItemType Directory -Force -Path $prepared, $deterministicDir, $globalCache, $localCache, $compilerCache | Out-Null
+    New-Item -ItemType Directory -Force -Path $prepared, $globalCache, $localCache | Out-Null
 
     $oldGlobal = $env:ZIG_GLOBAL_CACHE_DIR
     $oldLocal = $env:ZIG_LOCAL_CACHE_DIR
@@ -586,24 +567,6 @@ function Invoke-NativeBuild {
         if ($zigExitCode -ne 0) {
             throw "SIMD libghostty build failed with exit code $zigExitCode; raw reproducer is $buildRoot`n$($zigOutput -join "`n")"
         }
-
-        $staticCommands = @($zigOutput | Where-Object {
-            $_ -match '\bbuild-lib\b' -and
-            $_ -match '--name ghostty-vt-static\b' -and
-            $_ -match '\s-static(?:\s|$)'
-        })
-        if ($staticCommands.Count -ne 1) {
-            throw "expected one ghostty-vt-static compiler command, found $($staticCommands.Count)"
-        }
-        $directCommand = $staticCommands[0]
-        $directCommand = $directCommand -replace '\bbuild-lib\b', 'build-lib -j1 -fno-incremental'
-        $directCommand = $directCommand -replace '--cache-dir\s+"[^"]+"', ('--cache-dir "' + $compilerCache + '"')
-        $directCommand = $directCommand -replace '\s+--listen=-\s*$', ''
-        $directOutput = @(& $env:ComSpec /d /s /c $directCommand 2>&1 | ForEach-Object { $_.ToString() })
-        $directExitCode = $LASTEXITCODE
-        if ($directExitCode -ne 0) {
-            throw "serialized non-incremental libghostty compile failed with exit code $directExitCode; reproducer is $buildRoot`n$($directOutput -join "`n")"
-        }
     }
     finally {
         Pop-Location
@@ -613,7 +576,6 @@ function Invoke-NativeBuild {
         $env:NO_COLOR = $oldNoColor
     }
 
-    $directArchive = Join-Path $buildSource "ghostty-vt-static.lib"
     if (-not (Test-Path -LiteralPath $zigPrefix -PathType Container)) {
         throw "Zig did not emit the fixed install prefix $zigPrefix"
     }
@@ -626,17 +588,11 @@ function Invoke-NativeBuild {
     if (-not (Test-Path -LiteralPath (Join-Path $rawInclude "ghostty\vt.h"))) {
         throw "missing installed libghostty headers: $rawInclude"
     }
-    if (-not (Test-Path -LiteralPath $directArchive)) {
-        throw "serialized compiler did not emit $directArchive"
-    }
-    $deterministicArchive = Join-Path $deterministicDir "ghostty-vt-static.lib"
-    Move-Item -LiteralPath $directArchive -Destination $deterministicArchive
-
     $libDir = Join-Path $prepared "lib"
     $includeDir = Join-Path $prepared "include"
     New-Item -ItemType Directory -Force -Path $libDir, $includeDir | Out-Null
     $archive = Join-Path $libDir "ghostty-vt-static.lib"
-    Normalize-CoffArchive $rawArchive $deterministicArchive $archive $llvmObjcopy $llvmAr
+    Normalize-CoffArchive $rawArchive $archive $llvmObjcopy $llvmAr
     Copy-Item -LiteralPath (Join-Path $rawInclude "ghostty") -Destination $includeDir -Recurse -Force
     $bindingText = [IO.File]::ReadAllText($bindings).Replace("`r`n", "`n").Replace("`r", "`n")
     $encoding = New-Object System.Text.UTF8Encoding($false)
@@ -723,8 +679,6 @@ function Invoke-NativeBuild {
         "simd=true",
         "build_seed=$BuildSeed",
         "build_jobs=$BuildJobs",
-        "compiler_jobs=1",
-        "compiler_incremental=false",
         "canonical_source_path=$CanonicalSourcePath",
         "canonical_cache_path=$CanonicalSourcePath/.paneflow-zig-cache",
         "canonical_prefix_path=$CanonicalSourcePath/.paneflow-zig-output",

@@ -151,8 +151,6 @@ fn main() -> BuildResult<()> {
                 "build_jobs",
                 manifest_value(&manifest, "windows_build_jobs")?,
             ),
-            ("compiler_jobs", "1"),
-            ("compiler_incremental", "false"),
             ("canonical_source_path", canonical_source),
             ("canonical_cache_path", canonical_cache.as_str()),
             ("canonical_prefix_path", canonical_prefix.as_str()),
