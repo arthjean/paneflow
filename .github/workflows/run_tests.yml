@@ -1325,10 +1325,14 @@ jobs:
           key: aarch64-pc-windows-msvc
 
       - name: cargo clippy --target aarch64-pc-windows-msvc
-        run: cargo clippy --workspace --locked --target aarch64-pc-windows-msvc -- -D warnings
+        # Windows ARM64 is intentionally outside the x64-only libghostty
+        # artifact scope. Disable the Linux default feature so this lane keeps
+        # proving the portable application path instead of requesting a fake
+        # native ARM64 archive.
+        run: cargo clippy --workspace --locked --no-default-features --target aarch64-pc-windows-msvc -- -D warnings
 
       - name: cargo check --target aarch64-pc-windows-msvc
-        run: cargo check --workspace --locked --target aarch64-pc-windows-msvc
+        run: cargo check --workspace --locked --no-default-features --target aarch64-pc-windows-msvc
 
   # ───────────────────────────────────────────────────────────────────────
   # Single aggregator job - mirrors Zed's run_tests.yml `tests_pass`
