@@ -1290,7 +1290,8 @@ jobs:
           pwsh -NoProfile -File ./scripts/verify-libghostty-windows.ps1 `
             -Target $env:TARGET `
             -Binary $exe `
-            -ReportPath $report
+            -ReportPath $report `
+            -AllowGeneratedIcons
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $provenance = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json

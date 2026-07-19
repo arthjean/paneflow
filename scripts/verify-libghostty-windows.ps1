@@ -4,7 +4,8 @@ param(
     [string]$Binary,
     [string]$PackageRoot,
     [string]$RuntimeEvidence,
-    [string]$ReportPath
+    [string]$ReportPath,
+    [switch]$AllowGeneratedIcons
 )
 
 Set-StrictMode -Version Latest
@@ -345,8 +346,28 @@ $Commit = (& git -C $Root rev-parse HEAD).Trim()
 if ($Commit -notmatch '^[0-9a-f]{40}$') {
     throw "libghostty provenance requires a full checked-out Git commit SHA"
 }
-$WorktreeChanges = @(& git -C $Root status --porcelain --untracked-files=all -- `
-        . ':(exclude).ghostty-source' ':(exclude).ghostty-source/**')
+$WorktreePathspecs = @(
+    ".",
+    ":(exclude).ghostty-source",
+    ":(exclude).ghostty-source/**"
+)
+if ($AllowGeneratedIcons) {
+    $WorktreePathspecs += @(
+        ":(exclude)assets/PaneFlow.ico",
+        ":(exclude)assets/icons/paneflow-16.png",
+        ":(exclude)assets/icons/paneflow-24.png",
+        ":(exclude)assets/icons/paneflow-32.png",
+        ":(exclude)assets/icons/paneflow-48.png",
+        ":(exclude)assets/icons/paneflow-64.png",
+        ":(exclude)assets/icons/paneflow-128.png",
+        ":(exclude)assets/icons/paneflow-256.png",
+        ":(exclude)assets/icons/paneflow-512.png",
+        ":(exclude)assets/icons/paneflow.png",
+        ":(exclude)packaging/wix/paneflow.ico",
+        ":(exclude)src-app/assets/icons/paneflow.png"
+    )
+}
+$WorktreeChanges = @(& git -C $Root status --porcelain --untracked-files=all -- @WorktreePathspecs)
 if ($LASTEXITCODE -ne 0) {
     throw "could not inspect the libghostty provenance worktree"
 }
@@ -358,6 +379,7 @@ $Report = [ordered]@{
     schema_version = 1
     commit = $Commit
     worktree_dirty = $false
+    generated_icon_changes_allowed = [bool]$AllowGeneratedIcons
     target = $Target
     source_sha = $SourceSha
     ghostty_version = $GhosttyVersion
