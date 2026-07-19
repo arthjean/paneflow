@@ -2277,6 +2277,10 @@ fn pane_kind(surface: &SurfaceDefinition) -> PaneKind {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "layout fixtures remain beside the workspace presentation helpers"
+)]
 mod layout_tests {
     use paneflow_config::schema::LayoutNode;
 

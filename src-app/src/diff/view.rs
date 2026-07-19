@@ -1312,6 +1312,10 @@ impl DiffView {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::items_after_test_module,
+    reason = "path normalization remains beside the view implementation"
+)]
 mod tests {
     use super::*;
 

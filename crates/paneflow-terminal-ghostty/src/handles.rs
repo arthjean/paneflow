@@ -108,12 +108,12 @@ mod tests {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
-        let result: Result<()> = (|| {
+        let result: Result<()> = {
             let _terminal = fake_handle(1);
             let _render_state = fake_handle(2);
             let _row_iterator = fake_handle(3);
             Err(GhosttyError::AbiMismatch("forced partial init".into()))
-        })();
+        };
 
         assert!(result.is_err());
         assert_eq!(

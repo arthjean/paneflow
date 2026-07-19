@@ -5,6 +5,10 @@ use paneflow_terminal_ghostty::{
     MouseAction, MouseButton, MouseInput, Point, Rgb, Scroll, SelectionRange, WideCell, WindowSize,
 };
 
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
 fn terminal(cols: usize, rows: usize) -> DisplayTerminal {
     DisplayTerminal::new(WindowSize::new(cols, rows, 8, 16).unwrap(), 10_000).unwrap()
 }
@@ -30,13 +34,7 @@ fn feed_produces_owned_snapshot_and_ordered_effects() {
     assert!(snapshot.cells.iter().any(|cell| {
         cell.character == 'e' && cell.zerowidth.as_deref() == Some(['\u{301}'].as_slice())
     }));
-    assert!(
-        snapshot
-            .cells
-            .iter()
-            .take(5)
-            .all(|cell| cell.flags.bold == false)
-    );
+    assert!(snapshot.cells.iter().take(5).all(|cell| !cell.flags.bold));
 
     let events = terminal.drain_events();
     assert!(matches!(events.first(), Some(BackendEvent::Title(title)) if title == "owned title"));
@@ -371,6 +369,10 @@ fn absolute_scroll_rows_rebase_on_the_live_viewport() {
     assert_eq!(snapshot.display_offset, snapshot.history_size);
 }
 
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
 fn terminal_with_wrapped_scrollback(prompt_redraw: bool) -> DisplayTerminal {
     let mut terminal = terminal(140, 49);
     let prompt_start = if prompt_redraw {
@@ -394,6 +396,10 @@ fn terminal_with_wrapped_scrollback(prompt_redraw: bool) -> DisplayTerminal {
     terminal
 }
 
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture assertion must fail immediately"
+)]
 fn visible_non_blank(terminal: &mut DisplayTerminal) -> (usize, usize) {
     let snapshot = terminal.snapshot().unwrap();
     let non_blank = snapshot

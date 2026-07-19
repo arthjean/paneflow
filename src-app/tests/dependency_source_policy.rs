@@ -1,3 +1,8 @@
+#![allow(
+    clippy::panic,
+    reason = "integration test setup failures need contextual diagnostics"
+)]
+
 use std::path::Path;
 use std::process::Command;
 

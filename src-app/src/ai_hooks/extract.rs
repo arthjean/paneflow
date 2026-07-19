@@ -813,9 +813,10 @@ mod tests {
             return;
         };
         let bridge_str = bridge.to_string_lossy();
+        let version = env!("CARGO_PKG_VERSION");
         assert!(
-            !bridge_str.contains(VERSION),
-            "EP-001 US-003: bridge path {bridge_str} must NOT embed the version {VERSION}"
+            !bridge_str.contains(version),
+            "EP-001 US-003: bridge path {bridge_str} must NOT embed the version {version}"
         );
         // Distinct from the versioned helper cache dir.
         if let Ok(cache) = ensure_binaries_extracted() {

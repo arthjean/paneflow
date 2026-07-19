@@ -1047,7 +1047,7 @@ mod tests {
 
     #[test]
     fn numstat_z_skips_non_utf8_paths() {
-        let raw = b"1\t0\tsrc/\xff.rs\02\t0\tsrc/ok.rs\0";
+        let raw = b"1\t0\tsrc/\xff.rs\x002\t0\tsrc/ok.rs\0";
         let parsed = parse_numstat_z(raw);
         assert_eq!(
             parsed.get("src/ok.rs"),
