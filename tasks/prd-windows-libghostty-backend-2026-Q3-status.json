@@ -33,7 +33,7 @@
     {
       "id": "EP-004",
       "title": "Industrialiser CI, sécurité, performance et MSI",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 4,
       "stories_done": 0
@@ -225,22 +225,22 @@
       "id": "US-013",
       "title": "Ajouter la lane CI native et les contrôles supply-chain",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-002",
         "US-004"
       ],
-      "started_at": null,
+      "started_at": "2026-07-19",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-07-19"
     },
     {
       "id": "US-014",
       "title": "Enforcer corpus, performance et budgets de ressources",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
@@ -248,39 +248,39 @@
         "US-009",
         "US-010"
       ],
-      "started_at": null,
+      "started_at": "2026-07-19",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-07-19"
     },
     {
       "id": "US-015",
       "title": "Intégrer le linkage statique au MSI et aux notices",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-013",
         "US-014"
       ],
-      "started_at": null,
+      "started_at": "2026-07-19",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-07-19"
     },
     {
       "id": "US-016",
       "title": "Exécuter la matrice Windows et publier le runbook de diagnostic",
       "epic": "EP-004",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-012",
         "US-015"
       ],
-      "started_at": null,
+      "started_at": "2026-07-19",
       "completed_at": null,
-      "reviewed_at": null
+      "reviewed_at": "2026-07-19"
     },
     {
       "id": "US-017",
