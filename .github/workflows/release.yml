@@ -2662,7 +2662,8 @@ jobs:
                       '-Binary', $freshExe,
                       '-PackageRoot', $installDir,
                       '-RuntimeEvidence', $freshGhosttyEvidence,
-                      '-ReportPath', $freshReportPath
+                      '-ReportPath', $freshReportPath,
+                      '-AllowReleaseAssets'
                   ) `
                   -Label 'fresh-installed libghostty runtime verifier'
               $freshReport = Get-Content -LiteralPath $freshReportPath -Raw | ConvertFrom-Json
@@ -2775,7 +2776,8 @@ jobs:
                       '-Binary', $exe,
                       '-PackageRoot', $installDir,
                       '-RuntimeEvidence', $freshGhosttyEvidence,
-                      '-ReportPath', $installedReportPath
+                      '-ReportPath', $installedReportPath,
+                      '-AllowReleaseAssets'
                   ) `
                   -Label 'installed libghostty verifier'
 

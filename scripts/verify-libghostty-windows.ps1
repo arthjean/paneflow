@@ -5,7 +5,8 @@ param(
     [string]$PackageRoot,
     [string]$RuntimeEvidence,
     [string]$ReportPath,
-    [switch]$AllowGeneratedIcons
+    [switch]$AllowGeneratedIcons,
+    [switch]$AllowReleaseAssets
 )
 
 Set-StrictMode -Version Latest
@@ -367,6 +368,9 @@ if ($AllowGeneratedIcons) {
         ":(exclude)src-app/assets/icons/paneflow.png"
     )
 }
+if ($AllowReleaseAssets) {
+    $WorktreePathspecs += ":(exclude)release-assets/**"
+}
 $WorktreeChanges = @(& git -C $Root status --porcelain --untracked-files=all -- @WorktreePathspecs)
 if ($LASTEXITCODE -ne 0) {
     throw "could not inspect the libghostty provenance worktree"
@@ -380,6 +384,7 @@ $Report = [ordered]@{
     commit = $Commit
     worktree_dirty = $false
     generated_icon_changes_allowed = [bool]$AllowGeneratedIcons
+    release_asset_changes_allowed = [bool]$AllowReleaseAssets
     target = $Target
     source_sha = $SourceSha
     ghostty_version = $GhosttyVersion
