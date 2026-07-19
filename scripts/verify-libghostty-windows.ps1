@@ -144,10 +144,13 @@ $ZigVersion = Get-ManifestString "zig_version"
 $ZigArchiveUrl = Get-ManifestString "windows_zig_archive_url"
 $ZigArchiveSha = Get-ManifestString "windows_zig_archive_sha256"
 $ZigExecutableSha = Get-ManifestString "windows_zig_executable_sha256"
-$ZigFixedBaseExecutableSha = Get-ManifestString "windows_zig_fixed_base_executable_sha256"
 $ZigImageBase = Get-ManifestString "windows_zig_image_base"
 $ZigDllCharacteristics = Get-ManifestString "windows_zig_dll_characteristics"
-$ZigFixedBaseDllCharacteristics = Get-ManifestString "windows_zig_fixed_base_dll_characteristics"
+$SourcePatchPath = Get-ManifestString "windows_source_patch_path"
+$SourcePatchSha = Get-ManifestString "windows_source_patch_sha256"
+$SourcePatchTarget = Get-ManifestString "windows_source_patch_target"
+$SourcePatchInputSha = Get-ManifestString "windows_source_patch_input_sha256"
+$SourcePatchOutputSha = Get-ManifestString "windows_source_patch_output_sha256"
 $BindingsSha = Get-ManifestString "bindings_sha256"
 $NoticeSha = Get-ManifestString "notice_sha256"
 $SbomSha = Get-ManifestString "sbom_sha256"
@@ -166,8 +169,12 @@ $Header = Join-Path $PreparedRoot "include\ghostty\vt.h"
 $CanonicalBindings = Join-Path $Root (Get-ManifestString "bindings_path")
 $Notice = Join-Path $Root (Get-ManifestString "notice_path")
 $Sbom = Join-Path $Root (Get-ManifestString "sbom_path")
+$SourcePatch = [IO.Path]::GetFullPath((Join-Path $Root $SourcePatchPath))
+if (-not $SourcePatch.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "manifest-pinned Ghostty source patch must stay inside the repository"
+}
 
-foreach ($required in @($Archive, $BuildInfo, $Headers, $Symbols, $PreparedBindings, $Header, $CanonicalBindings, $Notice, $Sbom)) {
+foreach ($required in @($Archive, $BuildInfo, $Headers, $Symbols, $PreparedBindings, $Header, $CanonicalBindings, $Notice, $Sbom, $SourcePatch)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "missing reviewed libghostty Windows input: $required"
     }
@@ -184,6 +191,7 @@ Assert-TextHash $CanonicalBindings $BindingsSha "canonical libghostty bindings"
 Assert-TextHash $Header (Get-ManifestString "header_sha256") "Windows libghostty public header"
 Assert-TextHash $Notice $NoticeSha "libghostty third-party notice"
 Assert-TextHash $Sbom $SbomSha "libghostty CycloneDX SBOM"
+Assert-TextHash $SourcePatch $SourcePatchSha "Windows libghostty source patch"
 
 $BuildValues = Get-KeyValueFile $BuildInfo
 foreach ($expectation in @(
@@ -192,10 +200,13 @@ foreach ($expectation in @(
     @{ Key = "zig_archive_url"; Value = $ZigArchiveUrl },
     @{ Key = "zig_archive_sha256"; Value = $ZigArchiveSha },
     @{ Key = "zig_executable_sha256"; Value = $ZigExecutableSha },
-    @{ Key = "zig_fixed_base_executable_sha256"; Value = $ZigFixedBaseExecutableSha },
     @{ Key = "zig_image_base"; Value = $ZigImageBase },
     @{ Key = "zig_dll_characteristics"; Value = $ZigDllCharacteristics },
-    @{ Key = "zig_fixed_base_dll_characteristics"; Value = $ZigFixedBaseDllCharacteristics },
+    @{ Key = "source_patch_path"; Value = $SourcePatchPath },
+    @{ Key = "source_patch_sha256"; Value = $SourcePatchSha },
+    @{ Key = "source_patch_target"; Value = $SourcePatchTarget },
+    @{ Key = "source_patch_input_sha256"; Value = $SourcePatchInputSha },
+    @{ Key = "source_patch_output_sha256"; Value = $SourcePatchOutputSha },
     @{ Key = "rust_target"; Value = $Target },
     @{ Key = "archive_sha256"; Value = $ArchiveSha },
     @{ Key = "bindings_sha256"; Value = $BindingsSha },
@@ -407,10 +418,15 @@ $Report = [ordered]@{
         archive_url = $ZigArchiveUrl
         archive_sha256 = $ZigArchiveSha
         executable_sha256 = $ZigExecutableSha
-        fixed_base_executable_sha256 = $ZigFixedBaseExecutableSha
         image_base = $ZigImageBase
         dll_characteristics = $ZigDllCharacteristics
-        fixed_base_dll_characteristics = $ZigFixedBaseDllCharacteristics
+    }
+    source_patch = [ordered]@{
+        path = $SourcePatchPath
+        sha256 = $SourcePatchSha
+        target = $SourcePatchTarget
+        input_sha256 = $SourcePatchInputSha
+        output_sha256 = $SourcePatchOutputSha
     }
     archive_sha256 = $ArchiveSha
     manifest_sha256 = Get-NormalizedTextSha256 $ManifestPath

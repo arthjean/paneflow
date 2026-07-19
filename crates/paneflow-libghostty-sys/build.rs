@@ -58,6 +58,18 @@ fn main() -> BuildResult<()> {
     };
     let action = corrective_action(spec.platform, &target);
 
+    if spec.platform == NativePlatform::Windows {
+        let source_patch = workspace.join(manifest_value(&manifest, "windows_source_patch_path")?);
+        require_file(&source_patch, &target, &action)?;
+        verify_text_hash(
+            &source_patch,
+            manifest_value(&manifest, "windows_source_patch_sha256")?,
+            &target,
+            &action,
+        )?;
+        println!("cargo:rerun-if-changed={}", source_patch.display());
+    }
+
     let canonical_bindings = workspace.join(manifest_value(&manifest, "bindings_path")?);
     verify_text_hash(
         &canonical_bindings,
@@ -155,8 +167,24 @@ fn main() -> BuildResult<()> {
                 manifest_value(&manifest, "windows_zig_executable_sha256")?,
             ),
             (
-                "zig_fixed_base_executable_sha256",
-                manifest_value(&manifest, "windows_zig_fixed_base_executable_sha256")?,
+                "source_patch_path",
+                manifest_value(&manifest, "windows_source_patch_path")?,
+            ),
+            (
+                "source_patch_sha256",
+                manifest_value(&manifest, "windows_source_patch_sha256")?,
+            ),
+            (
+                "source_patch_target",
+                manifest_value(&manifest, "windows_source_patch_target")?,
+            ),
+            (
+                "source_patch_input_sha256",
+                manifest_value(&manifest, "windows_source_patch_input_sha256")?,
+            ),
+            (
+                "source_patch_output_sha256",
+                manifest_value(&manifest, "windows_source_patch_output_sha256")?,
             ),
             (
                 "zig_image_base",
@@ -165,10 +193,6 @@ fn main() -> BuildResult<()> {
             (
                 "zig_dll_characteristics",
                 manifest_value(&manifest, "windows_zig_dll_characteristics")?,
-            ),
-            (
-                "zig_fixed_base_dll_characteristics",
-                manifest_value(&manifest, "windows_zig_fixed_base_dll_characteristics")?,
             ),
             ("simd", "true"),
             (

@@ -1,0 +1,372 @@
+diff --git a/src/terminal/formatter.zig b/src/terminal/formatter.zig
+index a375b4dd7..d54db4285 100644
+--- a/src/terminal/formatter.zig
++++ b/src/terminal/formatter.zig
+@@ -879,0 +880,14 @@ pub const PageFormatter = struct {
++    ) std.Io.Writer.Error!TrailingState {
++        return switch (self.opts.emit) {
++            inline else => |emit| @call(
++                .never_inline,
++                PageFormatter.formatWithStateForEmit,
++                .{ self, writer, emit },
++            ),
++        };
++    }
++
++    fn formatWithStateForEmit(
++        self: PageFormatter,
++        writer: *std.Io.Writer,
++        comptime emit: Format,
+@@ -936,62 +950,5 @@ pub const PageFormatter = struct {
+-        // Wrap HTML output in monospace font styling
+-        switch (self.opts.emit) {
+-            .plain => {},
+-
+-            .html => {
+-                // Setup our div. We use a buffer here that should always
+-                // fit the stuff we need, in order to make counting bytes easier.
+-                var buf: [1024]u8 = undefined;
+-                var stream = std.io.fixedBufferStream(&buf);
+-                const buf_writer = stream.writer();
+-
+-                // Monospace and whitespace preserving
+-                buf_writer.writeAll("<div style=\"font-family: monospace; white-space: pre;") catch return error.WriteFailed;
+-
+-                // Background/foreground colors
+-                if (self.opts.background) |bg| buf_writer.print(
+-                    "background-color: #{x:0>2}{x:0>2}{x:0>2};",
+-                    .{ bg.r, bg.g, bg.b },
+-                ) catch return error.WriteFailed;
+-                if (self.opts.foreground) |fg| buf_writer.print(
+-                    "color: #{x:0>2}{x:0>2}{x:0>2};",
+-                    .{ fg.r, fg.g, fg.b },
+-                ) catch return error.WriteFailed;
+-
+-                buf_writer.writeAll("\">") catch return error.WriteFailed;
+-
+-                const header = stream.getWritten();
+-                try writer.writeAll(header);
+-                if (self.point_map) |*map| map.map.appendNTimes(
+-                    map.alloc,
+-                    .{ .x = 0, .y = 0 },
+-                    header.len,
+-                ) catch return error.WriteFailed;
+-            },
+-
+-            .vt => {
+-                // OSC 10 sets foreground color, OSC 11 sets background color
+-                var buf: [512]u8 = undefined;
+-                var stream = std.io.fixedBufferStream(&buf);
+-                const buf_writer = stream.writer();
+-                if (self.opts.foreground) |fg| {
+-                    buf_writer.print(
+-                        "\x1b]10;rgb:{x:0>2}/{x:0>2}/{x:0>2}\x1b\\",
+-                        .{ fg.r, fg.g, fg.b },
+-                    ) catch return error.WriteFailed;
+-                }
+-                if (self.opts.background) |bg| {
+-                    buf_writer.print(
+-                        "\x1b]11;rgb:{x:0>2}/{x:0>2}/{x:0>2}\x1b\\",
+-                        .{ bg.r, bg.g, bg.b },
+-                    ) catch return error.WriteFailed;
+-                }
+-
+-                const header = stream.getWritten();
+-                try writer.writeAll(header);
+-                if (self.point_map) |*map| map.map.appendNTimes(
+-                    map.alloc,
+-                    .{ .x = 0, .y = 0 },
+-                    header.len,
+-                ) catch return error.WriteFailed;
+-            },
+-        }
++        try @call(
++            .never_inline,
++            PageFormatter.formatHeaderForEmit,
++            .{ self, writer, emit },
++        );
+@@ -1052,54 +1009,5 @@ pub const PageFormatter = struct {
+-                // Reset style before emitting newlines to prevent background
+-                // colors from bleeding into the next line's leading cells.
+-                if (!style.default()) {
+-                    try self.formatStyleClose(writer);
+-                    style = .{};
+-                }
+-
+-                const sequence: []const u8 = switch (self.opts.emit) {
+-                    // Plaintext just uses standard newlines because newlines
+-                    // on their own usually move the cursor back in anywhere
+-                    // you type plaintext.
+-                    .plain => "\n",
+-
+-                    // VT uses \r\n because in a raw pty, \n alone doesn't
+-                    // guarantee moving the cursor back to column 0. \r
+-                    // makes it work for sure.
+-                    .vt => "\r\n",
+-
+-                    // HTML uses just \n because HTML rendering will move
+-                    // the cursor back.
+-                    .html => "\n",
+-                };
+-
+-                for (0..blank_rows) |_| try writer.writeAll(sequence);
+-
+-                // \r and \n map to the row that ends with this newline.
+-                // If we're continuing (trailing state) then this will be
+-                // in a prior page, so we just map to the first row of this
+-                // page.
+-                if (self.point_map) |*map| {
+-                    const start: Coordinate = if (map.map.items.len > 0)
+-                        map.map.items[map.map.items.len - 1]
+-                    else
+-                        .{ .x = 0, .y = 0 };
+-
+-                    // The first one inherits the x value.
+-                    map.map.appendNTimes(
+-                        map.alloc,
+-                        .{ .x = start.x, .y = start.y },
+-                        sequence.len,
+-                    ) catch return error.WriteFailed;
+-
+-                    // All others have x = 0 since they reference their prior
+-                    // blank line.
+-                    for (1..blank_rows) |y_offset_usize| {
+-                        const y_offset: size.CellCountInt = @intCast(y_offset_usize);
+-                        map.map.appendNTimes(
+-                            map.alloc,
+-                            .{ .x = 0, .y = start.y + y_offset },
+-                            sequence.len,
+-                        ) catch return error.WriteFailed;
+-                    }
+-                }
+-
++                try @call(
++                    .never_inline,
++                    PageFormatter.formatBlankRowsForEmit,
++                    .{ self, writer, emit, blank_rows, &style },
++                );
+@@ -1135 +1043 @@ pub const PageFormatter = struct {
+-                    if (formatStyled(self.opts.emit) and
++                    if (formatStyled(emit) and
+@@ -1191 +1099 @@ pub const PageFormatter = struct {
+-                    if (!formatStyled(self.opts.emit)) break :style;
++                    if (!formatStyled(emit)) break :style;
+@@ -1202,2 +1110,6 @@ pub const PageFormatter = struct {
+-                    if (!style.default()) switch (self.opts.emit) {
+-                        .html => try self.formatStyleClose(writer),
++                    if (!style.default()) switch (emit) {
++                        .html => try @call(
++                            .never_inline,
++                            PageFormatter.formatStyleClose,
++                            .{ self, writer },
++                        ),
+@@ -1208 +1120,5 @@ pub const PageFormatter = struct {
+-                        .vt => if (cell_style.default()) try self.formatStyleClose(writer),
++                        .vt => if (cell_style.default()) try @call(
++                            .never_inline,
++                            PageFormatter.formatStyleClose,
++                            .{ self, writer },
++                        ),
+@@ -1222,3 +1138,4 @@ pub const PageFormatter = struct {
+-                    try self.formatStyleOpen(
+-                        writer,
+-                        &style,
++                    try @call(
++                        .never_inline,
++                        PageFormatter.formatStyleOpen,
++                        .{ self, writer, &style },
+@@ -1231,3 +1148,4 @@ pub const PageFormatter = struct {
+-                        try self.formatStyleOpen(
+-                            &discarding.writer,
+-                            &style,
++                        try @call(
++                            .never_inline,
++                            PageFormatter.formatStyleOpen,
++                            .{ self, &discarding.writer, &style },
+@@ -1250 +1168 @@ pub const PageFormatter = struct {
+-                    if (self.opts.emit != .html) break :hyperlink;
++                    if (emit != .html) break :hyperlink;
+@@ -1266 +1184,5 @@ pub const PageFormatter = struct {
+-                        try self.formatHyperlinkClose(writer);
++                        try @call(
++                            .never_inline,
++                            PageFormatter.formatHyperlinkClose,
++                            .{ self, writer },
++                        );
+@@ -1282,3 +1204,4 @@ pub const PageFormatter = struct {
+-                    try self.formatHyperlinkOpen(
+-                        writer,
+-                        uri,
++                    try @call(
++                        .never_inline,
++                        PageFormatter.formatHyperlinkOpen,
++                        .{ self, writer, uri },
+@@ -1291,3 +1214,4 @@ pub const PageFormatter = struct {
+-                        try self.formatHyperlinkOpen(
+-                            &discarding.writer,
+-                            uri,
++                        try @call(
++                            .never_inline,
++                            PageFormatter.formatHyperlinkOpen,
++                            .{ self, &discarding.writer, uri },
+@@ -1309 +1233,5 @@ pub const PageFormatter = struct {
+-                        try self.writeCell(tag, writer, cell);
++                        try @call(
++                            .never_inline,
++                            PageFormatter.writeCell,
++                            .{ self, tag, writer, cell },
++                        );
+@@ -1315 +1243,5 @@ pub const PageFormatter = struct {
+-                            try self.writeCell(tag, &discarding.writer, cell);
++                            try @call(
++                                .never_inline,
++                                PageFormatter.writeCell,
++                                .{ self, tag, &discarding.writer, cell },
++                            );
+@@ -1340 +1272,5 @@ pub const PageFormatter = struct {
+-        if (!style.default()) try self.formatStyleClose(writer);
++        if (!style.default()) try @call(
++            .never_inline,
++            PageFormatter.formatStyleClose,
++            .{ self, writer },
++        );
+@@ -1343 +1279,5 @@ pub const PageFormatter = struct {
+-        if (current_hyperlink_id != null) try self.formatHyperlinkClose(writer);
++        if (current_hyperlink_id != null) try @call(
++            .never_inline,
++            PageFormatter.formatHyperlinkClose,
++            .{ self, writer },
++        );
+@@ -1346 +1286 @@ pub const PageFormatter = struct {
+-        if (self.opts.emit == .html) {
++        if (emit == .html) {
+@@ -1363,0 +1304,129 @@ pub const PageFormatter = struct {
++    fn formatHeaderForEmit(
++        self: PageFormatter,
++        writer: *std.Io.Writer,
++        comptime emit: Format,
++    ) std.Io.Writer.Error!void {
++        // Wrap HTML output in monospace font styling
++        switch (emit) {
++            .plain => {},
++
++            .html => {
++                // Setup our div. We use a buffer here that should always
++                // fit the stuff we need, in order to make counting bytes easier.
++                var buf: [1024]u8 = undefined;
++                var stream = std.io.fixedBufferStream(&buf);
++                const buf_writer = stream.writer();
++
++                // Monospace and whitespace preserving
++                buf_writer.writeAll("<div style=\"font-family: monospace; white-space: pre;") catch return error.WriteFailed;
++
++                // Background/foreground colors
++                if (self.opts.background) |bg| buf_writer.print(
++                    "background-color: #{x:0>2}{x:0>2}{x:0>2};",
++                    .{ bg.r, bg.g, bg.b },
++                ) catch return error.WriteFailed;
++                if (self.opts.foreground) |fg| buf_writer.print(
++                    "color: #{x:0>2}{x:0>2}{x:0>2};",
++                    .{ fg.r, fg.g, fg.b },
++                ) catch return error.WriteFailed;
++
++                buf_writer.writeAll("\">") catch return error.WriteFailed;
++
++                const header = stream.getWritten();
++                try writer.writeAll(header);
++                if (self.point_map) |*map| map.map.appendNTimes(
++                    map.alloc,
++                    .{ .x = 0, .y = 0 },
++                    header.len,
++                ) catch return error.WriteFailed;
++            },
++
++            .vt => {
++                // OSC 10 sets foreground color, OSC 11 sets background color
++                var buf: [512]u8 = undefined;
++                var stream = std.io.fixedBufferStream(&buf);
++                const buf_writer = stream.writer();
++                if (self.opts.foreground) |fg| {
++                    buf_writer.print(
++                        "\x1b]10;rgb:{x:0>2}/{x:0>2}/{x:0>2}\x1b\\",
++                        .{ fg.r, fg.g, fg.b },
++                    ) catch return error.WriteFailed;
++                }
++                if (self.opts.background) |bg| {
++                    buf_writer.print(
++                        "\x1b]11;rgb:{x:0>2}/{x:0>2}/{x:0>2}\x1b\\",
++                        .{ bg.r, bg.g, bg.b },
++                    ) catch return error.WriteFailed;
++                }
++
++                const header = stream.getWritten();
++                try writer.writeAll(header);
++                if (self.point_map) |*map| map.map.appendNTimes(
++                    map.alloc,
++                    .{ .x = 0, .y = 0 },
++                    header.len,
++                ) catch return error.WriteFailed;
++            },
++        }
++    }
++
++    fn formatBlankRowsForEmit(
++        self: PageFormatter,
++        writer: *std.Io.Writer,
++        comptime emit: Format,
++        blank_rows: usize,
++        style: *Style,
++    ) std.Io.Writer.Error!void {
++        // Reset style before emitting newlines to prevent background colors
++        // from bleeding into the next line's leading cells.
++        if (!style.default()) {
++            try @call(
++                .never_inline,
++                PageFormatter.formatStyleClose,
++                .{ self, writer },
++            );
++            style.* = .{};
++        }
++
++        const sequence: []const u8 = switch (emit) {
++            // Plaintext just uses standard newlines because newlines on their
++            // own usually move the cursor back in anywhere you type plaintext.
++            .plain => "\n",
++
++            // VT uses \r\n because in a raw pty, \n alone doesn't guarantee
++            // moving the cursor back to column 0. \r makes it work for sure.
++            .vt => "\r\n",
++
++            // HTML uses just \n because HTML rendering will move the cursor back.
++            .html => "\n",
++        };
++
++        for (0..blank_rows) |_| try writer.writeAll(sequence);
++
++        // \r and \n map to the row that ends with this newline. If we're
++        // continuing then this can be in a prior page, so use the first row.
++        if (self.point_map) |*map| {
++            const start: Coordinate = if (map.map.items.len > 0)
++                map.map.items[map.map.items.len - 1]
++            else
++                .{ .x = 0, .y = 0 };
++
++            // The first one inherits the x value.
++            map.map.appendNTimes(
++                map.alloc,
++                .{ .x = start.x, .y = start.y },
++                sequence.len,
++            ) catch return error.WriteFailed;
++
++            // All others have x = 0 since they reference their prior blank line.
++            for (1..blank_rows) |y_offset_usize| {
++                const y_offset: size.CellCountInt = @intCast(y_offset_usize);
++                map.map.appendNTimes(
++                    map.alloc,
++                    .{ .x = 0, .y = start.y + y_offset },
++                    sequence.len,
++                ) catch return error.WriteFailed;
++            }
++        }
++    }
++

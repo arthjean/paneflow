@@ -92,69 +92,6 @@ function Get-Pe64ImageMetadata {
     }
 }
 
-function New-FixedBaseZig {
-    param(
-        [string]$Source,
-        [string]$Destination,
-        [string]$Version,
-        [string]$ExpectedSourceSha,
-        [string]$ExpectedFixedSha,
-        [string]$ExpectedImageBase,
-        [string]$ExpectedSourceCharacteristics,
-        [string]$ExpectedFixedCharacteristics
-    )
-
-    if ((Get-Sha256 $Source) -ne $ExpectedSourceSha) {
-        throw "Zig $Version executable checksum mismatch: $Source"
-    }
-    $sourceMetadata = Get-Pe64ImageMetadata $Source
-    if ($sourceMetadata.ImageBase -ne $ExpectedImageBase -or
-        $sourceMetadata.DllCharacteristics -ne $ExpectedSourceCharacteristics) {
-        throw "Zig $Version PE metadata drift: expected image base $ExpectedImageBase and DLL characteristics $ExpectedSourceCharacteristics, got $($sourceMetadata.ImageBase) and $($sourceMetadata.DllCharacteristics)"
-    }
-    if (($sourceMetadata.DllCharacteristicsValue -band 0x0060) -ne 0x0060) {
-        throw "Zig $Version must enable HIGH_ENTROPY_VA and DYNAMIC_BASE before fixed-base derivation"
-    }
-    $fixedCharacteristics = [uint16]($sourceMetadata.DllCharacteristicsValue -band 0xff9f)
-    if (("0x{0:x4}" -f $fixedCharacteristics) -ne $ExpectedFixedCharacteristics) {
-        throw "Zig $Version fixed-base DLL characteristics drift"
-    }
-    if (Test-Path -LiteralPath $Destination) {
-        throw "refusing to replace existing fixed-base Zig executable: $Destination"
-    }
-
-    $sourceLength = (Get-Item -LiteralPath $Source).Length
-    Copy-Item -LiteralPath $Source -Destination $Destination
-    $stream = [IO.File]::Open($Destination, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::Read)
-    $writer = [IO.BinaryWriter]::new($stream, [Text.Encoding]::ASCII, $true)
-    try {
-        $stream.Position = $sourceMetadata.DllCharacteristicsOffset
-        $writer.Write($fixedCharacteristics)
-        $writer.Flush()
-    }
-    finally {
-        $writer.Dispose()
-        $stream.Dispose()
-    }
-
-    $fixedMetadata = Get-Pe64ImageMetadata $Destination
-    if ((Get-Item -LiteralPath $Destination).Length -ne $sourceLength) {
-        throw "derived Zig $Version fixed-base executable size drift"
-    }
-    if ($fixedMetadata.ImageBase -ne $ExpectedImageBase -or
-        $fixedMetadata.DllCharacteristics -ne $ExpectedFixedCharacteristics) {
-        throw "derived Zig $Version fixed-base PE metadata is incoherent"
-    }
-    if ((Get-Sha256 $Destination) -ne $ExpectedFixedSha) {
-        throw "derived Zig $Version fixed-base executable checksum mismatch"
-    }
-    $fixedVersion = (& $Destination version).Trim()
-    if ($LASTEXITCODE -ne 0 -or $fixedVersion -ne $Version) {
-        throw "derived fixed-base Zig executable does not report version $Version"
-    }
-    return $Destination
-}
-
 function Write-Utf8Lines {
     param(
         [string]$Path,
@@ -477,15 +414,20 @@ function Export-ReproducibilityEvidence {
         target = $Target
         source_sha = $SourceSha
         source_date_epoch = $SourceDateEpoch
+        source_patch = [ordered]@{
+            path = $SourcePatchPath
+            sha256 = $SourcePatchSha
+            target = $SourcePatchTarget
+            input_sha256 = $SourcePatchInputSha
+            output_sha256 = $SourcePatchOutputSha
+        }
         toolchain = [ordered]@{
             zig_version = $ZigVersion
             zig_archive_url = $ZigArchiveUrl
             zig_archive_sha256 = $ZigArchiveSha
             zig_executable_sha256 = $ZigExecutableSha
-            zig_fixed_base_executable_sha256 = $ZigFixedBaseExecutableSha
             zig_image_base = $ZigImageBase
             zig_dll_characteristics = $ZigDllCharacteristics
-            zig_fixed_base_dll_characteristics = $ZigFixedBaseDllCharacteristics
             msvc_toolset = $MsvcToolset
             windows_sdk = $WindowsSdk
             llvm_version = $LlvmVersion
@@ -520,10 +462,13 @@ $ZigVersion = Get-ManifestString "zig_version"
 $ZigArchiveUrl = Get-ManifestString "windows_zig_archive_url"
 $ZigArchiveSha = Get-ManifestString "windows_zig_archive_sha256"
 $ZigExecutableSha = Get-ManifestString "windows_zig_executable_sha256"
-$ZigFixedBaseExecutableSha = Get-ManifestString "windows_zig_fixed_base_executable_sha256"
 $ZigImageBase = Get-ManifestString "windows_zig_image_base"
 $ZigDllCharacteristics = Get-ManifestString "windows_zig_dll_characteristics"
-$ZigFixedBaseDllCharacteristics = Get-ManifestString "windows_zig_fixed_base_dll_characteristics"
+$SourcePatchPath = Get-ManifestString "windows_source_patch_path"
+$SourcePatchSha = Get-ManifestString "windows_source_patch_sha256"
+$SourcePatchTarget = Get-ManifestString "windows_source_patch_target"
+$SourcePatchInputSha = Get-ManifestString "windows_source_patch_input_sha256"
+$SourcePatchOutputSha = Get-ManifestString "windows_source_patch_output_sha256"
 $HeaderPath = Get-ManifestString "header_path"
 $HeaderSha = Get-ManifestString "header_sha256"
 $BindingsPath = Get-ManifestString "bindings_path"
@@ -569,13 +514,44 @@ elseif ($null -ne $zigCommand) {
 else {
     throw "libghostty requires Zig $ZigVersion; pass -Zig or add it to PATH"
 }
-$actualZig = (& $ZigPath version).Trim()
-if ($actualZig -ne $ZigVersion) {
-    throw "libghostty requires Zig $ZigVersion, found $actualZig"
+if ((Get-Sha256 $ZigPath) -ne $ZigExecutableSha) {
+    throw "Zig $ZigVersion executable checksum mismatch: $ZigPath"
+}
+$zigMetadata = Get-Pe64ImageMetadata $ZigPath
+if ($zigMetadata.ImageBase -ne $ZigImageBase -or
+    $zigMetadata.DllCharacteristics -ne $ZigDllCharacteristics) {
+    throw "Zig $ZigVersion PE metadata drift: expected image base $ZigImageBase and DLL characteristics $ZigDllCharacteristics, got $($zigMetadata.ImageBase) and $($zigMetadata.DllCharacteristics)"
 }
 $ZigLibDir = Join-Path (Split-Path $ZigPath -Parent) "lib"
 if (-not (Test-Path -LiteralPath $ZigLibDir -PathType Container)) {
     throw "libghostty requires the Zig $ZigVersion library beside $ZigPath"
+}
+$actualZig = (& $ZigPath version).Trim()
+if ($LASTEXITCODE -ne 0 -or $actualZig -ne $ZigVersion) {
+    throw "libghostty requires Zig $ZigVersion, found $actualZig"
+}
+
+$SourcePatch = [IO.Path]::GetFullPath((Join-Path $Root $SourcePatchPath))
+if (-not $SourcePatch.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+    -not (Test-Path -LiteralPath $SourcePatch -PathType Leaf)) {
+    throw "manifest-pinned Ghostty source patch must be a repository file: $SourcePatchPath"
+}
+if ((Get-NormalizedTextSha256 $SourcePatch) -ne $SourcePatchSha) {
+    throw "Ghostty source patch checksum mismatch at $SourcePatch"
+}
+$patchStats = @(& git apply --unidiff-zero --numstat $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
+if ($LASTEXITCODE -ne 0 -or $patchStats.Count -ne 1 -or
+    $patchStats[0] -notmatch '^[0-9-]+\t[0-9-]+\t(.+)$' -or
+    $matches[1].Replace('\', '/') -ne $SourcePatchTarget.Replace('\', '/')) {
+    throw "Ghostty source patch must modify exactly $SourcePatchTarget"
+}
+$sourcePatchTargetPath = [IO.Path]::GetFullPath((Join-Path $SourceDir $SourcePatchTarget))
+if (-not $sourcePatchTargetPath.StartsWith($SourceDir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+    -not (Test-Path -LiteralPath $sourcePatchTargetPath -PathType Leaf)) {
+    throw "manifest-pinned Ghostty source patch target is invalid: $SourcePatchTarget"
+}
+if ((Get-NormalizedTextSha256 $sourcePatchTargetPath) -ne $SourcePatchInputSha) {
+    throw "Ghostty source patch input checksum mismatch at $sourcePatchTargetPath"
 }
 
 $sourceHeader = Join-Path $SourceDir $HeaderPath
@@ -608,7 +584,7 @@ if ($LASTEXITCODE -ne 0 -or -not ($llvmVersionOutput -match "LLVM version $([reg
     throw "libghostty requires LLVM normalization tools $LlvmVersion"
 }
 
-if ($Normalization -ne "zig-fixed-base+fixed-source-cache-prefix+zig-build-seed0-j1+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
+if ($Normalization -ne "pinned-formatter-patch+fixed-source-cache-prefix+zig-build-seed0-j1+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
     throw "unsupported Windows archive normalization: $Normalization"
 }
 
@@ -635,7 +611,6 @@ $fixedSourceCreated = $false
 $canonicalSource = [IO.Path]::GetFullPath($CanonicalSourcePath)
 $sourceArchive = Join-Path $tempRoot "source.tar"
 $buildSource = $null
-$FixedZigPath = Join-Path $tempRoot "zig-fixed-base.exe"
 
 function Initialize-CanonicalSource {
     $publicRoot = [IO.Path]::GetFullPath("C:\Users\Public")
@@ -657,6 +632,28 @@ function Initialize-CanonicalSource {
     }
     if ((Get-Sha256 (Join-Path $canonicalSource $HeaderPath)) -ne $HeaderSha) {
         throw "canonical Ghostty export has an unexpected header checksum"
+    }
+    $canonicalPatchTarget = [IO.Path]::GetFullPath((Join-Path $canonicalSource $SourcePatchTarget))
+    if (-not $canonicalPatchTarget.StartsWith($canonicalSource + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+        (Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchInputSha) {
+        throw "canonical Ghostty export has an unexpected source patch input"
+    }
+    Push-Location $canonicalSource
+    try {
+        $patchCheck = @(& git apply --unidiff-zero --check --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
+        if ($LASTEXITCODE -ne 0) {
+            throw "manifest-pinned Ghostty source patch does not apply cleanly`n$($patchCheck -join "`n")"
+        }
+        $patchOutput = @(& git apply --unidiff-zero --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
+        if ($LASTEXITCODE -ne 0) {
+            throw "cannot apply manifest-pinned Ghostty source patch`n$($patchOutput -join "`n")"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    if ((Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchOutputSha) {
+        throw "canonical Ghostty source patch output checksum mismatch"
     }
     return $canonicalSource
 }
@@ -688,7 +685,7 @@ function Invoke-NativeBuild {
     $env:NO_COLOR = "1"
     Push-Location $buildSource
     try {
-        $zigOutput = @(& $FixedZigPath build --zig-lib-dir $ZigLibDir --verbose --seed $BuildSeed "-j$BuildJobs" -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc "-Doptimize=$BuildMode" -Dsimd=true --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
+        $zigOutput = @(& $ZigPath build --zig-lib-dir $ZigLibDir --verbose --seed $BuildSeed "-j$BuildJobs" -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc "-Doptimize=$BuildMode" -Dsimd=true --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
         $zigExitCode = $LASTEXITCODE
         if ($zigExitCode -ne 0) {
             throw "SIMD libghostty build failed with exit code $zigExitCode; raw reproducer is $buildRoot`n$($zigOutput -join "`n")"
@@ -795,14 +792,17 @@ function Invoke-NativeBuild {
     Write-Utf8Lines $buildInfo @(
         "source_sha=$SourceSha",
         "source_date_epoch=$SourceDateEpoch",
+        "source_patch_path=$SourcePatchPath",
+        "source_patch_sha256=$SourcePatchSha",
+        "source_patch_target=$SourcePatchTarget",
+        "source_patch_input_sha256=$SourcePatchInputSha",
+        "source_patch_output_sha256=$SourcePatchOutputSha",
         "zig_version=$ZigVersion",
         "zig_archive_url=$ZigArchiveUrl",
         "zig_archive_sha256=$ZigArchiveSha",
         "zig_executable_sha256=$ZigExecutableSha",
-        "zig_fixed_base_executable_sha256=$ZigFixedBaseExecutableSha",
         "zig_image_base=$ZigImageBase",
         "zig_dll_characteristics=$ZigDllCharacteristics",
-        "zig_fixed_base_dll_characteristics=$ZigFixedBaseDllCharacteristics",
         "header_sha256=$HeaderSha",
         "headers_sha256=$headerIndexSha",
         "bindings_sha256=$BindingsSha",
@@ -836,15 +836,6 @@ function Invoke-NativeBuild {
 }
 
 try {
-    $null = New-FixedBaseZig `
-        -Source $ZigPath `
-        -Destination $FixedZigPath `
-        -Version $ZigVersion `
-        -ExpectedSourceSha $ZigExecutableSha `
-        -ExpectedFixedSha $ZigFixedBaseExecutableSha `
-        -ExpectedImageBase $ZigImageBase `
-        -ExpectedSourceCharacteristics $ZigDllCharacteristics `
-        -ExpectedFixedCharacteristics $ZigFixedBaseDllCharacteristics
     $buildSource = Initialize-CanonicalSource
     $first = Invoke-NativeBuild "build-1"
     if ($VerifyReproducible) {
