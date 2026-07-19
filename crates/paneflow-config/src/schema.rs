@@ -318,9 +318,13 @@ impl PaneFlowConfig {
     }
 
     /// Resolve the macOS Sidebar material switch. Missing values default ON;
-    /// the global opaque backdrop remains the master off switch.
+    /// opaque and raw-transparent backdrops remain master off switches.
     pub fn macos_chrome_material_enabled(&self) -> bool {
         !self.window_backdrop_disables_chrome_material()
+            && !self
+                .window_backdrop
+                .as_deref()
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("transparent"))
             && self.macos_chrome_material.unwrap_or(true)
     }
 
@@ -334,7 +338,7 @@ impl PaneFlowConfig {
         if cfg!(target_os = "windows") {
             self.windows_chrome_material.unwrap_or(false)
         } else if cfg!(target_os = "macos") {
-            self.macos_chrome_material.unwrap_or(true)
+            self.macos_chrome_material_enabled()
         } else {
             true
         }
@@ -1962,6 +1966,13 @@ mod tests {
             ..Default::default()
         };
         assert!(!globally_opaque.macos_chrome_material_enabled());
+
+        let raw_transparent = PaneFlowConfig {
+            window_backdrop: Some("transparent".to_string()),
+            macos_chrome_material: Some(true),
+            ..Default::default()
+        };
+        assert!(!raw_transparent.macos_chrome_material_enabled());
     }
 
     #[test]
