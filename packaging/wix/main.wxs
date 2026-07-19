@@ -2,7 +2,7 @@
 <!--
   PaneFlow Windows installer (US-013 - prd-windows-port.md).
   Seeded from `cargo wix init` on the paneflow-app crate (cargo-wix 0.3.9),
-  then customized for US-013 AC-2:
+  then customized for US-013 AC-2 and EP-004 US-015:
     - Install dir: %ProgramFiles%\PaneFlow\
     - paneflow.exe at the install root (no `bin` subdirectory - matches
       the PRD `%ProgramFiles%\PaneFlow\paneflow.exe` detection rule
@@ -11,6 +11,8 @@
       taskbar pins keep a stable icon path across major upgrades.
     - ARP (Add or Remove Programs) entry with publisher "Strivex" and
       the multi-resolution icon at `packaging/wix/paneflow.ico`.
+    - GPL license and libghostty provenance/compliance files beside the
+      executable, with no runtime Ghostty DLL.
     - User config at %APPDATA%\paneflow\ is preserved on uninstall
       (AC-6); WiX only removes the files it installed.
 
@@ -23,6 +25,8 @@
     * Component Id='ApplicationShortcut' = Start Menu shortcut GUID
                               (AC-2b). Stable for the lifetime of the
                               installer product line.
+    * Component Id='GhosttyCompliance' = fixed compliance inventory GUID.
+                              Keep it stable across upgrades.
 -->
 
 <?if $(sys.BUILDARCH) = x64 or $(sys.BUILDARCH) = arm64 ?>
@@ -65,12 +69,36 @@
             <Directory Id='$(var.PlatformProgramFilesFolder)' Name='PFiles'>
                 <Directory Id='APPLICATIONFOLDER' Name='PaneFlow'>
 
-                    <!-- License sidecar. -->
+                    <!-- Full GPL license sidecar. License.rtf is only the short
+                         notice displayed by the installer UI. -->
                     <Component Id='License' Guid='*'>
                         <File Id='LicenseFile'
+                            Name='LICENSE.txt'
                             DiskId='1'
-                            Source='packaging/wix/License.rtf'
+                            Source='LICENSE'
                             KeyPath='yes'/>
+                    </Component>
+
+                    <!-- Static libghostty compliance inventory. These are
+                         provenance and license records, not runtime DLLs. -->
+                    <Component Id='GhosttyCompliance' Guid='67E44FE2-1DB5-4353-8BA0-3C7C58E1A471'>
+                        <File Id='GhosttyThirdPartyNotices'
+                            Name='THIRD_PARTY_NOTICES.md'
+                            DiskId='1'
+                            Source='native/libghostty/THIRD_PARTY_NOTICES.md'
+                            KeyPath='yes'/>
+                        <File Id='GhosttySbom'
+                            Name='libghostty-sbom.cdx.json'
+                            DiskId='1'
+                            Source='native/libghostty/sbom.cdx.json'/>
+                        <File Id='GhosttyManifest'
+                            Name='libghostty-manifest.toml'
+                            DiskId='1'
+                            Source='native/libghostty/manifest.toml'/>
+                        <File Id='GhosttyBuildInfo'
+                            Name='libghostty-build-info.txt'
+                            DiskId='1'
+                            Source='native/libghostty/prebuilt/x86_64-pc-windows-msvc/build-info.txt'/>
                     </Component>
 
                     <!-- paneflow.exe lives directly under %ProgramFiles%\PaneFlow\
@@ -167,13 +195,14 @@
         <Feature
             Id='Binaries'
             Title='PaneFlow'
-            Description='Installs PaneFlow, its license, Start Menu shortcut, and an entry on PATH.'
+            Description='Installs PaneFlow, its GPL license, libghostty compliance records, Start Menu shortcut, and an entry on PATH.'
             Level='1'
             ConfigurableDirectory='APPLICATIONFOLDER'
             AllowAdvertise='no'
             Display='expand'
             Absent='disallow'>
             <ComponentRef Id='License'/>
+            <ComponentRef Id='GhosttyCompliance'/>
             <ComponentRef Id='binary0'/>
             <ComponentRef Id='HelperBinaries'/>
             <ComponentRef Id='ApplicationShortcut'/>

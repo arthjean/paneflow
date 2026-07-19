@@ -29,6 +29,11 @@ on:
         required: false
         type: string
         default: main
+      msi_upgrade_version:
+        description: "Optional x.y.z MSI ProductVersion used only by a dry-run upgrade smoke"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -69,6 +74,12 @@ env:
   # the historical `actions/checkout@v5` default behaviour); dry-run
   # uses the user-supplied target_ref (default: main).
   RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_ref || 'main') || github.ref_name }}
+  # A dry-run may need to exercise an upgrade from the latest release while
+  # the checked-out source still reports that same version. The override only
+  # changes the non-published MSI ProductVersion; real releases always use the
+  # tag version, including prereleases normalized by cargo-wix, and the smoke
+  # enforces that equality.
+  WINDOWS_MSI_VERSION: ${{ github.event_name == 'workflow_dispatch' && (inputs.msi_upgrade_version || inputs.version) || github.ref_name }}
   # Mode flag consumed by per-step `if:` / `continue-on-error:` gates
   # so a dry-run can never accidentally publish a Release.
   RELEASE_MODE: ${{ github.event_name == 'workflow_dispatch' && 'dry-run' || 'release' }}
@@ -564,7 +575,7 @@ jobs:
           if ($env:WINDOWS_HELPERS_PREPARED -eq 'true') {
               $env:PANEFLOW_SKIP_EMBED_BUILD = '1'
           }
-          cargo build --release -p paneflow-app --locked --no-default-features --target $env:TARGET
+          cargo build --release -p paneflow-app --locked --no-default-features --features paneflow-app/libghostty-windows --target $env:TARGET
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # --- Phase 1 artifacts ---
@@ -1268,6 +1279,31 @@ jobs:
           }
           pwsh -NoProfile -File ./scripts/sign-windows.ps1 -InputFile $exe
 
+      - name: Verify Windows libghostty release payload
+        if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          $report = 'target\libghostty-windows-release\provenance.json'
+          $exe = "target\$env:TARGET\release\paneflow.exe"
+          pwsh -NoProfile -File ./scripts/verify-libghostty-windows.ps1 `
+            -Target $env:TARGET `
+            -Binary $exe `
+            -ReportPath $report
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $provenance = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+          if ($provenance.linkage -ne 'static-candidate' -or
+              $provenance.runtime_smoke_verified -ne $false -or
+              [string]::IsNullOrWhiteSpace($provenance.binary_sha256)) {
+              throw 'libghostty release provenance did not produce the expected pre-smoke static candidate'
+          }
+          $serialized = Get-Content -LiteralPath $report -Raw
+          if ($serialized -match '(?i)[a-z]:\\') {
+              throw 'libghostty release provenance must not contain runner-local absolute paths'
+          }
+
       # ─── US-016 AC-1: Produce MSI ────────────────────────────────────────
       # cargo-wix reads [package.metadata.wix] in src-app/Cargo.toml (US-013)
       # and `packaging/wix/main.wxs` to drive candle → light. The
@@ -1284,9 +1320,12 @@ jobs:
         if: runner.os == 'Windows' && steps.windows_signing.outputs.signing_available == 'true'
         shell: pwsh
         env:
-          TAG: ${{ env.RELEASE_TAG }}
+          MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
         run: |
-          $version = $env:TAG -replace '^v', ''
+          $version = $env:MSI_VERSION -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
+              throw "Windows MSI ProductVersion must be valid semver, got '$version'"
+          }
           # --no-build: the "Build release binary" step above already
           # produced target/x86_64-pc-windows-msvc/release/paneflow.exe.
           # Without this flag cargo-wix 0.3.9 internally re-runs
@@ -1520,8 +1559,17 @@ jobs:
           fi
           src="${matches[0]}"
           dst="paneflow-${version}-x86_64-pc-windows-msvc.msi"
+          provenance_src="target/libghostty-windows-release/provenance.json"
+          provenance_dst="paneflow-${version}-x86_64-pc-windows-msvc.libghostty-provenance.json"
+          if [ ! -s "${provenance_src}" ]; then
+              echo "::error::Missing Windows libghostty provenance report at ${provenance_src}" >&2
+              exit 1
+          fi
           cp "${src}" "release-assets/${dst}"
-          ( cd release-assets && sha256sum "${dst}" > "${dst}.sha256" )
+          cp "${provenance_src}" "release-assets/${provenance_dst}"
+          ( cd release-assets \
+            && sha256sum "${dst}" > "${dst}.sha256" \
+            && sha256sum "${provenance_dst}" > "${provenance_dst}.sha256" )
           ls -la release-assets/
 
       # --- Stage all 4 artifacts with canonical names ---
@@ -2294,62 +2342,127 @@ jobs:
           name: release-assets-x86_64-Windows
           path: ./release-assets
 
-      - name: Install MSI, verify binary, and exercise update relay
+      - name: Download pinned v0.8.0 Alacritty-only MSI baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:BASELINE_DIR | Out-Null
+          gh release download v0.8.0 `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern 'paneflow-0.8.0-x86_64-pc-windows-msvc.msi' `
+            --pattern 'paneflow-0.8.0-x86_64-pc-windows-msvc.msi.sha256' `
+            --dir $env:BASELINE_DIR
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upgrade MSI, verify compliance, and exercise update relay
         env:
           TAG: ${{ env.RELEASE_TAG }}
+          MSI_VERSION: ${{ env.WINDOWS_MSI_VERSION }}
           SMOKE_DIR: ${{ runner.temp }}\paneflow-msi-smoke
+          BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
         run: |
           $ErrorActionPreference = 'Stop'
 
           New-Item -ItemType Directory -Force -Path $env:SMOKE_DIR | Out-Null
           $version = $env:TAG.TrimStart('v')
-          $msis = @(Get-ChildItem -LiteralPath 'release-assets' -Filter 'paneflow-*-x86_64-pc-windows-msvc.msi' -File)
+          $msiVersion = $env:MSI_VERSION.TrimStart('v')
+          if ($env:RELEASE_MODE -eq 'release' -and $msiVersion -ne $version) {
+              throw "Published MSI ProductVersion '$msiVersion' must match release version '$version'"
+          }
+          if ($msiVersion -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$') {
+              throw "Windows MSI upgrade smoke requires a valid semver, got '$msiVersion'"
+          }
+          if ($msiVersion -match '^\d+\.\d+\.\d+$' -and [version]$msiVersion -le [version]'0.8.0') {
+              throw "Windows MSI upgrade smoke requires an MSI ProductVersion newer than the pinned v0.8.0 baseline, got '$msiVersion'"
+          }
 
+          $msis = @(Get-ChildItem -LiteralPath 'release-assets' -Filter 'paneflow-*-x86_64-pc-windows-msvc.msi' -File)
           if ($msis.Count -ne 1) {
               $found = $msis | Sort-Object Name | ForEach-Object { $_.Name }
               throw "Expected exactly one Windows MSI, found $($msis.Count): $($found -join ', ')"
           }
-
           $msi = $msis[0]
           if ($msi.Length -le 0) {
               throw "MSI is empty: $($msi.FullName)"
           }
 
-          $shaPath = "$($msi.FullName).sha256"
-          if (-not (Test-Path -LiteralPath $shaPath)) {
-              throw "Missing SHA-256 sidecar: $shaPath"
+          $baselineMsis = @(Get-ChildItem -LiteralPath $env:BASELINE_DIR -Filter 'paneflow-0.8.0-x86_64-pc-windows-msvc.msi' -File)
+          if ($baselineMsis.Count -ne 1) {
+              throw "Expected exactly one pinned v0.8.0 MSI, found $($baselineMsis.Count)"
           }
+          $baselineMsi = $baselineMsis[0]
 
-          $expectedHash = ((Get-Content -LiteralPath $shaPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
-          if ($expectedHash -notmatch '^[a-f0-9]{64}$') {
-              throw "Invalid SHA-256 sidecar content in $shaPath"
-          }
-
-          $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $msi.FullName).Hash.ToLowerInvariant()
-          if ($actualHash -ne $expectedHash) {
-              throw "MSI SHA-256 mismatch: expected $expectedHash, got $actualHash"
-          }
-
-          $signature = Get-AuthenticodeSignature -LiteralPath $msi.FullName
-          if ($signature.Status -ne 'Valid') {
-              throw "MSI Authenticode signature is $($signature.Status): $($signature.StatusMessage)"
-          }
-
-          if ($signature.SignerCertificate) {
-              Write-Host "MSI signed by $($signature.SignerCertificate.Subject)"
-          }
           $publisherSource = Get-Content -LiteralPath 'src-app/src/update/windows/msi.rs' -Raw
           $publisherMatch = [regex]::Match(
               $publisherSource,
               'const\s+WINDOWS_PUBLISHER_ORGANIZATION:\s*&str\s*=\s*"([^"]+)";'
           )
           if (-not $publisherMatch.Success) {
-              throw "Could not read WINDOWS_PUBLISHER_ORGANIZATION from src-app/src/update/windows/msi.rs"
+              throw 'Could not read WINDOWS_PUBLISHER_ORGANIZATION from src-app/src/update/windows/msi.rs'
           }
           $expectedPublisher = $publisherMatch.Groups[1].Value
-          $publisherPattern = "(?:^|,\s*)O=$([regex]::Escape($expectedPublisher))(?:,|$)"
-          if ($signature.SignerCertificate.Subject -notmatch $publisherPattern) {
-              throw "MSI publisher mismatch: expected O=$expectedPublisher, got $($signature.SignerCertificate.Subject)"
+
+          function Assert-Sha256Sidecar {
+              param(
+                  [Parameter(Mandatory = $true)][string] $Path,
+                  [Parameter(Mandatory = $true)][string] $Sidecar,
+                  [Parameter(Mandatory = $true)][string] $Label
+              )
+
+              if (-not (Test-Path -LiteralPath $Sidecar -PathType Leaf)) {
+                  throw "$Label is missing SHA-256 sidecar: $Sidecar"
+              }
+              $expectedHash = ((Get-Content -LiteralPath $Sidecar -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+              if ($expectedHash -notmatch '^[a-f0-9]{64}$') {
+                  throw "$Label has invalid SHA-256 sidecar content in $Sidecar"
+              }
+              $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+              if ($actualHash -ne $expectedHash) {
+                  throw "$Label SHA-256 mismatch: expected $expectedHash, got $actualHash"
+              }
+          }
+
+          function Assert-MsiTrust {
+              param(
+                  [Parameter(Mandatory = $true)][System.IO.FileInfo] $Msi,
+                  [Parameter(Mandatory = $true)][string] $Publisher,
+                  [Parameter(Mandatory = $true)][string] $Label
+              )
+
+              Assert-Sha256Sidecar -Path $Msi.FullName -Sidecar "$($Msi.FullName).sha256" -Label $Label
+              $signature = Get-AuthenticodeSignature -LiteralPath $Msi.FullName
+              if ($signature.Status -ne 'Valid' -or $null -eq $signature.SignerCertificate) {
+                  throw "$Label Authenticode signature is $($signature.Status): $($signature.StatusMessage)"
+              }
+              $publisherPattern = "(?:^|,\s*)O=$([regex]::Escape($Publisher))(?:,|$)"
+              if ($signature.SignerCertificate.Subject -notmatch $publisherPattern) {
+                  throw "$Label publisher mismatch: expected O=$Publisher, got $($signature.SignerCertificate.Subject)"
+              }
+              Write-Host "$Label signed by $($signature.SignerCertificate.Subject)"
+          }
+
+          Assert-MsiTrust -Msi $baselineMsi -Publisher $expectedPublisher -Label 'Pinned v0.8.0 MSI'
+          Assert-MsiTrust -Msi $msi -Publisher $expectedPublisher -Label 'Candidate MSI'
+
+          $releaseReports = @(Get-ChildItem -LiteralPath 'release-assets' -Filter 'paneflow-*.libghostty-provenance.json' -File)
+          if ($releaseReports.Count -ne 1) {
+              throw "Expected exactly one Windows libghostty provenance report, found $($releaseReports.Count)"
+          }
+          $releaseReportFile = $releaseReports[0]
+          Assert-Sha256Sidecar `
+              -Path $releaseReportFile.FullName `
+              -Sidecar "$($releaseReportFile.FullName).sha256" `
+              -Label 'Windows libghostty provenance report'
+          $releaseReportText = Get-Content -LiteralPath $releaseReportFile.FullName -Raw
+          if ($releaseReportText -match '(?i)[a-z]:\\') {
+              throw 'Windows libghostty provenance report contains a runner-local absolute path'
+          }
+          $releaseReport = $releaseReportText | ConvertFrom-Json
+          if ($releaseReport.target -ne 'x86_64-pc-windows-msvc' -or
+              $releaseReport.linkage -ne 'static-candidate' -or
+              $releaseReport.runtime_smoke_verified -ne $false) {
+              throw 'Windows libghostty provenance report has the wrong target or linkage mode'
           }
 
           function Show-LogTail {
@@ -2394,37 +2507,295 @@ jobs:
               return $process.ExitCode
           }
 
+          $complianceSources = [ordered]@{
+              'LICENSE.txt' = 'LICENSE'
+              'THIRD_PARTY_NOTICES.md' = 'native/libghostty/THIRD_PARTY_NOTICES.md'
+              'libghostty-sbom.cdx.json' = 'native/libghostty/sbom.cdx.json'
+              'libghostty-manifest.toml' = 'native/libghostty/manifest.toml'
+              'libghostty-build-info.txt' = 'native/libghostty/prebuilt/x86_64-pc-windows-msvc/build-info.txt'
+          }
+
+          function Assert-NoMsiResidue {
+              param([Parameter(Mandatory = $true)][string] $Label)
+
+              if (-not (Test-Path -LiteralPath $installDir -PathType Container)) {
+                  return
+              }
+              $residue = @(Get-ChildItem -LiteralPath $installDir -Recurse -File -Force |
+                  ForEach-Object { [IO.Path]::GetRelativePath($installDir, $_.FullName) } |
+                  Sort-Object)
+              if ($residue.Count -ne 0) {
+                  throw "$Label left installed files: $($residue -join ', ')"
+              }
+          }
+
+          function Invoke-BackendLaunchSmoke {
+              param(
+                  [Parameter(Mandatory = $true)][string] $Exe,
+                  [Parameter(Mandatory = $true)][ValidateSet('ghostty', 'alacritty')][string] $Backend,
+                  [Parameter(Mandatory = $true)][string] $ExpectedRequested,
+                  [Parameter(Mandatory = $true)][string] $ExpectedEffective
+              )
+
+              $configDir = Join-Path $env:APPDATA 'paneflow'
+              $configPath = Join-Path $configDir 'paneflow.json'
+              New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+              [ordered]@{ terminal = [ordered]@{ backend = $Backend } } |
+                  ConvertTo-Json -Depth 4 |
+                  Set-Content -LiteralPath $configPath -Encoding utf8
+
+              $stdout = Join-Path $env:SMOKE_DIR "backend-$Backend.stdout.log"
+              $stderr = Join-Path $env:SMOKE_DIR "backend-$Backend.stderr.log"
+              $previousRustLog = $env:RUST_LOG
+              $process = $null
+              try {
+                  $env:RUST_LOG = 'paneflow::terminal::backend=info'
+                  $process = Start-Process -FilePath $Exe `
+                      -PassThru `
+                      -RedirectStandardOutput $stdout `
+                      -RedirectStandardError $stderr
+                  Start-Sleep -Seconds 15
+                  if ($process.HasExited) {
+                      throw "PaneFlow $Backend launch exited before the backend diagnostic was captured"
+                  }
+              }
+              finally {
+                  if ($null -ne $process -and -not $process.HasExited) {
+                      $process.Kill($true)
+                      $null = $process.WaitForExit(10000)
+                  }
+                  if ($null -eq $previousRustLog) {
+                      Remove-Item Env:RUST_LOG -ErrorAction SilentlyContinue
+                  }
+                  else {
+                      $env:RUST_LOG = $previousRustLog
+                  }
+              }
+
+              $backendLogParts = foreach ($logPath in @($stdout, $stderr)) {
+                  if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+                      Get-Content -LiteralPath $logPath -Raw
+                  }
+              }
+              $backendLog = @($backendLogParts) -join "`n"
+              $expected = "requested=$ExpectedRequested effective=$ExpectedEffective failure_phase=none"
+              if (-not $backendLog.Contains($expected)) {
+                  throw "PaneFlow $Backend launch did not emit the expected privacy-safe diagnostic '$expected'"
+              }
+              if ($backendLog -match '(?i)(command=|cwd=|clipboard=|osc_payload=|[a-z]:\\users\\)') {
+                  throw "PaneFlow $Backend diagnostic contains a forbidden sensitive field"
+              }
+              if ($Backend -eq 'ghostty') {
+                  foreach ($identity in @(
+                      "ghostty_source_sha=$($releaseReport.source_sha)",
+                      "ghostty_version=$($releaseReport.ghostty_version)"
+                  )) {
+                      if (-not $backendLog.Contains($identity)) {
+                          throw "PaneFlow Ghostty launch did not emit runtime identity '$identity'"
+                      }
+                  }
+                  $runtimeEvidencePath = Join-Path $env:SMOKE_DIR 'ghostty-runtime-evidence.json'
+                  [ordered]@{
+                      schema_version = 1
+                      binary_sha256 = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
+                      requested = $ExpectedRequested
+                      effective = $ExpectedEffective
+                      source_sha = $releaseReport.source_sha
+                      ghostty_version = $releaseReport.ghostty_version
+                      status = 'passed'
+                  } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $runtimeEvidencePath -Encoding utf8
+                  return $runtimeEvidencePath
+              }
+              return $null
+          }
+
           $msiexec = Join-Path $env:WINDIR 'System32\msiexec.exe'
-          $installLog = Join-Path $env:SMOKE_DIR 'install.log'
+          $installDir = Join-Path $env:ProgramFiles 'PaneFlow'
+          $pwsh = (Get-Command -Name pwsh -ErrorAction Stop).Source
+          $verifier = (Resolve-Path -LiteralPath 'scripts/verify-libghostty-windows.ps1').Path
+          $freshInstallLog = Join-Path $env:SMOKE_DIR 'fresh-install.log'
+          $freshUninstallLog = Join-Path $env:SMOKE_DIR 'fresh-uninstall.log'
+          $baselineInstallLog = Join-Path $env:SMOKE_DIR 'baseline-install.log'
+          $upgradeLog = Join-Path $env:SMOKE_DIR 'upgrade.log'
           $uninstallLog = Join-Path $env:SMOKE_DIR 'uninstall.log'
           $installed = $false
+          $uninstallMsi = $baselineMsi.FullName
+
+          $freshInstalled = $false
+          try {
+              try {
+                  Invoke-SmokeProcess `
+                      -FilePath $msiexec `
+                      -Arguments @('/i', $msi.FullName, '/qn', '/norestart', '/l*v', $freshInstallLog) `
+                      -Label 'candidate MSI fresh install'
+              }
+              catch {
+                  Show-LogTail -Path $freshInstallLog
+                  throw
+              }
+              $freshInstalled = $true
+              $freshExe = Join-Path $installDir 'paneflow.exe'
+              $freshVersion = (& $freshExe --version).Trim()
+              if ($LASTEXITCODE -ne 0 -or $freshVersion -ne "paneflow $version") {
+                  throw "Fresh candidate returned '$freshVersion', expected 'paneflow $version'"
+              }
+
+              $freshGhosttyEvidence = Invoke-BackendLaunchSmoke `
+                  -Exe $freshExe `
+                  -Backend 'ghostty' `
+                  -ExpectedRequested 'Ghostty' `
+                  -ExpectedEffective 'ghostty'
+              Invoke-BackendLaunchSmoke `
+                  -Exe $freshExe `
+                  -Backend 'alacritty' `
+                  -ExpectedRequested 'Alacritty' `
+                  -ExpectedEffective 'alacritty'
+
+              $freshReportPath = Join-Path $env:SMOKE_DIR 'fresh-install-libghostty-provenance.json'
+              Invoke-SmokeProcess `
+                  -FilePath $pwsh `
+                  -Arguments @(
+                      '-NoProfile',
+                      '-File', $verifier,
+                      '-Target', 'x86_64-pc-windows-msvc',
+                      '-Binary', $freshExe,
+                      '-PackageRoot', $installDir,
+                      '-RuntimeEvidence', $freshGhosttyEvidence,
+                      '-ReportPath', $freshReportPath
+                  ) `
+                  -Label 'fresh-installed libghostty runtime verifier'
+              $freshReport = Get-Content -LiteralPath $freshReportPath -Raw | ConvertFrom-Json
+              if ($freshReport.linkage -ne 'static' -or
+                  $freshReport.runtime_smoke_verified -ne $true -or
+                  $freshReport.binary_sha256 -ne $releaseReport.binary_sha256) {
+                  throw 'Fresh-installed PaneFlow binary did not produce runtime-verified static provenance'
+              }
+          }
+          finally {
+              if ($freshInstalled) {
+                  try {
+                      Invoke-SmokeProcess `
+                          -FilePath $msiexec `
+                          -Arguments @('/x', $msi.FullName, '/qn', '/norestart', '/l*v', $freshUninstallLog) `
+                          -Label 'candidate MSI fresh uninstall'
+                  }
+                  catch {
+                      Show-LogTail -Path $freshUninstallLog
+                      throw
+                  }
+              }
+          }
+          Assert-NoMsiResidue -Label 'Candidate fresh uninstall'
+
+          $configDir = Join-Path $env:APPDATA 'paneflow'
+          $configPath = Join-Path $configDir 'paneflow.json'
+          New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+          [ordered]@{ terminal = [ordered]@{ backend = 'alacritty' } } |
+              ConvertTo-Json -Depth 4 |
+              Set-Content -LiteralPath $configPath -Encoding utf8
+          $configHashBeforeUpgrade = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
 
           try {
               try {
                   Invoke-SmokeProcess `
                       -FilePath $msiexec `
-                      -Arguments @('/i', $msi.FullName, '/qn', '/norestart', '/l*v', $installLog) `
-                      -Label 'msiexec install'
+                      -Arguments @('/i', $baselineMsi.FullName, '/qn', '/norestart', '/l*v', $baselineInstallLog) `
+                      -Label 'pinned v0.8.0 MSI install'
               } catch {
-                  Show-LogTail -Path $installLog
+                  Show-LogTail -Path $baselineInstallLog
                   throw
               }
-
               $installed = $true
-              $installDir = Join-Path $env:ProgramFiles 'PaneFlow'
               $exe = Join-Path $installDir 'paneflow.exe'
               if (-not (Test-Path -LiteralPath $exe)) {
-                  throw "Installed paneflow.exe not found at $exe"
+                  throw "Pinned v0.8.0 paneflow.exe not found at $exe"
+              }
+              $baselineActualVersion = (& $exe --version).Trim()
+              if ($LASTEXITCODE -ne 0 -or $baselineActualVersion -ne 'paneflow 0.8.0') {
+                  throw "Pinned baseline returned '$baselineActualVersion', expected 'paneflow 0.8.0'"
               }
 
+              try {
+                  Invoke-SmokeProcess `
+                      -FilePath $msiexec `
+                      -Arguments @('/i', $msi.FullName, '/qn', '/norestart', '/l*v', $upgradeLog) `
+                      -Label 'candidate MSI upgrade'
+              } catch {
+                  Show-LogTail -Path $upgradeLog
+                  throw
+              }
+              $uninstallMsi = $msi.FullName
+
+              if (-not (Test-Path -LiteralPath $exe)) {
+                  throw "Upgraded paneflow.exe not found at $exe"
+              }
               $actualVersion = (& $exe --version).Trim()
               if ($LASTEXITCODE -ne 0) {
                   throw "paneflow --version exited with $LASTEXITCODE"
               }
-
               $expectedVersion = "paneflow $version"
               if ($actualVersion -ne $expectedVersion) {
                   throw "paneflow --version returned '$actualVersion', expected '$expectedVersion'"
+              }
+
+              if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+                  throw 'MSI upgrade removed the existing PaneFlow configuration'
+              }
+              $configHashAfterUpgrade = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
+              $preservedConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+              if ($configHashAfterUpgrade -ne $configHashBeforeUpgrade -or
+                  $preservedConfig.terminal.backend -ne 'alacritty') {
+                  throw 'MSI upgrade did not preserve the explicit Alacritty rollback configuration'
+              }
+
+              foreach ($entry in $complianceSources.GetEnumerator()) {
+                  $installedPath = Join-Path $installDir $entry.Key
+                  if (-not (Test-Path -LiteralPath $installedPath -PathType Leaf)) {
+                      throw "Installed MSI compliance inventory is missing $($entry.Key)"
+                  }
+                  $sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $entry.Value).Hash
+                  $installedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $installedPath).Hash
+                  if ($installedHash -ne $sourceHash) {
+                      throw "Installed MSI compliance file differs from its release source: $($entry.Key)"
+                  }
+              }
+              $forbiddenDlls = @(Get-ChildItem -LiteralPath $installDir -Recurse -Filter '*ghostty*.dll' -File)
+              if ($forbiddenDlls.Count -ne 0) {
+                  throw "Installed MSI contains forbidden Ghostty DLLs: $(($forbiddenDlls.FullName) -join ', ')"
+              }
+
+              $installedReportPath = Join-Path $env:SMOKE_DIR 'installed-libghostty-provenance.json'
+              Invoke-SmokeProcess `
+                  -FilePath $pwsh `
+                  -Arguments @(
+                      '-NoProfile',
+                      '-File', $verifier,
+                      '-Target', 'x86_64-pc-windows-msvc',
+                      '-Binary', $exe,
+                      '-PackageRoot', $installDir,
+                      '-RuntimeEvidence', $freshGhosttyEvidence,
+                      '-ReportPath', $installedReportPath
+                  ) `
+                  -Label 'installed libghostty verifier'
+
+              $installedReportText = Get-Content -LiteralPath $installedReportPath -Raw
+              if ($installedReportText -match '(?i)[a-z]:\\') {
+                  throw 'Installed libghostty provenance report contains a runner-local absolute path'
+              }
+              $installedReport = $installedReportText | ConvertFrom-Json
+              $installedBinaryHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
+              if ($installedReport.linkage -ne 'static' -or
+                  $installedReport.runtime_smoke_verified -ne $true -or
+                  $installedReport.binary_sha256 -ne $installedBinaryHash) {
+                  throw 'Installed libghostty provenance does not match the statically linked PaneFlow binary'
+              }
+              if ($releaseReport.binary_sha256 -ne $installedBinaryHash) {
+                  throw 'Packaged Windows libghostty provenance does not match the installed PaneFlow binary'
+              }
+              foreach ($requiredFile in @('paneflow.exe') + @($complianceSources.Keys)) {
+                  if (@($installedReport.package_files) -notcontains $requiredFile) {
+                      throw "Installed libghostty provenance is missing package inventory entry $requiredFile"
+                  }
               }
 
               $relayExe = Join-Path $env:SMOKE_DIR 'paneflow-msi-relay.exe'
@@ -2476,7 +2847,7 @@ jobs:
                   try {
                       Invoke-SmokeProcess `
                           -FilePath $msiexec `
-                          -Arguments @('/x', $msi.FullName, '/qn', '/norestart', '/l*v', $uninstallLog) `
+                          -Arguments @('/x', $uninstallMsi, '/qn', '/norestart', '/l*v', $uninstallLog) `
                           -Label 'msiexec uninstall'
                   } catch {
                       Show-LogTail -Path $uninstallLog
@@ -2484,6 +2855,37 @@ jobs:
                   }
               }
           }
+
+          Assert-NoMsiResidue -Label 'Candidate upgrade uninstall'
+          if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
+              (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash -ne $configHashBeforeUpgrade) {
+              throw 'MSI uninstall did not preserve the explicit Alacritty rollback configuration'
+          }
+
+      - name: Record manual Windows backend smoke boundary
+        if: success()
+        run: |
+          @'
+          ## Windows backend release boundary
+
+          CI proved fresh install, hosted-desktop Ghostty and Alacritty launches,
+          the signed v0.8.0 MSI upgrade, preserved rollback configuration, static
+          libghostty provenance, installed compliance inventory, updater relay,
+          and clean uninstall. A release reviewer must still execute the full
+          Windows 10 and Windows 11 desktop matrix, including IME, GPU,
+          sleep/resume, non-ASCII profile paths, and conditional RDP.
+          '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload Windows libghostty smoke provenance
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-libghostty-smoke-provenance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}\paneflow-msi-smoke\*libghostty-provenance.json
+            ${{ runner.temp }}\paneflow-msi-smoke\ghostty-runtime-evidence.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Upload Windows MSI smoke logs on failure
         if: failure()
