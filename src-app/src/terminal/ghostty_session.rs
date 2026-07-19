@@ -4183,7 +4183,7 @@ mod tests {
                 .to_vec();
         #[cfg(target_os = "windows")]
         let command = {
-            let mut command = br#"powershell.exe -NoLogo -NoProfile -NonInteractive -Command "Write-Output ('PANEFLOW_GHOSTTY_RUNTIME_OK:' + $env:TERM_PROGRAM); Write-Output ('PANEFLOW_SIZE:' + [Console]::WindowHeight + 'x' + [Console]::WindowWidth)" & exit"#.to_vec();
+            let mut command = br#"powershell.exe -NoLogo -NoProfile -NonInteractive -Command "$deadline = [DateTime]::UtcNow.AddSeconds(3); do { $height = [Console]::WindowHeight; $width = [Console]::WindowWidth; if ($height -eq 30 -and $width -eq 100) { break }; Start-Sleep -Milliseconds 20 } while ([DateTime]::UtcNow -lt $deadline); Write-Output ('PANEFLOW_GHOSTTY_RUNTIME_OK:' + $env:TERM_PROGRAM); Write-Output ('PANEFLOW_SIZE:' + $height + 'x' + $width)" & exit"#.to_vec();
             command.extend_from_slice(b"\r\n");
             command
         };
