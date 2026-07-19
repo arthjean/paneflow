@@ -25,10 +25,10 @@
     {
       "id": "EP-003",
       "title": "Atteindre la parité terminal et workflow Windows",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 0
+      "stories_done": 4
     },
     {
       "id": "EP-004",
@@ -164,51 +164,51 @@
       "id": "US-009",
       "title": "Étendre le corpus rendu et interaction à Windows",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-004",
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-18",
+      "reviewed_at": "2026-07-18"
     },
     {
       "id": "US-010",
       "title": "Intégrer le clavier Ghostty, AltGr, dead keys et IME",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-005"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-19",
+      "reviewed_at": "2026-07-19"
     },
     {
       "id": "US-011",
       "title": "Valider paste, clipboard, souris, focus et liens",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
         "US-005",
         "US-010"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-19",
+      "reviewed_at": "2026-07-19"
     },
     {
       "id": "US-012",
       "title": "Qualifier les shells et workflows Paneflow réels",
       "epic": "EP-003",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "L",
       "blocked_by": [
@@ -217,9 +217,9 @@
         "US-010",
         "US-011"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-18",
+      "completed_at": "2026-07-19",
+      "reviewed_at": "2026-07-19"
     },
     {
       "id": "US-013",
