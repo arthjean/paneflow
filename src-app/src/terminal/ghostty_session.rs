@@ -4176,6 +4176,31 @@ mod tests {
         #[cfg(target_os = "linux")]
         let child_pid = spawned.child_pid;
         session.promote();
+        #[cfg(target_os = "windows")]
+        {
+            assert!(
+                session
+                    .write(b"echo PANEFLOW_CONPTY^_READY\r\n".to_vec())
+                    .is_sent()
+            );
+            let ready_deadline = Instant::now() + Duration::from_secs(5);
+            let mut child_ready = false;
+            while Instant::now() < ready_deadline {
+                if session
+                    .recent_output_lines()
+                    .iter()
+                    .any(|line| line.contains("PANEFLOW_CONPTY_READY"))
+                {
+                    child_ready = true;
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(
+                child_ready,
+                "ConPTY child must process input before the resize probe"
+            );
+        }
         session.resize(TerminalWindowSize::new(100, 30, 8, 16));
         #[cfg(target_os = "linux")]
         let command =
