@@ -367,7 +367,7 @@ jobs:
             image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
             format: rpm
           - distro: opensuse
-            image: registry.opensuse.org/opensuse/tumbleweed:latest@sha256:d4e953622cb4c5e73984c4c246436a71260ad0cf0474241bfa69a33455f5427c
+            image: registry.opensuse.org/opensuse/tumbleweed:latest@sha256:0eb1f4ea3b39ff60fdf5bb738326f1eaadd7fa090791880fc08b249eec7414ea
             format: rpm
           - distro: arch
             image: archlinux:base@sha256:fe6972d4dc1f660c0c10f4c41b2de8986bab89e7e2955378f8beadb8ebcd7433
