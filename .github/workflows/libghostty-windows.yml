@@ -218,7 +218,11 @@ jobs:
 
   consumer-qualification:
     name: Repository consumer and release budgets
-    runs-on: windows-2022
+    # Windows Server 2022 build 20348 carries microsoft/terminal#8706:
+    # ClosePseudoConsole leaks its internal OpenConsole process handle once per
+    # session. Run resource gates on the build-26100 ConPTY line so they measure
+    # Paneflow ownership; supported Windows 10/11 remain in the manual matrix.
+    runs-on: windows-2025
     timeout-minutes: 120
     defaults:
       run:
