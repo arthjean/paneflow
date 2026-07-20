@@ -189,31 +189,6 @@ fn warn_ghostty_unavailable_once() {
     });
 }
 
-#[cfg(any(test, all(debug_assertions, target_os = "windows")))]
-fn backend_resolution_for_log(
-    diagnostics: &super::pty_session::TerminalBackendDiagnostics,
-) -> String {
-    let requested = match diagnostics.requested {
-        TerminalBackendConfig::Auto => "auto",
-        TerminalBackendConfig::Ghostty => "ghostty",
-        TerminalBackendConfig::Alacritty => "alacritty",
-    };
-    format!("requested={requested} resolved={}", diagnostics.effective)
-}
-
-#[cfg(all(debug_assertions, target_os = "windows"))]
-fn log_windows_dev_active_backend(terminal: &TerminalState) {
-    let diagnostics = terminal.backend_diagnostics();
-    let resolution = backend_resolution_for_log(&diagnostics);
-    log::warn!(
-        target: "paneflow::terminal::backend",
-        "Windows dev terminal backend active: {resolution}"
-    );
-}
-
-#[cfg(not(all(debug_assertions, target_os = "windows")))]
-fn log_windows_dev_active_backend(_terminal: &TerminalState) {}
-
 fn log_backend_diagnostics(terminal: &TerminalState) {
     let diagnostics = terminal.backend_diagnostics();
     log::info!(
@@ -792,7 +767,6 @@ impl TerminalView {
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
-                            log_windows_dev_active_backend(&view.terminal);
                         }
                         BackgroundSpawnOutcome::Alacritty(Err(error)) => {
                             // Spawn failed: keep the display-only placeholder and
@@ -822,7 +796,6 @@ impl TerminalView {
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
-                            log_windows_dev_active_backend(&view.terminal);
                         }
                         #[cfg(any(
                             all(target_os = "linux", feature = "libghostty-linux"),
@@ -848,7 +821,6 @@ impl TerminalView {
                                     if let Some(size) = view.recorded_window_size() {
                                         view.terminal.notify_window_size(size);
                                     }
-                                    log_windows_dev_active_backend(&view.terminal);
                                 }
                                 Err(error) => {
                                     log::error!(
@@ -2201,22 +2173,6 @@ mod tests {
             TerminalBackendConfig::Alacritty,
             true
         ));
-    }
-
-    #[test]
-    fn backend_resolution_log_names_requested_and_resolved_backends() {
-        let diagnostics = super::super::pty_session::TerminalBackendDiagnostics {
-            requested: TerminalBackendConfig::Auto,
-            effective: "ghostty",
-            failure: None,
-            target_triple: "x86_64-pc-windows-msvc",
-            ghostty: None,
-        };
-
-        assert_eq!(
-            backend_resolution_for_log(&diagnostics),
-            "requested=auto resolved=ghostty"
-        );
     }
 
     // --- send_keystroke submission guard (US-005, orchestration-v2) ---
