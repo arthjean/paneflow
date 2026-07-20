@@ -499,7 +499,7 @@ impl From<AlacTermMode> for Modes {
         if m.contains(AlacTermMode::MOUSE_MOTION) {
             out = out | Modes::MOUSE_MOTION;
         }
-        if m.contains(AlacTermMode::KITTY_KEYBOARD_PROTOCOL) {
+        if m.intersects(AlacTermMode::KITTY_KEYBOARD_PROTOCOL) {
             out = out | Modes::KITTY_KEYBOARD;
         }
         out
@@ -957,6 +957,19 @@ mod tests {
         let alt = Modes::from(AlacTermMode::ALT_SCREEN);
         assert!(alt.contains(Modes::ALT_SCREEN));
         assert!(!alt.contains(Modes::SGR_MOUSE));
+    }
+
+    #[test]
+    fn kitty_mode_maps_when_any_protocol_flag_is_enabled() {
+        for flag in [
+            AlacTermMode::DISAMBIGUATE_ESC_CODES,
+            AlacTermMode::REPORT_EVENT_TYPES,
+            AlacTermMode::REPORT_ALTERNATE_KEYS,
+            AlacTermMode::REPORT_ALL_KEYS_AS_ESC,
+            AlacTermMode::REPORT_ASSOCIATED_TEXT,
+        ] {
+            assert!(Modes::from(flag).contains(Modes::KITTY_KEYBOARD));
+        }
     }
 
     #[test]

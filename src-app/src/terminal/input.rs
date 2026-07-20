@@ -25,6 +25,7 @@ use gpui::{
 ))]
 use paneflow_terminal_ghostty as ghostty;
 
+use crate::keys::TerminalKeySequence;
 use crate::mouse;
 use crate::terminal::types::{
     HyperlinkSource, HyperlinkZone, Modes, Point, SelectionKind, SelectionSide, ShellQuoting,
@@ -63,12 +64,12 @@ fn key_escape_sequence(
     mode: &Modes,
     option_as_meta: bool,
     prefer_character_input: bool,
-) -> Option<Cow<'static, str>> {
-    if prefer_character_input {
-        None
-    } else {
-        crate::keys::to_esc_str(keystroke, mode, option_as_meta)
+) -> Option<TerminalKeySequence> {
+    let sequence = crate::keys::terminal_key_sequence(keystroke, mode, option_as_meta)?;
+    if prefer_character_input && matches!(&sequence, TerminalKeySequence::Protocol(_)) {
+        return None;
     }
+    Some(sequence)
 }
 
 #[cfg(any(
@@ -494,12 +495,16 @@ impl TerminalView {
         // (replace_text_in_range) is the single source of truth for them on
         // both normal and alt screens. Writing them here as well caused
         // character doubling in ALT_SCREEN mode (e.g. Claude Code fullscreen TUI).
-        if let Some(seq) = key_escape_sequence(
+        if let Some(mapped_sequence) = key_escape_sequence(
             keystroke,
             &mode,
             self.option_as_meta,
             event.prefer_character_input,
         ) {
+            let (seq, _encode_with_backend) = match mapped_sequence {
+                TerminalKeySequence::Protocol(seq) => (seq, true),
+                TerminalKeySequence::Literal(seq) => (seq, false),
+            };
             // Snap to bottom on input. Matches Zed `terminal.rs:input()` - if
             // the user is scrolled back in the history and types, the shell's
             // echo would otherwise be invisible.
@@ -520,29 +525,30 @@ impl TerminalView {
                     feature = "libghostty-windows"
                 )
             ))]
-            let ghostty_encoded = ghostty_key_input(
-                keystroke,
-                if event.is_held {
-                    ghostty::KeyAction::Repeat
-                } else {
-                    ghostty::KeyAction::Press
-                },
-            )
-            .map(|input| {
-                let mut release = input.clone();
-                release.action = ghostty::KeyAction::Release;
-                release.text.clear();
-                release.composing = false;
-                let result = self
-                    .terminal
-                    .write_ghostty_key(input, Some(legacy_key_bytes(seq.clone())));
-                if result == BackendInputResult::Accepted {
-                    self.ghostty_pressed_keys
-                        .insert(ghostty_release_id(keystroke), release);
-                }
-                result.is_handled()
-            })
-            .unwrap_or(false);
+            let ghostty_encoded = _encode_with_backend
+                && ghostty_key_input(
+                    keystroke,
+                    if event.is_held {
+                        ghostty::KeyAction::Repeat
+                    } else {
+                        ghostty::KeyAction::Press
+                    },
+                )
+                .map(|input| {
+                    let mut release = input.clone();
+                    release.action = ghostty::KeyAction::Release;
+                    release.text.clear();
+                    release.composing = false;
+                    let result = self
+                        .terminal
+                        .write_ghostty_key(input, Some(legacy_key_bytes(seq.clone())));
+                    if result == BackendInputResult::Accepted {
+                        self.ghostty_pressed_keys
+                            .insert(ghostty_release_id(keystroke), release);
+                    }
+                    result.is_handled()
+                })
+                .unwrap_or(false);
             #[cfg(not(any(
                 all(target_os = "linux", feature = "libghostty-linux"),
                 all(
@@ -1635,6 +1641,17 @@ mod tests {
             super::key_escape_sequence(&keystroke, &Modes::empty(), false, true).is_none(),
             "AltGr character input must wait for the text commit"
         );
+    }
+
+    #[test]
+    fn character_preference_keeps_literal_shift_enter_routing() {
+        let keystroke = gpui::Keystroke::parse("shift-enter").unwrap();
+        let Some(crate::keys::TerminalKeySequence::Literal(sequence)) =
+            super::key_escape_sequence(&keystroke, &Modes::empty(), false, true)
+        else {
+            panic!("Shift+Enter must bypass backend key encoding");
+        };
+        assert_eq!(sequence.as_ref(), "\x0a");
     }
 
     // EP-001 US-001 (agent-control-plane-hardening): the wrap is the burst that

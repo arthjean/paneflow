@@ -9,6 +9,44 @@ use gpui::Keystroke;
 
 use crate::terminal::types::Modes;
 
+/// How a mapped terminal key sequence must be delivered.
+///
+/// Protocol sequences are legacy fallbacks: a native terminal encoder may
+/// replace them when the child enabled a richer keyboard protocol. Literal
+/// sequences are Paneflow bindings whose bytes are the behavior, so a backend
+/// encoder must not reinterpret the original physical key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TerminalKeySequence {
+    Protocol(Cow<'static, str>),
+    Literal(Cow<'static, str>),
+}
+
+impl TerminalKeySequence {
+    fn into_sequence(self) -> Cow<'static, str> {
+        match self {
+            Self::Protocol(sequence) | Self::Literal(sequence) => sequence,
+        }
+    }
+}
+
+fn shift_enter_sequence(
+    keystroke: &Keystroke,
+    mode: &Modes,
+    option_as_meta: bool,
+) -> Option<TerminalKeySequence> {
+    let alt = keystroke.modifiers.alt && option_as_meta;
+    if keystroke.key != "enter" || !keystroke.modifiers.shift || keystroke.modifiers.control || alt
+    {
+        return None;
+    }
+
+    if mode.contains(Modes::KITTY_KEYBOARD) {
+        Some(TerminalKeySequence::Protocol(Cow::Borrowed("\x1b[13;2u")))
+    } else {
+        Some(TerminalKeySequence::Literal(Cow::Borrowed("\x0a")))
+    }
+}
+
 /// Map a GPUI keystroke to a terminal escape sequence.
 ///
 /// Returns `Some(Cow::Borrowed(...))` for static keys (zero-alloc),
@@ -45,6 +83,14 @@ pub fn to_esc_str(
     // `option_as_meta`. The config key is not macOS-only, so a Linux/Windows user
     // with `option_as_meta: false` would otherwise lose Alt+Arrow entirely.
     let alt_phys = keystroke.modifiers.alt;
+
+    // Preserve the physical chord after a child negotiates Kitty keyboard
+    // reporting. Legacy terminals cannot represent Shift+Enter portably, so
+    // use LF there: agent editors receive it as the conventional Ctrl+J
+    // multiline binding rather than a submitting carriage return.
+    if let Some(sequence) = shift_enter_sequence(keystroke, mode, option_as_meta) {
+        return Some(sequence.into_sequence());
+    }
 
     // Modifier+cursor/function combos (CSI 1;N) - resolved first so a modified
     // nav/fn key is never swallowed by the unmodified-key fast path below. Only
@@ -204,7 +250,6 @@ pub fn to_esc_str(
     if shift && !ctrl && !alt {
         let seq: Option<&'static str> = match key {
             "tab" => Some("\x1b[Z"), // Back-tab
-            "enter" => Some("\x0a"), // LF
             _ => None,
         };
         if let Some(s) = seq {
@@ -245,6 +290,26 @@ pub fn to_esc_str(
 
     // Not a special key - caller should handle as printable character input
     None
+}
+
+/// Map a keystroke together with the delivery policy required by the mapping.
+///
+/// Most entries are protocol fallbacks because a stateful backend can encode
+/// them more accurately after a child enables Kitty or xterm keyboard modes.
+/// Legacy Shift+Enter is deliberately literal: passing it back through that
+/// encoder turns LF into a modified-Enter escape sequence and loses multiline
+/// input. Once Kitty keyboard reporting is active, the backend keeps the
+/// structured key so the child receives the real Shift+Enter chord.
+pub(crate) fn terminal_key_sequence(
+    keystroke: &Keystroke,
+    mode: &Modes,
+    option_as_meta: bool,
+) -> Option<TerminalKeySequence> {
+    if let Some(sequence) = shift_enter_sequence(keystroke, mode, option_as_meta) {
+        return Some(sequence);
+    }
+
+    to_esc_str(keystroke, mode, option_as_meta).map(TerminalKeySequence::Protocol)
 }
 
 #[cfg(test)]
@@ -298,5 +363,49 @@ mod tests {
         let mode = Modes::empty();
         let e_acute = Keystroke::parse("alt-é").expect("valid keystroke");
         assert_eq!(to_esc_str(&e_acute, &mode, true).as_deref(), Some("\x1bé"));
+    }
+
+    #[test]
+    fn legacy_shift_enter_is_an_exact_line_feed_binding() {
+        let mode = Modes::empty();
+        let shift_enter = Keystroke::parse("shift-enter").expect("valid keystroke");
+        assert_eq!(
+            terminal_key_sequence(&shift_enter, &mode, true),
+            Some(TerminalKeySequence::Literal(Cow::Borrowed("\x0a")))
+        );
+    }
+
+    #[test]
+    fn kitty_shift_enter_preserves_the_physical_chord() {
+        let mode = Modes::KITTY_KEYBOARD;
+        let shift_enter = Keystroke::parse("shift-enter").expect("valid keystroke");
+        assert_eq!(
+            terminal_key_sequence(&shift_enter, &mode, true),
+            Some(TerminalKeySequence::Protocol(Cow::Borrowed("\x1b[13;2u")))
+        );
+    }
+
+    #[test]
+    fn shift_enter_respects_option_as_meta() {
+        let mode = Modes::empty();
+        let option_shift_enter = Keystroke::parse("alt-shift-enter").expect("valid keystroke");
+        assert_eq!(
+            terminal_key_sequence(&option_shift_enter, &mode, false),
+            Some(TerminalKeySequence::Literal(Cow::Borrowed("\x0a")))
+        );
+        assert_eq!(
+            terminal_key_sequence(&option_shift_enter, &mode, true),
+            None
+        );
+    }
+
+    #[test]
+    fn plain_enter_keeps_backend_protocol_encoding() {
+        let mode = Modes::empty();
+        let enter = Keystroke::parse("enter").expect("valid keystroke");
+        assert_eq!(
+            terminal_key_sequence(&enter, &mode, true),
+            Some(TerminalKeySequence::Protocol(Cow::Borrowed("\r")))
+        );
     }
 }
