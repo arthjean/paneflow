@@ -380,6 +380,10 @@ windows-sys = { version = "0.59", features = [
     # under _System_IO; CreateEventW is in _Threading above.
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
+    # Test-only EP-004 leak diagnostics: classify current-process handles via
+    # NtQuerySystemInformation + NtQueryObject when a Windows stress gate fails.
+    "Wdk_Foundation",
+    "Wdk_System_SystemInformation",
     "Wdk_System_Threading",
 ] }
 widestring.workspace = true

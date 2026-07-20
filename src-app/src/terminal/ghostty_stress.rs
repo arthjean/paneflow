@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[cfg(target_os = "windows")]
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{Duration, Instant};
 
 use futures::channel::mpsc::UnboundedReceiver;
@@ -81,6 +83,29 @@ struct ExitObservation {
 struct ResourceSnapshot {
     handles: u64,
     rss: u64,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct SystemHandleEntry {
+    object: *mut std::ffi::c_void,
+    process_id: usize,
+    handle: usize,
+    granted_access: u32,
+    creator_backtrace_index: u16,
+    object_type_index: u16,
+    attributes: u32,
+    reserved: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone, Copy)]
+#[repr(C)]
+struct UnicodeString {
+    length: u16,
+    maximum_length: u16,
+    buffer: *const u16,
 }
 
 struct StressPane {
@@ -547,6 +572,178 @@ fn resource_snapshot() -> ResourceSnapshot {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn current_process_handles() -> Result<Vec<SystemHandleEntry>, i32> {
+    use windows_sys::Wdk::System::SystemInformation::NtQuerySystemInformation;
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+
+    const SYSTEM_EXTENDED_HANDLE_INFORMATION: i32 = 64;
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xc000_0004_u32 as i32;
+    const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
+
+    let process_id = unsafe { GetCurrentProcessId() } as usize;
+    let mut requested_bytes = 64 * 1024usize;
+    loop {
+        let words = requested_bytes.div_ceil(std::mem::size_of::<usize>());
+        let mut buffer = vec![0usize; words];
+        let buffer_bytes = buffer.len() * std::mem::size_of::<usize>();
+        let mut returned_bytes = 0u32;
+        // SAFETY: the aligned vector is writable for `buffer_bytes`, and the
+        // kernel reports the number of initialized bytes through the final pointer.
+        let status = unsafe {
+            NtQuerySystemInformation(
+                SYSTEM_EXTENDED_HANDLE_INFORMATION,
+                buffer.as_mut_ptr().cast(),
+                u32::try_from(buffer_bytes).unwrap_or(u32::MAX),
+                &mut returned_bytes,
+            )
+        };
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            requested_bytes = usize::try_from(returned_bytes)
+                .unwrap_or(MAX_SNAPSHOT_BYTES)
+                .max(buffer_bytes.saturating_mul(2));
+            if requested_bytes > MAX_SNAPSHOT_BYTES {
+                return Err(status);
+            }
+            continue;
+        }
+        if status < 0 {
+            return Err(status);
+        }
+
+        let header_bytes = 2 * std::mem::size_of::<usize>();
+        if buffer_bytes < header_bytes {
+            return Err(STATUS_INFO_LENGTH_MISMATCH);
+        }
+        let base = buffer.as_ptr().cast::<u8>();
+        // SAFETY: a successful query initializes the two-word header. Read it
+        // unaligned so this remains correct independently of allocator alignment.
+        let handle_count = unsafe { std::ptr::read_unaligned(base.cast::<usize>()) };
+        let entry_bytes = std::mem::size_of::<SystemHandleEntry>();
+        let available_entries = (buffer_bytes - header_bytes) / entry_bytes;
+        if handle_count > available_entries {
+            return Err(STATUS_INFO_LENGTH_MISMATCH);
+        }
+
+        let mut handles = Vec::new();
+        for index in 0..handle_count {
+            let offset = header_bytes + index * entry_bytes;
+            // SAFETY: the bounds check above proves the complete entry lies in
+            // the initialized snapshot buffer. The native structure may be unaligned.
+            let entry =
+                unsafe { std::ptr::read_unaligned(base.add(offset).cast::<SystemHandleEntry>()) };
+            if entry.process_id == process_id {
+                handles.push(entry);
+            }
+        }
+        return Ok(handles);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_object_type_name(handle: usize) -> Option<String> {
+    use windows_sys::Wdk::Foundation::NtQueryObject;
+
+    const OBJECT_TYPE_INFORMATION: i32 = 2;
+    const STATUS_INFO_LENGTH_MISMATCH: i32 = 0xc000_0004_u32 as i32;
+    let mut requested_bytes = 1024usize;
+    for _ in 0..2 {
+        let words = requested_bytes.div_ceil(std::mem::size_of::<usize>());
+        let mut buffer = vec![0usize; words];
+        let buffer_bytes = buffer.len() * std::mem::size_of::<usize>();
+        let mut returned_bytes = 0u32;
+        // SAFETY: the handle came from a current-process system snapshot, and
+        // the aligned vector is writable for the supplied byte length.
+        let status = unsafe {
+            NtQueryObject(
+                handle as windows_sys::Win32::Foundation::HANDLE,
+                OBJECT_TYPE_INFORMATION,
+                buffer.as_mut_ptr().cast(),
+                u32::try_from(buffer_bytes).unwrap_or(u32::MAX),
+                &mut returned_bytes,
+            )
+        };
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            requested_bytes = usize::try_from(returned_bytes).ok()?.max(buffer_bytes * 2);
+            continue;
+        }
+        if status < 0 || buffer_bytes < std::mem::size_of::<UnicodeString>() {
+            return None;
+        }
+        // SAFETY: ObjectTypeInformation starts with a UNICODE_STRING descriptor.
+        let name = unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<UnicodeString>()) };
+        if name.buffer.is_null() || name.length == 0 || name.length % 2 != 0 {
+            return None;
+        }
+        // SAFETY: NtQueryObject returned a live UTF-16 buffer for `length` bytes.
+        let units =
+            unsafe { std::slice::from_raw_parts(name.buffer, usize::from(name.length) / 2) };
+        return Some(String::from_utf16_lossy(units));
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn windows_handle_type_histogram() -> BTreeMap<String, u64> {
+    let handles = match current_process_handles() {
+        Ok(handles) => handles,
+        Err(status) => {
+            return BTreeMap::from([(
+                format!("snapshot-error/ntstatus=0x{:08x}", status as u32),
+                1,
+            )]);
+        }
+    };
+    let mut type_names = BTreeMap::<u16, String>::new();
+    for entry in &handles {
+        if type_names.contains_key(&entry.object_type_index) {
+            continue;
+        }
+        if let Some(name) = windows_object_type_name(entry.handle) {
+            type_names.insert(entry.object_type_index, name);
+        }
+    }
+
+    let mut histogram = BTreeMap::new();
+    for entry in handles {
+        let type_name = type_names
+            .get(&entry.object_type_index)
+            .cloned()
+            .unwrap_or_else(|| format!("type-index-{}", entry.object_type_index));
+        let key = format!(
+            "{type_name}/index={}/access=0x{:08x}",
+            entry.object_type_index, entry.granted_access
+        );
+        *histogram.entry(key).or_insert(0) += 1;
+    }
+    histogram
+}
+
+#[cfg(target_os = "windows")]
+fn windows_handle_type_delta(
+    baseline: &BTreeMap<String, u64>,
+    current: &BTreeMap<String, u64>,
+) -> String {
+    let keys = baseline
+        .keys()
+        .chain(current.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let changes = keys
+        .into_iter()
+        .filter_map(|key| {
+            let before = baseline.get(&key).copied().unwrap_or(0);
+            let after = current.get(&key).copied().unwrap_or(0);
+            (before != after).then(|| format!("{key}:{before}->{after}"))
+        })
+        .collect::<Vec<_>>();
+    if changes.is_empty() {
+        "none".to_owned()
+    } else {
+        changes.join(",")
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn resource_snapshot() -> ResourceSnapshot {
     ResourceSnapshot {
@@ -645,6 +842,8 @@ fn ghostty_spawn_resize_close_stress_has_no_residual_growth() {
     for warmup in 0..WARMUP_CYCLES {
         let _ = run_cycle(warmup as u64);
     }
+    #[cfg(target_os = "windows")]
+    let handle_types_baseline = windows_handle_type_histogram();
     let baseline = resource_snapshot();
     let started = Instant::now();
     let mut max_cycle = Duration::ZERO;
@@ -657,6 +856,8 @@ fn ghostty_spawn_resize_close_stress_has_no_residual_growth() {
         descendants_observed = descendants_observed.saturating_add(descendants);
     }
     let recovered = wait_for_resource_recovery(baseline);
+    #[cfg(target_os = "windows")]
+    let handle_types_recovered = windows_handle_type_histogram();
     let elapsed = started.elapsed();
     let limits = resource_limits(baseline);
     cycle_durations.sort_unstable();
@@ -672,6 +873,11 @@ fn ghostty_spawn_resize_close_stress_has_no_residual_growth() {
         baseline.rss,
         recovered.rss,
         limits.rss,
+    );
+    #[cfg(target_os = "windows")]
+    println!(
+        "scenario=ghostty_spawn_resize_close handle_types_baseline={handle_types_baseline:?} handle_types_end={handle_types_recovered:?} handle_types_delta={}",
+        windows_handle_type_delta(&handle_types_baseline, &handle_types_recovered),
     );
     assert_resource_recovery("cycles", baseline, recovered);
     assert!(
