@@ -41,10 +41,19 @@
     {
       "id": "EP-005",
       "title": "Qualifier, promouvoir et rendre le rollback explicite",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "stories_total": 2,
-      "stories_done": 0
+      "stories_done": 1,
+      "qualifications": {
+        "windows_10_22h2_vm": {
+          "status": "DONE",
+          "basis": "OWNER_RISK_ACCEPTANCE",
+          "accepted_at": "2026-07-20",
+          "evidence_status": "NOT_COLLECTED",
+          "note": "Clôture administrative demandée explicitement par le propriétaire; aucune preuve d'exécution VM n'a été collectée."
+        }
+      }
     }
   ],
   "stories": [
@@ -286,22 +295,22 @@
       "id": "US-017",
       "title": "Ajouter la sélection Windows et le mode de qualification",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
         "US-005",
         "US-007"
       ],
-      "started_at": null,
-      "completed_at": null,
-      "reviewed_at": null
+      "started_at": "2026-07-20",
+      "completed_at": "2026-07-20",
+      "reviewed_at": "2026-07-20"
     },
     {
       "id": "US-018",
       "title": "Promouvoir Ghostty comme backend auto sous Windows",
       "epic": "EP-005",
-      "status": "TODO",
+      "status": "IN_REVIEW",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -312,7 +321,7 @@
         "US-016",
         "US-017"
       ],
-      "started_at": null,
+      "started_at": "2026-07-20",
       "completed_at": null,
       "reviewed_at": null
     }
