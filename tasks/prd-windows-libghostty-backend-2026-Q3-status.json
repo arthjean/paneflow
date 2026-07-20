@@ -33,10 +33,10 @@
     {
       "id": "EP-004",
       "title": "Industrialiser CI, sécurité, performance et MSI",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "stories_total": 4,
-      "stories_done": 3
+      "stories_done": 4
     },
     {
       "id": "EP-005",
@@ -271,7 +271,7 @@
       "id": "US-016",
       "title": "Exécuter la matrice Windows et publier le runbook de diagnostic",
       "epic": "EP-004",
-      "status": "IN_REVIEW",
+      "status": "DONE",
       "priority": "P0",
       "size": "M",
       "blocked_by": [
@@ -279,8 +279,8 @@
         "US-015"
       ],
       "started_at": "2026-07-19",
-      "completed_at": null,
-      "reviewed_at": "2026-07-19"
+      "completed_at": "2026-07-20",
+      "reviewed_at": "2026-07-20"
     },
     {
       "id": "US-017",
