@@ -371,6 +371,9 @@ windows-sys = { version = "0.59", features = [
     # Windows toast attribution: bind the process identity to the same
     # AppUserModelID used by the Start Menu shortcut and WinRT toast sender.
     "Win32_UI_Shell",
+    # Custom caption controls need an explicit SW_MAXIMIZE/SW_RESTORE toggle;
+    # GPUI's Windows zoom implementation only sends SW_MAXIMIZE.
+    "Win32_UI_WindowsAndMessaging",
     "Win32_System_Registry",
     # EP-006 US-013 (agent-control-plane-hardening): PeekNamedPipe gates every
     # events.subscribe push on the named pipe's liveness, so a disconnected
