@@ -13,19 +13,21 @@ categories.workspace = true
 readme = "../README.md"
 
 [features]
-default = ["libghostty-linux"]
+default = ["libghostty-linux", "libghostty-windows"]
 # Linux-only backend backed by the pinned libghostty-vt archive. It is the
 # standard backend for cargo run, development builds, and official releases.
-# The target-specific dependencies keep this default inert on macOS/Windows.
+# The target-specific dependencies keep it inert on macOS/Windows.
 # Enabling it never clones or downloads from build.rs.
 libghostty-linux = [
     "dep:paneflow-terminal-ghostty",
     "dep:portable-pty",
     "paneflow-terminal-ghostty/native",
 ]
-# Windows qualification feature. It links the pinned native wrapper and ConPTY
-# host; explicit `terminal.backend = "ghostty"` selects it while `auto` stays
-# on Alacritty until the later promotion story.
+# Windows backend backed by the pinned static wrapper and the ConPTY host. It is
+# enabled in standard builds so `terminal.backend = "auto"` can select Ghostty
+# on supported x64 MSVC Windows targets. Target-specific dependencies keep it
+# inert on Linux/macOS, and `--no-default-features` preserves an Alacritty-only
+# recovery build.
 libghostty-windows = [
     "dep:paneflow-terminal-ghostty",
     "dep:portable-pty",
@@ -315,6 +317,13 @@ raw-window-handle = "0.6"
 cocoa = "0.26"
 objc = "0.2"
 
+# The verified Windows Ghostty archive exists only for x64 MSVC. Keeping these
+# optional dependencies on that exact target lets the default feature remain
+# enabled while Windows ARM64 and GNU builds compile with the Alacritty path.
+[target.'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))'.dependencies]
+paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", optional = true }
+portable-pty = { version = "0.9.0", optional = true }
+
 # Windows: windows-sys powers the TerminateProcess path in TerminalState::drop
 # (US-004 - prd-windows-port.md). Feature set kept minimal on purpose: adding
 # a new Win32 API elsewhere in the app should require an explicit feature
@@ -325,8 +334,6 @@ objc = "0.2"
 #     walks the process tree via CreateToolhelp32Snapshot / Process32{First,Next}W.
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
-paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", optional = true }
-portable-pty = { version = "0.9.0", optional = true }
 windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_Foundation",

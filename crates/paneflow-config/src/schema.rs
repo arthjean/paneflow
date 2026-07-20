@@ -565,8 +565,8 @@ pub enum CursorBlinkConfig {
 }
 
 /// Terminal engine requested for newly-created sessions. `Auto` selects
-/// Ghostty in standard Linux builds and Alacritty on macOS, Windows, or Linux
-/// builds using `--no-default-features`.
+/// Ghostty in standard Linux and supported Windows x64 MSVC builds. macOS and
+/// builds without the target's native Ghostty feature use Alacritty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBackendConfig {
@@ -580,8 +580,9 @@ pub enum TerminalBackendConfig {
 // errors on an unrecognised variant; that error propagates up to
 // `parse_and_validate` (loader.rs), which discards the ENTIRE user config and
 // returns defaults. A typo (`"cursor_shape": "squiggle"`) would silently wipe
-// the theme, shell, shortcuts, and agent settings. Instead fall back to the
-// variant default with a logged warning, mirroring `ThinkingDisplayMode`.
+// the theme, shell, shortcuts, and agent settings. Instead fall back with a
+// logged warning. Terminal backend typos fail safe to the explicit Alacritty
+// rollback rather than inheriting a future `auto` promotion.
 // `Serialize` stays derived (snake_case), so round-tripping a valid value is
 // unchanged.
 impl<'de> Deserialize<'de> for CursorShapeConfig {
@@ -648,9 +649,11 @@ impl<'de> Deserialize<'de> for TerminalBackendConfig {
                 tracing::warn!(
                     target: "paneflow_config::terminal",
                     value = other,
-                    "terminal.backend value not recognized, defaulting to auto",
+                    reason_code = "unknown_terminal_backend",
+                    fallback = "alacritty",
+                    "terminal.backend value not recognized, using the safe rollback backend",
                 );
-                Self::Auto
+                Self::Alacritty
             }
         })
     }
@@ -691,9 +694,9 @@ impl TerminalSurfaceProfile {
 #[serde(default)]
 pub struct TerminalConfig {
     /// Backend requested for new sessions. `auto` resolves to Ghostty in
-    /// standard Linux builds and to Alacritty on macOS, Windows, or Linux
-    /// builds using `--no-default-features`.
-    /// `alacritty` is the explicit Linux rollback.
+    /// standard Linux and supported Windows x64 MSVC builds. macOS and builds
+    /// without the target's native Ghostty feature use Alacritty.
+    /// `alacritty` is the explicit cross-platform rollback.
     #[serde(default, deserialize_with = "lenient_terminal_backend")]
     pub backend: TerminalBackendConfig,
     /// Render programming-font ligatures (FiraCode `=>`, `!=`, …) when
@@ -2166,16 +2169,40 @@ mod tests {
     }
 
     #[test]
-    fn terminal_backend_is_lenient_and_defaults_to_auto() {
+    fn terminal_backend_serializes_and_fails_safe_on_unknown_values() {
         let automatic: TerminalConfig = serde_json::from_str(r#"{}"#).unwrap();
         assert_eq!(automatic.backend, TerminalBackendConfig::Auto);
 
         let ghostty: TerminalConfig = serde_json::from_str(r#"{"backend":"ghostty"}"#).unwrap();
         assert_eq!(ghostty.backend, TerminalBackendConfig::Ghostty);
 
+        let alacritty: TerminalConfig = serde_json::from_str(r#"{"backend":"alacritty"}"#).unwrap();
+        assert_eq!(alacritty.backend, TerminalBackendConfig::Alacritty);
+
+        assert_eq!(
+            serde_json::to_string(&TerminalBackendConfig::Auto).unwrap(),
+            r#""auto""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TerminalBackendConfig::Ghostty).unwrap(),
+            r#""ghostty""#
+        );
+        assert_eq!(
+            serde_json::to_string(&TerminalBackendConfig::Alacritty).unwrap(),
+            r#""alacritty""#
+        );
+
         let unknown: TerminalConfig =
             serde_json::from_str(r#"{"backend":"future-engine"}"#).unwrap();
-        assert_eq!(unknown.backend, TerminalBackendConfig::Auto);
+        assert_eq!(unknown.backend, TerminalBackendConfig::Alacritty);
+
+        let legacy: PaneFlowConfig =
+            serde_json::from_str(r#"{"theme":"One Dark","terminal":{"scrollback_lines":4321}}"#)
+                .unwrap();
+        let terminal = legacy.terminal.expect("legacy terminal block");
+        assert_eq!(legacy.theme.as_deref(), Some("One Dark"));
+        assert_eq!(terminal.backend, TerminalBackendConfig::Auto);
+        assert_eq!(terminal.scrollback_lines, Some(4321));
     }
 
     #[test]

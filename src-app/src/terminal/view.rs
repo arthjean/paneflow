@@ -56,12 +56,26 @@ fn should_start_ghostty_for_policy(
     available: bool,
     auto_selects: bool,
 ) -> bool {
-    available
-        && match requested {
-            TerminalBackendConfig::Auto => auto_selects,
-            TerminalBackendConfig::Ghostty => true,
-            TerminalBackendConfig::Alacritty => false,
-        }
+    available && policy_requests_ghostty(requested, auto_selects)
+}
+
+fn policy_requests_ghostty(requested: TerminalBackendConfig, auto_selects: bool) -> bool {
+    match requested {
+        TerminalBackendConfig::Auto => auto_selects,
+        TerminalBackendConfig::Ghostty => true,
+        TerminalBackendConfig::Alacritty => false,
+    }
+}
+
+fn auto_selects_ghostty_for_target() -> bool {
+    cfg!(any(
+        target_os = "linux",
+        all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc"
+        )
+    ))
 }
 
 #[cfg(any(
@@ -86,7 +100,7 @@ fn should_start_ghostty(requested: TerminalBackendConfig) -> bool {
                 feature = "libghostty-windows"
             )
         )),
-        cfg!(all(target_os = "linux", feature = "libghostty-linux")),
+        auto_selects_ghostty_for_target(),
     )
 }
 
@@ -610,7 +624,7 @@ impl TerminalView {
                 feature = "libghostty-windows"
             )
         )))]
-        if requested_backend == TerminalBackendConfig::Ghostty {
+        if policy_requests_ghostty(requested_backend, auto_selects_ghostty_for_target()) {
             warn_ghostty_unavailable_once();
             terminal.record_backend_failure(TerminalBackendFailureDiagnostics::new(
                 TerminalBackendFailurePhase::Availability,
@@ -2118,7 +2132,7 @@ mod tests {
 
         assert_eq!(
             should_start_ghostty(TerminalBackendConfig::Auto),
-            cfg!(all(target_os = "linux", feature = "libghostty-linux"))
+            ghostty_available && auto_selects_ghostty_for_target()
         );
         assert_eq!(
             should_start_ghostty(TerminalBackendConfig::Ghostty),
@@ -2128,7 +2142,17 @@ mod tests {
     }
 
     #[test]
-    fn windows_qualification_requires_an_explicit_ghostty_request() {
+    fn promoted_auto_policy_preserves_rollback_and_unavailable_fallback() {
+        assert!(should_start_ghostty_for_policy(
+            TerminalBackendConfig::Auto,
+            true,
+            true,
+        ));
+        assert!(!should_start_ghostty_for_policy(
+            TerminalBackendConfig::Auto,
+            false,
+            true,
+        ));
         assert!(!should_start_ghostty_for_policy(
             TerminalBackendConfig::Auto,
             true,
@@ -2143,6 +2167,11 @@ mod tests {
             TerminalBackendConfig::Alacritty,
             true,
             false,
+        ));
+        assert!(policy_requests_ghostty(TerminalBackendConfig::Auto, true));
+        assert!(!policy_requests_ghostty(
+            TerminalBackendConfig::Alacritty,
+            true
         ));
     }
 
