@@ -191,7 +191,10 @@ fn portable_pty_delivers_ctrl_c_and_supports_group_shutdown() {
     interrupt.read_until("INTERRUPTED");
     assert_eq!(interrupt.wait_for_exit().exit_code(), 130);
 
-    let mut grouped = Probe::spawn("trap 'exit 0' HUP TERM; sleep 30 & wait", cwd.path());
+    let mut grouped = Probe::spawn(
+        r#"sleep 30 & child=$!; trap 'kill "$child" 2>/dev/null || :; wait "$child" 2>/dev/null || :; exit 0' HUP TERM; wait "$child""#,
+        cwd.path(),
+    );
     let pgid = grouped
         .master
         .process_group_leader()
