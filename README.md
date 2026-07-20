@@ -1,16 +1,26 @@
-# Paneflow
-
-<p align="center">
-  <a href="https://github.com/arthjean/paneflow"><img alt="Paneflow" src="assets/badges/paneflow.svg?v=2"></a>
-  <a href="https://github.com/arthjean/paneflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/arthjean/paneflow?sort=semver"></a>
-  <a href="https://github.com/arthjean/paneflow/actions/workflows/run_tests.yml"><img alt="Tests" src="https://github.com/arthjean/paneflow/actions/workflows/run_tests.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/arthjean/paneflow"></a>
-  <a href="https://github.com/arthjean/paneflow/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/arthjean/paneflow/total"></a>
-  <img alt="Platforms" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational">
-  <img alt="Rust" src="https://img.shields.io/badge/Rust-1.96.1-orange?logo=rust">
-</p>
-
-**A native GPUI workspace for running coding agents in parallel.**
+<div align="center">
+  <a href="https://github.com/arthjean/paneflow">
+    <img src="assets/icons/paneflow-128.png" alt="Paneflow logo" width="128" height="128" />
+  </a>
+  <h1>Paneflow</h1>
+  <p><strong>A native GPUI workspace for running coding agents in parallel.</strong></p>
+  <p>
+    <a href="https://github.com/arthjean/paneflow/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/arthjean/paneflow?sort=semver"></a>
+    <a href="https://github.com/arthjean/paneflow/actions/workflows/run_tests.yml"><img alt="Tests" src="https://github.com/arthjean/paneflow/actions/workflows/run_tests.yml/badge.svg"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/arthjean/paneflow"></a>
+    <a href="https://github.com/arthjean/paneflow/releases"><img alt="Downloads" src="https://img.shields.io/github/downloads/arthjean/paneflow/total"></a>
+    <img alt="Platforms" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-informational">
+    <img alt="Rust" src="https://img.shields.io/badge/Rust-1.96.1-orange?logo=rust">
+  </p>
+  <p>
+    <a href="#install">Install</a> ·
+    <a href="#why-paneflow">Why Paneflow</a> ·
+    <a href="#core-workflows">Core workflows</a> ·
+    <a href="#safety-model">Safety model</a> ·
+    <a href="#docs">Docs</a> ·
+    <a href="#faq">FAQ</a>
+  </p>
+</div>
 
 Paneflow keeps Claude Code, Codex, Gemini, opencode, and any CLI
 agent in real terminal panes you can see, interrupt, and take over. It tracks
@@ -23,16 +33,7 @@ and ships native builds for Linux, macOS Apple Silicon, and Windows x64. No
 Electron. No WSL required. No hosted agent runtime.
 
 <p align="center">
-  <a href="#install">Install</a> ·
-  <a href="#why-paneflow">Why Paneflow</a> ·
-  <a href="#core-workflows">Core workflows</a> ·
-  <a href="#safety-model">Safety model</a> ·
-  <a href="#docs">Docs</a> ·
-  <a href="#faq">FAQ</a>
-</p>
-
-<p align="center">
-  <img src="assets/images/demo.gif" alt="Paneflow running several coding agents in parallel panes, with live agent status in the sidebar" width="100%" />
+  <img src="assets/images/demo.png" alt="Paneflow running several coding agents in parallel panes, with live agent status in the sidebar" width="100%" />
 </p>
 <p align="center">
   <sub>Several coding agents running in parallel panes, with live status for who is thinking, running, waiting, or done.</sub>
