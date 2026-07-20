@@ -1797,17 +1797,24 @@ fn run_runtime(
         }
     };
     let output_mailbox = mailbox.clone();
-    if let Err(error) = std::thread::Builder::new()
+    let reader_worker = match std::thread::Builder::new()
         .name("paneflow-ghostty-pty-reader".into())
         .spawn(move || read_pty(reader, output_mailbox))
     {
-        startup_child.terminate();
-        let _ = startup_tx.send(StartupReport::PostSpawnFailed {
-            child_pid,
-            error: anyhow::Error::new(error).context("failed to start PTY reader"),
-        });
-        return;
-    }
+        Ok(worker) => worker,
+        Err(error) => {
+            startup_child.terminate();
+            let _ = startup_tx.send(StartupReport::PostSpawnFailed {
+                child_pid,
+                error: anyhow::Error::new(error).context("failed to start PTY reader"),
+            });
+            return;
+        }
+    };
+    #[cfg(target_os = "windows")]
+    let mut reader_worker = Some(reader_worker);
+    #[cfg(not(target_os = "windows"))]
+    drop(reader_worker);
 
     drop(pair.slave);
     startup_state.mark_runtime_started();
@@ -2386,6 +2393,15 @@ fn run_runtime(
                     .unwrap_or_else(Instant::now);
                 if !master.join_until(closer_deadline) {
                     continue;
+                }
+                if let Some(worker) = reader_worker.take()
+                    && worker.join().is_err()
+                {
+                    let _ = inner
+                        .events_tx
+                        .unbounded_send(GhosttyUiEvent::RuntimeFailed(
+                            "Ghostty PTY reader terminated unexpectedly".to_owned(),
+                        ));
                 }
             }
             if let Some(exit) = lifecycle.take_ready_exit(now, mailbox.pending_output_count()) {
