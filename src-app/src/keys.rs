@@ -29,21 +29,37 @@ impl TerminalKeySequence {
     }
 }
 
+#[cfg(target_os = "windows")]
+const LEGACY_SHIFT_ENTER_SEQUENCE: &str = "\x1b\r";
+
+#[cfg(not(target_os = "windows"))]
+const LEGACY_SHIFT_ENTER_SEQUENCE: &str = "\n";
+
+pub(crate) fn is_shift_enter(keystroke: &Keystroke, option_as_meta: bool) -> bool {
+    let alt = keystroke.modifiers.alt && option_as_meta;
+    keystroke.key == "enter" && keystroke.modifiers.shift && !keystroke.modifiers.control && !alt
+}
+
 fn shift_enter_sequence(
     keystroke: &Keystroke,
     mode: &Modes,
     option_as_meta: bool,
 ) -> Option<TerminalKeySequence> {
-    let alt = keystroke.modifiers.alt && option_as_meta;
-    if keystroke.key != "enter" || !keystroke.modifiers.shift || keystroke.modifiers.control || alt
-    {
+    if !is_shift_enter(keystroke, option_as_meta) {
         return None;
     }
 
-    if mode.contains(Modes::KITTY_KEYBOARD) {
+    if mode.contains(Modes::KITTY_KEYBOARD) && cfg!(not(target_os = "windows")) {
         Some(TerminalKeySequence::Protocol(Cow::Borrowed("\x1b[13;2u")))
     } else {
-        Some(TerminalKeySequence::Literal(Cow::Borrowed("\x0a")))
+        // ConPTY translates LF to Ctrl+Enter rather than Ctrl+J, which does not
+        // match multiline bindings in Crossterm applications such as Codex.
+        // ESC CR survives as Alt+Enter, the portable multiline alias those
+        // applications already expose. Windows ConPTY also drops CSI-u input,
+        // so this fallback remains necessary after Kitty mode negotiation.
+        Some(TerminalKeySequence::Literal(Cow::Borrowed(
+            LEGACY_SHIFT_ENTER_SEQUENCE,
+        )))
     }
 }
 
@@ -84,10 +100,8 @@ pub fn to_esc_str(
     // with `option_as_meta: false` would otherwise lose Alt+Arrow entirely.
     let alt_phys = keystroke.modifiers.alt;
 
-    // Preserve the physical chord after a child negotiates Kitty keyboard
-    // reporting. Legacy terminals cannot represent Shift+Enter portably, so
-    // use LF there: agent editors receive it as the conventional Ctrl+J
-    // multiline binding rather than a submitting carriage return.
+    // Preserve the physical chord when both the child and PTY transport support
+    // Kitty keyboard reporting. Otherwise use the platform's multiline alias.
     if let Some(sequence) = shift_enter_sequence(keystroke, mode, option_as_meta) {
         return Some(sequence.into_sequence());
     }
@@ -296,10 +310,10 @@ pub fn to_esc_str(
 ///
 /// Most entries are protocol fallbacks because a stateful backend can encode
 /// them more accurately after a child enables Kitty or xterm keyboard modes.
-/// Legacy Shift+Enter is deliberately literal: passing it back through that
-/// encoder turns LF into a modified-Enter escape sequence and loses multiline
-/// input. Once Kitty keyboard reporting is active, the backend keeps the
-/// structured key so the child receives the real Shift+Enter chord.
+/// Legacy Shift+Enter is deliberately literal so the backend cannot reinterpret
+/// its platform-specific multiline alias. Once Kitty keyboard reporting is
+/// active on a compatible transport, the backend keeps the structured key so
+/// the child receives the real Shift+Enter chord.
 pub(crate) fn terminal_key_sequence(
     keystroke: &Keystroke,
     mode: &Modes,
@@ -365,6 +379,7 @@ mod tests {
         assert_eq!(to_esc_str(&e_acute, &mode, true).as_deref(), Some("\x1bé"));
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn legacy_shift_enter_is_an_exact_line_feed_binding() {
         let mode = Modes::empty();
@@ -375,6 +390,7 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn kitty_shift_enter_preserves_the_physical_chord() {
         let mode = Modes::KITTY_KEYBOARD;
@@ -385,13 +401,27 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn conpty_shift_enter_uses_alt_enter_transport() {
+        let shift_enter = Keystroke::parse("shift-enter").expect("valid keystroke");
+        for mode in [Modes::empty(), Modes::KITTY_KEYBOARD] {
+            assert_eq!(
+                terminal_key_sequence(&shift_enter, &mode, true),
+                Some(TerminalKeySequence::Literal(Cow::Borrowed("\x1b\r")))
+            );
+        }
+    }
+
     #[test]
     fn shift_enter_respects_option_as_meta() {
         let mode = Modes::empty();
         let option_shift_enter = Keystroke::parse("alt-shift-enter").expect("valid keystroke");
         assert_eq!(
             terminal_key_sequence(&option_shift_enter, &mode, false),
-            Some(TerminalKeySequence::Literal(Cow::Borrowed("\x0a")))
+            Some(TerminalKeySequence::Literal(Cow::Borrowed(
+                LEGACY_SHIFT_ENTER_SEQUENCE
+            )))
         );
         assert_eq!(
             terminal_key_sequence(&option_shift_enter, &mode, true),
