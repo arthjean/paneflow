@@ -189,6 +189,7 @@ impl PaneFlowApp {
     /// paths, where a deferred background write would be lost when the process
     /// exits or is replaced.
     pub(crate) fn save_session_blocking(&self, cx: &App) {
+        crate::window_state::save();
         // Cancel any in-flight deferred save: bump the coalescing token so a
         // background task still sleeping in its debounce wakes to a stale `seq`
         // and no-ops. Without this, a `save_session` fired moments before quit

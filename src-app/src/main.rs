@@ -66,16 +66,16 @@ mod ui_primitives;
 mod update;
 mod widgets;
 mod window_chrome;
+mod window_state;
 mod windows_app_identity;
 mod workspace;
 
 use crate::window_chrome::title_bar;
 
 use gpui::{
-    Animation, AnimationExt, App, Bounds, Context, CursorStyle, Entity, FocusHandle, Focusable,
+    Animation, AnimationExt, App, Context, CursorStyle, Entity, FocusHandle, Focusable,
     InteractiveElement, IntoElement, PathBuilder, Pixels, Point, Render, SharedString, Styled,
     Window, WindowBounds, WindowDecorations, WindowOptions, canvas, div, point, prelude::*, px,
-    size,
 };
 use gpui_platform::application;
 use notify::Watcher;
@@ -2579,6 +2579,7 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
     let view = window.replace_root(cx, |_, cx| PaneFlowApp::new(cx));
     view.update(cx, |_, cx| {
         let subscription = cx.observe_window_bounds(window, |this, window, cx| {
+            crate::window_state::record_windowed_size(window);
             #[cfg(target_os = "linux")]
             crate::window_chrome::linux_backdrop::refresh_blur_region(window);
             if this.settings_section.is_some() {
@@ -3039,7 +3040,7 @@ fn main() {
                 install_macos_menu_action_fallbacks(cx);
             }
 
-            let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
+            let bounds = crate::window_state::initial_bounds(cx);
             let decorations = match config.window_decorations.as_deref() {
                 Some("server") => WindowDecorations::Server,
                 Some("client") | None => WindowDecorations::Client,
@@ -3072,7 +3073,7 @@ fn main() {
             let window_result = cx.open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(800.0), px(500.0))),
+                    window_min_size: Some(crate::window_state::minimum_size()),
                     window_decorations: Some(decorations),
                     titlebar: Some(titlebar_options),
                     window_background: crate::app::constants::window_background_appearance(
