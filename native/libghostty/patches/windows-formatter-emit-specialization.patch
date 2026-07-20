@@ -240,7 +240,7 @@ index a375b4dd7..d54db4285 100644
 @@ -1346 +1286 @@ pub const PageFormatter = struct {
 -        if (self.opts.emit == .html) {
 +        if (emit == .html) {
-@@ -1363,0 +1304,141 @@ pub const PageFormatter = struct {
+@@ -1363,0 +1304,143 @@ pub const PageFormatter = struct {
 +    fn formatHeaderForEmit(
 +        self: PageFormatter,
 +        writer: *std.Io.Writer,
@@ -315,6 +315,8 @@ index a375b4dd7..d54db4285 100644
 +        alloc: Allocator,
 +        count: usize,
 +    ) std.Io.Writer.Error!void {
++        if (count == 0) return;
++
 +        map.appendNTimes(
 +            alloc,
 +            .{ .x = 0, .y = 0 },
