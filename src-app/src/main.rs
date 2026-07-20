@@ -1692,6 +1692,14 @@ impl Render for PaneFlowApp {
         );
         let isolate_primary_sidebar_material =
             cfg!(any(target_os = "windows", target_os = "macos")) && chrome_material_active;
+        // Native sidebar material is isolated by an opaque shell mask. Reuse
+        // that shell color for the main panel's corner wedges: transparent
+        // paint cannot cover rectangular child backgrounds on Windows/macOS.
+        let main_panel_corner_mask_bg = if isolate_primary_sidebar_material {
+            opaque_shell_bg
+        } else {
+            panel_corner_mask_bg
+        };
         #[cfg(target_os = "linux")]
         {
             crate::window_chrome::linux_backdrop::set_chrome_geometry(
@@ -2154,6 +2162,41 @@ impl Render for PaneFlowApp {
                                     ))
                                     .child(main_content),
                             )
+                            // Windows Acrylic spans the host window. Cover the
+                            // panel's outer insets so native material cannot
+                            // continue past the four rounded corner wedges.
+                            .when(terminal_material_visible, |panel_shell| {
+                                panel_shell
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .right_0()
+                                            .top(panel_top)
+                                            .bottom_0()
+                                            .w(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                            .bg(opaque_shell_bg),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left_0()
+                                            .right_0()
+                                            .bottom_0()
+                                            .h(px(crate::app::constants::SIDEBAR_CARD_INSET))
+                                            .bg(opaque_shell_bg),
+                                    )
+                                    .when(main_panel_left_inset > 0., |panel_shell| {
+                                        panel_shell.child(
+                                            div()
+                                                .absolute()
+                                                .left_0()
+                                                .top(panel_top)
+                                                .bottom_0()
+                                                .w(px(main_panel_left_inset))
+                                                .bg(opaque_shell_bg),
+                                        )
+                                    })
+                            })
                             // GPUI clips overflow with a rectangular content
                             // mask, so rounded panel children can still paint
                             // square backgrounds in the corners. These masks
@@ -2166,7 +2209,7 @@ impl Render for PaneFlowApp {
                                     .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
                                     .child(panel_corner_mask(
                                         PanelCorner::TopLeft,
-                                        panel_corner_mask_bg,
+                                        main_panel_corner_mask_bg,
                                     )),
                             )
                             .child(
@@ -2177,7 +2220,7 @@ impl Render for PaneFlowApp {
                                     .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
                                     .child(panel_corner_mask(
                                         PanelCorner::TopRight,
-                                        panel_corner_mask_bg,
+                                        main_panel_corner_mask_bg,
                                     )),
                             )
                             .child(
@@ -2188,7 +2231,7 @@ impl Render for PaneFlowApp {
                                     .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
                                     .child(panel_corner_mask(
                                         PanelCorner::BottomLeft,
-                                        panel_corner_mask_bg,
+                                        main_panel_corner_mask_bg,
                                     )),
                             )
                             .child(
@@ -2199,7 +2242,7 @@ impl Render for PaneFlowApp {
                                     .size(crate::app::constants::SIDEBAR_CARD_CORNER_RADIUS)
                                     .child(panel_corner_mask(
                                         PanelCorner::BottomRight,
-                                        panel_corner_mask_bg,
+                                        main_panel_corner_mask_bg,
                                     )),
                             ),
                     )
@@ -2352,7 +2395,11 @@ impl Render for PaneFlowApp {
             app_content,
             window,
             app_backdrop_bg,
-            ui.border,
+            if terminal_material_visible {
+                gpui::transparent_black()
+            } else {
+                ui.border
+            },
         )
     }
 }
