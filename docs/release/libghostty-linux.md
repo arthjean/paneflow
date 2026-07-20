@@ -3,7 +3,8 @@
 Ghostty is the default terminal backend in standard Linux builds. This includes
 bare `cargo run`, normal development builds, tests, and official x86_64 and
 ARM64 packages. `terminal.backend = auto` selects Ghostty for every new Linux
-terminal. macOS and Windows remain Alacritty-only.
+terminal. macOS remains Alacritty-only; supported Windows x64 MSVC builds use
+their separately qualified native Ghostty backend.
 
 ## Development build
 
@@ -44,9 +45,11 @@ reviewed SHA-256 and requires every statically bundled component marker.
 
 The release workflow follows the same rule for Linux x86_64 and ARM64: it
 generates the pinned archive, selects it explicitly, builds Paneflow with the
-default features, verifies static linkage, then packages it. macOS and Windows
-build with `--no-default-features`, so their terminal backend stays Alacritty
-and their jobs require neither Zig nor Ghostty source.
+default features, verifies static linkage, then packages it. macOS builds with
+`--no-default-features` and stays on Alacritty. Windows starts from
+`--no-default-features`, explicitly enables `libghostty-windows`, and consumes
+the separately verified x64 MSVC archive without requiring a local Ghostty
+checkout.
 
 ## Updating the pinned native input
 

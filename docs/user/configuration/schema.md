@@ -88,7 +88,7 @@ CLI binary.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `terminal.backend` | string | `auto` | `auto`, `ghostty`, or `alacritty`. In standard Linux builds, including `cargo run`, `auto` selects Ghostty and `alacritty` is the explicit rollback. macOS, Windows, and Linux builds using `--no-default-features` use Alacritty. Applies only to new sessions. |
+| `terminal.backend` | string | `auto` | `auto`, `ghostty`, or `alacritty`. Standard Linux builds and supported Windows x64 MSVC builds select Ghostty for `auto`; `ghostty` requests it explicitly and `alacritty` is the rollback. macOS and builds without the target's native Ghostty feature use Alacritty. Unknown runtime values fail safe to Alacritty. Applies only to new sessions. |
 | `terminal.ligatures` | boolean or null | `false` | Enables programming ligatures for fonts that ship them. |
 | `terminal.integrated_glyphs` | boolean or null | `true` | Draws built-in block-element glyphs as filled quads. |
 | `terminal.color_emoji` | boolean or null | `true` | Uses the platform color-emoji path. |

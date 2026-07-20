@@ -5,6 +5,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- Windows 10 1809+ and Windows 11 x64 builds now select the statically linked
+  Ghostty terminal engine for new sessions when `terminal.backend` is `auto`.
+  Explicit `ghostty` remains available for diagnosis and `alacritty` remains
+  the immediate rollback. A Ghostty startup failure can fall back once before
+  child spawn; live sessions never switch backend. Linux keeps its existing
+  Ghostty selection, macOS remains on Alacritty, and persisted workspace and
+  session formats are unchanged.
+
 ## [0.6.2] - 2026-06-24
 
 Patch release focused on Windows trust and cleaner agent terminal startup.

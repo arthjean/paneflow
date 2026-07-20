@@ -1,13 +1,15 @@
 # Windows libghostty qualification and rollback
 
-This runbook qualifies the statically linked libghostty-vt backend before it
-can become the Windows `auto` backend. It complements
+This runbook qualifies the statically linked libghostty-vt backend and governs
+its promotion as the Windows `auto` backend. It complements
 `docs/WINDOWS-SMOKE-TEST.md`: the existing runbook covers the general PaneFlow
 installer and UI, while this document owns QG-008 through QG-011 from
 `tasks/prd-windows-libghostty-backend-2026-Q3.md`.
 
-Until EP-005 is complete, `terminal.backend = "auto"` still resolves to
-Alacritty on Windows. Select Ghostty explicitly during qualification.
+The promoted Windows x64 build resolves `terminal.backend = "auto"` to
+Ghostty for new sessions. `ghostty` remains the explicit native request and
+`alacritty` remains the rollback. Qualification must exercise all three modes;
+a build without the verified native feature stays on Alacritty.
 
 ## Automated evidence
 
@@ -40,6 +42,12 @@ frame gate applies output and resize pressure to the backend-neutral GPUI
 renderer; Ghostty parsing and ConPTY host behavior are covered by the separate
 corpus and lifecycle gates. Do not replace a failing baseline or raise a
 budget without a versioned rationale and review.
+
+The promotion is publishable only when the automated artifacts and both
+desktop result files identify the same full candidate commit. A missing or
+failing gate blocks publication; the recovery build or configuration must keep
+Alacritty selected. No environment flag or unversioned exception bypasses this
+rule.
 
 The signed release workflow first records a static candidate from the release
 PE and its imports, then binds the exact binary hash to a hosted-desktop
@@ -90,7 +98,7 @@ PaneFlow chrome and synthetic fixture text.
 | Platform | Windows 10 22H2 x64, Windows 11 x64, supported GPU | Signed MSI launches with no fallback or native DLL |
 | Session | local desktop, optional RDP, sleep/resume | Existing panes recover input, resize and output without duplicate children |
 | Profile | ASCII and non-ASCII user path | Config, hooks, shell spawn and uninstall complete without exposing the path |
-| Backend | explicit `ghostty`, explicit `alacritty` | Requested and effective backend match before the child is used |
+| Backend | `auto`, explicit `ghostty`, explicit `alacritty` | `auto` and `ghostty` resolve to Ghostty; `alacritty` resolves to Alacritty before the child is used |
 
 ## QG-008 input and protocol matrix
 
@@ -151,8 +159,9 @@ Alacritty-only upgrade baseline.
    present, `paneflow.exe` is x64, imports are approved, and no `*ghostty*.dll`
    exists.
 3. Launch once with an isolated profile containing
-   `"terminal": { "backend": "ghostty" }`, then once with `alacritty`.
-   Confirm the requested and effective values in the backend diagnostic.
+   `"terminal": { "backend": "auto" }`, once with `ghostty`, then once with
+   `alacritty`. Confirm the requested and effective values in the backend
+   diagnostic.
 4. Uninstall the candidate, install v0.8.0, create a harmless configuration
    marker, upgrade to the candidate, and confirm the marker plus explicit
    Alacritty selection survive.
