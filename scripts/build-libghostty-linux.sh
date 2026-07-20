@@ -113,6 +113,9 @@ normalize_archive() {
     echo "archive normalization found duplicate member names: $duplicates" >&2
     return 1
   }
+  # Zig may append members in parallel completion order. Rebuild from a
+  # canonical order so identical object files always produce identical bytes.
+  mapfile -t basenames < <(printf '%s\n' "${basenames[@]}" | LC_ALL=C sort)
 
   rm -rf "$normalize_dir" "$normalized"
   mkdir -p "$normalize_dir"
