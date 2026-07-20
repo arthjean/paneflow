@@ -55,6 +55,12 @@ enum SidebarAgentState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WorkspaceDropEdge {
+    Before,
+    After,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SidebarAgentSummary {
     state: SidebarAgentState,
     count: usize,
@@ -71,8 +77,22 @@ const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
 const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 const SIDEBAR_AGENT_STATUS_SLOT_WIDTH: f32 = 48.0;
 const SIDEBAR_AGENT_ICON_SLOT_WIDTH: f32 = 20.0;
+const SIDEBAR_DROP_GAP: f32 = 8.0;
 const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
+
+fn workspace_row_shell() -> gpui::Div {
+    div()
+        .px(px(SIDEBAR_ROW_PADDING_X))
+        .py(px(4.))
+        .min_h(px(44.))
+        .flex_none()
+        .rounded(px(8.))
+        .overflow_x_hidden()
+        .flex()
+        .flex_col()
+        .gap(px(4.))
+}
 
 impl SidebarDiffSummary {
     fn is_visible(self) -> bool {
@@ -251,6 +271,20 @@ where
 fn sidebar_workspace_title_slot_width(summary: Option<SidebarAgentSummary>) -> f32 {
     let reserved = summary.map_or(0.0, |summary| SIDEBAR_TITLE_ROW_GAP + summary.slot_width());
     (SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - reserved).max(0.0)
+}
+
+fn workspace_drop_edge(
+    drag: &WorkspaceDrag,
+    target_id: u64,
+    target_idx: usize,
+) -> Option<WorkspaceDropEdge> {
+    if drag.id == target_id {
+        None
+    } else if drag.source_idx < target_idx {
+        Some(WorkspaceDropEdge::After)
+    } else {
+        Some(WorkspaceDropEdge::Before)
+    }
 }
 
 impl PaneFlowApp {
@@ -493,6 +527,7 @@ impl PaneFlowApp {
         let idx = i;
         let ws_id = ws.id;
         let ws_title: SharedString = ws.title.clone().into();
+        let ws_branch = (!ws.git_branch.is_empty()).then(|| ws.git_branch.clone().into());
         let hover_bg = crate::app::constants::sidebar_tab_active_background();
         let resting_bg = if is_active {
             hover_bg
@@ -500,29 +535,23 @@ impl PaneFlowApp {
             hover_bg.opacity(0.0)
         };
 
-        let mut row = div()
+        let mut row = workspace_row_shell()
             .id(SharedString::from(format!("ws-{ws_id}")))
-            .mx(px(SIDEBAR_ROW_MARGIN_X))
-            .px(px(SIDEBAR_ROW_PADDING_X))
-            .py(px(4.))
-            .min_h(px(44.))
-            .rounded(px(8.))
-            .overflow_x_hidden()
             .animated_hover_bg(resting_bg, hover_bg)
             .on_drag(
                 WorkspaceDrag {
                     id: ws_id,
+                    source_idx: idx,
                     title: ws_title.clone(),
+                    branch: ws_branch.clone(),
                 },
                 |drag, _offset, _window, cx| {
                     cx.new(|_| WorkspaceDragPreview {
                         title: drag.title.clone(),
+                        branch: drag.branch.clone(),
                     })
                 },
             )
-            .on_drop(cx.listener(move |this, drag: &WorkspaceDrag, _window, cx| {
-                this.reorder_workspace(drag.id, idx, cx);
-            }))
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
                 this.dismiss_transient_surfaces();
                 if let Some(workspace) = this.workspaces.get_mut(idx) {
@@ -583,10 +612,7 @@ impl PaneFlowApp {
                         }
                     }
                 }
-            }))
-            .flex()
-            .flex_col()
-            .gap(px(4.));
+            }));
 
         // Row 1: title
         let agent_status =
@@ -657,7 +683,35 @@ impl PaneFlowApp {
             })
             .into()
         });
-        row
+
+        div()
+            .id(SharedString::from(format!("ws-drop-{ws_id}")))
+            .mx(px(SIDEBAR_ROW_MARGIN_X))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .rounded(px(8.))
+            .drag_over::<WorkspaceDrag>(move |style, drag, _window, _cx| {
+                let indicator = ui.text.opacity(0.4);
+                let target_background = hover_bg.opacity(0.24);
+                match workspace_drop_edge(drag, ws_id, idx) {
+                    Some(WorkspaceDropEdge::Before) => style
+                        .pt(px(SIDEBAR_DROP_GAP))
+                        .border_t_1()
+                        .border_color(indicator)
+                        .bg(target_background),
+                    Some(WorkspaceDropEdge::After) => style
+                        .pb(px(SIDEBAR_DROP_GAP))
+                        .border_b_1()
+                        .border_color(indicator)
+                        .bg(target_background),
+                    None => style,
+                }
+            })
+            .on_drop(cx.listener(move |this, drag: &WorkspaceDrag, _window, cx| {
+                this.reorder_workspace(drag.id, idx, cx);
+            }))
+            .child(row)
     }
 
     fn render_workspace_meta_row(
@@ -1184,18 +1238,92 @@ mod tests {
     use super::{
         SIDEBAR_AGENT_ICON_SLOT_WIDTH, SIDEBAR_AGENT_STATUS_SLOT_WIDTH, SIDEBAR_TITLE_ROW_GAP,
         SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH, SidebarAgentState, SidebarAgentSummary,
-        SidebarDiffSummary, SidebarServiceSummary, collapse_home, sidebar_agent_summary,
-        sidebar_diff_summary, sidebar_file_change_label, sidebar_service_summary,
-        sidebar_workspace_title_slot_width, visible_service_ports,
+        SidebarDiffSummary, SidebarServiceSummary, WorkspaceDropEdge, collapse_home,
+        sidebar_agent_summary, sidebar_diff_summary, sidebar_file_change_label,
+        sidebar_service_summary, sidebar_workspace_title_slot_width, visible_service_ports,
+        workspace_drop_edge, workspace_row_shell,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
     use crate::terminal::ServiceInfo;
     use crate::workspace::GitDiffStats;
+    use gpui::{
+        AvailableSpace, InteractiveElement, ParentElement, SharedString, Styled, TestAppContext,
+        div, point, px, size,
+    };
     use std::collections::HashMap;
 
     fn session(state: AgentState) -> AgentSession {
         AgentSession::new(TerminalAgent::ClaudeCode, state)
+    }
+
+    #[test]
+    fn workspace_drop_edge_matches_reorder_insertion_side() {
+        let drag = crate::WorkspaceDrag {
+            id: 7,
+            source_idx: 2,
+            title: SharedString::from("source"),
+            branch: None,
+        };
+
+        assert_eq!(workspace_drop_edge(&drag, 7, 2), None);
+        assert_eq!(
+            workspace_drop_edge(&drag, 3, 0),
+            Some(WorkspaceDropEdge::Before)
+        );
+        assert_eq!(
+            workspace_drop_edge(&drag, 9, 5),
+            Some(WorkspaceDropEdge::After)
+        );
+    }
+
+    #[gpui::test]
+    fn sidebar_workspace_rows_keep_height_when_list_overflows(cx: &mut TestAppContext) {
+        const ROWS: [&str; 8] = [
+            "sidebar-row-0",
+            "sidebar-row-1",
+            "sidebar-row-2",
+            "sidebar-row-3",
+            "sidebar-row-4",
+            "sidebar-row-5",
+            "sidebar-row-6",
+            "sidebar-row-7",
+        ];
+
+        let cx = cx.add_empty_window();
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(240.)),
+                AvailableSpace::Definite(px(200.)),
+            ),
+            |_, _| {
+                let mut list = div()
+                    .w(px(240.))
+                    .h(px(200.))
+                    .overflow_hidden()
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.));
+
+                for selector in ROWS {
+                    list = list.child(
+                        workspace_row_shell()
+                            .child(div().h(px(20.)).flex_none())
+                            .child(div().h(px(14.)).flex_none())
+                            .debug_selector(move || selector.into()),
+                    );
+                }
+                list
+            },
+        );
+
+        for selector in ROWS {
+            let bounds = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("{selector} not painted"));
+            assert_eq!(bounds.size.height, px(46.), "{selector}");
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
