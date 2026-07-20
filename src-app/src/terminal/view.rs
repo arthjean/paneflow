@@ -144,29 +144,13 @@ enum BackgroundSpawnOutcome {
     },
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
-fn event_uses_ghostty_backend(event: &TerminalBackendEvent) -> bool {
+#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+fn should_render_ghostty_wakeup_immediately(event: &TerminalBackendEvent) -> bool {
     matches!(event, TerminalBackendEvent::Ghostty(_))
 }
 
-#[cfg(not(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-)))]
-fn event_uses_ghostty_backend(_event: &TerminalBackendEvent) -> bool {
+#[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+fn should_render_ghostty_wakeup_immediately(_event: &TerminalBackendEvent) -> bool {
     false
 }
 
@@ -896,33 +880,34 @@ impl TerminalView {
 
         // Backend event coalescing:
         // Phase 1: Block until first event (zero CPU when idle)
-        // Phase 2: Render the leading Ghostty wakeup immediately, then batch
-        // trailing events for 4ms (max 100, dedup Wakeup). Alacritty retains
-        // the existing fixed-window behavior.
+        // Phase 2: Render the leading Linux Ghostty wakeup immediately. Windows
+        // Ghostty and Alacritty wait 4ms (max 100, dedup Wakeup) so ConPTY cannot
+        // expose a partial multi-write terminal frame.
         // Phase 3: Process batch, yield to other GPUI tasks
         let events_rx = terminal.take_backend_events();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut events_rx = events_rx;
-                let mut ghostty_wakeup_burst_active = false;
+                let mut immediate_ghostty_wakeup_burst_active = false;
                 loop {
                     // Phase 1: Block until first event arrives (zero CPU when idle)
                     let Some(first_event) = events_rx.next().await else {
                         break; // Channel closed
                     };
 
-                    // Phase 2: Ghostty's first wakeup after a quiet window is
-                    // latency-sensitive. Mark the terminal dirty and notify
-                    // GPUI before opening the trailing batch window. Further
-                    // wakeups in the same sustained burst remain coalesced.
+                    // Phase 2: Keep the existing low-latency path for Linux PTYs. Windows
+                    // Ghostty holds its first wakeup until the batch closes because ConPTY can
+                    // split or normalize the synchronized-output sequence around TUI redraws.
                     let mut batch = Vec::with_capacity(32);
                     let mut dequeued = 1usize;
-                    let first_uses_ghostty = event_uses_ghostty_backend(&first_event);
+                    let render_wakeup_immediately =
+                        should_render_ghostty_wakeup_immediately(&first_event);
                     let mut had_wakeup = first_event.is_wakeup();
-                    let leading_ghostty_wakeup =
-                        first_uses_ghostty && had_wakeup && !ghostty_wakeup_burst_active;
-                    if leading_ghostty_wakeup {
-                        ghostty_wakeup_burst_active = true;
+                    let leading_immediate_wakeup = render_wakeup_immediately
+                        && had_wakeup
+                        && !immediate_ghostty_wakeup_burst_active;
+                    if leading_immediate_wakeup {
+                        immediate_ghostty_wakeup_burst_active = true;
                         let result = cx.update(|cx| {
                             this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                                 view.terminal.process_backend_wakeup();
@@ -934,7 +919,7 @@ impl TerminalView {
                         }
                         had_wakeup = false;
                     }
-                    if !had_wakeup && !leading_ghostty_wakeup {
+                    if !had_wakeup && !leading_immediate_wakeup {
                         batch.push(first_event);
                     }
 
@@ -968,7 +953,7 @@ impl TerminalView {
                         }
                     }
                     if batch_window_elapsed {
-                        ghostty_wakeup_burst_active = false;
+                        immediate_ghostty_wakeup_burst_active = false;
                     }
 
                     // Phase 3: Process the batch in a single entity update
