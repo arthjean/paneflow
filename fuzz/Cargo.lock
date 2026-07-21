@@ -289,14 +289,14 @@ dependencies = [
 
 [[package]]
 name = "paneflow-libghostty-sys"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "paneflow-terminal-ghostty"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "base64",
  "paneflow-libghostty-sys",

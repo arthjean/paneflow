@@ -63,6 +63,16 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.8.2" date="2026-07-21">
+      <description>
+        <p>Windows title bar material isolation and documentation update.</p>
+        <ul>
+          <li>Windows keeps the title bar opaque when its dedicated chrome material is disabled, even when the terminal activates the host-window backdrop</li>
+          <li>Terminal material no longer bleeds into title-adjacent chrome that is configured to use the theme background</li>
+          <li>Architecture, installation, platform, and Build Week documentation now match the shipped v0.8 terminal stack</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.1" date="2026-07-21">
       <description>
         <p>Windows Ghostty terminal engine and desktop reliability update.</p>

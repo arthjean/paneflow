@@ -5981,11 +5981,11 @@ dependencies = [
 
 [[package]]
 name = "paneflow-acp"
-version = "0.8.1"
+version = "0.8.2"
 
 [[package]]
 name = "paneflow-ai-hook"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "interprocess",
  "serde",
@@ -5995,7 +5995,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-app"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
@@ -6088,7 +6088,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-config"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "dirs",
  "notify 7.0.0",
@@ -6101,7 +6101,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-ghostty-smoke"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "anyhow",
  "libc",
@@ -6111,7 +6111,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-ipc-client"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "interprocess",
  "serde_json",
@@ -6121,14 +6121,14 @@ dependencies = [
 
 [[package]]
 name = "paneflow-libghostty-sys"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "paneflow-mcp"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "paneflow-ipc-client",
  "serde",
@@ -6137,7 +6137,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-mcp-install"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -6151,11 +6151,11 @@ dependencies = [
 
 [[package]]
 name = "paneflow-process"
-version = "0.8.1"
+version = "0.8.2"
 
 [[package]]
 name = "paneflow-shim"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "ctrlc",
  "libc",
@@ -6166,7 +6166,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-telemetry"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "log",
  "serde",
@@ -6178,7 +6178,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-terminal-ghostty"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "base64",
  "paneflow-libghostty-sys",
