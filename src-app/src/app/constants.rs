@@ -190,17 +190,36 @@ fn windows_supports_system_backdrop() -> bool {
     unsafe { RtlGetVersion(&mut version) >= 0 && version.build >= 22_621 }
 }
 
-/// Transparent fill used by chrome children inside the window shell.
+/// Fill used by chrome children inside the window shell.
 ///
-/// The rounded shell owns the actual theme tint. Keeping title-adjacent rails
-/// transparent prevents their rectangular backgrounds from repainting pixels
-/// outside the shell's corner radius, since GPUI overflow masks are rectangular.
+/// Windows must paint an opaque title bar when its dedicated chrome material is
+/// disabled. The terminal can still activate the host-window backdrop, so a
+/// transparent title bar would otherwise expose that terminal-only material.
+/// Other platforms keep the child transparent and let the rounded shell own the
+/// tint, avoiding rectangular paint outside GPUI's corner mask.
 pub(crate) fn cockpit_chrome_background(
-    _background: Hsla,
-    _is_window_active: bool,
-    _material_active: bool,
+    background: Hsla,
+    is_window_active: bool,
+    material_active: bool,
 ) -> Hsla {
-    gpui::transparent_black()
+    #[cfg(target_os = "windows")]
+    {
+        let _ = is_window_active;
+        if material_active {
+            gpui::transparent_black()
+        } else {
+            Hsla {
+                a: 1.0,
+                ..background
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (background, is_window_active, material_active);
+        gpui::transparent_black()
+    }
 }
 
 /// Fill for the inset primary navigation card.
@@ -351,12 +370,35 @@ mod material_tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
     #[test]
     fn cockpit_children_stay_transparent_over_an_opaque_shell() {
         let background = Hsla::from(gpui::rgb(0x141414));
 
         assert_eq!(
             cockpit_chrome_background(background, true, false),
+            gpui::transparent_black()
+        );
+        assert_eq!(
+            cockpit_backdrop_background(background, true, false),
+            background
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn disabled_chrome_material_keeps_title_bar_opaque() {
+        let background = Hsla::from(gpui::rgb(0x141414));
+
+        assert_eq!(
+            cockpit_chrome_background(background, true, false),
+            Hsla {
+                a: 1.0,
+                ..background
+            }
+        );
+        assert_eq!(
+            cockpit_chrome_background(background, true, true),
             gpui::transparent_black()
         );
         assert_eq!(
