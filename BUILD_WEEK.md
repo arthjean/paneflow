@@ -10,7 +10,7 @@
 
 ## Project Story
 
-**Summary of the work completed during OpenAI Build Week:** Paneflow existed before Build Week. During the event, I used Codex CLI, Codex App, and GPT-5.6 Sol to migrate its terminal backend to `libghostty-vt` on Linux, port the architecture to Windows x64 MSVC with ConPTY, and ship the new engine on both targets. In parallel, I redesigned the UX/UI of the app and `paneflow.dev`, along with Paneflow's entire visual identity.
+**Summary of the work completed during OpenAI Build Week:** Paneflow existed before Build Week. During the event, I used Codex CLI, Codex App, and GPT-5.6 Sol to migrate its terminal backend to `libghostty-vt` on Linux, port the architecture to Windows with ConPTY, and ship the new engine on both platforms. In parallel, I redesigned the UX/UI of the app and `paneflow.dev`, along with Paneflow's entire visual identity.
 
 ### Inspiration
 
@@ -26,7 +26,7 @@ Conductor is its local control plane: a human or lead agent can orchestrate the 
 
 ### Technical Design
 
-Paneflow is written in Rust with GPUI, the native UI framework used by Zed. Each pane is a real terminal connected to a pseudoterminal (PTY). `libghostty-vt` is the default engine on Linux and Windows x64 MSVC, with Alacritty available as an explicit rollback for new sessions. macOS still uses Alacritty until the Ghostty port is complete.
+Paneflow is written in Rust with GPUI, the native UI framework used by Zed. Each pane is a real terminal connected to a pseudoterminal (PTY). `libghostty-vt` is the default engine on Linux and Windows, with Alacritty available as a fallback. macOS still uses Alacritty until the Ghostty port is complete.
 
 Agent hooks send lifecycle events to Paneflow as JSON-RPC over a local socket or named pipe. Paneflow matches each event to the right session and terminal, updates the UI immediately, then mirrors the normalized state onto a non-blocking event bus for subscribers such as Conductor. Conductor also uses the same JSON-RPC interface to orchestrate agents, while the MCP bridge exposes only three read-only tools: `list_panes`, `read_pane`, and `search_pane`.
 
@@ -55,11 +55,11 @@ I asked Codex to turn that research into two PRDs in dependency order: a [Linux 
 The migration includes:
 
 - A session abstraction and safe Rust API around Ghostty's C ABI. All `unsafe` access remains confined to small FFI modules, and GPUI receives only self-contained Rust snapshots.
-- A complete PTY lifecycle using `portable-pty` on Linux and ConPTY on Windows x64 MSVC, along with search, selection, clipboard support, OSC events, and persistence. Ghostty is the default backend on those targets, and Alacritty remains an explicit rollback for new sessions. Automatic fallback is allowed only before child creation.
+- A complete PTY lifecycle using `portable-pty` on Linux and ConPTY on Windows, along with search, selection, clipboard support, OSC events, and persistence. Ghostty is the default backend on both platforms, and Alacritty remains immediately available if something goes wrong.
 - A 135-case differential test corpus comparing Ghostty and Alacritty, two fuzzing targets, and tests covering input, line reflow, malformed sequences, and different stream chunk boundaries.
 - Pinned, reproducible static `libghostty-vt` archives for Linux x86_64, Linux ARM64, and Windows x64 MSVC. `cargo build` verifies and links them without downloading or compiling Ghostty, while CI checks their provenance, bindings, packages, and licenses.
 
-I set the constraints up front: GPUI remains responsible for rendering, Ghostty provides the terminal state, the artifacts are statically linked, Cargo stays offline, and Alacritty provides an explicit rollback for new sessions. Codex then traced behavior across Paneflow, Ghostty, Ghostling, and Zed, implemented the PRDs in batches, and diagnosed resizing, ConPTY, and native CI issues.
+I set the constraints up front: GPUI remains responsible for rendering, Ghostty provides the terminal state, the artifacts are statically linked, Cargo stays offline, and Alacritty provides an immediate fallback. Codex then traced behavior across Paneflow, Ghostty, Ghostling, and Zed, implemented the PRDs in batches, and diagnosed resizing, ConPTY, and native CI issues.
 
 Throughout Build Week, I used Codex CLI on Linux. On Windows, Codex App and Computer Use let me observe Paneflow while PowerShell drove the terminals, backend switching, and resizing. This combination exposed problems that library tests couldn't catch.
 
@@ -81,7 +81,9 @@ Building the interactive layouts for the `paneflow.dev` landing page was just as
 
 ### What I'm Proud Of
 
-I'm proud to have taken this migration all the way to shipping. Ghostty is now the default backend on Linux and Windows x64 MSVC, statically linked and shipped with no separate runtime. Alacritty remains available as a rollback for new sessions, while Paneflow never switches a live session after its shell has started.
+I'm proud to have taken this migration all the way to shipping. Ghostty is now the default backend on Linux and Windows, statically linked and shipped with no separate runtime. Alacritty remains immediately available if something goes wrong.
+
+Paneflow has already recorded more than 150 opt-in users in PostHog. It is an early signal that the coordination problem it addresses extends beyond my own workflow.
 
 I also used Paneflow to build Paneflow. Several Codex sessions with GPT-5.6 Sol were working in parallel on the Ghostty migration, the Windows port, the tests, the app, and the website. I could immediately see which session was waiting or had failed, read its output, compare its changes, and step in without losing context. Paneflow solved the problem that led me to create it.
 
