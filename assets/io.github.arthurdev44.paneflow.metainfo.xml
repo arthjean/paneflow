@@ -63,6 +63,17 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.8.1" date="2026-07-21">
+      <description>
+        <p>Windows Ghostty terminal engine and desktop reliability update.</p>
+        <ul>
+          <li>Windows x64 builds now use the pinned libghostty-vt engine through ConPTY by default, with Alacritty available as an explicit rollback</li>
+          <li>Official MSI packages statically link a reproducible native archive and include verified provenance, notices, and an SBOM</li>
+          <li>Multiline input, redraw batching, named-pipe I/O, terminal teardown, and maximized-window controls are more reliable on Windows</li>
+          <li>macOS sidebar materials, workspace drag guidance, application artwork, and main-window size persistence are improved</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.0" date="2026-07-18">
       <description>
         <p>Linux Ghostty terminal engine and interaction polish.</p>
