@@ -4,10 +4,12 @@ Paneflow is a native GPU-accelerated terminal workspace for running CLI coding
 agents in parallel. One user-facing Rust binary, no web runtime: the UI is
 built on a pinned Paneflow branch of
 [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui),
-terminal emulation is upstream
-[`alacritty_terminal`](https://crates.io/crates/alacritty_terminal), and
-everything else - PTY management, agent lifecycle tracking, IPC, the MCP
-bridge, self-update - is purpose-built in this repository.
+terminal emulation is provided by a pinned, statically linked
+`libghostty-vt` backend by default on Linux and Windows x64 MSVC. Upstream
+[`alacritty_terminal`](https://crates.io/crates/alacritty_terminal) remains the
+macOS backend and the explicit cross-platform rollback. Paneflow owns backend
+selection, PTY lifecycle orchestration, rendering, and integration with agent
+tracking, IPC, the MCP bridge, and self-update.
 
 This document describes how the pieces fit together. It is aimed at
 contributors and at anyone curious how you build a multiplexing terminal app
@@ -21,6 +23,9 @@ focused library crates:
 | Crate | Path | Purpose |
 |---|---|---|
 | `paneflow-app` | `src-app/` | The GPUI application and `paneflow` CLI entrypoint: UI, panes, PTY sessions, IPC server, self-update |
+| `paneflow-libghostty-sys` | `crates/paneflow-libghostty-sys/` | Raw Ghostty ABI plus verification and linking of the pinned static archive |
+| `paneflow-terminal-ghostty` | `crates/paneflow-terminal-ghostty/` | Safe Rust interface over Ghostty terminal state, input, search, selection, and owned render snapshots |
+| `paneflow-ghostty-smoke` | `crates/paneflow-ghostty-smoke/` | Package-level native smoke binary for Ghostty, PTY I/O, resize, and shutdown verification |
 | `paneflow-config` | `crates/paneflow-config/` | Config schema, tolerant JSON loader, file watcher |
 | `paneflow-shim` | `crates/paneflow-shim/` | PATH shim wrapping 16 known agent CLIs so Paneflow can observe their lifecycle |
 | `paneflow-ai-hook` | `crates/paneflow-ai-hook/` | The hook binary agent CLIs invoke to report session events back over IPC |
@@ -45,22 +50,24 @@ own crate and never links GPUI.
 │   owns all Entity state, rendering, input dispatch      │
 └─────────────────────────────────────────────────────────┘
         ▲                    ▲                    ▲
-        │ Wakeup events      │ mpsc (50ms poll)   │ channel
+        │ Backend events     │ mpsc (50ms poll)   │ channel
 ┌───────┴────────┐  ┌────────┴───────┐  ┌─────────┴────────┐
-│ PTY I/O threads│  │ IPC thread     │  │ Watcher threads  │
-│ one per pane   │  │ JSON-RPC 2.0   │  │ config, theme,   │
-│ (alacritty     │  │ socket server  │  │ git state        │
-│  EventLoop)    │  │                │  │                  │
+│ Terminal       │  │ IPC thread     │  │ Watcher threads  │
+│ workers        │  │ JSON-RPC 2.0   │  │ config, theme,   │
+│ Ghostty or     │  │ socket server  │  │ git state        │
+│ Alacritty      │  │                │  │                  │
 └────────────────┘  └────────────────┘  └──────────────────┘
 ```
 
 - **Main thread**: the GPUI event loop. All UI state lives in `Entity<T>`
   values mutated through GPUI contexts; there are no locks around UI state.
-- **PTY I/O threads**: one per terminal, spawned by
-  `alacritty_terminal::EventLoop`. The only cross-thread data is the terminal
-  grid itself, an `Arc<FairMutex<Term<…>>>` shared between the reader thread
-  (which feeds the VTE parser) and the render pass (which locks it briefly to
-  snapshot renderable content).
+- **Terminal workers**: the backend is selected before the shell child is
+  created. Each Ghostty session owns a `paneflow-ghostty-runtime` worker and a
+  PTY reader; Windows also uses a dedicated ConPTY closer so pipe drainage
+  cannot block teardown. Alacritty sessions retain their `EventLoop` I/O
+  thread and shared terminal grid. Both implementations publish
+  backend-neutral events to the view and owned render snapshots through
+  `TerminalSessionBackend`.
 - **IPC thread**: accepts connections on a Unix socket (Linux/macOS) or named
   pipe (Windows). Stateless methods reply in place; stateful methods are
   dispatched to the main thread through a bounded channel and drained by the
@@ -77,14 +84,21 @@ The full input/output pipeline, end to end:
 
 ```
 KeyDownEvent
-  → TerminalView::handle_key_down() → keys::to_esc_str()
-  → write_to_pty() → PTY EventLoop thread → shell / agent CLI
-  → output bytes → VTE parser → Term grid mutations
-  → Wakeup event → channel → 4ms event batch → sync() → cx.notify()
-  → TerminalElement::prepaint()  - lock grid, snapshot renderable content
+  → TerminalView::handle_key_down()
+  → Ghostty structured input or Alacritty escape-sequence input
+  → selected backend writer → PTY → shell / agent CLI
+  → output bytes → libghostty-vt engine or Alacritty VTE / Term grid
+  → TerminalBackendEvent → sync() → cx.notify()
+  → TerminalSessionBackend::render_content() → owned neutral Content
+  → TerminalElement::prepaint()
   → TerminalElement::paint()     - quads + shaped glyph runs
   → GPU (Vulkan on Linux, Metal on macOS, DirectX on Windows)
 ```
+
+The first Ghostty wakeup on Linux can render immediately. Windows Ghostty and
+Alacritty wakeups are coalesced into the 4 ms event batch. This keeps the
+renderer backend-independent without imposing the same scheduling policy on
+different PTY implementations.
 
 `TerminalElement` (`src-app/src/terminal/element/`) is the one place Paneflow
 implements GPUI's low-level `Element` trait directly instead of composing
@@ -95,17 +109,23 @@ app (sidebar, tabs, settings, diff viewer) is regular GPUI flex layout.
 Debug builds can trace the whole pipeline: `PANEFLOW_LATENCY_PROBE=1` stamps a
 keystroke at ingress and reports time-to-pixel.
 
-## Terminal emulation behind a boundary
+## Dual terminal engines behind one boundary
 
-Paneflow uses **upstream** `alacritty_terminal` from crates.io - not a fork.
-All alacritty types are confined behind neutral wrapper types in
-`src-app/src/terminal/types.rs`, and a guard test enforces that only an
-explicit allowlist of files may import `alacritty_terminal` directly. The rest
-of the app sees Paneflow's own `Point`, mode flags, and cell types.
+`TerminalSessionBackend` is the renderer-facing facade for both engines.
+Standard Linux builds and supported Windows x64 MSVC builds resolve
+`terminal.backend = auto` to Ghostty. macOS, builds without a verified native
+Ghostty feature, and explicit rollback sessions use upstream
+`alacritty_terminal`. The choice applies to new sessions only.
 
-The boundary has already paid for itself once (migrating off Zed's alacritty
-fork to upstream) and keeps the door open for swapping or extending the
-emulation core without a codebase-wide refactor.
+Ghostty's raw ABI and static archive linking live in
+`paneflow-libghostty-sys`; `paneflow-terminal-ghostty` exposes the safe Rust
+interface. Alacritty imports remain confined to an explicit allowlist. Neither
+engine leaks borrowed terminal state into GPUI: the rest of the app consumes
+Paneflow-owned points, mode flags, cells, events, and `Content` snapshots.
+
+A Ghostty startup failure may fall back to Alacritty only before the shell
+child exists. Once a child has been spawned, Paneflow never starts a second
+child or switches the live session to another engine.
 
 ## Agent lifecycle tracking
 
@@ -189,7 +209,8 @@ other two platforms:
 |---|---|---|---|
 | GPU | Vulkan | Metal | DirectX |
 | Windowing | Wayland + X11 | AppKit | Win32 |
-| PTY | `portable-pty` | `portable-pty` | ConPTY via `portable-pty` |
+| Terminal engine | `libghostty-vt` by default, Alacritty rollback | Alacritty | `libghostty-vt` by default on x64 MSVC, Alacritty rollback |
+| PTY | `portable-pty` for Ghostty, `alacritty_terminal::tty` for rollback | `alacritty_terminal::tty` | ConPTY via `portable-pty` for Ghostty, `alacritty_terminal::tty` for rollback |
 | IPC | Unix socket | Unix socket | Named pipe |
 | Packaging | `.deb` / `.rpm` / AppImage / tarball | signed + notarized `.dmg` | signed `.msi` |
 

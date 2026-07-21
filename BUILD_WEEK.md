@@ -1,119 +1,113 @@
 # OpenAI Build Week: Paneflow
 
-## Project overview
+## Project Overview
 
 **Project name:** Paneflow
 
-**Elevator pitch:** Cross-platform GPUI app for parallel coding agents.
+**Category:** Developer Tools
 
-## Project story
+**Pitch:** A native cross-platform workspace for launching, monitoring, and orchestrating multiple coding agents in parallel.
 
-**Built during OpenAI Build Week:** I used Codex with GPT-5.6 Sol to move Paneflow's Linux terminals from Alacritty to `libghostty-vt`. I made Ghostty the default Linux backend, added differential tests and fuzzing, and made the pinned `libghostty-vt` archives reproducible. Every terminal pane shown in the submission screenshots is running on that new Ghostty backend. Alacritty is still available as a rollback. I also redesigned the UX/UI across the application; the matching `paneflow.dev` redesign is still in progress.
+## Project Story
+
+**Summary of the work completed during OpenAI Build Week:** Paneflow existed before Build Week. During the event, I used Codex CLI, Codex App, and GPT-5.6 Sol to migrate its terminal backend to `libghostty-vt` on Linux, port the architecture to Windows x64 MSVC with ConPTY, and ship the new engine on both targets. In parallel, I redesigned the UX/UI of the app and `paneflow.dev`, along with Paneflow's entire visual identity.
 
 ### Inspiration
 
-I usually have several coding agents running at the same time. Starting them is easy. Remembering which one is waiting, which branch it touched, what failed, and whether two agents are about to work on the same thing gets messy fast.
+Before Paneflow, I was running more and more agents in parallel. Starting them was easy. But keeping track of who was waiting, who was changing what, what had failed, and how to avoid conflicts created a constant mental burden I could not eliminate. Running more terminal windows and processes also increased my PC's memory usage.
 
-I was supervising tmux grids and a pile of terminal windows, mostly from memory. I wanted a workspace where every agent stayed visible and where I could step in at any time.
+I was monitoring tmux grids and countless terminals while keeping each agent's state in my head. I wanted a workspace where every session stayed visible and I could step in at any time. That's how Paneflow was born.
 
-That became Paneflow.
+### How It Works
 
-### What it does
+Paneflow is a local workspace for developers who supervise multiple CLI agents on the same project. It brings Codex, Claude Code, OpenCode, Grok, Pi, and other agents into real terminals, alongside their branches, worktrees, and sessions. The interface makes their status visible, while the Review view lets you compare changes across worktrees.
 
-Paneflow is a cross-platform GPUI app for parallel coding agents. It runs Codex, Claude Code, Gemini, OpenCode, and other CLI agents inside real terminal panes.
+Conductor is its local control plane: a human or lead agent can orchestrate the others through a CLI and a JSON-RPC socket. The read-only MCP bridge lets them inspect neighboring panes without taking control. Paneflow brings terminals, lifecycle states, orchestration, and diff review together in a native app for Linux, macOS on Apple Silicon, and Windows x64.
 
-The sidebar shows which agents are thinking, running, waiting, finished, or stuck. Each workspace keeps its directory and Git branch visible. Paneflow also provides persistent layouts, an attention queue, desktop notifications, and a Review view for comparing worktree diffs side by side.
+### Technical Design
 
-Paneflow Conductor is the local control plane behind the interface. Its CLI and JSON-RPC socket let a human or lead agent list running agents, inspect their state, read terminal output, send a prompt, and wait for lifecycle events.
+Paneflow is written in Rust with GPUI, the native UI framework used by Zed. Each pane is a real terminal connected to a pseudoterminal (PTY). `libghostty-vt` is the default engine on Linux and Windows x64 MSVC, with Alacritty available as an explicit rollback for new sessions. macOS still uses Alacritty until the Ghostty port is complete.
 
-Agents can also inspect another pane through a built-in read-only MCP bridge with three tools: `list_panes`, `read_pane`, and `search_pane`. Terminal output returned through MCP is wrapped as untrusted data. Prompt submission remains human-controlled by default, with automatic submission available as an explicit opt-in.
+Agent hooks send lifecycle events to Paneflow as JSON-RPC over a local socket or named pipe. Paneflow matches each event to the right session and terminal, updates the UI immediately, then mirrors the normalized state onto a non-blocking event bus for subscribers such as Conductor. Conductor also uses the same JSON-RPC interface to orchestrate agents, while the MCP bridge exposes only three read-only tools: `list_panes`, `read_pane`, and `search_pane`.
 
-Paneflow runs locally and ships native builds for Linux, macOS Apple Silicon, and Windows x64.
+### What I Built During OpenAI Build Week
 
-### How I built it
+Paneflow existed before Build Week. During the event, I worked across dozens of Codex sessions on Linux and Windows, covering research, PRDs, implementation, testing, debugging, design, and more.
 
-Paneflow is written in Rust with GPUI, the native GPU-accelerated UI framework behind Zed.
+For verification, commit `e82b3da`, released on July 10 as version 0.7.10, is the pre-event baseline. Devpost also includes the `/feedback` ID from one of the critical sessions for the build.
 
-Each pane is backed by a real PTY. Agent lifecycle hooks feed a local event bus, while the application tracks workspaces, branches, repository changes, notifications, and session state. Conductor exposes the same state through a local JSON-RPC protocol and public CLI. The MCP server provides a smaller read-only surface for agent-to-agent inspection.
+#### Versions and Verifiable History
 
-The application ships as native packages and does not need Electron, WSL, or a hosted agent runtime.
+- [v0.7.10](https://github.com/arthjean/paneflow/releases/tag/v0.7.10): the pre-Build Week baseline.
+- [v0.7.11](https://github.com/arthjean/paneflow/releases/tag/v0.7.11): the first release shipped during the event, focused on workspace navigation and terminal polish.
+- [v0.8.0](https://github.com/arthjean/paneflow/releases/tag/v0.8.0): Ghostty became the default terminal engine on Linux, backed by differential validation, fuzzing, reproducible static archives, and native packaging.
+- [v0.8.1](https://github.com/arthjean/paneflow/releases/tag/v0.8.1): Ghostty became the default terminal engine in published Windows x64 MSVC builds, with the ConPTY host, signed MSI qualification, and Windows integration fixes.
+- [Full Build Week comparison](https://github.com/arthjean/paneflow/compare/v0.7.10...v0.8.1): every commit shipped from the pre-event baseline through the final release.
 
-### What I built during OpenAI Build Week
+The choice was simple: Ghostty was a better foundation than Alacritty across every area that mattered to Paneflow, and developers already loved it.
 
-Paneflow predates Build Week, so I am using commit `e82b3da` from July 10 as the pre-event baseline. The Devpost submission contains the `/feedback` ID for the main build session, while the dated commits after `e82b3da` separate this work from the existing product.
+I started with an architecture study using GPT-5.6 Sol with Ultra reasoning. I explored Ghostty and Ghostling to determine which components Paneflow could reuse without giving up control of the rendering, then validated the FFI boundary and packaging on Linux before porting the architecture to Windows with ConPTY.
 
-During Build Week, I used Codex with GPT-5.6 Sol to move Paneflow's Linux terminal stack to `libghostty-vt`.
+I couldn't start the macOS port during Build Week. I don't own a MacBook, and that month I couldn't afford to rent an Apple Silicon machine from Scaleway to properly test the PTY, rendering, and native packaging.
 
-The migration started with an architecture study. I used GPT-5.6 Sol at Ultra reasoning effort to explore Ghostty and Ghostling in depth, find the parts Paneflow could safely reuse, and work out whether a cross-platform path was realistic. I chose Linux as the first target so I could validate the engine and packaging before taking on Windows and macOS.
+I asked Codex to turn that research into two PRDs in dependency order: a [Linux PRD](https://github.com/arthjean/paneflow/blob/main/tasks/prd-linux-libghostty-backend-2026-Q3.md), followed by a [Windows PRD](https://github.com/arthjean/paneflow/blob/main/tasks/prd-windows-libghostty-backend-2026-Q3.md). I gave it my own skills for research, writing, implementation, and review, which I audited with GPT-5.6 Sol before starting the work.
 
-After that initial research, I asked Codex to turn the findings into a complete, dependency-ordered [migration PRD](tasks/prd-linux-libghostty-backend-2026-Q3.md). It starts with a smoke test, then moves through the session abstraction, implementation, default switch, differential testing, and release pipeline. I supplied implementation and review skills I had written for this kind of work, then used GPT-5.6 Sol to audit those skills before running the epics.
+The migration includes:
 
-The migration included:
+- A session abstraction and safe Rust API around Ghostty's C ABI. All `unsafe` access remains confined to small FFI modules, and GPUI receives only self-contained Rust snapshots.
+- A complete PTY lifecycle using `portable-pty` on Linux and ConPTY on Windows x64 MSVC, along with search, selection, clipboard support, OSC events, and persistence. Ghostty is the default backend on those targets, and Alacritty remains an explicit rollback for new sessions. Automatic fallback is allowed only before child creation.
+- A 135-case differential test corpus comparing Ghostty and Alacritty, two fuzzing targets, and tests covering input, line reflow, malformed sequences, and different stream chunk boundaries.
+- Pinned, reproducible static `libghostty-vt` archives for Linux x86_64, Linux ARM64, and Windows x64 MSVC. `cargo build` verifies and links them without downloading or compiling Ghostty, while CI checks their provenance, bindings, packages, and licenses.
 
-- A backend-neutral terminal session layer owned by Paneflow.
-- A safe Rust wrapper around the evolving Ghostty C API.
-- A complete Linux PTY lifecycle covering spawn, input, resize, scrollback, search, selection, clipboard, OSC events, shutdown, and session restoration.
-- Ghostty as the default Linux backend, with Alacritty preserved as an explicit rollback.
-- Deterministic differential tests that feed the same terminal streams into both backends and compare normalized output.
-- Fuzz targets for rendering, input, reflow, malformed sequences, and chunk boundaries.
-- Reproducible, pinned static `libghostty-vt` archives for Linux x86_64 and ARM64.
-- CI checks for generated bindings, dependency sources, package contents, native licenses, and cross-platform isolation.
-- A broader UX/UI redesign across the application, including the sidebar, tab bar, Review and Settings surfaces, window chrome, and interaction feedback.
+I set the constraints up front: GPUI remains responsible for rendering, Ghostty provides the terminal state, the artifacts are statically linked, Cargo stays offline, and Alacritty provides an explicit rollback for new sessions. Codex then traced behavior across Paneflow, Ghostty, Ghostling, and Zed, implemented the PRDs in batches, and diagnosed resizing, ConPTY, and native CI issues.
 
-I made the architectural calls up front: GPUI stays in charge of rendering, Ghostty is pinned and statically linked, `cargo build` never downloads native code, unsafe access stays confined to small wrappers, Linux gets the new backend first, and Alacritty remains available for rollback. Codex worked inside those constraints.
+Throughout Build Week, I used Codex CLI on Linux. On Windows, Codex App and Computer Use let me observe Paneflow while PowerShell drove the terminals, backend switching, and resizing. This combination exposed problems that library tests couldn't catch.
 
-Codex then helped me trace behavior across Paneflow, Ghostty, Ghostling, and Zed. I used it to implement the PRD one dependency-ordered slice at a time, generate focused tests, diagnose resize and reflow bugs, review FFI boundaries, and fix failures in the native CI pipeline.
+In parallel, I redesigned the app's navigation, Review and Settings views, window chrome, and interaction feedback. I carried that direction over to `paneflow.dev`, then redesigned Paneflow's entire visual identity with GPT-5.6 Sol using `xhigh` reasoning, from the logo and marketing visuals to the brand guidelines. The new website is live here: https://paneflow.dev/
 
-I use Codex CLI on Linux every day, but I also worked from Codex App on Windows for the hands-on validation. I used Computer Use to observe Paneflow, while CLI tools, test harnesses, and PowerShell drove the scenarios around terminal startup, backend switching, and window or pane resizing. That caught integration problems that library-level tests alone would not show.
+### Challenges I Ran Into
 
-In parallel, I reworked the visual hierarchy, spacing, navigation, Review surfaces, window chrome, and interaction feedback across the application. The `paneflow.dev` redesign follows the same direction and is still underway. I will count it as completed Build Week work only once the new site is finished and live before the deadline.
+`libghostty-vt` exposes its rendering state through a C API whose data can be invalidated as soon as the terminal changes. Paneflow therefore confines each Ghostty instance to a dedicated thread, copies the cells, styles, and grapheme clusters while reading them, and then passes only self-contained Rust snapshots to GPUI. No Ghostty pointer ever reaches the renderer.
 
-### Challenges I ran into
+Ghostty handles VT parsing, the grid, and reflow. Paneflow retains responsibility for the PTY, process lifecycle, GPUI rendering, persistence, and product events. The most visible bugs appeared at this boundary: the terminal looked fine while idle, then its content jumped during a resize or when moving the scrollbar.
 
-`libghostty-vt` exposes borrowed render data through a C API. A terminal mutation can invalidate that data, so no pointer or borrowed slice can survive a lock or frame boundary. The Rust wrapper copies the data Paneflow needs while the terminal is locked and only exposes owned snapshots to the GPUI renderer.
+One of those bugs took more than an hour in a single Codex session. I kept resizing Paneflow, watching the offset, adjusting the implementation with GPT-5.6, and repeating the process until the terminal stayed stable, while making sure the code remained clean, without hacks or technical debt. That loop captures how I work with GPT-5.6 Sol in Codex: observe, isolate, fix, repeat.
 
-Ghostty provides the terminal engine, while Paneflow still owns the PTY, process lifecycle, renderer, persistence, product events, and platform integration. The most visible bugs appeared during resize, reflow, and scrollbar dragging, where the terminal could look correct at rest and then jump as its dimensions changed.
+On Windows, ConPTY added another trap: shutting it down can hang while the pipe is draining. Paneflow therefore closes the pseudoterminal on a dedicated thread, drains the final output, and releases the handles before signaling the end of the session.
 
-One resize bug took more than an hour of back-and-forth in the same Codex session. We kept resizing the Paneflow window, checking what the Ghostty-backed terminal did, changing the implementation, and trying again until the terminal stayed aligned. It was slow, concrete debugging, and it is one of the clearest examples of how I actually worked with GPT-5.6 during the migration.
+Packaging required the same level of rigor. I didn't want to turn `cargo build` into a Ghostty build system. Cargo consumes a versioned, verified native archive without invoking Zig, bindgen, or a Ghostty checkout. Dedicated scripts and CI pipelines rebuild the Linux and Windows static archives separately, then verify their reproducibility, ABI, headers, bindings, symbols, and licenses.
 
-Packaging was another large part of the work. A normal Paneflow build must work without Zig or a local Ghostty checkout, so the release pipeline produces pinned static archives ahead of time and verifies their headers, bindings, checksums, symbols, and licenses.
+Building the interactive layouts for the `paneflow.dev` landing page was just as complex. With GPT-5.6 Sol in Codex and its Computer Use and Browser Use tools, I recreated Paneflow's native Rust and GPUI interface in Next.js, aiming for near pixel-perfect fidelity. I had to translate the title bar, window controls, sidebar, panes, layout changes, session dock, and agent states into a completely different rendering system while preserving the interactions and responsive behavior.
 
-### What I am proud of
+### What I'm Proud Of
 
-The Linux backend is now a real product path rather than an isolated experiment. It is the default for standard Linux builds, it has an immediate rollback, and it ships without adding a native runtime dependency for users.
+I'm proud to have taken this migration all the way to shipping. Ghostty is now the default backend on Linux and Windows x64 MSVC, statically linked and shipped with no separate runtime. Alacritty remains available as a rollback for new sessions, while Paneflow never switches a live session after its shell has started.
 
-I also used Paneflow to build Paneflow. Multiple Codex sessions ran side by side while I inspected their state, reviewed changes, diagnosed failures, and took over individual panes when needed.
+I also used Paneflow to build Paneflow. Several Codex sessions with GPT-5.6 Sol were working in parallel on the Ghostty migration, the Windows port, the tests, the app, and the website. I could immediately see which session was waiting or had failed, read its output, compare its changes, and step in without losing context. Paneflow solved the problem that led me to create it.
 
-### What I learned
+### What I Learned
 
-Codex was most useful when the task had a clear seam, explicit invariants, and a focused way to verify the result. The productive loop was concrete: reproduce a bug, capture logs, give Codex a bounded investigation, review the diff, and run the narrowest relevant check.
+GPT-5.6 Sol is particularly effective when I frame the problem and give it a fast way to verify each hypothesis. My loop was simple: reproduce, observe, hand the investigation to Codex, review the diff, and then test the exact change. I also learned that parallelism is useful only when it remains easy to follow. Observing agents, comparing their work, and stepping in are now part of the engineering process itself.
 
-The migration also reinforced why Paneflow exists. Once several agents are working across architecture, implementation, testing, and review, observing the work becomes part of the engineering problem.
+### Next Steps
 
-### What's next
+After Linux and Windows, the next platform for the Ghostty backend will be macOS. I'll start that port as soon as I have access to an Apple Silicon machine so I can properly validate the PTY, rendering, and native packaging.
 
-I plan to keep deepening Conductor, agent observability, and worktree review. The Ghostty port to Windows is now underway, using the same backend boundary and rollback strategy. It is still in progress, so v0.8.0 and this submission claim only the completed Linux migration.
+I also want to connect the agents' real-time status more closely with the Review view, making the transition from implementation to validation smoother while keeping full visibility and the ability to step into any terminal.
 
-macOS comes next. That port will resume when I can rent a real macOS test machine and validate the Ghostty backend hands-on.
+My vision is simple: I want to ship an agentic ecosystem that adapts to this new way of building software. Paneflow is the central pillar.
 
-Repo: https://github.com/arthjean/paneflow
+[GitHub repository](https://github.com/arthjean/paneflow)
 
-Website: https://paneflow.dev
+[Website](https://paneflow.dev)
 
-## Built with
+## Technologies and Tools Used
 
-- Rust
-- GPUI
-- Codex
-- GPT-5.6 Sol (Ultra reasoning effort)
-- libghostty-vt
-- Tokio
-- portable-pty
-- Model Context Protocol (MCP)
-- JSON-RPC 2.0
-- Serde
-- Tree-sitter
-- Zig
-- GitHub Actions
-- Wayland
-- X11
+- **OpenAI:** Codex CLI, Codex App, GPT-5.6 Sol (Ultra and `xhigh` reasoning), Computer Use, and Browser Use
+- **Native app:** Rust and GPUI
+- **Terminal:** `libghostty-vt`, Rust/C FFI, `portable-pty`, and ConPTY
+- **Orchestration:** CLI, JSON-RPC 2.0, and Model Context Protocol (MCP)
+- **Review:** Git worktrees, `imara-diff`, and Tree-sitter
+- **Testing:** Differential tests against Alacritty and `cargo-fuzz` with libFuzzer
+- **Native build and CI:** Zig and GitHub Actions
+- **Website:** Next.js, React, TypeScript, and Tailwind CSS

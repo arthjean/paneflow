@@ -41,17 +41,43 @@ Electron. No WSL required. No hosted agent runtime.
 
 ## OpenAI Build Week
 
-For OpenAI Build Week, I used Codex with GPT-5.6 Sol to migrate Paneflow's
-Linux terminal stack to `libghostty-vt`. Codex helped me implement the
-backend-neutral session layer, safe Rust wrappers over Ghostty's C API, the
-Linux PTY lifecycle, differential and fuzz tests, reproducible native builds,
-and CI verification.
+Paneflow existed before Build Week. Starting from commit
+[`e82b3da`](https://github.com/arthjean/paneflow/commit/e82b3da) and release
+`v0.7.10`, I used Codex CLI, the Codex app, and GPT-5.6 Sol to ship Ghostty as
+the default terminal engine on Linux and Windows x64 MSVC while keeping
+Alacritty as the macOS backend and explicit rollback for new sessions.
 
-I used Paneflow itself to run and supervise multiple Codex sessions side by
-side while reviewing changes, diagnosing failures, and taking over individual
-terminal panes when needed. The full scope, pre-event baseline, technical
-decisions, challenges, and lessons are documented in the
-[Build Week engineering story](BUILD_WEEK.md).
+I set the architecture constraints and used Codex to help implement the
+backend-neutral session layer, safe Rust wrappers over Ghostty's C API,
+reproducible static archives, Linux PTY and Windows x64 MSVC ConPTY lifecycles,
+a 135-case differential corpus, two fuzz targets, and native CI coverage. I
+also used Paneflow itself to supervise parallel Codex sessions while
+redesigning the app and [paneflow.dev](https://paneflow.dev).
+
+The complete implementation trail is documented in the
+[Build Week engineering story](BUILD_WEEK.md). The submitted build is
+[`v0.8.1`](https://github.com/arthjean/paneflow/releases/tag/v0.8.1), and every
+Build Week change is visible in the
+[`v0.7.10...v0.8.1` comparison](https://github.com/arthjean/paneflow/compare/v0.7.10...v0.8.1).
+
+### Judge quick test
+
+1. Download the `v0.8.1` package for Linux x86_64, Linux aarch64, or Windows
+   x64 from the [release page](https://github.com/arthjean/paneflow/releases/tag/v0.8.1).
+2. Enable the backend diagnostic and launch the package. On Linux, run
+   `RUST_LOG=paneflow::terminal::backend=info paneflow`. On Windows PowerShell,
+   run `$env:RUST_LOG = "paneflow::terminal::backend=info"; & "$env:ProgramFiles\PaneFlow\paneflow.exe"`.
+3. Without creating an account, open a terminal pane and confirm the log line
+   contains `requested=Auto effective=ghostty`.
+4. Run an interactive shell or full-screen TUI, then resize the pane, enter
+   text, scroll, search, and copy a selection.
+5. To exercise the rollback, set `terminal.backend` to `alacritty` in
+   `paneflow.json`, then open a new terminal. Existing sessions keep their
+   original backend. The exact setting is documented in the
+   [configuration schema](docs/user/configuration/schema.md).
+
+The macOS build is fully usable, but intentionally remains on Alacritty for
+this release.
 
 ## Install
 
@@ -196,7 +222,7 @@ is available.
 | Review | Worktree diff columns, hunk navigation, review prompts, cost estimate |
 | Automation | CLI, JSON-RPC socket, `paneflow up`, `paneflow flow run`, event stream |
 | Agent context | Read-only MCP bridge with `list_panes`, `read_pane`, `search_pane` |
-| Native runtime | Rust, GPUI, `alacritty_terminal`, Vulkan / Metal / DirectX |
+| Native runtime | Rust, GPUI, `libghostty-vt` by default on Linux and Windows x64 MSVC, `alacritty_terminal` on macOS and as rollback, Vulkan / Metal / DirectX |
 | Trust | GPL-3.0-or-later, signed release artifacts, opt-in telemetry |
 
 ## Safety model

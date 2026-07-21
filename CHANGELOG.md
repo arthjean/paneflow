@@ -5,6 +5,8 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-21
+
 ### Changed
 
 - Windows 10 1809+ and Windows 11 x64 builds now select the statically linked
@@ -787,7 +789,8 @@ app shell.
 - Opened the 0.3.x release line. See the GitHub compare link for the full commit
   list.
 
-[Unreleased]: https://github.com/arthjean/paneflow/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/arthjean/paneflow/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/arthjean/paneflow/compare/v0.8.0...v0.8.1
 [0.6.2]: https://github.com/arthjean/paneflow/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/arthjean/paneflow/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/arthjean/paneflow/compare/v0.5.9...v0.6.0
