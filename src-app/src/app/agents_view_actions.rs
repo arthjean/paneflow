@@ -1124,6 +1124,10 @@ impl PaneFlowApp {
         // the launch command below so the live PTY binds 1:1 to its on-disk
         // session file (and resumes the same session after a restart).
         let bound_session = thread.session_id.clone();
+        // Resolved against the on-disk session store below: the first launch
+        // mints the id, every reopen reattaches to it. See
+        // [`crate::agent_launcher::SessionBinding`].
+        let thread_cwd = thread.cwd.clone();
         // Explicit per-thread agent wins; legacy `Agent`-kind chat rows
         // fall back to their stored ACP agent so reopening them launches
         // the same CLI in a terminal. Plain Terminal Threads stay a bare
@@ -1156,8 +1160,11 @@ impl PaneFlowApp {
         // Cache hits (in-session re-selection) skip this, so a running
         // agent is never relaunched on navigation.
         if let Some(agent) = terminal_agent {
-            let cmd =
-                agent.launch_command_with_session(&self.cached_config, bound_session.as_deref());
+            let binding = crate::agent_launcher::SessionBinding::resolve(
+                bound_session.as_deref(),
+                &thread_cwd,
+            );
+            let cmd = agent.launch_command_with_session(&self.cached_config, binding);
             view.read(cx).send_command(&cmd);
         }
         // Mirror Zed's `AgentTerminal::refresh_terminal_metadata`

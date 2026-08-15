@@ -87,6 +87,28 @@ pub fn project_dir_for_cwd(cwd: &str) -> Option<PathBuf> {
     Some(home.join(".claude").join("projects").join(slug))
 }
 
+/// Whether the CLI already holds a session file for `session_id` under
+/// `cwd`'s project dir.
+///
+/// Drives the mint-vs-resume choice in
+/// [`crate::agent_launcher::SessionBinding::resolve`]: `--session-id` is only
+/// legal for an id the CLI has never seen, so a thread may only pass it on
+/// the launch that creates the session.
+///
+/// Unlike the readers below this is a single `stat` - it never walks or
+/// parses the project dir - so it is cheap enough for the PTY-mount path on
+/// the GPUI main thread. Ids are filtered through
+/// [`crate::agent_sessions::is_valid_session_id`] first, which rejects `/`,
+/// `\` and `.`, so a tampered `session.json` cannot escape the project dir.
+pub fn session_file_exists(cwd: &str, session_id: &str) -> bool {
+    if !crate::agent_sessions::is_valid_session_id(session_id) {
+        return false;
+    }
+    project_dir_for_cwd(cwd)
+        .map(|dir| dir.join(format!("{session_id}.jsonl")).is_file())
+        .unwrap_or(false)
+}
+
 fn project_snapshot_mtime(project_dir: &Path) -> Option<SystemTime> {
     let mut latest = fs::metadata(project_dir)
         .ok()
