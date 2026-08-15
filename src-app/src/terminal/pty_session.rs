@@ -61,7 +61,33 @@ use super::ghostty_session::{
 /// [`paneflow_config::TerminalConfig::resolved_scrollback_lines`].
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
 const PTY_DRAIN_ON_EXIT: bool = true;
-const CLAUDECODE_ENV: &str = "CLAUDECODE";
+/// Identity and credential markers Claude Code exports into the processes it
+/// spawns. A pane that inherits them makes the agent running inside it believe
+/// it is a *nested child* of the Claude Code session that launched Paneflow.
+///
+/// The consequence is silent and expensive: on inheriting
+/// `CLAUDE_CODE_CHILD_SESSION` the agent turns transcript saving off, so its
+/// conversation never lands in `~/.claude/projects/<slug>/<uuid>.jsonl`. The
+/// thread then has no session file to come back to, and reopening it after a
+/// restart starts an empty conversation instead of resuming - the failure only
+/// announces itself as one dim line at the bottom of the agent's own TUI.
+///
+/// The messaging socket/token pair is stripped for a second reason: it is a
+/// live credential for the launching session's IPC channel, and no agent
+/// spawned in a pane has any business holding it.
+///
+/// A pane must always look like a fresh terminal, never like a continuation of
+/// whatever spawned Paneflow. Inheriting is the only way these reach the child
+/// - Paneflow itself namespaces everything it sets under `PANEFLOW_*`.
+const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+];
 const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
 
 /// Read the user's configured scrollback length, clamped to the
@@ -4052,8 +4078,14 @@ fn is_loader_influencing_env_key(key: &str) -> bool {
     key.starts_with("LD_") || key.starts_with("DYLD_")
 }
 
+/// True if `key` is one of the launching agent session's identity/credential
+/// markers - see [`INHERITED_AGENT_SESSION_ENV`].
+fn is_inherited_agent_session_env_key(key: &str) -> bool {
+    INHERITED_AGENT_SESSION_ENV.contains(&key)
+}
+
 fn is_forbidden_child_env_key(key: &str) -> bool {
-    key == CLAUDECODE_ENV || is_loader_influencing_env_key(key)
+    is_inherited_agent_session_env_key(key) || is_loader_influencing_env_key(key)
 }
 
 /// True if `key` is a well-formed environment variable name safe to insert into
@@ -4278,7 +4310,9 @@ fn assemble_pty_env(
         }
     }
 
-    env.remove(CLAUDECODE_ENV);
+    // Runs after the user/session merge so neither an inherited value nor a
+    // hand-written `terminal.env` entry can put these back.
+    env.retain(|k, _| !is_inherited_agent_session_env_key(k));
     reassert_paneflow_bin_dir_first(&mut env);
 
     env
@@ -5827,6 +5861,40 @@ mod tests {
             "CLAUDECODE must never reach agent child processes"
         );
         assert_eq!(env.get("KEEP_ME").map(String::as_str), Some("yes"));
+    }
+
+    #[test]
+    fn inherited_agent_session_markers_are_dropped_from_child_env() {
+        // Launching Paneflow from inside an agent session (or from an IDE
+        // terminal that carries these) otherwise leaks the parent session's
+        // identity into every pane. `CLAUDE_CODE_CHILD_SESSION` in particular
+        // makes the agent disable transcript saving, so its conversation never
+        // reaches `~/.claude/projects` and the thread cannot be resumed after a
+        // restart.
+        let mut base = HashMap::new();
+        let mut user = HashMap::new();
+        for key in INHERITED_AGENT_SESSION_ENV {
+            base.insert((*key).to_string(), "inherited".to_string());
+            // Also offered through `terminal.env`: the strip runs after the
+            // merge, so a hand-written config cannot reinstate them either.
+            user.insert((*key).to_string(), "from-config".to_string());
+        }
+        user.insert("KEEP_ME".to_string(), "yes".to_string());
+
+        let env = assemble_pty_env(base, 1, 1, Some(user));
+
+        for key in INHERITED_AGENT_SESSION_ENV {
+            assert_eq!(
+                env.get(*key),
+                None,
+                "{key} must never reach an agent spawned in a pane"
+            );
+        }
+        assert_eq!(
+            env.get("KEEP_ME").map(String::as_str),
+            Some("yes"),
+            "a benign var alongside the markers must still pass through"
+        );
     }
 
     // US-019: foreground_command degrades gracefully (no panic, None) on a
