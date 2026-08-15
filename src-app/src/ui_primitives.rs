@@ -580,17 +580,28 @@ fn filter_pill_with_clear_cursor(
                 .rounded(px(3.))
                 .cursor(clear_cursor)
                 .text_color(ui.muted)
-                .animated_hover(move |style, delta| {
-                    style
+                // Emitted from inside the hover closure: `svg()` paints its
+                // mask in its own style's text color and never inherits the
+                // parent's, so a bare `svg()` child renders as nothing - the
+                // clear button stays clickable while its glyph is invisible.
+                .animated_hover_element(move |button, delta| {
+                    let icon_color = lerp_color(ui.muted, ui.text, delta);
+                    button
+                        .style()
                         .bg(lerp_color(
                             with_alpha(ui.text, 0.0),
                             with_alpha(ui.text, 0.10),
                             delta,
                         ))
-                        .text_color(lerp_color(ui.muted, ui.text, delta));
+                        .text_color(icon_color);
+                    button.extend([svg()
+                        .size(px(10.))
+                        .flex_none()
+                        .path("icons/close.svg")
+                        .text_color(icon_color)
+                        .into_any_element()]);
                 })
-                .on_click(on_clear)
-                .child(svg().size(px(10.)).flex_none().path("icons/close.svg")),
+                .on_click(on_clear),
         );
     }
     field

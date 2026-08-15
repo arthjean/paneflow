@@ -1277,10 +1277,25 @@ fn hover_actions_cluster(
         .rounded(px(4.))
         .bg(resting_background)
         .text_color(ui.muted)
-        .animated_hover(move |style, delta| {
-            style
+        // The icon is emitted from inside the hover closure, exactly like the
+        // "New project" button above. `svg()` paints a monochrome mask in its
+        // OWN style's text color and does not inherit the parent's, so an
+        // `svg()` child with no `text_color` of its own renders as nothing:
+        // the button, its tooltip and its click target all work while the
+        // glyph is simply invisible. Re-emitting it per frame is also what
+        // lets the icon animate with the button instead of staying flat.
+        .animated_hover_element(move |button, delta| {
+            let icon_color = lerp_color(ui.muted, ui.text, delta);
+            button
+                .style()
                 .bg(lerp_color(resting_background, hover_background, delta))
-                .text_color(lerp_color(ui.muted, ui.text, delta));
+                .text_color(icon_color);
+            button.extend([svg()
+                .size(px(12.))
+                .flex_none()
+                .path("icons/trash.svg")
+                .text_color(icon_color)
+                .into_any_element()]);
         })
         .tooltip(crate::ui_primitives::text_tooltip("Delete"))
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -1288,8 +1303,7 @@ fn hover_actions_cluster(
             // cluster flips to a red "Delete" button (see the `armed` branch).
             this.arm_delete_for_target(target, cx);
             cx.stop_propagation();
-        }))
-        .child(svg().size(px(12.)).flex_none().path("icons/trash.svg"));
+        }));
 
     div()
         .absolute()
