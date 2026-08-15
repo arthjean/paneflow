@@ -18,6 +18,50 @@ use std::time::{Duration, Instant};
 
 use paneflow_config::schema::PaneFlowConfig;
 
+/// How a thread's forced agent session id reaches the CLI.
+///
+/// Claude Code separates *minting* a session from *resuming* one, and the two
+/// are not interchangeable (verified against Claude Code 2.1.232):
+///
+/// - `--session-id <uuid>` - "Use a specific session ID for the conversation".
+///   Names a **new** conversation. Once that id has a session file on disk the
+///   CLI refuses the launch with
+///   `Error: Session ID <uuid> is already in use.`
+/// - `-r, --resume <uuid>` - "Resume a conversation by session ID". The only
+///   way back into an existing session.
+///
+/// A thread therefore mints on the launch that creates its session and
+/// resumes on every launch after that. Passing `--session-id` unconditionally
+/// works on first mount and breaks on every reopen, which is what
+/// [`SessionBinding::resolve`] exists to prevent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionBinding<'a> {
+    /// No forced id: bare shell, non-Claude agent, or a thread that never
+    /// minted one.
+    Unbound,
+    /// The id has no session file yet - mint it (`--session-id <uuid>`).
+    Mint(&'a str),
+    /// The id already has a session file - reattach (`--resume <uuid>`).
+    Resume(&'a str),
+}
+
+impl<'a> SessionBinding<'a> {
+    /// Resolve the binding for `session_id` in `cwd` by asking the on-disk
+    /// session store whether the CLI has seen this id before.
+    ///
+    /// Disk is the authority rather than any in-memory "have we launched yet"
+    /// flag: it stays correct when the user deletes a session behind
+    /// PaneFlow's back, when `session.json` is restored onto a different
+    /// machine, and when the CLI never got far enough to write the file.
+    pub fn resolve(session_id: Option<&'a str>, cwd: &str) -> Self {
+        match session_id {
+            Some(id) if crate::claude_sessions::session_file_exists(cwd, id) => Self::Resume(id),
+            Some(id) => Self::Mint(id),
+            None => Self::Unbound,
+        }
+    }
+}
+
 /// One of the CLI coding agents Paneflow can launch in a terminal.
 ///
 /// Distinct from [`paneflow_acp::AgentKind`] (Claude/Codex only, the ACP
@@ -327,10 +371,10 @@ impl TerminalAgent {
     }
 
     /// Whether the CLI accepts a caller-forced session UUID via
-    /// `--session-id <uuid>`. Only Claude Code does (verified against the
-    /// CLI: a fresh id starts a new session, an existing id resumes +
-    /// appends, so a stable per-thread id is safe across restarts). Other
-    /// agents fall back to the newest-session heuristic in the title
+    /// `--session-id <uuid>`. Only Claude Code does, and only for a *fresh*
+    /// id - an id that already has a session file must be reattached with
+    /// `--resume` instead. See [`SessionBinding`] for the full contract.
+    /// Other agents fall back to the newest-session heuristic in the title
     /// backfill.
     pub fn supports_forced_session_id(self) -> bool {
         matches!(self, TerminalAgent::ClaudeCode)
@@ -355,21 +399,27 @@ impl TerminalAgent {
         }
     }
 
-    /// Like [`Self::command`] but injects a forced `--session-id <uuid>` for
-    /// Claude when `session_id` is `Some` and passes the PTY allow-list. The
-    /// flag lands right after the binary so it composes with the optional
+    /// Like [`Self::command`] but injects the session flag selected by
+    /// `binding` for Claude when its id passes the PTY allow-list:
+    /// `--session-id <uuid>` to mint, `--resume <uuid>` to reattach. The flag
+    /// lands right after the binary so it composes with the optional
     /// `--permission-mode bypassPermissions` already baked into the base
-    /// command. Any other agent (or `None`) yields the plain base command.
-    fn command_with_session(self, config: &PaneFlowConfig, session_id: Option<&str>) -> String {
+    /// command. Any other agent (or [`SessionBinding::Unbound`]) yields the
+    /// plain base command.
+    fn command_with_session(self, config: &PaneFlowConfig, binding: SessionBinding<'_>) -> String {
         if self != TerminalAgent::ClaudeCode {
             return self.command(config);
         }
-        let Some(id) = session_id.filter(|id| crate::agent_sessions::is_valid_session_id(id))
-        else {
-            return self.command(config);
+        let (flag, id) = match binding {
+            SessionBinding::Unbound => return self.command(config),
+            SessionBinding::Mint(id) => ("--session-id", id),
+            SessionBinding::Resume(id) => ("--resume", id),
         };
+        if !crate::agent_sessions::is_valid_session_id(id) {
+            return self.command(config);
+        }
         let mut spec = self.launch_spec(config);
-        spec.insert_arg(0, "--session-id");
+        spec.insert_arg(0, flag);
         spec.insert_arg(1, id);
         spec.render_shell_command()
     }
@@ -378,17 +428,18 @@ impl TerminalAgent {
     /// configured shell (`clear`, `cls`, or `Clear-Host`) so the agent TUI owns
     /// the viewport from the first frame on every platform.
     pub fn launch_command(self, config: &PaneFlowConfig) -> String {
-        self.launch_command_with_session(config, None)
+        self.launch_command_with_session(config, SessionBinding::Unbound)
     }
 
-    /// [`Self::launch_command`] with a forced agent session id (Claude
-    /// only - see [`Self::command_with_session`]). The Agents-view PTY
-    /// mount passes the thread's bound `session_id` here so the live thread
-    /// maps 1:1 to its on-disk session file.
+    /// [`Self::launch_command`] with a bound agent session (Claude only - see
+    /// [`Self::command_with_session`]). The Agents-view PTY mount resolves
+    /// the thread's `session_id` through [`SessionBinding::resolve`] and
+    /// passes the result here, so the live thread maps 1:1 to its on-disk
+    /// session file on the first launch and reattaches to it on every reopen.
     pub fn launch_command_with_session(
         self,
         config: &PaneFlowConfig,
-        session_id: Option<&str>,
+        binding: SessionBinding<'_>,
     ) -> String {
         // US-042: trim + drop-empty exactly like the PTY session does when it
         // resolves the shell (`pty_session.rs:442`). A config such as
@@ -400,7 +451,7 @@ impl TerminalAgent {
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        crate::terminal::shell::clear_then(&self.command_with_session(config, session_id), shell)
+        crate::terminal::shell::clear_then(&self.command_with_session(config, binding), shell)
     }
 
     /// Visible variants for the given config, in display order. Drives
@@ -730,9 +781,27 @@ mod tests {
     #[test]
     fn claude_session_id_is_injected_after_binary() {
         let cfg = PaneFlowConfig::default();
-        let cmd = TerminalAgent::ClaudeCode.command_with_session(&cfg, Some(SAMPLE_UUID));
+        let cmd =
+            TerminalAgent::ClaudeCode.command_with_session(&cfg, SessionBinding::Mint(SAMPLE_UUID));
         assert_eq!(cmd, format!("claude --session-id {SAMPLE_UUID}"));
         // Leading token stays `claude` (the PATH-probe invariant).
+        assert_eq!(cmd.split_whitespace().next(), Some("claude"));
+    }
+
+    #[test]
+    fn claude_resume_reattaches_instead_of_minting() {
+        // Regression: reopening a thread after a restart used to re-send
+        // `--session-id <existing uuid>`, which Claude Code rejects with
+        // `Error: Session ID <uuid> is already in use.` An id that already
+        // has a session file must go out as `--resume`.
+        let cfg = PaneFlowConfig::default();
+        let cmd = TerminalAgent::ClaudeCode
+            .command_with_session(&cfg, SessionBinding::Resume(SAMPLE_UUID));
+        assert_eq!(cmd, format!("claude --resume {SAMPLE_UUID}"));
+        assert!(
+            !cmd.contains("--session-id"),
+            "resume must never re-mint the id"
+        );
         assert_eq!(cmd.split_whitespace().next(), Some("claude"));
     }
 
@@ -742,17 +811,25 @@ mod tests {
             claude_code_bypass_permissions: Some(true),
             ..Default::default()
         };
-        let cmd = TerminalAgent::ClaudeCode.command_with_session(&cfg, Some(SAMPLE_UUID));
+        let mint =
+            TerminalAgent::ClaudeCode.command_with_session(&cfg, SessionBinding::Mint(SAMPLE_UUID));
         assert_eq!(
-            cmd,
+            mint,
             format!("claude --session-id {SAMPLE_UUID} --permission-mode bypassPermissions")
+        );
+        let resume = TerminalAgent::ClaudeCode
+            .command_with_session(&cfg, SessionBinding::Resume(SAMPLE_UUID));
+        assert_eq!(
+            resume,
+            format!("claude --resume {SAMPLE_UUID} --permission-mode bypassPermissions")
         );
     }
 
     #[test]
     fn invalid_session_id_is_not_injected() {
         // Flag-shaped / shell-meta ids fail the allow-list, so a tampered
-        // session.json can never smuggle a second argument into the launch.
+        // session.json can never smuggle a second argument into the launch -
+        // on either arm.
         let cfg = PaneFlowConfig::default();
         for hostile in [
             "--dangerously-skip-permissions",
@@ -761,11 +838,35 @@ mod tests {
             "$(reboot)",
         ] {
             assert_eq!(
-                TerminalAgent::ClaudeCode.command_with_session(&cfg, Some(hostile)),
+                TerminalAgent::ClaudeCode.command_with_session(&cfg, SessionBinding::Mint(hostile)),
                 "claude",
-                "hostile id {hostile:?} must be dropped"
+                "hostile id {hostile:?} must be dropped when minting"
+            );
+            assert_eq!(
+                TerminalAgent::ClaudeCode
+                    .command_with_session(&cfg, SessionBinding::Resume(hostile)),
+                "claude",
+                "hostile id {hostile:?} must be dropped when resuming"
             );
         }
+    }
+
+    #[test]
+    fn session_binding_resolves_unbound_without_an_id() {
+        assert_eq!(
+            SessionBinding::resolve(None, "/tmp/paneflow-does-not-exist"),
+            SessionBinding::Unbound
+        );
+    }
+
+    #[test]
+    fn session_binding_mints_when_no_session_file_exists() {
+        // No project dir for this cwd, so the id cannot have a session file
+        // and the first launch must mint it.
+        assert_eq!(
+            SessionBinding::resolve(Some(SAMPLE_UUID), "/tmp/paneflow-no-such-project-dir"),
+            SessionBinding::Mint(SAMPLE_UUID)
+        );
     }
 
     #[test]
@@ -778,21 +879,26 @@ mod tests {
     #[test]
     fn non_claude_ignores_forced_session_id() {
         let cfg = PaneFlowConfig::default();
-        assert_eq!(
-            TerminalAgent::Codex.command_with_session(&cfg, Some(SAMPLE_UUID)),
-            "codex"
-        );
-        assert_eq!(
-            TerminalAgent::OpenCode.command_with_session(&cfg, Some(SAMPLE_UUID)),
-            "opencode"
-        );
+        for binding in [
+            SessionBinding::Mint(SAMPLE_UUID),
+            SessionBinding::Resume(SAMPLE_UUID),
+        ] {
+            assert_eq!(
+                TerminalAgent::Codex.command_with_session(&cfg, binding),
+                "codex"
+            );
+            assert_eq!(
+                TerminalAgent::OpenCode.command_with_session(&cfg, binding),
+                "opencode"
+            );
+        }
     }
 
     #[test]
     fn claude_without_session_id_is_bare_command() {
         let cfg = PaneFlowConfig::default();
         assert_eq!(
-            TerminalAgent::ClaudeCode.command_with_session(&cfg, None),
+            TerminalAgent::ClaudeCode.command_with_session(&cfg, SessionBinding::Unbound),
             "claude"
         );
     }
