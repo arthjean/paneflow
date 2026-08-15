@@ -836,6 +836,9 @@ mod tests {
             "-x",
             "x; rm -rf ~",
             "$(reboot)",
+            // A bare space would split into a second, positional argument
+            // even without any shell metacharacter.
+            "abc def",
         ] {
             assert_eq!(
                 TerminalAgent::ClaudeCode.command_with_session(&cfg, SessionBinding::Mint(hostile)),

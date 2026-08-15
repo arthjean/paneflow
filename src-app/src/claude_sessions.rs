@@ -81,10 +81,30 @@ pub fn slug_for_cwd(cwd: &str) -> String {
 
 /// Compute the absolute path of `~/.claude/projects/<slug>/`. Returns
 /// `None` when `dirs::home_dir()` fails (no `$HOME` / `%USERPROFILE%`).
+///
+/// A trailing separator is normalized away first. Claude derives its own slug
+/// from the agent process's cwd, which never carries one, so `/a/b/` has to
+/// resolve to the same directory as `/a/b` - otherwise the lookup misses a
+/// directory that exists, and [`session_file_exists`] reports "no session"
+/// for a session that is very much there, sending `--session-id` for an id
+/// the CLI already knows.
 pub fn project_dir_for_cwd(cwd: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
-    let slug = slug_for_cwd(cwd);
+    let slug = slug_for_cwd(normalize_cwd_for_slug(cwd));
     Some(home.join(".claude").join("projects").join(slug))
+}
+
+/// Strip trailing path separators, unless that would reduce `cwd` to a bare
+/// root. `/` is all separator and `C:\` is a drive root: trimming those
+/// changes the slug (`-` → ``, `C--` → `C-`) instead of normalizing it, and
+/// Claude keeps them intact.
+fn normalize_cwd_for_slug(cwd: &str) -> &str {
+    let trimmed = cwd.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() || trimmed.ends_with(':') {
+        cwd
+    } else {
+        trimmed
+    }
 }
 
 /// Whether the CLI already holds a session file for `session_id` under
@@ -98,8 +118,11 @@ pub fn project_dir_for_cwd(cwd: &str) -> Option<PathBuf> {
 /// Unlike the readers below this is a single `stat` - it never walks or
 /// parses the project dir - so it is cheap enough for the PTY-mount path on
 /// the GPUI main thread. Ids are filtered through
-/// [`crate::agent_sessions::is_valid_session_id`] first, which rejects `/`,
-/// `\` and `.`, so a tampered `session.json` cannot escape the project dir.
+/// [`crate::agent_sessions::is_valid_session_id`] first, whose allow-list
+/// admits only ASCII alphanumerics plus `-`/`_` (and never a leading `-`):
+/// no separator, no `.`, no space, no shell metacharacter. A tampered
+/// `session.json` can therefore neither escape the project dir here nor
+/// smuggle an extra argument into the launch command.
 pub fn session_file_exists(cwd: &str, session_id: &str) -> bool {
     if !crate::agent_sessions::is_valid_session_id(session_id) {
         return false;
@@ -556,6 +579,49 @@ mod tests {
         // Verified against a real install: Claude Code stores `C:\dev\paneflow`
         // sessions under `~/.claude/projects/C--dev-paneflow/`.
         assert_eq!(slug_for_cwd("C:\\dev\\paneflow"), "C--dev-paneflow");
+    }
+
+    #[test]
+    fn trailing_separator_resolves_to_the_same_project_dir() {
+        // Claude's own cwd never carries a trailing separator, so a stored
+        // `thread.cwd` that does must still find the directory that exists.
+        // Getting this wrong makes `session_file_exists` report "no session"
+        // for a live one, which re-sends `--session-id` and reproduces
+        // `Session ID <uuid> is already in use`.
+        assert_eq!(
+            project_dir_for_cwd("/home/alice/myapp/"),
+            project_dir_for_cwd("/home/alice/myapp")
+        );
+        assert_eq!(
+            project_dir_for_cwd("/home/alice/myapp///"),
+            project_dir_for_cwd("/home/alice/myapp")
+        );
+        assert_eq!(
+            project_dir_for_cwd("C:\\dev\\paneflow\\"),
+            project_dir_for_cwd("C:\\dev\\paneflow")
+        );
+    }
+
+    #[test]
+    fn bare_roots_keep_their_slug() {
+        // All-separator paths are not normalized: trimming would change the
+        // slug rather than canonicalize it.
+        assert_eq!(normalize_cwd_for_slug("/"), "/");
+        assert_eq!(normalize_cwd_for_slug("C:\\"), "C:\\");
+        assert_eq!(slug_for_cwd(normalize_cwd_for_slug("/")), "-");
+        assert_eq!(slug_for_cwd(normalize_cwd_for_slug("C:\\")), "C--");
+    }
+
+    #[test]
+    fn session_file_exists_rejects_ids_outside_the_allow_list() {
+        // The allow-list gate runs before any path join, so no id can escape
+        // the project dir or reach the filesystem as a traversal.
+        for hostile in ["../../etc/passwd", "a/b", "a\\b", "with space", ".hidden"] {
+            assert!(
+                !session_file_exists("/home/alice/myapp", hostile),
+                "hostile id {hostile:?} must be rejected before the path join"
+            );
+        }
     }
 
     #[test]
