@@ -12,20 +12,28 @@
     "properties": {
       "lines": {
         "description": "Number of lines to return (default 200, max 4000).",
+        "maximum": 4000,
         "minimum": 1,
         "type": "integer"
       },
       "offset": {
         "description": "Lines to skip from the most-recent end, to page back through history.",
+        "maximum": 9007199254740991,
         "minimum": 0,
         "type": "integer"
       },
       "target": {
         "description": "Surface to target: its name (e.g. \"cargo-run\", from list_panes) or numeric surface_id. Names match exactly, case-insensitively, then by unique prefix.",
-        "minLength": 1,
-        "type": [
-          "string",
-          "number"
+        "oneOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
         ]
       }
     },

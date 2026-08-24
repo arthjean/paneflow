@@ -12,6 +12,7 @@
     "properties": {
       "max_matches": {
         "description": "Cap on matching lines returned (default 50, max 1000).",
+        "maximum": 1000,
         "minimum": 1,
         "type": "integer"
       },
@@ -22,10 +23,16 @@
       },
       "target": {
         "description": "Surface to target: its name (e.g. \"cargo-run\", from list_panes) or numeric surface_id. Names match exactly, case-insensitively, then by unique prefix.",
-        "minLength": 1,
-        "type": [
-          "string",
-          "number"
+        "oneOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          }
         ]
       }
     },

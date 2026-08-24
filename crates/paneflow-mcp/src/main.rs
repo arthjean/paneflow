@@ -22,11 +22,20 @@
 //! - [`paneflow_ipc_client`] - socket path resolution + blocking JSON-RPC
 //!   client (US-005), shared with the `paneflow` CLI.
 //! - [`mcp`] - MCP stdio protocol loop (US-006)
-//! - [`tools`] - the three tools + untrusted-output wrapping (US-006/007/008)
+//! - [`bridge`] - typed, scope-aware Paneflow IPC adapter
+//! - [`tools`] - the three MCP tool adapters (US-006/007/008)
+//! - [`resources`] - MCP resource convenience layer (US-014)
+//! - [`output`] - untrusted terminal-output fencing
 //! - [`resolve`] - name → surface_id resolution with disambiguation (US-009)
 
+mod bridge;
 mod mcp;
+mod output;
 mod resolve;
+mod resources;
+mod scope;
+#[cfg(test)]
+mod test_support;
 mod tools;
 
 use std::process::ExitCode;
@@ -44,9 +53,16 @@ fn main() -> ExitCode {
     let client = paneflow_ipc_client::IpcClient::new(socket);
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
-    let scope = tools::BridgeScope::from_env();
+    let scope = match scope::BridgeScope::from_env() {
+        Ok(scope) => scope,
+        Err(error) => {
+            eprintln!("paneflow-mcp: invalid read scope: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let bridge = bridge::Bridge::new(&client, scope);
 
-    match mcp::serve(stdin, stdout, &client, scope) {
+    match mcp::serve(stdin, stdout, &bridge) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("paneflow-mcp: stdio loop terminated: {e}");

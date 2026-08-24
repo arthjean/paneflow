@@ -5,23 +5,12 @@
 //! ambiguity and no-match errors that list the candidates so the agent can
 //! re-target. All pure and unit-tested.
 
-use serde_json::Value;
-
 /// Minimal view of a surface entry from `surface.list` - only what name
 /// resolution needs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceRef {
     pub surface_id: u64,
     pub name: String,
-}
-
-/// Parse one `surfaces[]` entry from a `surface.list` result. Returns `None`
-/// for entries missing the required `surface_id` / `name`.
-pub fn surface_ref_from_json(v: &Value) -> Option<SurfaceRef> {
-    Some(SurfaceRef {
-        surface_id: v.get("surface_id").and_then(Value::as_u64)?,
-        name: v.get("name").and_then(Value::as_str)?.to_string(),
-    })
 }
 
 /// Resolve a name query to a single `surface_id`, in precedence order:
@@ -85,7 +74,6 @@ fn no_match(surfaces: &[SurfaceRef], query: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn s(id: u64, name: &str) -> SurfaceRef {
         SurfaceRef {
@@ -145,26 +133,5 @@ mod tests {
         assert!(err.contains("must not be empty"), "got: {err}");
         let err = resolve_target(&set, "   ").expect_err("blank");
         assert!(err.contains("must not be empty"), "got: {err}");
-    }
-
-    #[test]
-    fn surface_ref_from_json_parses_full_entry() {
-        let v = json!({
-            "surface_id": 42u64,
-            "name": "cargo-run",
-            "title": "cargo run",
-            "cwd": "/home/a/paneflow",
-            "cmd": "cargo run",
-            "workspace": 0
-        });
-        let r = surface_ref_from_json(&v).expect("some");
-        assert_eq!(r.surface_id, 42);
-        assert_eq!(r.name, "cargo-run");
-    }
-
-    #[test]
-    fn surface_ref_from_json_rejects_missing_fields() {
-        assert!(surface_ref_from_json(&json!({"name": "x"})).is_none());
-        assert!(surface_ref_from_json(&json!({"surface_id": 1u64})).is_none());
     }
 }
