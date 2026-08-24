@@ -26,7 +26,6 @@ mod tree;
 pub use navigation::{FocusDirection, FocusNav};
 pub use tree::{LayoutTree, SplitDirection};
 
-/// Hard cap on leaf panes in a single workspace's layout tree (US-054: single
-/// source for the bound previously re-declared as a local `const` at every
-/// split/insert site - split handlers, IPC `surface.split`, layout presets).
-pub(crate) const MAX_PANES: usize = 32;
+/// Hard cap on leaf panes in a single workspace. The persistence boundary and
+/// live mutation paths share one canonical value.
+pub(crate) use paneflow_config::schema::MAX_LAYOUT_LEAVES as MAX_PANES;

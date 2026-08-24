@@ -96,8 +96,9 @@ impl PaneFlowApp {
         layout: &mut LayoutNode,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        // Validate the layout (clamps ratios, pads children, etc.)
-        paneflow_config::loader::validate_layout(layout);
+        // Validate the layout (clamp ratios, prune excess branches, and
+        // collapse malformed splits).
+        paneflow_config::schema::validate_layout(layout);
 
         let needed = layout.leaf_count();
         if needed == 0 {

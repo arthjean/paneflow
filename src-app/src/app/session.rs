@@ -227,9 +227,8 @@ impl PaneFlowApp {
     ///
     /// Telemetry: callers receive a `SessionCorruptionInfo` they can
     /// pass to `PaneFlowApp::emit_session_corrupted` once the
-    /// telemetry client is up. The emit is consent-gated by the
-    /// existing `TelemetryClient::Null` factory branch - opted-out
-    /// users never produce a network call.
+    /// telemetry client is up. The client factory gates the emit, so
+    /// opted-out users never produce a network call.
     pub(crate) fn load_session() -> (
         Option<paneflow_config::schema::SessionState>,
         Option<SessionCorruptionInfo>,
@@ -383,19 +382,13 @@ impl PaneFlowApp {
             }
             let ws_id = next_workspace_id();
 
-            // US-009 AC2 / US-011: `validate_layout` best-effort-caps the leaf
-            // budget, but its ">= 2 children" padding re-introduces a bounded
-            // O(depth) overshoot of app-synthesized pad panes once that budget
-            // is spent (a crafted deeply-nested session.json - local-only, but
-            // still a self-DoS). Enforce the hard MAX_PANES ceiling HERE, the
-            // location US-009 AC2 names, so no workspace can ever restore more
-            // than MAX_PANES real PTYs: over the cap we drop the layout and fall
-            // back to a single default terminal.
+            // The config boundary canonicalizes the untrusted tree and enforces
+            // the same hard pane ceiling as live layout mutations.
             let restored_layout = ws_session
                 .layout
                 .clone()
                 .map(without_persisted_scrollback)
-                .and_then(validated_layout_within_cap);
+                .map(canonicalize_persisted_layout);
 
             let mut workspace = if let Some(layout) = restored_layout {
                 let mut pane_deque: VecDeque<Entity<Pane>> = VecDeque::new();
@@ -711,25 +704,12 @@ fn without_persisted_scrollback(mut layout: LayoutNode) -> LayoutNode {
     layout
 }
 
-/// Validate a persisted layout and enforce the hard `MAX_PANES` ceiling
-/// (US-009 AC2 / US-011). `validate_layout` best-effort-caps the leaf budget,
-/// but its ">= 2 children" padding re-introduces a bounded `O(depth)` overshoot
-/// of app-synthesized pad panes once that budget is spent (a crafted
-/// deeply-nested session.json). Returns `None` - restore a single default
-/// terminal - when the post-validation leaf count still exceeds `MAX_PANES`, so
-/// no workspace can ever restore more than `MAX_PANES` real PTYs. The location
-/// US-009 AC2 names; defence-in-depth on top of `validate_layout`'s budget.
-fn validated_layout_within_cap(mut layout: LayoutNode) -> Option<LayoutNode> {
-    paneflow_config::loader::validate_layout(&mut layout);
-    let leaves = layout.leaf_count();
-    if leaves > MAX_PANES {
-        log::warn!(
-            "session restore: layout has {leaves} panes after validation \
-             (> MAX_PANES {MAX_PANES}); discarding it and restoring a single terminal"
-        );
-        return None;
-    }
-    Some(layout)
+/// Canonicalize a persisted layout at the config boundary. The validator owns
+/// the pane ceiling invariant, so callers do not need a second guard.
+fn canonicalize_persisted_layout(mut layout: LayoutNode) -> LayoutNode {
+    paneflow_config::schema::validate_layout(&mut layout);
+    debug_assert!(layout.leaf_count() <= MAX_PANES);
+    layout
 }
 
 fn should_repair_restored_root_terminal(title: &str, cwd: &Path) -> bool {
@@ -1064,7 +1044,7 @@ mod tests {
     }
 
     #[test]
-    fn validated_layout_within_cap_rejects_overshooting_deep_layout() {
+    fn canonicalize_persisted_layout_sanitizes_deep_layout() {
         use paneflow_config::schema::LayoutNode;
         // A small, valid layout passes through unchanged.
         let small = LayoutNode::Split {
@@ -1080,16 +1060,11 @@ mod tests {
                 },
             ],
         };
-        assert!(
-            validated_layout_within_cap(small).is_some(),
-            "a 2-pane layout is within MAX_PANES"
-        );
+        let sanitized_small = canonicalize_persisted_layout(small.clone());
+        assert_eq!(sanitized_small, small);
 
-        // US-009 AC2 / US-011: a deeply-nested left-leaning chain defeats
-        // `validate_layout`'s leaf budget via its >=2-children padding (each
-        // budget-0 ancestor smuggles in an uncounted pad pane), so the
-        // post-validation leaf_count exceeds MAX_PANES. The hard cap must drop
-        // it rather than spawn O(depth) PTYs.
+        // A deeply-nested left-leaning chain is reduced at the canonical
+        // boundary without padding panes back into the exhausted budget.
         let mut deep = LayoutNode::Pane {
             surfaces: vec![Default::default()],
         };
@@ -1106,10 +1081,8 @@ mod tests {
                 ],
             };
         }
-        assert!(
-            validated_layout_within_cap(deep).is_none(),
-            "a layout exceeding MAX_PANES after validation must be discarded"
-        );
+        let sanitized = canonicalize_persisted_layout(deep);
+        assert!(sanitized.leaf_count() <= MAX_PANES);
     }
 
     #[test]

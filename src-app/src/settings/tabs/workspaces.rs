@@ -11,7 +11,7 @@ use gpui::{
     prelude::*, px, rgb, svg,
 };
 use paneflow_config::schema::{
-    CommandDefinition, LayoutNode, SurfaceDefinition, WorkspaceDefinition,
+    CommandDefinition, CommandTarget, LayoutNode, SurfaceDefinition, WorkspaceDefinition,
 };
 use serde_json::{Value, json};
 
@@ -98,7 +98,7 @@ impl PaneFlowApp {
         let Some(command) = self.cached_config.commands.get(idx) else {
             return div().into_any_element();
         };
-        let Some(workspace) = command.workspace.as_ref() else {
+        let Some(workspace) = command.workspace() else {
             return div().into_any_element();
         };
         let title = workspace
@@ -231,7 +231,7 @@ impl PaneFlowApp {
         let Some(command) = self.cached_config.commands.get(idx) else {
             return div().into_any_element();
         };
-        let Some(workspace) = command.workspace.as_ref() else {
+        let Some(workspace) = command.workspace() else {
             return div().into_any_element();
         };
         let selected = self.workspace_template_detail_open
@@ -333,7 +333,7 @@ impl PaneFlowApp {
         let Some(command) = self.cached_config.commands.get(idx) else {
             return div().into_any_element();
         };
-        let Some(workspace) = command.workspace.as_ref() else {
+        let Some(workspace) = command.workspace() else {
             return div().into_any_element();
         };
 
@@ -829,7 +829,7 @@ impl PaneFlowApp {
         let Some(command) = self.cached_config.commands.get(idx) else {
             return;
         };
-        let Some(workspace) = command.workspace.as_ref() else {
+        let Some(workspace) = command.workspace() else {
             return;
         };
         let title = workspace
@@ -854,7 +854,7 @@ impl PaneFlowApp {
             .cached_config
             .commands
             .get(idx)
-            .and_then(|cmd| cmd.workspace.as_ref())
+            .and_then(CommandDefinition::workspace)
         else {
             return;
         };
@@ -912,14 +912,15 @@ impl PaneFlowApp {
             name: name.clone(),
             description: Some(format!("Workspace template for {cwd}")),
             keywords: vec!["workspace".to_string()],
-            workspace: Some(WorkspaceDefinition {
-                name: Some(name),
-                cwd: Some(cwd),
-                layout_preset: Some("even_h".to_string()),
-                color: None,
-                layout: None,
-            }),
-            command: None,
+            target: CommandTarget::Workspace {
+                workspace: WorkspaceDefinition {
+                    name: Some(name),
+                    cwd: Some(cwd),
+                    layout_preset: Some("even_h".to_string()),
+                    color: None,
+                    layout: None,
+                },
+            },
         };
         let mut commands = self.cached_config.commands.clone();
         commands.push(command);
@@ -1020,7 +1021,10 @@ impl PaneFlowApp {
             return;
         };
         let mut commands = self.cached_config.commands.clone();
-        let Some(workspace) = commands.get_mut(idx).and_then(|cmd| cmd.workspace.as_mut()) else {
+        let Some(workspace) = commands
+            .get_mut(idx)
+            .and_then(CommandDefinition::workspace_mut)
+        else {
             return;
         };
         let panes = template_surfaces(workspace);
@@ -1033,7 +1037,10 @@ impl PaneFlowApp {
 
     fn add_workspace_template_pane(&mut self, idx: usize, cx: &mut Context<Self>) {
         let mut commands = self.cached_config.commands.clone();
-        let Some(workspace) = commands.get_mut(idx).and_then(|cmd| cmd.workspace.as_mut()) else {
+        let Some(workspace) = commands
+            .get_mut(idx)
+            .and_then(CommandDefinition::workspace_mut)
+        else {
             return;
         };
         let mut panes = template_surfaces(workspace);
@@ -1071,7 +1078,10 @@ impl PaneFlowApp {
             return;
         };
         let mut commands = self.cached_config.commands.clone();
-        let Some(workspace) = commands.get_mut(idx).and_then(|cmd| cmd.workspace.as_mut()) else {
+        let Some(workspace) = commands
+            .get_mut(idx)
+            .and_then(CommandDefinition::workspace_mut)
+        else {
             return;
         };
         let mut panes = template_surfaces(workspace);
@@ -1104,7 +1114,10 @@ impl PaneFlowApp {
             return;
         };
         let mut commands = self.cached_config.commands.clone();
-        let Some(workspace) = commands.get_mut(idx).and_then(|cmd| cmd.workspace.as_mut()) else {
+        let Some(workspace) = commands
+            .get_mut(idx)
+            .and_then(CommandDefinition::workspace_mut)
+        else {
             return;
         };
         let mut panes = template_surfaces(workspace);
@@ -1146,7 +1159,10 @@ impl PaneFlowApp {
             return;
         };
         let mut commands = self.cached_config.commands.clone();
-        let Some(workspace) = commands.get_mut(idx).and_then(|cmd| cmd.workspace.as_mut()) else {
+        let Some(workspace) = commands
+            .get_mut(idx)
+            .and_then(CommandDefinition::workspace_mut)
+        else {
             return;
         };
         let mut panes = template_surfaces(workspace);
@@ -1169,8 +1185,9 @@ impl PaneFlowApp {
         };
         let mut copy = template;
         copy.name = format!("{} copy", copy.name);
-        if let Some(workspace) = copy.workspace.as_mut() {
-            workspace.name = Some(copy.name.clone());
+        let copy_name = copy.name.clone();
+        if let Some(workspace) = copy.workspace_mut() {
+            workspace.name = Some(copy_name);
         }
         let mut commands = self.cached_config.commands.clone();
         commands.push(copy);
@@ -1191,7 +1208,7 @@ impl PaneFlowApp {
         self.workspace_template_selected = commands
             .iter()
             .enumerate()
-            .find_map(|(i, command)| command.workspace.is_some().then_some(i));
+            .find_map(|(i, command)| command.workspace().is_some().then_some(i));
         self.workspace_template_detail_open = false;
         self.workspace_template_selected_pane = 0;
         self.workspace_template_status = Some("Workspace deleted.".to_string());
@@ -1209,7 +1226,7 @@ impl PaneFlowApp {
                 let params = self.workspace_up_params(&commands, idx)?;
                 let project = commands
                     .get(idx)
-                    .and_then(|command| command.workspace.as_ref())
+                    .and_then(CommandDefinition::workspace)
                     .and_then(|workspace| workspace.cwd.as_deref())
                     .ok_or_else(|| "project path is required".to_string())?;
                 let target_idx = self
@@ -1238,7 +1255,7 @@ impl PaneFlowApp {
             .iter()
             .enumerate()
             .find_map(|(idx, command)| {
-                let workflow = command.workspace.as_ref()?;
+                let workflow = command.workspace()?;
                 if template_surfaces(workflow).is_empty() {
                     return None;
                 }
@@ -1426,7 +1443,7 @@ impl PaneFlowApp {
             .commands
             .iter()
             .enumerate()
-            .filter_map(|(idx, command)| command.workspace.is_some().then_some(idx))
+            .filter_map(|(idx, command)| command.workspace().is_some().then_some(idx))
             .collect()
     }
 
@@ -1436,7 +1453,7 @@ impl PaneFlowApp {
                 .cached_config
                 .commands
                 .get(idx)
-                .and_then(|command| command.workspace.as_ref())
+                .and_then(CommandDefinition::workspace)
                 .is_some()
         {
             return Some(idx);
@@ -1444,12 +1461,12 @@ impl PaneFlowApp {
         self.cached_config
             .commands
             .iter()
-            .position(|command| command.workspace.is_some())
+            .position(|command| command.workspace().is_some())
     }
 
     fn selected_template_and_pane(&self) -> Option<(usize, usize)> {
         let idx = self.selected_workspace_template_index()?;
-        let workspace = self.cached_config.commands.get(idx)?.workspace.as_ref()?;
+        let workspace = self.cached_config.commands.get(idx)?.workspace()?;
         let panes = template_surfaces(workspace);
         if panes.is_empty() {
             None
@@ -1487,14 +1504,8 @@ impl PaneFlowApp {
         command.name = name.clone();
         command.description = Some(format!("Workspace template for {project}"));
         let workspace = command
-            .workspace
-            .get_or_insert_with(|| WorkspaceDefinition {
-                name: Some(name.clone()),
-                cwd: Some(project.clone()),
-                layout_preset: Some("even_h".to_string()),
-                color: None,
-                layout: None,
-            });
+            .workspace_mut()
+            .ok_or_else(|| "selected command is not a workspace template".to_string())?;
         workspace.name = Some(name);
         workspace.cwd = Some(project);
         Ok(idx)
@@ -1506,7 +1517,10 @@ impl PaneFlowApp {
         idx: usize,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        let Some(workspace) = commands.get_mut(idx).and_then(|cmd| cmd.workspace.as_mut()) else {
+        let Some(workspace) = commands
+            .get_mut(idx)
+            .and_then(CommandDefinition::workspace_mut)
+        else {
             return Err("selected workspace is not a workspace template".to_string());
         };
         let mut panes = template_surfaces(workspace);
@@ -1572,8 +1586,7 @@ impl PaneFlowApp {
             .get(idx)
             .ok_or_else(|| "selected workspace no longer exists".to_string())?;
         let workspace = command
-            .workspace
-            .as_ref()
+            .workspace()
             .ok_or_else(|| "selected command is not a workspace".to_string())?;
         let project = workspace
             .cwd

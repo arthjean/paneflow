@@ -39,9 +39,12 @@ fn config_write_guard() -> MutexGuard<'static, ()> {
 /// cannot overwrite the user's recoverable `paneflow.json` with `{}`.
 fn load_raw_config(path: &Path) -> Result<serde_json::Value, ()> {
     match paneflow_config::loader::read_config_string(path) {
-        paneflow_config::loader::ConfigRead::Absent => Ok(serde_json::json!({})),
-        paneflow_config::loader::ConfigRead::Rejected => Err(()),
-        paneflow_config::loader::ConfigRead::Contents(contents) => {
+        Ok(None) => Ok(serde_json::json!({})),
+        Err(error) => {
+            log::warn!("config: {error}; refusing to overwrite");
+            Err(())
+        }
+        Ok(Some(contents)) => {
             let value: serde_json::Value = serde_json::from_str(&contents).map_err(|e| {
                 log::warn!(
                     "config: invalid JSON at {}; refusing to overwrite: {e}",

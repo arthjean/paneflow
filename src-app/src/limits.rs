@@ -6,13 +6,11 @@
 //! silently rot when the two numbers live a screen apart in different files.
 //!
 //! Three caps are owned by the module/crate that defines their domain and are
-//! cross-referenced (not duplicated) here, since a `const` cannot span a crate
-//! boundary and moving a `pub(crate)` const would only churn its many import
-//! sites for no behavioral gain:
+//! cross-referenced here:
 //!
 //! - **`MAX_PANES`** (32) - [`crate::layout::MAX_PANES`]. Live UI create cap
 //!   (split / drop-to-split / IPC `surface.split` / `workspace.create`) ↔ read
-//!   cap in [`paneflow_config::loader::validate_layout`] (US-011) and at session
+//!   cap in [`paneflow_config::schema::validate_layout`] (US-011) and at session
 //!   restore (US-009).
 //! - **`MAX_WORKSPACES`** (20) - [`crate::workspace::MAX_WORKSPACES`]. Live
 //!   `workspace.create` cap ↔ `restore_workspaces` cap (US-009).
@@ -38,10 +36,9 @@ pub(crate) const MAX_CHARS: usize = 400_000;
 pub(crate) const MAX_OSC52_BYTES: usize = 100 * 1024;
 
 /// JSON-RPC framing ceiling on the local IPC socket: the server's per-line read
-/// (`read_capped_line` in `ipc.rs`) and the MCP bridge client's reply read
-/// (`paneflow_mcp::ipc_client::MAX_RESPONSE_LEN`, a cross-crate mirror of this
-/// value) both bound a single request/reply to this many bytes.
-pub(crate) const MAX_REQUEST_LEN: u64 = 256 * 1024;
+/// (`read_capped_line` in `ipc.rs`) and every shared IPC client use this one
+/// cross-crate value for requests, replies, and AI-hook notifications.
+pub(crate) const MAX_REQUEST_LEN: u64 = paneflow_ipc_client::MAX_FRAME_BYTES as u64;
 
 /// Maximum body text returned by `surface.read` before JSON envelope overhead
 /// and optional untrusted-output fencing. Kept below [`MAX_REQUEST_LEN`] so a
