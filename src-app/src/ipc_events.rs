@@ -31,6 +31,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex};
 
+use paneflow_ipc_client::ai_hook::{
+    METHOD_EXIT, METHOD_NOTIFICATION, METHOD_PROMPT_SUBMIT, METHOD_SESSION_END,
+    METHOD_SESSION_START, METHOD_STOP, METHOD_TOOL_USE,
+};
 use serde_json::Value;
 
 /// Per-subscriber outbound queue depth. Past this the bus drops the current
@@ -42,13 +46,13 @@ const SUBSCRIBER_QUEUE_CAP: usize = 1024;
 /// a type outside this set is rejected (US-005 AC3) rather than producing a
 /// silent never-matching stream.
 pub const KNOWN_EVENT_TYPES: &[&str] = &[
-    "ai.session_start",
-    "ai.prompt_submit",
-    "ai.tool_use",
-    "ai.notification",
-    "ai.stop",
-    "ai.exit",
-    "ai.session_end",
+    METHOD_SESSION_START,
+    METHOD_PROMPT_SUBMIT,
+    METHOD_TOOL_USE,
+    METHOD_NOTIFICATION,
+    METHOD_STOP,
+    METHOD_EXIT,
+    METHOD_SESSION_END,
     "surface_changed",
 ];
 

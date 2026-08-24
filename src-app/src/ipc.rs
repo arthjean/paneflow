@@ -1059,6 +1059,30 @@ fn handle_connection(
                                 json!({"jsonrpc": "2.0", "result": {"pong": true}, "id": response_id})
                             }
                             "system.capabilities" => {
+                                let mut methods = vec![
+                                    "system.ping",
+                                    "system.capabilities",
+                                    "system.identify",
+                                    "workspace.list",
+                                    "workspace.create",
+                                    "workspace.select",
+                                    "workspace.close",
+                                    "workspace.current",
+                                    "workspace.restore_layout",
+                                    "workspace.up",
+                                    "surface.list",
+                                    "surface.read",
+                                    "surface.search",
+                                    "surface.rename",
+                                    "surface.send_text",
+                                    "surface.send_keystroke",
+                                    "surface.split",
+                                    "surface.focus",
+                                    "surface.status",
+                                    "fleet.list",
+                                    "events.subscribe",
+                                ];
+                                methods.extend_from_slice(paneflow_ipc_client::ai_hook::METHODS);
                                 json!({"jsonrpc": "2.0", "result": {
                                     "scripting": std::env::var("PANEFLOW_IPC_SCRIPTING")
                                         .is_ok_and(|v| v == "1"),
@@ -1066,24 +1090,7 @@ fn handle_connection(
                                         .is_ok_and(|v| v == "1")
                                         || std::env::var("PANEFLOW_IPC_SCRIPTING")
                                             .is_ok_and(|v| v == "1"),
-                                    "methods": [
-                                        "system.ping", "system.capabilities", "system.identify",
-                                        "workspace.list", "workspace.create", "workspace.select",
-                                        "workspace.close", "workspace.current",
-                                        "workspace.restore_layout", "workspace.up",
-                                        "surface.list", "surface.read", "surface.search", "surface.rename",
-                                        "surface.send_text", "surface.send_keystroke", "surface.split",
-                                        "surface.focus", "surface.status",
-                                        "fleet.list",
-                                        "events.subscribe",
-                                        "ai.session_start",
-                                        "ai.prompt_submit",
-                                        "ai.tool_use",
-                                        "ai.notification",
-                                        "ai.stop",
-                                        "ai.exit",
-                                        "ai.session_end"
-                                    ]
+                                    "methods": methods
                                 }, "id": response_id})
                             }
                             "system.identify" => {

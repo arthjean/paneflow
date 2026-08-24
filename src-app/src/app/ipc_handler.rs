@@ -19,6 +19,10 @@ use std::time::Duration;
 
 use gpui::{App, AppContext, BackgroundExecutor, Context, Entity, Focusable};
 use paneflow_config::schema::{LayoutNode, PaneFlowConfig, TerminalSurfaceProfile};
+use paneflow_ipc_client::ai_hook::{
+    AiToolName, LifecycleEventSource, METHOD_EXIT, METHOD_NOTIFICATION, METHOD_PROMPT_SUBMIT,
+    METHOD_SESSION_END, METHOD_SESSION_START, METHOD_STOP, METHOD_TOOL_USE, SessionPid, SurfaceId,
+};
 
 use crate::agent_launcher::TerminalAgent;
 use crate::agents::notifications::{self as desktop_notifications, DesktopNotification};
@@ -297,16 +301,8 @@ fn read_stop_summary(params: &serde_json::Value) -> (Option<String>, Option<std:
     (inline, transcript_path)
 }
 
-fn lifecycle_event_source(params: &serde_json::Value) -> Option<&str> {
-    let hook = params.get("hook_payload");
-    params
-        .get("event_source")
-        .or_else(|| hook.and_then(|h| h.get("event_source")))
-        .and_then(|v| v.as_str())
-}
-
 fn is_interrupt_lifecycle_event(params: &serde_json::Value) -> bool {
-    lifecycle_event_source(params) == Some("interrupt")
+    LifecycleEventSource::from_wire_params(params) == Some(LifecycleEventSource::Interrupt)
 }
 
 /// Inner with an explicit cap so the oversize-skip branch is unit-testable
@@ -874,6 +870,9 @@ pub(crate) struct SurfaceMeta {
     pub title: String,
     pub cwd: Option<String>,
     pub cmd: Option<String>,
+    /// Stable runtime workspace identity exported to child PTYs.
+    pub workspace_id: Option<u64>,
+    /// Positional index retained for backwards compatibility with older IPC clients.
     pub workspace: Option<usize>,
     pub scope: &'static str,
 }
@@ -899,6 +898,20 @@ impl SurfaceScope {
             SurfaceScope::Workspace(idx) => Some(idx),
             SurfaceScope::AgentsThread(_) | SurfaceScope::AgentsBottom(_) => None,
         }
+    }
+}
+
+fn authorize_surface_workspace(
+    surface_id: u64,
+    expected_workspace_id: Option<u64>,
+    actual_workspace_id: Option<u64>,
+) -> Result<(), JsonRpcError> {
+    match expected_workspace_id {
+        None => Ok(()),
+        Some(expected) if actual_workspace_id == Some(expected) => Ok(()),
+        Some(expected) => Err(JsonRpcError::invalid_params(format!(
+            "surface_id {surface_id} not found in workspace_id {expected}"
+        ))),
     }
 }
 
@@ -939,9 +952,23 @@ fn surface_meta_value(s: SurfaceMeta) -> serde_json::Value {
         "title": s.title,
         "cwd": s.cwd,
         "cmd": s.cmd,
+        "workspace_id": s.workspace_id,
         "workspace": s.workspace,
         "scope": s.scope,
     })
+}
+
+fn requested_workspace_id(params: &serde_json::Value) -> Result<Option<u64>, JsonRpcError> {
+    let Some(value) = params.get("workspace_id") else {
+        return Ok(None);
+    };
+    value.as_u64().map(Some).ok_or_else(|| {
+        JsonRpcError::invalid_params("'workspace_id' must be a non-negative integer")
+    })
+}
+
+fn surface_matches_workspace(surface: &SurfaceMeta, workspace_id: Option<u64>) -> bool {
+    workspace_id.is_none_or(|expected| surface.workspace_id == Some(expected))
 }
 
 /// Window a scrollback string by line for `surface.read` (US-003). `offset`
@@ -1010,13 +1037,11 @@ fn truncate_ipc_text(text: String) -> (String, bool) {
 // ---------------------------------------------------------------------------
 // EP-003 US-011 (agent-control-plane): anti-injection fence for `surface.read`.
 //
-// The fence trio below is replicated VERBATIM from the MCP bridge
-// (`crates/paneflow-mcp/src/tools.rs`: `fence_id` / `neutralize_sentinel` /
-// `wrap_untrusted`). That crate is a binary with no library target, so the
-// functions cannot be imported across the crate boundary. Keep the two copies
-// byte-for-byte identical: the fence is a security boundary, and any divergence
-// between the MCP path and the CLI/IPC path would reopen the very inter-agent
-// injection vector US-011 closes. A change here MUST be mirrored there.
+// This fence has an equivalent implementation in the MCP bridge
+// (`crates/paneflow-mcp/src/output.rs`). That crate is a binary with no library
+// target, so the functions cannot be imported across the crate boundary. Keep
+// the security invariants aligned: randomized paired ids and literal closing
+// sentinel neutralization. A behavioral change here MUST be mirrored there.
 // ---------------------------------------------------------------------------
 
 /// Per-call unguessable fence id (16-char hex `u64` from the OS-seeded
@@ -1403,7 +1428,7 @@ impl PaneFlowApp {
             crate::theme::invalidate_theme_cache();
             crate::theme::sync_markdown_global_theme(cx);
             // US-014 (telemetry): reconcile the telemetry consent state. On any
-            // change, rebuild the `TelemetryClient` handle (Null ↔ Active) so
+            // change, rebuild the `TelemetryClient` handle (disabled/active) so
             // future emissions reflect the new choice; show a confirmation
             // toast; fire a one-time `telemetry_reenabled` breadcrumb on an
             // explicit opted-out → opted-in transition (ROPA audit trail).
@@ -1461,26 +1486,25 @@ impl PaneFlowApp {
             return;
         }
 
-        // Swap the client handle. Distinct_id is read only when the new
-        // consent state can actually capture events; opt-out must not create
-        // persistent telemetry state.
-        let consent = crate::telemetry::client::TelemetryConsent::new(new_enabled);
-        let distinct_id =
-            if crate::telemetry::client::TelemetryClient::consent_allows_capture(consent) {
-                crate::telemetry::id::telemetry_id()
-            } else {
-                String::new()
-            };
+        // Swap the client handle. The identifier callback is lazy and runs
+        // only after the factory resolves consent and kill switches.
+        let consent = crate::telemetry::client::TelemetryConsent::from_config(new_enabled);
         let api_key = option_env!("POSTHOG_API_KEY").unwrap_or("");
         let host = option_env!("POSTHOG_HOST").unwrap_or("https://eu.i.posthog.com");
-        self.telemetry.deactivate();
-        let telemetry =
-            std::sync::Arc::new(crate::telemetry::client::TelemetryClient::from_consent(
-                consent,
-                api_key,
-                host,
-                &distinct_id,
-            ));
+        // Stop new captures synchronously, then wait for any already-running
+        // transport off the GPUI thread. A stale handle cannot start another
+        // request after `disable` returns.
+        let deactivating_telemetry = std::sync::Arc::clone(&self.telemetry);
+        deactivating_telemetry.disable();
+        cx.background_spawn(async move {
+            smol::unblock(move || deactivating_telemetry.deactivate()).await;
+        })
+        .detach();
+        let (telemetry_client, _) =
+            crate::telemetry::client::TelemetryClient::from_consent(consent, api_key, host, || {
+                (crate::telemetry::id::telemetry_id(), false)
+            });
+        let telemetry = std::sync::Arc::new(telemetry_client);
         self.telemetry = std::sync::Arc::clone(&telemetry);
         Self::spawn_telemetry_flusher(telemetry, cx);
 
@@ -1489,7 +1513,7 @@ impl PaneFlowApp {
             // carries no properties - its presence alone documents that
             // consent was re-granted from an opted-out state.
             self.telemetry
-                .capture("telemetry_reenabled", serde_json::json!({}));
+                .capture(crate::telemetry::event::TelemetryEvent::telemetry_reenabled());
         }
 
         self.telemetry_enabled_last = new_enabled;
@@ -1540,6 +1564,7 @@ impl PaneFlowApp {
                 title: entry.title.clone(),
                 cwd: entry.cwd.clone(),
                 cmd: entry.cmd.clone(),
+                workspace_id: self.workspace_id_for_scope(entry.scope),
                 workspace: entry.scope.workspace_index(),
                 scope: entry.scope.as_wire(),
             })
@@ -1677,6 +1702,12 @@ impl PaneFlowApp {
             })
     }
 
+    fn workspace_id_for_scope(&self, scope: SurfaceScope) -> Option<u64> {
+        scope
+            .workspace_index()
+            .and_then(|idx| self.workspaces.get(idx).map(|workspace| workspace.id))
+    }
+
     fn focus_agents_surface(
         &mut self,
         surface_id: u64,
@@ -1769,6 +1800,25 @@ impl PaneFlowApp {
             return Ok(t);
         }
         Err(JsonRpcError::invalid_params("no surface available"))
+    }
+
+    /// Resolve a readable surface and enforce an optional stable workspace
+    /// identity in the same GPUI request. This keeps the MCP scope check in the
+    /// canonical owner of workspace membership instead of doing a racy
+    /// `surface.list` check followed by an unrestricted read in the bridge.
+    fn resolve_readable_surface(
+        &self,
+        params: &serde_json::Value,
+        cx: &App,
+    ) -> Result<gpui::Entity<TerminalView>, JsonRpcError> {
+        let terminal = self.resolve_surface(params, cx)?;
+        let expected_workspace_id = requested_workspace_id(params)?;
+        let surface_id = terminal.entity_id().as_u64();
+        let actual_workspace_id = self
+            .surface_scope_by_id(surface_id, cx)
+            .and_then(|scope| self.workspace_id_for_scope(scope));
+        authorize_surface_workspace(surface_id, expected_workspace_id, actual_workspace_id)?;
+        Ok(terminal)
     }
 
     /// `workspace.up` - materialize a declarative multi-pane agent workspace in
@@ -2510,10 +2560,17 @@ impl PaneFlowApp {
             "surface.list" => {
                 // US-002: additive enrichment - keep the legacy root fields
                 // (`pane_count`, `workspace`) for back-compat and add a
-                // per-surface `surfaces` array with disambiguated names.
+                // per-surface `surfaces` array with disambiguated names. MCP
+                // callers pass the stable PTY workspace_id so filtering is
+                // owned by the same layer that owns workspace membership.
+                let requested_workspace_id = match requested_workspace_id(params) {
+                    Ok(workspace_id) => workspace_id,
+                    Err(error) => return error.into_value(),
+                };
                 let surfaces: Vec<_> = self
                     .collect_surface_meta(cx)
                     .into_iter()
+                    .filter(|surface| surface_matches_workspace(surface, requested_workspace_id))
                     .map(surface_meta_value)
                     .collect();
                 let count = self.active_workspace().map_or(0, |ws| ws.pane_count());
@@ -2526,7 +2583,7 @@ impl PaneFlowApp {
             "surface.read" => {
                 // US-003: read a surface's scrollback as plain text. Read-only;
                 // no scripting gate (the send_* gate guards writes, not reads).
-                let terminal = match self.resolve_surface(params, cx) {
+                let terminal = match self.resolve_readable_surface(params, cx) {
                     Ok(t) => t,
                     Err(e) => return e.into_value(),
                 };
@@ -2650,7 +2707,7 @@ impl PaneFlowApp {
                     ))
                     .into_value();
                 }
-                let terminal = match self.resolve_surface(params, cx) {
+                let terminal = match self.resolve_readable_surface(params, cx) {
                     Ok(t) => t,
                     Err(e) => return e.into_value(),
                 };
@@ -3093,7 +3150,7 @@ impl PaneFlowApp {
             // -----------------------------------------------------------------
             // AI hook lifecycle methods (from paneflow-hook via IPC socket)
             // -----------------------------------------------------------------
-            "ai.session_start" => {
+            METHOD_SESSION_START => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
@@ -3122,7 +3179,7 @@ impl PaneFlowApp {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
             }
-            "ai.prompt_submit" => {
+            METHOD_PROMPT_SUBMIT => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
@@ -3169,7 +3226,7 @@ impl PaneFlowApp {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
             }
-            "ai.tool_use" => {
+            METHOD_TOOL_USE => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
@@ -3220,7 +3277,7 @@ impl PaneFlowApp {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
             }
-            "ai.notification" => {
+            METHOD_NOTIFICATION => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
@@ -3289,7 +3346,7 @@ impl PaneFlowApp {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
             }
-            "ai.stop" => {
+            METHOD_STOP => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
@@ -3477,7 +3534,7 @@ impl PaneFlowApp {
             // exit status (`ChildExit` only ever carries the shell's). Always
             // emitted BEFORE the shim's `ai.session_end`, both blocking - see
             // `paneflow-shim::main` for the ordering contract.
-            "ai.exit" => {
+            METHOD_EXIT => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
@@ -3571,27 +3628,18 @@ impl PaneFlowApp {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
             }
-            "ai.session_end" => {
+            METHOD_SESSION_END => {
                 let Some(workspace_id) = params.get("workspace_id").and_then(|v| v.as_u64()) else {
                     return serde_json::json!({"error": "Missing workspace_id"});
                 };
-                let hook = params.get("hook_payload");
-                let tool_str = params
-                    .get("tool")
-                    .and_then(|v| v.as_str())
-                    .or_else(|| hook.and_then(|h| h.get("tool")).and_then(|v| v.as_str()))
-                    .unwrap_or("claude");
-                if tool_str.len() > 64
-                    || !tool_str
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-                {
-                    return serde_json::json!({"error": "Invalid tool name"});
-                }
+                let tool_name = match AiToolName::from_wire_params(params) {
+                    Ok(tool_name) => tool_name,
+                    Err(_) => return serde_json::json!({"error": "Invalid tool name"}),
+                };
                 let pid = read_session_pid(params);
                 // Unknown tool string → `None`: the PID-based removal below
                 // still works, only the tool-name fallback is skipped.
-                let tool = crate::agent_launcher::TerminalAgent::from_binary(tool_str);
+                let tool = crate::agent_launcher::TerminalAgent::from_binary(tool_name.as_str());
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
 
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
@@ -3750,11 +3798,7 @@ fn clear_agents_thread_on_session_end(thread: &mut crate::project::Thread) -> bo
 /// Windows DWORD ids in practice), so a legitimate frame is never dropped;
 /// a forged real-range PID is self-limiting (probed and reaped ≤ 30 s).
 fn read_session_pid(params: &serde_json::Value) -> Option<u32> {
-    params
-        .get("pid")
-        .and_then(|v| v.as_u64())
-        .and_then(|n| u32::try_from(n).ok())
-        .filter(|&p| p > 0 && p <= i32::MAX as u32)
+    SessionPid::from_wire_params(params).map(SessionPid::get)
 }
 
 /// Read the surface id carried by a modern hook frame. `paneflow-ai-hook`
@@ -3762,12 +3806,7 @@ fn read_session_pid(params: &serde_json::Value) -> Option<u32> {
 /// key under `hook_payload` keeps the server tolerant of older/alternate shims.
 /// Zero is rejected because GPUI entity ids are never meaningful as 0.
 fn read_frame_surface_id(params: &serde_json::Value) -> Option<u64> {
-    let hook = params.get("hook_payload");
-    params
-        .get("surface_id")
-        .or_else(|| hook.and_then(|h| h.get("surface_id")))
-        .and_then(|v| v.as_u64())
-        .filter(|sid| *sid > 0)
+    SurfaceId::from_wire_params(params).map(SurfaceId::get)
 }
 
 /// Read the `tool` field from an `ai.*` IPC param object, falling back
@@ -3779,13 +3818,8 @@ fn read_frame_surface_id(params: &serde_json::Value) -> Option<u64> {
 /// is then ignored by the caller instead of silently retyped as Claude
 /// (the historical `from_name` fallback mislabeled every future agent).
 fn read_tool(params: &serde_json::Value) -> Option<crate::agent_launcher::TerminalAgent> {
-    let hook = params.get("hook_payload");
-    let tool_str = params
-        .get("tool")
-        .and_then(|v| v.as_str())
-        .or_else(|| hook.and_then(|h| h.get("tool")).and_then(|v| v.as_str()))
-        .unwrap_or("claude");
-    crate::agent_launcher::TerminalAgent::from_binary(tool_str)
+    let tool_name = AiToolName::from_wire_params(params).ok()?;
+    crate::agent_launcher::TerminalAgent::from_binary(tool_name.as_str())
 }
 
 fn session_end_fallback_candidate(
@@ -4939,9 +4973,11 @@ mod tests {
             title: "zsh".to_string(),
             cwd: Some("/repo".to_string()),
             cmd: Some("zsh".to_string()),
+            workspace_id: Some(42),
             workspace: Some(2),
             scope: "workspace",
         });
+        assert_eq!(workspace["workspace_id"], 42);
         assert_eq!(workspace["workspace"], 2);
         assert_eq!(workspace["scope"], "workspace");
 
@@ -4951,11 +4987,47 @@ mod tests {
             title: "codex".to_string(),
             cwd: None,
             cmd: Some("codex".to_string()),
+            workspace_id: None,
             workspace: None,
             scope: "agents_thread",
         });
+        assert_eq!(agents["workspace_id"], serde_json::Value::Null);
         assert_eq!(agents["workspace"], serde_json::Value::Null);
         assert_eq!(agents["scope"], "agents_thread");
+    }
+
+    #[test]
+    fn workspace_scope_uses_stable_id_not_positional_index() {
+        let surface = super::SurfaceMeta {
+            surface_id: 7,
+            name: "shell".to_string(),
+            title: "zsh".to_string(),
+            cwd: None,
+            cmd: None,
+            workspace_id: Some(42),
+            workspace: Some(0),
+            scope: "workspace",
+        };
+
+        assert!(super::surface_matches_workspace(&surface, Some(42)));
+        assert!(
+            !super::surface_matches_workspace(&surface, Some(0)),
+            "the positional index must never authorize a stable-id scope"
+        );
+        assert!(super::surface_matches_workspace(&surface, None));
+    }
+
+    #[test]
+    fn readable_surface_authorization_rejects_cross_workspace_targets() {
+        assert_eq!(
+            super::authorize_surface_workspace(7, Some(42), Some(42)),
+            Ok(())
+        );
+        let error = super::authorize_surface_workspace(7, Some(42), Some(99))
+            .expect_err("cross-workspace read/search must fail");
+        assert_eq!(error.code, super::JsonRpcError::INVALID_PARAMS);
+        assert_eq!(error.message, "surface_id 7 not found in workspace_id 42");
+        assert!(super::authorize_surface_workspace(7, None, Some(99)).is_ok());
     }
 
     #[test]
