@@ -15,6 +15,7 @@ serde_json = { workspace = true }
 tempfile.workspace = true
 # Cross-platform file identity for the hardlink loop guard.
 same-file = "1"
+paneflow-agent-config.workspace = true
 
 # Signal disposition control - required to make Ctrl+C / SIGHUP / SIGTERM
 # only reach the child claude/codex process (so the AI sees the
