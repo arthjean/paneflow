@@ -22,6 +22,8 @@
 //! Shared crate (no GPUI / `src-app` dependency): consumed both by the MCP
 //! bridge (`paneflow-mcp`) and the `paneflow` CLI subcommands.
 
+pub mod ai_hook;
+
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -31,6 +33,9 @@ use std::time::Instant;
 
 use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
 use serde_json::{json, Value};
+
+/// Maximum size of one newline-delimited JSON-RPC frame on the local socket.
+pub const MAX_FRAME_BYTES: usize = 256 * 1024;
 
 /// Wire timeout for a single request/response round-trip. The server always
 /// writes a response (it can synthesize a `-32002` dispatch timeout
@@ -42,7 +47,7 @@ const IPC_TIMEOUT: Duration = Duration::from_secs(10);
 /// time but not memory - a same-UID peer can deliver many GB before the
 /// deadline - so the read is also byte-bounded and a reply that hits the cap
 /// without a terminating newline is a framing error, not a partial parse.
-const MAX_RESPONSE_LEN: u64 = 256 * 1024;
+const MAX_RESPONSE_LEN: u64 = MAX_FRAME_BYTES as u64;
 
 /// Abstraction over "send a JSON-RPC request to Paneflow, get the `result`".
 /// Lets callers (MCP layer, CLI) be unit-tested against a fake transport with
