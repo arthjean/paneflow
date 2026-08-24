@@ -1,13 +1,15 @@
 //! Desktop telemetry subsystem (opt-in, anonymous).
 //!
 //! US-003: the reusable plumbing now lives in the `paneflow-telemetry`
-//! workspace crate. This module re-exports `client` and provides thin
+//! workspace crate. This module re-exports the client and closed event schema,
+//! and provides thin
 //! domain shims for `id` (path resolution wrapper) and `tags` (the
 //! `InstallMethod`/`UpdateError` mapping that depends on `crate::update`
 //! types and therefore stays inside the desktop binary).
 //!
 //! Submodules:
-//! - `client` (US-012) - re-exported from `paneflow-telemetry::client`.
+//! - `client` (US-012) - consent-gated capture and flushing.
+//! - `event` - the closed, runtime-validated event schema.
 //! - `id` (US-010) - desktop shim that resolves `runtime_paths::data_dir()`
 //!   then delegates to `paneflow_telemetry::id::telemetry_id_at`.
 //! - `tags` (US-013) - domain mapping for `InstallMethod` and `UpdateError`
@@ -23,10 +25,9 @@
 //! - No event is ever emitted unless `config.telemetry.enabled == Some(true)`
 //!   **and** no kill-switch env var is set (`PANEFLOW_NO_TELEMETRY`,
 //!   `DO_NOT_TRACK`, `NO_TELEMETRY`).
-//! - No PII, no paths, no terminal content is ever transmitted - enforced
-//!   at every call site, documented in `tasks/compliance-analytics.md §5`.
+//! - No PII, paths, or terminal content is accepted by the closed event schema.
 
-pub use paneflow_telemetry::client;
+pub use paneflow_telemetry::{client, event};
 
 pub mod id;
 pub mod tags;

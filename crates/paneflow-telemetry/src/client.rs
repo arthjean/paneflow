@@ -1,400 +1,350 @@
-//! Minimal PostHog capture client (US-012).
+//! Consent-gated PostHog capture client.
 //!
-//! Design goals - in order of priority:
-//! 1. **Never block the main thread.** Network I/O goes through an
-//!    `ActiveClient::post_batch` call that the caller schedules on a
-//!    background thread (`cx.background_spawn` in US-013, or a plain
-//!    `std::thread::spawn` at shutdown).
-//! 2. **Runtime-neutral.** We use blocking `ureq`, not `reqwest`/tokio -
-//!    the PaneFlow desktop already ships `ureq` (self-update) and runs on
-//!    GPUI's `smol` executor. Adding tokio would fragment the async
-//!    surface and bloat the binary by several MB (see PRD Research
-//!    Findings §Validated Technical Choices).
-//! 3. **Drop, don't retry.** A failed flush logs at DEBUG and discards
-//!    the batch. v1 tolerates data loss over complexity or startup
-//!    latency (PRD AC #4).
-//! 4. **Type-erased disabled state.** The `Null` variant gives us a
-//!    single call-site signature (`client.capture(...)`) whether the
-//!    user has opted in, opted out, or not yet been asked (PRD AC #6).
-//!
-//! Non-goals for v1 (may ship later):
-//! - Retry queue / persistence across launches.
-//! - Client-side timestamps (PostHog server-stamps on receipt; good
-//!   enough for a ~30s batching window).
-//! - Event de-duplication.
+//! Network I/O is blocking and runtime-neutral. Call [`TelemetryClient::poll_flush`]
+//! from a background task. Shutdown may call [`TelemetryClient::flush_blocking`]
+//! with an explicit deadline. Failed batches are logged at DEBUG and dropped.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::collections::VecDeque;
+use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
+use uuid::Uuid;
 
-/// Flush threshold: a full batch of events triggers an immediate post.
+use crate::event::TelemetryEvent;
+
+/// A full queue triggers a flush on the next scheduler poll.
 pub(crate) const BATCH_MAX: usize = 10;
-/// Hard queue bound. Capture is best effort, so once this many events are
-/// buffered we drop new events instead of retaining unbounded memory.
+/// Defense-in-depth bound on queued event count.
 pub(crate) const QUEUE_MAX: usize = 1_000;
-
-/// Flush threshold: if the oldest queued event has been waiting this
-/// long, post the batch even if it's under `BATCH_MAX`. Trades a small
-/// amount of latency for steady data flow during idle sessions.
+/// Hard bound on serialized property bytes retained in memory.
+pub(crate) const QUEUE_MAX_BYTES: usize = 512 * 1024;
+/// Maximum age of the oldest queued event before a scheduler poll flushes it.
 pub(crate) const BATCH_MAX_AGE: Duration = Duration::from_secs(30);
-
-/// Per-request transport timeout. Applies to connect + read + write as a
-/// single global budget (ureq `timeout_global`). A DNS failure surfaces
-/// within this budget (PRD unhappy-path AC).
+/// Default transport deadline for background flushes.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A single queued capture. We intentionally omit a client-side
-/// `timestamp` - PostHog server-stamps on receipt, which is accurate
-/// enough for a 30-second flush window and saves us a date-formatting
-/// crate.
+const KILL_SWITCH_VARS: [&str; 3] = ["PANEFLOW_NO_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY"];
+
 struct Event {
-    event: String,
-    properties: Value,
+    name: &'static str,
+    properties: Map<String, Value>,
 }
 
-/// In-memory queue state. Guarded by a plain `Mutex` - contention is
-/// negligible (tens of events per session at most) and the critical
-/// sections are `Vec::push` / `mem::take`.
 struct Queue {
-    events: Vec<Event>,
+    events: VecDeque<Event>,
+    queued_bytes: usize,
     dropped_events: usize,
-    /// Wall-clock timestamp of the moment the currently-buffered batch
-    /// started - reset to `None` every time the queue drains. Used to
-    /// trigger the age-based flush in `should_flush`.
     first_queued_at: Option<Instant>,
 }
 
-/// Consent state supplied by the application layer.
-///
-/// The telemetry crate deliberately does not depend on the global Paneflow
-/// config schema. Callers adapt their own config into this tiny shape.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct TelemetryConsent {
-    enabled: Option<bool>,
-}
-
-impl TelemetryConsent {
-    pub fn new(enabled: Option<bool>) -> Self {
-        Self { enabled }
+impl Queue {
+    fn new() -> Self {
+        Self {
+            events: VecDeque::new(),
+            queued_bytes: 0,
+            dropped_events: 0,
+            first_queued_at: None,
+        }
     }
 
-    pub fn enabled(self) -> Option<bool> {
-        self.enabled
+    fn take_events(&mut self) -> Vec<Event> {
+        self.first_queued_at = None;
+        self.queued_bytes = 0;
+        self.events.drain(..).collect()
     }
 }
 
-/// Live PostHog client. Cheap to construct; all methods are `&self` so
-/// it can be shared across threads via `Arc<TelemetryClient>`.
-pub struct ActiveClient {
+enum RuntimeState {
+    Active(Queue),
+    Disabled,
+}
+
+struct Endpoint {
     api_key: String,
     host: String,
     distinct_id: String,
-    enabled: AtomicBool,
-    queue: Mutex<Queue>,
 }
 
-/// Type-erased dispatch between opted-in (Active) and disabled (Null)
-/// states. Callers always write `client.capture(...)` regardless.
-pub enum TelemetryClient {
-    Active(ActiveClient),
-    Null,
+/// Explicit application consent state.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TelemetryConsent {
+    #[default]
+    Unknown,
+    Declined,
+    Granted,
+}
+
+impl TelemetryConsent {
+    pub const fn from_config(enabled: Option<bool>) -> Self {
+        match enabled {
+            None => Self::Unknown,
+            Some(false) => Self::Declined,
+            Some(true) => Self::Granted,
+        }
+    }
+}
+
+/// Thread-safe telemetry handle. Disabled and active states share the same
+/// no-op capture surface, while construction and runtime state remain private.
+pub struct TelemetryClient {
+    endpoint: Option<Endpoint>,
+    state: Mutex<RuntimeState>,
+    /// A read guard spans each network request. Deactivation marks the state
+    /// disabled first, then takes the write guard so it cannot return while an
+    /// older handle can still begin or finish an HTTP request.
+    send_gate: RwLock<()>,
+}
+
+impl Default for TelemetryClient {
+    fn default() -> Self {
+        Self::disabled()
+    }
 }
 
 impl TelemetryClient {
-    /// Unconditional Active constructor. The caller has already decided
-    /// telemetry is on - no consent checks happen here. Use
-    /// [`TelemetryClient::from_consent`] for the gated factory.
-    pub fn new(api_key: &str, host: &str, distinct_id: &str) -> Self {
-        Self::Active(ActiveClient {
-            api_key: api_key.to_string(),
-            host: host.trim_end_matches('/').to_string(),
-            distinct_id: distinct_id.to_string(),
-            enabled: AtomicBool::new(true),
-            queue: Mutex::new(Queue {
-                events: Vec::new(),
-                dropped_events: 0,
-                first_queued_at: None,
-            }),
-        })
+    /// Build a disabled client with no endpoint or identifier state.
+    pub fn disabled() -> Self {
+        Self {
+            endpoint: None,
+            state: Mutex::new(RuntimeState::Disabled),
+            send_gate: RwLock::new(()),
+        }
     }
 
-    /// Consent-aware factory. Returns `Null` if any of the gates fail:
-    /// - A kill-switch env var is set - any of `PANEFLOW_NO_TELEMETRY`,
-    ///   `DO_NOT_TRACK`, or `NO_TELEMETRY`. Project-specific plus the two
-    ///   de-facto community standards (`DO_NOT_TRACK` - .NET SDK / GitHub
-    ///   CLI / Homebrew precedent; `NO_TELEMETRY` - the `no-telemetry`
-    ///   universal opt-out). Unconditional; checked before consent state.
-    /// - `consent.enabled` is `None` (user never answered).
-    /// - `consent.enabled` is `Some(false)` (user declined).
-    ///
-    /// Only `Some(true)` with no env kill-switch returns Active.
-    ///
-    /// A WARN log is emitted once when the caller builds an Active client
-    /// with an empty `api_key` - PostHog would otherwise 401 every batch
-    /// silently, which only surfaces in the server dashboard.
-    pub fn from_consent(
+    /// Resolve consent and kill switches once, then lazily create the anonymous
+    /// identifier only when capture is allowed. The returned boolean is the
+    /// identifier factory's `is_first_run` value, or `false` when disabled.
+    pub fn from_consent<F>(
         consent: TelemetryConsent,
         api_key: &str,
         host: &str,
-        distinct_id: &str,
-    ) -> Self {
-        if !Self::consent_allows_capture(consent) {
-            return Self::Null;
+        distinct_id: F,
+    ) -> (Self, bool)
+    where
+        F: FnOnce() -> (String, bool),
+    {
+        Self::from_consent_with_kill_switch(
+            consent,
+            api_key,
+            host,
+            distinct_id,
+            is_kill_switch_set(),
+        )
+    }
+
+    fn from_consent_with_kill_switch<F>(
+        consent: TelemetryConsent,
+        api_key: &str,
+        host: &str,
+        distinct_id: F,
+        kill_switch_set: bool,
+    ) -> (Self, bool)
+    where
+        F: FnOnce() -> (String, bool),
+    {
+        if kill_switch_set || consent != TelemetryConsent::Granted {
+            return (Self::disabled(), false);
         }
         if api_key.is_empty() {
             log::warn!(
-                "paneflow: telemetry is opted-in but POSTHOG_API_KEY was empty at build time - \
-                 PostHog will reject every batch with HTTP 401 and events will be silently \
-                 dropped. Provide POSTHOG_API_KEY at build time or set PANEFLOW_NO_TELEMETRY=1 \
-                 to suppress this warning."
+                "paneflow: telemetry is opted-in but POSTHOG_API_KEY was empty at build time; \
+                 PostHog will reject every batch. Provide POSTHOG_API_KEY at build time or set \
+                 PANEFLOW_NO_TELEMETRY=1 to suppress this warning."
             );
         }
-        Self::new(api_key, host, distinct_id)
+        let (distinct_id, is_first_run) = anonymous_distinct_id(distinct_id());
+        (Self::active(api_key, host, distinct_id), is_first_run)
     }
 
-    pub fn consent_allows_capture(consent: TelemetryConsent) -> bool {
-        !is_kill_switch_set() && consent.enabled() == Some(true)
-    }
-
-    /// Queue one event. `Null` variant no-ops; no allocation.
-    pub fn capture(&self, event: &str, properties: Value) {
-        if let Self::Active(c) = self {
-            c.capture(event, properties);
+    fn active(api_key: &str, host: &str, distinct_id: String) -> Self {
+        Self {
+            endpoint: Some(Endpoint {
+                api_key: api_key.to_string(),
+                host: host.trim_end_matches('/').to_string(),
+                distinct_id,
+            }),
+            state: Mutex::new(RuntimeState::Active(Queue::new())),
+            send_gate: RwLock::new(()),
         }
     }
 
-    /// Scheduler hook. Call periodically from a background task; only
-    /// triggers an HTTP POST when the queue meets the size or age
-    /// threshold. Cheap when there is nothing to do.
+    /// Queue one canonical event. Invalid or oversized payloads are dropped.
+    pub fn capture(&self, event: TelemetryEvent) {
+        let Some(encoded_len) = event.encoded_len_if_safe() else {
+            log::debug!(
+                "telemetry: rejected invalid or oversized {} event",
+                event.name()
+            );
+            return;
+        };
+        let (name, properties) = event.into_parts();
+        let mut state = self.lock_state();
+        let RuntimeState::Active(queue) = &mut *state else {
+            return;
+        };
+        let Some(next_bytes) = queue.queued_bytes.checked_add(encoded_len) else {
+            queue.dropped_events = queue.dropped_events.saturating_add(1);
+            return;
+        };
+        if queue.events.len() >= QUEUE_MAX || next_bytes > QUEUE_MAX_BYTES {
+            queue.dropped_events = queue.dropped_events.saturating_add(1);
+            return;
+        }
+        if queue.events.is_empty() {
+            queue.first_queued_at = Some(Instant::now());
+        }
+        queue.queued_bytes = next_bytes;
+        queue.events.push_back(Event { name, properties });
+    }
+
+    /// Scheduler hook. Call periodically from a background task.
     pub fn poll_flush(&self) {
-        if let Self::Active(c) = self {
-            c.poll_flush();
-        }
+        let Some(endpoint) = &self.endpoint else {
+            return;
+        };
+        let _send_guard = self
+            .send_gate
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let batch = {
+            let mut state = self.lock_state();
+            let RuntimeState::Active(queue) = &mut *state else {
+                return;
+            };
+            if !should_flush(queue) {
+                return;
+            }
+            log_dropped_events(queue);
+            queue.take_events()
+        };
+        post_batch(endpoint, &batch, HTTP_TIMEOUT);
     }
 
-    /// Shutdown hook. Drains any pending events and waits up to
-    /// `timeout` for the HTTP POST to complete. On timeout the batch is
-    /// dropped (its worker thread is detached) and shutdown continues -
-    /// never block process exit on telemetry.
+    /// Drain pending events and perform one blocking POST bounded by `timeout`.
+    /// A zero timeout drops the drained batch without starting a request.
     pub fn flush_blocking(&self, timeout: Duration) {
-        if let Self::Active(c) = self {
-            c.flush_blocking(timeout);
+        let Some(endpoint) = &self.endpoint else {
+            return;
+        };
+        let _send_guard = self
+            .send_gate
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let batch = {
+            let mut state = self.lock_state();
+            let RuntimeState::Active(queue) = &mut *state else {
+                return;
+            };
+            if queue.events.is_empty() {
+                return;
+            }
+            log_dropped_events(queue);
+            queue.take_events()
+        };
+        if timeout.is_zero() {
+            return;
         }
+        post_batch(endpoint, &batch, timeout.min(HTTP_TIMEOUT));
     }
 
-    /// Permanently disable this handle and discard any queued events.
-    ///
-    /// Config reconciliation swaps `Arc<TelemetryClient>` handles, but background
-    /// flushers may still own an older `Arc`. Deactivation makes those stale
-    /// handles inert after opt-out.
+    /// Permanently disable capture and discard queued events without waiting
+    /// for a request that was already in flight.
+    pub fn disable(&self) {
+        let mut state = self.lock_state();
+        *state = RuntimeState::Disabled;
+    }
+
+    /// Disable this handle, then wait for any request already in flight to
+    /// finish before returning. Run this from a background task when a live
+    /// request could make waiting visible to the caller.
     pub fn deactivate(&self) {
-        if let Self::Active(c) = self {
-            c.deactivate();
-        }
+        self.disable();
+        let _send_guard = self
+            .send_gate
+            .write()
+            .unwrap_or_else(PoisonError::into_inner);
     }
 
-    /// Lightweight introspection for US-014 (settings toggle) - callers
-    /// need to know whether to swap the client handle when consent changes.
-    ///
-    /// Currently only exercised by the unit-test suite; the reconcile path
-    /// in `app::ipc_handler::reconcile_telemetry` rebuilds via
-    /// [`TelemetryClient::from_consent`] unconditionally. Kept public for
-    /// future callers (settings UI, IPC "is telemetry active?" probe).
-    #[allow(dead_code)]
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Active(c) if c.enabled.load(Ordering::Relaxed))
+        matches!(*self.lock_state(), RuntimeState::Active(_))
+    }
+
+    fn lock_state(&self) -> MutexGuard<'_, RuntimeState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
-impl ActiveClient {
-    fn capture(&self, event: &str, properties: Value) {
-        if !self.enabled.load(Ordering::Relaxed) {
-            return;
-        }
-        let Ok(mut q) = self.queue.lock() else {
-            // Lock poisoning means a previous holder panicked. Silently
-            // drop the event - telemetry must never surface errors.
-            return;
-        };
-        if q.events.len() >= QUEUE_MAX {
-            q.dropped_events = q.dropped_events.saturating_add(1);
-            return;
-        }
-        if q.events.is_empty() {
-            q.first_queued_at = Some(Instant::now());
-        }
-        q.events.push(Event {
-            event: event.to_string(),
-            properties,
-        });
-    }
-
-    fn poll_flush(&self) {
-        if !self.enabled.load(Ordering::Relaxed) {
-            return;
-        }
-        let batch = {
-            let Ok(mut q) = self.queue.lock() else {
-                return;
-            };
-            if !should_flush(&q) {
-                return;
-            }
-            if q.dropped_events > 0 {
-                log::debug!(
-                    "telemetry: dropped {} event(s) because the in-memory queue was full",
-                    q.dropped_events
-                );
-                q.dropped_events = 0;
-            }
-            q.first_queued_at = None;
-            std::mem::take(&mut q.events)
-        };
-        if batch.is_empty() {
-            return;
-        }
-        post_batch(&self.api_key, &self.host, &self.distinct_id, &batch);
-    }
-
-    fn flush_blocking(&self, timeout: Duration) {
-        if !self.enabled.load(Ordering::Relaxed) {
-            return;
-        }
-        let batch = {
-            let Ok(mut q) = self.queue.lock() else {
-                return;
-            };
-            if q.events.is_empty() {
-                return;
-            }
-            if q.dropped_events > 0 {
-                log::debug!(
-                    "telemetry: dropped {} event(s) because the in-memory queue was full",
-                    q.dropped_events
-                );
-                q.dropped_events = 0;
-            }
-            q.first_queued_at = None;
-            std::mem::take(&mut q.events)
-        };
-
-        // Move the POST into a worker thread so we can enforce `timeout`
-        // without relying on tokio-style cancellation. If the deadline
-        // elapses the handle is dropped (detached) and the process
-        // continues shutdown; the OS reaps the thread on exit.
-        let api_key = self.api_key.clone();
-        let host = self.host.clone();
-        let distinct_id = self.distinct_id.clone();
-        let handle = std::thread::spawn(move || {
-            post_batch(&api_key, &host, &distinct_id, &batch);
-        });
-
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if handle.is_finished() {
-                // Join to collect the thread and propagate nothing
-                // (post_batch itself swallows all errors).
-                let _ = handle.join();
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        // Timed out - detach. The thread may still be in flight; it's
-        // bounded by `HTTP_TIMEOUT` and will terminate without external
-        // intervention. No value in `join`-ing here since the caller
-        // asked us to honor the deadline.
-    }
-
-    fn deactivate(&self) {
-        self.enabled.store(false, Ordering::Relaxed);
-        if let Ok(mut q) = self.queue.lock() {
-            q.events.clear();
-            q.dropped_events = 0;
-            q.first_queued_at = None;
-        }
-    }
-}
-
-/// Env-var kill-switch predicate. Any one of the three disables telemetry
-/// unconditionally; checked before consent state in
-/// [`TelemetryClient::from_consent`]. Kept as a free function (not a method)
-/// so both the factory and the test module can call it without wiring.
 fn is_kill_switch_set() -> bool {
-    std::env::var("PANEFLOW_NO_TELEMETRY").is_ok()
-        || std::env::var("DO_NOT_TRACK").is_ok()
-        || std::env::var("NO_TELEMETRY").is_ok()
+    is_kill_switch_set_with(|key| std::env::var_os(key).is_some())
 }
 
-/// Trigger predicate. Split from `poll_flush` so the test module can
-/// drive it directly without touching network state.
-fn should_flush(q: &Queue) -> bool {
-    if q.events.len() >= BATCH_MAX {
-        return true;
-    }
-    match q.first_queued_at {
-        Some(t) => t.elapsed() >= BATCH_MAX_AGE,
-        None => false,
+fn anonymous_distinct_id(candidate: (String, bool)) -> (String, bool) {
+    let (candidate, is_first_run) = candidate;
+    match Uuid::parse_str(&candidate) {
+        Ok(id) if id.get_version_num() == 4 => (id.to_string(), is_first_run),
+        _ => {
+            log::debug!("telemetry: invalid distinct_id replaced with a session-scoped UUID v4");
+            (Uuid::new_v4().to_string(), false)
+        }
     }
 }
 
-/// Build the PostHog `/batch` body shape.
-///
-/// ```json
-/// {
-///   "api_key": "phc_...",
-///   "batch": [
-///     { "event": "...", "distinct_id": "...", "properties": {...} }
-///   ]
-/// }
-/// ```
-fn build_batch_body(api_key: &str, distinct_id: &str, batch: &[Event]) -> Value {
+fn is_kill_switch_set_with(mut is_present: impl FnMut(&str) -> bool) -> bool {
+    KILL_SWITCH_VARS.iter().copied().any(&mut is_present)
+}
+
+fn should_flush(queue: &Queue) -> bool {
+    queue.events.len() >= BATCH_MAX
+        || queue
+            .first_queued_at
+            .is_some_and(|queued_at| queued_at.elapsed() >= BATCH_MAX_AGE)
+}
+
+fn log_dropped_events(queue: &mut Queue) {
+    if queue.dropped_events == 0 {
+        return;
+    }
+    log::debug!(
+        "telemetry: dropped {} event(s) because the in-memory queue was full",
+        queue.dropped_events
+    );
+    queue.dropped_events = 0;
+}
+
+fn build_batch_body(endpoint: &Endpoint, batch: &[Event]) -> Value {
     let events: Vec<Value> = batch
         .iter()
-        .map(|e| {
-            let properties = posthog_anonymous_properties(&e.properties);
+        .map(|event| {
             json!({
-                "event": e.event,
-                "distinct_id": distinct_id,
-                "properties": properties,
+                "event": event.name,
+                "distinct_id": endpoint.distinct_id,
+                "properties": posthog_anonymous_properties(&event.properties),
             })
         })
         .collect();
     json!({
-        "api_key": api_key,
+        "api_key": endpoint.api_key,
         "batch": events,
     })
 }
 
-fn posthog_anonymous_properties(properties: &Value) -> Value {
-    match properties {
-        Value::Object(map) => {
-            let mut map = map.clone();
-            map.entry("$process_person_profile".to_string())
-                .or_insert_with(|| json!(false));
-            Value::Object(map)
-        }
-        other => json!({
-            "value": other,
-            "$process_person_profile": false,
-        }),
-    }
+fn posthog_anonymous_properties(properties: &Map<String, Value>) -> Value {
+    let mut properties = properties.clone();
+    properties.insert("$process_person_profile".to_string(), json!(false));
+    properties.insert("$geoip_disable".to_string(), json!(true));
+    Value::Object(properties)
 }
 
-/// POST the batch. Swallows every failure - transport errors and
-/// non-2xx statuses both log at DEBUG and drop the batch silently. The
-/// client must never surface errors to users or to the caller.
-fn post_batch(api_key: &str, host: &str, distinct_id: &str, batch: &[Event]) {
+fn post_batch(endpoint: &Endpoint, batch: &[Event], timeout: Duration) {
     if batch.is_empty() {
         return;
     }
-    let body = build_batch_body(api_key, distinct_id, batch);
-    let url = format!("{host}/batch");
-
+    let body = build_batch_body(endpoint, batch);
+    let url = format!("{}/batch", endpoint.host);
     let outcome = ureq::post(&url)
         .config()
-        .timeout_global(Some(HTTP_TIMEOUT))
+        .timeout_global(Some(timeout))
         .build()
         .header("Content-Type", "application/json")
         .send_json(&body);
@@ -410,9 +360,9 @@ fn post_batch(api_key: &str, host: &str, distinct_id: &str, batch: &[Event]) {
                 );
             }
         }
-        Err(e) => {
+        Err(error) => {
             log::debug!(
-                "telemetry: batch of {} event(s) failed to flush ({e}); dropped",
+                "telemetry: batch of {} event(s) failed to flush ({error}); dropped",
                 batch.len()
             );
         }
@@ -422,332 +372,327 @@ fn post_batch(api_key: &str, host: &str, distinct_id: &str, batch: &[Event]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex as StdMutex;
+    use crate::event::TelemetryVersion;
+    use std::cell::Cell;
+    use std::net::TcpListener;
+    use std::sync::{mpsc, Arc};
 
-    // Env vars are process-global. Any test that mutates the kill-switch
-    // vars must serialize on this lock - otherwise a parallel `Null`-factory
-    // test bleeds into the `Active`-factory test and the latter sees the
-    // kill switch. The guard snapshots all three kill-switch vars so any
-    // test that leaks one leaves no cross-test residue.
-    static ENV_LOCK: StdMutex<()> = StdMutex::new(());
-
-    const KILL_SWITCH_VARS: [&str; 3] = ["PANEFLOW_NO_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY"];
-
-    struct EnvGuard {
-        prior: [(&'static str, Option<String>); 3],
-        _lock: std::sync::MutexGuard<'static, ()>,
+    fn active_client() -> TelemetryClient {
+        active_client_at("http://127.0.0.1:1")
     }
 
-    impl EnvGuard {
-        fn take() -> Self {
-            let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-            let prior = KILL_SWITCH_VARS.map(|k| (k, std::env::var(k).ok()));
-            // Clear the snapshot so each test starts from a known state;
-            // Drop restores the original values.
-            for (k, _) in &prior {
-                // SAFETY: ENV_LOCK held via `lock`.
-                unsafe { std::env::remove_var(k) };
-            }
-            Self { prior, _lock: lock }
-        }
-
-        /// Sets `PANEFLOW_NO_TELEMETRY` specifically - preserved for the
-        /// pre-existing test that only exercises that variable.
-        fn set(&self, value: Option<&str>) {
-            self.set_var("PANEFLOW_NO_TELEMETRY", value);
-        }
-
-        fn set_var(&self, key: &str, value: Option<&str>) {
-            // SAFETY: serialized via ENV_LOCK held in `_lock` for the
-            // lifetime of the guard - no other test or production thread
-            // mutates this variable during the critical section.
-            unsafe {
-                match value {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
+    fn active_client_at(host: &str) -> TelemetryClient {
+        TelemetryClient::active("phc", host, Uuid::new_v4().to_string())
     }
 
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            // SAFETY: ENV_LOCK still held via `_lock`.
-            unsafe {
-                for (k, prior) in &self.prior {
-                    match prior {
-                        Some(v) => std::env::set_var(k, v),
-                        None => std::env::remove_var(k),
-                    }
-                }
-            }
-        }
+    fn queued(event: TelemetryEvent) -> Event {
+        assert!(event.encoded_len_if_safe().is_some());
+        let (name, properties) = event.into_parts();
+        Event { name, properties }
     }
 
-    fn consent(enabled: Option<bool>) -> TelemetryConsent {
-        TelemetryConsent::new(enabled)
-    }
-
-    fn active(c: &TelemetryClient) -> &ActiveClient {
-        match c {
-            TelemetryClient::Active(a) => a,
-            TelemetryClient::Null => panic!("expected Active variant"),
-        }
+    fn version(value: &str) -> TelemetryVersion {
+        TelemetryVersion::parse(value).unwrap()
     }
 
     #[test]
-    fn new_builds_active_variant() {
-        let c = TelemetryClient::new("phc_test", "http://localhost", "abc");
-        assert!(c.is_active());
-    }
-
-    #[test]
-    fn host_trailing_slash_is_trimmed() {
-        let c = TelemetryClient::new("phc_test", "http://localhost/", "abc");
-        assert_eq!(active(&c).host, "http://localhost");
-    }
-
-    #[test]
-    fn null_client_capture_and_flush_noop() {
-        let c = TelemetryClient::Null;
-        c.capture("anything", json!({"foo": "bar"}));
-        c.poll_flush();
-        c.flush_blocking(Duration::from_millis(100));
-        assert!(!c.is_active());
-    }
-
-    #[test]
-    fn from_consent_null_when_unanswered() {
-        let g = EnvGuard::take();
-        g.set(None);
-        let c = TelemetryClient::from_consent(consent(None), "phc", "http://h", "id");
-        assert!(!c.is_active());
-    }
-
-    #[test]
-    fn from_consent_null_when_opted_out() {
-        let g = EnvGuard::take();
-        g.set(None);
-        let c = TelemetryClient::from_consent(consent(Some(false)), "phc", "http://h", "id");
-        assert!(!c.is_active());
-    }
-
-    #[test]
-    fn from_consent_active_when_opted_in() {
-        let g = EnvGuard::take();
-        g.set(None);
-        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
-        assert!(c.is_active());
-    }
-
-    #[test]
-    fn from_consent_env_kill_switch_overrides_opt_in() {
-        let g = EnvGuard::take();
-        g.set(Some("1"));
-        // Even with explicit consent, the env var wins.
-        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
-        assert!(!c.is_active());
-    }
-
-    #[test]
-    fn from_consent_do_not_track_env_kills_opt_in() {
-        // De-facto cross-tool standard (.NET SDK, GitHub CLI, Homebrew).
-        let g = EnvGuard::take();
-        g.set_var("DO_NOT_TRACK", Some("1"));
-        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
-        assert!(!c.is_active());
-    }
-
-    #[test]
-    fn from_consent_no_telemetry_env_kills_opt_in() {
-        // De-facto universal opt-out standard (`no-telemetry` project).
-        let g = EnvGuard::take();
-        g.set_var("NO_TELEMETRY", Some("1"));
-        let c = TelemetryClient::from_consent(consent(Some(true)), "phc", "http://h", "id");
-        assert!(!c.is_active());
-    }
-
-    #[test]
-    fn is_kill_switch_set_picks_up_any_of_three_vars() {
-        let g = EnvGuard::take();
-        assert!(
-            !is_kill_switch_set(),
-            "clean env must not report kill switch"
+    fn consent_config_maps_to_explicit_states() {
+        assert_eq!(
+            TelemetryConsent::from_config(None),
+            TelemetryConsent::Unknown
         );
-        for var in KILL_SWITCH_VARS {
-            g.set_var(var, Some("1"));
-            assert!(is_kill_switch_set(), "{var} should trigger kill switch");
-            g.set_var(var, None);
-            assert!(
-                !is_kill_switch_set(),
-                "clearing {var} must lift the kill switch"
+        assert_eq!(
+            TelemetryConsent::from_config(Some(false)),
+            TelemetryConsent::Declined
+        );
+        assert_eq!(
+            TelemetryConsent::from_config(Some(true)),
+            TelemetryConsent::Granted
+        );
+    }
+
+    #[test]
+    fn disabled_consent_never_resolves_identifier() {
+        for consent in [TelemetryConsent::Unknown, TelemetryConsent::Declined] {
+            let called = Cell::new(false);
+            let (client, first_run) = TelemetryClient::from_consent_with_kill_switch(
+                consent,
+                "phc",
+                "http://h",
+                || {
+                    called.set(true);
+                    ("id".to_string(), true)
+                },
+                false,
             );
+            assert!(!client.is_active());
+            assert!(!first_run);
+            assert!(!called.get());
         }
     }
 
     #[test]
-    fn capture_enqueues_event() {
-        let c = TelemetryClient::new("phc", "http://h", "id");
-        c.capture("hello", json!({"x": 1}));
-        c.capture("world", json!({"x": 2}));
-        let a = active(&c);
-        let q = a.queue.lock().unwrap();
-        assert_eq!(q.events.len(), 2);
-        assert_eq!(q.events[0].event, "hello");
-        assert_eq!(q.dropped_events, 0);
-        assert!(q.first_queued_at.is_some());
+    fn kill_switch_never_resolves_identifier() {
+        let called = Cell::new(false);
+        let (client, first_run) = TelemetryClient::from_consent_with_kill_switch(
+            TelemetryConsent::Granted,
+            "phc",
+            "http://h",
+            || {
+                called.set(true);
+                (Uuid::new_v4().to_string(), true)
+            },
+            true,
+        );
+        assert!(!client.is_active());
+        assert!(!first_run);
+        assert!(!called.get());
     }
 
     #[test]
-    fn capture_drops_new_events_when_queue_is_full() {
-        let c = TelemetryClient::new("phc", "http://h", "id");
-        for i in 0..QUEUE_MAX + 3 {
-            c.capture("hello", json!({"i": i}));
+    fn granted_consent_builds_active_client_once() {
+        let calls = Cell::new(0);
+        let (client, first_run) = TelemetryClient::from_consent_with_kill_switch(
+            TelemetryConsent::Granted,
+            "phc",
+            "http://h/",
+            || {
+                calls.set(calls.get() + 1);
+                (Uuid::new_v4().to_string(), true)
+            },
+            false,
+        );
+        assert!(client.is_active());
+        assert!(first_run);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(client.endpoint.as_ref().unwrap().host, "http://h");
+        assert!(
+            Uuid::parse_str(&client.endpoint.as_ref().unwrap().distinct_id)
+                .is_ok_and(|id| id.get_version_num() == 4)
+        );
+    }
+
+    #[test]
+    fn non_anonymous_identifier_is_replaced_and_not_first_run() {
+        let (client, first_run) = TelemetryClient::from_consent_with_kill_switch(
+            TelemetryConsent::Granted,
+            "phc",
+            "http://h",
+            || ("arthur@example.com".to_string(), true),
+            false,
+        );
+        let distinct_id = &client.endpoint.as_ref().unwrap().distinct_id;
+        assert_ne!(distinct_id, "arthur@example.com");
+        assert!(Uuid::parse_str(distinct_id).is_ok_and(|id| id.get_version_num() == 4));
+        assert!(!first_run);
+    }
+
+    #[test]
+    fn kill_switch_predicate_accepts_any_present_variable() {
+        for expected in KILL_SWITCH_VARS {
+            assert!(is_kill_switch_set_with(|key| key == expected));
         }
-        let a = active(&c);
-        let q = a.queue.lock().unwrap();
-        assert_eq!(q.events.len(), QUEUE_MAX);
-        assert_eq!(q.dropped_events, 3);
+        assert!(!is_kill_switch_set_with(|_| false));
+    }
+
+    #[test]
+    fn disabled_client_is_a_noop() {
+        let client = TelemetryClient::disabled();
+        client.capture(TelemetryEvent::telemetry_reenabled());
+        client.poll_flush();
+        client.flush_blocking(Duration::from_millis(1));
+        assert!(!client.is_active());
+    }
+
+    #[test]
+    fn capture_enqueues_event_and_tracks_bytes() {
+        let client = active_client();
+        client.capture(TelemetryEvent::update_available(
+            version("0.8.1"),
+            version("0.8.2"),
+            crate::event::UpdateAssetFormat::Deb,
+        ));
+        let state = client.lock_state();
+        let RuntimeState::Active(queue) = &*state else {
+            panic!("expected active queue");
+        };
+        assert_eq!(queue.events.len(), 1);
+        assert!(queue.queued_bytes > 0);
+        assert_eq!(queue.events[0].name, "update_available");
+    }
+
+    #[test]
+    fn capture_drops_new_events_when_count_bound_is_full() {
+        let client = active_client();
+        for _ in 0..QUEUE_MAX + 3 {
+            client.capture(TelemetryEvent::telemetry_reenabled());
+        }
+        let state = client.lock_state();
+        let RuntimeState::Active(queue) = &*state else {
+            panic!("expected active queue");
+        };
+        assert_eq!(queue.events.len(), QUEUE_MAX);
+        assert_eq!(queue.dropped_events, 3);
+        assert!(queue.queued_bytes <= QUEUE_MAX_BYTES);
     }
 
     #[test]
     fn deactivate_clears_queue_and_ignores_future_capture() {
-        let c = TelemetryClient::new("phc", "http://h", "id");
-        c.capture("hello", json!({"x": 1}));
-        c.deactivate();
-        assert!(!c.is_active());
-        c.capture("world", json!({"x": 2}));
-        let a = active(&c);
-        let q = a.queue.lock().unwrap();
-        assert!(q.events.is_empty());
-        assert_eq!(q.dropped_events, 0);
+        let client = active_client();
+        client.capture(TelemetryEvent::telemetry_reenabled());
+        client.deactivate();
+        client.capture(TelemetryEvent::telemetry_reenabled());
+        assert!(!client.is_active());
+        assert!(matches!(*client.lock_state(), RuntimeState::Disabled));
     }
 
     #[test]
-    fn should_flush_false_for_empty_queue() {
-        let q = Queue {
-            events: Vec::new(),
-            dropped_events: 0,
-            first_queued_at: None,
+    fn should_flush_uses_size_or_age_threshold() {
+        let mut queue = Queue::new();
+        assert!(!should_flush(&queue));
+        queue
+            .events
+            .push_back(queued(TelemetryEvent::telemetry_reenabled()));
+        queue.first_queued_at = Some(Instant::now() - BATCH_MAX_AGE);
+        assert!(should_flush(&queue));
+
+        let mut queue = Queue::new();
+        for _ in 0..BATCH_MAX {
+            queue
+                .events
+                .push_back(queued(TelemetryEvent::telemetry_reenabled()));
+        }
+        assert!(should_flush(&queue));
+    }
+
+    #[test]
+    fn batch_body_forces_anonymous_processing_controls() {
+        let endpoint = Endpoint {
+            api_key: "phc_test".to_string(),
+            host: "http://h".to_string(),
+            distinct_id: "00000000-0000-4000-8000-000000000000".to_string(),
         };
-        assert!(!should_flush(&q));
-    }
-
-    #[test]
-    fn should_flush_false_for_small_recent_batch() {
-        let q = Queue {
-            events: vec![Event {
-                event: "e".into(),
-                properties: json!({}),
-            }],
-            dropped_events: 0,
-            first_queued_at: Some(Instant::now()),
-        };
-        assert!(!should_flush(&q));
-    }
-
-    #[test]
-    fn should_flush_true_on_size_threshold() {
-        let events: Vec<Event> = (0..BATCH_MAX)
-            .map(|i| Event {
-                event: format!("e{i}"),
-                properties: json!({}),
-            })
-            .collect();
-        let q = Queue {
-            events,
-            dropped_events: 0,
-            first_queued_at: Some(Instant::now()),
-        };
-        assert!(should_flush(&q));
-    }
-
-    #[test]
-    fn should_flush_true_on_age_threshold() {
-        let q = Queue {
-            events: vec![Event {
-                event: "e".into(),
-                properties: json!({}),
-            }],
-            dropped_events: 0,
-            first_queued_at: Some(Instant::now() - BATCH_MAX_AGE - Duration::from_millis(1)),
-        };
-        assert!(should_flush(&q));
-    }
-
-    #[test]
-    fn batch_body_shape_matches_posthog_contract() {
-        let events = vec![
-            Event {
-                event: "app_started".into(),
-                properties: json!({"os": "linux"}),
-            },
-            Event {
-                event: "app_exited".into(),
-                properties: json!({"session_duration_seconds": 42}),
-            },
-        ];
-        let body = build_batch_body("phc_test", "dist-123", &events);
+        let body = build_batch_body(
+            &endpoint,
+            &[queued(TelemetryEvent::app_started(
+                crate::event::OperatingSystem::Linux,
+                crate::event::Architecture::X86_64,
+                version("0.8.2"),
+                crate::event::InstallMethod::Deb,
+                true,
+            ))],
+        );
         assert_eq!(body["api_key"], "phc_test");
-        let batch = body["batch"].as_array().unwrap();
-        assert_eq!(batch.len(), 2);
-        assert_eq!(batch[0]["event"], "app_started");
-        assert_eq!(batch[0]["distinct_id"], "dist-123");
-        assert_eq!(batch[0]["properties"]["os"], "linux");
-        assert_eq!(batch[0]["properties"]["$process_person_profile"], false);
-        // No client-side timestamp - server stamps on receipt.
-        assert!(batch[0].get("timestamp").is_none());
-    }
-
-    #[test]
-    fn non_object_properties_are_wrapped_before_posthog_batching() {
-        let events = vec![Event {
-            event: "odd".into(),
-            properties: json!("raw"),
-        }];
-        let body = build_batch_body("phc_test", "dist-123", &events);
-        assert_eq!(body["batch"][0]["properties"]["value"], "raw");
+        assert_eq!(body["batch"][0]["event"], "app_started");
+        assert_eq!(
+            body["batch"][0]["distinct_id"],
+            "00000000-0000-4000-8000-000000000000"
+        );
         assert_eq!(
             body["batch"][0]["properties"]["$process_person_profile"],
             false
         );
+        assert_eq!(body["batch"][0]["properties"]["$geoip_disable"], true);
     }
 
-    // An unroutable endpoint (port 1, reserved) forces `ureq` into its
-    // connection-refused / timeout path without relying on external
-    // network state. The test proves two contracts simultaneously:
-    // 1. `poll_flush` returns without panicking on transport failure.
-    // 2. The queue is drained regardless - v1 drops, does not retry.
+    #[test]
+    fn processing_controls_override_caller_values() {
+        let mut properties = Map::new();
+        properties.insert("$process_person_profile".to_string(), json!(true));
+        properties.insert("$geoip_disable".to_string(), json!(false));
+        let properties = posthog_anonymous_properties(&properties);
+        assert_eq!(properties["$process_person_profile"], false);
+        assert_eq!(properties["$geoip_disable"], true);
+    }
+
     #[test]
     fn poll_flush_drops_batch_on_unroutable_host() {
-        let c = TelemetryClient::new("phc", "http://127.0.0.1:1", "id");
-        for i in 0..BATCH_MAX {
-            c.capture("e", json!({"i": i}));
+        let client = active_client();
+        for _ in 0..BATCH_MAX {
+            client.capture(TelemetryEvent::telemetry_reenabled());
         }
-        // Size threshold reached → poll_flush drains + posts + fails silently.
-        c.poll_flush();
-        let a = active(&c);
-        let q = a.queue.lock().unwrap();
-        assert!(
-            q.events.is_empty(),
-            "queue must be cleared even on failed post"
-        );
-        assert!(q.first_queued_at.is_none());
+        client.poll_flush();
+        let state = client.lock_state();
+        let RuntimeState::Active(queue) = &*state else {
+            panic!("expected active queue");
+        };
+        assert!(queue.events.is_empty());
+        assert_eq!(queue.queued_bytes, 0);
     }
 
     #[test]
-    fn flush_blocking_respects_timeout_on_unroutable_host() {
-        let c = TelemetryClient::new("phc", "http://127.0.0.1:1", "id");
-        c.capture("e", json!({}));
+    fn zero_timeout_drops_without_starting_request() {
+        let client = active_client();
+        client.capture(TelemetryEvent::telemetry_reenabled());
+        client.flush_blocking(Duration::ZERO);
+        let state = client.lock_state();
+        let RuntimeState::Active(queue) = &*state else {
+            panic!("expected active queue");
+        };
+        assert!(queue.events.is_empty());
+    }
+
+    #[test]
+    fn flush_blocking_respects_transport_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            accepted_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+
+        let client = active_client_at(&host);
+        client.capture(TelemetryEvent::telemetry_reenabled());
         let start = Instant::now();
-        // Very short timeout - ensures we're testing the deadline path,
-        // not waiting for ureq's HTTP_TIMEOUT (5s).
-        c.flush_blocking(Duration::from_millis(100));
+        client.flush_blocking(Duration::from_millis(100));
         let elapsed = start.elapsed();
-        // Allow some jitter; the point is we're not waiting seconds.
-        assert!(
-            elapsed < Duration::from_millis(500),
-            "flush_blocking should honor timeout, elapsed={elapsed:?}"
-        );
+
+        accepted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(elapsed >= Duration::from_millis(75), "elapsed={elapsed:?}");
+        assert!(elapsed < Duration::from_secs(1), "elapsed={elapsed:?}");
+        release_tx.send(()).unwrap();
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn deactivate_waits_for_an_in_flight_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let (accepted_tx, accepted_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            accepted_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+        });
+
+        let client = Arc::new(active_client_at(&host));
+        client.capture(TelemetryEvent::telemetry_reenabled());
+        let flushing = Arc::clone(&client);
+        let flush = std::thread::spawn(move || {
+            flushing.flush_blocking(Duration::from_secs(2));
+        });
+        accepted_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+
+        client.disable();
+        let deactivating = Arc::clone(&client);
+        let (deactivated_tx, deactivated_rx) = mpsc::channel();
+        let deactivate = std::thread::spawn(move || {
+            deactivating.deactivate();
+            deactivated_tx.send(()).unwrap();
+        });
+        assert!(deactivated_rx
+            .recv_timeout(Duration::from_millis(50))
+            .is_err());
+        assert!(!client.is_active());
+
+        release_tx.send(()).unwrap();
+        deactivated_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        flush.join().unwrap();
+        deactivate.join().unwrap();
+        server.join().unwrap();
     }
 }

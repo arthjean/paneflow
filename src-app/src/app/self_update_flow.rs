@@ -7,7 +7,6 @@
 
 use gpui::{ClipboardItem, Context, Window};
 
-use crate::app::telemetry_events::UpdateDismissReason;
 use crate::{
     DismissUpdate, PaneFlowApp, StartSelfUpdate, TOAST_HOLD_MS, ToastAction,
     system_package_update_command, update,
@@ -177,7 +176,7 @@ impl PaneFlowApp {
     ) {
         // Capture the to_version BEFORE we drop update_status so the
         // emit helper can reference it.
-        self.emit_update_dismissed(UpdateDismissReason::UserDismissed);
+        self.emit_update_dismissed();
         self.self_update.update_status = None;
         cx.notify();
     }

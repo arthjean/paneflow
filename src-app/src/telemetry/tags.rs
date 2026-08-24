@@ -4,46 +4,33 @@
 //! `UpdateError` (`src-app/src/update/error.rs`) exist to drive the
 //! in-app updater UX - their variant names are tuned for the renderer,
 //! not for analytics. This module is the one place the internal variants
-//! flatten into the canonical values documented in
-//! `tasks/compliance-analytics.md §5`.
-//!
-//! US-003: the format-invariant helper
-//! [`paneflow_telemetry::tags::is_canonical_tag_format`] lives in the
-//! workspace crate so any future emitter (trust, …) can reuse the
-//! same lowercase-ASCII-only contract. The domain mapping
-//! stays here because it depends on `crate::update::*` types.
-//!
-//! Every mapping target is a `&'static str` - telemetry properties are
-//! low-cardinality labels, not messages. Keep the mapping total: any new
-//! variant added to `InstallMethod` or `UpdateError` MUST be reflected
-//! here in the same commit, or the compiler warns via the exhaustive
-//! match.
+//! flatten into closed telemetry enums. The domain mapping stays here because
+//! it depends on `crate::update::*` types. Exhaustive matches force every new
+//! updater variant to choose an explicit analytics value.
 
 use crate::update::error::UpdateError;
 use crate::update::install_method::{InstallMethod, PackageManager};
+use paneflow_telemetry::event::{InstallMethod as TelemetryInstallMethod, UpdateErrorCategory};
 
-/// Canonical install-method tag for the `install_method` property on
-/// `app_started` and `update_installed` events. Stable across releases.
-///
-/// See `tasks/compliance-analytics.md §5` for the committed vocabulary.
-pub fn install_method_tag(method: &InstallMethod) -> &'static str {
+/// Closed install-method value for desktop telemetry events.
+pub fn install_method_value(method: &InstallMethod) -> TelemetryInstallMethod {
     match method {
         InstallMethod::SystemPackage { manager } => match manager {
-            PackageManager::Apt => "deb",
-            PackageManager::Dnf | PackageManager::Zypper => "rpm",
-            PackageManager::RpmOstree => "rpm-ostree",
-            PackageManager::Other => "other",
+            PackageManager::Apt => TelemetryInstallMethod::Deb,
+            PackageManager::Dnf | PackageManager::Zypper => TelemetryInstallMethod::Rpm,
+            PackageManager::RpmOstree => TelemetryInstallMethod::RpmOstree,
+            PackageManager::Other => TelemetryInstallMethod::Other,
         },
-        InstallMethod::AppImage { .. } => "appimage",
-        InstallMethod::TarGz { .. } => "tar.gz",
-        InstallMethod::AppBundle { .. } => "dmg",
-        InstallMethod::WindowsMsi { .. } => "msi",
+        InstallMethod::AppImage { .. } => TelemetryInstallMethod::AppImage,
+        InstallMethod::TarGz { .. } => TelemetryInstallMethod::TarGz,
+        InstallMethod::AppBundle { .. } => TelemetryInstallMethod::Dmg,
+        InstallMethod::WindowsMsi { .. } => TelemetryInstallMethod::Msi,
         // Sandboxed runtimes (Flatpak / Snap) and packager-baked
         // `PANEFLOW_UPDATE_EXPLANATION` builds report a coarse tag
         // - the in-app updater is disabled for these so finer-grained
         // attribution would only confuse downstream dashboards.
-        InstallMethod::ExternallyManaged { .. } => "externally-managed",
-        InstallMethod::Unknown => "unknown",
+        InstallMethod::ExternallyManaged { .. } => TelemetryInstallMethod::ExternallyManaged,
+        InstallMethod::Unknown => TelemetryInstallMethod::Unknown,
     }
 }
 
@@ -52,172 +39,153 @@ pub fn install_method_tag(method: &InstallMethod) -> &'static str {
 /// internal failure variant into one of the four documented labels; any
 /// variant that doesn't fit cleanly lands in `"unknown"` - a deliberate
 /// coarse default so the PRD's four-bucket contract stays honest.
-pub fn error_category_tag(err: &UpdateError) -> &'static str {
+pub fn update_error_category(err: &UpdateError) -> UpdateErrorCategory {
     match err {
-        UpdateError::Network(_) => "network",
-        UpdateError::ReleaseAssetMissing { .. } => "network",
+        UpdateError::Network(_) => UpdateErrorCategory::Network,
+        UpdateError::ReleaseAssetMissing { .. } => UpdateErrorCategory::Network,
         // A stalled download/install buckets with network: the dominant cause
         // is a half-open TCP or a mirror that accepts then stalls (U-002).
-        UpdateError::Timeout => "network",
-        UpdateError::IntegrityMismatch { .. } => "signature",
-        UpdateError::DiskFull { .. } => "disk",
+        UpdateError::Timeout => UpdateErrorCategory::Network,
+        UpdateError::IntegrityMismatch { .. } => UpdateErrorCategory::Signature,
+        UpdateError::DiskFull { .. } => UpdateErrorCategory::Disk,
         UpdateError::Fuse2Missing
         | UpdateError::InstallDeclined { .. }
         | UpdateError::InstallFailed { .. }
         | UpdateError::EnvironmentBroken { .. }
-        | UpdateError::Other(_) => "unknown",
+        | UpdateError::Other(_) => UpdateErrorCategory::Unknown,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use paneflow_telemetry::tags::is_canonical_tag_format;
     use std::path::PathBuf;
 
     #[test]
-    fn install_method_tag_covers_every_variant() {
-        let cases: &[(&str, InstallMethod)] = &[
+    fn install_method_mapping_covers_every_variant() {
+        let cases: &[(TelemetryInstallMethod, InstallMethod)] = &[
             (
-                "deb",
+                TelemetryInstallMethod::Deb,
                 InstallMethod::SystemPackage {
                     manager: PackageManager::Apt,
                 },
             ),
             (
-                "rpm",
+                TelemetryInstallMethod::Rpm,
                 InstallMethod::SystemPackage {
                     manager: PackageManager::Dnf,
                 },
             ),
             (
-                "rpm",
+                TelemetryInstallMethod::Rpm,
                 InstallMethod::SystemPackage {
                     manager: PackageManager::Zypper,
                 },
             ),
             (
-                "rpm-ostree",
+                TelemetryInstallMethod::RpmOstree,
                 InstallMethod::SystemPackage {
                     manager: PackageManager::RpmOstree,
                 },
             ),
             (
-                "other",
+                TelemetryInstallMethod::Other,
                 InstallMethod::SystemPackage {
                     manager: PackageManager::Other,
                 },
             ),
             (
-                "appimage",
+                TelemetryInstallMethod::AppImage,
                 InstallMethod::AppImage {
                     mount_point: PathBuf::new(),
                     source_path: PathBuf::new(),
                 },
             ),
             (
-                "tar.gz",
+                TelemetryInstallMethod::TarGz,
                 InstallMethod::TarGz {
                     app_dir: PathBuf::new(),
                 },
             ),
             (
-                "dmg",
+                TelemetryInstallMethod::Dmg,
                 InstallMethod::AppBundle {
                     bundle_path: PathBuf::new(),
                 },
             ),
             (
-                "msi",
+                TelemetryInstallMethod::Msi,
                 InstallMethod::WindowsMsi {
                     install_path: PathBuf::new(),
                 },
             ),
-            ("unknown", InstallMethod::Unknown),
+            (
+                TelemetryInstallMethod::ExternallyManaged,
+                InstallMethod::ExternallyManaged {
+                    explanation: "managed".to_string(),
+                },
+            ),
+            (TelemetryInstallMethod::Unknown, InstallMethod::Unknown),
         ];
         for (expected, method) in cases {
             assert_eq!(
-                install_method_tag(method),
+                install_method_value(method),
                 *expected,
-                "{method:?} should map to {expected}"
+                "{method:?} should map to {expected:?}"
             );
         }
     }
 
     #[test]
-    fn error_category_tag_buckets_into_four_canonical_labels() {
+    fn update_error_category_buckets_into_four_values() {
         assert_eq!(
-            error_category_tag(&UpdateError::Network("dns".into())),
-            "network"
+            update_error_category(&UpdateError::Network("dns".into())),
+            UpdateErrorCategory::Network
         );
         assert_eq!(
-            error_category_tag(&UpdateError::ReleaseAssetMissing {
+            update_error_category(&UpdateError::ReleaseAssetMissing {
                 url: "https://example".into()
             }),
-            "network"
+            UpdateErrorCategory::Network
         );
         assert_eq!(
-            error_category_tag(&UpdateError::IntegrityMismatch {
+            update_error_category(&UpdateError::IntegrityMismatch {
                 expected: "a".into(),
                 got: "b".into()
             }),
-            "signature"
+            UpdateErrorCategory::Signature
         );
         assert_eq!(
-            error_category_tag(&UpdateError::DiskFull {
+            update_error_category(&UpdateError::DiskFull {
                 path: PathBuf::new()
             }),
-            "disk"
-        );
-        assert_eq!(error_category_tag(&UpdateError::Fuse2Missing), "unknown");
-        assert_eq!(
-            error_category_tag(&UpdateError::InstallDeclined { message: "".into() }),
-            "unknown"
+            UpdateErrorCategory::Disk
         );
         assert_eq!(
-            error_category_tag(&UpdateError::InstallFailed {
+            update_error_category(&UpdateError::Fuse2Missing),
+            UpdateErrorCategory::Unknown
+        );
+        assert_eq!(
+            update_error_category(&UpdateError::InstallDeclined { message: "".into() }),
+            UpdateErrorCategory::Unknown
+        );
+        assert_eq!(
+            update_error_category(&UpdateError::InstallFailed {
                 log_path: PathBuf::new()
             }),
-            "unknown"
+            UpdateErrorCategory::Unknown
         );
         assert_eq!(
-            error_category_tag(&UpdateError::EnvironmentBroken { message: "".into() }),
-            "unknown"
+            update_error_category(&UpdateError::EnvironmentBroken { message: "".into() }),
+            UpdateErrorCategory::Unknown
         );
         assert_eq!(
-            error_category_tag(&UpdateError::Other("x".into())),
-            "unknown"
+            update_error_category(&UpdateError::Other("x".into())),
+            UpdateErrorCategory::Unknown
         );
-        assert_eq!(error_category_tag(&UpdateError::Timeout), "network");
-    }
-
-    #[test]
-    fn every_published_tag_satisfies_the_canonical_format_contract() {
-        // Single source of truth for the format invariant: delegate to
-        // `paneflow_telemetry::tags::is_canonical_tag_format`. Breaking
-        // the lowercase-ASCII rule on any of these would invalidate any
-        // PostHog breakdown filter Arthur has already configured on
-        // `install_method` or `error_category`.
-        let all = [
-            "deb",
-            "rpm",
-            "rpm-ostree",
-            "other",
-            "appimage",
-            "tar.gz",
-            "dmg",
-            "msi",
-            "externally-managed",
-            "unknown",
-            "network",
-            "signature",
-            "disk",
-        ];
-        for tag in all {
-            assert!(
-                is_canonical_tag_format(tag),
-                "tag {tag:?} violates the canonical format contract - telemetry labels must be lowercase ascii letters/digits/[-.]"
-            );
-        }
+        assert_eq!(
+            update_error_category(&UpdateError::Timeout),
+            UpdateErrorCategory::Network
+        );
     }
 }

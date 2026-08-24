@@ -99,23 +99,25 @@ impl PaneFlowApp {
 
         // ConfigWatcher: background thread detects file changes (300ms debounce),
         // stores parsed config in a shared slot for the 50ms poll loop to pick up.
-        // Note: `start()` moves the OS watcher into a background thread, so the
-        // `ConfigWatcher` struct itself can be safely dropped after starting.
+        // Its running handle is owned by that app-lifetime poll task below.
         let pending_config = std::sync::Arc::new(std::sync::Mutex::new(
             None::<paneflow_config::schema::PaneFlowConfig>,
         ));
         let pending_config_writer = std::sync::Arc::clone(&pending_config);
-        if let Some(Err(e)) = paneflow_config::watcher::ConfigWatcher::new(std::sync::Arc::new(
-            move |cfg: paneflow_config::schema::PaneFlowConfig| {
+        let running_config_watcher = paneflow_config::watcher::ConfigWatcher::new(
+            std::sync::Arc::new(move |cfg: paneflow_config::schema::PaneFlowConfig| {
                 *pending_config_writer
                     .lock()
                     .unwrap_or_else(|e| e.into_inner()) = Some(cfg);
-            },
-        ))
-        .map(|config_watcher| config_watcher.start())
-        {
-            log::warn!("config watcher failed to start: {e}; config hot-reload disabled");
-        }
+            }),
+        )
+        .and_then(|config_watcher| match config_watcher.start() {
+            Ok(running) => Some(running),
+            Err(error) => {
+                log::warn!("config watcher failed to start: {error}; config hot-reload disabled");
+                None
+            }
+        });
 
         // US-006: dedicated theme watcher. Mirrors `ConfigWatcher` shape but
         // signals via an `Arc<AtomicBool>` rather than carrying a payload -
@@ -532,7 +534,9 @@ impl PaneFlowApp {
 
         // Poll automation channels every 50 ms.
         cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                // Keep the OS watcher alive exactly as long as this app task.
+                let _config_watcher = running_config_watcher;
                 loop {
                     smol::Timer::after(std::time::Duration::from_millis(50)).await;
                     let result = cx.update(|cx| {
@@ -691,29 +695,30 @@ impl PaneFlowApp {
             .telemetry
             .as_ref()
             .and_then(|t| t.enabled);
-        let telemetry_consent = telemetry::client::TelemetryConsent::new(telemetry_enabled_last);
-        // US-010/US-012 - resolve the anonymous telemetry_id only after the
-        // consent and kill-switch gates pass. Opt-out, unanswered consent, and
-        // env kill-switches must not create persistent telemetry state.
-        let (telemetry_distinct_id, is_first_run_for_telemetry) =
-            if telemetry::client::TelemetryClient::consent_allows_capture(telemetry_consent) {
-                telemetry::id::telemetry_id_with_first_run()
-            } else {
-                (String::new(), false)
-            };
-        let telemetry = std::sync::Arc::new(telemetry::client::TelemetryClient::from_consent(
-            telemetry_consent,
-            posthog_api_key,
-            posthog_host,
-            &telemetry_distinct_id,
-        ));
-        // EP-003 US-008 (agent-control-plane): one-shot boot warn when AI
-        // free-access mode is enabled, mirroring the PANEFLOW_IPC_SCRIPTING
-        // boot warn in `ipc::start_server()`. Reuses the snapshot already
-        // loaded for telemetry so the file is not re-read. The fence is
-        // independent and defaults ON, so it does not warn.
+        let telemetry_consent =
+            telemetry::client::TelemetryConsent::from_config(telemetry_enabled_last);
+        // Consent and kill switches are resolved once inside the factory. The
+        // identifier callback is lazy, so disabled states create no telemetry
+        // file and cannot accidentally bypass the same decision.
+        let (telemetry_client, is_first_run_for_telemetry) =
+            telemetry::client::TelemetryClient::from_consent(
+                telemetry_consent,
+                posthog_api_key,
+                posthog_host,
+                telemetry::id::telemetry_id_with_first_run,
+            );
+        let telemetry = std::sync::Arc::new(telemetry_client);
+        // EP-003 US-008 (agent-control-plane): boot trace when AI free-access
+        // mode is enabled. Demoted from `warn!` to `debug!` - the state is
+        // owned and surfaced by Settings -> AI Agent, so a permanent boot
+        // warning is noise for operators who enabled it deliberately. The
+        // per-call gate in `ipc_handler::send_text_gate_open` stays the
+        // enforcement boundary, and `ipc::start_server()` still warns for the
+        // env-var path (`PANEFLOW_IPC_SCRIPTING`), which can be inherited
+        // without the operator realising. Reuses the snapshot already loaded
+        // for telemetry so the file is not re-read.
         if telemetry_config_snapshot.ai_unrestricted_enabled() {
-            tracing::warn!(
+            tracing::debug!(
                 "ai.unrestricted is ON; same-UID callers may auto-submit prompts to agent panes without PANEFLOW_IPC_SCRIPTING (toggle in Settings -> AI Agent)"
             );
         }
@@ -721,10 +726,7 @@ impl PaneFlowApp {
         // background update check. The detached worker emits
         // `update_check_started` immediately and `update_available`
         // only when both the version is greater AND an asset matched.
-        let pending_update = update::checker::spawn_check(
-            std::sync::Arc::clone(&telemetry),
-            update::checker::UpdateCheckTrigger::Auto,
-        );
+        let pending_update = update::checker::spawn_check(std::sync::Arc::clone(&telemetry));
         // Background flusher: every 5 s the client inspects its queue and
         // posts when the size or age threshold is met. Re-spawned when the
         // telemetry client is swapped by config reconciliation.
@@ -1104,14 +1106,14 @@ impl PaneFlowApp {
             }
         }
 
-        // US-013 AC #1 - fire `app_started` once per launch. `Null` clients
+        // US-013 AC #1 - fire `app_started` once per launch. Disabled clients
         // (opt-out / unanswered consent / env kill-switch) no-op; only a
         // consenting user produces an HTTP call, batched on the flusher
         // above. Must happen after the struct literal so `self.telemetry`
         // and `self.self_update.install_method` are both populated.
         app.emit_app_started(is_first_run_for_telemetry);
         // US-006: emit the corruption event after the client is up.
-        // `Null` clients (consent off / kill-switch active) make this
+        // Disabled clients (consent off / kill-switch active) make this
         // a no-op without a network call.
         if let Some(info) = session_corruption {
             app.emit_session_corrupted(&info);
