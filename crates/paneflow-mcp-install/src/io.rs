@@ -11,65 +11,17 @@
 //!   and `rename`d into place, mirroring `session.rs`'s tmp+rename pattern.
 //!   A crash mid-write leaves the temp file, never a half-written config.
 
-use std::fs::{File, OpenOptions};
-use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-
-const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
-const LOCK_RETRY: Duration = Duration::from_millis(50);
-
-/// Best-effort inter-process lock for one config file. Paneflow writers honor
-/// it before any read-modify-write pass, so two Paneflow invocations cannot
-/// race each other and lose an edit between read and atomic persist.
-pub struct ConfigLock {
-    path: PathBuf,
-    _file: File,
-}
-
-impl Drop for ConfigLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
-fn lock_path(path: &Path) -> PathBuf {
-    let mut lock = path.as_os_str().to_owned();
-    lock.push(".lock");
-    PathBuf::from(lock)
-}
+pub use paneflow_agent_config::ConfigLock;
 
 /// Acquire the Paneflow lock for `path`, retrying briefly if another
-/// Paneflow process is already editing the same config.
+/// Paneflow process is already editing the same config. Abandoned leases are
+/// recovered by the shared dependency-light config layer.
 pub fn lock_config(path: &Path) -> Result<ConfigLock> {
-    let parent = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-    std::fs::create_dir_all(&parent)
-        .with_context(|| format!("create parent dir {} failed", parent.display()))?;
-
-    let lock = lock_path(path);
-    let deadline = Instant::now() + LOCK_TIMEOUT;
-    loop {
-        match OpenOptions::new().write(true).create_new(true).open(&lock) {
-            Ok(file) => {
-                return Ok(ConfigLock {
-                    path: lock,
-                    _file: file,
-                })
-            }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists && Instant::now() < deadline => {
-                std::thread::sleep(LOCK_RETRY);
-            }
-            Err(e) if e.kind() == ErrorKind::AlreadyExists => {
-                anyhow::bail!("timed out waiting for config lock {}", lock.display());
-            }
-            Err(e) => return Err(e).with_context(|| format!("lock {} failed", lock.display())),
-        }
-    }
+    paneflow_agent_config::lock_config(path)
+        .with_context(|| format!("lock {} failed", path.display()))
 }
 
 /// Run a closure while holding the Paneflow config lock for `path`.

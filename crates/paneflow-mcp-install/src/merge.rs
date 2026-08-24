@@ -1,10 +1,10 @@
 //! No-clobber config-merge primitives (EP-002 US-006).
 //!
 //! Two formats, two rules:
-//! - **JSON** (Claude Code, Gemini, opencode) is merged via
-//!   `serde_json::Value` - never a typed-struct round-trip - so unknown
-//!   keys and sibling MCP servers are preserved byte-for-meaning. Only the
-//!   `paneflow` entry under the agent's container key is inserted/updated.
+//! - **JSON** (Claude Code, Gemini) is merged via `serde_json::Value`, so
+//!   unknown keys and sibling MCP servers are preserved semantically.
+//! - **JSONC** (opencode) is parsed here and surgically edited through
+//!   `paneflow-agent-config`, preserving comments and surrounding formatting.
 //! - **TOML** (Codex) is edited via `toml_edit::DocumentMut`, which
 //!   preserves comments and key order. Only `[<table>.paneflow]` is
 //!   upserted.
@@ -17,6 +17,7 @@
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use paneflow_agent_config::jsonc;
 
 // ---------------------------------------------------------------------------
 // JSON
@@ -44,8 +45,7 @@ fn parse_json_or_jsonc(path: &Path, bytes: &[u8]) -> Result<serde_json::Value> {
                     path.display()
                 )
             })?;
-            let normalized = normalize_jsonc(text);
-            serde_json::from_str(&normalized).with_context(|| {
+            jsonc::parse(text).with_context(|| {
                 format!(
                     "{} is not valid JSONC - refusing to overwrite it; fix or remove it, then re-run",
                     path.display()
@@ -60,115 +60,6 @@ fn parse_json_or_jsonc(path: &Path, bytes: &[u8]) -> Result<serde_json::Value> {
             )
         }),
     }
-}
-
-fn normalize_jsonc(input: &str) -> String {
-    remove_trailing_commas(&strip_jsonc_comments(input))
-}
-
-fn strip_jsonc_comments(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.chars().peekable();
-    let mut in_string = false;
-    let mut escaped = false;
-
-    while let Some(ch) = chars.next() {
-        if in_string {
-            out.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            continue;
-        }
-
-        if ch == '/' {
-            match chars.peek().copied() {
-                Some('/') => {
-                    chars.next();
-                    for comment_ch in chars.by_ref() {
-                        if comment_ch == '\n' {
-                            out.push('\n');
-                            break;
-                        }
-                    }
-                    continue;
-                }
-                Some('*') => {
-                    chars.next();
-                    let mut prev = '\0';
-                    for comment_ch in chars.by_ref() {
-                        if comment_ch == '\n' {
-                            out.push('\n');
-                        }
-                        if prev == '*' && comment_ch == '/' {
-                            break;
-                        }
-                        prev = comment_ch;
-                    }
-                    continue;
-                }
-                _ => {}
-            }
-        }
-
-        out.push(ch);
-    }
-
-    out
-}
-
-fn remove_trailing_commas(input: &str) -> String {
-    let chars: Vec<char> = input.chars().collect();
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0;
-    let mut in_string = false;
-    let mut escaped = false;
-
-    while i < chars.len() {
-        let ch = chars[i];
-        if in_string {
-            out.push(ch);
-            if escaped {
-                escaped = false;
-            } else if ch == '\\' {
-                escaped = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            i += 1;
-            continue;
-        }
-
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            i += 1;
-            continue;
-        }
-
-        if ch == ',' {
-            let next = chars[i + 1..].iter().copied().find(|c| !c.is_whitespace());
-            if matches!(next, Some('}') | Some(']')) {
-                i += 1;
-                continue;
-            }
-        }
-
-        out.push(ch);
-        i += 1;
-    }
-
-    out
 }
 
 /// Upsert `root[container_key][entry_name] = entry_value`, creating the

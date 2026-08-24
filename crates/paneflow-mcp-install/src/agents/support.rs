@@ -1,17 +1,15 @@
 //! Shared plumbing for the per-agent writers (EP-003).
 //!
 //! - Config-path resolution (cross-platform, `dirs`-based).
-//! - `shell_out` - run an agent's own CLI and surface a clean error on
-//!   non-zero exit (preferred path for Claude Code / Codex per PRD D4).
-//! - Format-generic install / uninstall / status built on the tested
+//! - Format-specific install / uninstall / status built on the tested
 //!   [`crate::merge`] + [`crate::io`] primitives, so every writer is
 //!   idempotent and no-clobber without repeating the logic.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Context, Result};
+use paneflow_agent_config::jsonc;
 
 use crate::agents::{InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::{io, merge};
@@ -114,62 +112,6 @@ fn push_opencode_names(out: &mut Vec<PathBuf>, config_base: PathBuf) {
 }
 
 // ---------------------------------------------------------------------------
-// CLI shell-out
-// ---------------------------------------------------------------------------
-
-/// Wall-clock deadline for an agent CLI shell-out (U-032). `mcp add` is a quick
-/// local config edit; 30 s is generous for a cold CLI start yet bounds a hung
-/// invocation (network stall, auth prompt) so install can't block.
-const CLI_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// stdout cap for an agent CLI shell-out - `mcp add` prints a short
-/// confirmation, so 1 MiB is plenty while bounding a runaway CLI.
-const CLI_STDOUT_CAP: u64 = 1024 * 1024;
-
-/// Is `cli` resolvable on `PATH`?
-pub(crate) fn cli_on_path(cli: &str) -> bool {
-    which::which(cli).is_ok()
-}
-
-/// Run `program args...`, capturing output. `Ok(())` iff it exits 0;
-/// otherwise an error carrying the trimmed stderr (for `log`/report).
-pub(crate) fn shell_out(program: &str, args: &[&str]) -> Result<()> {
-    // US-042 (Windows): a bare `Command::new("claude")` goes through
-    // `CreateProcessW`, which ignores `PATHEXT` and so cannot launch the
-    // `claude.cmd` shim that npm/bun install - even though `cli_on_path`
-    // (via `which::which`) resolved it, so the "preferred CLI path" was
-    // entered and then died with `NotFound`. Resolve the full `.cmd`/`.exe`
-    // path first; Rust std ≥1.77 wraps `.cmd`/`.bat` through `cmd.exe`
-    // automatically. On Unix `execvp` honors PATH for a bare name, so the
-    // original behavior is kept there.
-    #[cfg(windows)]
-    let resolved = which::which(program).unwrap_or_else(|_| PathBuf::from(program));
-    #[cfg(windows)]
-    let mut command = Command::new(resolved);
-    #[cfg(not(windows))]
-    let mut command = Command::new(program);
-    command.args(args);
-
-    // U-032: bound the CLI with a wall-clock deadline so a hung `claude`/`codex
-    // mcp add` (network stall, auth prompt) can't block the installer.
-    // run_with_timeout nulls stdin and caps stdout/stderr for us.
-    let output = paneflow_process::run_with_timeout(command, CLI_DEADLINE, CLI_STDOUT_CAP)
-        .map_err(|e| anyhow!("failed to run `{program}`: {e}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Err(anyhow!(
-        "`{program} {}` exited with {}: {}",
-        args.join(" "),
-        output.status,
-        // Some CLIs report errors on stdout; include both, trimmed.
-        format!("{} {}", stderr.trim(), stdout.trim()).trim()
-    ))
-}
-
-// ---------------------------------------------------------------------------
 // JSON install / uninstall / status (Claude Code, Gemini, opencode)
 // ---------------------------------------------------------------------------
 
@@ -183,6 +125,27 @@ pub(crate) fn json_install(
     entry: serde_json::Value,
 ) -> Result<InstallOutcome> {
     io::with_config_lock(path, || {
+        if is_jsonc(path) {
+            let source = read_jsonc_source(path)?;
+            let root = jsonc::parse(&source)
+                .with_context(|| format!("{} is not valid JSONC", path.display()))?;
+            let had_prior = root
+                .get(container)
+                .and_then(|value| value.get(ENTRY))
+                .is_some();
+            let Some(updated) = jsonc::upsert_entry(&source, container, ENTRY, &entry)
+                .with_context(|| format!("edit {} failed", path.display()))?
+            else {
+                return Ok(InstallOutcome::AlreadyCurrent);
+            };
+            io::write_if_changed_unlocked(path, updated.as_bytes())?;
+            return Ok(if had_prior {
+                InstallOutcome::Updated
+            } else {
+                InstallOutcome::Installed
+            });
+        }
+
         let mut root = merge::read_json_or_default(path)?;
         let had_prior = root.get(container).and_then(|c| c.get(ENTRY)).is_some();
         let changed = merge::merge_json_entry(&mut root, container, ENTRY, entry)?;
@@ -208,6 +171,17 @@ pub(crate) fn json_uninstall(path: &Path, container: &str) -> Result<UninstallOu
         if !path.exists() {
             return Ok(UninstallOutcome::NothingToRemove);
         }
+        if is_jsonc(path) {
+            let source = read_jsonc_source(path)?;
+            let Some(updated) = jsonc::remove_entry(&source, container, ENTRY)
+                .with_context(|| format!("edit {} failed", path.display()))?
+            else {
+                return Ok(UninstallOutcome::NothingToRemove);
+            };
+            io::write_if_changed_unlocked(path, updated.as_bytes())?;
+            return Ok(UninstallOutcome::Removed);
+        }
+
         let mut root = merge::read_json_or_default(path)?;
         if !merge::remove_json_entry(&mut root, container, ENTRY) {
             return Ok(UninstallOutcome::NothingToRemove);
@@ -241,6 +215,18 @@ pub(crate) fn json_status(
         return Ok(StatusOutcome::NotInstalled);
     };
     Ok(validate(entry, expected))
+}
+
+fn is_jsonc(path: &Path) -> bool {
+    path.extension().and_then(|extension| extension.to_str()) == Some("jsonc")
+}
+
+fn read_jsonc_source(path: &Path) -> Result<String> {
+    match std::fs::read_to_string(path) {
+        Ok(source) => Ok(source),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok("{}\n".to_string()),
+        Err(error) => Err(error).with_context(|| format!("read {} failed", path.display())),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -330,34 +316,6 @@ pub(crate) fn array_command(entry: &serde_json::Value) -> Option<String> {
         .first()?
         .as_str()
         .map(str::to_string)
-}
-
-pub(crate) fn json_entry_present(path: &Path, container: &str) -> Result<bool> {
-    if !path.exists() {
-        return Ok(false);
-    }
-    let root = merge::read_json_or_default(path)?;
-    let Some(container_value) = root.get(container) else {
-        return Ok(false);
-    };
-    let Some(container_object) = container_value.as_object() else {
-        bail!("config key `{container}` is not an object - refusing to overwrite");
-    };
-    Ok(container_object.contains_key(ENTRY))
-}
-
-pub(crate) fn toml_entry_present(path: &Path) -> Result<bool> {
-    if !path.exists() {
-        return Ok(false);
-    }
-    let doc = merge::read_toml_or_default(path)?;
-    let Some(parent) = doc.get(CODEX_TABLE) else {
-        return Ok(false);
-    };
-    let Some(parent) = parent.as_table() else {
-        bail!("`{CODEX_TABLE}` is not a TOML table - refusing to overwrite");
-    };
-    Ok(parent.contains_key(ENTRY))
 }
 
 // ---------------------------------------------------------------------------

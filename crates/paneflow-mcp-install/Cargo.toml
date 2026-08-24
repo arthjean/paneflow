@@ -20,20 +20,15 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 # the size-budgeted bridge.
 toml_edit = "0.22"
 # Match the versions already compiled in the src-app dep graph so this
-# crate adds no new transitive build (src-app pins which 8; dirs 6 matches
-# paneflow-acp). PRD: `which` is "déjà utilisé dans le workspace".
+# crate adds no new transitive build (src-app pins which 8 and dirs 6).
+# PRD: `which` is "déjà utilisé dans le workspace".
 which.workspace = true
 dirs.workspace = true
 anyhow.workspace = true
-# Surfaces shell-out failures (e.g. `claude mcp add` non-zero exit) to
-# stderr via the host's env_logger before the direct-merge fallback runs.
-log.workspace = true
 # Used by `io::write_atomic` for same-dir temp file + atomic rename (not
 # test-only), so it lives in [dependencies], not [dev-dependencies].
 tempfile.workspace = true
-# EP-002 (prd-ultron-remediation, U-032): bound `claude mcp add` / `codex mcp
-# add` shell-outs with a wall-clock deadline. std-only, no transitive build.
-paneflow-process = { workspace = true }
+paneflow-agent-config.workspace = true
 
 [lints]
 workspace = true

@@ -1,15 +1,12 @@
 //! Codex writer (EP-003 US-008).
 //!
-//! Preferred path: shell out to `codex mcp add paneflow -- <bridge>` when
-//! the `codex` CLI is on PATH. Fallback: format-preserving `toml_edit`
-//! upsert of `[mcp_servers.paneflow]` in `~/.codex/config.toml`, keeping
-//! comments and sibling tables intact.
+//! The writer uses a format-preserving `toml_edit` upsert of
+//! `[mcp_servers.paneflow]` in `~/.codex/config.toml`, keeping comments and
+//! sibling tables intact through one atomic, fully tested mutation path.
 //!
-//! **Volatility:** Codex's config schema and `codex mcp` subcommand flags
-//! move fast (verified 2026: `[mcp_servers.<name>]` with `command`/`args`,
-//! `codex mcp add` exists but its flags are under-documented). Re-verify
-//! against `codex mcp --help` if registration regresses; the TOML fallback
-//! is the stable path.
+//! **Volatility:** Codex's config schema moves fast (verified 2026:
+//! `[mcp_servers.<name>]` with `command`/`args`). Re-verify that table shape
+//! if registration regresses.
 
 use std::path::{Path, PathBuf};
 
@@ -17,13 +14,11 @@ use anyhow::{anyhow, Result};
 
 use crate::agents::{support, AgentConfigWriter, InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::detect::{self, Presence};
-use crate::{io, merge};
 
 const CLI: &str = "codex";
 
 pub struct Codex {
     config_path: Option<PathBuf>,
-    allow_cli: bool,
 }
 
 impl Codex {
@@ -31,7 +26,6 @@ impl Codex {
     pub fn new() -> Self {
         Self {
             config_path: support::codex_config(),
-            allow_cli: true,
         }
     }
 
@@ -57,7 +51,6 @@ impl AgentConfigWriter for Codex {
     }
 
     fn presence(&self) -> Presence {
-        let cli = if self.allow_cli { Some(CLI) } else { None };
         // Detect via the config dir too: `~/.codex/` existing is a strong
         // signal even before `config.toml` is created.
         let mut paths: Vec<PathBuf> = Vec::new();
@@ -67,64 +60,16 @@ impl AgentConfigWriter for Codex {
                 paths.push(parent.to_path_buf());
             }
         }
-        detect::detect(cli, &paths)
+        detect::detect(Some(CLI), &paths)
     }
 
     fn install(&self, bridge: &Path) -> Result<InstallOutcome> {
-        let path = self.path()?;
         let bridge_s = bridge.to_string_lossy().into_owned();
-
-        let status = support::toml_status(path, Some(bridge))?;
-        if matches!(status, StatusOutcome::Installed { .. }) {
-            return Ok(InstallOutcome::AlreadyCurrent);
-        }
-        let had_prior = support::toml_entry_present(path)?;
-
-        if self.allow_cli && support::cli_on_path(CLI) {
-            io::backup(path)?;
-            if had_prior {
-                let _ = support::shell_out(CLI, &["mcp", "remove", "paneflow"]);
-            }
-            match support::shell_out(CLI, &["mcp", "add", "paneflow", "--", &bridge_s]) {
-                Ok(()) => {
-                    return Ok(if had_prior {
-                        InstallOutcome::Updated
-                    } else {
-                        InstallOutcome::Installed
-                    });
-                }
-                Err(e) => {
-                    log::warn!(
-                        "paneflow mcp: `codex mcp add` failed ({e:#}); falling back to direct ~/.codex/config.toml edit"
-                    );
-                }
-            }
-        }
-
-        support::toml_install(path, &bridge_s)
+        support::toml_install(self.path()?, &bridge_s)
     }
 
     fn uninstall(&self) -> Result<UninstallOutcome> {
-        let path = self.path()?;
-        // US-021: a present-but-unparseable `~/.codex/config.toml` must
-        // surface a loud error, not be silently mistaken for "nothing to
-        // remove". The tolerant `current_toml_command` below swallows parse
-        // failures (`.ok()?` → None), so probe parseability first -
-        // `read_toml_or_default` is `Err` on a present malformed file and
-        // `Ok` (empty doc) when absent.
-        if path.exists() {
-            merge::read_toml_or_default(path)?;
-        }
-        if !support::toml_entry_present(path)? {
-            return Ok(UninstallOutcome::NothingToRemove);
-        }
-        if self.allow_cli && support::cli_on_path(CLI) {
-            io::backup(path)?;
-            if let Ok(()) = support::shell_out(CLI, &["mcp", "remove", "paneflow"]) {
-                return Ok(UninstallOutcome::Removed);
-            }
-        }
-        support::toml_uninstall(path)
+        support::toml_uninstall(self.path()?)
     }
 
     fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
@@ -139,7 +84,6 @@ mod tests {
     fn test_writer(path: PathBuf) -> Codex {
         Codex {
             config_path: Some(path),
-            allow_cli: false,
         }
     }
 

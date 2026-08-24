@@ -228,7 +228,9 @@ mod tests {
         );
         assert!(jsonc.exists());
         assert!(!json.exists());
-        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&jsonc).unwrap()).unwrap();
+        let after = std::fs::read_to_string(&jsonc).unwrap();
+        assert!(after.contains("// keep this file selected"));
+        let v = crate::merge::read_json_or_default(&jsonc).unwrap();
         assert_eq!(
             v["mcp"]["paneflow"]["command"],
             json!(["/data/paneflow-mcp"])
