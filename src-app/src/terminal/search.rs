@@ -113,6 +113,7 @@ impl TerminalView {
     }
 
     pub(super) fn toggle_search(&mut self, window: &mut gpui::Window, cx: &mut Context<Self>) {
+        self.cancel_pending_search();
         self.search_active = !self.search_active;
         self.search_generation = self.search_generation.wrapping_add(1);
         // Always reset the query state; the field starts empty on every open.
@@ -120,6 +121,7 @@ impl TerminalView {
         self.search_matches.clear();
         self.search_current = 0;
         self.search_regex_error = None;
+        self.search_truncated = false;
         self.search_input.update(cx, |input, cx| {
             input.clear(cx);
         });
@@ -164,12 +166,14 @@ impl TerminalView {
     }
 
     pub(super) fn dismiss_search(&mut self, cx: &mut Context<Self>) {
+        self.cancel_pending_search();
         self.search_active = false;
         self.search_generation = self.search_generation.wrapping_add(1);
         self.search_query.clear();
         self.search_matches.clear();
         self.search_current = 0;
         self.search_regex_error = None;
+        self.search_truncated = false;
         self.terminal.session_backend().scroll_to_bottom();
         cx.notify();
     }
@@ -205,11 +209,13 @@ impl TerminalView {
     }
 
     fn schedule_search(&mut self, cx: &mut Context<Self>) {
+        self.cancel_pending_search();
         self.search_generation = self.search_generation.wrapping_add(1);
         let generation = self.search_generation;
         if self.search_query.is_empty() {
             self.search_matches.clear();
             self.search_regex_error = None;
+            self.search_truncated = false;
             self.search_current = 0;
             return;
         }
@@ -217,12 +223,17 @@ impl TerminalView {
         let backend = self.terminal.session_backend();
         let query = self.search_query.clone();
         let regex = self.search_regex_mode;
+        let cancellation = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.search_cancellation = Some(cancellation.clone());
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 smol::Timer::after(std::time::Duration::from_millis(LOCAL_SEARCH_DEBOUNCE_MS))
                     .await;
                 let worker_query = query.clone();
-                let result = smol::unblock(move || backend.search(&worker_query, regex)).await;
+                let result = smol::unblock(move || {
+                    backend.search_with_cancel(&worker_query, regex, &cancellation)
+                })
+                .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |view, cx| {
                         if view.search_generation == generation
@@ -241,11 +252,19 @@ impl TerminalView {
     }
 
     fn apply_search_result(&mut self, result: crate::search::SearchResult) {
+        self.search_cancellation = None;
         self.search_matches = result.matches;
         self.search_regex_error = result.regex_error;
+        self.search_truncated = result.truncated;
         self.search_current = 0;
         if !self.search_matches.is_empty() {
             self.scroll_to_current_match();
+        }
+    }
+
+    fn cancel_pending_search(&mut self) {
+        if let Some(cancellation) = self.search_cancellation.take() {
+            cancellation.store(true, std::sync::atomic::Ordering::Release);
         }
     }
 

@@ -7,7 +7,7 @@
 
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -54,8 +54,6 @@ const MAX_CLIPBOARD_EVENTS: usize = 8;
 
 const _: () = assert!(OUTPUT_POOL_BYTES <= NFR_005_MAX_PENDING_OUTPUT_BYTES);
 const _: () = assert!(MAX_QUEUED_INPUT_BYTES <= NFR_005_MAX_QUEUED_INPUT_BYTES);
-
-type SearchScrollbackReply = SyncSender<Result<(Vec<(i32, String)>, bool), String>>;
 
 #[derive(Debug)]
 pub(crate) enum GhosttyUiEvent {
@@ -217,6 +215,7 @@ struct SessionInner {
     clipboard_gate: Arc<ClipboardGate>,
     state: RwLock<SharedState>,
     recent_output_lines: RwLock<Arc<[String]>>,
+    search_generation: AtomicU64,
     queued_input_bytes: AtomicUsize,
     command_backpressure: AtomicBool,
     promoted: AtomicBool,
@@ -258,15 +257,15 @@ enum RuntimeMessage {
     SelectWord(ghostty::Point),
     SelectLine(ghostty::Point),
     ClearSelection,
-    Search {
-        query: String,
-        regex: bool,
-        reply: SyncSender<Result<ghostty::SearchResult, String>>,
+    UpdateAppearance(ghostty::TerminalAppearance),
+    SearchChunk {
+        start_row: usize,
+        max_cells: usize,
+        reply: SyncSender<Result<ghostty::SearchChunk, String>>,
     },
-    SearchScrollback {
-        query: String,
-        max_matches: usize,
-        reply: SearchScrollbackReply,
+    LineTexts {
+        lines: Vec<i32>,
+        reply: SyncSender<Result<Vec<(i32, String)>, String>>,
     },
     SelectionText(SyncSender<Result<Option<String>, String>>),
     Hyperlink {
@@ -981,6 +980,7 @@ impl GhosttySession {
                     metrics: initial_grid_metrics(size.cols.max(1), size.rows.max(1)),
                 }),
                 recent_output_lines: RwLock::new(Arc::from(Vec::<String>::new())),
+                search_generation: AtomicU64::new(0),
                 queued_input_bytes: AtomicUsize::new(0),
                 command_backpressure: AtomicBool::new(false),
                 promoted: AtomicBool::new(false),
@@ -1454,6 +1454,15 @@ impl GhosttySession {
         self.inner.state.read().content.selection
     }
 
+    pub(super) fn refresh_appearance(&self) -> bool {
+        self.inner
+            .mailbox
+            .try_send_control(RuntimeMessage::UpdateAppearance(
+                current_ghostty_appearance(),
+            ))
+            .is_ok()
+    }
+
     pub(super) fn hyperlink_at(&self, point: Point) -> Option<HyperlinkZone> {
         self.request(|reply| RuntimeMessage::Hyperlink {
             point: ghostty_point(point),
@@ -1508,27 +1517,71 @@ impl GhosttySession {
     }
 
     pub(super) fn search(&self, query: &str, regex: bool) -> crate::search::SearchResult {
-        let result = self.request(|reply| RuntimeMessage::Search {
-            query: query.to_owned(),
-            regex,
-            reply,
-        });
-        match result.and_then(Result::ok) {
-            Some(result) => crate::search::SearchResult {
-                matches: result
-                    .matches
-                    .into_iter()
-                    .map(|found| crate::search::SearchMatch {
-                        start: point_from_ghostty(found.start),
-                        end: point_from_ghostty(found.end),
-                    })
-                    .collect(),
-                regex_error: result.regex_error,
-            },
-            None => crate::search::SearchResult {
-                matches: Vec::new(),
-                regex_error: None,
-            },
+        self.search_with_cancel(query, regex, &AtomicBool::new(false))
+    }
+
+    pub(super) fn search_with_cancel(
+        &self,
+        query: &str,
+        regex: bool,
+        cancelled: &AtomicBool,
+    ) -> crate::search::SearchResult {
+        let mut search = match ghostty::SearchEngine::new(query, regex) {
+            Ok(search) => search,
+            Err(error) => {
+                return crate::search::SearchResult {
+                    matches: Vec::new(),
+                    regex_error: Some(error.to_string()),
+                    truncated: false,
+                };
+            }
+        };
+        if search.is_done() {
+            return search_result_from_ghostty(search.finish(false));
+        }
+
+        let generation = self
+            .inner
+            .search_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
+        let mut next_row = 0usize;
+        let mut scanned_cells = 0usize;
+        loop {
+            if cancelled.load(Ordering::Acquire)
+                || self.inner.search_generation.load(Ordering::Acquire) != generation
+            {
+                return search_result_from_ghostty(search.finish(true));
+            }
+            let remaining = ghostty::MAX_SEARCH_CELLS.saturating_sub(scanned_cells);
+            if remaining == 0 {
+                return search_result_from_ghostty(search.finish(true));
+            }
+            let requested_cells = remaining.min(ghostty::SEARCH_CHUNK_CELLS);
+            let chunk = self
+                .request(|reply| RuntimeMessage::SearchChunk {
+                    start_row: next_row,
+                    max_cells: requested_cells,
+                    reply,
+                })
+                .and_then(Result::ok);
+            let Some(chunk) = chunk else {
+                return search_result_from_ghostty(search.finish(true));
+            };
+            if chunk.next_row == next_row && chunk.next_row < chunk.total_rows {
+                return search_result_from_ghostty(search.finish(true));
+            }
+            scanned_cells =
+                scanned_cells.saturating_add(chunk.lines.len().saturating_mul(chunk.cols));
+            for line in chunk.lines {
+                if !search.push_line(line.line, &line.text, &line.char_to_column) {
+                    return search_result_from_ghostty(search.finish(false));
+                }
+            }
+            if chunk.next_row >= chunk.total_rows {
+                return search_result_from_ghostty(search.finish(false));
+            }
+            next_row = chunk.next_row;
         }
     }
 
@@ -1537,13 +1590,35 @@ impl GhosttySession {
         query: &str,
         max_matches: usize,
     ) -> (Vec<(i32, String)>, bool) {
-        self.request(|reply| RuntimeMessage::SearchScrollback {
-            query: query.to_owned(),
-            max_matches,
-            reply,
-        })
-        .and_then(Result::ok)
-        .unwrap_or_default()
+        if query.is_empty() || max_matches == 0 {
+            return (Vec::new(), false);
+        }
+        let search = self.search(query, false);
+        let mut seen = std::collections::HashSet::new();
+        let mut rows = Vec::new();
+        let mut hit_cap = search.truncated;
+        for found in &search.matches {
+            if seen.insert(found.start.line.0) {
+                rows.push(found.start.line.0);
+                if rows.len() >= max_matches {
+                    hit_cap = true;
+                    break;
+                }
+            }
+        }
+        let lines = self
+            .request(|reply| RuntimeMessage::LineTexts { lines: rows, reply })
+            .and_then(Result::ok);
+        match lines {
+            Some(mut lines) => {
+                for (_, text) in &mut lines {
+                    let trimmed_len = text.trim_end().len();
+                    text.truncate(trimmed_len);
+                }
+                (lines, hit_cap)
+            }
+            None => (Vec::new(), true),
+        }
     }
 
     pub(super) fn extract_scrollback(&self) -> Option<String> {
@@ -1602,6 +1677,21 @@ impl GhosttySession {
             .try_send_control(command(reply_tx))
             .ok()?;
         reply_rx.recv_timeout(Duration::from_secs(1)).ok()
+    }
+}
+
+fn search_result_from_ghostty(result: ghostty::SearchResult) -> crate::search::SearchResult {
+    crate::search::SearchResult {
+        matches: result
+            .matches
+            .into_iter()
+            .map(|found| crate::search::SearchMatch {
+                start: point_from_ghostty(found.start),
+                end: point_from_ghostty(found.end),
+            })
+            .collect(),
+        regex_error: result.regex_error,
+        truncated: result.truncated,
     }
 }
 
@@ -1675,7 +1765,9 @@ fn run_runtime(
             return;
         }
     };
-    let mut terminal = match ghostty::DisplayTerminal::new(ghostty_size, max_scrollback) {
+    let appearance = current_ghostty_appearance();
+    let mut terminal = match ghostty::DisplayTerminal::new(ghostty_size, max_scrollback, appearance)
+    {
         Ok(terminal) => terminal,
         Err(error) => {
             let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(
@@ -1684,16 +1776,6 @@ fn run_runtime(
             return;
         }
     };
-    let theme = crate::theme::active_theme();
-    let foreground = ghostty_rgb(theme.foreground);
-    let background = ghostty_rgb(theme.ansi_background);
-    let cursor = ghostty_rgb(theme.cursor);
-    if let Err(error) = terminal.set_default_colors(foreground, background, cursor) {
-        let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(
-            error.to_string()
-        )));
-        return;
-    }
     if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
         let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(error)));
         return;
@@ -2146,23 +2228,32 @@ fn run_runtime(
                     "Ghostty selection clear failed: {error}"
                 ),
             },
-            Ok(RuntimeMessage::Search {
-                query,
-                regex,
+            Ok(RuntimeMessage::UpdateAppearance(appearance)) => {
+                if let Err(error) = terminal.set_appearance(appearance) {
+                    let _ = inner
+                        .events_tx
+                        .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
+                            "Ghostty appearance update failed: {error}"
+                        )));
+                }
+            }
+            Ok(RuntimeMessage::SearchChunk {
+                start_row,
+                max_cells,
                 reply,
             }) => {
                 let _ = reply.send(
                     terminal
-                        .search(&query, regex)
+                        .search_chunk(start_row, max_cells)
                         .map_err(|error| error.to_string()),
                 );
             }
-            Ok(RuntimeMessage::SearchScrollback {
-                query,
-                max_matches,
-                reply,
-            }) => {
-                let _ = reply.send(search_scrollback_lines(&terminal, &query, max_matches));
+            Ok(RuntimeMessage::LineTexts { lines, reply }) => {
+                let _ = reply.send(
+                    terminal
+                        .line_texts(&lines)
+                        .map_err(|error| error.to_string()),
+                );
             }
             Ok(RuntimeMessage::SelectionText(reply)) => {
                 let _ = reply.send(terminal.selection_text().map_err(|error| error.to_string()));
@@ -2426,39 +2517,6 @@ fn run_runtime(
             }
         }
     }
-}
-
-fn search_scrollback_lines(
-    terminal: &ghostty::DisplayTerminal,
-    query: &str,
-    max_matches: usize,
-) -> Result<(Vec<(i32, String)>, bool), String> {
-    if query.is_empty() || max_matches == 0 {
-        return Ok((Vec::new(), false));
-    }
-    let search = terminal
-        .search(query, false)
-        .map_err(|error| error.to_string())?;
-    let mut seen = std::collections::HashSet::new();
-    let mut rows = Vec::new();
-    let mut hit_cap = false;
-    for found in &search.matches {
-        if seen.insert(found.start.line) {
-            rows.push(found.start.line);
-            if rows.len() >= max_matches {
-                hit_cap = true;
-                break;
-            }
-        }
-    }
-    let mut lines = terminal
-        .line_texts(&rows)
-        .map_err(|error| error.to_string())?;
-    for (_, text) in &mut lines {
-        let trimmed_len = text.trim_end().len();
-        text.truncate(trimmed_len);
-    }
-    Ok((lines, hit_cap))
 }
 
 // These parameters are the mutable runtime-loop state. Grouping them would add
@@ -2757,6 +2815,14 @@ fn handle_engine_events(
                     "Ghostty dropped oversized callback input ({bytes} bytes)"
                 );
             }
+            ghostty::BackendEvent::EffectsOverflow {
+                dropped_events,
+                dropped_bytes,
+            } => {
+                return Err(format!(
+                    "Ghostty callback effects overflowed ({dropped_events} events, {dropped_bytes} bytes)"
+                ));
+            }
         }
     }
     Ok(())
@@ -2805,6 +2871,20 @@ fn ghostty_rgb(color: gpui::Hsla) -> ghostty::Rgb {
         g: color.g,
         b: color.b,
     }
+}
+
+fn current_ghostty_appearance() -> ghostty::TerminalAppearance {
+    let theme = crate::theme::active_theme();
+    ghostty::TerminalAppearance::new(
+        ghostty_rgb(theme.foreground),
+        ghostty_rgb(theme.ansi_background),
+        ghostty_rgb(theme.cursor),
+        if theme.ansi_background.l > 0.5 {
+            ghostty::ColorScheme::Light
+        } else {
+            ghostty::ColorScheme::Dark
+        },
+    )
 }
 
 #[cfg(target_os = "linux")]

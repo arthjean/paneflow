@@ -9,17 +9,16 @@ use alacritty_terminal::index::{Column as GridCol, Point as AlacPoint};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags;
-use regex::Regex;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use paneflow_terminal_ghostty::SearchEngine;
 
 use crate::terminal::ZedListener;
 use crate::terminal::types::Point;
 
-/// Maximum number of matches to collect before stopping search.
-const MAX_MATCHES: usize = 10_000;
-
 /// Maximum query length (bytes).
-pub const MAX_QUERY_LEN: usize = 512;
+pub const MAX_QUERY_LEN: usize = paneflow_terminal_ghostty::MAX_QUERY_LEN;
 
 /// A single search match: start and end points in the terminal grid.
 #[derive(Clone, Debug)]
@@ -33,6 +32,8 @@ pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     /// If regex mode and the pattern is invalid, contains the error message.
     pub regex_error: Option<String>,
+    /// The cell or match budget stopped the scan before the grid ended.
+    pub truncated: bool,
 }
 
 fn extract_line_text_and_columns(
@@ -57,62 +58,13 @@ fn extract_line_text_and_columns(
         } else {
             line_text.push(cell.c);
         }
-    }
-}
-
-fn byte_to_char_index(text: &str, byte: usize) -> usize {
-    text[..byte].chars().count()
-}
-
-fn search_match_from_chars(
-    line: alacritty_terminal::index::Line,
-    char_to_col: &[usize],
-    char_start: usize,
-    char_count: usize,
-) -> Option<SearchMatch> {
-    if char_count == 0 {
-        return None;
-    }
-    let char_end = char_start + char_count - 1;
-    let start_col = *char_to_col.get(char_start)?;
-    let end_col = *char_to_col.get(char_end)?;
-    Some(SearchMatch {
-        start: Point::new(line.0, start_col),
-        end: Point::new(line.0, end_col),
-    })
-}
-
-fn fold_char(c: char) -> String {
-    c.to_lowercase().collect()
-}
-
-fn push_plain_matches(
-    line_text: &str,
-    line: alacritty_terminal::index::Line,
-    char_to_col: &[usize],
-    query_folded: &[String],
-    matches: &mut Vec<SearchMatch>,
-) -> bool {
-    if query_folded.is_empty() {
-        return true;
-    }
-    let line_folded: Vec<String> = line_text.chars().map(fold_char).collect();
-    let query_len = query_folded.len();
-    if line_folded.len() < query_len {
-        return true;
-    }
-
-    for char_start in 0..=(line_folded.len() - query_len) {
-        if line_folded[char_start..char_start + query_len] == *query_folded
-            && let Some(m) = search_match_from_chars(line, char_to_col, char_start, query_len)
-        {
-            matches.push(m);
-            if matches.len() >= MAX_MATCHES {
-                return false;
+        if let Some(zero_width) = cell.zerowidth() {
+            for &character in zero_width {
+                char_to_col.push(col);
+                line_text.push(character);
             }
         }
     }
-    true
 }
 
 /// Search the terminal's full grid (scrollback + visible) for matches.
@@ -123,34 +75,28 @@ pub fn search_term(
     query: &str,
     regex_mode: bool,
 ) -> SearchResult {
-    if query.is_empty() {
-        return SearchResult {
-            matches: Vec::new(),
-            regex_error: None,
-        };
-    }
+    search_term_with_cancel(term, query, regex_mode, &AtomicBool::new(false))
+}
 
-    // In regex mode, compile the pattern (case-insensitive)
-    let compiled_regex = if regex_mode {
-        match Regex::new(&format!("(?i)(?:{})", query)) {
-            Ok(re) => Some(re),
-            Err(e) => {
-                return SearchResult {
-                    matches: Vec::new(),
-                    regex_error: Some(e.to_string()),
-                };
-            }
+pub fn search_term_with_cancel(
+    term: &Arc<FairMutex<Term<ZedListener>>>,
+    query: &str,
+    regex_mode: bool,
+    cancelled: &AtomicBool,
+) -> SearchResult {
+    let mut search = match SearchEngine::new(query, regex_mode) {
+        Ok(search) => search,
+        Err(error) => {
+            return SearchResult {
+                matches: Vec::new(),
+                regex_error: Some(error.to_string()),
+                truncated: false,
+            };
         }
-    } else {
-        None
     };
-
-    let query_folded: Vec<String> = if regex_mode {
-        Vec::new()
-    } else {
-        query.chars().map(fold_char).collect()
-    };
-    let mut matches = Vec::new();
+    if search.is_done() {
+        return from_shared_result(search.finish(false));
+    }
 
     let (top, bottom, initial_cols) = {
         let term = term.lock();
@@ -163,53 +109,68 @@ pub fn search_term(
     let mut line_text = String::with_capacity(initial_cols);
     let mut char_to_col = Vec::with_capacity(initial_cols);
     let mut line = top;
+    let mut scanned_cells = 0usize;
+    let mut truncated = false;
     while line <= bottom {
-        let Some(()) = ({
+        if cancelled.load(Ordering::Acquire) {
+            truncated = true;
+            break;
+        }
+        if scanned_cells >= paneflow_terminal_ghostty::MAX_SEARCH_CELLS {
+            truncated = true;
+            break;
+        }
+        let copied = {
             let term = term.lock();
             if line < term.topmost_line() || line > term.bottommost_line() {
                 None
             } else {
                 let cols = term.columns();
-                extract_line_text_and_columns(&term, line, cols, &mut line_text, &mut char_to_col);
-                Some(())
+                if scanned_cells.saturating_add(cols) > paneflow_terminal_ghostty::MAX_SEARCH_CELLS
+                {
+                    truncated = true;
+                    None
+                } else {
+                    scanned_cells += cols;
+                    extract_line_text_and_columns(
+                        &term,
+                        line,
+                        cols,
+                        &mut line_text,
+                        &mut char_to_col,
+                    );
+                    Some(())
+                }
             }
-        }) else {
+        };
+        if truncated {
+            break;
+        }
+        let Some(()) = copied else {
             line += 1;
             continue;
         };
 
-        if let Some(re) = &compiled_regex {
-            // Regex mode: use find_iter for all non-overlapping matches
-            for m in re.find_iter(&line_text) {
-                let char_start = byte_to_char_index(&line_text, m.start());
-                let match_char_count = line_text[m.start()..m.end()].chars().count();
-                if let Some(search_match) =
-                    search_match_from_chars(line, &char_to_col, char_start, match_char_count)
-                {
-                    matches.push(search_match);
-                    if matches.len() >= MAX_MATCHES {
-                        return SearchResult {
-                            matches,
-                            regex_error: None,
-                        };
-                    }
-                }
-            }
-        } else {
-            if !push_plain_matches(&line_text, line, &char_to_col, &query_folded, &mut matches) {
-                return SearchResult {
-                    matches,
-                    regex_error: None,
-                };
-            }
+        if !search.push_line(line.0, &line_text, &char_to_col) {
+            break;
         }
-
         line += 1;
     }
+    from_shared_result(search.finish(truncated))
+}
 
+fn from_shared_result(result: paneflow_terminal_ghostty::SearchResult) -> SearchResult {
     SearchResult {
-        matches,
-        regex_error: None,
+        matches: result
+            .matches
+            .into_iter()
+            .map(|found| SearchMatch {
+                start: Point::new(found.start.line, found.start.column),
+                end: Point::new(found.end.line, found.end.column),
+            })
+            .collect(),
+        regex_error: result.regex_error,
+        truncated: result.truncated,
     }
 }
 
@@ -277,5 +238,27 @@ mod tests {
         assert!(!result.matches.is_empty());
         assert_eq!(result.matches[0].start.column.0, 0);
         assert_eq!(result.matches[0].end.column.0, 2);
+    }
+
+    #[test]
+    fn search_includes_combining_characters_at_their_base_column() {
+        let result = restored_search("e\u{301}abc", "e\u{301}", false);
+
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.matches[0].start.column.0, 0);
+        assert_eq!(result.matches[0].end.column.0, 0);
+    }
+
+    #[test]
+    fn cancelled_search_stops_before_scanning() {
+        let state = TerminalState::new_display_only(5, 20);
+        state.restore_scrollback("needle");
+        let cancelled = AtomicBool::new(true);
+        let result = state
+            .session_backend()
+            .search_with_cancel("needle", false, &cancelled);
+
+        assert!(result.matches.is_empty());
+        assert!(result.truncated);
     }
 }

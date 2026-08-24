@@ -311,6 +311,8 @@ pub struct TerminalView {
     pub(super) search_query: String,
     /// Monotonic token used to discard stale async local-search results.
     pub(super) search_generation: u64,
+    /// Cooperative cancellation flag for the currently running scan.
+    pub(super) search_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// Cached search matches (grid coordinates)
     pub(super) search_matches: Vec<crate::search::SearchMatch>,
     /// Index of the currently focused match (for navigation)
@@ -319,6 +321,10 @@ pub struct TerminalView {
     pub(super) search_regex_mode: bool,
     /// Regex compilation error message (None when valid or plain text mode)
     pub(super) search_regex_error: Option<String>,
+    /// Whether the active scan stopped at its cell or match budget.
+    pub(super) search_truncated: bool,
+    /// Last theme generation propagated to the native terminal engine.
+    appearance_theme_generation: u64,
     /// Whether Alt key is treated as Meta (ESC prefix). Read from config.
     pub(super) option_as_meta: bool,
     /// US-008: cursor blink override (On / Off / TerminalControlled). Read
@@ -1126,10 +1132,13 @@ impl TerminalView {
             search_input,
             search_query: String::new(),
             search_generation: 0,
+            search_cancellation: None,
             search_matches: Vec::new(),
             search_current: 0,
             search_regex_mode: false,
             search_regex_error: None,
+            search_truncated: false,
+            appearance_theme_generation: crate::theme::theme_generation(),
             option_as_meta: config
                 .option_as_meta
                 .unwrap_or_else(crate::keys::default_option_as_meta),
@@ -1601,6 +1610,8 @@ impl TerminalView {
             (String::new(), ui.muted)
         } else if !has_matches {
             ("No results".to_string(), ui.muted)
+        } else if self.search_truncated {
+            (format!("{current_match}/{match_count}+"), ui.muted)
         } else {
             (format!("{current_match}/{match_count}"), ui.muted)
         };
@@ -1850,6 +1861,10 @@ impl Render for TerminalView {
         let focused = self.focus_handle.is_focused(window);
         self.apply_terminal_focus(focused);
         let backend = self.terminal.session_backend();
+        let theme_generation = crate::theme::theme_generation();
+        if self.appearance_theme_generation != theme_generation && backend.refresh_appearance() {
+            self.appearance_theme_generation = theme_generation;
+        }
         let terminal_mode = backend.modes();
 
         // Update cell dimensions for mouse → grid mapping
