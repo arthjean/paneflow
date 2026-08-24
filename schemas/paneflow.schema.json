@@ -392,19 +392,29 @@
     "commandDefinition": {
       "type": "object",
       "required": ["name"],
-      "description": "Either a workspace definition (set 'workspace') or a shell command (set 'command'). The two fields are mutually exclusive.",
+      "description": "Exactly one non-null payload: a workspace definition (set 'workspace') or a non-blank shell command (set 'command').",
       "additionalProperties": false,
-      "not": {
-        "required": ["workspace", "command"],
-        "properties": {
-          "workspace": { "not": { "type": "null" } },
-          "command": { "not": { "type": "null" } }
+      "oneOf": [
+        {
+          "required": ["workspace"],
+          "properties": {
+            "workspace": { "$ref": "#/definitions/workspaceDefinition" },
+            "command": { "type": "null" }
+          }
+        },
+        {
+          "required": ["command"],
+          "properties": {
+            "workspace": { "type": "null" },
+            "command": { "type": "string", "pattern": "\\S" }
+          }
         }
-      },
+      ],
       "properties": {
         "name": {
           "type": "string",
           "minLength": 1,
+          "pattern": "\\S",
           "description": "Display name (must not be blank)."
         },
         "description": {
@@ -425,6 +435,7 @@
         },
         "command": {
           "type": ["string", "null"],
+          "pattern": "\\S",
           "description": "Shell command string. Mutually exclusive with 'workspace'."
         }
       }
