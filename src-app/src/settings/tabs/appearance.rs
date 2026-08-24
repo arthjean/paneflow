@@ -128,7 +128,26 @@ impl PaneFlowApp {
             .child(theme_card)
             .child(div().h(px(18.)).flex_none())
             .child(section_header(ui, "Presets"))
-            .child(presets_grid);
+            .child(presets_grid)
+            .child(div().h(px(18.)).flex_none())
+            .child(section_header(ui, "Panes"))
+            .child(
+                setting_card(ui).child(self.settings_stepper_row(
+                    "unfocused-pane-opacity",
+                    "Unfocused pane opacity",
+                    "Fade panes that do not hold focus (0.15-1.00). 1.00 disables the effect. Hot-reloads.",
+                    // Read back through the resolver so a hand-edited
+                    // out-of-range value is shown clamped, exactly as painted.
+                    1.0 - self.cached_config.resolved_unfocused_pane_dim_alpha() as f64,
+                    0.15,
+                    1.0,
+                    0.05,
+                    2,
+                    "unfocused_pane_opacity",
+                    ui,
+                    cx,
+                )),
+            );
 
         #[cfg(target_os = "windows")]
         let content = {

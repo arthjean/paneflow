@@ -147,6 +147,13 @@ const SECTION_PX: f32 = 6.0;
 const ACTION_BUTTON_SIZE: f32 = 22.0;
 /// Full-distance duration for every tab-bar hover transition.
 const TAB_BAR_HOVER_MS: u64 = 120;
+/// Cross-fade duration for the unfocused-pane dim, at full travel. Short
+/// enough that focus feels instantaneous, long enough not to strobe when
+/// `Alt+Arrow` walks the tree.
+const PANE_DIM_FADE_MS: u64 = 130;
+/// Below this alpha the dim layer is indistinguishable from absent, so the
+/// element is dropped entirely rather than painted at ~0.
+const PANE_DIM_EPSILON: f32 = 0.002;
 /// Square size of the new-tab affordance that trails the last tab chip.
 const ADD_TAB_BUTTON_SIZE: f32 = TAB_HEIGHT;
 /// Plus glyph size inside the new-tab affordance.
@@ -405,6 +412,22 @@ pub struct Pane {
     /// `PaneFlowApp::sync_broadcast_stripes`. The stripe is a DISTINCT element
     /// from the attention border below - the pane border slot stays the glow's.
     broadcast_stripe: Option<usize>,
+    /// Ghostty-style unfocused dim: `true` when this pane is NOT the focused
+    /// one in a multi-pane workspace. Pushed idempotently by
+    /// [`crate::layout::LayoutTree::sync_unfocused_dim`] - never mutated
+    /// locally, so focus stays the single source of truth.
+    dimmed: bool,
+    /// Dim alpha the cross-fade starts from, snapshotted from
+    /// [`Self::dim_alpha`] at the instant [`Self::set_dimmed`] flips, so an
+    /// interrupted fade resumes from the pixel that is actually on screen
+    /// instead of snapping back to the previous endpoint.
+    dim_from: f32,
+    /// Live dim alpha, shared with the animation closure (which runs outside
+    /// `&mut self`) so the next flip can read where the fade got to.
+    dim_alpha: Rc<Cell<f32>>,
+    /// Bumped on every [`Self::set_dimmed`] flip; keys the animation
+    /// `ElementId` so GPUI restarts the ease instead of resuming the old one.
+    dim_seq: usize,
 }
 
 impl EventEmitter<PaneEvent> for Pane {}
@@ -442,6 +465,10 @@ impl Pane {
             composer_slot: None,
             pending_prefill: std::collections::HashSet::new(),
             broadcast_stripe: None,
+            dimmed: false,
+            dim_from: 0.0,
+            dim_alpha: Rc::new(Cell::new(0.0)),
+            dim_seq: 0,
         }
     }
 
@@ -495,6 +522,10 @@ impl Pane {
             composer_slot: None,
             pending_prefill: std::collections::HashSet::new(),
             broadcast_stripe: None,
+            dimmed: false,
+            dim_from: 0.0,
+            dim_alpha: Rc::new(Cell::new(0.0)),
+            dim_seq: 0,
         }
     }
 
@@ -565,6 +596,20 @@ impl Pane {
             self.pending_prefill = pending;
             cx.notify();
         }
+    }
+
+    /// Set/clear this pane's unfocused dim. Idempotent push from
+    /// [`crate::layout::LayoutTree::sync_unfocused_dim`]: it repaints only on
+    /// a real flip, and snapshots the live alpha first so an interrupted
+    /// cross-fade resumes from what is on screen.
+    pub fn set_dimmed(&mut self, dimmed: bool, cx: &mut Context<Self>) {
+        if self.dimmed == dimmed {
+            return;
+        }
+        self.dim_from = self.dim_alpha.get();
+        self.dim_seq = self.dim_seq.wrapping_add(1);
+        self.dimmed = dimmed;
+        cx.notify();
     }
 
     /// EP-001 US-002: set/clear the broadcast-group stripe color slot.
@@ -2658,11 +2703,68 @@ impl Render for Pane {
             Some(TabContent::Diff(d)) => d.clone().into_any_element(),
             None => div().size_full().into_any_element(),
         };
+        let theme = crate::theme::active_theme();
         let content_background = pane_content_background(
-            &crate::theme::active_theme(),
+            &theme,
             self.cached_config.windows_terminal_material_enabled(),
             terminal_selected,
         );
+
+        // Unfocused-pane dim (Ghostty `unfocused-split-opacity`, rebuilt as a
+        // single layer instead of one per apprt): a plain compositing quad over
+        // this pane's content, never a renderer or GPU effect. It sits inside
+        // `content`, so the tab bar, the US-018 attention glow, the peek badge,
+        // the broadcast stripe and the Composer all stay at full contrast - the
+        // dim only ever touches terminal/markdown/diff output. It carries no
+        // `id` and no handlers, so GPUI inserts no hitbox for it and it cannot
+        // swallow a click (Ghostty needs three explicit opt-outs for this).
+        //
+        // The Composer steals focus from the pane it is attached to, so a pane
+        // hosting one is never dimmed even though it reads as unfocused.
+        // `resolved_unfocused_pane_dim_alpha` already inverts opacity -> alpha
+        // once, in the config crate; nothing here re-derives `1 - x`.
+        let dim_target = if self.dimmed && self.composer_slot.is_none() {
+            self.cached_config.resolved_unfocused_pane_dim_alpha()
+        } else {
+            0.0
+        };
+        let dim_fill = theme.background;
+        let dim_from = self.dim_from;
+        let dim_live = self.dim_alpha.clone();
+        let dim_layer = (dim_target > PANE_DIM_EPSILON || self.dim_alpha.get() > PANE_DIM_EPSILON)
+            .then(|| {
+                let distance = (dim_target - dim_from).abs();
+                if self.dim_seq == 0 || distance <= f32::EPSILON {
+                    dim_live.set(dim_target);
+                    return div()
+                        .absolute()
+                        .inset_0()
+                        .bg(dim_fill.opacity(dim_target))
+                        .into_any_element();
+                }
+                let anim_id = SharedString::from(format!(
+                    "pane-dim-{}-{}",
+                    cx.entity().entity_id().as_u64(),
+                    self.dim_seq
+                ));
+                let duration = Duration::from_secs_f32(
+                    Duration::from_millis(PANE_DIM_FADE_MS).as_secs_f32() * distance,
+                );
+                div()
+                    .absolute()
+                    .inset_0()
+                    .with_animation(
+                        anim_id,
+                        Animation::new(duration).with_easing(ease_out_quint()),
+                        move |layer, delta| {
+                            let alpha =
+                                (dim_from + (dim_target - dim_from) * delta).clamp(0.0, 1.0);
+                            dim_live.set(alpha);
+                            layer.bg(dim_fill.opacity(alpha))
+                        },
+                    )
+                    .into_any_element()
+            });
 
         // EP-003 drop-to-split: the content region hosts the drag-move
         // direction probe, the drop commit, and the blue preview overlay.
@@ -2865,6 +2967,10 @@ impl Render for Pane {
                 },
             ))
             .child(body)
+            // Between the content and the drop preview: the blue drop overlay
+            // and every chrome element above stay crisp while a drag is in
+            // flight.
+            .children(dim_layer)
             .child(overlay);
 
         // The blue active-pane focus ring is removed (Arthur): no border tint on

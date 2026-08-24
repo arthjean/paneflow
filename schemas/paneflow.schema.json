@@ -68,6 +68,13 @@
       "maximum": 2.0,
       "default": 0.6
     },
+    "unfocused_pane_opacity": {
+      "type": ["number", "null"],
+      "description": "Opacity of panes that do not hold focus, when a workspace has more than one pane. 1.0 disables the dim. Default 0.7.",
+      "minimum": 0.15,
+      "maximum": 1.0,
+      "default": 0.7
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",

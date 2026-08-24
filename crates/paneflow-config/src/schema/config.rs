@@ -45,6 +45,12 @@ pub struct PaneFlowConfig {
     /// AppKit's native Sidebar material. Other platforms ignore this field.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub macos_chrome_material: Option<bool>,
+    /// Opacity of panes that do not hold focus, when the workspace holds more
+    /// than one pane (default: 0.7, valid range: 0.15-1.0). `1.0` disables the
+    /// effect. Rendered as a single compositing layer over the pane content, so
+    /// it never touches the terminal renderer.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub unfocused_pane_opacity: Option<f32>,
     /// Terminal line height multiplier (default: 1.2, valid range: 1.0-2.5).
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
@@ -309,6 +315,17 @@ impl PaneFlowConfig {
     /// the clipboard fallback already covers the long tail.
     pub const MAX_REVIEW_PREFILL_DELAY_MS: u64 = 10_000;
 
+    /// Default opacity of an unfocused pane. Matches Ghostty's
+    /// `unfocused-split-opacity` default: enough contrast to read focus at a
+    /// glance without making background agent output unreadable.
+    pub const DEFAULT_UNFOCUSED_PANE_OPACITY: f32 = 0.7;
+    /// Lower bound: below this the unfocused pane is effectively blanked and
+    /// streaming agent output can no longer be monitored out of the corner of
+    /// the eye.
+    pub const MIN_UNFOCUSED_PANE_OPACITY: f32 = 0.15;
+    /// Upper bound and off switch: `1.0` paints no dim layer at all.
+    pub const MAX_UNFOCUSED_PANE_OPACITY: f32 = 1.0;
+
     /// EP-001 US-001 (agent-control-plane-hardening): default paste->submit
     /// floor. 70 ms sits in the middle of the 60-80 ms band that reliably lets
     /// Claude Code / Codex finish buffering a bracketed paste before the `\r`.
@@ -433,6 +450,35 @@ impl PaneFlowConfig {
             );
         }
         clamped
+    }
+
+    /// Resolve the alpha of the dim layer painted over unfocused panes.
+    ///
+    /// This is the single point where the configured *opacity* is inverted into
+    /// a *fill alpha*, so no caller can get the direction wrong: `0.7` opacity
+    /// yields a `0.3` overlay, and `1.0` yields `0.0` (no layer). Non-finite
+    /// values fall back to the default; out-of-range values are clamped with a
+    /// `warn!`.
+    pub fn resolved_unfocused_pane_dim_alpha(&self) -> f32 {
+        let raw = self
+            .unfocused_pane_opacity
+            .filter(|value| value.is_finite())
+            .unwrap_or(Self::DEFAULT_UNFOCUSED_PANE_OPACITY);
+        let clamped = raw.clamp(
+            Self::MIN_UNFOCUSED_PANE_OPACITY,
+            Self::MAX_UNFOCUSED_PANE_OPACITY,
+        );
+        if clamped != raw {
+            tracing::warn!(
+                target: "paneflow_config::appearance",
+                requested = raw,
+                clamped,
+                "unfocused_pane_opacity out of range [{min}, {max}], clamped",
+                min = Self::MIN_UNFOCUSED_PANE_OPACITY,
+                max = Self::MAX_UNFOCUSED_PANE_OPACITY,
+            );
+        }
+        1.0 - clamped
     }
 
     /// EP-003 US-008 (agent-control-plane): resolve the AI free-access master

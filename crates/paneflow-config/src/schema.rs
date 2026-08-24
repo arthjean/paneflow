@@ -80,6 +80,7 @@ mod tests {
             windows_terminal_material: Some(true),
             windows_chrome_material: Some(true),
             macos_chrome_material: Some(true),
+            unfocused_pane_opacity: Some(0.7),
             line_height: Some(1.2),
             cell_width: Some(0.6),
             font_family: Some("Geist Mono".to_string()),
@@ -461,6 +462,39 @@ mod tests {
             ..Default::default()
         };
         assert!(!raw_transparent.macos_chrome_material_enabled());
+    }
+
+    #[test]
+    fn unfocused_pane_dim_alpha_inverts_clamps_and_disables() {
+        // The accessor is the single point of inversion: opacity -> fill alpha.
+        assert!(
+            (PaneFlowConfig::default().resolved_unfocused_pane_dim_alpha() - 0.3).abs() < 1e-6,
+            "default 0.7 opacity must paint a 0.3 overlay"
+        );
+        // 1.0 is the off switch: no layer at all.
+        let cfg = PaneFlowConfig {
+            unfocused_pane_opacity: Some(1.0),
+            ..Default::default()
+        };
+        assert_eq!(cfg.resolved_unfocused_pane_dim_alpha(), 0.0);
+        // Below the floor clamps up to 0.15 opacity -> 0.85 overlay.
+        let cfg = PaneFlowConfig {
+            unfocused_pane_opacity: Some(-4.0),
+            ..Default::default()
+        };
+        assert!((cfg.resolved_unfocused_pane_dim_alpha() - 0.85).abs() < 1e-6);
+        // Above the ceiling clamps down to the off switch.
+        let cfg = PaneFlowConfig {
+            unfocused_pane_opacity: Some(12.0),
+            ..Default::default()
+        };
+        assert_eq!(cfg.resolved_unfocused_pane_dim_alpha(), 0.0);
+        // NaN falls back to the default instead of poisoning the layer alpha.
+        let cfg = PaneFlowConfig {
+            unfocused_pane_opacity: Some(f32::NAN),
+            ..Default::default()
+        };
+        assert!((cfg.resolved_unfocused_pane_dim_alpha() - 0.3).abs() < 1e-6);
     }
 
     #[test]

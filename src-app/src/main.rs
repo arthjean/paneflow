@@ -1748,6 +1748,10 @@ impl Render for PaneFlowApp {
                 let on_resize_end = std::rc::Rc::new(move |cx: &mut App| {
                     let _ = app_weak.update(cx, |app, cx| app.save_session(cx));
                 });
+                // Project focus onto the per-pane unfocused dim before the
+                // tree paints. GPUI repaints the window on every focus change
+                // and each write is idempotent, so a steady frame is a no-op.
+                root.sync_unfocused_dim(window, cx);
                 root.render(window, cx, Some(on_resize_end))
             } else {
                 div()

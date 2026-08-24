@@ -29,6 +29,34 @@ impl LayoutTree {
         }
     }
 
+    /// Push the Ghostty-style unfocused dim onto every leaf of this tree.
+    ///
+    /// Focus is the single source of truth: this is a pure projection of
+    /// "which leaf holds focus" onto per-pane state, so no call site has to
+    /// remember to clear a stale dim. Called once per frame from
+    /// `PaneFlowApp::render` (focus changes always repaint the window, and
+    /// GPUI has no window-level focus-changed hook here); every write is
+    /// idempotent, so a steady frame does nothing at all.
+    pub fn sync_unfocused_dim(&self, window: &Window, cx: &mut App) {
+        let leaves = self.collect_leaves();
+        let focused = leaves
+            .iter()
+            .position(|pane| pane.read(cx).focus_handle(cx).is_focused(window));
+        match dim_policy(leaves.len(), focused) {
+            DimPolicy::Keep => {}
+            DimPolicy::ClearAll => {
+                for pane in &leaves {
+                    pane.update(cx, |pane, cx| pane.set_dimmed(false, cx));
+                }
+            }
+            DimPolicy::DimAllExcept(idx) => {
+                for (i, pane) in leaves.iter().enumerate() {
+                    pane.update(cx, |pane, cx| pane.set_dimmed(i != idx, cx));
+                }
+            }
+        }
+    }
+
     /// Count the number of leaf (terminal) panes in the tree.
     pub fn leaf_count(&self) -> usize {
         match self {
@@ -116,5 +144,56 @@ impl LayoutTree {
                 children.last().and_then(|c| c.node.last_leaf())
             }
         }
+    }
+}
+
+/// Outcome of the unfocused-dim decision, split out from
+/// [`LayoutTree::sync_unfocused_dim`] so the policy is unit-testable without a
+/// GPUI window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DimPolicy {
+    /// A single pane has nothing to contrast against: never dim it.
+    ClearAll,
+    /// Dim every leaf except the one at this index.
+    DimAllExcept(usize),
+    /// Focus left the pane tree entirely (sidebar, settings, a fleet search
+    /// field). Keep the previous decision instead of flashing the whole
+    /// cockpit back to full brightness. This replaces Ghostty's
+    /// `lastFocusedSurface` bookkeeping: the last decision *is* the memory.
+    Keep,
+}
+
+/// Pure dim policy: see [`DimPolicy`].
+pub(crate) fn dim_policy(leaf_count: usize, focused: Option<usize>) -> DimPolicy {
+    if leaf_count < 2 {
+        return DimPolicy::ClearAll;
+    }
+    match focused {
+        Some(idx) => DimPolicy::DimAllExcept(idx),
+        None => DimPolicy::Keep,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DimPolicy, dim_policy};
+
+    #[test]
+    fn dim_policy_never_dims_a_lone_pane() {
+        assert_eq!(dim_policy(0, None), DimPolicy::ClearAll);
+        assert_eq!(dim_policy(1, Some(0)), DimPolicy::ClearAll);
+        assert_eq!(dim_policy(1, None), DimPolicy::ClearAll);
+    }
+
+    #[test]
+    fn dim_policy_dims_every_pane_but_the_focused_one() {
+        assert_eq!(dim_policy(3, Some(1)), DimPolicy::DimAllExcept(1));
+        assert_eq!(dim_policy(2, Some(0)), DimPolicy::DimAllExcept(0));
+    }
+
+    #[test]
+    fn dim_policy_is_sticky_when_focus_leaves_the_tree() {
+        // Clicking the sidebar or opening Settings must not undim everything.
+        assert_eq!(dim_policy(4, None), DimPolicy::Keep);
     }
 }

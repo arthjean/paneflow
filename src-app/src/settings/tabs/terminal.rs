@@ -198,7 +198,7 @@ impl PaneFlowApp {
         let display_card = setting_card(ui)
             .child(self.terminal_font_family_row(current_font, ui, cx))
             .child(hairline(ui))
-            .child(self.terminal_stepper_row(
+            .child(self.settings_stepper_row(
                 "term-font-size",
                 "Font size",
                 "Terminal font size in points (8-32). Hot-reloads.",
@@ -212,7 +212,7 @@ impl PaneFlowApp {
                 cx,
             ))
             .child(hairline(ui))
-            .child(self.terminal_stepper_row(
+            .child(self.settings_stepper_row(
                 "term-line-height",
                 "Line height",
                 "Terminal line-height multiplier (1.0-2.5). Hot-reloads.",
@@ -226,7 +226,7 @@ impl PaneFlowApp {
                 cx,
             ))
             .child(hairline(ui))
-            .child(self.terminal_stepper_row(
+            .child(self.settings_stepper_row(
                 "term-cell-width",
                 "Cell width",
                 "Terminal cell-width multiplier (0.3-2.0). Hot-reloads.",
@@ -752,7 +752,7 @@ impl PaneFlowApp {
     /// before being written, so it can never go out of range and never writes
     /// a float-precision-noisy value.
     #[allow(clippy::too_many_arguments)]
-    fn terminal_stepper_row(
+    pub(crate) fn settings_stepper_row(
         &self,
         id: &'static str,
         title: &'static str,
