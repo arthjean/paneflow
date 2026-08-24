@@ -2,10 +2,9 @@
 // view domain model. Many items here are deliberately "unused" until
 // follow-up stories activate them:
 // - ID counters + `bump_id_counters_to`: US-009 restore path.
-// - `project_from_session` / `thread_from_session` / `agent_kind_from_str`:
-//   US-009 restore from session.json.
-// - `Thread::new` / `Project::new` constructors: US-011 sidebar
-//   create-new affordances.
+// - `project_from_session` / `thread_from_session`: US-009 restore from
+//   session.json, including migration of legacy ACP rows.
+// - `Project::new`: US-011 sidebar create-new affordance.
 // - `ThreadStatus` non-`Idle` variants + `Thread::status`: US-013/US-015
 //   streaming state machine.
 //
@@ -30,7 +29,7 @@
 //! whole app crate into the same compile unit. Runtime types carry the
 //! richer enums and conversion helpers.
 
-use paneflow_acp::AgentKind;
+use crate::agent_launcher::TerminalAgent;
 use paneflow_config::schema::{AgentsTargetSession, ProjectSession, ThreadSession};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -236,33 +235,14 @@ impl ThreadStatus {
     }
 }
 
-/// What kind of surface a thread row drives in the main area. The
-/// Agents view is terminal-only since the in-app ACP chat was removed,
-/// so every live thread renders a `Terminal` PTY surface (launching the
-/// thread's [`crate::agent_launcher::TerminalAgent`] CLI). `Agent` is a
-/// legacy variant retained only so a pre-removal `session.json` (chat
-/// threads) still deserializes; those rows are routed through the same
-/// terminal path at render time and relaunch their original agent.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum ThreadKind {
-    /// Legacy chat thread restored from an older session. Rendered as a
-    /// terminal (relaunching the stored `agent`); never created anew.
-    #[default]
-    Agent,
-    /// A PTY surface in the thread's cwd, optionally auto-launching a
-    /// CLI agent (`terminal_agent`).
-    Terminal,
-}
-
 /// One persistent thread row in the Agents sidebar. A Terminal Thread:
 /// the PTY is the source of truth and only the sidebar metadata
-/// round-trips through session.json.
+/// round-trips through session.json. Legacy ACP rows are normalized into
+/// this shape while loading and never survive in the runtime model.
 #[derive(Debug, Clone)]
 pub struct Thread {
     pub id: u64,
     pub title: String,
-    pub agent: AgentKind,
-    pub kind: ThreadKind,
     pub status: ThreadStatus,
     pub cwd: String,
     pub created_at: u64,
@@ -273,11 +253,9 @@ pub struct Thread {
     /// rows); kept on the struct only so a pre-removal `session.json`
     /// round-trips its `store_id` field without data loss.
     pub store_id: Option<String>,
-    /// Which CLI coding agent a [`ThreadKind::Terminal`] thread launches
-    /// on first PTY mount. `None` for a bare shell (the plain
-    /// "New terminal thread" affordance + legacy Agent rows). Always
-    /// `None` for `ThreadKind::Agent`.
-    pub terminal_agent: Option<crate::agent_launcher::TerminalAgent>,
+    /// Which CLI coding agent this thread launches on first PTY mount.
+    /// `None` represents a bare shell.
+    pub terminal_agent: Option<TerminalAgent>,
     /// US-001 (Agents UI redesign): whether the user
     /// pinned this thread. Pinned threads (project threads and free chats
     /// alike) are surfaced in the rail's PINNED section. Round-trips through
@@ -312,37 +290,12 @@ pub struct Thread {
 }
 
 impl Thread {
-    /// Create a fresh thread with an auto-allocated ID and `Idle` status.
-    pub fn new(title: impl Into<String>, agent: AgentKind, cwd: impl Into<String>) -> Self {
-        Self {
-            id: next_thread_id(),
-            title: title.into(),
-            agent,
-            kind: ThreadKind::Agent,
-            status: ThreadStatus::Idle,
-            cwd: cwd.into(),
-            created_at: now_unix_millis(),
-            model: None,
-            mode: None,
-            store_id: None,
-            terminal_agent: None,
-            pinned: false,
-            agent_pid: None,
-            agent_proc_start: None,
-            session_id: None,
-            title_user_set: false,
-        }
-    }
-
     /// Create a fresh Terminal Thread bound to `terminal_agent` (the CLI
     /// auto-launched on first PTY mount, or `None` for a bare shell).
-    /// The `agent` slot is filled with a placeholder (`ClaudeCode`) that
-    /// the Terminal dispatch never consults - see [`ThreadKind`] for the
-    /// rationale.
     pub fn new_terminal(
         title: impl Into<String>,
         cwd: impl Into<String>,
-        terminal_agent: Option<crate::agent_launcher::TerminalAgent>,
+        terminal_agent: Option<TerminalAgent>,
     ) -> Self {
         // Mint a forced session UUID for agents that accept `--session-id`
         // (Claude only today). This binds the live thread to a known
@@ -354,8 +307,6 @@ impl Thread {
         Self {
             id: next_thread_id(),
             title: title.into(),
-            agent: AgentKind::ClaudeCode,
-            kind: ThreadKind::Terminal,
             status: ThreadStatus::Idle,
             cwd: cwd.into(),
             created_at: now_unix_millis(),
@@ -418,25 +369,28 @@ pub fn project_to_session(p: &Project) -> ProjectSession {
 /// runtime `status` is intentionally not persisted -- every thread
 /// restores as `Idle`; live state is rebuilt from hook/IPC events.
 pub fn thread_to_session(t: &Thread) -> ThreadSession {
+    // `agent` predates Terminal Threads and remains required on disk for old
+    // readers. Mirror the two legacy launchers when possible; newer agents and
+    // bare shells use the historical Claude placeholder that modern readers
+    // ignore in favor of `terminal_agent`.
+    let legacy_agent = match t.terminal_agent {
+        Some(TerminalAgent::ClaudeCode) => TerminalAgent::ClaudeCode.tag(),
+        Some(TerminalAgent::Codex) => TerminalAgent::Codex.tag(),
+        _ => TerminalAgent::ClaudeCode.tag(),
+    };
     ThreadSession {
         id: t.id,
         title: clean_sidebar_title(&t.title).unwrap_or_else(|| "Terminal".to_string()),
-        agent: agent_kind_to_str(t.agent).to_string(),
+        agent: legacy_agent.to_string(),
         cwd: t.cwd.clone(),
         created_at: t.created_at,
         model: t.model.clone(),
         mode: t.mode.clone(),
-        // `store_id` is set by US-011's create-thread side-effect
-        // (after inserting the `threads.db` row). Restoring a thread
-        // from session without a `store_id` is legal -- the cascade
-        // delete checks for `Some` before calling the store.
+        // Preserve the removed chat store's foreign key for old session files.
+        // Terminal Threads never consult it, but dropping it during a
+        // read-write cycle would make the compatibility migration lossy.
         store_id: t.store_id.clone(),
-        // None for the legacy Agent kind so pre-Terminal-Thread
-        // session.json files round-trip byte-identically.
-        kind: match t.kind {
-            ThreadKind::Agent => None,
-            ThreadKind::Terminal => Some(THREAD_KIND_TAG_TERMINAL.to_string()),
-        },
+        kind: Some(THREAD_KIND_TAG_TERMINAL.to_string()),
         terminal_agent: t.terminal_agent.map(|a| a.tag().to_string()),
         // US-001: persist the pin flag so a restart restores the
         // PINNED section.
@@ -449,10 +403,8 @@ pub fn thread_to_session(t: &Thread) -> ThreadSession {
     }
 }
 
-/// Inverse of [`project_to_session`]. Unknown `agent` strings are
-/// dropped (the thread is skipped) -- the AC says "OpenCode
-/// deliberately excluded for v1", so any future tag we don't yet
-/// recognise should surface as a missing thread, not a crash.
+/// Inverse of [`project_to_session`]. Legacy ACP rows with unknown `agent`
+/// strings are dropped rather than restored with an ambiguous launcher.
 pub fn project_from_session(s: &ProjectSession) -> Project {
     let mut remaining_threads = usize::MAX;
     project_from_session_with_budget(s, &mut remaining_threads)
@@ -503,21 +455,19 @@ pub fn thread_from_session_with_budget(
     Some(thread)
 }
 
-/// Inverse of [`thread_to_session`]. Returns `None` on unknown agent
-/// tag (forward-compat for a future v1.x where OpenCode lands).
-/// Terminal-kind rows ignore the `agent` field entirely (it carries a
-/// placeholder on disk for forward-compat with pre-Terminal-Thread
-/// readers, see `THREAD_KIND_TAG_TERMINAL`).
+/// Inverse of [`thread_to_session`]. Rows without the terminal discriminant
+/// use the legacy `agent` tag and are normalized immediately into a Terminal
+/// Thread. Returns `None` when that legacy tag is unknown.
 pub fn thread_from_session(s: &ThreadSession) -> Option<Thread> {
-    let kind = match s.kind.as_deref() {
-        Some(THREAD_KIND_TAG_TERMINAL) => ThreadKind::Terminal,
-        Some(_) | None => ThreadKind::Agent,
-    };
-    let agent = match kind {
-        ThreadKind::Agent => agent_kind_from_str(&s.agent)?,
-        // Terminal threads never dispatch through the agent path; the
-        // placeholder keeps the struct shape uniform.
-        ThreadKind::Terminal => AgentKind::ClaudeCode,
+    let terminal_agent = match s.kind.as_deref() {
+        Some(THREAD_KIND_TAG_TERMINAL) => s
+            .terminal_agent
+            .as_deref()
+            .and_then(TerminalAgent::from_tag),
+        // `None` is the pre-Terminal-Thread representation. Unknown future
+        // discriminants preserve the previous fallback behavior by using the
+        // legacy tag rather than ghosting a row with a known launcher.
+        Some(_) | None => Some(TerminalAgent::from_tag(&s.agent)?),
     };
     // Strip leading spinner/bullet decoration that CLI agents may
     // have baked into the title when it was last persisted (Claude
@@ -528,18 +478,13 @@ pub fn thread_from_session(s: &ThreadSession) -> Option<Thread> {
     Some(Thread {
         id: s.id,
         title,
-        agent,
-        kind,
         status: ThreadStatus::default(),
         cwd: s.cwd.clone(),
         created_at: s.created_at,
         model: s.model.clone(),
         mode: s.mode.clone(),
         store_id: s.store_id.clone(),
-        terminal_agent: s
-            .terminal_agent
-            .as_deref()
-            .and_then(crate::agent_launcher::TerminalAgent::from_tag),
+        terminal_agent,
         // US-001: a pre-refonte ThreadSession defaults `pinned = false`
         // via `#[serde(default)]`, so this restores cleanly.
         pinned: s.pinned,
@@ -558,9 +503,8 @@ pub fn thread_from_session(s: &ThreadSession) -> Option<Thread> {
     })
 }
 
-/// On-disk discriminant for [`ThreadKind::Terminal`] in
-/// `ThreadSession::kind`. Lives in its own constant so the round-trip
-/// helpers and the affordance handlers agree on the literal.
+/// On-disk discriminant for the canonical terminal runtime shape. Legacy rows
+/// omit it and are migrated at the persistence boundary.
 pub const THREAD_KIND_TAG_TERMINAL: &str = "terminal";
 
 /// Strip leading decoration glyphs and invisible characters that CLI
@@ -659,23 +603,6 @@ fn is_title_meaningful_lead(c: char) -> bool {
             // Currency
             | '\u{00A3}' | '\u{00A5}' | '\u{20AC}' // £ ¥ €
         )
-}
-
-/// Canonical string tag for an [`AgentKind`]. Stable on-disk format
-/// for `ThreadSession::agent`.
-pub fn agent_kind_to_str(kind: AgentKind) -> &'static str {
-    match kind {
-        AgentKind::ClaudeCode => "claude_code",
-        AgentKind::Codex => "codex",
-    }
-}
-
-pub fn agent_kind_from_str(tag: &str) -> Option<AgentKind> {
-    match tag {
-        "claude_code" => Some(AgentKind::ClaudeCode),
-        "codex" => Some(AgentKind::Codex),
-        _ => None,
-    }
 }
 
 fn now_unix_millis() -> u64 {
@@ -792,13 +719,16 @@ mod tests {
     #[test]
     fn project_roundtrip_through_session_shape() {
         let mut proj = Project::new("Paneflow", "/home/me/dev/paneflow");
-        proj.threads.push(Thread::new(
+        proj.threads.push(Thread::new_terminal(
             "First thread",
-            AgentKind::ClaudeCode,
             &proj.cwd,
+            Some(TerminalAgent::ClaudeCode),
         ));
-        proj.threads
-            .push(Thread::new("Second thread", AgentKind::Codex, &proj.cwd));
+        proj.threads.push(Thread::new_terminal(
+            "Second thread",
+            &proj.cwd,
+            Some(TerminalAgent::Codex),
+        ));
         proj.is_expanded = false;
 
         let session = project_to_session(&proj);
@@ -806,29 +736,67 @@ mod tests {
         assert_eq!(session.threads.len(), 2);
         assert_eq!(session.threads[0].agent, "claude_code");
         assert_eq!(session.threads[1].agent, "codex");
+        assert_eq!(session.threads[0].kind.as_deref(), Some("terminal"));
+        assert_eq!(session.threads[1].terminal_agent.as_deref(), Some("codex"));
         assert!(!session.is_expanded);
 
         let restored = project_from_session(&session);
         assert_eq!(restored.id, proj.id);
         assert_eq!(restored.title, proj.title);
         assert_eq!(restored.threads.len(), 2);
-        assert_eq!(restored.threads[0].agent, AgentKind::ClaudeCode);
-        assert_eq!(restored.threads[1].agent, AgentKind::Codex);
+        assert_eq!(
+            restored.threads[0].terminal_agent,
+            Some(TerminalAgent::ClaudeCode)
+        );
+        assert_eq!(
+            restored.threads[1].terminal_agent,
+            Some(TerminalAgent::Codex)
+        );
         // Status always restores Idle regardless of pre-save value.
         assert_eq!(restored.threads[0].status, ThreadStatus::Idle);
+    }
+
+    #[test]
+    fn legacy_agent_row_migrates_to_terminal_shape() {
+        let legacy = ThreadSession {
+            id: 7,
+            title: "Legacy Codex".to_string(),
+            agent: "codex".to_string(),
+            cwd: "/tmp".to_string(),
+            created_at: 0,
+            model: None,
+            mode: None,
+            store_id: Some("legacy-store".to_string()),
+            kind: None,
+            terminal_agent: None,
+            pinned: false,
+            session_id: None,
+            title_user_set: false,
+        };
+
+        let restored = thread_from_session(&legacy).expect("known legacy agent migrates");
+        assert_eq!(restored.terminal_agent, Some(TerminalAgent::Codex));
+        assert_eq!(restored.store_id.as_deref(), Some("legacy-store"));
+
+        let normalized = thread_to_session(&restored);
+        assert_eq!(normalized.kind.as_deref(), Some("terminal"));
+        assert_eq!(normalized.agent, "codex");
+        assert_eq!(normalized.terminal_agent.as_deref(), Some("codex"));
     }
 
     #[test]
     fn agents_target_round_trips_by_stable_ids() {
         let mut first = Project::new("First", "/tmp/first");
         first.id = 10;
-        let mut first_thread = Thread::new("First thread", AgentKind::ClaudeCode, &first.cwd);
+        let mut first_thread =
+            Thread::new_terminal("First thread", &first.cwd, Some(TerminalAgent::ClaudeCode));
         first_thread.id = 100;
         first.threads.push(first_thread);
 
         let mut second = Project::new("Second", "/tmp/second");
         second.id = 20;
-        let mut second_thread = Thread::new("Second thread", AgentKind::Codex, &second.cwd);
+        let mut second_thread =
+            Thread::new_terminal("Second thread", &second.cwd, Some(TerminalAgent::Codex));
         second_thread.id = 200;
         second.threads.push(second_thread);
 
@@ -894,7 +862,7 @@ mod tests {
             threads: vec![ThreadSession {
                 id: 1,
                 title: "Future thread".to_string(),
-                agent: "opencode".to_string(), // not in AgentKind yet
+                agent: "future-agent".to_string(),
                 cwd: "/tmp".to_string(),
                 created_at: 0,
                 model: None,
@@ -1072,14 +1040,5 @@ mod tests {
         // No regression: bumping to a smaller value is a no-op.
         bump_counter(&raw, 7);
         assert_eq!(raw.load(Ordering::Relaxed), 10);
-    }
-
-    #[test]
-    fn agent_kind_tags_are_bijective() {
-        for kind in AgentKind::all() {
-            let tag = agent_kind_to_str(kind);
-            assert_eq!(agent_kind_from_str(tag), Some(kind), "round-trip {tag}");
-        }
-        assert_eq!(agent_kind_from_str("nope"), None);
     }
 }

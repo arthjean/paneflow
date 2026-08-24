@@ -1128,16 +1128,7 @@ impl PaneFlowApp {
         // mints the id, every reopen reattaches to it. See
         // [`crate::agent_launcher::SessionBinding`].
         let thread_cwd = thread.cwd.clone();
-        // Explicit per-thread agent wins; legacy `Agent`-kind chat rows
-        // fall back to their stored ACP agent so reopening them launches
-        // the same CLI in a terminal. Plain Terminal Threads stay a bare
-        // shell (`None`).
-        let terminal_agent = thread.terminal_agent.or_else(|| match thread.kind {
-            crate::project::ThreadKind::Agent => Some(
-                crate::agent_launcher::TerminalAgent::from_agent_kind(thread.agent),
-            ),
-            crate::project::ThreadKind::Terminal => None,
-        });
+        let terminal_agent = thread.terminal_agent;
         let view = cx.new(|cx| {
             crate::terminal::view::TerminalView::with_cwd_and_profile(
                 crate::project::thread_env_id(thread_id),
@@ -2332,11 +2323,9 @@ fn open_agents_cwd_with_system_handler(path: &std::path::Path) -> Result<String,
 
 fn spawn_agents_editor(path: &std::path::Path, command: &str, label: &str) -> Result<(), String> {
     let bin = crate::app::workspace_ops::resolve_editor_binary(command);
-    std::process::Command::new(&bin)
-        .current_dir(path)
-        .arg(".")
-        .spawn()
-        .map(|_| ())
+    let mut cmd = std::process::Command::new(&bin);
+    cmd.current_dir(path).arg(".");
+    paneflow_process::spawn_detached(&mut cmd)
         .map_err(|err| format!("Couldn't open in {label}: {err}"))
 }
 

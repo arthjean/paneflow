@@ -19,7 +19,6 @@ default = ["libghostty-linux", "libghostty-windows"]
 # The target-specific dependencies keep it inert on macOS/Windows.
 # Enabling it never clones or downloads from build.rs.
 libghostty-linux = [
-    "dep:paneflow-terminal-ghostty",
     "dep:portable-pty",
     "paneflow-terminal-ghostty/native",
 ]
@@ -29,7 +28,6 @@ libghostty-linux = [
 # inert on Linux/macOS, and `--no-default-features` preserves an Alacritty-only
 # recovery build.
 libghostty-windows = [
-    "dep:paneflow-terminal-ghostty",
     "dep:portable-pty",
     "paneflow-terminal-ghostty/native",
 ]
@@ -93,9 +91,7 @@ polling = "3"
 
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
-# Legacy agent identity plus the CLAUDECODE env scrub. The terminal-only
-# Agents view no longer carries the in-app ACP chat or SDK wrapper here.
-paneflow-acp = { path = "../crates/paneflow-acp" }
+paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty" }
 # US-003: telemetry plumbing extracted to its own workspace crate so future
 # `paneflow-trust` member can emit events without pulling the desktop binary
 # into its dep graph.
@@ -292,7 +288,6 @@ x11rb = { version = "0.13.2", features = ["allow-unsafe-code"] }
 # Native host for the standard Linux Ghostty session backend. It remains absent
 # from macOS, Windows, and explicit Linux builds using --no-default-features.
 portable-pty = { version = "0.9.0", optional = true }
-paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", optional = true }
 
 # macOS: libproc powers detect_ports() (US-006) - walks per-PID socket FDs
 # via proc_pidinfo/proc_pidfdinfo wrappers. The macOS-only gate keeps it
@@ -321,7 +316,6 @@ objc = "0.2"
 # optional dependencies on that exact target lets the default feature remain
 # enabled while Windows ARM64 and GNU builds compile with the Alacritty path.
 [target.'cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))'.dependencies]
-paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", optional = true }
 portable-pty = { version = "0.9.0", optional = true }
 
 # Windows: windows-sys powers the TerminateProcess path in TerminalState::drop

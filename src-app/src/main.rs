@@ -1307,7 +1307,7 @@ struct PaneFlowApp {
     custom_buttons_modal: Option<app::custom_buttons_modal::CustomButtonsModal>,
     /// Focus handle routing key events to the custom-buttons modal while open.
     custom_buttons_modal_focus: FocusHandle,
-    /// Live telemetry handle (US-012/US-013). `Null` when consent is missing
+    /// Live telemetry handle (US-012/US-013). Disabled when consent is missing
     /// or `PANEFLOW_NO_TELEMETRY` is set - every `capture`/`flush` call is a
     /// no-op in that state, so callers never branch on consent.
     telemetry: std::sync::Arc<crate::telemetry::client::TelemetryClient>,
@@ -2427,9 +2427,9 @@ fn run_update_and_exit() -> i32 {
     log::info!("--update-and-exit: install method = {method:?}");
 
     // The harness MUST NOT emit telemetry - the test runs are not user
-    // sessions and would skew funnels. Use a Null client (no-op
+    // sessions and would skew funnels. Use a disabled client (no-op
     // capture, no HTTP).
-    let null_telemetry = crate::telemetry::client::TelemetryClient::Null;
+    let null_telemetry = crate::telemetry::client::TelemetryClient::disabled();
     let status = check_github_release(&null_telemetry);
     let (version, asset_url) = match status {
         UpdateStatus::Available {
@@ -2752,17 +2752,16 @@ fn main() {
     // thread exists.
     // SAFETY: this is still before env_logger, GPUI, IPC, config watchers,
     // async executors, and any app-owned thread.
-    unsafe { paneflow_acp::scrub_claudecode_env() };
+    unsafe { agents::parent_guard::scrub_claudecode_env_before_threads() };
 
     // Quiet by default: a plain `cargo run` (or a shipped binary) shows only
     // warnings + errors. `RUST_LOG=info` restores the startup/runtime
     // diagnostics (GPU selection, IPC, session restore, …) and `RUST_LOG=debug`
     // adds the per-operation diff/git trace - matching the documented
     // "RUST_LOG=info cargo run # with logging" workflow.
-    env_logger::Builder::from_env(
-        env_logger::Env::default()
-            .default_filter_or("warn,wgpu_hal=off,naga=warn,zbus=warn,tracing::span=warn"),
-    )
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(
+        "warn,wgpu_hal=off,naga=warn,zbus=warn,zbus::proxy=error,tracing::span=warn",
+    ))
     .init();
 
     // US-003: install the process-wide kill-on-parent-death guard BEFORE any

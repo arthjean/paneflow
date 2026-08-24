@@ -18,9 +18,8 @@ pub(crate) struct ReviewTerminal {
     pub(crate) prompt: Option<String>,
 }
 
-/// A CLI coding agent Paneflow can launch in a terminal for a review. Unlike the
-/// ACP layer (Claude Code + Codex only), the terminal path supports every CLI -
-/// it just spawns the binary in a shell.
+/// A CLI coding agent Paneflow can launch in a terminal for a review. This
+/// focused picker exposes the four review integrations supported by this view.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ReviewCli {
     ClaudeCode,

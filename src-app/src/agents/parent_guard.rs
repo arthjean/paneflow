@@ -15,8 +15,8 @@
 //!   Paneflow after that point inherits the job by default. A narrowly
 //!   scoped exception exists for explicit `CREATE_BREAKAWAY_FROM_JOB`
 //!   children, used by the MSI self-update relay that must survive the
-//!   current GUI process exiting. Normal agent paths (`paneflow-acp`,
-//!   `portable-pty`) do not request breakaway. When Paneflow exits, the
+//!   current GUI process exiting. Normal agent and PTY paths do not request
+//!   breakaway. When Paneflow exits, the
 //!   last job handle is closed and Windows kills every member -- agent
 //!   CLI, ConPTY host, descendants.
 //!
@@ -27,12 +27,29 @@
 //!   installs `prctl(PR_SET_PDEATHSIG)` on Linux and a parent-death
 //!   watcher on macOS before it waits on the real agent binary. Raw PTY
 //!   shells are covered by a tiny per-PTY watcher process launched through
-//!   [`spawn_pty_guard`]. The remaining gap is spawn paths hidden behind
-//!   another API, notably `paneflow-acp::spawn`, until those surfaces expose
-//!   a child pre-exec hook or equivalent parent-death API.
+//!   [`spawn_pty_guard`].
 
 #[cfg(unix)]
 use std::process::{ChildStdin, Command, Stdio};
+
+const CLAUDECODE_ENV: &str = "CLAUDECODE";
+
+/// Remove Claude Code's nesting marker from the process environment before
+/// any worker thread or PTY backend starts. Alacritty 0.26 inherits the parent
+/// environment and does not expose arbitrary `env_remove` entries, so this
+/// process-level guard remains necessary until that spawn boundary can own the
+/// exclusion directly.
+///
+/// # Safety
+///
+/// Must run before any other thread, async runtime, or foreign library can
+/// concurrently read environment variables.
+pub(crate) unsafe fn scrub_claudecode_env_before_threads() {
+    // SAFETY: delegated to the caller by this function's contract.
+    unsafe {
+        std::env::remove_var(CLAUDECODE_ENV);
+    }
+}
 
 #[cfg(unix)]
 pub const PTY_GUARD_SUBCOMMAND: &str = "__paneflow-pty-guard";
@@ -88,8 +105,8 @@ pub fn install_process_job() -> Result<ParentGuardStatus, Box<dyn std::error::Er
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // Unsupported on Linux + macOS until paneflow-acp and portable-pty
-        // expose a pre_exec hook; see the module-level docstring.
+        // Unix has no process-wide equivalent to a Windows Job Object; PTY
+        // shells and shim-wrapped agents install per-child guards instead.
         Ok(ParentGuardStatus::Unsupported)
     }
 }

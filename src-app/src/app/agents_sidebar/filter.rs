@@ -194,16 +194,16 @@ pub(crate) fn match_positions(haystack: &str, lowered_needle: &str) -> Option<(u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_launcher::TerminalAgent;
     use crate::project::Project;
-    use paneflow_acp::AgentKind;
 
     fn project_with_threads(title: &str, titles: &[&str]) -> Project {
         let mut p = Project::new(title, "/tmp");
         for t in titles {
-            p.threads.push(crate::project::Thread::new(
+            p.threads.push(crate::project::Thread::new_terminal(
                 *t,
-                AgentKind::ClaudeCode,
                 "/tmp",
+                Some(TerminalAgent::ClaudeCode),
             ));
         }
         p

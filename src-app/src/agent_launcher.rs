@@ -63,10 +63,6 @@ impl<'a> SessionBinding<'a> {
 }
 
 /// One of the CLI coding agents Paneflow can launch in a terminal.
-///
-/// Distinct from [`paneflow_acp::AgentKind`] (Claude/Codex only, the ACP
-/// wire agents): this is the broader set surfaced as terminal launchers
-/// and bound to Agents-view Terminal Threads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TerminalAgent {
     ClaudeCode,
@@ -231,16 +227,6 @@ impl TerminalAgent {
             TerminalAgent::Factory => "factory",
             TerminalAgent::Qoder => "qoder",
             TerminalAgent::Openclaw => "openclaw",
-        }
-    }
-
-    /// Map an ACP [`paneflow_acp::AgentKind`] (Claude/Codex only) to its
-    /// terminal launcher. Used to relaunch legacy chat threads (which
-    /// stored an `AgentKind`) as terminal sessions of the same agent.
-    pub fn from_agent_kind(kind: paneflow_acp::AgentKind) -> TerminalAgent {
-        match kind {
-            paneflow_acp::AgentKind::ClaudeCode => TerminalAgent::ClaudeCode,
-            paneflow_acp::AgentKind::Codex => TerminalAgent::Codex,
         }
     }
 

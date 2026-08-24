@@ -23,12 +23,9 @@
 //! See US-007 of `tasks/prd-agents-view.md`.
 
 use gpui::Context;
-use paneflow_acp::AgentKind;
 
 use crate::PaneFlowApp;
-use crate::project::{
-    AgentsTarget, Project, Thread, ThreadStatus, next_project_id, next_thread_id,
-};
+use crate::project::{AgentsTarget, Project, Thread, next_project_id};
 
 /// Hard caps from the PRD's Non-Functional Requirements: at most 50
 /// projects per session and 100 threads per project. Exceeding either
@@ -103,8 +100,7 @@ impl PaneFlowApp {
     }
 
     /// Close the project at `idx`. Adjusts `active_project_idx` to
-    /// stay in range. Returns the removed project (so a caller can
-    /// cascade-delete its threads from `paneflow-threads`).
+    /// stay in range and returns the removed project.
     pub(crate) fn close_project(
         &mut self,
         idx: usize,
@@ -198,58 +194,8 @@ impl PaneFlowApp {
         Ok(())
     }
 
-    /// Add a thread to the project at `project_idx`. The thread is
-    /// always added to the end of the project's list (the sidebar
-    /// will sort by `updated_at DESC` at render time via the threads
-    /// DB query -- US-010). Returns the new thread's ID.
-    pub(crate) fn add_thread(
-        &mut self,
-        project_idx: usize,
-        title: impl Into<String>,
-        agent: AgentKind,
-        cx: &mut Context<Self>,
-    ) -> Result<u64, OpError> {
-        let project = self
-            .projects
-            .get_mut(project_idx)
-            .ok_or(OpError::ProjectNotFound)?;
-        if project.threads.len() >= MAX_THREADS_PER_PROJECT {
-            return Err(OpError::ThreadLimitReached);
-        }
-        let thread = Thread {
-            id: next_thread_id(),
-            title: title.into(),
-            agent,
-            kind: crate::project::ThreadKind::Agent,
-            status: ThreadStatus::Idle,
-            cwd: project.cwd.clone(),
-            created_at: now_unix_millis(),
-            model: None,
-            mode: None,
-            // US-011: filled in by the affordance handler after the
-            // threads.db INSERT succeeds (the op layer stays
-            // persistence-agnostic so it can be unit-tested without
-            // a SQLite store).
-            store_id: None,
-            terminal_agent: None,
-            pinned: false,
-            agent_pid: None,
-            agent_proc_start: None,
-            // Legacy Agent-kind row (not a Terminal Thread): no forced
-            // session id, no manual-rename lock.
-            session_id: None,
-            title_user_set: false,
-        };
-        let id = thread.id;
-        project.threads.push(thread);
-        cx.notify();
-        Ok(id)
-    }
-
-    /// Append a Terminal Thread to `project_idx`. Same shape as
-    /// [`Self::add_thread`] but stamps [`crate::project::ThreadKind::Terminal`]
-    /// and never touches `threads.db` - the PTY is the source of truth
-    /// for Terminal Threads and no message rows exist to persist.
+    /// Append a Terminal Thread to `project_idx`. The PTY is the source of
+    /// truth and no message rows exist to persist.
     /// `terminal_agent` is the CLI auto-launched on first PTY mount
     /// (`None` for a bare shell).
     pub(crate) fn add_terminal_thread(
@@ -340,9 +286,7 @@ impl PaneFlowApp {
         Ok(())
     }
 
-    /// Remove a thread by index within the given project. Returns
-    /// the removed [`Thread`] so the caller can cascade-delete its
-    /// row from `paneflow-threads`.
+    /// Remove a thread by index within the given project and return it.
     pub(crate) fn remove_thread(
         &mut self,
         project_idx: usize,
@@ -431,13 +375,6 @@ pub(crate) fn chat_home_cwd() -> String {
                 .map(|p| p.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| ".".to_string())
-}
-
-fn now_unix_millis() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
