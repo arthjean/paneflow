@@ -10,6 +10,7 @@
 //! durable store does not accumulate orphan rows (AC #9).
 
 use gpui::{AppContext, Context, PathPromptOptions, Pixels, Point, Window};
+use paneflow_process::spawn_detached;
 
 use super::state::{AgentsContextMenu, AgentsDeleteTarget, AgentsRenameTarget};
 use crate::PaneFlowApp;
@@ -795,11 +796,9 @@ impl PaneFlowApp {
         let cwd = project.cwd.clone();
         let bin = resolve_editor_binary(command);
         let toast_label = editor_toast_label(label);
-        if let Err(err) = std::process::Command::new(&bin)
-            .current_dir(&cwd)
-            .arg(".")
-            .spawn()
-        {
+        let mut cmd = std::process::Command::new(&bin);
+        cmd.current_dir(&cwd).arg(".");
+        if let Err(err) = spawn_detached(&mut cmd) {
             log::warn!("agents-sidebar: open in {toast_label} failed: {err}");
             self.show_toast(format!("Couldn't open in {toast_label}: {err}"), cx);
         }

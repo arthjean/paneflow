@@ -585,6 +585,7 @@ fn run_native_command(
         paneflow_process::ProcError::Wait(e) => {
             anyhow::Error::new(e).context(format!("wait for {label}"))
         }
+        other => anyhow::Error::new(other).context(format!("run {label}")),
     })
 }
 

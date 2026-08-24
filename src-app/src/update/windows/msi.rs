@@ -184,9 +184,7 @@ fn install_with(msi_path: &Path, log_path: &Path, runner: &dyn Msiexec) -> Resul
                 "msiexec.exe not found in System32 or on PATH - Windows system install appears broken. Reinstall PaneFlow manually from the releases page."
                     .to_string(),
         })),
-        Err(MsiexecError::SpawnFailed(e)) => {
-            Err(e).context("spawn msiexec.exe")
-        }
+        Err(MsiexecError::RunFailed(e)) => Err(e).context("run msiexec.exe"),
         Err(MsiexecError::Timeout) => Err(anyhow::Error::new(UpdateError::Timeout)
             .context(format!("msiexec exceeded {}s deadline", MSIEXEC_TIMEOUT.as_secs()))),
         Err(MsiexecError::NonZeroExit { code }) => Err(map_exit_code(code, log_path)),
@@ -440,8 +438,8 @@ fn run_msiexec_for_relay(
             append_relay_log(relay_log_path, "msiexec.exe not found");
             RelayInstallResult { exit_code: 127 }
         }
-        Err(MsiexecError::SpawnFailed(err)) => {
-            append_relay_log(relay_log_path, &format!("spawn msiexec failed: {err:#}"));
+        Err(MsiexecError::RunFailed(err)) => {
+            append_relay_log(relay_log_path, &format!("run msiexec failed: {err:#}"));
             RelayInstallResult { exit_code: 1 }
         }
         Err(MsiexecError::Timeout) => {
@@ -1033,15 +1031,13 @@ fn map_exit_code(code: i32, log_path: &Path) -> anyhow::Error {
     }
 }
 
-/// Why `msiexec` failed. `NotFound` and `NonZeroExit` route to specific
-/// `UpdateError` variants; `SpawnFailed` is for the rare kernel-level
-/// spawn error (PROCESS_CREATE_FAILED etc.) that isn't semantically
-/// distinct from a generic I/O failure.
+/// Why `msiexec` failed. `NotFound`, `Timeout`, and `NonZeroExit` route to
+/// specific `UpdateError` variants; `RunFailed` retains the typed process cause.
 #[derive(Debug)]
 #[allow(dead_code)]
 enum MsiexecError {
     NotFound,
-    SpawnFailed(anyhow::Error),
+    RunFailed(anyhow::Error),
     Timeout,
     NonZeroExit { code: i32 },
 }
@@ -1063,9 +1059,9 @@ impl Msiexec for MsiexecProcessRunner {
     fn run_installer(&self, msi: &Path, log: &Path) -> std::result::Result<(), MsiexecError> {
         let msiexec = msiexec_exe().ok_or(MsiexecError::NotFound)?;
 
-        // Bound the native installer with the same process-tree runner used
-        // by other external tools. It drains pipes while enforcing a deadline,
-        // so `msiexec` cannot wedge the relay forever.
+        // Bound the native installer with the same process-tree runner used by
+        // other external tools. Capture overflow and timeout both terminate the
+        // run, so `msiexec` cannot wedge the relay forever.
         let mut cmd = Command::new(&msiexec);
         cmd.arg("/i")
             .arg(msi)
@@ -1076,10 +1072,7 @@ impl Msiexec for MsiexecProcessRunner {
         let out = paneflow_process::run_with_timeout(cmd, MSIEXEC_TIMEOUT, NATIVE_STDOUT_CAP)
             .map_err(|e| match e {
                 paneflow_process::ProcError::Timeout => MsiexecError::Timeout,
-                paneflow_process::ProcError::Spawn(err)
-                | paneflow_process::ProcError::Wait(err) => {
-                    MsiexecError::SpawnFailed(anyhow::Error::new(err))
-                }
+                other => MsiexecError::RunFailed(anyhow::Error::new(other)),
             })?;
 
         if out.status.success() {

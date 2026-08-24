@@ -23,6 +23,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use paneflow_process::spawn_detached;
+
 /// Family of recognised editor binaries, each with a distinct argv shape
 /// for "open at line and column".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,8 +247,8 @@ pub fn open_at_location(path: &Path, line: Option<u32>, col: Option<u32>) -> boo
 }
 
 fn try_spawn(bin: &str, args: &[String]) -> bool {
-    match Command::new(bin).args(args).spawn() {
-        Ok(_) => {
+    match spawn_detached(Command::new(bin).args(args)) {
+        Ok(()) => {
             log::info!("editor: spawned {bin} {args:?}");
             true
         }

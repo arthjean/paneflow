@@ -8,9 +8,15 @@ authors.workspace = true
 repository.workspace = true
 description = "Bounded external-process execution (wall-clock deadline + stdout cap) shared across Paneflow crates"
 
-# Zero external dependencies on purpose: this crate is a dependency of the
-# embedded `paneflow-shim`, so anything pulled in here inflates the shim binary
-# that ships inside the main executable (EP-002, US-005).
+# Keep platform process-tree handling behind target-specific dependencies. The
+# app already ships these Windows crates, while paneflow-shim does not depend on
+# paneflow-process.
+[target.'cfg(windows)'.dependencies]
+win32job = "2.0.3"
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_JobObjects",
+] }
 
 [lints]
 workspace = true
