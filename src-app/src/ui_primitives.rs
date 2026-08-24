@@ -13,6 +13,8 @@
 //! helpers only paint the shared skin and accept the dynamic bits as params,
 //! mirroring the established pattern in [`crate::settings::components`].
 
+pub(crate) mod squircle;
+
 use gpui::{
     AnimationExt, AnyElement, AnyView, App, Bounds, ClickEvent, CursorStyle, Div, Element,
     ElementId, FontWeight, GlobalElementId, Hsla, InspectorElementId, InteractiveElement,

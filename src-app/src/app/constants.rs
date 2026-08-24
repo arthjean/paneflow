@@ -17,21 +17,28 @@ pub(crate) const TITLE_BAR_CONTROL_SPACING: Pixels = px(12.);
 pub(crate) const TITLE_BAR_CONTROL_SIZE: Pixels = px(20.);
 /// Minimum title-bar height preserving an 8px inset around compact controls.
 pub(crate) const TITLE_BAR_MIN_HEIGHT: Pixels = px(36.);
-/// Inset between the window shell and the primary navigation card.
-pub(crate) const SIDEBAR_CARD_INSET: f32 = 4.;
-/// The primary navigation rails share the main panel's structural corner language.
-pub(crate) const SIDEBAR_CARD_CORNER_RADIUS: Pixels = WINDOW_CORNER_RADIUS;
-/// Inner CLI content inset. Combined with the pane's reserved 1px border,
-/// this places tabs and terminal cells 4px from the main panel edge.
+/// Inset between the window shell and the main panel.
+pub(crate) const PANEL_INSET: f32 = 4.;
+/// The main panel's structural corner language.
+pub(crate) const PANEL_CORNER_RADIUS: Pixels = WINDOW_CORNER_RADIUS;
+/// Corner radius of a single CLI pane card.
+///
+/// The card draws its corners as a superellipse rather than a circular arc
+/// (see [`crate::ui_primitives::squircle`]), and the two are not interchangeable
+/// at equal radius: a superellipse hugs the corner far more tightly at its
+/// midpoint, so it reads as noticeably less rounded than a circle of the same
+/// value. The radius is therefore the distance the corner runs *along the
+/// edge*, not its depth, and it has to be roughly 1.5x a circular radius to
+/// land on the same apparent roundness. That is what buys the softer
+/// silhouette: a long, gentle departure from the edge instead of a short arc.
+///
+/// This is larger than [`PANEL_CORNER_RADIUS`] by design - the cards are the
+/// foreground objects, and it is their corner the eye reads, not the shell's.
+pub(crate) const PANE_CARD_RADIUS: Pixels = px(20.);
+/// Inner CLI content inset, placing tabs and terminal cells this far from the
+/// pane card's edge. The card's hairline is painted as a path rather than
+/// reserved as a border, so it costs no layout and is not folded in here.
 pub(crate) const PANE_CONTENT_INSET: f32 = 3.;
-/// Windows Mica and macOS Sidebar material already supply theme-aware tints.
-/// The card remains fully transparent there so the material stays perceptible;
-/// its border still defines the inset surface.
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-const SIDEBAR_CARD_MATERIAL_OPACITY: f32 = 0.;
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-const SIDEBAR_CARD_MATERIAL_OPACITY: f32 = 0.84;
-
 /// Selected rows carry a stronger lift than hover rows so current navigation
 /// remains legible without a separate indicator. Linux precomposes these tints
 /// over the opaque chrome color; macOS and Windows keep their native material.
@@ -222,19 +229,6 @@ pub(crate) fn cockpit_chrome_background(
     }
 }
 
-/// Fill for the inset primary navigation card.
-///
-/// Linux uses a fully opaque surface. Windows and macOS expose their raw native
-/// materials, with the same opaque fallback when the material is off.
-pub(crate) fn primary_sidebar_card_background(surface: Hsla, material_active: bool) -> Hsla {
-    let opaque_surface = Hsla { a: 1.0, ..surface };
-    if cfg!(target_os = "linux") || !material_active {
-        opaque_surface
-    } else {
-        opaque_surface.opacity(SIDEBAR_CARD_MATERIAL_OPACITY)
-    }
-}
-
 /// Window-level backdrop behind the application chrome.
 ///
 /// This is what the rounded panel corners reveal in their clip notch, so it MUST
@@ -407,15 +401,6 @@ mod material_tests {
         );
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    #[test]
-    fn native_sidebar_card_exposes_raw_material() {
-        let surface = Hsla::from(gpui::rgb(0x212122));
-        let card = primary_sidebar_card_background(surface, true);
-
-        assert_eq!(card.a, 0., "the sidebar must not veil native material");
-    }
-
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_chrome_stays_opaque_when_material_is_requested() {
@@ -430,6 +415,5 @@ mod material_tests {
             cockpit_backdrop_background(light, true, true),
             Hsla { a: 1.0, ..light }
         );
-        assert_eq!(primary_sidebar_card_background(dark, true).a, 1.0);
     }
 }

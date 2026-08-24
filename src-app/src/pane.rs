@@ -25,6 +25,7 @@ use gpui::{
 use paneflow_config::schema::ButtonCommand;
 
 use crate::settings::components::with_alpha;
+use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 use crate::diff::DiffView;
@@ -78,15 +79,16 @@ fn tab_colors() -> crate::theme::UiColors {
     crate::theme::ui_colors()
 }
 
-fn tab_bar_background(theme: &crate::theme::TerminalTheme, terminal_material_active: bool) -> Hsla {
-    if terminal_material_active && cfg!(target_os = "windows") {
-        gpui::transparent_black()
-    } else {
-        theme.background
-    }
-}
-
-fn pane_content_background(
+/// Fill of the pane card.
+///
+/// The card is the only surface in the pane that paints a background: the tab
+/// strip, the content region and the terminal element are all transparent, so
+/// this single rounded quad is what the corners clip cleanly (GPUI does not
+/// clip a child's own background to its parent's radius).
+///
+/// Windows terminal material stays scoped to terminal tabs: there the card
+/// itself goes transparent so the Mica backdrop reads through the pane.
+fn pane_card_background(
     theme: &crate::theme::TerminalTheme,
     terminal_material_active: bool,
     terminal_selected: bool,
@@ -741,11 +743,16 @@ impl Pane {
                     .flex()
                     .flex_col()
                     .justify_end()
-                    .bg(gpui::hsla(0., 0., 0., 0.25))
                     .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                         cx.stop_propagation();
                         dismiss_backdrop(cx);
                     })
+                    // The scrim takes the card's silhouette so it does not
+                    // repaint the corners square over the pane behind it.
+                    .child(squircle_fill(
+                        crate::app::constants::PANE_CARD_RADIUS,
+                        gpui::hsla(0., 0., 0., 0.25),
+                    ))
                     .child(
                         div()
                             .id("composer-panel")
@@ -858,7 +865,6 @@ impl Pane {
         config: &paneflow_config::schema::PaneFlowConfig,
         cx: &mut Context<Self>,
     ) {
-        let terminal_material_active = config.windows_terminal_material_enabled();
         let integrated_glyphs_enabled = config
             .terminal
             .as_ref()
@@ -873,7 +879,6 @@ impl Pane {
             .and_then(|terminal| terminal.cursor_color.as_deref())
             .and_then(crate::terminal::view::hsla_from_hex_color);
         terminal.update(cx, |terminal, cx| {
-            terminal.set_terminal_material_active(terminal_material_active, cx);
             terminal.set_integrated_glyphs_enabled(integrated_glyphs_enabled, cx);
             terminal.set_color_emoji_enabled(color_emoji_enabled, cx);
             terminal.set_cursor_color_override(cursor_color_override, cx);
@@ -1684,32 +1689,22 @@ impl Pane {
     ) -> impl IntoElement {
         let tab_count = self.tabs.len();
         let ui = tab_colors();
-        let theme = crate::theme::active_theme();
         // Handle to this pane, captured once for the per-tab drag closures
         // (EP-001): same-pane vs cross-pane is decided by comparing the
         // drag's `source_pane` to this entity. `accent` tints the insertion
         // indicator drawn during a same-pane reorder hover.
         let self_entity = cx.entity();
         let accent = ui.accent;
-        // Tab strip uses the terminal background so it melts into the terminal
-        // body below it - one clean surface (Arthur). When Windows terminal
-        // material is enabled, the strip goes transparent too so the tab bar
-        // and terminal body share the same native backdrop.
-        let bar_bg = tab_bar_background(
-            &theme,
-            self.cached_config.windows_terminal_material_enabled(),
-        );
-
-        // Outer container: full-width, fixed height, tab_bar background. The
-        // chips are shorter than the bar, so center them vertically to float.
+        // Tab strip melts into the terminal body below it - one clean surface
+        // (Arthur). It paints nothing of its own: the pane card behind it owns
+        // the fill, which also keeps the card's top arcs intact.
         let bar = div()
             .flex()
             .flex_none()
             .flex_row()
             .items_center()
             .w_full()
-            .h(px(TAB_BAR_HEIGHT))
-            .bg(bar_bg);
+            .h(px(TAB_BAR_HEIGHT));
 
         // Scrollable tab area (Zed pattern: overflow_x_scroll on inner row)
         let highlight_entity = self_entity.clone();
@@ -2704,7 +2699,7 @@ impl Render for Pane {
             None => div().size_full().into_any_element(),
         };
         let theme = crate::theme::active_theme();
-        let content_background = pane_content_background(
+        let card_background = pane_card_background(
             &theme,
             self.cached_config.windows_terminal_material_enabled(),
             terminal_selected,
@@ -2736,11 +2731,11 @@ impl Render for Pane {
                 let distance = (dim_target - dim_from).abs();
                 if self.dim_seq == 0 || distance <= f32::EPSILON {
                     dim_live.set(dim_target);
-                    return div()
-                        .absolute()
-                        .inset_0()
-                        .bg(dim_fill.opacity(dim_target))
-                        .into_any_element();
+                    return squircle_fill(
+                        crate::app::constants::PANE_CARD_RADIUS,
+                        dim_fill.opacity(dim_target),
+                    )
+                    .into_any_element();
                 }
                 let anim_id = SharedString::from(format!(
                     "pane-dim-{}-{}",
@@ -2760,7 +2755,10 @@ impl Render for Pane {
                             let alpha =
                                 (dim_from + (dim_target - dim_from) * delta).clamp(0.0, 1.0);
                             dim_live.set(alpha);
-                            layer.bg(dim_fill.opacity(alpha))
+                            layer.child(squircle_fill(
+                                crate::app::constants::PANE_CARD_RADIUS,
+                                dim_fill.opacity(alpha),
+                            ))
                         },
                     )
                     .into_any_element()
@@ -2772,7 +2770,6 @@ impl Render for Pane {
         // only this pane's overlay reacts while a tab hovers its content.
         let group_name =
             SharedString::from(format!("pane-content-{}", cx.entity().entity_id().as_u64()));
-        let accent = tab_colors().accent;
 
         // Glide geometry: lerp the overlay from its previous region's rect to
         // the current one over a short ease, so the preview slides between
@@ -2942,7 +2939,6 @@ impl Render for Pane {
             .flex_1()
             .size_full()
             .overflow_hidden()
-            .bg(content_background)
             // US-007: map the cursor within the content bounds to a split edge.
             // Stays on `content` (full pane) - the overlay shrinks to a half
             // when `dir = Some(edge)`, so probing there would miss the cursor
@@ -2974,8 +2970,9 @@ impl Render for Pane {
             .child(overlay);
 
         // The blue active-pane focus ring is removed (Arthur): no border tint on
-        // focus. The 1px border is still reserved so the US-018 attention glow
-        // can paint without reflow.
+        // focus. The 1px border is the card's resting hairline, and doubles as
+        // the US-018 attention glow slot - the width never changes, so the glow
+        // paints without reflow.
         //
         // US-018 (orchestration-v2): a pane whose agent waits for input glows
         // with the attention color - amplify the waiting pane, never degrade
@@ -2985,17 +2982,22 @@ impl Render for Pane {
         let attention_color = tab_colors().vc_conflict;
         let peek = self.render_peek_overlay(cx);
         let composer = self.render_composer_overlay(cx);
+        let card_radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
             .flex()
             .flex_col()
             .size_full()
             .relative()
-            .border_1()
-            .border_color(if has_attention {
-                attention_color.opacity(0.7)
-            } else {
-                accent.opacity(0.)
-            })
+            .overflow_hidden()
+            // The pane is a floating card over the window shell. Its silhouette
+            // is a superellipse, which GPUI's `rounded()` cannot express, so the
+            // fill and the hairline are painted as paths under and over the
+            // subtree instead of as quad properties. Everything between them is
+            // transparent: this pair is the card.
+            //
+            // The hairline keeps the card separable from its neighbors even on
+            // themes whose shell and terminal colors coincide.
+            .child(squircle_fill(card_radius, card_background))
             .child(self.render_tab_bar(is_active, window, cx))
             .child(content)
             .children(peek)
@@ -3008,49 +3010,37 @@ impl Render for Pane {
                     div()
                         .absolute()
                         .left_0()
-                        .top_0()
-                        .bottom_0()
+                        .top(card_radius)
+                        .bottom(card_radius)
                         .w(px(3.))
                         .bg(tab_colors().group_color(idx)),
                 )
             })
+            .child(squircle_border(
+                card_radius,
+                px(1.),
+                if has_attention {
+                    attention_color.opacity(0.7)
+                } else {
+                    tab_colors().border
+                },
+            ))
             .children(composer)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        MAX_TAB_TITLE_LEN, pane_content_background, peek_badge_line, tab_bar_background,
-        truncate_tab_title,
-    };
+    use super::{MAX_TAB_TITLE_LEN, pane_card_background, peek_badge_line, truncate_tab_title};
 
     #[test]
-    fn terminal_material_scopes_tab_bar_to_windows() {
+    fn terminal_material_scopes_the_card_to_windows_terminal_tabs() {
         let theme = crate::theme::one_dark();
 
-        assert_eq!(tab_bar_background(&theme, false), theme.background);
-        if cfg!(target_os = "windows") {
-            assert_eq!(tab_bar_background(&theme, true).a, 0.0);
-        } else {
-            assert_eq!(tab_bar_background(&theme, true), theme.background);
-        }
-    }
+        assert_eq!(pane_card_background(&theme, true, false), theme.background);
+        assert_eq!(pane_card_background(&theme, false, true), theme.background);
 
-    #[test]
-    fn terminal_material_scopes_content_to_windows_terminal_tabs() {
-        let theme = crate::theme::one_dark();
-
-        assert_eq!(
-            pane_content_background(&theme, true, false),
-            theme.background
-        );
-        assert_eq!(
-            pane_content_background(&theme, false, true),
-            theme.background
-        );
-
-        let material = pane_content_background(&theme, true, true);
+        let material = pane_card_background(&theme, true, true);
         #[cfg(target_os = "windows")]
         assert_eq!(material.a, 0.0);
         #[cfg(not(target_os = "windows"))]

@@ -1,9 +1,9 @@
 dims 8.000x16.000 grid 12x4 off=0 hist=0 exited=None signal=None
-bg=hsla(0.6111,0.1304,0.1804,1.0000) thumb=hsla(0.6000,0.2096,0.6725,0.3000) link=hsla(0.4775,0.6000,0.5882,1.0000)
+bg=hsla(0.0000,0.0000,0.0000,0.0000) thumb=hsla(0.6000,0.2096,0.6725,0.3000) link=hsla(0.4775,0.6000,0.5882,1.0000)
 runs[1]:
   L0 C0 "ab" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal ul=false st=false
 rects[1]:
-  L0+1ln C0+2c hsla(0.6111,0.1304,0.1804,1.0000)
+  L0+1ln C0+2c hsla(0.0000,0.0000,0.0000,0.0000)
 blocks[0]:
 selection_rects[0]:
 search_rects[0]:

@@ -344,7 +344,6 @@ pub struct TerminalView {
     pub(super) scroll_multiplier: f32,
     /// Platform appearance switch: default terminal backgrounds become
     /// transparent so the native window material can show through.
-    pub(super) terminal_material_active: bool,
     /// Renderer switch: block elements use Paneflow's built-in quad renderer
     /// instead of font glyphs.
     pub(super) integrated_glyphs_enabled: bool,
@@ -469,13 +468,6 @@ impl TerminalView {
         self.needs_initial_clear
             .store(false, std::sync::atomic::Ordering::Relaxed);
         self.terminal.restore_scrollback(text);
-    }
-
-    pub(crate) fn set_terminal_material_active(&mut self, active: bool, cx: &mut Context<Self>) {
-        if self.terminal_material_active != active {
-            self.terminal_material_active = active;
-            cx.notify();
-        }
     }
 
     pub(crate) fn set_integrated_glyphs_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
@@ -1146,7 +1138,6 @@ impl TerminalView {
             default_cursor_shape,
             cursor_color_override,
             scroll_multiplier,
-            terminal_material_active: false,
             integrated_glyphs_enabled,
             color_emoji_enabled,
             copy_mode_active: false,
@@ -1952,7 +1943,6 @@ impl Render for TerminalView {
             search_rail_lines,
             self.default_cursor_shape,
             self.cursor_color_override,
-            self.terminal_material_active,
             self.integrated_glyphs_enabled,
             self.color_emoji_enabled,
             frame_metrics,

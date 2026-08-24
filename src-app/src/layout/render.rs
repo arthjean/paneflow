@@ -179,6 +179,10 @@ impl LayoutTree {
                         let ratio_before = children[divider_idx].ratio.clone();
                         let ratio_after = child.ratio.clone();
 
+                        // The band paints nothing: panes are cards and the gap
+                        // between them exposes the window shell. It still
+                        // reserves DIVIDER_PX on the main axis and keeps the
+                        // resize cursor plus the drag hitbox.
                         let divider_hit_margin = (DIVIDER_PX - DIVIDER_HIT_PX) / 2.0;
                         let divider = match dir {
                             SplitDirection::Horizontal => div()
@@ -186,29 +190,13 @@ impl LayoutTree {
                                 .w_full()
                                 .my(px(divider_hit_margin))
                                 .flex_shrink_0()
-                                .cursor_row_resize()
-                                .flex()
-                                .items_center()
-                                .child(
-                                    div()
-                                        .h(px(DIVIDER_PX))
-                                        .w_full()
-                                        .bg(crate::theme::ui_colors().border),
-                                ),
+                                .cursor_row_resize(),
                             SplitDirection::Vertical => div()
                                 .w(px(DIVIDER_HIT_PX))
                                 .h_full()
                                 .mx(px(divider_hit_margin))
                                 .flex_shrink_0()
-                                .cursor_col_resize()
-                                .flex()
-                                .justify_center()
-                                .child(
-                                    div()
-                                        .w(px(DIVIDER_PX))
-                                        .h_full()
-                                        .bg(crate::theme::ui_colors().border),
-                                ),
+                                .cursor_col_resize(),
                         };
 
                         #[cfg(test)]
@@ -529,7 +517,9 @@ mod tests {
 
     #[test]
     fn available_main_axis_excludes_fixed_dividers() {
-        assert!((available_main_axis_px(500.0, 3) - 492.0).abs() < f32::EPSILON);
+        assert!(
+            (available_main_axis_px(500.0, 3) - (500.0 - 2.0 * DIVIDER_PX)).abs() < f32::EPSILON
+        );
     }
 
     #[test]

@@ -56,7 +56,11 @@ pub enum LayoutTree {
     },
 }
 
-pub(super) const DIVIDER_PX: f32 = 4.0;
+/// Gap reserved between two sibling panes. Panes are floating cards, so this
+/// band paints nothing: it exposes the window shell behind the grid, and the
+/// same value is used as the grid's outer padding (`PANE_GUTTER_PX`).
+pub(super) const DIVIDER_PX: f32 = 8.0;
+/// Grab band for drag-to-resize, independent of the visual gap above.
 pub(super) const DIVIDER_HIT_PX: f32 = 7.0;
 /// Minimum pane size in pixels. No pane may be resized below this.
 pub(super) const MIN_PANE_SIZE: f32 = 80.0;
@@ -273,7 +277,8 @@ mod tests {
             container_size: Rc::new(Cell::new(0.0)),
         };
 
-        assert!((tree.min_main_axis_px(SplitDirection::Vertical) - 248.0).abs() < f32::EPSILON);
+        let expected = 3.0 * MIN_PANE_SIZE + 2.0 * DIVIDER_PX;
+        assert!((tree.min_main_axis_px(SplitDirection::Vertical) - expected).abs() < f32::EPSILON);
     }
 
     #[gpui::test]
@@ -289,7 +294,10 @@ mod tests {
         );
         let tree = LayoutTree::new_split(SplitDirection::Vertical, stacked, LayoutTree::Leaf(c));
 
-        assert!((tree.min_main_axis_px(SplitDirection::Vertical) - 164.0).abs() < f32::EPSILON);
-        assert!((tree.min_main_axis_px(SplitDirection::Horizontal) - 164.0).abs() < f32::EPSILON);
+        let expected = 2.0 * MIN_PANE_SIZE + DIVIDER_PX;
+        assert!((tree.min_main_axis_px(SplitDirection::Vertical) - expected).abs() < f32::EPSILON);
+        assert!(
+            (tree.min_main_axis_px(SplitDirection::Horizontal) - expected).abs() < f32::EPSILON
+        );
     }
 }

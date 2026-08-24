@@ -26,6 +26,11 @@ mod tree;
 pub use navigation::{FocusDirection, FocusNav};
 pub use tree::{LayoutTree, SplitDirection};
 
+/// Outer padding around the pane grid, matching the gap between two sibling
+/// panes so every card sits at the same distance from its neighbors and from
+/// the panel edge.
+pub(crate) const PANE_GUTTER_PX: f32 = tree::DIVIDER_PX;
+
 /// Hard cap on leaf panes in a single workspace. The persistence boundary and
 /// live mutation paths share one canonical value.
 pub(crate) use paneflow_config::schema::MAX_LAYOUT_LEAVES as MAX_PANES;

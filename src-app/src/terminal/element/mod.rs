@@ -202,7 +202,6 @@ fn resolved_cell_background(
     cell_bg: Color,
     flags: CellFlags,
     theme: &crate::theme::TerminalTheme,
-    terminal_material_active: bool,
 ) -> Hsla {
     let raw_bg = if flags.contains(CellFlags::INVERSE) {
         cell_fg
@@ -211,11 +210,9 @@ fn resolved_cell_background(
     };
 
     if matches!(raw_bg, Color::Named(NamedColor::Background)) {
-        if terminal_material_active {
-            gpui::transparent_black()
-        } else {
-            theme.ansi_background
-        }
+        // Default-background cells paint nothing: the pane card behind the
+        // element owns the fill, and only it is clipped to the card radius.
+        gpui::transparent_black()
     } else {
         terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme)
     }
@@ -427,7 +424,6 @@ struct CursorCellContext<'a> {
     desired_cols: usize,
     desired_rows: usize,
     theme: &'a crate::theme::TerminalTheme,
-    terminal_material_active: bool,
 }
 
 fn selection_marker_cursor(
@@ -454,13 +450,7 @@ fn selection_marker_cursor(
                 cell.flags.contains(CellFlags::BOLD) || cell.flags.contains(CellFlags::BOLD_ITALIC),
                 cell.flags.contains(CellFlags::ITALIC)
                     || cell.flags.contains(CellFlags::BOLD_ITALIC),
-                resolved_cell_background(
-                    cell.fg,
-                    cell.bg,
-                    cell.flags,
-                    ctx.theme,
-                    ctx.terminal_material_active,
-                ),
+                resolved_cell_background(cell.fg, cell.bg, cell.flags, ctx.theme),
             )
         })
         .unwrap_or((
@@ -473,7 +463,6 @@ fn selection_marker_cursor(
                 Color::Named(NamedColor::Background),
                 CellFlags::empty(),
                 ctx.theme,
-                ctx.terminal_material_active,
             ),
         ));
 
@@ -497,7 +486,6 @@ fn cursor_from_content(
     cursor_color: Hsla,
     default_cursor_shape: CursorShape,
     theme: &crate::theme::TerminalTheme,
-    terminal_material_active: bool,
 ) -> Option<CursorInfo> {
     if matches!(cursor.shape, CursorShape::Hidden) || !cursor_visible || !focused {
         return None;
@@ -520,13 +508,7 @@ fn cursor_from_content(
         col: cursor.point.column.0,
         shape,
         color: cursor_color,
-        cell_bg: resolved_cell_background(
-            cursor.fg,
-            cursor.bg,
-            cursor.flags,
-            theme,
-            terminal_material_active,
-        ),
+        cell_bg: resolved_cell_background(cursor.fg, cursor.bg, cursor.flags, theme),
         wide: cursor.wide,
         text,
         bold: cursor.bold,
@@ -572,7 +554,6 @@ pub(crate) struct LayoutInputs<'a> {
     pub theme: &'a crate::theme::TerminalTheme,
     pub exited: Option<i32>,
     pub exit_signal: Option<String>,
-    pub terminal_material_active: bool,
     pub integrated_glyphs_enabled: bool,
     pub color_emoji_enabled: bool,
 }
@@ -669,7 +650,6 @@ pub struct TerminalElement {
     search_rail_lines: Vec<usize>,
     /// When active, default terminal backgrounds are painted transparent so
     /// the parent surface/window material can show through.
-    terminal_material_active: bool,
     /// When enabled, block-element glyphs are rendered as built-in quads.
     integrated_glyphs_enabled: bool,
     /// When enabled, emoji glyphs are rendered through GPUI's color path.
@@ -704,7 +684,6 @@ impl TerminalElement {
         search_rail_lines: Vec<usize>,
         default_cursor_shape: CursorShape,
         cursor_color_override: Option<Hsla>,
-        terminal_material_active: bool,
         integrated_glyphs_enabled: bool,
         color_emoji_enabled: bool,
         frame_metrics: TerminalFrameMetrics,
@@ -729,7 +708,6 @@ impl TerminalElement {
             terminal_window_size,
             scrollbar_metrics,
             search_rail_lines,
-            terminal_material_active,
             cursor_color_override,
             integrated_glyphs_enabled,
             color_emoji_enabled,
@@ -843,7 +821,6 @@ impl TerminalElement {
             cursor_color,
             self.default_cursor_shape,
             &theme,
-            self.terminal_material_active,
         );
         let copy_mode_cursor =
             focused_copy_mode_cursor(self.copy_mode_cursor.as_ref(), self.focused);
@@ -867,7 +844,6 @@ impl TerminalElement {
             theme: &theme,
             exited: self.exited,
             exit_signal: self.exit_signal.clone(),
-            terminal_material_active: self.terminal_material_active,
             integrated_glyphs_enabled: self.integrated_glyphs_enabled,
             color_emoji_enabled: self.color_emoji_enabled,
         })
@@ -901,16 +877,14 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         theme,
         exited,
         exit_signal,
-        terminal_material_active,
         integrated_glyphs_enabled,
         color_emoji_enabled,
     } = inputs;
 
-    let background_color = if terminal_material_active {
-        gpui::transparent_black()
-    } else {
-        theme.background
-    };
+    // The terminal never fills its own bounds. Its host pane card carries the
+    // background and the rounded corners; a base fill here would repaint the
+    // arcs square (GPUI does not clip children to a parent radius).
+    let background_color = gpui::transparent_black();
     let selection_color = theme.selection;
 
     let cursor_snapshot = cursor_snapshot.and_then(|mut cursor| {
@@ -927,7 +901,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             desired_cols,
             desired_rows,
             theme,
-            terminal_material_active,
         };
 
         let main = selection_marker_cursor(
@@ -1066,8 +1039,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         } else {
             1
         };
-        let cell_bg_color =
-            resolved_cell_background(*cell_fg, *cell_bg, flags, theme, terminal_material_active);
+        let cell_bg_color = resolved_cell_background(*cell_fg, *cell_bg, flags, theme);
         match &mut current_rect {
             Some(rect)
                 if rect.line == point.line.0
@@ -2302,7 +2274,6 @@ mod golden_frame_tests {
             theme: &theme,
             exited: None,
             exit_signal: None,
-            terminal_material_active: false,
             integrated_glyphs_enabled,
             color_emoji_enabled: true,
         })
@@ -2331,7 +2302,6 @@ mod golden_frame_tests {
             theme: &theme,
             exited: None,
             exit_signal: None,
-            terminal_material_active: false,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
         })
@@ -2656,7 +2626,6 @@ mod golden_frame_tests {
             theme: &theme,
             exited: None,
             exit_signal: None,
-            terminal_material_active: false,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
         });
@@ -2677,29 +2646,12 @@ mod golden_frame_tests {
         let theme = crate::theme::one_dark();
 
         assert!(
-            cursor_from_content(
-                cursor,
-                true,
-                true,
-                white(),
-                CursorShape::Block,
-                &theme,
-                false
-            )
-            .is_some(),
+            cursor_from_content(cursor, true, true, white(), CursorShape::Block, &theme,).is_some(),
             "focused terminals should keep the live cursor"
         );
         assert!(
-            cursor_from_content(
-                cursor,
-                true,
-                false,
-                white(),
-                CursorShape::Block,
-                &theme,
-                false
-            )
-            .is_none(),
+            cursor_from_content(cursor, true, false, white(), CursorShape::Block, &theme,)
+                .is_none(),
             "unfocused terminals must not paint a hollow cursor outline"
         );
     }
@@ -2715,7 +2667,6 @@ mod golden_frame_tests {
             white(),
             CursorShape::Vintage,
             &theme,
-            false,
         )
         .unwrap();
         assert_eq!(vintage.shape, CursorShape::Vintage);
@@ -2732,7 +2683,6 @@ mod golden_frame_tests {
             white(),
             CursorShape::DoubleUnderline,
             &theme,
-            false,
         )
         .unwrap();
         assert_eq!(double.shape, CursorShape::DoubleUnderline);
@@ -2749,44 +2699,21 @@ mod golden_frame_tests {
         let mut cursor = renderable_cursor_at(0, CursorShape::Block, 'x');
         cursor.bg = explicit_bg;
 
-        let info = cursor_from_content(
-            cursor,
-            true,
-            true,
-            white(),
-            CursorShape::Block,
-            &theme,
-            false,
-        )
-        .expect("cursor visible");
+        let info = cursor_from_content(cursor, true, true, white(), CursorShape::Block, &theme)
+            .expect("cursor visible");
         assert_eq!(info.cell_bg, rgb_to_hsla(12, 34, 56));
 
         let mut inverse = renderable_cursor_at(0, CursorShape::Block, 'x');
         inverse.fg = Color::Spec(Rgb { r: 90, g: 8, b: 7 });
         inverse.flags = CellFlags::INVERSE;
-        let info = cursor_from_content(
-            inverse,
-            true,
-            true,
-            white(),
-            CursorShape::Block,
-            &theme,
-            false,
-        )
-        .expect("cursor visible");
+        let info = cursor_from_content(inverse, true, true, white(), CursorShape::Block, &theme)
+            .expect("cursor visible");
         assert_eq!(info.cell_bg, rgb_to_hsla(90, 8, 7));
 
         let transparent = renderable_cursor_at(0, CursorShape::Block, 'x');
-        let info = cursor_from_content(
-            transparent,
-            true,
-            true,
-            white(),
-            CursorShape::Block,
-            &theme,
-            true,
-        )
-        .expect("cursor visible");
+        let info =
+            cursor_from_content(transparent, true, true, white(), CursorShape::Block, &theme)
+                .expect("cursor visible");
         assert_eq!(info.cell_bg.a, 0.0);
     }
 
@@ -2892,7 +2819,6 @@ mod golden_frame_tests {
             theme: &theme,
             exited: None,
             exit_signal: None,
-            terminal_material_active: false,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
         });
@@ -2964,7 +2890,6 @@ mod golden_frame_tests {
             theme: &theme,
             exited: None,
             exit_signal: None,
-            terminal_material_active: true,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
         });
@@ -3048,14 +2973,13 @@ mod golden_frame_tests {
             theme: &theme,
             exited: None,
             exit_signal: None,
-            terminal_material_active: false,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
         });
 
         assert!(
             state.rects.iter().all(|rect| rect.color == card_bg),
-            "neutral panel backgrounds should align with sidebar card color"
+            "neutral panel backgrounds should align with the Codex panel color"
         );
     }
 }

@@ -28,7 +28,7 @@ struct SidebarMaterial {
 ///
 /// The material spans the full content view, including the transparent native
 /// title bar. PaneFlow's opaque shell mask hides it everywhere except the inset
-/// primary sidebar card. AppKit owns focus dimming and accessibility adaptation.
+/// primary sidebar rail. AppKit owns focus dimming and accessibility adaptation.
 pub(crate) fn apply_subtle_sidebar_material(
     window: &gpui::Window,
     is_light: bool,
