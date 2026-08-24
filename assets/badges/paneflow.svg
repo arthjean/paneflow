@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="82" height="20" role="img" aria-label="Paneflow">
-  <title>Paneflow</title>
-  <rect width="82" height="20" rx="3" fill="#bac0ff"/>
-  <rect x="0.5" y="0.5" width="81" height="19" rx="2.5" fill="none" stroke="#111827" stroke-opacity="0.12"/>
-  <image x="5" y="2" width="16" height="16" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAACH0lEQVQ4y82TT2sTURTFz3tvJp2QxIBttLVqtRbBorT4B8Su3OkHsCCu/QIW+yHU4taViIKfQFoQBRddKFqKbiQ0hUr/pk1jk85MJnPve9dVE6Td69mf3z33wAH+G4k4ZS1PMbMlIiYiay1Z58iKEBMRM5MQpY/DKFKHAMw8RUSSEjlmkjRlaUYsWzWWtVWWOLRSq7Jr7JHErXj6wKe6ACLnYIyGSlhheQP4WWZQAxgs+ugtKrRaFoPDSoJ8In2lvAEA7wDgBNYYeHshsLAseDdPUKwwMeLDCxR+rVhcv+nBz4iK9p09lICY2s4i8/pjG28/tPDgTh4t9uBCINMUnC8ZKKfQkyFcuprwyYGiDwD6AOAZhZUq49VsDUtNi6+bGhPDDu+/xKjsOCyWLeYXCeu7KaBc57Du1qixudXCj+91pEIYOyWY/bSKnB8iV9RYDQWJr+AHFsTccXldgEM76YESD2is4+WbMra3EjycvAHZJ/Tls7h4zqGQZ0BBjkjgpE4a1t9GXN1EZb+EtH8UL+YMVjYyuDaqcLrEKBxjBIHBUS/ob2tNRKJx/94tTN6+jHjDYHggi/FxjSBooxnWcWbIF61Vx9cpQyR9NLcQzXwuQ3qzvoprbaSRxYk+DwPHFXLZNkYueFLqDdRuvTE9dHbw6V8dVGvh87tjPfpKf/Rk53ficmM+fKPATNAKKBQ8MUbr3fre9FKl8uxfT6+rP8yHIi7l0ytOAAAAAElFTkSuQmCC"/>
-  <text x="50.5" y="14" text-anchor="middle" fill="#111827" font-family="Verdana,Geneva,DejaVu Sans,sans-serif" font-size="11" text-rendering="geometricPrecision">Paneflow</text>
-</svg>

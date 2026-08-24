@@ -9,7 +9,6 @@
 #
 # Outputs:
 #   assets/icons/paneflow-{16,24,32,48,64,128,256,512}.png   hicolor sizes for cargo-deb / cargo-generate-rpm
-#   assets/icons/paneflow.png                                alias of -128 used by some packaging paths
 #   assets/PaneFlow.icns                                     consumed by scripts/bundle-macos.sh
 #   assets/PaneFlow.ico                                      canonical multi-res Windows .ico (build output)
 #   packaging/wix/paneflow.ico                               mirror of assets/PaneFlow.ico; the .ico cargo-wix's main.wxs actually reads
@@ -220,11 +219,6 @@ for size in 16 24 32 48 64 128 256 512; do
     log "  $dst  <- $(basename "$src")"
     resize_with_inset_png "$src" "$dst" "$size" "$PORTABLE_BODY_PCT"
 done
-
-# Alias paneflow.png at 128 (used by some packaging paths as the canonical
-# unsized name). 128 is large enough for the full chrome render -- always
-# sourced from the master, never the simplified copy.
-cp "$OUT_ICONS_DIR/paneflow-128.png" "$OUT_ICONS_DIR/paneflow.png"
 
 # Runtime-embedded GPUI window icon -- rust-embed picks this up at compile
 # time for the title-bar / about pane uses. 128px is enough today.
