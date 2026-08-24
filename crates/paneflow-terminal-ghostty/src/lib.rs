@@ -1,58 +1,102 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 mod encode;
 #[cfg(all(
     test,
     feature = "native",
-    any(target_os = "linux", target_os = "windows")
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
 ))]
 mod encode_tests;
 mod error;
 mod input;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 mod input_map;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 mod limits;
 mod model;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod osc52;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
+mod osc;
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 mod osc7;
-
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod abi;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod abi_layout;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod callback_ffi;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod callbacks;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod color_query;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod constructor;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod engine;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod grid;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod handles;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod navigation;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod persistence;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
 mod search;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod snapshot;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod snapshot_cell;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod snapshot_ffi;
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
-mod snapshot_state;
-#[cfg(not(all(feature = "native", any(target_os = "linux", target_os = "windows"))))]
+
+macro_rules! native_modules {
+    ($($module:ident),+ $(,)?) => {
+        $(
+            #[cfg(all(
+                feature = "native",
+                any(
+                    target_os = "linux",
+                    all(
+                        target_os = "windows",
+                        target_arch = "x86_64",
+                        target_env = "msvc"
+                    )
+                )
+            ))]
+            mod $module;
+        )+
+    };
+}
+
+native_modules!(
+    abi,
+    abi_layout,
+    callback_ffi,
+    callbacks,
+    constructor,
+    engine,
+    grid,
+    handles,
+    navigation,
+    persistence,
+    snapshot,
+    snapshot_cell,
+    snapshot_ffi,
+    snapshot_state,
+);
+
+#[cfg(not(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+)))]
 mod stub;
 
 pub use error::{GhosttyError, Result};
@@ -60,13 +104,29 @@ pub use input::{
     FocusEvent, Key, KeyAction, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput,
 };
 pub use model::{
-    BackendEvent, Cell, CellFlags, Color, Content, Cursor, CursorShape, Hyperlink, Modes, Point,
-    Rgb, Scroll, SearchMatch, SearchResult, SelectionRange, UnderlineStyle, WideCell, WindowSize,
+    BackendEvent, Cell, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape, Hyperlink,
+    Modes, Point, Rgb, Scroll, SearchMatch, SearchResult, SelectionRange, TerminalAppearance,
+    UnderlineStyle, WideCell, WindowSize,
 };
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+pub use search::{
+    MAX_QUERY_LEN, MAX_SEARCH_CELLS, SEARCH_CHUNK_CELLS, SearchChunk, SearchEngine, SearchLine,
+};
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 pub const GHOSTTY_APP_VERSION: &str = paneflow_libghostty_sys::GHOSTTY_APP_VERSION;
 
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuildIdentity {
     pub source_sha: &'static str,
@@ -76,7 +136,13 @@ pub struct BuildIdentity {
     pub simd: &'static str,
 }
 
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 pub fn build_identity() -> BuildIdentity {
     const MANIFEST: &str = include_str!("../../../native/libghostty/manifest.toml");
 
@@ -96,15 +162,30 @@ pub fn build_identity() -> BuildIdentity {
     }
 }
 
-#[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#[cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 pub use engine::DisplayTerminal;
-#[cfg(not(all(feature = "native", any(target_os = "linux", target_os = "windows"))))]
+#[cfg(not(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+)))]
 pub use stub::DisplayTerminal;
 
 #[cfg(all(
     test,
     feature = "native",
-    any(target_os = "linux", target_os = "windows")
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
 ))]
 mod identity_tests {
     #[test]

@@ -6,6 +6,86 @@ use crate::{GhosttyError, Result, Rgb, UnderlineStyle, WideCell};
 const MAX_GRAPHEME_CODEPOINTS: usize = 1024;
 const INLINE_GRAPHEME_CODEPOINTS: usize = 16;
 
+mod sealed {
+    pub trait Sealed {}
+}
+
+pub(crate) trait TerminalField: sealed::Sealed {
+    type Value: Default;
+    const DATA: sys::GhosttyTerminalData;
+}
+
+pub(crate) trait RenderField: sealed::Sealed {
+    type Value: Default;
+    const DATA: sys::GhosttyRenderStateData;
+}
+
+macro_rules! terminal_fields {
+    ($($field:ident: $value:ty = $data:expr),+ $(,)?) => {
+        $(
+            pub(crate) struct $field;
+            impl sealed::Sealed for $field {}
+            impl TerminalField for $field {
+                type Value = $value;
+                const DATA: sys::GhosttyTerminalData = $data;
+            }
+        )+
+    };
+}
+
+macro_rules! render_fields {
+    ($($field:ident: $value:ty = $data:expr),+ $(,)?) => {
+        $(
+            pub(crate) struct $field;
+            impl sealed::Sealed for $field {}
+            impl RenderField for $field {
+                type Value = $value;
+                const DATA: sys::GhosttyRenderStateData = $data;
+            }
+        )+
+    };
+}
+
+terminal_fields! {
+    TerminalKittyKeyboardFlags: u8 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS,
+    TerminalCursorX: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_X,
+    TerminalCursorY: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_Y,
+    TerminalTotalRows: usize = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
+    TerminalScrollbackRows: usize = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+    TerminalCols: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLS,
+}
+
+render_fields! {
+    RenderCols: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_COLS,
+    RenderRows: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_ROWS,
+    RenderDirty: sys::GhosttyRenderStateDirty = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_DIRTY,
+    RenderCursorVisible: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
+    RenderCursorBlinking: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
+    RenderCursorViewportHasValue: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
+    RenderCursorVisualStyle: sys::GhosttyRenderStateCursorVisualStyle = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
+    RenderCursorViewportX: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
+    RenderCursorViewportY: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
+    RenderCursorViewportWideTail: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
+}
+
+pub(crate) struct RenderRowData {
+    pub(crate) dirty: bool,
+    pub(crate) cells: sys::GhosttyRenderStateRowCells,
+    pub(crate) selection: Option<sys::GhosttyRenderStateRowSelection>,
+}
+
+pub(crate) struct RenderCellData {
+    pub(crate) raw: sys::GhosttyCell,
+    pub(crate) style: sys::GhosttyStyle,
+}
+
+pub(crate) struct RawCellData {
+    pub(crate) codepoint: u32,
+    pub(crate) wide: sys::GhosttyCellWide,
+    pub(crate) has_hyperlink: bool,
+    pub(crate) content_tag: sys::GhosttyCellContentTag,
+}
+
 pub(crate) fn ghostty_point(
     tag: sys::GhosttyPointTag,
     row: usize,
@@ -83,16 +163,14 @@ pub(crate) fn cell_grapheme(
         heap.resize(len, 0);
         heap.as_mut_slice()
     };
-    // SAFETY: `cells` is the live row-cells iterator handle passed through
-    // `copy_cell`; GRAPHEMES_BUF writes `len` u32 values, and `codepoints` has
-    // exactly that many initialized, writable elements.
-    unsafe {
-        cell_get(
+    let result = unsafe {
+        sys::ghostty_render_state_row_cells_get(
             cells,
             sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
-            &mut codepoints[0],
-        )?;
-    }
+            codepoints.as_mut_ptr().cast(),
+        )
+    };
+    check("render_state_row_cells_get_graphemes", result)?;
     let mut characters = codepoints
         .iter()
         .copied()
@@ -102,114 +180,230 @@ pub(crate) fn cell_grapheme(
     Ok((character, zerowidth))
 }
 
-/// Read a field from a libghostty render-state handle.
-///
-/// # Safety
-///
-/// `state` must be a live `GhosttyRenderState`. `data` must select a field
-/// whose ABI output type is exactly `T`, including size, alignment, and valid
-/// Rust bit patterns. The selected operation must be allowed to initialize
-/// `out` for the duration of this call.
-pub(crate) unsafe fn render_get<T>(
-    state: sys::GhosttyRenderState,
-    data: sys::GhosttyRenderStateData,
-    out: &mut T,
-) -> Result<()> {
-    let result = unsafe { sys::ghostty_render_state_get(state, data, (out as *mut T).cast()) };
-    check("render_state_get", result)
-}
-
-/// Read a field from a live libghostty row-cells iterator.
-///
-/// # Safety
-///
-/// `cells` must be a live `GhosttyRenderStateRowCells`. `data` must select a
-/// field whose ABI output type is exactly `T`, including size, alignment, and
-/// valid Rust bit patterns. For buffer selectors, `out` must point to the first
-/// element of a writable allocation large enough for the complete FFI write.
-pub(crate) unsafe fn cell_get<T>(
-    cells: sys::GhosttyRenderStateRowCells,
-    data: sys::GhosttyRenderStateRowCellsData,
-    out: &mut T,
-) -> Result<()> {
-    let result =
-        unsafe { sys::ghostty_render_state_row_cells_get(cells, data, (out as *mut T).cast()) };
-    check("render_state_row_cells_get", result)
-}
-
-/// Read multiple fields from a live libghostty row-cells iterator.
-///
-/// # Safety
-///
-/// `cells` must be a live `GhosttyRenderStateRowCells`. Each `values[i]` must
-/// be non-null, aligned, writable, and point to the exact ABI output type for
-/// `keys[i]`; all output regions must remain valid and non-overlapping for the
-/// call, and every written value must have a valid Rust representation.
-pub(crate) unsafe fn cell_get_multi<const N: usize>(
-    cells: sys::GhosttyRenderStateRowCells,
-    keys: [sys::GhosttyRenderStateRowCellsData; N],
-    mut values: [*mut std::ffi::c_void; N],
-) -> Result<()> {
-    let mut written = 0usize;
+pub(crate) fn terminal_get<F: TerminalField>(terminal: sys::GhosttyTerminal) -> Result<F::Value> {
+    let mut value = F::Value::default();
     let result = unsafe {
-        sys::ghostty_render_state_row_cells_get_multi(
-            cells,
-            N,
-            keys.as_ptr(),
-            values.as_mut_ptr(),
-            &mut written,
+        sys::ghostty_terminal_get(terminal, F::DATA, (&mut value as *mut F::Value).cast())
+    };
+    check("terminal_get", result)?;
+    Ok(value)
+}
+
+pub(crate) fn terminal_scrollbar(
+    terminal: sys::GhosttyTerminal,
+) -> Result<sys::GhosttyTerminalScrollbar> {
+    let mut value: sys::GhosttyTerminalScrollbar = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        sys::ghostty_terminal_get(
+            terminal,
+            sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBAR,
+            (&mut value as *mut sys::GhosttyTerminalScrollbar).cast(),
         )
     };
-    check("render_state_row_cells_get_multi", result)?;
-    if written != N {
-        return Err(GhosttyError::AbiMismatch(format!(
-            "render cell multi-get wrote {written} fields, expected {N}"
-        )));
-    }
-    Ok(())
+    check("terminal_get_scrollbar", result)?;
+    Ok(value)
 }
 
-/// Read a field from a libghostty cell value.
-///
-/// # Safety
-///
-/// `cell` must be a valid `GhosttyCell` produced by libghostty. `data` must
-/// select a field whose ABI output type is exactly `T`, including size,
-/// alignment, and valid Rust bit patterns.
-pub(crate) unsafe fn raw_cell_get<T>(
-    cell: sys::GhosttyCell,
-    data: sys::GhosttyCellData,
-    out: &mut T,
-) -> Result<()> {
-    let result = unsafe { sys::ghostty_cell_get(cell, data, (out as *mut T).cast()) };
-    check("cell_get", result)
-}
-
-/// Read multiple fields from a libghostty cell value.
-///
-/// # Safety
-///
-/// `cell` must be a valid `GhosttyCell` produced by libghostty. Each
-/// `values[i]` must be non-null, aligned, writable, and point to the exact ABI
-/// output type for `keys[i]`; all output regions must remain valid and
-/// non-overlapping for the call, and every written value must have a valid
-/// Rust representation.
-pub(crate) unsafe fn raw_cell_get_multi<const N: usize>(
-    cell: sys::GhosttyCell,
-    keys: [sys::GhosttyCellData; N],
-    mut values: [*mut std::ffi::c_void; N],
-) -> Result<()> {
-    let mut written = 0usize;
+pub(crate) fn terminal_selection_rectangle(terminal: sys::GhosttyTerminal) -> Result<Option<bool>> {
+    let mut selection: sys::GhosttySelection = unsafe { std::mem::zeroed() };
+    selection.size = std::mem::size_of::<sys::GhosttySelection>();
     let result = unsafe {
-        sys::ghostty_cell_get_multi(cell, N, keys.as_ptr(), values.as_mut_ptr(), &mut written)
+        sys::ghostty_terminal_get(
+            terminal,
+            sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SELECTION,
+            (&mut selection as *mut sys::GhosttySelection).cast(),
+        )
     };
-    check("cell_get_multi", result)?;
-    if written != N {
-        return Err(GhosttyError::AbiMismatch(format!(
-            "raw cell multi-get wrote {written} fields, expected {N}"
-        )));
+    if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
+        Ok(None)
+    } else {
+        check("terminal_get_selection", result)?;
+        Ok(Some(selection.rectangle))
     }
-    Ok(())
+}
+
+pub(crate) fn render_get<F: RenderField>(state: sys::GhosttyRenderState) -> Result<F::Value> {
+    let mut value = F::Value::default();
+    let result = unsafe {
+        sys::ghostty_render_state_get(state, F::DATA, (&mut value as *mut F::Value).cast())
+    };
+    check("render_state_get", result)?;
+    Ok(value)
+}
+
+pub(crate) fn render_row_iterator(
+    state: sys::GhosttyRenderState,
+    mut iterator: sys::GhosttyRenderStateRowIterator,
+) -> Result<sys::GhosttyRenderStateRowIterator> {
+    let result = unsafe {
+        sys::ghostty_render_state_get(
+            state,
+            sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
+            (&mut iterator as *mut sys::GhosttyRenderStateRowIterator).cast(),
+        )
+    };
+    check("render_state_get_row_iterator", result)?;
+    Ok(iterator)
+}
+
+pub(crate) fn cell_grapheme_len(cells: sys::GhosttyRenderStateRowCells) -> Result<u32> {
+    let mut len = 0u32;
+    let result = unsafe {
+        sys::ghostty_render_state_row_cells_get(
+            cells,
+            sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
+            (&mut len as *mut u32).cast(),
+        )
+    };
+    check("render_state_row_cells_get_grapheme_len", result)?;
+    Ok(len)
+}
+
+pub(crate) fn render_row_data(
+    iterator: sys::GhosttyRenderStateRowIterator,
+    cells: sys::GhosttyRenderStateRowCells,
+) -> Result<RenderRowData> {
+    let mut dirty = false;
+    let result = unsafe {
+        sys::ghostty_render_state_row_get(
+            iterator,
+            sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
+            (&mut dirty as *mut bool).cast(),
+        )
+    };
+    check("render_state_row_get_dirty", result)?;
+
+    let mut cells = cells;
+    let result = unsafe {
+        sys::ghostty_render_state_row_get(
+            iterator,
+            sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+            (&mut cells as *mut sys::GhosttyRenderStateRowCells).cast(),
+        )
+    };
+    check("render_state_row_get_cells", result)?;
+
+    let mut selection: sys::GhosttyRenderStateRowSelection = unsafe { std::mem::zeroed() };
+    selection.size = std::mem::size_of::<sys::GhosttyRenderStateRowSelection>();
+    let result = unsafe {
+        sys::ghostty_render_state_row_get(
+            iterator,
+            sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
+            (&mut selection as *mut sys::GhosttyRenderStateRowSelection).cast(),
+        )
+    };
+    let selection = if result == sys::GhosttyResult_GHOSTTY_NO_VALUE {
+        None
+    } else {
+        check("render_state_row_get_selection", result)?;
+        Some(selection)
+    };
+    Ok(RenderRowData {
+        dirty,
+        cells,
+        selection,
+    })
+}
+
+pub(crate) fn render_cell_data(cells: sys::GhosttyRenderStateRowCells) -> Result<RenderCellData> {
+    let mut style: sys::GhosttyStyle = unsafe { std::mem::zeroed() };
+    style.size = std::mem::size_of::<sys::GhosttyStyle>();
+    let mut raw = 0u64;
+    let result = unsafe {
+        sys::ghostty_render_state_row_cells_get(
+            cells,
+            sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+            (&mut raw as *mut sys::GhosttyCell).cast(),
+        )
+    };
+    check("render_state_row_cells_get_raw", result)?;
+    let result = unsafe {
+        sys::ghostty_render_state_row_cells_get(
+            cells,
+            sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+            (&mut style as *mut sys::GhosttyStyle).cast(),
+        )
+    };
+    check("render_state_row_cells_get_style", result)?;
+    Ok(RenderCellData { raw, style })
+}
+
+pub(crate) fn raw_cell_data(cell: sys::GhosttyCell) -> Result<RawCellData> {
+    let mut codepoint = 0u32;
+    let result = unsafe {
+        sys::ghostty_cell_get(
+            cell,
+            sys::GhosttyCellData_GHOSTTY_CELL_DATA_CODEPOINT,
+            (&mut codepoint as *mut u32).cast(),
+        )
+    };
+    check("cell_get_codepoint", result)?;
+
+    let wide = raw_cell_wide(cell)?;
+    let mut has_hyperlink = false;
+    let result = unsafe {
+        sys::ghostty_cell_get(
+            cell,
+            sys::GhosttyCellData_GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+            (&mut has_hyperlink as *mut bool).cast(),
+        )
+    };
+    check("cell_get_has_hyperlink", result)?;
+
+    let mut content_tag = sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT;
+    let result = unsafe {
+        sys::ghostty_cell_get(
+            cell,
+            sys::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
+            (&mut content_tag as *mut sys::GhosttyCellContentTag).cast(),
+        )
+    };
+    check("cell_get_content_tag", result)?;
+    Ok(RawCellData {
+        codepoint,
+        wide,
+        has_hyperlink,
+        content_tag,
+    })
+}
+
+pub(crate) fn raw_cell_wide(cell: sys::GhosttyCell) -> Result<sys::GhosttyCellWide> {
+    let mut value = sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW;
+    let result = unsafe {
+        sys::ghostty_cell_get(
+            cell,
+            sys::GhosttyCellData_GHOSTTY_CELL_DATA_WIDE,
+            (&mut value as *mut sys::GhosttyCellWide).cast(),
+        )
+    };
+    check("cell_get_wide", result)?;
+    Ok(value)
+}
+
+pub(crate) fn raw_cell_palette(cell: sys::GhosttyCell) -> Result<u8> {
+    let mut value = 0u8;
+    let result = unsafe {
+        sys::ghostty_cell_get(
+            cell,
+            sys::GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_PALETTE,
+            (&mut value as *mut u8).cast(),
+        )
+    };
+    check("cell_get_palette", result)?;
+    Ok(value)
+}
+
+pub(crate) fn raw_cell_rgb(cell: sys::GhosttyCell) -> Result<sys::GhosttyColorRgb> {
+    let mut value = sys::GhosttyColorRgb { r: 0, g: 0, b: 0 };
+    let result = unsafe {
+        sys::ghostty_cell_get(
+            cell,
+            sys::GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_RGB,
+            (&mut value as *mut sys::GhosttyColorRgb).cast(),
+        )
+    };
+    check("cell_get", result)?;
+    Ok(value)
 }
 
 impl From<sys::GhosttyColorRgb> for Rgb {

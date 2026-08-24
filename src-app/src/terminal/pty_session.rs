@@ -969,6 +969,15 @@ impl TerminalSessionBackend {
     }
 
     pub(crate) fn search(&self, query: &str, regex: bool) -> crate::search::SearchResult {
+        self.search_with_cancel(query, regex, &std::sync::atomic::AtomicBool::new(false))
+    }
+
+    pub(crate) fn search_with_cancel(
+        &self,
+        query: &str,
+        regex: bool,
+        cancelled: &std::sync::atomic::AtomicBool,
+    ) -> crate::search::SearchResult {
         #[cfg(any(
             all(target_os = "linux", feature = "libghostty-linux"),
             all(
@@ -979,9 +988,25 @@ impl TerminalSessionBackend {
             )
         ))]
         if let Some(ghostty) = &self.ghostty {
-            return ghostty.search(query, regex);
+            return ghostty.search_with_cancel(query, regex, cancelled);
         }
-        crate::search::search_term(&self.term, query, regex)
+        crate::search::search_term_with_cancel(&self.term, query, regex, cancelled)
+    }
+
+    pub(crate) fn refresh_appearance(&self) -> bool {
+        #[cfg(any(
+            all(target_os = "linux", feature = "libghostty-linux"),
+            all(
+                target_os = "windows",
+                target_arch = "x86_64",
+                target_env = "msvc",
+                feature = "libghostty-windows"
+            )
+        ))]
+        if let Some(ghostty) = &self.ghostty {
+            return ghostty.refresh_appearance();
+        }
+        true
     }
 
     pub(crate) fn scroll_to_match(&self, search_match: &crate::search::SearchMatch) -> usize {

@@ -1,12 +1,12 @@
 use crate::{
     BackendEvent, Content, FocusEvent, GhosttyError, Hyperlink, KeyInput, Modes, MouseInput, Point,
-    Result, Rgb, Scroll, SearchResult, SelectionRange, WindowSize,
+    Result, Scroll, SearchResult, SelectionRange, TerminalAppearance, WindowSize,
 };
 
 pub struct DisplayTerminal;
 
 impl DisplayTerminal {
-    pub fn new(_: WindowSize, _: usize) -> Result<Self> {
+    pub fn new(_: WindowSize, _: usize, _: TerminalAppearance) -> Result<Self> {
         Err(GhosttyError::UnsupportedPlatform)
     }
 
@@ -15,10 +15,6 @@ impl DisplayTerminal {
     }
 
     pub fn resize(&mut self, _: WindowSize) -> Result<()> {
-        Err(GhosttyError::UnsupportedPlatform)
-    }
-
-    pub fn set_default_colors(&mut self, _: Rgb, _: Rgb, _: Rgb) -> Result<()> {
         Err(GhosttyError::UnsupportedPlatform)
     }
 

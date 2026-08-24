@@ -2,7 +2,8 @@ use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
 use crate::snapshot_ffi::{
-    cell_get, cell_get_multi, cell_grapheme, raw_cell_get, raw_cell_get_multi, underline, wide_cell,
+    cell_grapheme, cell_grapheme_len, raw_cell_data, raw_cell_palette, raw_cell_rgb,
+    render_cell_data, underline, wide_cell,
 };
 use crate::{Cell, CellFlags, Color, GhosttyError, Point, Result};
 
@@ -14,66 +15,16 @@ impl DisplayTerminal {
         column: usize,
         selected: bool,
     ) -> Result<Cell> {
-        let mut style: sys::GhosttyStyle = unsafe { std::mem::zeroed() };
-        style.size = std::mem::size_of::<sys::GhosttyStyle>();
-        let mut raw_cell = 0u64;
-        // SAFETY: `row_cells` is the live iterator handle returned for the
-        // current render row. RAW writes `GhosttyCell`, STYLE writes
-        // `GhosttyStyle`, and both pointers target distinct writable locals.
-        unsafe {
-            cell_get_multi(
-                row_cells,
-                [
-                    sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
-                    sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
-                ],
-                [
-                    (&mut raw_cell as *mut sys::GhosttyCell).cast(),
-                    (&mut style as *mut sys::GhosttyStyle).cast(),
-                ],
-            )?;
-        }
+        let rendered = render_cell_data(row_cells)?;
+        let style = rendered.style;
         let foreground = style_color(style.fg_color)?;
-        let mut codepoint = 0u32;
-        let mut wide = sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW;
-        let mut has_hyperlink = false;
-        let mut content_tag = sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT;
-        // SAFETY: `raw_cell` was produced by the RAW selector above. The four
-        // selectors write u32, GhosttyCellWide, bool, and GhosttyCellContentTag
-        // respectively into distinct, aligned, writable locals.
-        unsafe {
-            raw_cell_get_multi(
-                raw_cell,
-                [
-                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_CODEPOINT,
-                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_WIDE,
-                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_HAS_HYPERLINK,
-                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
-                ],
-                [
-                    (&mut codepoint as *mut u32).cast(),
-                    (&mut wide as *mut sys::GhosttyCellWide).cast(),
-                    (&mut has_hyperlink as *mut bool).cast(),
-                    (&mut content_tag as *mut sys::GhosttyCellContentTag).cast(),
-                ],
-            )?;
-        }
-        let (character, zerowidth) = match content_tag {
+        let raw = raw_cell_data(rendered.raw)?;
+        let (character, zerowidth) = match raw.content_tag {
             sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT => {
-                (decode_codepoint(codepoint), None)
+                (decode_codepoint(raw.codepoint), None)
             }
             sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME => {
-                let mut grapheme_len = 0u32;
-                // SAFETY: `row_cells` is the current live row-cells iterator,
-                // and GRAPHEMES_LEN writes exactly one u32.
-                unsafe {
-                    cell_get(
-                        row_cells,
-                        sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
-                        &mut grapheme_len,
-                    )?;
-                }
-                cell_grapheme(row_cells, grapheme_len)?
+                cell_grapheme(row_cells, cell_grapheme_len(row_cells)?)?
             }
             sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE
             | sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_RGB => (' ', None),
@@ -83,7 +34,7 @@ impl DisplayTerminal {
                 )));
             }
         };
-        let background = cell_background(raw_cell, content_tag, style.bg_color)?;
+        let background = cell_background(rendered.raw, raw.content_tag, style.bg_color)?;
         let row = i32::try_from(row)
             .map_err(|_| GhosttyError::AbiMismatch("snapshot row overflow".into()))?;
         Ok(Cell {
@@ -102,9 +53,9 @@ impl DisplayTerminal {
                 overline: style.overline,
                 underline: underline(style.underline)?,
             },
-            wide: wide_cell(wide)?,
+            wide: wide_cell(raw.wide)?,
             selected,
-            hyperlink: has_hyperlink,
+            hyperlink: raw.has_hyperlink,
         })
     }
 }
@@ -127,30 +78,10 @@ fn cell_background(
 ) -> Result<Color> {
     match content_tag {
         sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE => {
-            let mut index = 0u8;
-            // SAFETY: `cell` came from the current row's RAW selector, and the
-            // COLOR_PALETTE selector writes exactly one u8.
-            unsafe {
-                raw_cell_get(
-                    cell,
-                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_PALETTE,
-                    &mut index,
-                )?;
-            }
-            Ok(Color::Palette(index))
+            Ok(Color::Palette(raw_cell_palette(cell)?))
         }
         sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_RGB => {
-            let mut rgb = sys::GhosttyColorRgb { r: 0, g: 0, b: 0 };
-            // SAFETY: `cell` came from the current row's RAW selector, and the
-            // COLOR_RGB selector writes exactly one `GhosttyColorRgb`.
-            unsafe {
-                raw_cell_get(
-                    cell,
-                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_RGB,
-                    &mut rgb,
-                )?;
-            }
-            Ok(Color::Rgb(rgb.into()))
+            Ok(Color::Rgb(raw_cell_rgb(cell)?.into()))
         }
         _ => style_color(style),
     }

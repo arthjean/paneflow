@@ -5,7 +5,7 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use anyhow::{Context as _, Result, bail};
-    use paneflow_terminal_ghostty::{DisplayTerminal, WindowSize};
+    use paneflow_terminal_ghostty::{DisplayTerminal, TerminalAppearance, WindowSize};
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
     const MARKER: &str = "PANEFLOW_GHOSTTY_PACKAGE_OK";
@@ -13,7 +13,7 @@ mod linux {
 
     pub(super) fn run() -> Result<()> {
         let size = WindowSize::new(80, 24, 8, 16)?;
-        let mut terminal = DisplayTerminal::new(size, 1_000)?;
+        let mut terminal = DisplayTerminal::new(size, 1_000, TerminalAppearance::default())?;
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: 24,
@@ -131,7 +131,7 @@ mod linux {
 mod windows {
     use anyhow::{Result, bail};
     use paneflow_terminal_ghostty::{
-        Color, DisplayTerminal, Key, KeyAction, KeyInput, Modifiers, Rgb, WindowSize,
+        Color, DisplayTerminal, Key, KeyAction, KeyInput, Modifiers, TerminalAppearance, WindowSize,
     };
 
     const MARKER: &str = "PANEFLOW_GHOSTTY_WINDOWS_HEADLESS_OK";
@@ -139,24 +139,8 @@ mod windows {
     pub(super) fn run() -> Result<()> {
         let initial_size = WindowSize::new(80, 24, 8, 16)?;
         for iteration in 0..32 {
-            let mut terminal = DisplayTerminal::new(initial_size, 4_000)?;
-            terminal.set_default_colors(
-                Rgb {
-                    r: 0xdd,
-                    g: 0xdd,
-                    b: 0xdd,
-                },
-                Rgb {
-                    r: 0x11,
-                    g: 0x11,
-                    b: 0x11,
-                },
-                Rgb {
-                    r: 0xff,
-                    g: 0xff,
-                    b: 0xff,
-                },
-            )?;
+            let mut terminal =
+                DisplayTerminal::new(initial_size, 4_000, TerminalAppearance::default())?;
             terminal.feed(b"\x1b]52;c;not-base64!\x07\xff")?;
             terminal.feed(
                 format!(
@@ -197,7 +181,13 @@ mod windows {
             }
         }
 
-        if DisplayTerminal::new(WindowSize::new(80, 24, 8, 16)?, usize::MAX).is_ok() {
+        if DisplayTerminal::new(
+            WindowSize::new(80, 24, 8, 16)?,
+            usize::MAX,
+            TerminalAppearance::default(),
+        )
+        .is_ok()
+        {
             bail!("headless constructor accepted an intentionally invalid scrollback limit")
         }
         Ok(())

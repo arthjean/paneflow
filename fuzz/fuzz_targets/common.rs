@@ -4,7 +4,9 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::Config;
 use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
-use paneflow_terminal_ghostty::{Content, DisplayTerminal, WideCell, WindowSize};
+use paneflow_terminal_ghostty::{
+    Content, DisplayTerminal, TerminalAppearance, WideCell, WindowSize,
+};
 
 const MAX_FUZZ_BYTES: usize = 4_096;
 
@@ -32,7 +34,8 @@ pub fn differential_replay(data: &[u8], cols: usize, rows: usize, snapshot_each_
     let mut alacritty = Term::new(Config::default(), &dimensions, VoidListener);
     let mut processor = Processor::<StdSyncHandler>::new();
     let size = WindowSize::new(cols, rows, 8, 16).expect("bounded fuzz dimensions are valid");
-    let mut ghostty = DisplayTerminal::new(size, 1_000).expect("libghostty initializes");
+    let mut ghostty = DisplayTerminal::new(size, 1_000, TerminalAppearance::default())
+        .expect("libghostty initializes");
     let input = bounded_vt_input(data, cols, rows);
 
     for chunk in input.chunks(64) {

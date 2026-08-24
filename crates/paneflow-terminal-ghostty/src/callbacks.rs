@@ -6,9 +6,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use paneflow_libghostty_sys as sys;
 
 use crate::handles::check;
-use crate::{BackendEvent, Result, WindowSize};
+use crate::{BackendEvent, ColorScheme, Result, WindowSize};
 
-const MAX_EVENTS: usize = 256;
+const MAX_PENDING_WRITE_PTY_BYTES: usize = 1024 * 1024;
+const MAX_PENDING_CLIPBOARD_EVENTS: usize = 32;
+const MAX_PENDING_BELL_EVENTS: usize = 256;
 
 const _: sys::GhosttyTerminalWritePtyFn = Some(crate::callback_ffi::write_pty);
 const _: sys::GhosttyTerminalBellFn = Some(crate::callback_ffi::bell);
@@ -21,18 +23,24 @@ const _: sys::GhosttyTerminalDeviceAttributesFn = Some(crate::callback_ffi::devi
 
 pub(crate) struct CallbackState {
     events: RefCell<VecDeque<BackendEvent>>,
+    pending_write_pty_bytes: Cell<usize>,
+    pending_clipboard_events: Cell<usize>,
+    pending_bell_events: Cell<usize>,
     size: Cell<WindowSize>,
-    dark: Cell<bool>,
+    color_scheme: Cell<ColorScheme>,
     #[cfg(test)]
     pub(crate) panic_next: Cell<bool>,
 }
 
 impl CallbackState {
-    pub(crate) fn new(size: WindowSize) -> Self {
+    pub(crate) fn new(size: WindowSize, color_scheme: ColorScheme) -> Self {
         Self {
             events: RefCell::new(VecDeque::new()),
+            pending_write_pty_bytes: Cell::new(0),
+            pending_clipboard_events: Cell::new(0),
+            pending_bell_events: Cell::new(0),
             size: Cell::new(size),
-            dark: Cell::new(true),
+            color_scheme: Cell::new(color_scheme),
             #[cfg(test)]
             panic_next: Cell::new(false),
         }
@@ -46,20 +54,108 @@ impl CallbackState {
         self.size.get()
     }
 
-    pub(crate) fn is_dark(&self) -> bool {
-        self.dark.get()
+    pub(crate) fn color_scheme(&self) -> ColorScheme {
+        self.color_scheme.get()
+    }
+
+    pub(crate) fn set_color_scheme(&self, color_scheme: ColorScheme) {
+        self.color_scheme.set(color_scheme);
     }
 
     pub(crate) fn push(&self, event: BackendEvent) {
         let mut events = self.events.borrow_mut();
-        if events.len() == MAX_EVENTS {
-            events.pop_front();
+        match event {
+            BackendEvent::WritePty(bytes) => {
+                let pending = self.pending_write_pty_bytes.get();
+                let Some(total) = pending.checked_add(bytes.len()) else {
+                    push_overflow(&mut events, 1, bytes.len());
+                    return;
+                };
+                if total > MAX_PENDING_WRITE_PTY_BYTES {
+                    push_overflow(&mut events, 1, bytes.len());
+                    return;
+                }
+                self.pending_write_pty_bytes.set(total);
+                if let Some(BackendEvent::WritePty(pending)) = events.back_mut() {
+                    pending.extend_from_slice(&bytes);
+                } else {
+                    events.push_back(BackendEvent::WritePty(bytes));
+                }
+            }
+            BackendEvent::ClipboardStore(text) => {
+                let pending = self.pending_clipboard_events.get();
+                if pending >= MAX_PENDING_CLIPBOARD_EVENTS {
+                    push_overflow(&mut events, 1, text.len());
+                } else {
+                    self.pending_clipboard_events.set(pending + 1);
+                    events.push_back(BackendEvent::ClipboardStore(text));
+                }
+            }
+            BackendEvent::Title(title) => {
+                events.retain(|event| !matches!(event, BackendEvent::Title(_)));
+                events.push_back(BackendEvent::Title(title));
+            }
+            BackendEvent::WorkingDirectory(cwd) => {
+                events.retain(|event| !matches!(event, BackendEvent::WorkingDirectory(_)));
+                events.push_back(BackendEvent::WorkingDirectory(cwd));
+            }
+            BackendEvent::Bell => {
+                let pending = self.pending_bell_events.get();
+                if pending >= MAX_PENDING_BELL_EVENTS {
+                    push_overflow(&mut events, 1, 0);
+                } else {
+                    self.pending_bell_events.set(pending + 1);
+                    events.push_back(BackendEvent::Bell);
+                }
+            }
+            BackendEvent::CallbackPanicked => {
+                if !events
+                    .iter()
+                    .any(|event| matches!(event, BackendEvent::CallbackPanicked))
+                {
+                    events.push_back(BackendEvent::CallbackPanicked);
+                }
+            }
+            BackendEvent::InputDropped { bytes } => {
+                if let Some(BackendEvent::InputDropped { bytes: pending }) = events
+                    .iter_mut()
+                    .find(|event| matches!(event, BackendEvent::InputDropped { .. }))
+                {
+                    *pending = pending.saturating_add(bytes);
+                } else {
+                    events.push_back(BackendEvent::InputDropped { bytes });
+                }
+            }
+            BackendEvent::EffectsOverflow {
+                dropped_events,
+                dropped_bytes,
+            } => push_overflow(&mut events, dropped_events, dropped_bytes),
         }
-        events.push_back(event);
     }
 
     pub(crate) fn drain(&self) -> Vec<BackendEvent> {
+        self.pending_write_pty_bytes.set(0);
+        self.pending_clipboard_events.set(0);
+        self.pending_bell_events.set(0);
         self.events.borrow_mut().drain(..).collect()
+    }
+}
+
+fn push_overflow(events: &mut VecDeque<BackendEvent>, dropped_events: usize, dropped_bytes: usize) {
+    if let Some(BackendEvent::EffectsOverflow {
+        dropped_events: pending_events,
+        dropped_bytes: pending_bytes,
+    }) = events
+        .iter_mut()
+        .find(|event| matches!(event, BackendEvent::EffectsOverflow { .. }))
+    {
+        *pending_events = pending_events.saturating_add(dropped_events);
+        *pending_bytes = pending_bytes.saturating_add(dropped_bytes);
+    } else {
+        events.push_back(BackendEvent::EffectsOverflow {
+            dropped_events,
+            dropped_bytes,
+        });
     }
 }
 
@@ -159,7 +255,7 @@ mod tests {
 
     #[test]
     fn callback_panic_is_contained_and_reported() {
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap());
+        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
         state.panic_next.set(true);
         unsafe {
             crate::callback_ffi::bell(
@@ -172,7 +268,7 @@ mod tests {
 
     #[test]
     fn callback_p99_stays_below_one_millisecond() {
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap());
+        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
         let data = b"response";
         let mut samples = Vec::with_capacity(2_000);
         for _ in 0..2_000 {
@@ -189,5 +285,30 @@ mod tests {
         }
         samples.sort_unstable();
         assert!(samples[samples.len() * 99 / 100] < std::time::Duration::from_millis(1));
+    }
+
+    #[test]
+    fn protocol_replies_are_coalesced_without_an_event_count_limit() {
+        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        for _ in 0..1_000 {
+            state.push(BackendEvent::WritePty(vec![b'x']));
+        }
+
+        assert_eq!(state.drain(), [BackendEvent::WritePty(vec![b'x'; 1_000])]);
+    }
+
+    #[test]
+    fn protocol_overflow_is_explicit() {
+        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
+        state.push(BackendEvent::WritePty(vec![0; MAX_PENDING_WRITE_PTY_BYTES]));
+        state.push(BackendEvent::WritePty(vec![0; 1]));
+
+        assert!(matches!(
+            state.drain().last(),
+            Some(BackendEvent::EffectsOverflow {
+                dropped_events: 1,
+                dropped_bytes: 1,
+            })
+        ));
     }
 }

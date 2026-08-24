@@ -317,8 +317,12 @@ impl GhosttyHarness {
         let size = paneflow_terminal_ghostty::WindowSize::new(80, 24, 0, 0)
             .expect("corpus dimensions are valid");
         Self {
-            terminal: paneflow_terminal_ghostty::DisplayTerminal::new(size, 10_000)
-                .expect("pinned Ghostty terminal initializes"),
+            terminal: paneflow_terminal_ghostty::DisplayTerminal::new(
+                size,
+                10_000,
+                paneflow_terminal_ghostty::TerminalAppearance::default(),
+            )
+            .expect("pinned Ghostty terminal initializes"),
         }
     }
 
@@ -482,6 +486,12 @@ fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Op
         }
         paneflow_terminal_ghostty::BackendEvent::CallbackPanicked
         | paneflow_terminal_ghostty::BackendEvent::InputDropped { .. } => None,
+        paneflow_terminal_ghostty::BackendEvent::EffectsOverflow {
+            dropped_events,
+            dropped_bytes,
+        } => Some(format!(
+            "EffectsOverflow(events={dropped_events},bytes={dropped_bytes})"
+        )),
     }
 }
 

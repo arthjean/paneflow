@@ -7,15 +7,28 @@ use crate::callbacks::{self, CallbackState};
 use crate::engine::DisplayTerminal;
 use crate::handles::{OwnedHandle, check, create};
 use crate::limits::MAX_SCROLLBACK_ROWS;
-use crate::{GhosttyError, Result, Rgb, WindowSize};
+use crate::osc::OscRouter;
+use crate::{GhosttyError, Result, TerminalAppearance, WindowSize};
 
 const MAX_APC_BYTES: usize = 1024 * 1024;
 
 impl DisplayTerminal {
-    pub fn new(size: WindowSize, max_scrollback: usize) -> Result<Self> {
+    pub fn new(
+        size: WindowSize,
+        max_scrollback: usize,
+        appearance: TerminalAppearance,
+    ) -> Result<Self> {
         // SAFETY: a null pointer selects libghostty's process-lifetime default
         // allocator, so every owned handle may retain it until Drop.
-        unsafe { Self::new_with_allocator(size, max_scrollback, std::ptr::null()) }
+        unsafe { Self::new_with_allocator(size, max_scrollback, appearance, std::ptr::null()) }
+    }
+
+    pub fn set_appearance(&mut self, appearance: TerminalAppearance) -> Result<()> {
+        configure_appearance(self.terminal.raw(), appearance)?;
+        self.callbacks.set_color_scheme(appearance.color_scheme);
+        self.osc.set_appearance(appearance);
+        self.snapshot_cache.invalidate();
+        Ok(())
     }
 
     /// Construct with an allocator that remains valid through this terminal's Drop.
@@ -27,6 +40,7 @@ impl DisplayTerminal {
     unsafe fn new_with_allocator(
         size: WindowSize,
         max_scrollback: usize,
+        appearance: TerminalAppearance,
         allocator: *const sys::GhosttyAllocator,
     ) -> Result<Self> {
         let size = size.validate()?;
@@ -37,7 +51,7 @@ impl DisplayTerminal {
             });
         }
         crate::abi::validate()?;
-        let mut callbacks = Box::new(CallbackState::new(size));
+        let mut callbacks = Box::new(CallbackState::new(size, appearance.color_scheme));
         let options = sys::GhosttyTerminalOptions {
             cols: size.cols,
             rows: size.rows,
@@ -57,6 +71,7 @@ impl DisplayTerminal {
         let terminal = unsafe { OwnedHandle::from_raw(raw_terminal, sys::ghostty_terminal_free) };
         callbacks::install(terminal.raw(), (&mut *callbacks) as *mut CallbackState)?;
         configure_safety_limits(terminal.raw())?;
+        configure_appearance(terminal.raw(), appearance)?;
 
         // SAFETY: each constructor writes the named handle type using the
         // selected allocator, and each paired function is that type's exact
@@ -141,56 +156,45 @@ impl DisplayTerminal {
             terminal,
             snapshot_cache: Default::default(),
             callbacks,
-            color_queries: Default::default(),
-            osc_filter: Default::default(),
-            osc7: Default::default(),
-            osc52: Default::default(),
-            last_pwd: None,
+            osc: OscRouter::new(appearance),
             _not_send_or_sync: PhantomData,
         })
     }
+}
 
-    /// Configure the host theme colors used by OSC 10, 11, and 12 queries.
-    /// Terminal applications use these synchronous replies to select a
-    /// readable palette before their first stable redraw.
-    pub fn set_default_colors(
-        &mut self,
-        foreground: Rgb,
-        background: Rgb,
-        cursor: Rgb,
-    ) -> Result<()> {
-        for (option, color) in [
-            (
-                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND,
-                foreground,
-            ),
-            (
-                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND,
-                background,
-            ),
-            (
-                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_CURSOR,
-                cursor,
-            ),
-        ] {
-            let color = sys::GhosttyColorRgb {
-                r: color.r,
-                g: color.g,
-                b: color.b,
-            };
-            let result = unsafe {
-                sys::ghostty_terminal_set(
-                    self.terminal.raw(),
-                    option,
-                    (&color as *const sys::GhosttyColorRgb).cast(),
-                )
-            };
-            check("terminal_set_default_color", result)?;
-        }
-        self.color_queries
-            .set_colors(foreground, background, cursor);
-        Ok(())
+fn configure_appearance(
+    terminal: sys::GhosttyTerminal,
+    appearance: TerminalAppearance,
+) -> Result<()> {
+    for (option, color) in [
+        (
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND,
+            appearance.foreground,
+        ),
+        (
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND,
+            appearance.background,
+        ),
+        (
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_CURSOR,
+            appearance.cursor,
+        ),
+    ] {
+        let color = sys::GhosttyColorRgb {
+            r: color.r,
+            g: color.g,
+            b: color.b,
+        };
+        let result = unsafe {
+            sys::ghostty_terminal_set(
+                terminal,
+                option,
+                (&color as *const sys::GhosttyColorRgb).cast(),
+            )
+        };
+        check("terminal_set_default_color", result)?;
     }
+    Ok(())
 }
 
 fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<()> {
@@ -351,27 +355,27 @@ mod tests {
 
     #[test]
     fn configured_default_colors_answer_osc_queries() {
-        let mut terminal = DisplayTerminal::new(WindowSize::new(80, 24, 8, 16).unwrap(), 1_000)
-            .expect("terminal must initialize");
-        terminal
-            .set_default_colors(
-                Rgb {
-                    r: 0x11,
-                    g: 0x22,
-                    b: 0x33,
-                },
-                Rgb {
-                    r: 0x44,
-                    g: 0x55,
-                    b: 0x66,
-                },
-                Rgb {
-                    r: 0x77,
-                    g: 0x88,
-                    b: 0x99,
-                },
-            )
-            .expect("default colors must be accepted");
+        let appearance = TerminalAppearance::new(
+            crate::Rgb {
+                r: 0x11,
+                g: 0x22,
+                b: 0x33,
+            },
+            crate::Rgb {
+                r: 0x44,
+                g: 0x55,
+                b: 0x66,
+            },
+            crate::Rgb {
+                r: 0x77,
+                g: 0x88,
+                b: 0x99,
+            },
+            crate::ColorScheme::Light,
+        );
+        let mut terminal =
+            DisplayTerminal::new(WindowSize::new(80, 24, 8, 16).unwrap(), 1_000, appearance)
+                .expect("terminal must initialize");
 
         terminal
             .feed(b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\\x1b]12;?\x1b\\")
@@ -417,9 +421,15 @@ mod tests {
             {
                 // SAFETY: both `state` and the static vtable outlive the
                 // terminal, which is dropped before this scope ends.
-                let mut terminal =
-                    unsafe { DisplayTerminal::new_with_allocator(size, 2_000, &allocator) }
-                        .expect("terminal must initialize with the tracked allocator");
+                let mut terminal = unsafe {
+                    DisplayTerminal::new_with_allocator(
+                        size,
+                        2_000,
+                        TerminalAppearance::default(),
+                        &allocator,
+                    )
+                }
+                .expect("terminal must initialize with the tracked allocator");
                 terminal
                     .feed(format!("tracked-{iteration:02}-Ω").as_bytes())
                     .expect("tracked terminal must accept input");

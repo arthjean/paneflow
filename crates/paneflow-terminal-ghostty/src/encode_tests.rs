@@ -1,12 +1,19 @@
 use paneflow_libghostty_sys as sys;
 
 use crate::limits::MAX_SCROLLBACK_ROWS;
-use crate::{DisplayTerminal, GhosttyError, Key, KeyAction, KeyInput, Modifiers, WindowSize};
+use crate::{
+    DisplayTerminal, GhosttyError, Key, KeyAction, KeyInput, Modifiers, TerminalAppearance,
+    WindowSize,
+};
 
 #[test]
 fn key_text_pointer_is_cleared_after_encoding() {
-    let mut terminal =
-        DisplayTerminal::new(WindowSize::new(80, 24, 8, 16).unwrap(), 10_000).unwrap();
+    let mut terminal = DisplayTerminal::new(
+        WindowSize::new(80, 24, 8, 16).unwrap(),
+        10_000,
+        TerminalAppearance::default(),
+    )
+    .unwrap();
     terminal
         .encode_key(&KeyInput {
             key: Key::Character('x'),
@@ -34,13 +41,14 @@ fn constructor_revalidates_public_dimensions_and_scrollback_cap() {
         cell_height: 16,
     };
     assert!(matches!(
-        DisplayTerminal::new(invalid, 10_000),
+        DisplayTerminal::new(invalid, 10_000, TerminalAppearance::default()),
         Err(GhosttyError::InvalidDimensions { .. })
     ));
     assert!(matches!(
         DisplayTerminal::new(
             WindowSize::new(80, 24, 8, 16).unwrap(),
-            MAX_SCROLLBACK_ROWS + 1
+            MAX_SCROLLBACK_ROWS + 1,
+            TerminalAppearance::default(),
         ),
         Err(GhosttyError::LimitExceeded { .. })
     ));

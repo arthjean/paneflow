@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use paneflow_libghostty_sys as sys;
 
-use crate::engine::{DisplayTerminal, get_terminal};
+use crate::engine::DisplayTerminal;
 use crate::handles::check;
 use crate::limits::MAX_SNAPSHOT_CELLS;
-use crate::snapshot_ffi::render_get;
+use crate::snapshot_ffi::{
+    RenderDirty, render_get, render_row_data, render_row_iterator, terminal_scrollbar,
+};
 use crate::{Cell, Content, GhosttyError, Point, Result, Scroll, SelectionRange};
 
 #[derive(Default)]
@@ -47,16 +49,7 @@ impl DisplayTerminal {
             });
         }
 
-        let mut dirty = sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FALSE;
-        // SAFETY: the owned render-state handle is live, and DIRTY writes a
-        // GhosttyRenderStateDirty into `dirty` for this call.
-        unsafe {
-            render_get(
-                self.render_state.raw(),
-                sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_DIRTY,
-                &mut dirty,
-            )
-        }?;
+        let dirty = render_get::<RenderDirty>(self.render_state.raw())?;
         let full_refresh = match dirty {
             sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FALSE
             | sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_PARTIAL => {
@@ -143,16 +136,7 @@ impl DisplayTerminal {
             Vec::with_capacity(cell_count)
         });
 
-        let mut iterator = self.row_iterator.raw();
-        // SAFETY: the owned render state and iterator are live, and
-        // ROW_ITERATOR writes a GhosttyRenderStateRowIterator into `iterator`.
-        unsafe {
-            render_get(
-                self.render_state.raw(),
-                sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR,
-                &mut iterator,
-            )
-        }?;
+        let iterator = render_row_iterator(self.render_state.raw(), self.row_iterator.raw())?;
 
         let mut row_index = 0usize;
         let mut selection_start = None;
@@ -164,40 +148,8 @@ impl DisplayTerminal {
                 ));
             }
 
-            let mut row_dirty = false;
-            let mut row_cells = self.row_cells.raw();
-            let mut selection: sys::GhosttyRenderStateRowSelection = unsafe { std::mem::zeroed() };
-            selection.size = std::mem::size_of::<sys::GhosttyRenderStateRowSelection>();
-            let keys = [
-                sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
-                sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
-                sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION,
-            ];
-            let mut values: [*mut std::ffi::c_void; 3] = [
-                (&mut row_dirty as *mut bool).cast(),
-                (&mut row_cells as *mut sys::GhosttyRenderStateRowCells).cast(),
-                (&mut selection as *mut sys::GhosttyRenderStateRowSelection).cast(),
-            ];
-            let mut written = 0usize;
-            let result = unsafe {
-                sys::ghostty_render_state_row_get_multi(
-                    iterator,
-                    keys.len(),
-                    keys.as_ptr(),
-                    values.as_mut_ptr(),
-                    &mut written,
-                )
-            };
-            let row_selection = if result == sys::GhosttyResult_GHOSTTY_NO_VALUE && written == 2 {
-                None
-            } else {
-                check("render_state_row_get_multi", result)?;
-                if written != keys.len() {
-                    return Err(GhosttyError::AbiMismatch(format!(
-                        "render row multi-get wrote {written} fields, expected {}",
-                        keys.len()
-                    )));
-                }
+            let row = render_row_data(iterator, self.row_cells.raw())?;
+            let row_selection = if let Some(selection) = row.selection {
                 let start = usize::from(selection.start_x.min(selection.end_x));
                 let end = usize::from(selection.start_x.max(selection.end_x));
                 if end >= cols {
@@ -206,6 +158,8 @@ impl DisplayTerminal {
                     ));
                 }
                 Some((start, end))
+            } else {
+                None
             };
             if let Some((start, end)) = row_selection {
                 let line = i32::try_from(row_index)
@@ -213,9 +167,9 @@ impl DisplayTerminal {
                 selection_start.get_or_insert(Point::new(line, start));
                 selection_end = Some(Point::new(line, end));
             }
-            if full_refresh || row_dirty {
+            if full_refresh || row.dirty {
                 let mut column = 0usize;
-                while unsafe { sys::ghostty_render_state_row_cells_next(row_cells) } {
+                while unsafe { sys::ghostty_render_state_row_cells_next(row.cells) } {
                     if column >= cols {
                         return Err(GhosttyError::AbiMismatch(
                             "render iterator returned too many columns".into(),
@@ -223,7 +177,7 @@ impl DisplayTerminal {
                     }
                     let selected =
                         row_selection.is_some_and(|(start, end)| (start..=end).contains(&column));
-                    let cell = self.copy_cell(row_cells, row_index, column, selected)?;
+                    let cell = self.copy_cell(row.cells, row_index, column, selected)?;
                     if let Some(cells) = rebuilt_cells.as_mut() {
                         cells.push(cell);
                     } else {
@@ -246,7 +200,7 @@ impl DisplayTerminal {
                 }
             }
 
-            if full_refresh || row_dirty {
+            if full_refresh || row.dirty {
                 let clean = false;
                 let result = unsafe {
                     sys::ghostty_render_state_row_set(
@@ -307,17 +261,7 @@ impl DisplayTerminal {
     }
 
     fn scrollbar(&self) -> Result<sys::GhosttyTerminalScrollbar> {
-        let mut scrollbar: sys::GhosttyTerminalScrollbar = unsafe { std::mem::zeroed() };
-        // SAFETY: the owned terminal handle is live, and SCROLLBAR writes a
-        // GhosttyTerminalScrollbar into `scrollbar` for this call.
-        unsafe {
-            get_terminal(
-                self.terminal.raw(),
-                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBAR,
-                &mut scrollbar,
-            )
-        }?;
-        Ok(scrollbar)
+        terminal_scrollbar(self.terminal.raw())
     }
 
     fn scrollbar_position(&self) -> Result<(usize, usize)> {

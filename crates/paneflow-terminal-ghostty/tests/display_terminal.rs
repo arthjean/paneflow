@@ -1,8 +1,15 @@
-#![cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+#![cfg(all(
+    feature = "native",
+    any(
+        target_os = "linux",
+        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+    )
+))]
 
 use paneflow_terminal_ghostty::{
     BackendEvent, Color, DisplayTerminal, FocusEvent, Key, KeyAction, KeyInput, Modifiers,
-    MouseAction, MouseButton, MouseInput, Point, Rgb, Scroll, SelectionRange, WideCell, WindowSize,
+    MouseAction, MouseButton, MouseInput, Point, Rgb, Scroll, SelectionRange, TerminalAppearance,
+    WideCell, WindowSize,
 };
 
 #[allow(
@@ -10,14 +17,19 @@ use paneflow_terminal_ghostty::{
     reason = "test fixture setup must fail immediately"
 )]
 fn terminal(cols: usize, rows: usize) -> DisplayTerminal {
-    DisplayTerminal::new(WindowSize::new(cols, rows, 8, 16).unwrap(), 10_000).unwrap()
+    DisplayTerminal::new(
+        WindowSize::new(cols, rows, 8, 16).unwrap(),
+        10_000,
+        TerminalAppearance::default(),
+    )
+    .unwrap()
 }
 
 #[test]
 fn feed_produces_owned_snapshot_and_ordered_effects() {
     let mut terminal = terminal(16, 4);
     terminal
-        .feed(b"\x1b]0;owned title\x07\x07\x1b[31mhello \x1b[0m")
+        .feed(b"\x1b]0;owned title\x07\x07\x07\x1b[31mhello \x1b[0m")
         .unwrap();
     terminal.feed("中e\u{301}".as_bytes()).unwrap();
     terminal.feed(b"\x1b[6n").unwrap();
@@ -38,10 +50,12 @@ fn feed_produces_owned_snapshot_and_ordered_effects() {
 
     let events = terminal.drain_events();
     assert!(matches!(events.first(), Some(BackendEvent::Title(title)) if title == "owned title"));
-    assert!(
+    assert_eq!(
         events
             .iter()
-            .any(|event| matches!(event, BackendEvent::Bell))
+            .filter(|event| matches!(event, BackendEvent::Bell))
+            .count(),
+        2
     );
     assert!(
         events
@@ -305,6 +319,24 @@ fn batched_line_texts_read_matches_from_real_history() {
 }
 
 #[test]
+fn search_chunks_never_copy_a_partial_or_over_budget_row() {
+    let mut terminal = terminal(32, 2);
+    terminal
+        .feed(b"history-one\r\nhistory-two\r\nviewport-one\r\nviewport-two")
+        .unwrap();
+
+    let below_one_row = terminal.search_chunk(0, 31).unwrap();
+    assert!(below_one_row.lines.is_empty());
+    assert_eq!(below_one_row.next_row, 0);
+    assert!(below_one_row.total_rows > 0);
+
+    let one_row = terminal.search_chunk(0, 32).unwrap();
+    assert_eq!(one_row.lines.len(), 1);
+    assert_eq!(one_row.next_row, 1);
+    assert_eq!(one_row.cols, 32);
+}
+
+#[test]
 fn positive_scroll_delta_moves_into_history() {
     let mut terminal = terminal(5, 2);
     terminal
@@ -472,29 +504,11 @@ fn dimensions_reject_zero_and_values_above_u16() {
 #[test]
 fn repeated_headless_contract_survives_malformed_input_and_releases_every_terminal() {
     let size = WindowSize::new(40, 6, 8, 16).unwrap();
-    assert!(DisplayTerminal::new(size, usize::MAX).is_err());
+    assert!(DisplayTerminal::new(size, usize::MAX, TerminalAppearance::default()).is_err());
 
     for iteration in 0..64 {
-        let mut terminal = DisplayTerminal::new(size, 2_000).unwrap();
-        terminal
-            .set_default_colors(
-                Rgb {
-                    r: 0xdd,
-                    g: 0xdd,
-                    b: 0xdd,
-                },
-                Rgb {
-                    r: 0x11,
-                    g: 0x11,
-                    b: 0x11,
-                },
-                Rgb {
-                    r: 0xff,
-                    g: 0xff,
-                    b: 0xff,
-                },
-            )
-            .unwrap();
+        let mut terminal =
+            DisplayTerminal::new(size, 2_000, TerminalAppearance::default()).unwrap();
         terminal.feed(b"\x1b]52;c;@@@\x07\xff").unwrap();
         terminal
             .feed(format!("\x1b[?1049h\x1b[2J\x1b[H\x1b[48;5;42mWIN-{iteration:02}-Ω").as_bytes())

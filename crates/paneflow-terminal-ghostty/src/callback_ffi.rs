@@ -2,8 +2,8 @@ use std::ffi::c_void;
 
 use paneflow_libghostty_sys as sys;
 
-use crate::BackendEvent;
 use crate::callbacks::with_state;
+use crate::{BackendEvent, ColorScheme};
 
 const MAX_CALLBACK_BYTES: usize = 64 * 1024;
 const MAX_METADATA_BYTES: usize = 4096;
@@ -131,10 +131,9 @@ pub(crate) unsafe extern "C" fn color_scheme(
     unsafe {
         with_state(userdata, |state| {
             if let Some(out) = out.as_mut() {
-                *out = if state.is_dark() {
-                    sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK
-                } else {
-                    sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_LIGHT
+                *out = match state.color_scheme() {
+                    ColorScheme::Light => sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_LIGHT,
+                    ColorScheme::Dark => sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK,
                 };
                 filled = true;
             }
@@ -186,7 +185,7 @@ mod tests {
         let enquiry = unsafe { enquiry(std::ptr::null_mut(), std::ptr::null_mut()) };
         assert_eq!(enquiry.len, 0);
 
-        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap());
+        let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), ColorScheme::Dark);
         let mut attributes = unsafe { std::mem::zeroed::<sys::GhosttyDeviceAttributes>() };
         assert!(unsafe {
             device_attributes(
@@ -212,5 +211,30 @@ mod tests {
         );
         assert_eq!(attributes.secondary.firmware_version, 10);
         assert_eq!(attributes.secondary.rom_cartridge, 0);
+    }
+
+    #[test]
+    fn color_scheme_callback_uses_the_configured_appearance() {
+        for (scheme, expected) in [
+            (
+                ColorScheme::Light,
+                sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_LIGHT,
+            ),
+            (
+                ColorScheme::Dark,
+                sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK,
+            ),
+        ] {
+            let state = CallbackState::new(WindowSize::new(80, 24, 8, 16).unwrap(), scheme);
+            let mut actual = sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK;
+            assert!(unsafe {
+                color_scheme(
+                    std::ptr::null_mut(),
+                    (&state as *const CallbackState).cast_mut().cast(),
+                    &mut actual,
+                )
+            });
+            assert_eq!(actual, expected);
+        }
     }
 }

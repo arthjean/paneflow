@@ -41,7 +41,13 @@ impl WindowSize {
         })
     }
 
-    #[cfg(all(feature = "native", any(target_os = "linux", target_os = "windows")))]
+    #[cfg(all(
+        feature = "native",
+        any(
+            target_os = "linux",
+            all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
+        )
+    ))]
     pub(crate) fn validate(self) -> Result<Self> {
         if self.cols == 0 || self.rows == 0 {
             return Err(GhosttyError::InvalidDimensions {
@@ -59,6 +65,60 @@ pub struct Rgb {
     pub r: u8,
     pub g: u8,
     pub b: u8,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorScheme {
+    Light,
+    #[default]
+    Dark,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalAppearance {
+    pub foreground: Rgb,
+    pub background: Rgb,
+    pub cursor: Rgb,
+    pub color_scheme: ColorScheme,
+}
+
+impl TerminalAppearance {
+    pub const fn new(
+        foreground: Rgb,
+        background: Rgb,
+        cursor: Rgb,
+        color_scheme: ColorScheme,
+    ) -> Self {
+        Self {
+            foreground,
+            background,
+            cursor,
+            color_scheme,
+        }
+    }
+}
+
+impl Default for TerminalAppearance {
+    fn default() -> Self {
+        Self {
+            foreground: Rgb {
+                r: 0xdd,
+                g: 0xdd,
+                b: 0xdd,
+            },
+            background: Rgb {
+                r: 0x11,
+                g: 0x11,
+                b: 0x11,
+            },
+            cursor: Rgb {
+                r: 0xff,
+                g: 0xff,
+                b: 0xff,
+            },
+            color_scheme: ColorScheme::Dark,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -188,6 +248,7 @@ pub struct SearchMatch {
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
     pub regex_error: Option<String>,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -213,5 +274,11 @@ pub enum BackendEvent {
     Title(String),
     WorkingDirectory(String),
     CallbackPanicked,
-    InputDropped { bytes: usize },
+    InputDropped {
+        bytes: usize,
+    },
+    EffectsOverflow {
+        dropped_events: usize,
+        dropped_bytes: usize,
+    },
 }
