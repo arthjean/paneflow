@@ -13,7 +13,15 @@ default = []
 link = []
 
 [build-dependencies]
+serde.workspace = true
 sha2 = "0.10"
+toml = "0.8"
+
+[dev-dependencies]
+serde.workspace = true
+sha2 = "0.10"
+tempfile.workspace = true
+toml = "0.8"
 
 [lints]
 workspace = true

@@ -15,17 +15,7 @@ $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $ManifestPath = Join-Path $Root "native\libghostty\manifest.toml"
 $SmokeSource = Join-Path $Root "native\libghostty\windows-smoke.c"
 
-function Get-ManifestString {
-    param([string]$Key)
-
-    $pattern = '^' + [regex]::Escape($Key) + ' = "(.*)"$'
-    foreach ($line in Get-Content -LiteralPath $ManifestPath) {
-        if ($line -match $pattern) {
-            return $matches[1]
-        }
-    }
-    throw "libghostty manifest is missing '$Key'"
-}
+. "$PSScriptRoot/libghostty-manifest.ps1"
 
 function Get-Sha256 {
     param([string]$Path)
@@ -357,8 +347,8 @@ function Export-BuildEvidence {
     }
 
     $buildRoot = Split-Path $Prepared -Parent
-    $rawArchive = Join-Path $buildRoot "raw\lib\ghostty-vt-static.lib"
-    $finalArchive = Join-Path $Prepared "lib\ghostty-vt-static.lib"
+    $rawArchive = Join-Path (Join-Path $buildRoot "raw") $ArchivePath
+    $finalArchive = Join-Path $Prepared $ArchivePath
     foreach ($archive in @($rawArchive, $finalArchive)) {
         if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
             throw "cannot collect reproducibility evidence because archive is missing: $archive"
@@ -367,7 +357,7 @@ function Export-BuildEvidence {
 
     $rawEvidence = Join-Path $buildEvidence "archives\raw"
     New-Item -ItemType Directory -Force -Path $rawEvidence | Out-Null
-    Copy-Item -LiteralPath $rawArchive -Destination (Join-Path $rawEvidence "ghostty-vt-static.lib")
+    Copy-Item -LiteralPath $rawArchive -Destination (Join-Path $rawEvidence $ArchiveFileName)
 
     $membersEvidence = Join-Path $buildEvidence "final-members"
     $inventoryPath = Join-Path $buildEvidence "final-members.json"
@@ -481,11 +471,21 @@ $CanonicalSourcePath = Get-ManifestString "windows_canonical_source_path"
 $MsvcToolset = Get-ManifestString "windows_msvc_toolset"
 $WindowsSdk = Get-ManifestString "windows_sdk"
 $LlvmVersion = Get-ManifestString "windows_llvm_version"
-$Normalization = Get-ManifestString "archive_normalization_windows"
-$ExpectedArchiveSha = Get-ManifestString "archive_sha256_x86_64_pc_windows_msvc"
-$ExpectedBuildInfoSha = Get-ManifestString "build_info_sha256_x86_64_pc_windows_msvc"
-$ExpectedHeadersIndexSha = Get-ManifestString "headers_index_sha256_x86_64_pc_windows_msvc"
-$ExpectedSymbolsSha = Get-ManifestString "symbols_sha256_x86_64_pc_windows_msvc"
+$Crt = Get-ManifestString "windows_crt"
+$CxxRuntime = Get-ManifestString "windows_cxx_runtime"
+$ArchivePath = (Get-ManifestTargetString $Target "archive_path").Replace('/', '\')
+$ArchiveFileName = Split-Path $ArchivePath -Leaf
+$ZigTarget = Get-ManifestTargetString $Target "zig_target"
+$Simd = Get-ManifestTargetBoolean $Target "simd"
+$SimdText = $Simd.ToString().ToLowerInvariant()
+$SystemLibraries = @(Get-ManifestTargetStringArray $Target "system_libraries")
+$SystemLibraryArgs = @($SystemLibraries | ForEach-Object { "$_.lib" })
+$SystemLibrariesText = $SystemLibraryArgs -join ','
+$Normalization = Get-ManifestTargetString $Target "archive_normalization"
+$ExpectedArchiveSha = Get-ManifestTargetString $Target "archive_sha256"
+$ExpectedBuildInfoSha = Get-ManifestTargetString $Target "build_info_sha256"
+$ExpectedHeadersIndexSha = Get-ManifestTargetString $Target "headers_index_sha256"
+$ExpectedSymbolsSha = Get-ManifestTargetString $Target "symbols_sha256"
 
 $insideWorkTree = (& git -C $SourceDir rev-parse --is-inside-work-tree 2>$null)
 if ($LASTEXITCODE -ne 0 -or $insideWorkTree -ne "true") {
@@ -685,7 +685,7 @@ function Invoke-NativeBuild {
     $env:NO_COLOR = "1"
     Push-Location $buildSource
     try {
-        $zigOutput = @(& $ZigPath build --zig-lib-dir $ZigLibDir --verbose --seed $BuildSeed "-j$BuildJobs" -Demit-lib-vt=true -Dtarget=x86_64-windows-msvc "-Doptimize=$BuildMode" -Dsimd=true --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
+        $zigOutput = @(& $ZigPath build --zig-lib-dir $ZigLibDir --verbose --seed $BuildSeed "-j$BuildJobs" -Demit-lib-vt=true "-Dtarget=$ZigTarget" "-Doptimize=$BuildMode" "-Dsimd=$SimdText" --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
         $zigExitCode = $LASTEXITCODE
         if ($zigExitCode -ne 0) {
             throw "SIMD libghostty build failed with exit code $zigExitCode; raw reproducer is $buildRoot`n$($zigOutput -join "`n")"
@@ -703,7 +703,7 @@ function Invoke-NativeBuild {
         throw "Zig did not emit the fixed install prefix $zigPrefix"
     }
     Move-Item -LiteralPath $zigPrefix -Destination $raw
-    $rawArchive = Join-Path $raw "lib\ghostty-vt-static.lib"
+    $rawArchive = Join-Path $raw $ArchivePath
     $rawInclude = Join-Path $raw "include"
     if (-not (Test-Path -LiteralPath $rawArchive)) {
         throw "missing SIMD static archive: $rawArchive"
@@ -711,10 +711,10 @@ function Invoke-NativeBuild {
     if (-not (Test-Path -LiteralPath (Join-Path $rawInclude "ghostty\vt.h"))) {
         throw "missing installed libghostty headers: $rawInclude"
     }
-    $libDir = Join-Path $prepared "lib"
+    $archive = Join-Path $prepared $ArchivePath
+    $archiveDirectory = Split-Path $archive -Parent
     $includeDir = Join-Path $prepared "include"
-    New-Item -ItemType Directory -Force -Path $libDir, $includeDir | Out-Null
-    $archive = Join-Path $libDir "ghostty-vt-static.lib"
+    New-Item -ItemType Directory -Force -Path $archiveDirectory, $includeDir | Out-Null
     Normalize-CoffArchive $rawArchive $archive $llvmObjcopy $llvmAr
     Copy-Item -LiteralPath (Join-Path $rawInclude "ghostty") -Destination $includeDir -Recurse -Force
     $bindingText = [IO.File]::ReadAllText($bindings).Replace("`r`n", "`n").Replace("`r", "`n")
@@ -770,7 +770,7 @@ function Invoke-NativeBuild {
 
     $smokeObject = Join-Path $buildRoot "windows-smoke.obj"
     $smokeExe = Join-Path $buildRoot "windows-smoke.exe"
-    $clOutput = @(& $clExe /nologo /W4 /WX /std:c11 /MT "/I$includeDir" "/Fo$smokeObject" $SmokeSource $archive ntdll.lib /link "/out:$smokeExe" 2>&1)
+    $clOutput = @(& $clExe /nologo /W4 /WX /std:c11 /MT "/I$includeDir" "/Fo$smokeObject" $SmokeSource $archive @SystemLibraryArgs /link "/out:$smokeExe" 2>&1)
     $clExitCode = $LASTEXITCODE
     if ($clExitCode -ne 0) {
         throw "MSVC static smoke failed to link; reproducer is $buildRoot`n$($clOutput -join "`n")"
@@ -807,9 +807,9 @@ function Invoke-NativeBuild {
         "headers_sha256=$headerIndexSha",
         "bindings_sha256=$BindingsSha",
         "rust_target=$Target",
-        "zig_target=x86_64-windows-msvc",
+        "zig_target=$ZigTarget",
         "optimize=$BuildMode",
-        "simd=true",
+        "simd=$SimdText",
         "build_seed=$BuildSeed",
         "build_jobs=$BuildJobs",
         "canonical_source_path=$CanonicalSourcePath",
@@ -823,9 +823,9 @@ function Invoke-NativeBuild {
         "msvc_toolset=$MsvcToolset",
         "windows_sdk=$WindowsSdk",
         "llvm_version=$LlvmVersion",
-        "crt=MT_StaticRelease",
-        "cxx_runtime=libcpmt.lib",
-        "system_libraries=ntdll.lib,kernel32.lib"
+        "crt=$Crt",
+        "cxx_runtime=$CxxRuntime",
+        "system_libraries=$SystemLibrariesText"
     )
     $resolvedCache = [IO.Path]::GetFullPath($cacheRoot)
     if ((Split-Path $resolvedCache -Parent) -ne $buildSource -or (Split-Path $resolvedCache -Leaf) -ne ".paneflow-zig-cache") {
@@ -840,7 +840,7 @@ try {
     $first = Invoke-NativeBuild "build-1"
     if ($VerifyReproducible) {
         $second = Invoke-NativeBuild "build-2"
-        $comparedPaths = @("lib\ghostty-vt-static.lib", "headers.sha256", "bindings.rs", "symbols.txt", "build-info.txt")
+        $comparedPaths = @($ArchivePath, "headers.sha256", "bindings.rs", "symbols.txt", "build-info.txt")
         $comparisons = @(Export-ReproducibilityEvidence $first $second $EvidenceDir $comparedPaths $llvmAr)
         $mismatches = @($comparisons | Where-Object { -not $_.equal })
         if ($mismatches.Count -ne 0) {
@@ -849,7 +849,7 @@ try {
         }
     }
 
-    $actualArchiveSha = Get-Sha256 (Join-Path $first "lib\ghostty-vt-static.lib")
+    $actualArchiveSha = Get-Sha256 (Join-Path $first $ArchivePath)
     if ($actualArchiveSha -ne $ExpectedArchiveSha) {
         throw "canonical Windows archive hash differs from manifest; expected $ExpectedArchiveSha, got $actualArchiveSha"
     }

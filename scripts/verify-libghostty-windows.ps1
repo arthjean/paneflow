@@ -15,18 +15,7 @@ $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..")).Path
 $ManifestPath = Join-Path $Root "native\libghostty\manifest.toml"
 
-function Get-ManifestString {
-    param([Parameter(Mandatory = $true)][string]$Key)
-
-    $pattern = '^' + [regex]::Escape($Key) + ' = "(.*)"$'
-    $match = Get-Content -LiteralPath $ManifestPath |
-        Select-String -Pattern $pattern |
-        Select-Object -First 1
-    if ($null -eq $match) {
-        throw "libghostty manifest is missing '$Key'"
-    }
-    return $match.Matches[0].Groups[1].Value
-}
+. "$PSScriptRoot/libghostty-manifest.ps1"
 
 function Get-Sha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
@@ -154,13 +143,19 @@ $SourcePatchOutputSha = Get-ManifestString "windows_source_patch_output_sha256"
 $BindingsSha = Get-ManifestString "bindings_sha256"
 $NoticeSha = Get-ManifestString "notice_sha256"
 $SbomSha = Get-ManifestString "sbom_sha256"
-$ArchiveSha = Get-ManifestString "archive_sha256_x86_64_pc_windows_msvc"
-$BuildInfoSha = Get-ManifestString "build_info_sha256_x86_64_pc_windows_msvc"
-$HeadersSha = Get-ManifestString "headers_index_sha256_x86_64_pc_windows_msvc"
-$SymbolsSha = Get-ManifestString "symbols_sha256_x86_64_pc_windows_msvc"
+$ArchivePath = (Get-ManifestTargetString $Target "archive_path").Replace('/', '\')
+$ArchiveSha = Get-ManifestTargetString $Target "archive_sha256"
+$BuildInfoSha = Get-ManifestTargetString $Target "build_info_sha256"
+$HeadersSha = Get-ManifestTargetString $Target "headers_index_sha256"
+$SymbolsSha = Get-ManifestTargetString $Target "symbols_sha256"
+$ZigTarget = Get-ManifestTargetString $Target "zig_target"
+$Normalization = Get-ManifestTargetString $Target "archive_normalization"
+$SimdText = (Get-ManifestTargetBoolean $Target "simd").ToString().ToLowerInvariant()
+$SystemLibraries = @(Get-ManifestTargetStringArray $Target "system_libraries")
+$SystemLibrariesText = @($SystemLibraries | ForEach-Object { "$_.lib" }) -join ','
 
 $PreparedRoot = Join-Path $Root "native\libghostty\prebuilt\$Target"
-$Archive = Join-Path $PreparedRoot "lib\ghostty-vt-static.lib"
+$Archive = Join-Path $PreparedRoot $ArchivePath
 $BuildInfo = Join-Path $PreparedRoot "build-info.txt"
 $Headers = Join-Path $PreparedRoot "headers.sha256"
 $Symbols = Join-Path $PreparedRoot "symbols.txt"
@@ -208,6 +203,9 @@ foreach ($expectation in @(
     @{ Key = "source_patch_input_sha256"; Value = $SourcePatchInputSha },
     @{ Key = "source_patch_output_sha256"; Value = $SourcePatchOutputSha },
     @{ Key = "rust_target"; Value = $Target },
+    @{ Key = "zig_target"; Value = $ZigTarget },
+    @{ Key = "simd"; Value = $SimdText },
+    @{ Key = "archive_normalization"; Value = $Normalization },
     @{ Key = "archive_sha256"; Value = $ArchiveSha },
     @{ Key = "bindings_sha256"; Value = $BindingsSha },
     @{ Key = "headers_sha256"; Value = $HeadersSha },
@@ -215,7 +213,9 @@ foreach ($expectation in @(
     @{ Key = "msvc_toolset"; Value = (Get-ManifestString "windows_msvc_toolset") },
     @{ Key = "windows_sdk"; Value = (Get-ManifestString "windows_sdk") },
     @{ Key = "llvm_version"; Value = (Get-ManifestString "windows_llvm_version") },
-    @{ Key = "crt"; Value = (Get-ManifestString "windows_crt") }
+    @{ Key = "crt"; Value = (Get-ManifestString "windows_crt") },
+    @{ Key = "cxx_runtime"; Value = (Get-ManifestString "windows_cxx_runtime") },
+    @{ Key = "system_libraries"; Value = $SystemLibrariesText }
 )) {
     Assert-RecordedValue $BuildValues $expectation.Key $expectation.Value
 }
@@ -388,7 +388,6 @@ if ($AllowGeneratedIcons) {
         ":(exclude)assets/icons/paneflow-128.png",
         ":(exclude)assets/icons/paneflow-256.png",
         ":(exclude)assets/icons/paneflow-512.png",
-        ":(exclude)assets/icons/paneflow.png",
         ":(exclude)packaging/wix/paneflow.ico",
         ":(exclude)src-app/assets/icons/paneflow.png"
     )

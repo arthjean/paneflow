@@ -12,6 +12,44 @@ manifest_string() {
   sed -n "s/^${key} = \"\(.*\)\"$/\1/p" "$MANIFEST"
 }
 
+target_manifest_string() {
+  local target="$1"
+  local key="$2"
+  awk -v target="$target" -v key="$key" '
+    $0 == "[targets.\"" target "\"]" { in_target = 1; next }
+    in_target && /^\[/ { exit }
+    in_target {
+      prefix = key " = \""
+      if (index($0, prefix) == 1 && substr($0, length($0), 1) == "\"") {
+        print substr($0, length(prefix) + 1, length($0) - length(prefix) - 1)
+        found = 1
+        exit
+      }
+    }
+    END { if (!found) exit 1 }
+  ' "$MANIFEST"
+}
+
+manifest_targets() {
+  local platform="$1"
+  awk -v platform="$platform" '
+    /^\[targets\."[^"]+"\]$/ {
+      target = $0
+      sub(/^\[targets\."/, "", target)
+      sub(/"\]$/, "", target)
+      in_target = 1
+      next
+    }
+    in_target && /^platform = "/ {
+      value = $0
+      sub(/^platform = "/, "", value)
+      sub(/"$/, "", value)
+      if (value == platform) print target
+      in_target = 0
+    }
+  ' "$MANIFEST"
+}
+
 while (($#)); do
   case "$1" in
     --target)
@@ -37,8 +75,6 @@ HEADER_SHA256="$(manifest_string header_sha256)"
 BINDINGS_PATH="$(manifest_string bindings_path)"
 BINDINGS_SHA256="$(manifest_string bindings_sha256)"
 BUILD_MODE="$(manifest_string build_mode)"
-ARCHIVE_NORMALIZATION="$(manifest_string archive_normalization)"
-BUILD_INFO_SYMBOL="$(manifest_string build_info_symbol)"
 
 [[ -n "$SOURCE_DIR" ]] || {
   echo "PANEFLOW_GHOSTTY_SOURCE_DIR must point to Ghostty $SOURCE_SHA" >&2
@@ -85,16 +121,9 @@ ACTUAL_BINDINGS_SHA256="$(sha256sum "$ROOT/$BINDINGS_PATH" | awk '{print $1}')"
 }
 
 if ((${#TARGETS[@]} == 0)); then
-  TARGETS=("x86_64-unknown-linux-gnu" "aarch64-unknown-linux-gnu")
+  mapfile -t TARGETS < <(manifest_targets linux)
+  ((${#TARGETS[@]} > 0)) || { echo "manifest declares no Linux libghostty targets" >&2; exit 1; }
 fi
-
-zig_target() {
-  case "$1" in
-    x86_64-unknown-linux-gnu) echo "x86_64-linux-gnu" ;;
-    aarch64-unknown-linux-gnu) echo "aarch64-linux-gnu" ;;
-    *) echo "unsupported Linux target: $1" >&2; return 1 ;;
-  esac
-}
 
 normalize_archive() {
   local archive="$1"
@@ -141,7 +170,13 @@ build_one() {
   local output="$2"
   local cache="$3"
   local target
-  target="$(zig_target "$rust_target")"
+  local archive_path
+  local archive_normalization
+  local build_info_symbol
+  target="$(target_manifest_string "$rust_target" zig_target)"
+  archive_path="$(target_manifest_string "$rust_target" archive_path)"
+  archive_normalization="$(target_manifest_string "$rust_target" archive_normalization)"
+  build_info_symbol="$(target_manifest_string "$rust_target" build_info_symbol)"
   rm -rf "$output" "$cache"
   mkdir -p "$output" "$cache"
   (
@@ -152,15 +187,15 @@ build_one() {
       -Doptimize="$BUILD_MODE" \
       --prefix "$output"
   )
-  local archive="$output/lib/libghostty-vt.a"
+  local archive="$output/$archive_path"
   [[ -f "$archive" ]] || { echo "missing static archive: $archive" >&2; return 1; }
   [[ -f "$output/$HEADER_PATH" ]] || { echo "missing installed header: $output/$HEADER_PATH" >&2; return 1; }
-  case "$ARCHIVE_NORMALIZATION" in
+  case "$archive_normalization" in
     elfutils-strip-debug+ar-D) normalize_archive "$archive" ;;
-    *) echo "unsupported archive normalization: $ARCHIVE_NORMALIZATION" >&2; return 1 ;;
+    *) echo "unsupported archive normalization: $archive_normalization" >&2; return 1 ;;
   esac
-  nm -g --defined-only "$archive" | grep -E "[[:space:]]${BUILD_INFO_SYMBOL}$" >/dev/null || {
-    echo "archive does not export $BUILD_INFO_SYMBOL: $archive" >&2
+  nm -g --defined-only "$archive" | grep -E "[[:space:]]${build_info_symbol}$" >/dev/null || {
+    echo "archive does not export $build_info_symbol: $archive" >&2
     return 1
   }
   local archive_sha
@@ -174,9 +209,9 @@ build_one() {
     echo "rust_target=$rust_target"
     echo "zig_target=$target"
     echo "optimize=$BUILD_MODE"
-    echo "archive_normalization=$ARCHIVE_NORMALIZATION"
+    echo "archive_normalization=$archive_normalization"
     echo "archive_sha256=$archive_sha"
-    echo "build_info_symbol=$BUILD_INFO_SYMBOL"
+    echo "build_info_symbol=$build_info_symbol"
   } > "$output/build-info.txt"
 }
 
@@ -186,11 +221,12 @@ for rust_target in "${TARGETS[@]}"; do
   build_one "$rust_target" "$output" "$cache"
 
   if ((VERIFY_REPRODUCIBLE)); then
+    archive_path="$(target_manifest_string "$rust_target" archive_path)"
     second_output="$(mktemp -d)"
     second_cache="$(mktemp -d)"
     trap 'rm -rf "$second_output" "$second_cache"' EXIT
     build_one "$rust_target" "$second_output" "$second_cache"
-    cmp "$output/lib/libghostty-vt.a" "$second_output/lib/libghostty-vt.a"
+    cmp "$output/$archive_path" "$second_output/$archive_path"
     cmp "$output/$HEADER_PATH" "$second_output/$HEADER_PATH"
     cmp "$output/bindings.rs" "$second_output/bindings.rs"
     cmp "$output/build-info.txt" "$second_output/build-info.txt"

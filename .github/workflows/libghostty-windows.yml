@@ -74,16 +74,8 @@ jobs:
 
       - name: Install manifest-pinned Zig distribution
         run: |
-          function Get-ManifestString([string]$Key) {
-            $pattern = '^' + [regex]::Escape($Key) + ' = "(.*)"$'
-            $match = Get-Content -LiteralPath 'native\libghostty\manifest.toml' |
-              Select-String -Pattern $pattern |
-              Select-Object -First 1
-            if ($null -eq $match) {
-              throw "libghostty manifest is missing '$Key'"
-            }
-            return $match.Matches[0].Groups[1].Value
-          }
+          $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
+          . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
 
           $archiveUrl = Get-ManifestString 'windows_zig_archive_url'
           $expectedArchiveSha = Get-ManifestString 'windows_zig_archive_sha256'
@@ -180,6 +172,10 @@ jobs:
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
         run: |
           $prepared = "target\libghostty\$env:TARGET"
+          $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
+          . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
+          $archiveRelativePath = Get-ManifestTargetString $env:TARGET 'archive_path'
+          $archivePath = Join-Path $prepared $archiveRelativePath
           $report = Join-Path $env:EVIDENCE_DIR 'repository-provenance.json'
           & ./scripts/verify-libghostty-windows.ps1 -ReportPath $report
           $repositoryProvenance = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
@@ -197,7 +193,7 @@ jobs:
             zig_codegen = $repositoryProvenance.zig_codegen
             target = $env:TARGET
             profile = $env:NATIVE_PROFILE
-            archive_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\lib\ghostty-vt-static.lib").Hash.ToLowerInvariant()
+            archive_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
             build_info_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\build-info.txt").Hash.ToLowerInvariant()
             symbols_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\symbols.txt").Hash.ToLowerInvariant()
             headers_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\headers.sha256").Hash.ToLowerInvariant()
