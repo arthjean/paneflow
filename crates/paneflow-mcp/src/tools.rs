@@ -29,7 +29,7 @@ pub fn tool_specs() -> Vec<Value> {
     vec![
         json!({
             "name": "list_panes",
-            "description": "List Paneflow surfaces (terminal panes/tabs) with their human-readable name, title, cwd, foreground command, and surface_id. Use this first to discover which surface to read.",
+            "description": "List Paneflow surfaces (terminal panes) with their human-readable name, title, cwd, foreground command, surface_id, and the id and title of the workspace tab that holds them. Use this first to discover which surface to read.",
             "annotations": annotations.clone(),
             "inputSchema": {
                 "type": "object",

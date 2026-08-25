@@ -102,6 +102,14 @@ pub struct Surface {
     pub workspace_id: Option<u64>,
     pub workspace: Option<u64>,
     pub scope: String,
+    /// US-019 (`prd-cli-tab-hierarchy`): identity and title of the workspace
+    /// tab owning this surface. Both are additive and absent for surfaces
+    /// outside the CLI tab hierarchy - and absent altogether when talking to a
+    /// Paneflow older than the tab hierarchy, which simply never sends them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab_title: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -252,6 +260,37 @@ mod tests {
             "workspace": 0,
             "scope": "workspace"
         })
+    }
+
+    /// US-019: the tab is read when the app sends it, and its absence - an
+    /// older Paneflow that predates the tab hierarchy - is not an error and
+    /// leaves the reported payload byte-identical to what it was before.
+    #[test]
+    fn surface_list_reports_the_owning_tab_and_tolerates_its_absence() {
+        let mut tabbed = surface(7, Some(42));
+        tabbed["tab_id"] = json!(11);
+        tabbed["tab_title"] = json!("build");
+        let transport = FakeTransport::new().with("surface.list", json!({"surfaces": [tabbed]}));
+        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+        let surfaces = bridge.surfaces().expect("valid list");
+        assert_eq!(surfaces[0].tab_id, Some(11));
+        assert_eq!(surfaces[0].tab_title.as_deref(), Some("build"));
+        assert_eq!(
+            serde_json::to_value(&surfaces[0]).unwrap()["tab_title"],
+            "build"
+        );
+
+        // Older server: no tab keys at all.
+        let transport =
+            FakeTransport::new().with("surface.list", json!({"surfaces": [surface(7, Some(42))]}));
+        let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));
+        let legacy = bridge.surfaces().expect("a tab-less list still parses");
+        assert_eq!(legacy[0].tab_id, None);
+        let rendered = serde_json::to_value(&legacy[0]).unwrap();
+        assert!(
+            rendered.get("tab_id").is_none() && rendered.get("tab_title").is_none(),
+            "an absent tab is omitted, not rendered as null"
+        );
     }
 
     #[test]

@@ -22,7 +22,7 @@ intentional.
 
 | Tool | Arguments | Returns |
 |------|-----------|---------|
-| `list_panes` | - | Scoped surfaces: `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`. Call this first to discover what to read. The result is wrapped as untrusted terminal metadata. |
+| `list_panes` | - | Scoped surfaces: `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`, plus `tab_id` / `tab_title` for the workspace tab holding the surface. Call this first to discover what to read. The result is wrapped as untrusted terminal metadata. |
 | `read_pane` | `target` (name or `surface_id`), `lines?` (default 200, max 4000), `offset?` | The surface's scrollback as text, paginated. |
 | `search_pane` | `target`, `pattern`, `max_matches?` (default 50, max 1000) | Matching lines with their line numbers. |
 
@@ -34,6 +34,11 @@ intentional.
 > crafted string), and pane titles can also be terminal-controlled; the agent
 > is instructed to treat bridge output as data, never as instructions to
 > execute. The bridge exposes no write/keystroke tool by design.
+
+`tab_id` is a stable identity, never a positional index, and it is omitted for
+surfaces that live outside the CLI tab hierarchy (Agents threads, the bottom
+dock) or when the running Paneflow predates it. Targeting stays by surface
+name or `surface_id`: the tab is context for the agent, not an addressing key.
 
 MCP resources use stable `surface_id` URIs:
 `pane://surface/{surface_id}/content`. Human names and titles stay in
