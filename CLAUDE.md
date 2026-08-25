@@ -55,7 +55,7 @@ For tag-push releases specifically: run `cargo fmt --check` *one last time* on t
 ```
 PaneFlowApp (Entity<Render>)           ← src-app/src/main.rs
 ├── app/                               ← PaneFlowApp impl, split across modules
-│   ├── actions.rs                     ← 57 GPUI action types (paneflow namespace)
+│   ├── actions.rs                     ← 87 GPUI action types (paneflow namespace)
 │   ├── bootstrap.rs                   ← app init, window creation, GPUI setup
 │   ├── event_handlers.rs              ← title-bar/pane/terminal event subscribers + stale-PID sweep
 │   ├── ipc_handler.rs                 ← JSON-RPC handler dispatched to GPUI main thread
@@ -187,12 +187,15 @@ Hard-won from the diff-dock horizontal-scroll saga (`src-app/src/app/agents_diff
 
 ## Keybindings
 
-All registered in `keybindings::apply_keybindings()` via `cx.bind_keys()`. 57 total actions (see `app/actions.rs`).
+All registered in `keybindings::apply_keybindings()` via `cx.bind_keys()`. 87 total actions (see `app/actions.rs`).
 
 | Key | Action | Context |
 |-----|--------|---------|
 | `Ctrl+Shift+D/E` | Split horizontal/vertical | Global |
 | `Ctrl+Shift+W` | Close pane | Global |
+| `Ctrl+Alt+T` | New tab | Global |
+| `Ctrl+W` | Close tab | Global |
+| `Ctrl+]` / `Ctrl+[` | Next/previous tab | Global |
 | `Alt+Arrow` | Focus navigation | Global |
 | `Ctrl+Shift+N` | New workspace | Global |
 | `Ctrl+Shift+Q` | Close workspace | Global |
