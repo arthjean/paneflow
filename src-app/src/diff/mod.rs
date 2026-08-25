@@ -27,7 +27,6 @@ mod scope;
 mod scope_header;
 mod syntax;
 mod view;
-mod worddiff;
 
 // Only the host view + its seed type are consumed outside this module
 // (`pane::PaneSurface::Diff`, `event_handlers::open_multi_diff_for_repo`). The

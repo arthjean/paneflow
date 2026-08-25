@@ -8,56 +8,15 @@
 //! use the compact line height). Side-by-side rendering (LHS/RHS with phantom
 //! rows) is EP-003 (US-008/US-009); this is the EP-002 unified view.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::ops::Range;
 
 use gpui::{Hsla, SharedString};
 
-use super::engine::DiffHunkStatus;
 use super::git::{FileChange, FileDiff};
 use super::syntax::DiffSyntax;
-use super::worddiff::{MAX_WORD_DIFF_LINE_COUNT, word_diff_ranges};
 
 const MAX_FULL_SPLIT_ALIGN_LINES: usize = 20_000;
-
-/// Per-file word-diff ranges, keyed by line index in each side's text. Only
-/// populated for small modified hunks (US-010); other lines highlight at the
-/// line level only.
-#[derive(Clone, Default)]
-struct WordMaps {
-    old: HashMap<u32, Vec<Range<usize>>>,
-    new: HashMap<u32, Vec<Range<usize>>>,
-}
-
-fn build_word_maps(file: &FileDiff, base_lines: &[&str], new_lines: &[&str]) -> WordMaps {
-    let mut old: HashMap<u32, Vec<Range<usize>>> = HashMap::new();
-    let mut new: HashMap<u32, Vec<Range<usize>>> = HashMap::new();
-    for h in &file.hunks {
-        let bcount = h.base_row_range.end - h.base_row_range.start;
-        let ncount = h.new_row_range.end - h.new_row_range.start;
-        // Word diff only for bounded modified hunks. When a modified block has
-        // unequal side lengths, pair the shared prefix and leave overflow rows at
-        // line-level highlighting.
-        if h.status != DiffHunkStatus::Modified || bcount.max(ncount) > MAX_WORD_DIFF_LINE_COUNT {
-            continue;
-        }
-        for k in 0..bcount.min(ncount) {
-            let bi = h.base_row_range.start + k;
-            let ni = h.new_row_range.start + k;
-            let (o, n) = word_diff_ranges(
-                base_lines.get(bi as usize).copied().unwrap_or(""),
-                new_lines.get(ni as usize).copied().unwrap_or(""),
-            );
-            if !o.is_empty() {
-                old.insert(bi, o);
-            }
-            if !n.is_empty() {
-                new.insert(ni, n);
-            }
-        }
-    }
-    WordMaps { old, new }
-}
 
 /// Content row height (CSS px) - compact, one diff line.
 pub const ROW_HEIGHT: f32 = 18.0;
@@ -255,10 +214,9 @@ pub const CONTEXT_LINES: u32 = 3;
 
 /// Per-file caches shared by unified/split row builders for one diff snapshot.
 /// The Review view keeps these next to `files_full` so the inactive mode and
-/// later fold expansions reuse syntax + word-diff work instead of recomputing it.
+/// later fold expansions reuse the syntax pass instead of recomputing it.
 #[derive(Clone, Default)]
 pub struct FileRowCache {
-    words: WordMaps,
     syn_old: Vec<Vec<(Range<usize>, Hsla)>>,
     syn_new: Vec<Vec<(Range<usize>, Hsla)>>,
 }
@@ -281,9 +239,6 @@ pub struct DisplayRow {
     pub text: SharedString,
     pub old_no: Option<u32>,
     pub new_no: Option<u32>,
-    /// Byte ranges of changed words within `text` (US-010); empty for context
-    /// rows and modifications too large for word diff.
-    pub word_ranges: Vec<Range<usize>>,
     /// Per-token foreground syntax runs (US-017), computed off-thread; empty
     /// when syntax highlighting is disabled or the line is plain.
     pub syntax_runs: Vec<(Range<usize>, Hsla)>,
@@ -379,9 +334,6 @@ pub struct RowPalette {
     /// Background for balancing phantom cells in the side-by-side view.
     pub phantom_bg: Hsla,
     pub phantom_hatch: Hsla,
-    /// Stronger backgrounds for word-diff-highlighted spans (US-010).
-    pub add_word_bg: Hsla,
-    pub del_word_bg: Hsla,
     /// EP-002 US-007: faint document wash on context (unchanged) code so the
     /// diff body reads as a surface, not the bare window background.
     pub context_bg: Hsla,
@@ -392,14 +344,12 @@ pub struct RowPalette {
     pub del_gutter_bg: Hsla,
 }
 
-#[allow(clippy::too_many_arguments)]
 fn content_row(
     lines: &[&str],
     idx: u32,
     kind: RowKind,
     old_no: Option<u32>,
     new_no: Option<u32>,
-    word_ranges: Vec<Range<usize>>,
     syntax_runs: Vec<(Range<usize>, Hsla)>,
 ) -> DisplayRow {
     DisplayRow {
@@ -412,7 +362,6 @@ fn content_row(
             .into(),
         old_no,
         new_no,
-        word_ranges,
         syntax_runs,
         header: None,
         fold_key: None,
@@ -446,7 +395,6 @@ fn folded_display_row(path: &str, base_start: u32, new_start: u32, count: u32) -
         text: fold_label(count),
         old_no: None,
         new_no: None,
-        word_ranges: Vec::new(),
         syntax_runs: Vec::new(),
         header: None,
         fold_key: Some(fold_key(path, base_start, new_start, count)),
@@ -474,7 +422,6 @@ fn truncated_display_row(dropped: usize) -> DisplayRow {
         text: format!("diff truncated - {dropped} more lines not shown").into(),
         old_no: None,
         new_no: None,
-        word_ranges: Vec::new(),
         syntax_runs: Vec::new(),
         header: None,
         fold_key: None,
@@ -551,17 +498,11 @@ fn line_syntax(side: &[Vec<(Range<usize>, Hsla)>], idx: u32) -> Vec<(Range<usize
     side.get(idx as usize).cloned().unwrap_or_default()
 }
 
-fn build_file_row_cache(
-    file: &FileDiff,
-    base_lines: &[&str],
-    new_lines: &[&str],
-    syntax: Option<&DiffSyntax>,
-) -> FileRowCache {
+fn build_file_row_cache(file: &FileDiff, syntax: Option<&DiffSyntax>) -> FileRowCache {
     if file.is_binary {
         return FileRowCache::default();
     }
     FileRowCache {
-        words: build_word_maps(file, base_lines, new_lines),
         syn_old: side_syntax(syntax, file, &file.base_text),
         syn_new: side_syntax(syntax, file, &file.new_text),
     }
@@ -570,15 +511,7 @@ fn build_file_row_cache(
 pub fn build_file_row_caches(files: &[FileDiff], syntax: Option<&DiffSyntax>) -> Vec<FileRowCache> {
     files
         .iter()
-        .map(|file| {
-            if file.is_binary {
-                FileRowCache::default()
-            } else {
-                let base_lines: Vec<&str> = file.base_text.lines().collect();
-                let new_lines: Vec<&str> = file.new_text.lines().collect();
-                build_file_row_cache(file, &base_lines, &new_lines, syntax)
-            }
-        })
+        .map(|file| build_file_row_cache(file, syntax))
         .collect()
 }
 
@@ -588,7 +521,6 @@ pub fn build_file_row_caches(files: &[FileDiff], syntax: Option<&DiffSyntax>) ->
 /// both render with identical washes.
 pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
     let diff = ui.diff_colors();
-    let is_light = ui.base.l > 0.5;
     RowPalette {
         text: ui.text,
         muted: ui.muted,
@@ -621,8 +553,6 @@ pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
         // EP-002 US-007: intra-line word emphasis. Light keeps the theme's 0.40
         // `vc_word_*` alpha; dark drops to 0.28 - 0.40 read too hot over the
         // Codex-sampled dark line wash.
-        add_word_bg: diff.added.opacity(if is_light { 0.40 } else { 0.28 }),
-        del_word_bg: diff.deleted.opacity(if is_light { 0.40 } else { 0.28 }),
         // Neutral rows and phantom gutters sit on the editor background; the
         // colored add/delete washes carry the visual hierarchy.
         context_bg: ui.base,
@@ -667,7 +597,6 @@ pub fn build_display_rows_with_caches(
             text: format!("{shown_path}   +{added} -{removed}").into(),
             old_no: None,
             new_no: None,
-            word_ranges: Vec::new(),
             syntax_runs: Vec::new(),
             header: Some(HeaderParts {
                 dir_prefix: dir_prefix.into(),
@@ -688,7 +617,6 @@ pub fn build_display_rows_with_caches(
                 text: "Diff not shown (binary or large file)".into(),
                 old_no: None,
                 new_no: None,
-                word_ranges: Vec::new(),
                 syntax_runs: Vec::new(),
                 header: None,
                 fold_key: None,
@@ -710,7 +638,6 @@ pub fn build_display_rows_with_caches(
                 &fallback_cache
             }
         };
-        let words = &cache.words;
         let syn_old = &cache.syn_old;
         let syn_new = &cache.syn_new;
         let mut bc = 0u32; // base cursor (next unconsumed base row)
@@ -732,7 +659,6 @@ pub fn build_display_rows_with_caches(
                 RowKind::Context,
                 Some(bi + 1),
                 Some(ni + 1),
-                Vec::new(),
                 line_syntax(syn_new, ni),
             )
         };
@@ -767,7 +693,6 @@ pub fn build_display_rows_with_caches(
                         RowKind::Removed,
                         Some(r + 1),
                         None,
-                        words.old.get(&r).cloned().unwrap_or_default(),
                         line_syntax(syn_old, r),
                     ),
                     &mut rows,
@@ -783,7 +708,6 @@ pub fn build_display_rows_with_caches(
                         RowKind::Added,
                         None,
                         Some(r + 1),
-                        words.new.get(&r).cloned().unwrap_or_default(),
                         line_syntax(syn_new, r),
                     ),
                     &mut rows,
@@ -822,7 +746,6 @@ pub struct HalfCell {
     pub kind: CellKind,
     pub no: Option<u32>,
     pub text: SharedString,
-    pub word_ranges: Vec<Range<usize>>,
     pub syntax_runs: Vec<(Range<usize>, Hsla)>,
 }
 
@@ -843,17 +766,11 @@ pub enum SplitRow {
     },
 }
 
-fn resolve_half(
-    cell: Cell,
-    lines: &[&str],
-    words: &HashMap<u32, Vec<Range<usize>>>,
-    syntax: &[Vec<(Range<usize>, Hsla)>],
-) -> HalfCell {
-    let (no, text, word_ranges, syntax_runs) = match cell.kind {
+fn resolve_half(cell: Cell, lines: &[&str], syntax: &[Vec<(Range<usize>, Hsla)>]) -> HalfCell {
+    let (no, text, syntax_runs) = match cell.kind {
         CellKind::Phantom => (
             None,
             SharedString::default(),
-            Vec::<Range<usize>>::new(),
             Vec::<(Range<usize>, Hsla)>::new(),
         ),
         _ => {
@@ -866,7 +783,6 @@ fn resolve_half(
                     .unwrap_or("")
                     .to_string()
                     .into(),
-                words.get(&idx).cloned().unwrap_or_default(),
                 line_syntax(syntax, idx),
             )
         }
@@ -875,7 +791,6 @@ fn resolve_half(
         kind: cell.kind,
         no,
         text,
-        word_ranges,
         syntax_runs,
     }
 }
@@ -885,13 +800,12 @@ fn split_pair_row(
     right: Cell,
     base_lines: &[&str],
     new_lines: &[&str],
-    words: &WordMaps,
     syn_old: &[Vec<(Range<usize>, Hsla)>],
     syn_new: &[Vec<(Range<usize>, Hsla)>],
 ) -> SplitRow {
     SplitRow::Pair {
-        left: resolve_half(left, base_lines, &words.old, syn_old),
-        right: resolve_half(right, new_lines, &words.new, syn_new),
+        left: resolve_half(left, base_lines, syn_old),
+        right: resolve_half(right, new_lines, syn_new),
     }
 }
 
@@ -900,7 +814,6 @@ fn build_split_rows_from_hunk_windows(
     file: &FileDiff,
     base_lines: &[&str],
     new_lines: &[&str],
-    words: &WordMaps,
     syn_old: &[Vec<(Range<usize>, Hsla)>],
     syn_new: &[Vec<(Range<usize>, Hsla)>],
     rows: &mut Vec<SplitRow>,
@@ -911,7 +824,7 @@ fn build_split_rows_from_hunk_windows(
             *dropped += 1;
         } else {
             rows.push(split_pair_row(
-                left, right, base_lines, new_lines, words, syn_old, syn_new,
+                left, right, base_lines, new_lines, syn_old, syn_new,
             ));
         }
     };
@@ -1101,7 +1014,6 @@ pub fn build_split_rows_with_caches(
                 &fallback_cache
             }
         };
-        let words = &cache.words;
         let syn_old = &cache.syn_old;
         let syn_new = &cache.syn_new;
         if base_lines.len() + new_lines.len() > MAX_FULL_SPLIT_ALIGN_LINES {
@@ -1109,7 +1021,6 @@ pub fn build_split_rows_with_caches(
                 file,
                 &base_lines,
                 &new_lines,
-                words,
                 syn_old,
                 syn_new,
                 &mut rows,
@@ -1130,7 +1041,6 @@ pub fn build_split_rows_with_caches(
                     a.right,
                     &base_lines,
                     &new_lines,
-                    words,
                     syn_old,
                     syn_new,
                 ));
@@ -1291,7 +1201,6 @@ fn unified_fold_rows(
                 RowKind::Context,
                 Some(bi + 1),
                 Some(ni + 1),
-                Vec::new(),
                 line_syntax(&cache.syn_new, ni),
             )
         })
@@ -1320,7 +1229,6 @@ fn split_fold_rows(
                 },
                 &base_lines,
                 &new_lines,
-                &cache.words,
                 &cache.syn_old,
                 &cache.syn_new,
             )
@@ -1453,6 +1361,7 @@ pub fn apply_expanded_split_with_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::engine::DiffHunkStatus;
 
     #[test]
     fn split_header_path_separates_dir_from_basename() {
@@ -1745,45 +1654,6 @@ mod tests {
         assert_eq!(open_rows.len(), rows.len() + hidden);
         assert!(matches!(open_rows[fold_idx], SplitRow::Fold(_)));
         assert!(matches!(open_rows[fold_idx + 1], SplitRow::Pair { .. }));
-    }
-
-    #[test]
-    fn modified_hunks_with_unequal_line_counts_still_word_diff_shared_pairs() {
-        let base = "alpha old\nbeta old\n".to_string();
-        let new = "alpha new\nbeta new\ngamma extra\n".to_string();
-        let file = FileDiff {
-            path: "a.txt".into(),
-            change: FileChange::Modified,
-            old_path: None,
-            base_text: base,
-            new_text: new,
-            hunks: vec![crate::diff::engine::DiffHunk {
-                base_row_range: 0..2,
-                new_row_range: 0..3,
-                status: DiffHunkStatus::Modified,
-            }],
-            is_binary: false,
-        };
-
-        let (rows, dropped) = build_display_rows(std::slice::from_ref(&file), None);
-        assert_eq!(dropped, 0);
-
-        let first_removed = rows
-            .iter()
-            .find(|row| row.kind == RowKind::Removed && row.old_no == Some(1))
-            .expect("first removed row should be present");
-        let first_added = rows
-            .iter()
-            .find(|row| row.kind == RowKind::Added && row.new_no == Some(1))
-            .expect("first added row should be present");
-        let extra_added = rows
-            .iter()
-            .find(|row| row.kind == RowKind::Added && row.new_no == Some(3))
-            .expect("overflow added row should be present");
-
-        assert!(!first_removed.word_ranges.is_empty());
-        assert!(!first_added.word_ranges.is_empty());
-        assert!(extra_added.word_ranges.is_empty());
     }
 
     #[test]

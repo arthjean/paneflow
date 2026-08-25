@@ -9,7 +9,11 @@
 //! Zed-derived dependency kept is `imara-diff` (the same 0.1.8 Zed pins),
 //! driving the identical `Histogram` algorithm over `lines_with_terminator`.
 //!
-//! Word-level intra-line diff (Zed's `word_diff_ranges`) lands in US-010.
+//! Highlighting stays at the line level: the diff view shows changed lines as
+//! whole rows, the way Cursor and VS Code do. Word-level intra-line marking
+//! (Zed's `word_diff_ranges`, shipped here as US-010) was removed - on
+//! rewritten lines it painted a second, louder wash over the row tint and read
+//! as noise rather than precision.
 
 use std::ops::Range;
 

@@ -887,23 +887,13 @@ impl DiffElement {
                 );
             }
             RowKind::Context | RowKind::Added | RowKind::Removed => {
-                // (row-bg wash, opaque hunk-bar color, word-diff bg). EP-002
+                // (row-bg wash, gutter tint, opaque hunk-bar color). EP-002
                 // US-007: context now gets a faint document wash instead of the
                 // bare window background.
-                let (bg, gutter_bg, bar_color, word_bg) = match row.kind {
-                    RowKind::Added => (
-                        Some(p.add_bg),
-                        p.add_gutter_bg,
-                        Some(p.add_bar),
-                        Some(p.add_word_bg),
-                    ),
-                    RowKind::Removed => (
-                        Some(p.del_bg),
-                        p.del_gutter_bg,
-                        Some(p.del_bar),
-                        Some(p.del_word_bg),
-                    ),
-                    _ => (Some(p.context_bg), p.gutter_bg, None, None),
+                let (bg, gutter_bg, bar_color) = match row.kind {
+                    RowKind::Added => (Some(p.add_bg), p.add_gutter_bg, Some(p.add_bar)),
+                    RowKind::Removed => (Some(p.del_bg), p.del_gutter_bg, Some(p.del_bar)),
+                    _ => (Some(p.context_bg), p.gutter_bg, None),
                 };
                 if let Some(bg) = bg {
                     quads.push(Quad {
@@ -946,18 +936,6 @@ impl DiffElement {
                 let code_x = text_x - h_offset;
                 if !row.text.is_empty() {
                     let line = self.shape(window, &row.text, &row.syntax_runs, p.text);
-                    if let Some(wbg) = word_bg {
-                        self.push_word_quads(
-                            &line,
-                            &row.word_ranges,
-                            code_x,
-                            text_x,
-                            origin.y,
-                            lh,
-                            wbg,
-                            quads,
-                        );
-                    }
                     glyphs.push(Glyphs {
                         origin: point(code_x, origin.y),
                         line,
@@ -1094,22 +1072,12 @@ impl DiffElement {
         let p = &self.palette;
         let lh = self.line_height;
         let half_bounds = Bounds::new(origin, size(width, lh));
-        let (bg, gutter_bg, bar_color, word_bg) = match cell.kind {
-            CellKind::Added => (
-                Some(p.add_bg),
-                p.add_gutter_bg,
-                Some(p.add_bar),
-                Some(p.add_word_bg),
-            ),
-            CellKind::Removed => (
-                Some(p.del_bg),
-                p.del_gutter_bg,
-                Some(p.del_bar),
-                Some(p.del_word_bg),
-            ),
-            CellKind::Phantom => (Some(p.phantom_bg), p.gutter_bg, None, None),
+        let (bg, gutter_bg, bar_color) = match cell.kind {
+            CellKind::Added => (Some(p.add_bg), p.add_gutter_bg, Some(p.add_bar)),
+            CellKind::Removed => (Some(p.del_bg), p.del_gutter_bg, Some(p.del_bar)),
+            CellKind::Phantom => (Some(p.phantom_bg), p.gutter_bg, None),
             // EP-002 US-007: faint document wash on unchanged code.
-            CellKind::Context => (Some(p.context_bg), p.gutter_bg, None, None),
+            CellKind::Context => (Some(p.context_bg), p.gutter_bg, None),
         };
         if let Some(bg) = bg {
             quads.push(Quad {
@@ -1152,18 +1120,6 @@ impl DiffElement {
         let code_x = text_x - h_offset;
         if !cell.text.is_empty() {
             let line = self.shape(window, &cell.text, &cell.syntax_runs, p.text);
-            if let Some(wbg) = word_bg {
-                self.push_word_quads(
-                    &line,
-                    &cell.word_ranges,
-                    code_x,
-                    text_x,
-                    origin.y,
-                    lh,
-                    wbg,
-                    quads,
-                );
-            }
             glyphs.push(Glyphs {
                 origin: point(code_x, origin.y),
                 line,
@@ -1196,49 +1152,6 @@ impl DiffElement {
             line,
             clip: None,
         });
-    }
-
-    /// Push intra-line word-diff background quads. `ranges` are byte ranges into
-    /// the same text that produced `line`, so `line.x_for_index(b)` (reachable via
-    /// `ShapedLine`'s `Deref` to `LineLayout`) gives the glyph-aligned x relative
-    /// to the line origin; add `text_x` to place it. These quads sit above the
-    /// row wash and below the glyphs (all quads paint before all glyphs). No
-    /// panics: byte ranges are clamped to the shaped length and degenerate spans
-    /// are skipped.
-    #[allow(clippy::too_many_arguments)]
-    fn push_word_quads(
-        &self,
-        line: &ShapedLine,
-        ranges: &[Range<usize>],
-        code_x: Pixels,
-        clip_left: Pixels,
-        y: Pixels,
-        lh: Pixels,
-        color: Hsla,
-        quads: &mut Vec<Quad>,
-    ) {
-        let len = line.len();
-        for r in ranges {
-            let start = r.start.min(len);
-            let end = r.end.min(len);
-            if start >= end {
-                continue;
-            }
-            // The code is shifted left by the file's horizontal offset; clamp
-            // the word-diff background to the viewport's left edge so a scrolled
-            // span never bleeds over the pinned gutter (its right side stays
-            // bounded by the element's content mask).
-            let x0 = (code_x + line.x_for_index(start)).max(clip_left);
-            let x1 = code_x + line.x_for_index(end);
-            let w = (x1 - x0).max(px(0.));
-            if w <= px(0.) {
-                continue;
-            }
-            quads.push(Quad {
-                bounds: Bounds::new(point(x0, y), size(w, lh)),
-                color,
-            });
-        }
     }
 }
 
