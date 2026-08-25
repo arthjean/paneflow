@@ -145,7 +145,7 @@ impl PaneFlowApp {
         window: &Window,
         cx: &Context<Self>,
     ) -> Option<gpui::Entity<Pane>> {
-        let root = self.active_workspace()?.root.as_ref()?;
+        let root = self.active_workspace()?.active_tab().root.as_ref()?;
         root.focused_pane(window, cx).or_else(|| root.first_leaf())
     }
 
@@ -162,7 +162,7 @@ impl PaneFlowApp {
         };
         let mut out = Vec::new();
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
                     if group.members.contains(&pane.entity_id()) {
                         out.push(pane);
@@ -180,7 +180,7 @@ impl PaneFlowApp {
         let mut live: HashSet<gpui::EntityId> = HashSet::new();
         let mut leaves: Vec<gpui::Entity<Pane>> = Vec::new();
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
                     live.insert(pane.entity_id());
                     leaves.push(pane);
@@ -396,7 +396,7 @@ impl PaneFlowApp {
         // Live member counts so a closed pane never inflates a row (AC4).
         let mut live: HashSet<gpui::EntityId> = HashSet::new();
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
                     live.insert(pane.entity_id());
                 }

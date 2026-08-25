@@ -20,7 +20,7 @@ use crate::layout::{LayoutTree, MAX_PANES};
 use crate::limits::MAX_SESSION_SIZE_BYTES;
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{MAX_WORKSPACES, Workspace, next_workspace_id};
+use crate::workspace::{MAX_TABS_PER_WORKSPACE, MAX_WORKSPACES, Tab, Workspace, next_workspace_id};
 
 /// Cap on the number of `session.json.corrupted-*` backup files retained
 /// alongside the live session. Beyond this, the oldest are deleted on
@@ -88,7 +88,14 @@ impl PaneFlowApp {
                 .map(|ws| paneflow_config::schema::WorkspaceSession {
                     title: ws.title.clone(),
                     cwd: ws.cwd.clone(),
-                    layout: ws.serialize_layout_without_scrollback(cx),
+                    // US-018: v2 persists the whole tab list. An empty
+                    // folder is a single tab with `layout: null`, which v2
+                    // reads as "no pane" - the EP-003 `empty` marker existed
+                    // only because v1 could not express that.
+                    tabs: ws.serialize_tabs_without_scrollback(cx),
+                    active_tab: ws.active_tab_idx(),
+                    legacy_layout: None,
+                    legacy_empty: false,
                     custom_buttons: ws.custom_buttons.clone(),
                     // US-007: store expanded dirs relative to the workspace
                     // root. A path that can't be made relative (symlinked
@@ -294,6 +301,21 @@ impl PaneFlowApp {
             Ok(state) if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION => {
                 (Some(state), None)
             }
+            Ok(mut state)
+                if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION_V1 =>
+            {
+                // US-018: a v1 file is migrated, never replaced by an empty
+                // session - the tab list is derived from the single layout
+                // tree it carries. The next save writes pure v2.
+                log::info!(
+                    "session load: migrating schema v{} to v{} at {}",
+                    paneflow_config::schema::SESSION_SCHEMA_VERSION_V1,
+                    paneflow_config::schema::SESSION_SCHEMA_VERSION,
+                    path.display()
+                );
+                paneflow_config::schema::migrate_session_v1(&mut state);
+                (Some(state), None)
+            }
             Ok(state) => {
                 log::warn!(
                     "session load: unsupported schema version {} at {} (expected {}); falling back to empty session",
@@ -382,34 +404,39 @@ impl PaneFlowApp {
             }
             let ws_id = next_workspace_id();
 
-            // The config boundary canonicalizes the untrusted tree and enforces
-            // the same hard pane ceiling as live layout mutations.
-            let restored_layout = ws_session
-                .layout
-                .clone()
-                .map(without_persisted_scrollback)
-                .map(canonicalize_persisted_layout);
-
-            let mut workspace = if let Some(layout) = restored_layout {
-                let mut pane_deque: VecDeque<Entity<Pane>> = VecDeque::new();
-                let ws_cwd = cwd.clone();
-                let tree = LayoutTree::from_layout_node(&layout, &mut pane_deque, &mut |node| {
-                    let surfaces = match node {
-                        LayoutNode::Pane { surfaces } => surfaces.as_slice(),
-                        _ => &[],
-                    };
-                    Self::spawn_pane_from_surfaces(ws_id, surfaces, &ws_cwd, cx)
+            // US-018: v2 restores a tab list. A v1 file never reaches here
+            // with its old shape - `migrate_session_v1` has already turned its
+            // single tree into tabs - so this is the only restore path.
+            if ws_session.tabs.len() > MAX_TABS_PER_WORKSPACE {
+                log::warn!(
+                    "session restore: workspace \"{title}\" holds {} tabs, restoring the first {MAX_TABS_PER_WORKSPACE}",
+                    ws_session.tabs.len()
+                );
+            }
+            let mut tabs = Vec::new();
+            for tab_session in ws_session.tabs.iter().take(MAX_TABS_PER_WORKSPACE) {
+                // The config boundary canonicalizes the untrusted tree and
+                // enforces the same hard pane ceiling as live layout mutations.
+                let restored_layout = tab_session
+                    .layout
+                    .clone()
+                    .map(without_persisted_scrollback)
+                    .map(canonicalize_persisted_layout);
+                let root = restored_layout.map(|layout| {
+                    let mut pane_deque: VecDeque<Entity<Pane>> = VecDeque::new();
+                    let ws_cwd = cwd.clone();
+                    LayoutTree::from_layout_node(&layout, &mut pane_deque, &mut |node| {
+                        let surfaces = match node {
+                            LayoutNode::Pane { surfaces } => surfaces.as_slice(),
+                            _ => &[],
+                        };
+                        Self::spawn_pane_from_surfaces(ws_id, surfaces, &ws_cwd, cx)
+                    })
                 });
-                Workspace::with_layout_and_id(ws_id, title.clone(), cwd, tree)
-            } else {
-                let terminal =
-                    cx.new(|cx| TerminalView::with_cwd(ws_id, Some(cwd.clone()), None, cx));
-                cx.subscribe(&terminal, Self::handle_terminal_event)
-                    .detach();
-                let pane = cx.new(|cx| Pane::new(terminal, ws_id, cx));
-                cx.subscribe(&pane, Self::handle_pane_event).detach();
-                Workspace::with_cwd_and_id(ws_id, title.clone(), cwd, pane)
-            };
+                tabs.push(Tab::new(tab_session.title.clone(), root));
+            }
+            let mut workspace =
+                Workspace::restored_with_id(ws_id, title.clone(), cwd, tabs, ws_session.active_tab);
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             // EP-002 (orchestration-v2): rehydrate worktree ownership so the
@@ -428,7 +455,6 @@ impl PaneFlowApp {
                 .iter()
                 .filter_map(|rel| rehydrate_expanded_path(&workspace.cwd, rel))
                 .collect();
-            workspace.propagate_custom_buttons(cx);
             // US-013: kick off the deferred git-stats probe (off render thread).
             Self::spawn_initial_git_stats(ws_id, workspace.cwd.clone(), cx);
             workspaces.push(workspace);
@@ -465,108 +491,110 @@ impl PaneFlowApp {
         (workspaces, active_idx)
     }
 
-    /// Create a `Pane` (with one tab per surface) from serialized surface
-    /// definitions. Falls back to a single terminal in `fallback_cwd` when
-    /// the surface list is empty.
+    /// Build the single [`crate::pane::PaneSurface`] described by one
+    /// serialized definition, or `None` when the definition cannot be
+    /// materialized (a markdown entry with no path).
+    ///
+    /// EP-002 US-005: a pane is mono-surface, so exactly one definition is ever
+    /// built. Kept separate from [`Self::spawn_pane_from_surfaces`] so the
+    /// caller can try candidates in order without constructing - and instantly
+    /// dropping - a live `TerminalView` (and its PTY) per discarded surface.
+    fn build_restored_surface(
+        workspace_id: u64,
+        surface: &paneflow_config::schema::SurfaceDefinition,
+        fallback_cwd: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) -> Option<crate::pane::PaneSurface> {
+        use std::path::PathBuf;
+
+        if surface.surface_type.as_deref() == Some("markdown") {
+            let path = surface.path.as_ref().map(PathBuf::from)?;
+            let markdown = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
+                crate::markdown::MarkdownView::open(path, cx)
+            });
+            return Some(crate::pane::PaneSurface::Markdown(markdown));
+        }
+
+        let cwd = resolved_surface_cwd(surface.cwd.as_deref(), fallback_cwd);
+
+        // US-014: forward the per-surface env override; the global
+        // `terminal.env` default is merged underneath in `TerminalState::new`.
+        let surface_env = surface.env.clone();
+        let t = cx.new(|cx| {
+            TerminalView::with_cwd_and_env(workspace_id, Some(cwd), None, surface_env, cx)
+        });
+        // Explicit layout definitions may still seed scrollback.
+        // Session restore clears the legacy field before this path.
+        if let Some(ref scrollback) = surface.scrollback {
+            t.read(cx).restore_scrollback(scrollback);
+        }
+        // US-013: re-apply the persisted custom name.
+        if let Some(ref custom) = surface.custom_name {
+            t.update(cx, |view, _cx| {
+                view.terminal.custom_name = Some(custom.clone());
+            });
+        }
+        // EP-005 US-013: restore the identity pill as a dimmed "last known"
+        // value. Ingress whitelist: `from_tag` is an exact match against the
+        // known agent tags, so an unknown, oversized, or control-char value
+        // from a hand-edited session.json maps to `None` and no pill is
+        // rendered (parity with the US-057/EP-010 invariant - session.json is
+        // local-only but validated anyway). The first scan (0/2 s burst on
+        // restore activity) then confirms or clears it.
+        if let Some(agent) = surface
+            .agent
+            .as_deref()
+            .and_then(crate::agent_launcher::TerminalAgent::from_tag)
+        {
+            t.update(cx, |view, _cx| {
+                view.terminal.detected_agent = Some(agent);
+                view.terminal.agent_confirmed = false;
+            });
+        }
+        // EP-006 US-019: restore the per-pane font zoom through the ingress
+        // sanitizer - NaN/inf dropped, finite values clamped to [8.0, 32.0];
+        // never fed raw to the cell geometry (US-057/EP-010 invariant).
+        if let Some(size) = surface
+            .font_size
+            .and_then(crate::terminal::element::sanitize_font_override)
+        {
+            t.update(cx, |view, _cx| {
+                view.terminal.font_size_override = Some(size);
+            });
+        }
+        cx.subscribe(&t, Self::handle_terminal_event).detach();
+        Some(crate::pane::PaneSurface::Terminal(t))
+    }
+
+    /// Create a `Pane` from serialized surface definitions. Falls back to a
+    /// single terminal in `fallback_cwd` when the surface list is empty.
+    ///
+    /// EP-002 US-005: a pane is mono-surface, so a legacy session that still
+    /// lists several surfaces for one pane restores only the focused one (the
+    /// first one when none is flagged); the extra entries are dropped rather
+    /// than silently re-creating a tab strip. They are dropped *before* being
+    /// built, so restoring such a pane never spawns the shells it would
+    /// immediately discard.
     pub(crate) fn spawn_pane_from_surfaces(
         workspace_id: u64,
         surfaces: &[paneflow_config::schema::SurfaceDefinition],
         fallback_cwd: &std::path::Path,
         cx: &mut Context<Self>,
     ) -> Entity<Pane> {
-        use std::path::PathBuf;
+        let mut built: Option<crate::pane::PaneSurface> = None;
+        for i in restore_candidate_order(surfaces) {
+            built = Self::build_restored_surface(workspace_id, &surfaces[i], fallback_cwd, cx);
+            if built.is_some() {
+                break;
+            }
+        }
 
-        let mut focus_idx: usize = 0;
-        let tabs: Vec<crate::pane::TabContent> = if surfaces.is_empty() {
-            let t = cx.new(|cx| {
-                TerminalView::with_cwd(workspace_id, Some(fallback_cwd.to_path_buf()), None, cx)
-            });
-            cx.subscribe(&t, Self::handle_terminal_event).detach();
-            vec![crate::pane::TabContent::Terminal(t)]
-        } else {
-            surfaces
-                .iter()
-                .enumerate()
-                .filter_map(|(i, surface)| {
-                    if surface.surface_type.as_deref() == Some("markdown") {
-                        let path = surface.path.as_ref().map(PathBuf::from)?;
-                        let markdown = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
-                            crate::markdown::MarkdownView::open(path, cx)
-                        });
-                        if surface.focus == Some(true) {
-                            focus_idx = i;
-                        }
-                        return Some(crate::pane::TabContent::Markdown(markdown));
-                    }
-                    let cwd = resolved_surface_cwd(surface.cwd.as_deref(), fallback_cwd);
-
-                    // US-014: forward the per-surface env override; the global
-                    // `terminal.env` default is merged underneath in
-                    // `TerminalState::new`.
-                    let surface_env = surface.env.clone();
-                    let t = cx.new(|cx| {
-                        TerminalView::with_cwd_and_env(
-                            workspace_id,
-                            Some(cwd),
-                            None,
-                            surface_env,
-                            cx,
-                        )
-                    });
-
-                    // Explicit layout definitions may still seed scrollback.
-                    // Session restore clears the legacy field before this path.
-                    if let Some(ref scrollback) = surface.scrollback {
-                        t.read(cx).restore_scrollback(scrollback);
-                    }
-                    // US-013: re-apply the persisted custom name.
-                    if let Some(ref custom) = surface.custom_name {
-                        t.update(cx, |view, _cx| {
-                            view.terminal.custom_name = Some(custom.clone());
-                        });
-                    }
-                    // EP-005 US-013: restore the identity pill as a dimmed
-                    // "last known" value. Ingress whitelist: `from_tag` is an
-                    // exact match against the known agent tags, so an
-                    // unknown, oversized, or control-char value from a
-                    // hand-edited session.json maps to `None` and no pill is
-                    // rendered (parity with the US-057/EP-010 invariant -
-                    // session.json is local-only but validated anyway). The
-                    // first scan (0/2 s burst on restore activity) then
-                    // confirms or clears it.
-                    if let Some(agent) = surface
-                        .agent
-                        .as_deref()
-                        .and_then(crate::agent_launcher::TerminalAgent::from_tag)
-                    {
-                        t.update(cx, |view, _cx| {
-                            view.terminal.detected_agent = Some(agent);
-                            view.terminal.agent_confirmed = false;
-                        });
-                    }
-                    // EP-006 US-019: restore the per-pane font zoom through
-                    // the ingress sanitizer - NaN/inf dropped, finite values
-                    // clamped to [8.0, 32.0]; never fed raw to the cell
-                    // geometry (US-057/EP-010 invariant).
-                    if let Some(size) = surface
-                        .font_size
-                        .and_then(crate::terminal::element::sanitize_font_override)
-                    {
-                        t.update(cx, |view, _cx| {
-                            view.terminal.font_size_override = Some(size);
-                        });
-                    }
-                    cx.subscribe(&t, Self::handle_terminal_event).detach();
-                    if surface.focus == Some(true) {
-                        focus_idx = i;
-                    }
-                    Some(crate::pane::TabContent::Terminal(t))
-                })
-                .collect()
-        };
-
-        let Some(_) = tabs.first() else {
-            log::error!("spawn_pane_from_surfaces: no restorable tabs built; using fallback");
+        let Some(surface) = built else {
+            if !surfaces.is_empty() {
+                log::error!(
+                    "spawn_pane_from_surfaces: no restorable surface built; using fallback"
+                );
+            }
             let t = cx.new(|cx| {
                 TerminalView::with_cwd(workspace_id, Some(fallback_cwd.to_path_buf()), None, cx)
             });
@@ -575,7 +603,7 @@ impl PaneFlowApp {
             cx.subscribe(&pane, Self::handle_pane_event).detach();
             return pane;
         };
-        let pane = cx.new(|cx| Pane::new_with_tabs(tabs, focus_idx, workspace_id, cx));
+        let pane = cx.new(|cx| Pane::new_with_surface(surface, workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
     }
@@ -584,6 +612,27 @@ impl PaneFlowApp {
 // ---------------------------------------------------------------------------
 // EP-003 ingress-bound helpers (free functions, free of `&self`)
 // ---------------------------------------------------------------------------
+
+/// Order in which a legacy multi-surface pane's definitions are tried at
+/// restore: the focused one first, then the rest in file order (EP-002 US-005).
+///
+/// The caller builds the *first* candidate that materializes and stops, so a
+/// pane never spawns the surfaces (and PTYs) it is about to discard. Returning
+/// indices into the input slice - rather than picking inside an already-built
+/// list - is also what keeps the choice correct when a definition is skipped:
+/// a filtered build list no longer lines up with `focus`'s position.
+fn restore_candidate_order(surfaces: &[paneflow_config::schema::SurfaceDefinition]) -> Vec<usize> {
+    if surfaces.is_empty() {
+        return Vec::new();
+    }
+    let focused = surfaces
+        .iter()
+        .position(|s| s.focus == Some(true))
+        .unwrap_or(0);
+    std::iter::once(focused)
+        .chain((0..surfaces.len()).filter(|&i| i != focused))
+        .collect()
+}
 
 #[derive(Debug, PartialEq, Eq)]
 enum SessionRead {
@@ -1147,6 +1196,54 @@ mod tests {
         );
     }
 
+    /// US-018 AC2: a v1 file is migrated by the real load entry point, not
+    /// backed up and replaced by an empty session. The v1 branch sits *before*
+    /// the unsupported-version arm, which `unsupported_session_version_...`
+    /// above still proves is reached by anything else.
+    #[test]
+    fn v1_session_is_migrated_not_rejected() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let session_path = tmp.path().join("session.json");
+        let contents = r#"{
+            "version": 1,
+            "active_workspace": 0,
+            "workspaces": [
+                {
+                    "title": "paneflow",
+                    "cwd": "/tmp",
+                    "layout": {
+                        "type": "pane",
+                        "surfaces": [
+                            { "surface_type": "terminal", "name": "zsh" },
+                            { "surface_type": "terminal", "name": "claude", "focus": true }
+                        ]
+                    }
+                }
+            ]
+        }"#;
+        std::fs::write(&session_path, contents).expect("seed v1 session");
+
+        let (state, info) = PaneFlowApp::load_session_at(&session_path);
+
+        assert!(info.is_none(), "a v1 file is not corruption");
+        let state = state.expect("v1 session restores");
+        assert_eq!(
+            state.version,
+            paneflow_config::schema::SESSION_SCHEMA_VERSION
+        );
+        let ws = &state.workspaces[0];
+        assert_eq!(ws.tabs.len(), 2, "the stacked surface becomes a second tab");
+        assert!(ws.legacy_layout.is_none(), "the v1 key is drained");
+        assert_eq!(
+            ws.tabs[1].title, "zsh",
+            "promoted tab keeps the surface name"
+        );
+        assert!(
+            !session_path.with_extension("json.corrupted").exists(),
+            "no corruption backup for a supported version"
+        );
+    }
+
     #[test]
     fn corruption_backup_names_do_not_collide_within_same_second() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1400,6 +1497,38 @@ mod tests {
             restored.teardown,
             crate::workspace::worktree::TeardownPolicy::Keep,
             "unknown restored policy must not become auto-remove"
+        );
+    }
+
+    /// EP-002 US-005: a legacy pane listing several surfaces restores the
+    /// focused one, and the caller stops at the first that materializes - so
+    /// the discarded entries are never built (no PTY spawned then dropped).
+    /// The order is expressed over the *input* indices on purpose: the previous
+    /// shape picked inside an already-filtered build list, which silently
+    /// restored the wrong surface as soon as one definition was skipped.
+    #[test]
+    fn restore_candidate_order_puts_the_focused_surface_first() {
+        use paneflow_config::schema::SurfaceDefinition;
+
+        let surface = |focus: Option<bool>| SurfaceDefinition {
+            focus,
+            ..Default::default()
+        };
+
+        assert!(super::restore_candidate_order(&[]).is_empty());
+
+        // No flag: file order, first surface wins.
+        assert_eq!(
+            super::restore_candidate_order(&[surface(None), surface(Some(false))]),
+            vec![0, 1]
+        );
+
+        // Focused entry first, remaining entries keep file order. Index 2 here
+        // is exactly the case the old build-then-index shape got wrong when an
+        // earlier definition was unbuildable.
+        assert_eq!(
+            super::restore_candidate_order(&[surface(None), surface(None), surface(Some(true))]),
+            vec![2, 0, 1]
         );
     }
 }

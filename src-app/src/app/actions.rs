@@ -14,6 +14,8 @@ actions!(
         ClosePane,
         NewTab,
         CloseTab,
+        NextTab,
+        PreviousTab,
         FocusLeft,
         FocusRight,
         FocusUp,

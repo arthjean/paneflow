@@ -22,11 +22,23 @@ impl PaneFlowApp {
     /// area for the section panel. The name is kept for call-site compatibility
     /// there is no separate settings *window* anymore.
     pub(crate) fn open_settings_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_settings_at(SettingsSection::General, window, cx);
+    }
+
+    /// Open Settings directly on `section`.
+    ///
+    /// EP-005 US-017: the preset palette's "Manage presets..." entry lands on
+    /// the page that owns the selected preset's source, so the user does not
+    /// have to find it again after seeing it in the palette.
+    pub(crate) fn open_settings_at(
+        &mut self,
+        section: SettingsSection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.workspace_menu_open = None;
         self.profile_menu_open = None;
-        self.agents_view.sidebar_actions_menu_open = false;
-        self.agents_view.sidebar_mode_picker_open = false;
-        self.settings_section = Some(SettingsSection::General);
+        self.settings_section = Some(section);
         self.reset_settings_scroll();
         self.terminal_dropdown = None;
         self.general_dropdown = None;
@@ -34,9 +46,9 @@ impl PaneFlowApp {
         self.workspace_template_detail_open = false;
         self.font_dropdown_open = false;
         self.font_search.clear();
-        // Clear any stale nav search so the forced `General` landing row is
-        // always visible (a leftover query could filter the nav to a section
-        // that doesn't match the displayed page).
+        // Clear any stale nav search so the landing row is always visible (a
+        // leftover query could filter the nav to a section that doesn't match
+        // the displayed page).
         self.clear_settings_search(cx);
         // Warm the MCP bridge status off-thread so the MCP page can render its
         // button label without ever doing config I/O during a frame.

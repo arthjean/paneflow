@@ -41,17 +41,11 @@ impl PaneFlowApp {
         self.open_multi_diff_for_repo(repo_root, window, cx);
     }
 
-    /// Open a `DiffView` tab seeded with every sibling worktree sharing
-    /// `repo_root`. The tab is hosted in the active workspace's focused pane
-    /// (falling back to its first leaf); the diff content itself is
-    /// repo-scoped, independent of which pane hosts it. Ephemeral - not
-    /// persisted to the session. EP-002+ fills the seeded worktrees with
-    /// real diff columns.
     /// Gather the sibling-worktree seed for a repo: one [`crate::diff::DiffWorktree`]
     /// per open workspace whose `repo_root` matches. US-005 of
     /// prd-git-diff-mode-2026-Q3.md extracted this from `open_multi_diff_for_repo`
-    /// so the dedicated Diff mode (`rebuild_diff_view`) and the legacy tab path
-    /// share one source of truth. Pure in-memory read; git metadata was resolved
+    /// so the dedicated Diff mode (`rebuild_diff_view`) and the workspace-tab
+    /// path share one source of truth. Pure in-memory read; git metadata was resolved
     /// when the workspace was created, so this is safe to call on the main
     /// thread.
     pub(crate) fn collect_diff_worktrees(
@@ -129,35 +123,30 @@ impl PaneFlowApp {
         map.into_values().map(|(group, _)| group).collect()
     }
 
+    /// EP-002 US-007: the diff opens as its own workspace tab. A pane holds a
+    /// single surface, so hosting the diff inside an existing pane would evict
+    /// whatever runs there.
     pub(crate) fn open_multi_diff_for_repo(
         &mut self,
         repo_root: std::path::PathBuf,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Gather sibling worktrees across all workspaces sharing this repo.
         let worktrees = self.collect_diff_worktrees(&repo_root);
 
-        // Resolve a host pane from the active workspace (focused, else first leaf).
-        let target_pane = {
-            let Some(ws) = self.workspaces.get(self.active_idx) else {
-                return;
-            };
-            let Some(root) = ws.root.as_ref() else {
-                return;
-            };
-            root.focused_pane(window, cx)
-                .or_else(|| root.collect_leaves().into_iter().next())
-        };
-        let Some(target_pane) = target_pane else {
+        let ws_idx = self.active_idx;
+        let Some(ws_id) = self.workspaces.get(ws_idx).map(|ws| ws.id) else {
             return;
         };
 
         let diff = cx.new(|cx| crate::diff::DiffView::new(repo_root, worktrees, cx));
-        target_pane.update(cx, |pane, cx| {
-            pane.add_diff_tab(diff, cx);
-            cx.notify();
-        });
+        let pane =
+            self.create_pane_with_existing_surface(crate::pane::PaneSurface::Diff(diff), ws_id, cx);
+        if !self.open_pane_in_new_workspace_tab(ws_idx, pane.clone(), cx) {
+            return;
+        }
+        self.pending_pane_focus = Some(pane);
         cx.notify();
     }
 }

@@ -7,16 +7,16 @@
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, App, ClickEvent, ClipboardItem, Context, CursorStyle, Entity, InteractiveElement,
+    AnyElement, App, ClickEvent, ClipboardItem, Context, CursorStyle, InteractiveElement,
     IntoElement, MouseButton, ParentElement, Pixels, SharedString, Styled, Window, deferred, div,
     point, prelude::*, px,
 };
 
 use crate::app::files_tree;
-use crate::pane::{Pane, TabContent};
+use crate::pane::PaneSurface;
 use crate::settings::components::{menu_divider_color, select_item, select_menu, with_alpha};
 use crate::ui_primitives::AnimatedHoverExt;
-use crate::{PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
+use crate::{PaneContextMenu, PaneFlowApp, TabContextMenu, WorkspaceContextMenu};
 
 pub(crate) const EDITOR_CONTEXT_MENU_ITEMS: &[(&str, &str, &str, &str)] = &[
     ("zed", "Open in Zed", "zed", "open_workspace_in_zed"),
@@ -402,13 +402,15 @@ impl PaneFlowApp {
         deferred(context_menu).priority(3).into_any_element()
     }
 
-    /// Build the deferred "Move to pane…" tab context menu (EP-002 US-006, the
-    /// WCAG 2.5.7 non-drag alternative to a cross-pane drag). Lists every other
-    /// pane in the source pane's workspace; selecting one moves the tab there
-    /// through the same [`crate::pane_drag::move_tab_into`] path the drag uses,
-    /// so the PTY is preserved and an emptied source pane is reflowed away. When
-    /// the source pane is the workspace's only pane, the menu shows a disabled
-    /// note instead of move targets.
+    /// Build the deferred pane context menu, anchored on the pane header
+    /// (EP-002 US-007). A pane is mono-surface, so the former "Move to pane…"
+    /// entry is gone along with the tab strip that anchored it: what remains
+    /// are the surface actions (copy path, cancel a queued prompt, close the
+    /// pane). No dead or disabled move entry is left behind.
+    /// US-010: right-click menu on a sidebar tab row. Two entries - Rename and
+    /// Close - in the shared select-menu language of the workspace menu. Close
+    /// keeps FR-01: the last tab of a workspace is replaced by an empty one,
+    /// the workspace itself is never closed from here.
     pub(crate) fn render_tab_context_menu(
         &self,
         menu: TabContextMenu,
@@ -416,60 +418,18 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let source = menu.source_pane.clone();
-        let source_idx = source.read(cx).index_for_tab_id(menu.tab_id);
+        let TabContextMenu {
+            ws_idx,
+            tab_idx,
+            position,
+        } = menu;
+        let menu_height = px(8. + 2. * 28.);
+        let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
+        let close_shortcut = self
+            .shortcut_for_action("close_tab")
+            .map(|key| SharedString::from(key.to_string()));
 
-        // Enumerate the panes of the workspace that owns the source pane, in
-        // tree order, dropping the source itself.
-        let (workspace_cwd, others): (Option<PathBuf>, Vec<(usize, Entity<Pane>)>) = self
-            .workspaces
-            .iter()
-            .find_map(|ws| {
-                let root = ws.root.as_ref()?;
-                root.contains_leaf(&source).then(|| {
-                    let panes = root
-                        .collect_leaves()
-                        .into_iter()
-                        .enumerate()
-                        .filter(|(_, p)| p != &source)
-                        .collect();
-                    (Some(PathBuf::from(&ws.cwd)), panes)
-                })
-            })
-            .unwrap_or((None, Vec::new()));
-
-        let tab_path = source
-            .read(cx)
-            .tabs
-            .get(source_idx.unwrap_or(usize::MAX))
-            .and_then(|tab| Self::tab_context_path(tab, cx));
-        let target_tab_id =
-            source_idx.and_then(|idx| source.read(cx).tabs.get(idx).map(|tab| tab.entity_id()));
-        let full_path = tab_path
-            .as_ref()
-            .map(|path| path.to_string_lossy().into_owned());
-        let relative_path = tab_path.as_ref().map(|path| {
-            workspace_cwd
-                .as_ref()
-                .map(|root| files_tree::workspace_relative_path(root, path))
-                .unwrap_or_else(|| path.to_string_lossy().into_owned())
-        });
-
-        // EP-001 US-003 (cli-cockpit): cancel this tab's queued prompt -
-        // the non-Composer cancel path. Only shown when a buffer exists.
-        let pending_sid = source
-            .read(cx)
-            .tabs
-            .get(source_idx.unwrap_or(usize::MAX))
-            .and_then(|t| t.as_terminal())
-            .map(|t| t.entity_id().as_u64())
-            .filter(|sid| self.broadcast.pending.contains_key(sid));
-
-        let rows = 2 + others.len().max(1) + usize::from(pending_sid.is_some()) + 1;
-        let menu_height = px(8. + rows as f32 * 29. + 18.);
-        let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
-
-        let mut context_menu = select_menu("tab-context-menu", ui)
+        select_menu("tab-context-menu", ui)
             .occlude()
             .absolute()
             .left(menu_pos.x)
@@ -479,24 +439,103 @@ impl PaneFlowApp {
                 this.tab_menu_open = None;
                 cx.notify();
             }))
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .child(self.render_select_menu_item(
+                "tab-context-rename".into(),
+                "Rename",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.tab_menu_open = None;
+                    this.begin_tab_rename(ws_idx, tab_idx, cx);
+                    cx.stop_propagation();
+                }),
+            ))
+            .child(self.render_select_menu_item(
+                "tab-context-close".into(),
+                "Close",
+                close_shortcut,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.tab_menu_open = None;
+                    this.close_workspace_tab(ws_idx, tab_idx, window, cx);
+                    cx.stop_propagation();
+                }),
+            ))
+            .into_any_element()
+    }
+
+    pub(crate) fn render_pane_context_menu(
+        &self,
+        menu: PaneContextMenu,
+        ui: crate::theme::UiColors,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let source = menu.pane.clone();
+
+        // Workspace root of the pane, for the relative-path entry. The pane
+        // carries its owning workspace id, so this resolves without walking
+        // every tab's layout tree.
+        let owner_id = source.read(cx).workspace_id;
+        let workspace_cwd: Option<PathBuf> = self
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == owner_id)
+            .map(|ws| PathBuf::from(&ws.cwd));
+
+        let surface_path = Self::surface_context_path(&source.read(cx).surface, cx);
+        let full_path = surface_path
+            .as_ref()
+            .map(|path| path.to_string_lossy().into_owned());
+        let relative_path = surface_path.as_ref().map(|path| {
+            workspace_cwd
+                .as_ref()
+                .map(|root| files_tree::workspace_relative_path(root, path))
+                .unwrap_or_else(|| path.to_string_lossy().into_owned())
+        });
+
+        // EP-001 US-003 (cli-cockpit): cancel this surface's queued prompt -
+        // the non-Composer cancel path. Only shown when a buffer exists.
+        let pending_sid = source
+            .read(cx)
+            .surface
+            .as_terminal()
+            .map(|t| t.entity_id().as_u64())
+            .filter(|sid| self.broadcast.pending.contains_key(sid));
+
+        let rows = 2 + usize::from(pending_sid.is_some()) + 1;
+        let menu_height = px(8. + rows as f32 * 29. + 18.);
+        let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
+
+        let mut context_menu = select_menu("pane-context-menu", ui)
+            .occlude()
+            .absolute()
+            .left(menu_pos.x)
+            .top(menu_pos.y)
+            .w(px(248.))
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                this.pane_menu_open = None;
+                cx.notify();
+            }))
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation());
 
         if let Some(value) = full_path {
             context_menu = context_menu.child(self.render_select_menu_item(
-                "tab-context-copy-path".into(),
+                "pane-context-copy-path".into(),
                 "Copy Path",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
-                    this.tab_menu_open = None;
+                    this.pane_menu_open = None;
                     this.show_toast("Copied path", cx);
                     cx.stop_propagation();
                 }),
             ));
         } else {
             context_menu = context_menu.child(Self::render_disabled_select_menu_item(
-                "tab-context-copy-path-disabled".into(),
+                "pane-context-copy-path-disabled".into(),
                 "Copy Path unavailable",
                 ui,
             ));
@@ -504,115 +543,33 @@ impl PaneFlowApp {
 
         if let Some(value) = relative_path {
             context_menu = context_menu.child(self.render_select_menu_item(
-                "tab-context-copy-relative-path".into(),
+                "pane-context-copy-relative-path".into(),
                 "Copy Relative Path",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
                     cx.write_to_clipboard(ClipboardItem::new_string(value.clone()));
-                    this.tab_menu_open = None;
+                    this.pane_menu_open = None;
                     this.show_toast("Copied relative path", cx);
                     cx.stop_propagation();
                 }),
             ));
         } else {
             context_menu = context_menu.child(Self::render_disabled_select_menu_item(
-                "tab-context-copy-relative-path-disabled".into(),
+                "pane-context-copy-relative-path-disabled".into(),
                 "Copy Relative Path unavailable",
                 ui,
             ));
         }
 
-        context_menu = context_menu.child(
-            div()
-                .mx(px(6.))
-                .my(px(4.))
-                .h(px(1.))
-                .bg(menu_divider_color(ui)),
-        );
-
-        if source_idx.is_none() {
-            context_menu = context_menu.child(
-                div()
-                    .px(px(8.))
-                    .py(px(5.))
-                    .rounded(px(4.))
-                    .text_size(px(11.))
-                    .text_color(ui.muted)
-                    .child("Tab no longer exists"),
-            );
-        } else if others.is_empty() {
-            // AC US-006: with a single pane there is nowhere to move to.
-            context_menu = context_menu.child(
-                div()
-                    .px(px(8.))
-                    .py(px(5.))
-                    .rounded(px(4.))
-                    .text_size(px(11.))
-                    .text_color(ui.muted)
-                    .child("No other panes"),
-            );
-        } else {
-            for (orig_idx, dest) in others {
-                let label = format!(
-                    "Move to Pane {} - {}",
-                    orig_idx + 1,
-                    dest.read(cx).active_tab_label(cx)
-                );
-                let dest_for_click = dest.clone();
-                let source_for_click = source.clone();
-                let source_tab_id = menu.tab_id;
-                context_menu = context_menu.child(self.render_select_menu_item(
-                    SharedString::from(format!("tab-move-{orig_idx}")),
-                    &label,
-                    None,
-                    ui,
-                    cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        this.tab_menu_open = None;
-                        cx.stop_propagation();
-                        // Both panes are held alive by strong refs, but either
-                        // could have been removed from the tree while the menu
-                        // was open (e.g. a background shell exited and emptied
-                        // its pane). Moving into/out of an off-tree pane would
-                        // be a confusing no-op, so verify both are still live
-                        // leaves of the same workspace before committing.
-                        let both_live = this.workspaces.iter().any(|ws| {
-                            ws.root.as_ref().is_some_and(|r| {
-                                let leaves = r.collect_leaves();
-                                leaves.contains(&source_for_click)
-                                    && leaves.contains(&dest_for_click)
-                            })
-                        });
-                        if !both_live {
-                            cx.notify();
-                            return;
-                        }
-                        dest_for_click.update(cx, |dest_pane, dest_cx| {
-                            let dest_idx = dest_pane.tabs.len();
-                            crate::pane_drag::move_tab_into(
-                                dest_pane,
-                                dest_cx,
-                                &source_for_click,
-                                source_tab_id,
-                                dest_idx,
-                                window,
-                            );
-                        });
-                        this.save_session(cx);
-                        cx.notify();
-                    }),
-                ));
-            }
-        }
-
         if let Some(sid) = pending_sid {
             context_menu = context_menu.child(self.render_select_menu_item(
-                SharedString::from("tab-cancel-queued"),
+                SharedString::from("pane-cancel-queued"),
                 "Cancel queued prompt",
                 None,
                 ui,
                 cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                    this.tab_menu_open = None;
+                    this.pane_menu_open = None;
                     this.cancel_pending_for(sid, cx);
                     cx.stop_propagation();
                     cx.notify();
@@ -629,22 +586,14 @@ impl PaneFlowApp {
         );
 
         let source_for_close = source.clone();
-        let target_tab_id_for_close = target_tab_id;
         context_menu = context_menu.child(self.render_select_menu_item(
-            "tab-context-close".into(),
-            "Close Tab",
+            "pane-context-close".into(),
+            "Close Pane",
             None,
             ui,
             cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                this.tab_menu_open = None;
-                source_for_close.update(cx, |pane, pane_cx| {
-                    if let Some(tab_id) = target_tab_id_for_close
-                        && let Some(idx) =
-                            pane.tabs.iter().position(|tab| tab.entity_id() == tab_id)
-                    {
-                        pane.close_tab_at(idx, pane_cx);
-                    }
-                });
+                this.pane_menu_open = None;
+                source_for_close.update(cx, |pane, pane_cx| pane.close(pane_cx));
                 this.save_session(cx);
                 cx.stop_propagation();
                 cx.notify();
@@ -681,17 +630,19 @@ impl PaneFlowApp {
             )
     }
 
-    fn tab_context_path(tab: &TabContent, cx: &App) -> Option<PathBuf> {
-        match tab {
-            TabContent::Terminal(terminal) => terminal
+    /// Path a pane surface can advertise in its context menu: the terminal's
+    /// live CWD, the markdown file, or the diff's first column.
+    fn surface_context_path(surface: &PaneSurface, cx: &App) -> Option<PathBuf> {
+        match surface {
+            PaneSurface::Terminal(terminal) => terminal
                 .read(cx)
                 .terminal
                 .current_cwd
                 .as_ref()
                 .filter(|cwd| !cwd.is_empty())
                 .map(PathBuf::from),
-            TabContent::Markdown(markdown) => Some(markdown.read(cx).path.clone()),
-            TabContent::Diff(diff) => diff.read(cx).column_paths().into_iter().next(),
+            PaneSurface::Markdown(markdown) => Some(markdown.read(cx).path.clone()),
+            PaneSurface::Diff(diff) => diff.read(cx).column_paths().into_iter().next(),
         }
     }
 }

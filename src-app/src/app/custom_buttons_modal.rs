@@ -206,7 +206,6 @@ impl PaneFlowApp {
         };
         let ws = &mut self.workspaces[idx];
         ws.custom_buttons.retain(|b| b.id != button_id);
-        ws.propagate_custom_buttons(cx);
         self.save_session(cx);
         cx.notify();
     }
@@ -262,7 +261,6 @@ impl PaneFlowApp {
                 });
             }
         }
-        ws.propagate_custom_buttons(cx);
         self.save_session(cx);
 
         // Return to the list so the user sees the result of their action.

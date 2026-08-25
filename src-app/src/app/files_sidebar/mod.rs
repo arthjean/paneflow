@@ -27,7 +27,6 @@ use gpui::{
 };
 
 use crate::app::files_tree::{self, FilesTreeState};
-use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::{PaneFlowApp, ToggleFilesSidebar};
 
 /// Fixed sidebar width - matches the sessions sidebar (a resizable width is
@@ -54,7 +53,7 @@ impl PaneFlowApp {
             self.files_surface_id = self
                 .workspaces
                 .get(self.active_idx)
-                .and_then(|ws| ws.root.as_ref())
+                .and_then(|ws| ws.active_tab().root.as_ref())
                 .and_then(|root| root.focused_pane(window, cx))
                 .and_then(|pane| pane.read(cx).active_terminal_opt())
                 .map(|terminal| terminal.entity_id().as_u64());
@@ -217,39 +216,31 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// Open a markdown file in the active pane - the focused pane of the active
-    /// workspace, falling back to its first leaf. Reuses `MarkdownView::open` +
-    /// `Pane::add_markdown_tab` unchanged; the sidebar stays open.
+    /// Open a markdown file from the Files sidebar.
+    ///
+    /// EP-002 US-007: a pane holds a single surface, so the file opens as a new
+    /// workspace tab of the active workspace rather than being appended next to
+    /// a running terminal. The sidebar stays open.
     fn open_markdown_in_active_pane(
         &mut self,
         path: PathBuf,
-        window: &gpui::Window,
+        _window: &gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(root) = self
-            .workspaces
-            .get(self.active_idx)
-            .and_then(|ws| ws.root.as_ref())
-        else {
-            return;
-        };
-        let target = self
-            .files_surface_id
-            .and_then(|surface_id| find_pane_by_surface_id(&self.workspaces, surface_id, cx))
-            .and_then(|(ws_idx, pane, _tab_idx)| {
-                (ws_idx == self.active_idx && root.contains_leaf(&pane)).then_some(pane)
-            })
-            .or_else(|| root.focused_pane(window, cx))
-            .or_else(|| root.collect_leaves().into_iter().next());
-        let Some(target) = target else {
+        let ws_idx = self.active_idx;
+        let Some(ws_id) = self.workspaces.get(ws_idx).map(|ws| ws.id) else {
             return;
         };
         let markdown = cx.new(|cx| crate::markdown::MarkdownView::open(path, cx));
-        target.update(cx, |pane, cx| {
-            pane.add_markdown_tab(markdown, cx);
-            cx.notify();
-        });
-        self.pending_pane_focus = Some(target);
+        let pane = self.create_pane_with_existing_surface(
+            crate::pane::PaneSurface::Markdown(markdown),
+            ws_id,
+            cx,
+        );
+        if !self.open_pane_in_new_workspace_tab(ws_idx, pane.clone(), cx) {
+            return;
+        }
+        self.pending_pane_focus = Some(pane);
         self.save_session(cx);
         cx.notify();
     }

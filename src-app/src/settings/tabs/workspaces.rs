@@ -1375,8 +1375,8 @@ impl PaneFlowApp {
         let tree = build_up_layout(preset, panes, focus_idx)
             .ok_or_else(|| "could not build layout from panes".to_string())?;
         if let Some(workspace) = self.workspaces.get_mut(target_idx) {
-            workspace.root = Some(tree);
-            workspace.saved_layout = None;
+            workspace.active_tab_mut().root = Some(tree);
+            workspace.active_tab_mut().saved_layout = None;
             if let Some(first_cwd) = launches
                 .iter()
                 .find_map(|(terminal, _, _)| terminal.read(cx).terminal.cwd_now())

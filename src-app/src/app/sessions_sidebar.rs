@@ -25,7 +25,7 @@ use crate::PaneFlowApp;
 use crate::agent_launcher::AgentCommandSpec;
 use crate::agent_sessions::{SessionAgent, SessionMeta, format_relative_time};
 use crate::app::ipc_handler::find_pane_by_surface_id;
-use crate::pane_drag::{SessionDrag, TabDragPreview};
+use crate::pane_drag::{DragPreview, SessionDrag};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 /// Fixed sidebar width - between the CLI (220) and Agents (280) left sidebars,
@@ -565,7 +565,7 @@ impl PaneFlowApp {
             .px(px(8.))
             .rounded(px(6.))
             .on_drag(drag_payload, |drag, _offset, _window, cx| {
-                cx.new(|_| TabDragPreview {
+                cx.new(|_| DragPreview {
                     title: drag.title.clone(),
                     icon: drag.icon.clone(),
                 })
@@ -644,18 +644,10 @@ impl PaneFlowApp {
         let Some(expected_cwd) = self.agent_sessions.sessions_cwd.as_deref() else {
             return ResumeSendResult::Missing;
         };
-        let Some((_ws_idx, pane, tab_idx)) =
-            find_pane_by_surface_id(&self.workspaces, surface_id, cx)
-        else {
+        let Some(loc) = find_pane_by_surface_id(&self.workspaces, surface_id, cx) else {
             return ResumeSendResult::Missing;
         };
-        let Some(terminal) = pane
-            .read(cx)
-            .tabs
-            .get(tab_idx)
-            .and_then(|tab| tab.as_terminal())
-            .cloned()
-        else {
+        let Some(terminal) = loc.pane.read(cx).active_terminal_opt().cloned() else {
             return ResumeSendResult::Missing;
         };
         let current_cwd = {

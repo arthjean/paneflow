@@ -22,7 +22,7 @@ impl PaneFlowApp {
             SWAP_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
 
             if let Some(ws) = self.active_workspace()
-                && let Some(root) = &ws.root
+                && let Some(root) = &ws.active_tab().root
             {
                 // Move focus to find the target pane
                 let moved = matches!(root.focus_in_direction(dir, window, cx), FocusNav::Moved);
@@ -30,7 +30,7 @@ impl PaneFlowApp {
                     && target != source
                 {
                     let swapped = if let Some(ws) = self.active_workspace_mut()
-                        && let Some(ref mut root) = ws.root
+                        && let Some(ref mut root) = ws.active_tab_mut().root
                     {
                         root.swap_panes(&source, &target)
                     } else {
@@ -51,7 +51,7 @@ impl PaneFlowApp {
         }
 
         if let Some(ws) = self.active_workspace()
-            && let Some(root) = &ws.root
+            && let Some(root) = &ws.active_tab().root
             && !matches!(root.focus_in_direction(dir, window, cx), FocusNav::Moved)
         {
             self.show_toast("No pane in that direction", cx);
@@ -121,7 +121,7 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut order: Vec<(usize, gpui::Entity<crate::pane::Pane>, usize, u64)> = Vec::new();
+        let mut order: Vec<(usize, gpui::Entity<crate::pane::Pane>, u64)> = Vec::new();
         for (ws_idx, ws) in self.workspaces.iter().enumerate() {
             let matching: std::collections::HashSet<u64> = ws
                 .agent_sessions
@@ -132,36 +132,25 @@ impl PaneFlowApp {
             if matching.is_empty() {
                 continue;
             }
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
-                    for (tab_idx, tab) in pane.read(cx).tabs.iter().enumerate() {
-                        if let Some(t) = tab.as_terminal() {
-                            let sid = t.entity_id().as_u64();
-                            if matching.contains(&sid) {
-                                order.push((ws_idx, pane.clone(), tab_idx, sid));
-                            }
+                    if let Some(t) = pane.read(cx).active_terminal_opt() {
+                        let sid = t.entity_id().as_u64();
+                        if matching.contains(&sid) {
+                            order.push((ws_idx, pane.clone(), sid));
                         }
                     }
                 }
             }
         }
-        let ids: Vec<u64> = order.iter().map(|(_, _, _, sid)| *sid).collect();
+        let ids: Vec<u64> = order.iter().map(|(_, _, sid)| *sid).collect();
         let Some(next) = next_in_cycle(&ids, self.jump_cursor) else {
             return;
         };
-        let Some((ws_idx, pane, tab_idx, sid)) = order.into_iter().find(|(_, _, _, s)| *s == next)
-        else {
+        let Some((ws_idx, pane, sid)) = order.into_iter().find(|(_, _, s)| *s == next) else {
             return;
         };
-        self.activate_workspace_at(
-            ws_idx,
-            WorkspaceFocusTarget::PaneTab {
-                pane: pane.clone(),
-                tab_idx,
-            },
-            window,
-            cx,
-        );
+        self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
         self.jump_cursor = Some(sid);
     }
 }

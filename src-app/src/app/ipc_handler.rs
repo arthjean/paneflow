@@ -752,22 +752,30 @@ pub(crate) fn find_first_terminal(
     }
 }
 
-/// Find a terminal view entity by its surface_id (GPUI entity ID) across all workspaces.
+/// Find a terminal view entity by its surface_id (GPUI entity ID) across all
+/// workspaces and all their tabs.
+///
+/// US-003 (prd-cli-tab-hierarchy): the walk spans every tab, not just the
+/// visible one, for the same reason [`find_pane_by_surface_id`] does - a
+/// `surface_id` is the external address of a surface and stays resolvable
+/// whether or not its tab happens to be on screen. Narrowing this to the
+/// active tab would silently break `surface.send_text`, `surface.read` and the
+/// hook-provided-id validation for background tabs.
 pub(crate) fn find_terminal_by_surface_id(
     workspaces: &[Workspace],
     surface_id: u64,
     cx: &App,
 ) -> Option<gpui::Entity<TerminalView>> {
     for ws in workspaces {
-        if let Some(root) = &ws.root
-            && let Some(t) = find_terminal_in_tree(root, surface_id, cx)
-        {
-            return Some(t);
-        }
-        if let Some(saved) = &ws.saved_layout
-            && let Some(t) = find_terminal_in_tree(saved, surface_id, cx)
-        {
-            return Some(t);
+        for tab in ws.tabs() {
+            for tree in [tab.root.as_ref(), tab.saved_layout.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(t) = find_terminal_in_tree(tree, surface_id, cx) {
+                    return Some(t);
+                }
+            }
         }
     }
     None
@@ -816,45 +824,58 @@ fn parse_managed_worktree(
     crate::workspace::worktree::managed_worktree_from_record(path, repo_root, branch, teardown)
 }
 
-/// Locate the pane (and tab index) hosting a surface, across all workspaces.
-/// Returns `(workspace_index, pane, tab_index)`. Unlike
-/// [`find_terminal_by_surface_id`] this yields the *container*, which is what
-/// `surface.focus` (focus + tab activation) and the targeted `surface.split`
-/// (split at that leaf) need (US-001/US-002, prd-orchestration-v2).
+/// Where a surface lives: workspace, owning workspace tab, pane, and the
+/// owning pane.
+///
+/// US-003 (prd-cli-tab-hierarchy) added `tab_idx`: now that a workspace holds
+/// several layout trees, resolving a `surface_id` must also say *which* tab
+/// owns it, since that tab is not necessarily the visible one.
+pub(crate) struct SurfaceLocation {
+    pub workspace_idx: usize,
+    /// Index of the owning workspace tab. May differ from
+    /// `Workspace::active_tab_idx` when the surface sits in a background tab.
+    pub tab_idx: usize,
+    pub pane: gpui::Entity<Pane>,
+}
+
+/// Locate the pane hosting a surface, across all workspaces and all their tabs.
+/// Unlike [`find_terminal_by_surface_id`] this yields the *container*, which is
+/// what `surface.focus` (focus + tab activation) and the targeted
+/// `surface.split` (split at that leaf) need (US-001/US-002,
+/// prd-orchestration-v2).
 pub(crate) fn find_pane_by_surface_id(
     workspaces: &[Workspace],
     surface_id: u64,
     cx: &App,
-) -> Option<(usize, gpui::Entity<Pane>, usize)> {
-    for (ws_idx, ws) in workspaces.iter().enumerate() {
-        if let Some(root) = &ws.root
-            && let Some((pane, tab_idx)) = find_pane_in_tree(root, surface_id, cx)
-        {
-            return Some((ws_idx, pane, tab_idx));
-        }
-        if let Some(saved) = &ws.saved_layout
-            && let Some((pane, tab_idx)) = find_pane_in_tree(saved, surface_id, cx)
-        {
-            return Some((ws_idx, pane, tab_idx));
+) -> Option<SurfaceLocation> {
+    for (workspace_idx, ws) in workspaces.iter().enumerate() {
+        for (tab_idx, tab) in ws.tabs().iter().enumerate() {
+            for tree in [tab.root.as_ref(), tab.saved_layout.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                if let Some(pane) = find_pane_in_tree(tree, surface_id, cx) {
+                    return Some(SurfaceLocation {
+                        workspace_idx,
+                        tab_idx,
+                        pane,
+                    });
+                }
+            }
         }
     }
     None
 }
 
-fn find_pane_in_tree(
-    node: &LayoutTree,
-    surface_id: u64,
-    cx: &App,
-) -> Option<(gpui::Entity<Pane>, usize)> {
+fn find_pane_in_tree(node: &LayoutTree, surface_id: u64, cx: &App) -> Option<gpui::Entity<Pane>> {
     match node {
         LayoutTree::Leaf(pane) => {
-            // Index into `tabs` (not the terminals-only iterator): markdown
-            // tabs interleave, and `selected_idx` addresses the full tab list.
-            let tab_idx = pane.read(cx).tabs.iter().position(|tab| {
-                tab.as_terminal()
-                    .is_some_and(|t| t.entity_id().as_u64() == surface_id)
-            })?;
-            Some((pane.clone(), tab_idx))
+            // EP-002 US-004: a pane owns exactly one surface, so matching is a
+            // direct comparison - no index into a strip.
+            pane.read(cx)
+                .active_terminal_opt()
+                .is_some_and(|t| t.entity_id().as_u64() == surface_id)
+                .then(|| pane.clone())
         }
         LayoutTree::Container { children, .. } => children
             .iter()
@@ -875,6 +896,12 @@ pub(crate) struct SurfaceMeta {
     /// Positional index retained for backwards compatibility with older IPC clients.
     pub workspace: Option<usize>,
     pub scope: &'static str,
+    /// US-019: stable id of the workspace tab owning this surface, and that
+    /// tab's title. `None` for surfaces that live outside the CLI tab
+    /// hierarchy (Agents threads, the bottom dock). The id is an *identity*,
+    /// not a position - no positional tab index is ever exported (FR-07).
+    pub tab_id: Option<u64>,
+    pub tab_title: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -922,9 +949,39 @@ struct SurfaceEntry {
     cwd: Option<String>,
     cmd: Option<String>,
     scope: SurfaceScope,
+    /// US-019: the owning workspace tab, `None` outside the CLI hierarchy.
+    tab: Option<(u64, String)>,
 }
 
-fn surface_entry_for(entity: Entity<TerminalView>, scope: SurfaceScope, cx: &App) -> SurfaceEntry {
+/// US-019: the CLI half of [`PaneFlowApp::collect_surface_entries`], walking tab
+/// by tab so every surface carries the identity of the tab that owns it. Order
+/// is unchanged - tabs are visited in display order, which is exactly the order
+/// the previous flat `Workspace::collect_panes` walk produced.
+fn workspace_surface_entries(workspaces: &[Workspace], cx: &App) -> Vec<SurfaceEntry> {
+    let mut entries = Vec::new();
+    for (ws_idx, ws) in workspaces.iter().enumerate() {
+        for tab in ws.tabs() {
+            for pane in tab.collect_panes() {
+                for entity in pane.read(cx).terminals() {
+                    entries.push(surface_entry_for(
+                        entity.clone(),
+                        SurfaceScope::Workspace(ws_idx),
+                        Some((tab.id, tab.title.clone())),
+                        cx,
+                    ));
+                }
+            }
+        }
+    }
+    entries
+}
+
+fn surface_entry_for(
+    entity: Entity<TerminalView>,
+    scope: SurfaceScope,
+    tab: Option<(u64, String)>,
+    cx: &App,
+) -> SurfaceEntry {
     let (custom_name, title, cwd, cmd) = {
         let view = entity.read(cx);
         let ts = &view.terminal;
@@ -942,6 +999,7 @@ fn surface_entry_for(entity: Entity<TerminalView>, scope: SurfaceScope, cx: &App
         cwd,
         cmd,
         scope,
+        tab,
     }
 }
 
@@ -955,6 +1013,10 @@ fn surface_meta_value(s: SurfaceMeta) -> serde_json::Value {
         "workspace_id": s.workspace_id,
         "workspace": s.workspace,
         "scope": s.scope,
+        // US-019: additive. An older client that ignores these two keys reads
+        // exactly the payload it read before.
+        "tab_id": s.tab_id,
+        "tab_title": s.tab_title,
     })
 }
 
@@ -1567,6 +1629,8 @@ impl PaneFlowApp {
                 workspace_id: self.workspace_id_for_scope(entry.scope),
                 workspace: entry.scope.workspace_index(),
                 scope: entry.scope.as_wire(),
+                tab_id: entry.tab.as_ref().map(|(id, _)| *id),
+                tab_title: entry.tab.as_ref().map(|(_, title)| title.clone()),
             })
             .collect();
 
@@ -1596,18 +1660,7 @@ impl PaneFlowApp {
     }
 
     fn collect_surface_entries(&self, cx: &App) -> Vec<SurfaceEntry> {
-        let mut entries = Vec::new();
-        for (ws_idx, ws) in self.workspaces.iter().enumerate() {
-            for pane in ws.collect_panes() {
-                for entity in pane.read(cx).terminals() {
-                    entries.push(surface_entry_for(
-                        entity.clone(),
-                        SurfaceScope::Workspace(ws_idx),
-                        cx,
-                    ));
-                }
-            }
-        }
+        let mut entries = workspace_surface_entries(&self.workspaces, cx);
         let mut thread_ids: Vec<u64> = self
             .agents_view
             .agents_terminal_view_cache
@@ -1620,6 +1673,7 @@ impl PaneFlowApp {
                 entries.push(surface_entry_for(
                     entity.clone(),
                     SurfaceScope::AgentsThread(thread_id),
+                    None,
                     cx,
                 ));
             }
@@ -1628,6 +1682,7 @@ impl PaneFlowApp {
             entries.push(surface_entry_for(
                 term.view.clone(),
                 SurfaceScope::AgentsBottom(term.id),
+                None,
                 cx,
             ));
         }
@@ -1684,7 +1739,7 @@ impl PaneFlowApp {
         find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
             .and_then(|_| {
                 find_pane_by_surface_id(&self.workspaces, surface_id, cx)
-                    .map(|(ws_idx, _, _)| SurfaceScope::Workspace(ws_idx))
+                    .map(|loc| SurfaceScope::Workspace(loc.workspace_idx))
             })
             .or_else(|| {
                 self.agents_view
@@ -1794,7 +1849,7 @@ impl PaneFlowApp {
             }
         }
         if let Some(ws) = self.active_workspace()
-            && let Some(root) = &ws.root
+            && let Some(root) = &ws.active_tab().root
             && let Some(t) = find_first_terminal(root, cx)
         {
             return Ok(t);
@@ -2282,15 +2337,19 @@ impl PaneFlowApp {
         }
         // child_pid → surface entity id, across every workspace (the hook's
         // workspace_id can lag a moved pane; the chain decides).
+        //
+        // US-012 (prd-cli-tab-hierarchy): the walk spans every tab, like
+        // `find_pane_by_surface_id` does. Restricted to the visible tab, an
+        // agent launched in a background tab never resolves its surface, so
+        // its badge stays stuck on the folder row and never migrates to the
+        // owning tab.
         let mut candidates: HashMap<u32, u64> = HashMap::new();
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
-                for pane in root.collect_leaves() {
-                    for terminal in pane.read(cx).terminals() {
-                        let pid = terminal.read(cx).terminal.child_pid;
-                        if pid > 0 {
-                            candidates.insert(pid, terminal.entity_id().as_u64());
-                        }
+            for pane in ws.collect_panes() {
+                for terminal in pane.read(cx).terminals() {
+                    let pid = terminal.read(cx).terminal.child_pid;
+                    if pid > 0 {
+                        candidates.insert(pid, terminal.entity_id().as_u64());
                     }
                 }
             }
@@ -2369,29 +2428,25 @@ impl PaneFlowApp {
                 }
             }
         }
+        // US-012 (prd-cli-tab-hierarchy): every tab, not just the visible one.
+        // This push is the only thing that CLEARS a pane's dot, so skipping
+        // background tabs left a pane that changed state off screen wearing a
+        // stale attention or error dot until the next event fired while its
+        // tab happened to be visible.
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
-                for pane in root.collect_leaves() {
-                    let subset: HashMap<gpui::EntityId, Option<String>> = pane
-                        .read(cx)
-                        .terminals()
-                        .filter_map(|t| {
-                            waiting
-                                .get(&t.entity_id().as_u64())
-                                .map(|msg| (t.entity_id(), msg.clone()))
-                        })
-                        .collect();
-                    let errored_subset: std::collections::HashSet<gpui::EntityId> = pane
-                        .read(cx)
-                        .terminals()
-                        .filter(|t| errored.contains(&t.entity_id().as_u64()))
-                        .map(|t| t.entity_id())
-                        .collect();
-                    pane.update(cx, |p, cx| {
-                        p.set_attention(subset, cx);
-                        p.set_errored(errored_subset, cx);
-                    });
-                }
+            for pane in ws.collect_panes() {
+                let sid = pane
+                    .read(cx)
+                    .active_terminal_opt()
+                    .map(|t| t.entity_id().as_u64());
+                // EP-002 US-004: one surface per pane, so the per-pane
+                // subset degenerates to a single lookup.
+                let attention = sid.and_then(|sid| waiting.get(&sid).cloned()).flatten();
+                let is_errored = sid.is_some_and(|sid| errored.contains(&sid));
+                pane.update(cx, |p, cx| {
+                    p.set_attention(attention, cx);
+                    p.set_errored(is_errored, cx);
+                });
             }
         }
     }
@@ -2761,19 +2816,19 @@ impl PaneFlowApp {
                         .focus_agents_surface(sid, scope, cx)
                         .unwrap_or_else(|| serde_json::json!({"error": "Surface not found"}));
                 };
-                let Some((_found_ws_idx, pane, tab_idx)) =
-                    find_pane_by_surface_id(&self.workspaces, sid, cx)
-                else {
+                let Some(loc) = find_pane_by_surface_id(&self.workspaces, sid, cx) else {
                     return serde_json::json!({"error": "Surface not found"});
                 };
-                // Switch workspace + activate the hosting tab synchronously.
+                let pane = loc.pane;
+                // Switch workspace and make the owning workspace tab visible
+                // (US-003: the surface may live in a background tab) - all
+                // synchronously. EP-002 US-004: the pane holds exactly one
+                // surface, so there is no pane-level tab to activate.
                 self.activate_workspace_without_window(ws_idx, cx);
-                pane.update(cx, |p, cx| {
-                    if p.selected_idx != tab_idx {
-                        p.selected_idx = tab_idx;
-                    }
-                    cx.notify();
-                });
+                if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+                    ws.set_active_tab(loc.tab_idx);
+                }
+                pane.update(cx, |_p, cx| cx.notify());
                 // …but the keyboard focus needs a `&mut Window`, which the IPC
                 // dispatch doesn't carry. Defer one tick and re-enter through
                 // the main window handle (locate it among `cx.windows()` by
@@ -2855,7 +2910,7 @@ impl PaneFlowApp {
                     }
                 } else {
                     self.active_workspace()
-                        .and_then(|ws| ws.root.as_ref())
+                        .and_then(|ws| ws.active_tab().root.as_ref())
                         .and_then(|root| find_first_terminal(root, cx))
                 };
                 let Some(terminal) = target else {
@@ -2977,7 +3032,7 @@ impl PaneFlowApp {
                 {
                     self.find_surface_terminal_by_id(sid, cx)
                 } else if let Some(ws) = self.active_workspace()
-                    && let Some(root) = &ws.root
+                    && let Some(root) = &ws.active_tab().root
                 {
                     // Use first leaf as default
                     find_first_terminal(root, cx)
@@ -3057,25 +3112,34 @@ impl PaneFlowApp {
                 // lives - instead of the active workspace's first leaf. Absent
                 // = the legacy first-leaf behavior, so existing clients are
                 // untouched.
-                let (ws_idx, target_pane) =
+                // US-003 (cli-tab-hierarchy): the lookup also yields the
+                // owning workspace tab, so the split lands in - and the pane
+                // cap counts - that tab, not whichever one happens to be
+                // visible.
+                let (ws_idx, tab_idx, target_pane) =
                     if let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) {
-                        let Some((ws_idx, target_pane, _tab)) =
-                            find_pane_by_surface_id(&self.workspaces, sid, cx)
-                        else {
+                        let Some(loc) = find_pane_by_surface_id(&self.workspaces, sid, cx) else {
                             return JsonRpcError::invalid_params("Surface not found").into_value();
                         };
-                        (ws_idx, Some(target_pane))
+                        (loc.workspace_idx, loc.tab_idx, Some(loc.pane))
                     } else {
-                        (self.active_idx, None)
+                        (
+                            self.active_idx,
+                            self.active_workspace().map_or(0, |ws| ws.active_tab_idx()),
+                            None,
+                        )
                     };
                 let Some(ws) = self.workspaces.get(ws_idx) else {
                     return JsonRpcError::invalid_params("No active workspace").into_value();
                 };
                 let ws_id = ws.id;
-                let Some(root) = ws.root.as_ref() else {
+                let Some(tab) = ws.tabs().get(tab_idx) else {
                     return JsonRpcError::invalid_params("Workspace has no root").into_value();
                 };
-                if root.leaf_count() >= MAX_PANES {
+                let Some(root) = tab.root.as_ref() else {
+                    return JsonRpcError::invalid_params("Workspace has no root").into_value();
+                };
+                if !tab.can_add_pane() {
                     return JsonRpcError::invalid_params("Maximum pane count reached").into_value();
                 }
                 if let Some(target) = &target_pane
@@ -3100,7 +3164,10 @@ impl PaneFlowApp {
                 }
                 let surface_id = new_terminal.entity_id().as_u64();
                 let new_pane = self.create_pane(new_terminal.clone(), ws_id, cx);
-                let Some(root) = self.workspaces[ws_idx].root.as_mut() else {
+                let Some(root) = self.workspaces[ws_idx]
+                    .tab_mut(tab_idx)
+                    .and_then(|tab| tab.root.as_mut())
+                else {
                     return JsonRpcError::invalid_params("Workspace has no root").into_value();
                 };
                 match target_pane {
@@ -4976,10 +5043,15 @@ mod tests {
             workspace_id: Some(42),
             workspace: Some(2),
             scope: "workspace",
+            tab_id: Some(11),
+            tab_title: Some("build".to_string()),
         });
         assert_eq!(workspace["workspace_id"], 42);
         assert_eq!(workspace["workspace"], 2);
         assert_eq!(workspace["scope"], "workspace");
+        // US-019: tab identity is exported, never a positional tab index.
+        assert_eq!(workspace["tab_id"], 11);
+        assert_eq!(workspace["tab_title"], "build");
 
         let agents = super::surface_meta_value(super::SurfaceMeta {
             surface_id: 8,
@@ -4990,10 +5062,15 @@ mod tests {
             workspace_id: None,
             workspace: None,
             scope: "agents_thread",
+            tab_id: None,
+            tab_title: None,
         });
         assert_eq!(agents["workspace_id"], serde_json::Value::Null);
         assert_eq!(agents["workspace"], serde_json::Value::Null);
         assert_eq!(agents["scope"], "agents_thread");
+        // A surface outside the CLI hierarchy carries no tab.
+        assert_eq!(agents["tab_id"], serde_json::Value::Null);
+        assert_eq!(agents["tab_title"], serde_json::Value::Null);
     }
 
     #[test]
@@ -5007,6 +5084,8 @@ mod tests {
             workspace_id: Some(42),
             workspace: Some(0),
             scope: "workspace",
+            tab_id: Some(3),
+            tab_title: None,
         };
 
         assert!(super::surface_matches_workspace(&surface, Some(42)));
@@ -5613,5 +5692,204 @@ mod tests {
         assert_eq!(v["type"], "ai.session_end");
         assert_eq!(v["pid"], serde_json::Value::Null);
         assert_eq!(v["surface_id"], serde_json::Value::Null);
+    }
+
+    /// US-003 (prd-cli-tab-hierarchy): a `surface_id` living in a background
+    /// tab resolves to that tab, not to the visible one.
+    #[gpui::test]
+    fn surface_in_a_background_tab_resolves_to_its_owning_tab(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let make_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            let surface_id = terminal.entity_id().as_u64();
+            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+            (pane, surface_id)
+        };
+        let (visible_pane, visible_sid) = make_pane(cx);
+        let (hidden_pane, hidden_sid) = make_pane(cx);
+
+        let mut ws = Workspace::with_layout_and_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            crate::layout::LayoutTree::Leaf(visible_pane),
+        );
+        assert!(ws.open_tab(crate::workspace::Tab::new(
+            "background",
+            Some(crate::layout::LayoutTree::Leaf(hidden_pane)),
+        )));
+        // Make tab 0 the visible one so the second tab is genuinely hidden.
+        ws.set_active_tab(0);
+        let workspaces = vec![ws];
+
+        let found = cx
+            .update(|_, cx| find_pane_by_surface_id(&workspaces, hidden_sid, cx))
+            .expect("a surface in a background tab must still resolve");
+        assert_eq!(found.workspace_idx, 0);
+        assert_eq!(
+            found.tab_idx, 1,
+            "resolves to the owning tab, not the visible one"
+        );
+
+        let visible = cx
+            .update(|_, cx| find_pane_by_surface_id(&workspaces, visible_sid, cx))
+            .expect("the visible surface resolves too");
+        assert_eq!(visible.tab_idx, 0);
+
+        // The terminal resolver must agree with the pane resolver: it gates
+        // `surface_scope_by_id`, `find_surface_terminal_by_id` and the
+        // hook-provided-id validation, so a narrower walk would make
+        // `surface.send_text` fail for a background tab.
+        assert!(
+            cx.update(|_, cx| find_terminal_by_surface_id(&workspaces, hidden_sid, cx))
+                .is_some(),
+            "a surface in a background tab must resolve to its terminal"
+        );
+        assert!(
+            cx.update(|_, cx| find_terminal_by_surface_id(&workspaces, visible_sid, cx))
+                .is_some()
+        );
+    }
+
+    /// US-019: every CLI surface reported by `surface.list` carries the id and
+    /// title of the tab that owns it - including a surface in a background tab -
+    /// and the tab is an identity, never a positional index.
+    #[gpui::test]
+    fn surface_entries_carry_their_owning_tab(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let make_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            let surface_id = terminal.entity_id().as_u64();
+            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+            (pane, surface_id)
+        };
+        let (visible_pane, visible_sid) = make_pane(cx);
+        let (hidden_pane, hidden_sid) = make_pane(cx);
+
+        let mut ws = Workspace::with_layout_and_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            crate::layout::LayoutTree::Leaf(visible_pane),
+        );
+        let front_tab_id = ws.tabs()[0].id;
+        assert!(ws.open_tab(crate::workspace::Tab::new(
+            "background",
+            Some(crate::layout::LayoutTree::Leaf(hidden_pane)),
+        )));
+        let back_tab_id = ws.tabs()[1].id;
+        ws.set_active_tab(0);
+        let workspaces = vec![ws];
+
+        let entries = cx.update(|_, cx| super::workspace_surface_entries(&workspaces, cx));
+        let tab_of = |sid: u64| {
+            entries
+                .iter()
+                .find(|e| e.entity.entity_id().as_u64() == sid)
+                .and_then(|e| e.tab.clone())
+                .expect("every CLI surface belongs to a tab")
+        };
+
+        assert_eq!(tab_of(visible_sid).0, front_tab_id);
+        assert_eq!(
+            tab_of(hidden_sid).0,
+            back_tab_id,
+            "a surface in a background tab reports its own tab, not the visible one"
+        );
+        assert_eq!(tab_of(hidden_sid).1, "background");
+        assert_ne!(
+            front_tab_id, back_tab_id,
+            "tab ids are identities, so no two tabs collide"
+        );
+
+        // The exported payload keeps the identity and stays additive.
+        let value = super::surface_meta_value(super::SurfaceMeta {
+            surface_id: hidden_sid,
+            name: "zsh".to_string(),
+            title: String::new(),
+            cwd: None,
+            cmd: None,
+            workspace_id: Some(1),
+            workspace: Some(0),
+            scope: "workspace",
+            tab_id: Some(tab_of(hidden_sid).0),
+            tab_title: Some(tab_of(hidden_sid).1),
+        });
+        assert_eq!(value["tab_id"], back_tab_id);
+        assert_eq!(value["tab_title"], "background");
+    }
+
+    /// US-003: the pane cap bounds a *tab*. A tab already at `MAX_PANES` leaves
+    /// refuses a split - with the unchanged message - and its tree is untouched,
+    /// while a sibling tab under the cap still accepts one.
+    #[gpui::test]
+    fn split_is_refused_per_tab_at_the_pane_cap(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let new_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| Pane::new(terminal, 1, cx))
+        };
+
+        // Tab 0: saturated at MAX_PANES leaves. Tab 1: a single leaf.
+        let mut full = crate::layout::LayoutTree::Leaf(new_pane(cx));
+        for _ in 1..MAX_PANES {
+            let anchor = full.collect_leaves()[0].clone();
+            assert!(full.split_at_pane(&anchor, SplitDirection::Vertical, new_pane(cx)));
+        }
+        assert_eq!(full.leaf_count(), MAX_PANES);
+
+        let mut ws = Workspace::with_layout_and_id(1, "ws", std::path::PathBuf::new(), full);
+        let spare = crate::layout::LayoutTree::Leaf(new_pane(cx));
+        assert!(ws.open_tab(crate::workspace::Tab::new("spare", Some(spare))));
+
+        let leaf_ids = |ws: &Workspace, idx: usize| -> Vec<gpui::EntityId> {
+            ws.tabs()[idx]
+                .root
+                .as_ref()
+                .expect("tab has a layout")
+                .collect_leaves()
+                .into_iter()
+                .map(|p| p.entity_id())
+                .collect()
+        };
+        let before = leaf_ids(&ws, 0);
+
+        // `can_add_pane` is the shared guard every create site consults - the
+        // keyboard split, drop-to-split, the launch pad and `surface.split`.
+        assert!(!ws.tabs()[0].can_add_pane(), "the saturated tab refuses");
+        let extra = new_pane(cx);
+        if ws.tabs()[0].can_add_pane() {
+            let anchor = before[0];
+            let tab = ws.tab_mut(0).expect("tab 0 exists");
+            let target = tab
+                .root
+                .as_ref()
+                .expect("tab has a layout")
+                .collect_leaves()
+                .into_iter()
+                .find(|p| p.entity_id() == anchor)
+                .expect("anchor still present");
+            tab.root.as_mut().expect("tab has a layout").split_at_pane(
+                &target,
+                SplitDirection::Vertical,
+                extra,
+            );
+        }
+        assert_eq!(
+            leaf_ids(&ws, 0),
+            before,
+            "a refused split must leave the tree unchanged"
+        );
+
+        // The sibling tab is nowhere near the cap: the bound is per tab.
+        assert!(ws.tabs()[1].can_add_pane());
+        assert_eq!(ws.tabs()[1].pane_count(), 1);
+        assert_eq!(ws.pane_count(), MAX_PANES + 1);
     }
 }

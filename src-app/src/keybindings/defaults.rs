@@ -161,6 +161,20 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "close_tab",
         context: None,
     },
+    // US-020 (prd-cli-tab-hierarchy): cycle the active workspace's tabs.
+    // `secondary-]` / `secondary-[` are unclaimed (the taken set above:
+    // d/e/w/n/q/t/z/=/s/a/g plus digits), and `secondary-tab` keeps its
+    // existing meaning - next *workspace*, not next tab.
+    DefaultBinding {
+        key: "secondary-]",
+        action_name: "next_tab",
+        context: None,
+    },
+    DefaultBinding {
+        key: "secondary-[",
+        action_name: "previous_tab",
+        context: None,
+    },
     DefaultBinding {
         key: "ctrl-shift-c",
         action_name: "terminal_copy",

@@ -70,7 +70,7 @@ impl PaneFlowApp {
     pub(crate) fn attention_queue_rows(&self, cx: &Context<Self>) -> Vec<QueueRow> {
         let mut live_surfaces: HashSet<u64> = HashSet::new();
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
                     for t in pane.read(cx).terminals() {
                         live_surfaces.insert(t.entity_id().as_u64());
@@ -154,21 +154,17 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((ws_idx, pane, tab_idx)) =
-            find_pane_by_surface_id(&self.workspaces, surface_id, cx)
-        else {
+        let Some(loc) = find_pane_by_surface_id(&self.workspaces, surface_id, cx) else {
             cx.notify();
             return;
         };
-        self.activate_workspace_at(
-            ws_idx,
-            WorkspaceFocusTarget::PaneTab {
-                pane: pane.clone(),
-                tab_idx,
-            },
-            window,
-            cx,
-        );
+        // US-003 (cli-tab-hierarchy): the hit may live in a background
+        // workspace tab, so make that tab visible before focusing its pane.
+        let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
+        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+            ws.set_active_tab(loc.tab_idx);
+        }
+        self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
         // Keep the jump cycle coherent: a queue teleport counts as visiting
         // that surface, so the next Ctrl+Shift+J continues from here.
         self.jump_cursor = Some(surface_id);

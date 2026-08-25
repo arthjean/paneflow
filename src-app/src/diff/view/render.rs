@@ -404,7 +404,7 @@ impl DiffView {
             .on_drag(
                 DiffColumnDrag { source_idx: idx },
                 move |_drag, _offset, _window, cx| {
-                    cx.new(|_| TabDragPreview {
+                    cx.new(|_| DragPreview {
                         title: branch_drag.clone(),
                         icon: "icons/git-branch.svg".into(),
                     })

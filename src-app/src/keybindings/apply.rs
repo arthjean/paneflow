@@ -244,6 +244,68 @@ mod tests {
         );
     }
 
+    /// US-020 (prd-cli-tab-hierarchy): the two tab-cycling defaults parse,
+    /// claim free chords, and leave `secondary-tab` (next *workspace*) alone.
+    #[test]
+    fn tab_cycling_defaults_are_bindable_and_do_not_collide() {
+        use super::super::defaults::DEFAULTS;
+
+        for (key, action_name) in [("secondary-]", "next_tab"), ("secondary-[", "previous_tab")] {
+            let action = action_from_name(action_name).expect("registered action");
+            assert!(
+                make_binding(key, action, None).is_some(),
+                "{key} must parse into a valid KeyBinding"
+            );
+            let claimants: Vec<&str> = DEFAULTS
+                .iter()
+                .filter(|d| keystrokes_conflict(d.key, key))
+                .map(|d| d.action_name)
+                .collect();
+            assert_eq!(
+                claimants,
+                vec![action_name],
+                "{key} must be claimed by exactly one default"
+            );
+        }
+
+        // `secondary-tab` keeps meaning "next workspace".
+        assert!(
+            DEFAULTS
+                .iter()
+                .any(|d| d.key == "secondary-tab" && d.action_name == "next_workspace"),
+            "the tab shortcuts must not steal secondary-tab from next_workspace"
+        );
+    }
+
+    /// US-020: a user who already bound `secondary-]` to something else keeps
+    /// it. `apply_keybindings` drops the default sharing a user-claimed chord
+    /// before registering it, so no ambiguous double binding - and no
+    /// error-level conflict - is produced.
+    #[test]
+    fn user_override_of_a_tab_shortcut_wins_over_the_default() {
+        use super::super::defaults::DEFAULTS;
+
+        let user_key = "ctrl+]";
+        let user_claimed = canonical_keystroke(user_key).expect("a parsable user chord");
+        let dropped: Vec<&str> = DEFAULTS
+            .iter()
+            .filter(|d| canonical_keystroke(d.key).is_some_and(|k| k == user_claimed))
+            .map(|d| d.action_name)
+            .collect();
+        // On Linux/Windows `secondary` is ctrl, so the default is dropped; on
+        // macOS `secondary` is cmd and the two chords simply never collide.
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(dropped, vec!["next_tab"]);
+        #[cfg(target_os = "macos")]
+        assert!(dropped.is_empty());
+
+        // Either way the user's own binding is registrable.
+        assert!(
+            make_binding(user_key, Box::new(SplitHorizontally), None).is_some(),
+            "the user override must produce a valid binding"
+        );
+    }
+
     #[cfg(target_os = "macos")]
     #[test]
     fn us010_cmd_c_parses_as_binding() {

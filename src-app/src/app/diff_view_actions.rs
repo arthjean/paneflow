@@ -2,8 +2,8 @@
 //! point for the dedicated Git Diff mode ([`AppMode::Diff`]).
 //!
 //! This mirrors `agents_view_actions.rs`: the mode owns the full main
-//! area plus its own left sidebar, entered via the CLI / Diff / Agents
-//! segmented toggle (`render_mode_toggle`). EP-001 stands up the shell
+//! area plus its own left sidebar, entered via the CLI / Review / Agents
+//! tabs in the shared sidebar footer. EP-001 stands up the shell
 //! only - `enter_diff_mode` just flips the mode and `render_diff_main`
 //! renders a placeholder. EP-002 (US-004/US-005) mounts the reused
 //! `diff::DiffView` engine here; EP-005 adds the scope selector.

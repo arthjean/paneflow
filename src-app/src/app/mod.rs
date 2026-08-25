@@ -25,6 +25,7 @@ pub mod fleet_search;
 pub mod ipc_handler;
 pub mod launch_pad;
 pub mod notifications;
+pub mod pane_palette;
 pub mod profile_menu;
 pub mod project_ops;
 pub mod self_update_flow;

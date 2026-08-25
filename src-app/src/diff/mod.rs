@@ -8,7 +8,7 @@
 //!
 //! `DiffView` is the exact structural analog of `markdown::MarkdownView`: an
 //! `Entity` implementing `Render + Focusable`, hosted in a pane via the new
-//! `TabContent::Diff` variant. It is ephemeral - never persisted to
+//! `PaneSurface::Diff` variant. It is ephemeral - never persisted to
 //! `session.json` (like markdown tabs, dropped by `layout/serde.rs`).
 
 mod align;
@@ -30,7 +30,7 @@ mod view;
 mod worddiff;
 
 // Only the host view + its seed type are consumed outside this module
-// (`pane::TabContent::Diff`, `event_handlers::open_multi_diff_for_repo`). The
+// (`pane::PaneSurface::Diff`, `event_handlers::open_multi_diff_for_repo`). The
 // engine / git / rows types stay crate-internal, reached via `super::` paths.
 pub use git::{FileChange, list_repo_worktrees};
 pub use multi_view::MultiRepoDiffView;

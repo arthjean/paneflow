@@ -27,7 +27,7 @@ use gpui::{
 use notify::RecommendedWatcher;
 
 use crate::agent_sessions::SessionMeta;
-use crate::pane_drag::{DropEdge, SPLIT_EDGE_BAND, TabDragPreview, compute_drop_edge};
+use crate::pane_drag::{DragPreview, DropEdge, SPLIT_EDGE_BAND, compute_drop_edge};
 use crate::settings::components::{menu_divider_color, menu_surface, select_item, with_alpha};
 use crate::widgets::text_input::TextInput;
 

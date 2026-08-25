@@ -32,7 +32,9 @@ impl PaneFlowApp {
             }
         } else {
             // Zoom: save the full tree, replace root with the focused pane
-            let Some(root) = &ws.root else { return };
+            let Some(root) = &ws.active_tab().root else {
+                return;
+            };
 
             if root.leaf_count() <= 1 {
                 return;
@@ -43,9 +45,9 @@ impl PaneFlowApp {
             };
 
             focused.update(cx, |p, _| p.zoomed = true);
-            let full_tree = ws.root.take().unwrap();
-            ws.saved_layout = Some(full_tree);
-            ws.root = Some(LayoutTree::Leaf(focused.clone()));
+            let full_tree = ws.active_tab_mut().root.take().unwrap();
+            ws.active_tab_mut().saved_layout = Some(full_tree);
+            ws.active_tab_mut().root = Some(LayoutTree::Leaf(focused.clone()));
             focused.read(cx).focus_handle(cx).focus(window, cx);
         }
         self.save_session(cx);
@@ -66,12 +68,14 @@ impl PaneFlowApp {
         let Some(ws) = self.active_workspace_mut() else {
             return;
         };
-        let Some(root) = ws.root.take() else { return };
+        let Some(root) = ws.active_tab_mut().root.take() else {
+            return;
+        };
         let panes = root.collect_leaves();
 
         // No-op for single pane
         if panes.len() <= 1 {
-            ws.root = Some(root);
+            ws.active_tab_mut().root = Some(root);
             return;
         }
 
@@ -79,8 +83,8 @@ impl PaneFlowApp {
         // (root is consumed by collect_leaves moving entities out - but collect_leaves
         //  clones Entity refs, so root is still valid. We drop it explicitly.)
         drop(root);
-        ws.root = build(panes);
-        if let Some(ref r) = ws.root {
+        ws.active_tab_mut().root = build(panes);
+        if let Some(ref r) = ws.active_tab().root {
             r.focus_first(window, cx);
         }
         self.save_session(cx);
@@ -118,6 +122,7 @@ impl PaneFlowApp {
 
         // Collect existing panes and drop the old tree
         let existing: Vec<Entity<Pane>> = ws
+            .active_tab_mut()
             .root
             .take()
             .map(|r| r.collect_leaves())
@@ -139,7 +144,7 @@ impl PaneFlowApp {
         let Some(ws) = self.active_workspace_mut() else {
             return Err("No active workspace".into());
         };
-        ws.root = Some(tree);
+        ws.active_tab_mut().root = Some(tree);
         self.save_session(cx);
         cx.notify();
 
@@ -185,7 +190,9 @@ impl PaneFlowApp {
         let Some(ws) = self.active_workspace() else {
             return;
         };
-        let Some(root) = &ws.root else { return };
+        let Some(root) = &ws.active_tab().root else {
+            return;
+        };
 
         if root.leaf_count() <= 1 {
             return;
@@ -201,8 +208,8 @@ impl PaneFlowApp {
         let others: Vec<_> = panes.into_iter().filter(|p| *p != main_pane).collect();
 
         let ws = self.active_workspace_mut().unwrap();
-        drop(ws.root.take());
-        ws.root = LayoutTree::main_vertical(main_pane.clone(), others);
+        drop(ws.active_tab_mut().root.take());
+        ws.active_tab_mut().root = LayoutTree::main_vertical(main_pane.clone(), others);
         main_pane.read(cx).focus_handle(cx).focus(window, cx);
         self.save_session(cx);
         cx.notify();
@@ -224,7 +231,7 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         if let Some(ws) = self.active_workspace_mut()
-            && let Some(ref root) = ws.root
+            && let Some(ref root) = ws.active_tab().root
         {
             root.equalize_ratios();
             self.save_session(cx);

@@ -11,7 +11,7 @@ use gpui::{
 use super::{DIMMED_OPACITY, INDENT_STEP, ROW_HEIGHT};
 use crate::PaneFlowApp;
 use crate::app::files_tree::{self, VisibleRowRef};
-use crate::pane_drag::{MarkdownFileDrag, TabDragPreview};
+use crate::pane_drag::{DragPreview, MarkdownFileDrag};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
 impl PaneFlowApp {
@@ -128,7 +128,7 @@ impl PaneFlowApp {
                 icon: SharedString::from("icons/file-text.svg"),
             };
             el = el.on_drag(drag, |drag, _offset, _window, cx| {
-                cx.new(|_| TabDragPreview {
+                cx.new(|_| DragPreview {
                     title: drag.title.clone(),
                     icon: drag.icon.clone(),
                 })

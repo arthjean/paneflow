@@ -70,7 +70,7 @@ impl PaneFlowApp {
         let mut targets: Vec<(u64, String, String, crate::terminal::TerminalSessionBackend)> =
             Vec::new();
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
                     for t in pane.read(cx).terminals() {
                         let r = t.read(cx);
@@ -208,18 +208,13 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
-                    let subset: std::collections::HashMap<gpui::EntityId, usize> = pane
+                    let hits = pane
                         .read(cx)
-                        .terminals()
-                        .filter_map(|t| {
-                            counts
-                                .get(&t.entity_id().as_u64())
-                                .map(|c| (t.entity_id(), *c))
-                        })
-                        .collect();
-                    pane.update(cx, |p, cx| p.set_search_hits(subset, cx));
+                        .active_terminal_opt()
+                        .and_then(|t| counts.get(&t.entity_id().as_u64()).copied());
+                    pane.update(cx, |p, cx| p.set_search_hits(hits, cx));
                 }
             }
         }
@@ -251,9 +246,7 @@ impl PaneFlowApp {
         else {
             return;
         };
-        let Some((ws_idx, pane, tab_idx)) =
-            find_pane_by_surface_id(&self.workspaces, surface_id, cx)
-        else {
+        let Some(loc) = find_pane_by_surface_id(&self.workspaces, surface_id, cx) else {
             // Pane closed between render and Enter: drop the row, no panic.
             if let Some(state) = &mut self.fleet_search {
                 state.results.retain(|h| h.surface_id != surface_id);
@@ -261,22 +254,19 @@ impl PaneFlowApp {
             cx.notify();
             return;
         };
+        // US-003 (cli-tab-hierarchy): the hit may live in a background
+        // workspace tab, so make that tab visible before focusing its pane.
+        let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
+        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
+            ws.set_active_tab(loc.tab_idx);
+        }
         self.activate_workspace_at(
             ws_idx,
-            WorkspaceFocusTarget::PaneTab {
-                pane: pane.clone(),
-                tab_idx,
-            },
+            WorkspaceFocusTarget::Pane { pane: pane.clone() },
             window,
             cx,
         );
-        if let Some(t) = pane
-            .read(cx)
-            .tabs
-            .get(tab_idx)
-            .and_then(|t| t.as_terminal())
-            .cloned()
-        {
+        if let Some(t) = pane.read(cx).active_terminal_opt().cloned() {
             t.update(cx, |view, cx| view.arm_search(&query, regex, cx));
         }
         self.close_fleet_search(cx);

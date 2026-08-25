@@ -80,7 +80,7 @@ use gpui::{
 use gpui_platform::application;
 use notify::Watcher;
 
-use crate::pane::{Pane, TabContent};
+use crate::pane::{Pane, PaneSurface};
 use crate::terminal::TerminalView;
 use crate::workspace::Workspace;
 
@@ -95,7 +95,7 @@ pub(crate) use app::constants::{
 };
 // `TOAST_ENTER_MS` and `TOAST_EXIT_MS` are used only by the toast
 // renderer inside `app::notifications`; not re-exported at crate root.
-pub(crate) use app::drag::{WorkspaceDrag, WorkspaceDragPreview};
+pub(crate) use app::drag::{TabDrag, WorkspaceDrag, WorkspaceDragPreview};
 pub(crate) use app::notifications::{Toast, ToastAction};
 // Free helpers extracted to bootstrap.rs but still callable as
 // `crate::system_package_update_command` etc. from sibling modules.
@@ -215,13 +215,22 @@ pub(crate) struct WorkspaceContextMenu {
     pub(crate) position: Point<Pixels>,
 }
 
-/// Open "Move to pane…" tab context menu (EP-002 US-006). Identifies the tab
-/// by stable entity id plus owning pane; the destination panes are
-/// resolved at render time from the workspace's split tree.
-#[derive(Clone)]
+/// Right-click menu for a sidebar tab row (US-010). Identifies its target by
+/// workspace *and* tab index; both are re-validated before the menu paints, so
+/// a tab closed under an open menu simply dismisses it.
+#[derive(Clone, Copy)]
 pub(crate) struct TabContextMenu {
-    pub(crate) source_pane: Entity<Pane>,
-    pub(crate) tab_id: gpui::EntityId,
+    pub(crate) ws_idx: usize,
+    pub(crate) tab_idx: usize,
+    pub(crate) position: Point<Pixels>,
+}
+
+/// Right-click menu for a pane, anchored on its header (EP-002 US-007). A pane
+/// is mono-surface, so the menu identifies its target by the pane alone - there
+/// is no tab index, and no cross-pane move entry.
+#[derive(Clone)]
+pub(crate) struct PaneContextMenu {
+    pub(crate) pane: Entity<Pane>,
     pub(crate) position: Point<Pixels>,
 }
 
@@ -235,7 +244,7 @@ pub(crate) struct FilesContextMenu {
 }
 
 /// Captured state of a closed pane for undo-close-pane (US-014).
-pub(crate) enum ClosedTabRecord {
+pub(crate) enum ClosedSurfaceRecord {
     Terminal {
         cwd: Option<std::path::PathBuf>,
         scrollback: Option<String>,
@@ -248,8 +257,9 @@ pub(crate) enum ClosedTabRecord {
 }
 
 pub(crate) struct ClosedPaneRecord {
-    pub(crate) tabs: Vec<ClosedTabRecord>,
-    pub(crate) selected_idx: usize,
+    /// EP-002 US-004: a pane holds exactly one surface, so an undo record
+    /// captures exactly one surface and no selection cursor.
+    pub(crate) surface: ClosedSurfaceRecord,
     pub(crate) workspace_idx: usize,
 }
 
@@ -945,6 +955,10 @@ struct PaneFlowApp {
     workspaces: Vec<Workspace>,
     active_idx: usize,
     renaming_idx: Option<usize>,
+    /// US-010: sidebar tab being renamed inline, as `(workspace_idx, tab_idx)`.
+    /// Shares `rename_text` with the workspace rename - only one inline rename
+    /// can be live at a time, and `commit_rename` settles whichever is.
+    renaming_tab: Option<(usize, usize)>,
     rename_text: String,
     /// Shared slot for config changes from the background `ConfigWatcher` thread.
     /// The watcher writes `Some(config)` on every successful reload; the main
@@ -1028,8 +1042,6 @@ struct PaneFlowApp {
     mcp_install: Option<Result<Vec<paneflow_mcp_install::InstallReport>, String>>,
     /// Codex settings: an MCP-bridge install is running.
     mcp_busy: bool,
-    /// Cached HOME directory for sidebar display (avoids per-render syscall).
-    home_dir: String,
     /// Scroll state for the persistent sidebar workspace list.
     /// Driven by GPUI's `overflow_y_scroll + track_scroll`; the
     /// visible scroll bar has been removed but the handle is still
@@ -1054,10 +1066,12 @@ struct PaneFlowApp {
     theme_mode: ThemeMode,
     /// Workflow action menu currently open in the sidebar (`None` = closed).
     workspace_menu_open: Option<WorkspaceContextMenu>,
-    /// "Move to pane…" tab context menu (EP-002 US-006), or `None` when closed.
+    /// US-010: right-click menu on a sidebar tab row (Rename / Close).
     tab_menu_open: Option<TabContextMenu>,
-    /// Pane to focus on the next render (EP-003 US-009). Set by the
-    /// `DropSplit` handler - which runs in a subscription callback without a
+    /// Pane header context menu (EP-002 US-007), or `None` when closed.
+    pane_menu_open: Option<PaneContextMenu>,
+    /// Pane to focus on the next render (EP-003 US-009). Set by the drop and
+    /// split handlers - which run in a subscription callback without a
     /// `Window` - and consumed in `render`, which has one. One-shot.
     pending_pane_focus: Option<Entity<Pane>>,
     /// Profile menu currently open at the right of the title bar.
@@ -1165,6 +1179,15 @@ struct PaneFlowApp {
     /// EP-002 US-005 (cli-cockpit): Launch Pad modal state, `None` = closed.
     launch_pad: Option<app::launch_pad::LaunchPadState>,
     launch_pad_focus: FocusHandle,
+    /// EP-005 US-014 (cli-tab-hierarchy): « New pane » preset palette,
+    /// `None` = closed. Opened by `New tab` and by the sidebar folder row's
+    /// hover `+`.
+    pane_palette: Option<app::pane_palette::PanePaletteState>,
+    pane_palette_focus: FocusHandle,
+    /// Set when the palette is opened from a path that has no `Window` (the
+    /// pane-event subscriber); the next render claims focus for it, mirroring
+    /// `pending_pane_focus`.
+    pending_palette_focus: bool,
     /// US-053: self-update flow state (see `SelfUpdateState`).
     self_update: SelfUpdateState,
     /// State of the "Custom Buttons" management modal opened from the
@@ -1382,29 +1405,17 @@ impl PaneFlowApp {
         pane
     }
 
-    /// Create a pane around an existing tab and subscribe to pane-level events.
-    /// Terminal tabs passed here have already been wired to app-level terminal
-    /// events by their original owner; re-subscribing would duplicate CWD,
-    /// port-scan, and exit handling.
-    pub(crate) fn create_pane_with_existing_tab(
+    /// Create a pane around an existing surface and subscribe to pane-level
+    /// events. Terminal surfaces passed here have already been wired to
+    /// app-level terminal events by their original owner; re-subscribing would
+    /// duplicate CWD, port-scan, and exit handling.
+    pub(crate) fn create_pane_with_existing_surface(
         &mut self,
-        tab: TabContent,
+        surface: PaneSurface,
         workspace_id: u64,
         cx: &mut Context<Self>,
     ) -> Entity<Pane> {
-        let pane = cx.new(|cx| Pane::new_with_tab(tab, workspace_id, cx));
-        cx.subscribe(&pane, Self::handle_pane_event).detach();
-        pane
-    }
-
-    pub(crate) fn create_pane_with_existing_tabs(
-        &mut self,
-        tabs: Vec<TabContent>,
-        selected_idx: usize,
-        workspace_id: u64,
-        cx: &mut Context<Self>,
-    ) -> Entity<Pane> {
-        let pane = cx.new(|cx| Pane::new_with_tabs(tabs, selected_idx, workspace_id, cx));
+        let pane = cx.new(|cx| Pane::new_with_surface(surface, workspace_id, cx));
         cx.subscribe(&pane, Self::handle_pane_event).detach();
         pane
     }
@@ -1486,7 +1497,9 @@ impl Render for PaneFlowApp {
         // #181818 surface.
         let terminal_material_active = self.cached_config.windows_terminal_material_enabled();
         let chrome_material_active = self.cached_config.cockpit_chrome_material_enabled();
-        let terminal_surface_mounted = self.active_workspace().is_some_and(|ws| ws.root.is_some());
+        let terminal_surface_mounted = self
+            .active_workspace()
+            .is_some_and(|ws| ws.active_tab().root.is_some());
         let terminal_material_visible = !settings_open
             && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
             && terminal_surface_mounted
@@ -1578,6 +1591,12 @@ impl Render for PaneFlowApp {
         if let Some(pane) = self.pending_pane_focus.take() {
             pane.read(cx).focus_handle(cx).focus(window, cx);
         }
+        // EP-005: same deferral for a split picker opened from `PaneEvent::Split`,
+        // and drop one whose slot left the screen since the last frame.
+        if std::mem::take(&mut self.pending_palette_focus) {
+            window.focus(&self.pane_palette_focus, cx);
+        }
+        self.prune_stale_split_palette(cx);
         let main_content = if self.settings_section.is_some() {
             // Embedded settings take precedence over the mode screen: the left
             // rail becomes the settings nav (below) and this panel shows the
@@ -1597,7 +1616,7 @@ impl Render for PaneFlowApp {
             // mode would silently fall through to the terminal view.
             self.render_diff_main(cx)
         } else if let Some(ws) = self.active_workspace() {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 let app_weak = cx.weak_entity();
                 let on_resize_end = std::rc::Rc::new(move |cx: &mut App| {
                     let _ = app_weak.update(cx, |app, cx| app.save_session(cx));
@@ -1609,6 +1628,43 @@ impl Render for PaneFlowApp {
                 // Gutter around the outermost panes. Applied here rather than
                 // inside the recursive tree render, which would compound the
                 // gap at every nesting level.
+                let outer = div()
+                    .flex()
+                    .size_full()
+                    .pl(px(pane_grid_left_gutter))
+                    .pr(px(crate::layout::PANE_GUTTER_PX))
+                    .pt(px(crate::layout::PANE_GUTTER_PX))
+                    .pb(px(crate::layout::PANE_GUTTER_PX));
+                // EP-005: when a split button asked *what* to launch, the
+                // picker is injected into the tree at the target pane's slot,
+                // so it occupies exactly the half the split will create -
+                // wherever that pane sits in the layout. Nothing is split until
+                // a preset is picked, so the tree below is still the current
+                // layout.
+                let preview = self.pending_split_palette().map(|(target, direction)| {
+                    crate::layout::SplitPreview {
+                        target,
+                        direction,
+                        element: std::cell::RefCell::new(Some(self.render_pane_palette(cx))),
+                    }
+                });
+                outer
+                    .child(root.render_with_preview(
+                        window,
+                        cx,
+                        Some(on_resize_end),
+                        preview.as_ref(),
+                    ))
+                    .into_any_element()
+            } else if self
+                .pane_palette
+                .as_ref()
+                .is_some_and(|palette| palette.ws_id == ws.id)
+            {
+                // EP-005 US-014: an empty tab opened by `New tab` / the
+                // sidebar `+` shows the preset palette as its surface, inside
+                // the same gutter the pane grid uses - it is a pane-sized card,
+                // not a floating menu.
                 div()
                     .flex()
                     .size_full()
@@ -1616,7 +1672,7 @@ impl Render for PaneFlowApp {
                     .pr(px(crate::layout::PANE_GUTTER_PX))
                     .pt(px(crate::layout::PANE_GUTTER_PX))
                     .pb(px(crate::layout::PANE_GUTTER_PX))
-                    .child(root.render(window, cx, Some(on_resize_end)))
+                    .child(self.render_pane_palette(cx))
                     .into_any_element()
             } else {
                 div()
@@ -1731,6 +1787,8 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_close_pane))
             .on_action(cx.listener(Self::handle_new_tab))
             .on_action(cx.listener(Self::handle_close_tab))
+            .on_action(cx.listener(Self::handle_next_tab))
+            .on_action(cx.listener(Self::handle_previous_tab))
             .on_action(cx.listener(Self::handle_focus_left))
             .on_action(cx.listener(Self::handle_focus_right))
             .on_action(cx.listener(Self::handle_focus_up))
@@ -2196,9 +2254,19 @@ impl Render for PaneFlowApp {
                 app_content.child(self.render_workspace_context_menu(menu, ui, window, cx));
         }
 
-        // EP-002 US-006: "Move to pane…" tab context menu.
-        if let Some(menu) = self.tab_menu_open.clone() {
+        // US-010 (prd-cli-tab-hierarchy): sidebar tab row context menu.
+        if let Some(menu) = self.tab_menu_open
+            && self
+                .workspaces
+                .get(menu.ws_idx)
+                .is_some_and(|ws| menu.tab_idx < ws.tab_count())
+        {
             app_content = app_content.child(self.render_tab_context_menu(menu, ui, window, cx));
+        }
+
+        // EP-002 US-007: pane header context menu.
+        if let Some(menu) = self.pane_menu_open.clone() {
+            app_content = app_content.child(self.render_pane_context_menu(menu, ui, window, cx));
         }
 
         // files-tree EP-003 US-009: per-file copy-path context menu.

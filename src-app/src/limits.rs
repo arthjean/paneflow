@@ -11,9 +11,17 @@
 //! - **`MAX_PANES`** (32) - [`crate::layout::MAX_PANES`]. Live UI create cap
 //!   (split / drop-to-split / IPC `surface.split` / `workspace.create`) ↔ read
 //!   cap in [`paneflow_config::schema::validate_layout`] (US-011) and at session
-//!   restore (US-009).
+//!   restore (US-009). Since US-001 of `prd-cli-tab-hierarchy` it bounds a
+//!   *tab*, not a workspace: every create site counts the targeted tab's
+//!   leaves, and a workspace's total pane count is the sum over its tabs.
 //! - **`MAX_WORKSPACES`** (20) - [`crate::workspace::MAX_WORKSPACES`]. Live
 //!   `workspace.create` cap ↔ `restore_workspaces` cap (US-009).
+//! - **`MAX_TABS_PER_WORKSPACE`** (32) -
+//!   [`crate::workspace::MAX_TABS_PER_WORKSPACE`]. Live tab create cap
+//!   (US-001, `prd-cli-tab-hierarchy`), declared next to `MAX_WORKSPACES`.
+//!   Read-cap half: `restore_workspaces` truncates a session's tab list, and
+//!   [`paneflow_config::schema::MAX_SESSION_TABS`] applies the same bound to
+//!   the v1 -> v2 migration (US-018), whose surplus is logged, not silent.
 //! - **`MAX_CONFIG_SIZE_BYTES`** (1 MiB) - `paneflow_config::loader`. Read cap
 //!   on `paneflow.json`; the app's own config writer never approaches it.
 

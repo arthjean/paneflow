@@ -5,8 +5,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled, Window,
-    canvas, div, px,
+    AnyElement, App, Entity, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled,
+    Window, canvas, div, px, relative,
 };
 
 use super::tree::{
@@ -15,6 +15,19 @@ use super::tree::{
 };
 
 pub(crate) type ResizeEndCallback = Rc<dyn Fn(&mut App)>;
+
+/// EP-005: the half a pending split would create, drawn in place of the real
+/// pane it will be carved out of. The preset picker stands there until a preset
+/// is picked, so the user sees exactly where the new pane lands - inside the
+/// tree, at the target's slot, not against the whole grid.
+///
+/// `element` is consumed by the matching leaf: an `AnyElement` is not `Clone`,
+/// and exactly one leaf can match.
+pub(crate) struct SplitPreview {
+    pub(crate) target: Entity<crate::pane::Pane>,
+    pub(crate) direction: SplitDirection,
+    pub(crate) element: std::cell::RefCell<Option<AnyElement>>,
+}
 
 fn finish_drag(
     drag: &Cell<Option<DragState>>,
@@ -39,16 +52,59 @@ fn with_debug_selector_for_test(div: gpui::Div, selector: String) -> gpui::Div {
 }
 
 impl LayoutTree {
-    /// Render the layout tree recursively as nested GPUI flex divs.
+    /// Render the layout tree recursively as nested GPUI flex divs, with an
+    /// optional pending-split preview injected at the leaf it targets (EP-005).
     #[allow(clippy::only_used_in_recursion)]
-    pub fn render(
+    pub(crate) fn render_with_preview(
         &self,
         window: &Window,
         cx: &App,
         on_resize_end: Option<ResizeEndCallback>,
+        preview: Option<&SplitPreview>,
     ) -> AnyElement {
         match self {
-            LayoutTree::Leaf(pane) => div().size_full().child(pane.clone()).into_any_element(),
+            LayoutTree::Leaf(pane) => {
+                // The preview splits this leaf the way the real split will:
+                // same axis, same halves, same divider gap - so the picker
+                // appears exactly where the new pane is about to be.
+                if let Some(preview) = preview.filter(|preview| preview.target == *pane)
+                    && let Some(element) = preview.element.borrow_mut().take()
+                {
+                    let dir = preview.direction;
+                    let half = || {
+                        div()
+                            .flex()
+                            .flex_basis(relative(0.5))
+                            .flex_grow(1.0)
+                            .flex_shrink(1.0)
+                            .size_full()
+                            .min_w(px(MIN_PANE_SIZE))
+                            .min_h(px(MIN_PANE_SIZE))
+                            .overflow_hidden()
+                    };
+                    // Inert gap: the real divider only exists once the split
+                    // does, but the spacing must already match.
+                    let gap = match dir {
+                        SplitDirection::Horizontal => {
+                            div().h(px(DIVIDER_PX)).w_full().flex_shrink_0()
+                        }
+                        SplitDirection::Vertical => {
+                            div().w(px(DIVIDER_PX)).h_full().flex_shrink_0()
+                        }
+                    };
+                    let container = div().flex().size_full().overflow_hidden();
+                    let container = match dir {
+                        SplitDirection::Horizontal => container.flex_col(),
+                        SplitDirection::Vertical => container.flex_row(),
+                    };
+                    return container
+                        .child(half().child(pane.clone()))
+                        .child(gap)
+                        .child(half().child(element))
+                        .into_any_element();
+                }
+                div().size_full().child(pane.clone()).into_any_element()
+            }
 
             LayoutTree::Container {
                 direction,
@@ -222,7 +278,10 @@ impl LayoutTree {
                         container = container.child(divider);
                     }
 
-                    let elem = child.node.render(window, cx, on_resize_end.clone());
+                    let elem =
+                        child
+                            .node
+                            .render_with_preview(window, cx, on_resize_end.clone(), preview);
                     let child_wrapper = div()
                         .flex_basis(gpui::relative(child.ratio.get()))
                         .flex_grow(1.0)
@@ -329,7 +388,7 @@ mod tests {
             window: &mut gpui::Window,
             cx: &mut gpui::Context<Self>,
         ) -> impl gpui::IntoElement {
-            self.tree.render(window, cx, None)
+            self.tree.render_with_preview(window, cx, None, None)
         }
     }
 

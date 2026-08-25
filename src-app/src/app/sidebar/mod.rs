@@ -9,6 +9,7 @@
 
 pub(crate) mod context_menu;
 
+use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled,
@@ -16,10 +17,12 @@ use gpui::{
 };
 
 use crate::{
-    PaneFlowApp, SIDEBAR_WIDTH, WorkspaceContextMenu, WorkspaceDrag, WorkspaceDragPreview,
-    ai_types,
-    ui_primitives::{AnimatedHoverExt, lerp_color},
-    workspace::Workspace,
+    PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, WorkspaceContextMenu, WorkspaceDrag,
+    WorkspaceDragPreview, ai_types,
+    app::pane_palette::PalettePlacement,
+    pane_drag::PaneDrag,
+    ui_primitives::{ROW_RADIUS, squircle, squircle_skin},
+    workspace::{Tab, Workspace},
 };
 
 /// Memoized sibling-worktree ordering. Group labels stay hidden, but sibling
@@ -39,13 +42,6 @@ struct SidebarRenderTimeCanary {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SidebarDiffSummary {
-    None,
-    Lines { insertions: usize, deletions: usize },
-    Files { files_changed: usize },
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SidebarAgentState {
     NeedsInput,
     Errored,
@@ -54,10 +50,30 @@ enum SidebarAgentState {
     Thinking,
 }
 
+/// One row of the rail, in render order: a workspace folder row, or one of
+/// its tab rows. The gaps between these rows are what a sidebar drop actually
+/// aims at, so the same flattened plan drives both the rows and the dividers
+/// between them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WorkspaceDropEdge {
-    Before,
-    After,
+enum SidebarRow {
+    Folder(usize),
+    Tab(usize, usize),
+}
+
+/// An insertion point of the rail: the gap between two rows, or either end of
+/// the list. Rendered as its own divider element sitting *between* the cards
+/// rather than as a border painted on one of them - a card that lights up says
+/// "into this one", which no sidebar drop ever means.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct SidebarDropSlot {
+    /// `(workspace index, tab index)` a dropped tab or pane lands at. `None`
+    /// for the gap above the very first row: it precedes every workspace, so
+    /// it belongs to none of them.
+    tab: Option<(usize, usize)>,
+    /// Insertion index for a dropped folder, set only on the gaps that
+    /// actually separate two folders. A gap inside a tab list is not a
+    /// workspace boundary and shows no line for a folder drag.
+    workspace: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,30 +90,218 @@ struct SidebarServiceSummary {
 
 const SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
 const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
+const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
+/// Separates a row's title line from its meta line (a detected service).
+const SIDEBAR_ROW_GAP: f32 = 4.0;
+/// Height of a row's title line, and with it the height of a single-line row:
+/// `SIDEBAR_ROW_LINE_HEIGHT + 2 * SIDEBAR_ROW_PADDING_Y`.
+///
+/// Set explicitly because the default line height is a multiple of the font
+/// size, so the rail's row height moved with the font metrics - it measured 23
+/// px here and made every row 35 px tall. Pinning it keeps the row at 30 px,
+/// the height the rail is designed against, whatever font resolves.
+const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
 const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 const SIDEBAR_AGENT_STATUS_SLOT_WIDTH: f32 = 48.0;
 const SIDEBAR_AGENT_ICON_SLOT_WIDTH: f32 = 20.0;
-const SIDEBAR_DROP_GAP: f32 = 8.0;
+/// Group the rail's file-manager drop placeholder reads its visibility from.
+const SIDEBAR_DROP_GROUP: &str = "sidebar-drop-zone";
+/// Gap between the drop placeholder and the rail's edges, so the rounded box
+/// floats inside the sidebar instead of tracing its border.
+const SIDEBAR_DROP_PLACEHOLDER_MARGIN: f32 = 6.0;
+const SIDEBAR_DROP_PLACEHOLDER_RADIUS: f32 = 8.0;
+/// Fill / hairline alpha of the drop placeholder, matching the pane-swap
+/// placeholder (`pane.rs`) so both neutral drop targets read the same.
+const SIDEBAR_DROP_PLACEHOLDER_FILL_ALPHA: f32 = 0.10;
+const SIDEBAR_DROP_PLACEHOLDER_BORDER_ALPHA: f32 = 0.22;
+/// Side of one square button of a row's hover action cluster.
+const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 20.0;
+/// Gap between two buttons of the same cluster.
+const SIDEBAR_ACTION_BUTTON_GAP: f32 = 4.0;
+/// US-010: room the hover action cluster needs in the right corner of a
+/// workspace row, plus the gap that keeps it off the trailing agent badge. The
+/// folder cluster carries two buttons - "new pane" and "close workspace".
+///
+/// It is trailing padding on the title row, held at all times rather than
+/// opened on hover: reserving it only under the pointer left whatever could
+/// not shrink sitting under the button.
+const SIDEBAR_ACTION_LANE_WIDTH: f32 = SIDEBAR_TITLE_ROW_GAP
+    + SIDEBAR_ACTION_BUTTON_SIZE
+    + SIDEBAR_ACTION_BUTTON_GAP
+    + SIDEBAR_ACTION_BUTTON_SIZE;
+/// Vertical space between two rows of the rail. The divider element *is* that
+/// space (the list itself sets no gap), so inserting the drop slots costs no
+/// layout: nothing moves when a drag starts.
+const SIDEBAR_ROW_SPACING: f32 = 4.0;
+/// Thickness of the insertion line. Two pixels, not one: a hairline reads as
+/// an artifact of the row above it.
+const SIDEBAR_DROP_LINE_PX: f32 = 2.0;
+/// How far above and below its gap a divider's invisible drop band reaches -
+/// half a single-line row, so the bands of consecutive gaps tile the rail
+/// without overlapping. Dropping anywhere over a row therefore aims at the
+/// nearest gap, and the line the user sees is the one they get.
+const SIDEBAR_DROP_BAND_REACH: f32 = SIDEBAR_ROW_LINE_HEIGHT / 2.0 + SIDEBAR_ROW_PADDING_Y;
 const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
     SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_ROW_PADDING_X * 2.0;
+/// US-008: leading affordances of a workspace folder row - the folder icon and
+/// the gap before the title. The open/closed folder glyph is the whole
+/// disclosure affordance; there is deliberately no chevron next to it.
+///
+/// A tab row reserves the icon width with an invisible placeholder and nothing
+/// more, so every title in the rail - folder and tab alike - starts on the same
+/// X. The folder icon is then the only thing that distinguishes a workspace
+/// from its tabs, which is the alignment rule the Agents sidebar documents at
+/// `agents_sidebar/mod.rs` (thread rows vs project header).
+const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 14.0;
+/// US-013: geometry of the per-pane icon cluster carried by a tab row.
+///
+/// The cap is the visual reference's: past four panes the cluster would eat
+/// the title before it reaches the activity badge, so the tail folds into a
+/// `+N`. Each slot is fixed and painted whether or not the pane's agent is
+/// known yet, so the scan landing later swaps a glyph in place instead of
+/// reflowing the row (edge case 15).
+const SIDEBAR_TAB_ICON_SIZE: f32 = 16.0;
+const SIDEBAR_TAB_ICON_GAP: f32 = 3.0;
+const SIDEBAR_TAB_ICON_CAP: usize = 4;
+/// One card per pane, not one capsule around the stack: each glyph carries its
+/// own rounded fill plus hairline, and the cards slide over each other. The
+/// height is the row's line height, so a stack never grows the row; the width
+/// and the glyph keep the visual reference's proportions (card slightly taller
+/// than wide, glyph about two thirds of the card width).
+///
+/// The card is a square chip: 24x24 around a 16px glyph, so the padding is
+/// exactly 4px on all four sides. Both the difference (24 - 16 = 8) and each
+/// side (4) are whole pixels on purpose - an odd gap splits into 4.5px per side
+/// and GPUI's rounding then lands the glyph half a pixel off center, which on a
+/// mark this small is visible as a lean.
+///
+/// Centering is left to `items_center` + `justify_center` and nothing else: no
+/// per-icon nudge. The glyphs are optically centered *inside their own
+/// viewBox*, which is the fix that survives a size change - see `codex.svg`,
+/// whose viewBox is widened around the blossom's bounding box so the mark
+/// carries the same relative margin as the Lucide-derived icons next to it.
+///
+/// The card is *taller* than the row's line height (18px). It is laid out
+/// absolutely and overhangs into the row's 6px vertical padding rather than
+/// pushing the row past 30px, so the height must stay under that 30px total -
+/// the row shell clips its overflow, and a card past 30px would paint sliced.
+/// `tab_card_fits_inside_a_row` guards both bounds.
+///
+/// The corner is the rail's own: `ROW_RADIUS`, traced by the same `squircle`
+/// primitive the rows use, not GPUI's `rounded()` circular arc. A card sitting
+/// inside a row must not answer its container's continuous corner with a
+/// different curve. `trace` clamps the radius to half the shorter side, so a
+/// 14px corner on a 24px card resolves to the full superellipse - the card is
+/// all corner, which is exactly what makes it read as the row's own material.
+const SIDEBAR_TAB_CARD_WIDTH: f32 = 24.0;
+const SIDEBAR_TAB_CARD_HEIGHT: f32 = 24.0;
+const SIDEBAR_TAB_CARD_ICON_SIZE: f32 = 16.0;
+/// Stacked-card overlap: past the first slot every card slides back over its
+/// predecessor, which is what reads as one cluster rather than a row of loose
+/// cards. Children paint in declaration order, so the later pane sits on top -
+/// the same direction as the visual reference.
+const SIDEBAR_TAB_ICON_OVERLAP: f32 = 11.0;
 
-fn workspace_row_shell() -> gpui::Div {
+/// Shared shell of every rail row, folder and tab alike, so a workspace row is
+/// exactly as tall as a tab row: same padding, same corner, no minimum height.
+/// A workspace only grows past that when it renders a meta line (a detected
+/// service), which the `gap` then separates from the title.
+fn sidebar_row_shell() -> gpui::Div {
     div()
         .px(px(SIDEBAR_ROW_PADDING_X))
-        .py(px(4.))
-        .min_h(px(44.))
+        .py(px(SIDEBAR_ROW_PADDING_Y))
         .flex_none()
-        .rounded(px(8.))
+        // `relative()` belongs to the shell, not to its callers: the row's
+        // fill and its hover action cluster are both absolutely positioned
+        // against it.
+        .relative()
         .overflow_x_hidden()
         .flex()
         .flex_col()
-        .gap(px(4.))
+        .gap(px(SIDEBAR_ROW_GAP))
 }
 
-impl SidebarDiffSummary {
-    fn is_visible(self) -> bool {
-        !matches!(self, Self::None)
-    }
+/// A rail row: the shared continuous-corner skin, with `body` on top.
+fn squircle_row(
+    shell: gpui::Stateful<gpui::Div>,
+    group: SharedString,
+    resting: Option<gpui::Hsla>,
+    hovered: Option<gpui::Hsla>,
+    body: impl IntoElement,
+) -> gpui::Stateful<gpui::Div> {
+    squircle_skin(shell, group, ROW_RADIUS, resting, hovered).child(body)
+}
+
+/// US-010: the action cluster a rail row opens under the pointer - absolute,
+/// right-aligned, one 20x20 button per action, hidden until `group` is hovered.
+///
+/// Insets are resolved against this cluster's own parent - the element it is
+/// added to - not against the row shell: taffy positions an absolute child
+/// relative to its direct parent, it does not walk up to the nearest positioned
+/// ancestor the way CSS does. The caller therefore adds it to a box that is
+/// already inside the shell's padding, and must not re-apply that padding here.
+///
+/// The cluster is centered on the title line, not on the row: a row that grew a
+/// meta line must not drift its actions down with it. The buttons are 20px on
+/// an 18px line, hence the 1px overhang.
+///
+/// The hover toggle must NOT be `display`. `Div::prepaint` skips its children
+/// when the computed style says `display: none` while `Div::paint` paints them,
+/// and the two phases can disagree on hover within one frame (the group hitbox
+/// is only known after prepaint). Flipping `display` on hover therefore paints
+/// never-prepainted children and GPUI panics with "must call prepaint before
+/// paint". `visibility` is only consulted in `Interactivity::paint`, so both
+/// phases stay consistent - this is Zed's `visible_on_hover` idiom, and it also
+/// keeps the hidden cluster from swallowing clicks (mouse listeners are
+/// registered after the visibility check).
+fn sidebar_hover_actions(group: SharedString) -> gpui::Div {
+    div()
+        .absolute()
+        .top(px(
+            (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_ACTION_BUTTON_SIZE) / 2.
+        ))
+        .right(px(0.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(SIDEBAR_ACTION_BUTTON_GAP))
+        .invisible()
+        .group_hover(group, |style| style.visible())
+}
+
+/// One button of a [`sidebar_hover_actions`] cluster. The caller chains its own
+/// tooltip and click handler.
+///
+/// `svg()` is a mask: it paints nothing without its own `text_color`, and the
+/// parent's does NOT cascade - the same trap the sidebar header's `+`
+/// documents.
+fn sidebar_action_button(
+    id: SharedString,
+    icon: &'static str,
+    icon_size: f32,
+    ui: crate::theme::UiColors,
+) -> gpui::Stateful<gpui::Div> {
+    // The row underneath is already at the hover tint when this button is
+    // reachable, so the button hovers into the active tint - one step further,
+    // or it would be invisible against its own row.
+    let active_bg = crate::app::constants::sidebar_tab_active_background();
+    div()
+        .id(id)
+        .flex_none()
+        .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(6.))
+        .text_color(ui.muted)
+        .hover(move |style| style.bg(active_bg))
+        .child(
+            svg()
+                .size(px(icon_size))
+                .flex_none()
+                .path(icon)
+                .text_color(ui.muted),
+        )
 }
 
 impl SidebarAgentSummary {
@@ -159,25 +363,6 @@ impl Drop for SidebarRenderTimeCanary {
     }
 }
 
-/// Collapse a `home`-rooted absolute path to a `~`-prefixed display string.
-///
-/// US-040: uses [`std::path::Path::strip_prefix`] (component-boundary match,
-/// OS-native separator) instead of a raw `str::starts_with` + byte slice. The
-/// old form false-positived on a partial component (`/home/arth` vs
-/// `/home/arthur`) and assumed `/` separators. Returns `cwd` verbatim when it
-/// isn't under `home` (or `home` is empty), so a Windows casing mismatch
-/// degrades to the full path rather than a wrong collapse.
-fn collapse_home(cwd: &str, home: &str) -> String {
-    if home.is_empty() {
-        return cwd.to_string();
-    }
-    match std::path::Path::new(cwd).strip_prefix(home) {
-        Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
-        Ok(rest) => format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()),
-        Err(_) => cwd.to_string(),
-    }
-}
-
 fn visible_service_ports(
     active_ports: &[u16],
     service_labels: &std::collections::HashMap<u16, crate::terminal::ServiceInfo>,
@@ -207,25 +392,6 @@ fn sidebar_service_summary(
         primary,
         overflow: visible.len().saturating_sub(1),
     })
-}
-
-fn sidebar_diff_summary(stats: &crate::workspace::GitDiffStats) -> SidebarDiffSummary {
-    if stats.insertions > 0 || stats.deletions > 0 {
-        SidebarDiffSummary::Lines {
-            insertions: stats.insertions,
-            deletions: stats.deletions,
-        }
-    } else if stats.files_changed > 0 {
-        SidebarDiffSummary::Files {
-            files_changed: stats.files_changed,
-        }
-    } else {
-        SidebarDiffSummary::None
-    }
-}
-
-fn sidebar_file_change_label(files_changed: usize) -> String {
-    format!("{files_changed} changed")
 }
 
 fn sidebar_agent_summary<'a, I>(sessions: I, completion_unread: bool) -> Option<SidebarAgentSummary>
@@ -268,23 +434,129 @@ where
     })
 }
 
-fn sidebar_workspace_title_slot_width(summary: Option<SidebarAgentSummary>) -> f32 {
-    let reserved = summary.map_or(0.0, |summary| SIDEBAR_TITLE_ROW_GAP + summary.slot_width());
-    (SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - reserved).max(0.0)
+/// US-012: the sessions a workspace *folder* row speaks for.
+///
+/// Expanded, every session whose `surface_id` resolved is already spoken for
+/// by its own tab row, so the folder keeps only the residue: sessions still at
+/// `surface_id: None` - old shims, ancestor walks that never landed. That
+/// residue is exactly FR-04, an unattributed session belongs to the project
+/// and never to an arbitrary tab.
+///
+/// Collapsed, the tab rows are off screen, so the folder re-aggregates every
+/// session again: the fold must hide no state (FR-05).
+///
+/// The completion notification is deliberately NOT filtered here - it is
+/// workspace-scoped and carries no surface, so it stays on the folder row in
+/// both states, for the same reason.
+fn folder_row_sessions<'a, I>(
+    sessions: I,
+    expanded: bool,
+) -> impl Iterator<Item = &'a ai_types::AgentSession>
+where
+    I: IntoIterator<Item = &'a ai_types::AgentSession>,
+    I::IntoIter: 'a,
+{
+    sessions
+        .into_iter()
+        .filter(move |session| !expanded || session.surface_id.is_none())
 }
 
-fn workspace_drop_edge(
-    drag: &WorkspaceDrag,
-    target_id: u64,
-    target_idx: usize,
-) -> Option<WorkspaceDropEdge> {
-    if drag.id == target_id {
-        None
-    } else if drag.source_idx < target_idx {
-        Some(WorkspaceDropEdge::After)
-    } else {
-        Some(WorkspaceDropEdge::Before)
+/// US-012: the sessions one tab row speaks for - those whose `surface_id` is a
+/// terminal of that tab's pane tree.
+///
+/// This filter and [`folder_row_sessions`] partition on `surface_id`, so a
+/// session that resolves late simply migrates from the folder to its owning
+/// tab on the next frame, counted once on either side and never on both.
+fn tab_row_sessions<'a, I>(
+    sessions: I,
+    surfaces: &'a std::collections::HashSet<u64>,
+) -> impl Iterator<Item = &'a ai_types::AgentSession>
+where
+    I: IntoIterator<Item = &'a ai_types::AgentSession>,
+    I::IntoIter: 'a,
+{
+    sessions
+        .into_iter()
+        .filter(move |session| session.surface_id.is_some_and(|id| surfaces.contains(&id)))
+}
+
+/// US-013: how many pane icons a tab row paints, and how many fold into the
+/// trailing `+N`.
+fn tab_icon_cluster_split(pane_count: usize) -> (usize, usize) {
+    let shown = pane_count.min(SIDEBAR_TAB_ICON_CAP);
+    (shown, pane_count - shown)
+}
+
+/// US-013: what one pane contributes to its tab row's icon cluster.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TabPaneIcon {
+    path: &'static str,
+    label: &'static str,
+}
+
+/// US-013: read a pane's icon straight from `terminal.detected_agent`, the
+/// PID-authoritative scan result `apply_pane_scan` already deposited. No scan
+/// is started here: a pane whose agent is not known yet keeps the generic
+/// surface icon and swaps glyph in place once the 500 ms debounce lands.
+fn tab_pane_icon(pane: &crate::pane::Pane, cx: &gpui::App) -> TabPaneIcon {
+    let agent = pane
+        .surface
+        .as_terminal()
+        .and_then(|terminal| terminal.read(cx).terminal.detected_agent);
+    match agent {
+        Some(agent) => TabPaneIcon {
+            path: agent.icon_path(),
+            label: agent.display_name(),
+        },
+        None => TabPaneIcon {
+            path: pane.surface.kind_icon(),
+            label: pane.surface.kind_label(),
+        },
     }
+}
+
+/// US-009: label of a tab row. An unnamed tab (the default until it is renamed
+/// or created from a named preset) falls back to its 1-based position, so the
+/// list never shows a blank row.
+fn tab_display_title(tab: &Tab, tab_idx: usize) -> String {
+    if tab.title.trim().is_empty() {
+        format!("Tab {}", tab_idx + 1)
+    } else {
+        tab.title.clone()
+    }
+}
+
+/// Index a remove-then-insert reorder must target so the moved item lands in
+/// the gap at `slot`. Both [`crate::workspace::Workspace::reorder_tab`] and
+/// `reorder_workspace` remove first, which slides everything after the source
+/// up by one - so a move down aims one index lower than the gap it points at.
+fn reorder_target(from: usize, slot: usize) -> usize {
+    if from < slot { slot - 1 } else { slot }
+}
+
+/// The insertion points of a rendered rail: one before every row, one after
+/// the last, so `rows.len() + 1` in all.
+///
+/// A gap inherits its tab target from the row *above* it, which is the only
+/// reading that matches what the eye sees: the line above a folder row cannot
+/// mean "first tab of that folder" (its tabs render below it), it means "last
+/// tab of the workspace the line is under".
+fn sidebar_drop_slots(rows: &[SidebarRow], workspace_count: usize) -> Vec<SidebarDropSlot> {
+    (0..=rows.len())
+        .map(|k| SidebarDropSlot {
+            tab: match k.checked_sub(1).map(|above| rows[above]) {
+                Some(SidebarRow::Folder(ws)) => Some((ws, 0)),
+                Some(SidebarRow::Tab(ws, tab)) => Some((ws, tab + 1)),
+                None => None,
+            },
+            workspace: match rows.get(k) {
+                Some(SidebarRow::Folder(ws)) => Some(*ws),
+                // Past the last row: a folder dropped here lands at the end.
+                None => Some(workspace_count),
+                Some(SidebarRow::Tab(..)) => None,
+            },
+        })
+        .collect()
 }
 
 impl PaneFlowApp {
@@ -376,7 +648,11 @@ impl PaneFlowApp {
         );
         sidebar = sidebar.child(
             div()
-                .h(px(48.))
+                // Tight enough that the header reads as the list's first line
+                // rather than a floating band: at 48 the header label sat 43 px
+                // from the first row's label while consecutive rows sit 34
+                // apart.
+                .h(px(36.))
                 .flex_none()
                 .px(px(8.))
                 .flex()
@@ -387,36 +663,42 @@ impl PaneFlowApp {
                     div()
                         .pl(px(8.))
                         .text_size(px(13.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(ui.text)
+                        .text_color(ui.muted)
                         .child("Workspaces"),
                 )
                 .child({
-                    let hover_bg = crate::app::constants::sidebar_tab_active_background();
-                    div()
-                        .id("sidebar-new-workspace")
-                        .size(px(28.))
-                        .rounded(px(8.))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .animated_hover_bg(hover_bg.opacity(0.0), hover_bg)
-                        .tooltip(move |_w, cx| {
-                            cx.new(|_| SidebarTooltip {
-                                label: new_workspace_tooltip.clone().into(),
-                            })
-                            .into()
+                    // The header action is skinned as a rail row, not as its
+                    // own control: same hover tint and same continuous corner,
+                    // so it reads as part of the list it heads.
+                    let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+                    squircle_skin(
+                        div()
+                            .id("sidebar-new-workspace")
+                            .size(px(28.))
+                            .flex()
+                            .items_center()
+                            .justify_center(),
+                        "sidebar-new-workspace-group",
+                        ROW_RADIUS,
+                        None,
+                        Some(hover_bg),
+                    )
+                    .delayed_tooltip(move |_w, cx| {
+                        cx.new(|_| SidebarTooltip {
+                            label: new_workspace_tooltip.clone().into(),
                         })
-                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                            this.create_workspace_with_picker(window, cx);
-                        }))
-                        .child(
-                            svg()
-                                .size(px(12.))
-                                .flex_none()
-                                .path("icons/plus.svg")
-                                .text_color(ui.muted),
-                        )
+                        .into()
+                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.create_workspace_with_picker(window, cx);
+                    }))
+                    .child(
+                        svg()
+                            .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+                            .flex_none()
+                            .path("icons/folder-plus.svg")
+                            .text_color(ui.muted),
+                    )
                 }),
         );
 
@@ -433,9 +715,9 @@ impl PaneFlowApp {
             .track_scroll(&self.sidebar_scroll)
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .pt(px(4.))
-            .pb(px(8.));
+            // No gap and no top padding: the drop dividers are the gaps, and
+            // the leading one is the list's top padding.
+            .pb(px(4.));
 
         if self.workspaces.is_empty() {
             list = list.child(
@@ -468,7 +750,7 @@ impl PaneFlowApp {
                             .text_color(ui.text)
                             .text_size(px(11.))
                             .font_weight(FontWeight::MEDIUM)
-                            .animated_hover_bg(ui.subtle, hover_bg)
+                            .hover(move |style| style.bg(hover_bg))
                             .on_click(cx.listener(|this, _: &ClickEvent, w, cx| {
                                 this.create_workspace_with_picker(w, cx);
                             }))
@@ -486,17 +768,13 @@ impl PaneFlowApp {
 
         list = self.render_workspace_rows(list, ui, cx);
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
-        sidebar = sidebar.child(self.render_sidebar_settings_footer(self.cli_menu_items(), cx));
-        sidebar = sidebar.child(self.render_mode_toggle(cx));
+        sidebar = sidebar.child(self.render_sidebar_settings_footer(cx));
         sidebar
     }
 
-    fn render_workspace_rows(
-        &self,
-        mut list: gpui::Stateful<gpui::Div>,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
+    /// Flatten the rail into the rows it renders. Built once per frame because
+    /// the drop dividers are defined by the gaps between these rows.
+    fn sidebar_rows(&self) -> Vec<SidebarRow> {
         let signature = Self::sidebar_order_signature(&self.workspaces);
         if self.sidebar_order_cache.borrow().signature != Some(signature) {
             let order = Self::compute_display_order(&self.workspaces);
@@ -505,10 +783,147 @@ impl PaneFlowApp {
             cache.signature = Some(signature);
         }
         let order_cache = self.sidebar_order_cache.borrow();
+        let mut rows = Vec::with_capacity(order_cache.order.len());
         for &i in &order_cache.order {
-            list = list.child(self.render_workspace_row(i, ui, cx));
+            rows.push(SidebarRow::Folder(i));
+            // US-009: the tabs of an expanded workspace follow their folder row
+            // as sibling children of the scrolling list, so a long tab list
+            // scrolls with everything else instead of squeezing the rows above
+            // it (`sidebar_workspace_rows_keep_height_when_list_overflows`).
+            // An empty workspace shows no child row at all: its single tab is
+            // the FR-01 placeholder, not something the user created, and
+            // `open_tab` fills it in place. The folder simply reads as empty.
+            if self.workspaces[i].sidebar_expanded && !self.workspaces[i].is_empty_shell() {
+                for tab_idx in 0..self.workspaces[i].tab_count() {
+                    rows.push(SidebarRow::Tab(i, tab_idx));
+                }
+            }
+        }
+        rows
+    }
+
+    fn render_workspace_rows(
+        &self,
+        mut list: gpui::Stateful<gpui::Div>,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let rows = self.sidebar_rows();
+        let slots = sidebar_drop_slots(&rows, self.workspaces.len());
+        for (k, row) in rows.iter().enumerate() {
+            list = list.child(self.render_drop_divider(k, slots[k], ui, cx));
+            list = list.child(match *row {
+                SidebarRow::Folder(i) => self.render_workspace_row(i, ui, cx).into_any_element(),
+                SidebarRow::Tab(i, tab_idx) => {
+                    self.render_tab_row(i, tab_idx, ui, cx).into_any_element()
+                }
+            });
+        }
+        if let Some(&trailing) = slots.last() {
+            list = list.child(self.render_drop_divider(rows.len(), trailing, ui, cx));
         }
         list
+    }
+
+    /// The gap between two rows, rendered as a real element: an invisible drop
+    /// band spanning half a row on either side, holding the insertion line it
+    /// reveals while a matching drag hovers it.
+    ///
+    /// The band is absolutely positioned, so it reaches over its neighbors
+    /// without displacing them, and it carries no click listener - a plain
+    /// (`HitboxBehavior::Normal`) hitbox never occludes the rows underneath, so
+    /// they stay clickable through it. The line itself is a child styled by
+    /// `group_drag_over`, which is what keeps the visible mark 2 px thin while
+    /// the target stays a comfortable 34 px tall.
+    fn render_drop_divider(
+        &self,
+        key: usize,
+        slot: SidebarDropSlot,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        // Neutral, like the pane placeholder in the grid: the rail already
+        // spends its accent on the selected row, and a colored drop line
+        // competed with it.
+        let color = ui.text.opacity(0.5);
+        let group = SharedString::from(format!("drop-slot-{key}"));
+        let mut band = div()
+            .id(SharedString::from(format!("drop-band-{key}")))
+            .group(group.clone())
+            .absolute()
+            .top(px(-SIDEBAR_DROP_BAND_REACH))
+            // Width, not a `left`/`right` inset pair: an absolutely positioned
+            // element sized by its insets alone measures 0 px wide here, which
+            // leaves both the line and its hitbox invisible.
+            .w_full()
+            .px(px(SIDEBAR_ROW_MARGIN_X))
+            .h(px(SIDEBAR_ROW_SPACING + SIDEBAR_DROP_BAND_REACH * 2.0))
+            .flex()
+            .flex_col()
+            .justify_center();
+        // The line reads the band's hover state through `group_drag_over`, and
+        // that lookup only runs for an element owning a hitbox: the whole
+        // drag-over branch of GPUI's `compute_style_internal` sits behind
+        // `if let Some(hitbox)`, while `should_insert_hitbox` counts
+        // `drag_over_styles` but *not* `group_drag_over_styles`. Declaring the
+        // line a group of its own is what earns it that hitbox - without it the
+        // line is laid out and painted, yet never styled, so nothing shows.
+        let mut line = div()
+            .group(SharedString::from(format!("drop-line-{key}")))
+            .h(px(SIDEBAR_DROP_LINE_PX))
+            .w_full()
+            .rounded_full();
+
+        if let Some((ws_idx, tab_idx)) = slot.tab {
+            let ws_id = self.workspaces.get(ws_idx).map(|ws| ws.id);
+            band = band
+                // US-011: a tab dropped in a gap of its own workspace reorders;
+                // dropped in another workspace's gap it reattaches there,
+                // keeping its pane tree and its live terminals.
+                .on_drop(cx.listener(move |this, drag: &TabDrag, window, cx| {
+                    if ws_id == Some(drag.workspace_id) {
+                        let Some(from) = this
+                            .workspaces
+                            .get(ws_idx)
+                            .and_then(|ws| ws.tabs().iter().position(|tab| tab.id == drag.tab_id))
+                        else {
+                            return;
+                        };
+                        this.reorder_workspace_tab(drag, ws_idx, reorder_target(from, tab_idx), cx);
+                    } else {
+                        this.move_tab_to_workspace(drag, ws_idx, tab_idx, window, cx);
+                    }
+                }))
+                // A pane dragged out of the grid leaves its current tab and
+                // becomes a tab of this workspace, terminal still running.
+                // Legal on the pane's *own* workspace too: the gesture is "give
+                // this pane a tab of its own", not "reattach elsewhere".
+                .on_drop(cx.listener(move |this, drag: &PaneDrag, window, cx| {
+                    this.move_pane_to_new_tab(drag.pane_id, ws_idx, tab_idx, window, cx);
+                }));
+            line = line
+                .group_drag_over::<TabDrag>(group.clone(), move |style| style.bg(color))
+                .group_drag_over::<PaneDrag>(group.clone(), move |style| style.bg(color));
+        }
+
+        if let Some(ws_slot) = slot.workspace {
+            band = band.on_drop(cx.listener(move |this, drag: &WorkspaceDrag, _window, cx| {
+                // Re-resolve the source by id: the rail re-renders during the
+                // drag, so the index captured when it started can be stale.
+                let Some(from) = this.workspaces.iter().position(|ws| ws.id == drag.id) else {
+                    return;
+                };
+                this.reorder_workspace(drag.id, reorder_target(from, ws_slot), cx);
+            }));
+            line =
+                line.group_drag_over::<WorkspaceDrag>(group.clone(), move |style| style.bg(color));
+        }
+
+        div()
+            .h(px(SIDEBAR_ROW_SPACING))
+            .flex_none()
+            .relative()
+            .child(band.child(line))
     }
 
     fn render_workspace_row(
@@ -518,37 +933,33 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let ws = &self.workspaces[i];
-        let is_active = i == self.active_idx;
 
         let title = ws.title.clone();
-        // Format cwd as ~/... (collapse home dir)
-        let cwd_display = collapse_home(&ws.cwd, &self.home_dir);
 
         let idx = i;
         let ws_id = ws.id;
         let ws_title: SharedString = ws.title.clone().into();
-        let ws_branch = (!ws.git_branch.is_empty()).then(|| ws.git_branch.clone().into());
-        let hover_bg = crate::app::constants::sidebar_tab_active_background();
-        let resting_bg = if is_active {
-            hover_bg
-        } else {
-            hover_bg.opacity(0.0)
-        };
+        // Two distinct tints, not one: the row lifts by the hover step, and
+        // its own actions hover one step further into the active tint (see
+        // `sidebar_action_button`). Sharing a single tint left those actions
+        // invisible against the row they sit on.
+        let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        // US-008 / US-010: one hover group per folder row - the trailing agent
+        // badge fades out and the create-tab action fades in together.
+        let group_name = SharedString::from(format!("ws-row-{ws_id}"));
+        let is_expanded = ws.sidebar_expanded;
 
-        let mut row = workspace_row_shell()
+        let row_shell = sidebar_row_shell()
             .id(SharedString::from(format!("ws-{ws_id}")))
-            .animated_hover_bg(resting_bg, hover_bg)
+            .group(group_name.clone())
             .on_drag(
                 WorkspaceDrag {
                     id: ws_id,
-                    source_idx: idx,
                     title: ws_title.clone(),
-                    branch: ws_branch.clone(),
                 },
                 |drag, _offset, _window, cx| {
                     cx.new(|_| WorkspaceDragPreview {
                         title: drag.title.clone(),
-                        branch: drag.branch.clone(),
                     })
                 },
             )
@@ -561,8 +972,16 @@ impl PaneFlowApp {
                 if is_double {
                     this.begin_workspace_rename(idx, cx);
                 } else {
+                    let was_renaming = this.renaming_idx == Some(idx);
                     this.commit_rename(cx);
                     this.select_workspace(idx, window, cx);
+                    // US-008: the whole card is the disclosure control, not just
+                    // the folder icon. Committing a rename is exempt: that click
+                    // ends an edit, and folding the row under the cursor would
+                    // read as a side effect of typing a name.
+                    if !was_renaming {
+                        this.toggle_workspace_expanded(idx, cx);
+                    }
                 }
                 cx.notify();
             }))
@@ -615,22 +1034,25 @@ impl PaneFlowApp {
             }));
 
         // Row 1: title
-        let agent_status =
-            ai_types::workspace_agent_status(ws.agent_sessions.values(), &ws.detected_agents);
+        //
+        // US-012: expanded, the folder only speaks for what no tab can claim;
+        // collapsed, it speaks for everything again. The tooltip reads the very
+        // same set, or an expanded folder would enumerate tools its badge is no
+        // longer counting.
+        let folder_sessions = || folder_row_sessions(ws.agent_sessions.values(), is_expanded);
+        let agent_status = ai_types::workspace_agent_status(folder_sessions(), &ws.detected_agents);
         let row_agent_status = sidebar_agent_summary(
-            ws.agent_sessions.values(),
+            folder_sessions(),
             ws.agent_completion_notification.is_unread(),
         );
-        let title_slot_width = sidebar_workspace_title_slot_width(row_agent_status);
-
         let title_el = if self.renaming_idx == Some(i) {
             div()
-                .w(px(title_slot_width))
-                .max_w(px(title_slot_width))
+                .flex_1()
                 .min_w_0()
                 .overflow_x_hidden()
                 .text_color(ui.text)
                 .text_sm()
+                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                 .font_weight(FontWeight::MEDIUM)
                 .bg(ui.overlay)
                 .px_1()
@@ -638,17 +1060,42 @@ impl PaneFlowApp {
                 .child(format!("{}|", self.rename_text))
         } else {
             div()
-                .w(px(title_slot_width))
-                .max_w(px(title_slot_width))
+                .flex_1()
                 .min_w_0()
                 .overflow_x_hidden()
                 .whitespace_nowrap()
                 .text_ellipsis()
                 .text_color(ui.text)
                 .text_sm()
+                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
                 .font_weight(FontWeight::MEDIUM)
                 .child(title)
         };
+
+        // US-008: the open/closed folder glyph reports the disclosure state -
+        // no chevron beside it, and no click target of its own. The whole card
+        // is the disclosure affordance (see the row's click handler), so the
+        // icon is a pure indicator; giving it a private handler would have made
+        // its 14px square the one spot on the row that toggles without also
+        // selecting the workspace.
+        let folder_path = if is_expanded {
+            "icons/folder-open.svg"
+        } else {
+            "icons/folder.svg"
+        };
+        let disclosure = div()
+            .flex_none()
+            .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                svg()
+                    .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+                    .flex_none()
+                    .path(folder_path)
+                    .text_color(ui.muted),
+            );
 
         let mut title_row = div()
             .flex()
@@ -659,30 +1106,107 @@ impl PaneFlowApp {
             .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
             .min_w_0()
             .overflow_x_hidden()
+            // The lane is reserved at all times, not opened on hover: a hover
+            // padding only shifts what can still shrink, so a long name ended
+            // up under the `+` anyway.
+            .pr(px(SIDEBAR_ACTION_LANE_WIDTH))
+            .child(disclosure)
             .child(title_el);
         if let Some(row_agent_status) = row_agent_status {
             let status_tooltip = sidebar_agent_status_tooltip(row_agent_status, &agent_status);
             title_row = title_row.child(render_workspace_agent_summary(
                 row_agent_status,
-                ws.id,
+                &format!("ws-{ws_id}"),
                 status_tooltip,
                 ui,
             ));
         }
 
-        row = row.child(title_row);
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap(px(SIDEBAR_ROW_GAP))
+            .child(title_row);
 
         if let Some(meta_row) = self.render_workspace_meta_row(ws, ui, cx) {
-            row = row.child(meta_row);
+            body = body.child(meta_row);
         }
 
-        let cwd_tooltip = SharedString::from(cwd_display);
-        row = row.tooltip(move |_w, cx| {
-            cx.new(|_| WorkspaceCwdTooltip {
-                path: cwd_tooltip.clone(),
-            })
-            .into()
-        });
+        // US-010: hover action cluster on the folder row, on the Agents
+        // `hover_actions_cluster` patron - absolute, right-aligned, 20x20
+        // buttons, hidden until the row is hovered. The title row reserves the
+        // matching lane (`SIDEBAR_ACTION_LANE_WIDTH`), so the cluster never
+        // covers the agent badge.
+        //
+        // The `+` opens the « New pane » preset palette, which covers the
+        // shell, the agents, and the workspace's custom commands.
+        //
+        // The `x` closes the whole folder. Dropping the `Workspace` drops its
+        // tabs, their panes and their terminals in one move - the same teardown
+        // a pane close runs - so no PTY is orphaned. It closes without
+        // confirmation, at parity with the row's context menu and with
+        // `Ctrl+Shift+Q`.
+        body = body.child(
+            sidebar_hover_actions(group_name.clone())
+                .child(
+                    sidebar_action_button(
+                        SharedString::from(format!("ws-new-tab-{ws_id}")),
+                        "icons/plus.svg",
+                        12.,
+                        ui,
+                    )
+                    .delayed_tooltip({
+                        let label = SharedString::from(format!("New pane in {ws_title}"));
+                        move |_w, cx| {
+                            cx.new(|_| SidebarTooltip {
+                                label: label.clone(),
+                            })
+                            .into()
+                        }
+                    })
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            this.open_pane_palette(idx, window, cx);
+                            cx.stop_propagation();
+                        },
+                    )),
+                )
+                .child(
+                    sidebar_action_button(
+                        SharedString::from(format!("ws-close-{ws_id}")),
+                        "icons/close.svg",
+                        12.,
+                        ui,
+                    )
+                    .delayed_tooltip({
+                        let label = SharedString::from(format!("Close {ws_title}"));
+                        move |_w, cx| {
+                            cx.new(|_| SidebarTooltip {
+                                label: label.clone(),
+                            })
+                            .into()
+                        }
+                    })
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, window, cx| {
+                            // Re-resolve by id, never by the captured index: rows
+                            // reorder under a drag and a stale position would close
+                            // the wrong folder.
+                            if let Some(at) = this.workspaces.iter().position(|ws| ws.id == ws_id) {
+                                this.commit_rename(cx);
+                                this.close_workspace_at(at, window, cx);
+                            }
+                            cx.stop_propagation();
+                        },
+                    )),
+                ),
+        );
+
+        // Pure hover affordance: selecting a workspace never leaves the row
+        // filled. The folder is a container, not a leaf - the selected tab
+        // underneath is the one that rests filled, and a second filled block
+        // above it read as two selections at once.
+        let row = squircle_row(row_shell, group_name.clone(), None, Some(hover_bg), body);
 
         div()
             .id(SharedString::from(format!("ws-drop-{ws_id}")))
@@ -690,27 +1214,323 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .rounded(px(8.))
-            .drag_over::<WorkspaceDrag>(move |style, drag, _window, _cx| {
-                let indicator = ui.text.opacity(0.4);
-                let target_background = hover_bg.opacity(0.24);
-                match workspace_drop_edge(drag, ws_id, idx) {
-                    Some(WorkspaceDropEdge::Before) => style
-                        .pt(px(SIDEBAR_DROP_GAP))
-                        .border_t_1()
-                        .border_color(indicator)
-                        .bg(target_background),
-                    Some(WorkspaceDropEdge::After) => style
-                        .pb(px(SIDEBAR_DROP_GAP))
-                        .border_b_1()
-                        .border_color(indicator)
-                        .bg(target_background),
-                    None => style,
+            .rounded(ROW_RADIUS)
+            .child(row)
+    }
+
+    /// US-009 / US-010 / US-011: one tab rendered as a child row of its
+    /// workspace folder, on the Agents `thread_row` patron - a leading
+    /// invisible placeholder carries the indent and there is deliberately no
+    /// per-tab icon.
+    fn render_tab_row(
+        &self,
+        ws_idx: usize,
+        tab_idx: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let ws = &self.workspaces[ws_idx];
+        let ws_id = ws.id;
+        let tab = &ws.tabs()[tab_idx];
+        let tab_id = tab.id;
+        let title = tab_display_title(tab, tab_idx);
+        let is_active_tab = tab_idx == ws.active_tab_idx();
+        let is_active_workspace = ws_idx == self.active_idx;
+        let is_renaming = self.renaming_tab == Some((ws_idx, tab_idx));
+
+        // Per-tab activity (US-012) and per-pane identity (US-013) are read in
+        // one walk of the tab's leaves: `AgentSession::surface_id` holds a
+        // terminal entity id, so a tab's sessions are exactly the workspace
+        // sessions whose surface lives in one of that tab's panes, and the
+        // cluster is that same leaf order.
+        let panes = tab.collect_panes();
+        let mut surfaces: std::collections::HashSet<u64> =
+            std::collections::HashSet::with_capacity(panes.len());
+        let mut pane_icons: Vec<TabPaneIcon> = Vec::with_capacity(panes.len());
+        // US-012: the tab's own detected-agent set. The tooltip must name the
+        // tools of THIS tab's panes: handed `Workspace::detected_agents` it
+        // would append "Codex running" to a claude-only tab because a sibling
+        // tab runs codex, which is exactly the misattribution this epic
+        // removes. `apply_pane_scan` writes the workspace set and each
+        // terminal's `detected_agent` from the same scan, so this is that set
+        // restricted to the tab, not a second source of truth.
+        let mut tab_agents: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for pane in &panes {
+            let pane = pane.read(cx);
+            for terminal in pane.terminals() {
+                surfaces.insert(terminal.entity_id().as_u64());
+                if let Some(agent) = terminal.read(cx).terminal.detected_agent {
+                    tab_agents.insert(agent.binary().to_string());
                 }
-            })
-            .on_drop(cx.listener(move |this, drag: &WorkspaceDrag, _window, cx| {
-                this.reorder_workspace(drag.id, idx, cx);
+            }
+            pane_icons.push(tab_pane_icon(pane, cx));
+        }
+        // The split picker holds a slot this tab is about to fill, but nothing
+        // is split until a preset is picked - so the tab still counts one pane
+        // and its icon would render bare. Card it early: the row then already
+        // reads as the stack the choice is about to produce, and the pane the
+        // new one lands next to is named rather than left ambiguous.
+        let pending_split_pane = match self.pane_palette.as_ref().map(|p| &p.placement) {
+            Some(PalettePlacement::Split { target, .. }) => {
+                let target = target.entity_id();
+                panes.iter().any(|pane| pane.entity_id() == target)
+            }
+            _ => false,
+        };
+        let tab_sessions = || tab_row_sessions(ws.agent_sessions.values(), &surfaces);
+        let row_agent_status = sidebar_agent_summary(tab_sessions(), false);
+        let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
+        // One tint for both states, deliberately: the selected row rests at the
+        // very fill a hovered row lifts to, so moving the pointer across the
+        // rail never produces a block heavier than the selection it is passing
+        // over. `sidebar_tab_active_background` is the stronger step, and it
+        // stays reserved for what sits *on* a filled row - the hover action
+        // buttons - which needs one step further to read at all.
+        let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        // Leaf-only selection, on the Agents `thread_row` grammar: exactly one
+        // row in the whole rail rests filled - the visible tab of the visible
+        // workspace. The visible tab of another workspace stays flat and is
+        // marked by its title color alone (US-009 AC3), so an expanded rail
+        // reads as a tree instead of a stack of gray blocks.
+        let (resting_bg, hovered_bg) = if is_active_tab && is_active_workspace {
+            (Some(hover_bg), None)
+        } else {
+            (None, Some(hover_bg))
+        };
+        // Every title in the rail carries the same weight, selected or not: the
+        // resting fill is what marks the visible tab now (US-009 AC3's dimmed
+        // title is retired), and a muted title on top of it read as a disabled
+        // row rather than an unselected one.
+        let text_color = ui.text;
+
+        let title_el = if is_renaming {
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_x_hidden()
+                .text_color(ui.text)
+                .text_sm()
+                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                .bg(ui.overlay)
+                .px_1()
+                .rounded_sm()
+                .child(format!("{}|", self.rename_text))
+        } else {
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_color(text_color)
+                .text_sm()
+                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                .child(title.clone())
+        };
+
+        // US-012: the activity badge leads the title, in the folder-icon slot.
+        // Without a running agent the same slot stays empty, so the flex gap
+        // lands the tab title on the same X as the workspace title above it -
+        // no extra indent, no per-tab icon, the folder glyph alone marks the
+        // level.
+        let leading_slot = match row_agent_status {
+            Some(status) => render_tab_agent_summary(
+                status,
+                &format!("tab-{tab_id}"),
+                sidebar_agent_status_tooltip(status, &agent_status),
+                ui,
+            ),
+            None => div()
+                .flex_none()
+                .w(px(SIDEBAR_FOLDER_ICON_WIDTH))
+                .into_any_element(),
+        };
+
+        // No `overflow_x_hidden()` here, deliberately. GPUI's `overflow_mask`
+        // builds a mask as soon as *either* axis is hidden, and on the
+        // x-hidden/y-visible arm that mask still clamps Y to the element's own
+        // bounds - 18px here, the title's line height. The pane cards are
+        // taller than that by design (they overhang into the row's vertical
+        // padding), so a mask on this row sliced their top and bottom off and
+        // they painted squashed. The row cannot overflow horizontally anyway:
+        // its width is pinned, every child but the title is `flex_none`, and
+        // the title carries its own `overflow_x_hidden` + `text_ellipsis`.
+        let mut title_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(SIDEBAR_TITLE_ROW_GAP))
+            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .min_w_0()
+            .child(leading_slot)
+            .child(title_el);
+        let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
+        // US-013: the cluster owns the trailing lane - the title is the only
+        // thing that shrinks, so the icons are never pushed out of the row.
+        //
+        // The lane is shared with the row's close action, by swap rather than
+        // by reservation: the pane cards state what the tab holds at rest, the
+        // `x` takes their place under the pointer. A folder row can afford to
+        // hold its lane open at all times (its trailing badge is narrow), but a
+        // tab row's cluster is up to four cards wide - reserving room next to
+        // it would eat the title on every row to serve a hover-only control.
+        // An empty tab has no cards, so it reserves the button's own width
+        // instead, or the `x` would land on the title's tail.
+        match render_tab_pane_icons(
+            &pane_icons,
+            &format!("tab-{tab_id}"),
+            pending_split_pane,
+            ui,
+        ) {
+            Some(cluster) => {
+                title_row = title_row.child(
+                    div()
+                        .flex_none()
+                        // Hiding by `visibility`, not by `display`, for the
+                        // reason `sidebar_hover_actions` documents: the two
+                        // element phases must agree within the frame the hover
+                        // flips. It also stops the hidden lane from holding its
+                        // tooltip open under the close button.
+                        .group_hover(tab_group.clone(), |style| style.invisible())
+                        .child(cluster),
+                );
+            }
+            None => {
+                title_row = title_row.child(div().flex_none().w(px(SIDEBAR_ACTION_BUTTON_SIZE)));
+            }
+        }
+
+        // US-010 patron, applied to a tab: closing drops the `Tab`, and with it
+        // its panes and their terminals. Closing the last tab of a workspace
+        // leaves an empty tab behind and never closes the workspace (FR-01) -
+        // the folder row's own `x` is what closes that.
+        title_row = title_row.child(
+            sidebar_hover_actions(tab_group.clone()).child(
+                sidebar_action_button(
+                    SharedString::from(format!("tab-close-{tab_id}")),
+                    "icons/close.svg",
+                    12.,
+                    ui,
+                )
+                .delayed_tooltip({
+                    let label = SharedString::from("Close tab");
+                    move |_w, cx| {
+                        cx.new(|_| SidebarTooltip {
+                            label: label.clone(),
+                        })
+                        .into()
+                    }
+                })
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    // Re-resolve both indices by id: rows reorder under a drag,
+                    // and a stale position would close the wrong tab.
+                    if let Some((at_ws, at_tab)) = this
+                        .workspaces
+                        .iter()
+                        .position(|ws| ws.id == ws_id)
+                        .and_then(|at_ws| {
+                            this.workspaces[at_ws]
+                                .tabs()
+                                .iter()
+                                .position(|tab| tab.id == tab_id)
+                                .map(|at_tab| (at_ws, at_tab))
+                        })
+                    {
+                        this.commit_rename(cx);
+                        this.close_workspace_tab(at_ws, at_tab, window, cx);
+                    }
+                    cx.stop_propagation();
+                })),
+            ),
+        );
+
+        let row_shell = sidebar_row_shell()
+            .id(SharedString::from(format!("tab-row-{tab_id}")))
+            .group(tab_group.clone())
+            .on_drag(
+                TabDrag {
+                    workspace_id: ws_id,
+                    tab_id,
+                    title: SharedString::from(title),
+                },
+                |drag, _offset, _window, cx| {
+                    cx.new(|_| WorkspaceDragPreview {
+                        title: drag.title.clone(),
+                    })
+                },
+            )
+            .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count == 2);
+                if is_double {
+                    this.begin_tab_rename(ws_idx, tab_idx, cx);
+                } else {
+                    this.select_workspace_tab(ws_idx, tab_idx, window, cx);
+                }
+                cx.stop_propagation();
+                cx.notify();
             }))
+            .on_aux_click(cx.listener(move |this, e: &ClickEvent, _window, cx| {
+                if e.is_right_click()
+                    && let Some(position) = e.mouse_position()
+                {
+                    this.commit_rename(cx);
+                    this.dismiss_transient_surfaces();
+                    this.tab_menu_open = Some(TabContextMenu {
+                        ws_idx,
+                        tab_idx,
+                        position,
+                    });
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
+                let key = e.keystroke.key.as_str();
+                if this.renaming_tab != Some((ws_idx, tab_idx)) {
+                    if key == "f2" {
+                        this.begin_tab_rename(ws_idx, tab_idx, cx);
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                    return;
+                }
+                match key {
+                    "enter" => {
+                        this.commit_rename(cx);
+                        cx.notify();
+                    }
+                    "escape" => {
+                        this.renaming_tab = None;
+                        this.rename_text.clear();
+                        cx.notify();
+                    }
+                    "backspace" => {
+                        this.rename_text.pop();
+                        cx.notify();
+                    }
+                    _ => {
+                        if let Some(ch) = &e.keystroke.key_char
+                            && !ch.is_empty()
+                            && !e.keystroke.modifiers.control
+                            && !e.keystroke.modifiers.platform
+                        {
+                            this.rename_text.push_str(ch);
+                            cx.notify();
+                        }
+                    }
+                }
+            }));
+
+        let row = squircle_row(row_shell, tab_group, resting_bg, hovered_bg, title_row);
+
+        div()
+            .id(SharedString::from(format!("tab-drop-{tab_id}")))
+            .mx(px(SIDEBAR_ROW_MARGIN_X))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .rounded(ROW_RADIUS)
             .child(row)
     }
 
@@ -720,260 +1540,180 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        // Branch, diff, and service summary stay on one clipped line so a
-        // workspace row keeps its compact 44px rhythm.
-        let has_branch = !ws.git_branch.is_empty();
-        let diff_summary = sidebar_diff_summary(&ws.git_stats);
-        let has_stats = diff_summary.is_visible();
-        let service_summary = sidebar_service_summary(&ws.active_ports, &ws.service_labels);
-        let has_ports = service_summary.is_some();
-        if has_branch || has_stats || has_ports {
-            let mut meta_row = div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.))
-                .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-                .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-                .h(px(14.))
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_xs()
-                .text_color(ui.muted);
+        // Detected services only. Neither the git branch nor a diffstat is
+        // rendered in the rail: both crowded the row for little signal, and the
+        // Diff view is where change counts belong.
+        let service = sidebar_service_summary(&ws.active_ports, &ws.service_labels)?;
+        let mut meta_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.))
+            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .h(px(14.))
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_xs()
+            .text_color(ui.muted);
 
-            if has_branch {
-                let branch_width = match (has_stats, has_ports) {
-                    (true, true) => 64.0,
-                    (true, false) => 112.0,
-                    (false, true) => 126.0,
-                    (false, false) => SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH,
-                };
-                meta_row = meta_row.child(
-                    div()
-                        .min_w_0()
-                        .max_w(px(branch_width))
-                        .overflow_x_hidden()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(4.))
-                        .child(
-                            svg()
-                                .size(px(10.))
-                                .flex_none()
-                                .path("icons/git-branch-sidebar.svg")
-                                .text_color(ui.muted),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .flex_1()
-                                .overflow_x_hidden()
-                                .whitespace_nowrap()
-                                .text_ellipsis()
-                                .child(ws.git_branch.clone()),
-                        ),
-                );
-            }
+        let port = service.primary;
+        let workspace_id = ws.id;
+        let info = ws.service_labels.get(&port);
+        let is_frontend = info.is_some_and(|service| service.is_frontend);
+        let service_name = info
+            .and_then(|service| service.label.clone())
+            .unwrap_or_else(|| "Local service".to_string());
+        let service_tooltip: SharedString = format!("{service_name}  :{port}").into();
 
-            if has_stats {
-                // Shared diff palette (Codex green/red on dark, theme vc_* on
-                // light) so the CLI sidebar diffstat matches the Diff/Review
-                // view and the Agents dock instead of inlining its own hex.
-                let diff = ui.diff_colors();
-                match diff_summary {
-                    SidebarDiffSummary::Lines {
-                        insertions,
-                        deletions,
-                    } => {
-                        if insertions > 0 {
-                            meta_row = meta_row.child(
-                                div()
-                                    .flex_none()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(diff.added)
-                                    .child(format!("+{insertions}")),
-                            );
+        if is_frontend {
+            let url = info
+                .and_then(|service| service.url.clone())
+                .unwrap_or_else(|| format!("http://localhost:{port}"));
+            meta_row = meta_row.child(
+                div()
+                    .id(SharedString::from(format!("port-{workspace_id}-{port}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(2.))
+                    .text_size(px(10.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(ui.muted)
+                    .hover(move |style| style.text_color(ui.text))
+                    .delayed_tooltip({
+                        let label = service_tooltip.clone();
+                        move |_w, cx| {
+                            cx.new(|_| SidebarTooltip {
+                                label: label.clone(),
+                            })
+                            .into()
                         }
-                        if deletions > 0 {
-                            meta_row = meta_row.child(
-                                div()
-                                    .flex_none()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(diff.deleted)
-                                    .child(format!("-{deletions}")),
-                            );
-                        }
-                    }
-                    SidebarDiffSummary::Files { files_changed } => {
-                        meta_row = meta_row.child(
-                            div()
-                                .flex_none()
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(ui.muted)
-                                .child(sidebar_file_change_label(files_changed)),
-                        );
-                    }
-                    SidebarDiffSummary::None => {}
-                }
-            }
-
-            // Separator before the ports, only when branch/diff preceded
-            // them (a leading `·` would otherwise dangle).
-            if (has_branch || has_stats) && has_ports {
-                meta_row = meta_row.child(div().flex_none().text_color(ui.muted).child("·"));
-            }
-
-            if let Some(service) = service_summary {
-                let port = service.primary;
-                let workspace_id = ws.id;
-                let info = ws.service_labels.get(&port);
-                let is_frontend = info.is_some_and(|service| service.is_frontend);
-                let service_name = info
-                    .and_then(|service| service.label.clone())
-                    .unwrap_or_else(|| "Local service".to_string());
-                let service_tooltip: SharedString = format!("{service_name}  :{port}").into();
-
-                if is_frontend {
-                    let url = info
-                        .and_then(|service| service.url.clone())
-                        .unwrap_or_else(|| format!("http://localhost:{port}"));
-                    meta_row = meta_row.child(
-                        div()
-                            .id(SharedString::from(format!("port-{workspace_id}-{port}")))
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(2.))
-                            .text_size(px(10.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(ui.muted)
-                            .animated_hover(move |style, delta| {
-                                style.text_color(lerp_color(ui.muted, ui.text, delta));
-                            })
-                            .tooltip({
-                                let label = service_tooltip.clone();
-                                move |_w, cx| {
-                                    cx.new(|_| SidebarTooltip {
-                                        label: label.clone(),
-                                    })
-                                    .into()
-                                }
-                            })
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                                this.open_workspace_service_url(&url, cx);
-                                cx.stop_propagation();
-                            }))
-                            .child(
-                                svg()
-                                    .size(px(10.))
-                                    .flex_none()
-                                    .path("icons/world.svg")
-                                    .text_color(ui.muted),
-                            )
-                            .child(format!(":{port}")),
-                    );
-                } else {
-                    meta_row = meta_row.child(
-                        div()
-                            .id(SharedString::from(format!(
-                                "port-{workspace_id}-{port}-info"
-                            )))
-                            .text_size(px(10.))
-                            .text_color(ui.muted)
-                            .tooltip({
-                                let label = service_tooltip.clone();
-                                move |_w, cx| {
-                                    cx.new(|_| SidebarTooltip {
-                                        label: label.clone(),
-                                    })
-                                    .into()
-                                }
-                            })
-                            .child(format!(":{port}")),
-                    );
-                }
-
-                if service.overflow > 0 {
-                    let overflow = service.overflow;
-                    meta_row = meta_row.child(
-                        div()
-                            .id(SharedString::from(format!("ports-{workspace_id}-overflow")))
+                    })
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.open_workspace_service_url(&url, cx);
+                        cx.stop_propagation();
+                    }))
+                    .child(
+                        svg()
+                            .size(px(10.))
                             .flex_none()
-                            .text_size(px(10.))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(ui.muted)
-                            .tooltip(move |_w, cx| {
-                                cx.new(|_| SidebarTooltip {
-                                    label: format!(
-                                        "{overflow} more services · Right-click workspace to view"
-                                    )
-                                    .into(),
-                                })
-                                .into()
-                            })
-                            .child(format!("+{overflow}")),
-                    );
-                }
-            }
-
-            Some(meta_row.into_any_element())
+                            .path("icons/world.svg")
+                            .text_color(ui.muted),
+                    )
+                    .child(format!(":{port}")),
+            );
         } else {
-            None
+            meta_row = meta_row.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "port-{workspace_id}-{port}-info"
+                    )))
+                    .text_size(px(10.))
+                    .text_color(ui.muted)
+                    .delayed_tooltip({
+                        let label = service_tooltip.clone();
+                        move |_w, cx| {
+                            cx.new(|_| SidebarTooltip {
+                                label: label.clone(),
+                            })
+                            .into()
+                        }
+                    })
+                    .child(format!(":{port}")),
+            );
         }
-    }
 
-    /// Items rendered inside the bottom Settings popover when in CLI
-    /// mode. Order: creation actions first, destructive last, escape
-    /// hatch to the Settings window.
-    fn cli_menu_items(&self) -> Vec<crate::app::sidebar_actions_menu::SidebarMenuItem> {
-        use crate::app::sidebar_actions_menu::SidebarMenuItem;
-        let mut items = vec![SidebarMenuItem {
-            id: "cli-menu-themes".into(),
-            icon: "icons/palette.svg",
-            label: "Themes".into(),
-            on_click: Box::new(|app, w, cx| {
-                app.open_theme_picker(w, cx);
-            }),
-        }];
-        items.push(SidebarMenuItem {
-            id: "cli-menu-about".into(),
-            icon: "icons/info-circle.svg",
-            label: "About Paneflow".into(),
-            on_click: Box::new(|app, _w, cx| {
-                app.show_about_dialog = true;
-                cx.notify();
-            }),
-        });
-        items.push(SidebarMenuItem {
-            id: "cli-menu-open-settings".into(),
-            icon: "icons/settings.svg",
-            label: "Settings".into(),
-            on_click: Box::new(|app, w, cx| {
-                app.open_settings_window(w, cx);
-            }),
-        });
-        items
+        if service.overflow > 0 {
+            let overflow = service.overflow;
+            meta_row = meta_row.child(
+                div()
+                    .id(SharedString::from(format!("ports-{workspace_id}-overflow")))
+                    .flex_none()
+                    .text_size(px(10.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(ui.muted)
+                    .delayed_tooltip(move |_w, cx| {
+                        cx.new(|_| SidebarTooltip {
+                            label: format!(
+                                "{overflow} more services · Right-click workspace to view"
+                            )
+                            .into(),
+                        })
+                        .into()
+                    })
+                    .child(format!("+{overflow}")),
+            );
+        }
+
+        Some(meta_row.into_any_element())
     }
 
     pub(crate) fn sidebar_list_wrapper(
         &self,
         list: gpui::Stateful<gpui::Div>,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         // The visible scroll bar was removed; wheel-scroll on the
         // inner `list` (driven by `overflow_y_scroll + track_scroll`)
         // is the only scrolling surface now. The wrapper still
         // exists so callers keep a stable insertion point if a
         // trailing affordance lands here later.
+        //
+        // It is also the rail's drop target: a folder dragged out of the OS
+        // file manager and released here is filed as a workspace. The whole
+        // list area accepts it rather than a dedicated strip, because the
+        // gesture aims at "the sidebar", not at a position in it - the rail's
+        // order is the user's own, and a dropped folder joins at the end.
         div()
             .id("sidebar-list-wrapper")
             .relative()
+            .group(SIDEBAR_DROP_GROUP)
             .flex_1()
             .flex()
             .flex_col()
             .min_h_0()
+            // The wrapper is the drop target for the full area, margin band
+            // included, so nothing lands in the gap around the placeholder.
+            .on_drop(
+                cx.listener(|this, paths: &gpui::ExternalPaths, _window, cx| {
+                    this.open_workspace_folders(paths.paths(), cx);
+                }),
+            )
             .child(list)
+            .child(Self::render_sidebar_drop_placeholder(cx))
+    }
+
+    /// Neutral drop placeholder for a folder dragged in from the OS file
+    /// manager, on the pane-swap grammar (`pane.rs`): a translucent wash of the
+    /// theme's text color with a hairline of the same, rounded and floating
+    /// inside the rail. Neutral, not the blue split preview - blue means "a new
+    /// pane lands here", and this files a folder instead.
+    ///
+    /// It is absolute, so it never reflows the list, and `invisible()` until a
+    /// drag enters the wrapper's group. The `on_drop` is what earns it a
+    /// hitbox: GPUI evaluates `group_drag_over` styles only inside
+    /// `if let Some(hitbox)`, so a handler-less div would stay invisible
+    /// forever (same trap documented on the pane overlay).
+    fn render_sidebar_drop_placeholder(cx: &mut Context<Self>) -> impl IntoElement {
+        let tint = crate::theme::ui_colors().text;
+        div()
+            .absolute()
+            .top(px(SIDEBAR_DROP_PLACEHOLDER_MARGIN))
+            .left(px(SIDEBAR_DROP_PLACEHOLDER_MARGIN))
+            .right(px(SIDEBAR_DROP_PLACEHOLDER_MARGIN))
+            .bottom(px(SIDEBAR_DROP_PLACEHOLDER_MARGIN))
+            .rounded(px(SIDEBAR_DROP_PLACEHOLDER_RADIUS))
+            .bg(tint.opacity(SIDEBAR_DROP_PLACEHOLDER_FILL_ALPHA))
+            .border_2()
+            .border_color(tint.opacity(SIDEBAR_DROP_PLACEHOLDER_BORDER_ALPHA))
+            .invisible()
+            .group_drag_over::<gpui::ExternalPaths>(SIDEBAR_DROP_GROUP, |style| style.visible())
+            .on_drop(
+                cx.listener(|this, paths: &gpui::ExternalPaths, _window, cx| {
+                    this.open_workspace_folders(paths.paths(), cx);
+                }),
+            )
     }
 }
 
@@ -1016,13 +1756,221 @@ fn sidebar_agent_status_tooltip(
     }
 }
 
+/// US-013: one icon per pane of a tab, in the leaf order of its tree, so a
+/// work thread is recognizable without opening it. `None` for an empty tab -
+/// nothing is painted and the row keeps the height of every other row.
+fn render_tab_pane_icons(
+    icons: &[TabPaneIcon],
+    row_key: &str,
+    pending_pane: bool,
+    ui: crate::theme::UiColors,
+) -> Option<AnyElement> {
+    if icons.is_empty() {
+        return None;
+    }
+    let (shown, overflow) = tab_icon_cluster_split(icons.len());
+    let tooltip: SharedString = icons
+        .iter()
+        .map(|icon| icon.label)
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into();
+
+    // Every glyph is monochrome - one tint for the whole rail, no brand color.
+    // That means `svg()` for all of them, and `svg()` is a mask: without its
+    // own `text_color` it paints nothing, and the parent's does not cascade.
+    let glyph = ui.text.opacity(0.75);
+    // A lone pane is drawn bare: a card around a single icon is a box, not a
+    // stack. From two panes up each one gets its own card and the cards slide
+    // over each other, which is what reads as a stack. `pending_pane` is the
+    // one exception - a split picker already stands in the second slot, so the
+    // lone pane cards up now instead of popping into a card the moment the
+    // preset is picked.
+    if shown == 1 && !pending_pane {
+        return Some(tab_pane_icon_lane(
+            row_key,
+            tooltip,
+            overflow,
+            ui,
+            svg()
+                .size(px(SIDEBAR_TAB_ICON_SIZE))
+                .min_w(px(SIDEBAR_TAB_ICON_SIZE))
+                .flex_none()
+                .path(icons[0].path)
+                .text_color(glyph),
+        ));
+    }
+
+    let card_fill = crate::app::constants::sidebar_tab_icon_card_background();
+    let card_border = ui.text.opacity(0.14);
+    // Brighter than the bare glyph above: the card fill is a step darker than
+    // the row, so the mark needs the contrast back to read as the same weight.
+    let card_glyph = ui.text.opacity(0.92);
+
+    // The stack is laid out absolutely, not by flex with negative margins.
+    // The cluster sits at the end of a fixed-width title row, and a flex row
+    // is free to shrink or clip a child whose size is derived from its
+    // content: derived, the cards measured about half their width, then
+    // vanished entirely once there were two of them. Stating the cluster's
+    // exact box and placing each card at its own offset inside it takes the
+    // row's remaining space out of the equation.
+    let step = SIDEBAR_TAB_CARD_WIDTH - SIDEBAR_TAB_ICON_OVERLAP;
+    let cluster_width = SIDEBAR_TAB_CARD_WIDTH + (shown.saturating_sub(1) as f32) * step;
+    // The cluster reserves the row's line height, not the card's: the cards
+    // are absolute, so their extra two pixels overhang into the row's vertical
+    // padding instead of making a tab row taller than every other row.
+    let card_overhang = (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_TAB_CARD_HEIGHT) / 2.0;
+    let mut cluster = div()
+        .flex_none()
+        .relative()
+        .w(px(cluster_width))
+        .min_w(px(cluster_width))
+        .h(px(SIDEBAR_ROW_LINE_HEIGHT));
+    for (slot, icon) in icons[..shown].iter().enumerate() {
+        // Cards paint in declaration order, so the later pane sits on top -
+        // the same direction as the visual reference.
+        cluster = cluster.child(
+            div()
+                .absolute()
+                .top(px(card_overhang))
+                .left(px(slot as f32 * step))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_center()
+                .w(px(SIDEBAR_TAB_CARD_WIDTH))
+                .h(px(SIDEBAR_TAB_CARD_HEIGHT))
+                // Fill and hairline are painted paths, not `bg()` + `border_1()`:
+                // GPUI's box border is a circular arc and would betray the
+                // squircle underneath it at the corners, where the two curves
+                // diverge most. Both children are absolute, so the flex box
+                // still centers the glyph alone.
+                .child(squircle::squircle_fill(ROW_RADIUS, card_fill))
+                .child(squircle::squircle_border(ROW_RADIUS, px(1.), card_border))
+                .child(
+                    svg()
+                        .size(px(SIDEBAR_TAB_CARD_ICON_SIZE))
+                        .flex_none()
+                        .path(icon.path)
+                        .text_color(card_glyph),
+                ),
+        );
+    }
+    Some(tab_pane_icon_lane(row_key, tooltip, overflow, ui, cluster))
+}
+
+/// US-013: the trailing lane of a tab row - the pane cluster, and past the cap
+/// the `+N`. The counter is text, not a glyph: it labels the stack from
+/// outside it, so it neither joins the overlap nor makes a card's width depend
+/// on how a digit measures. The lane carries the row's pane tooltip.
+fn tab_pane_icon_lane(
+    row_key: &str,
+    tooltip: SharedString,
+    overflow: usize,
+    ui: crate::theme::UiColors,
+    cluster: impl IntoElement,
+) -> AnyElement {
+    div()
+        .id(SharedString::from(format!("tab-panes-{row_key}")))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(SIDEBAR_TAB_ICON_GAP))
+        .delayed_tooltip(move |_w, cx| {
+            cx.new(|_| SidebarTooltip {
+                label: tooltip.clone(),
+            })
+            .into()
+        })
+        .child(cluster)
+        .when(overflow > 0, |d| {
+            d.child(
+                div()
+                    .flex_none()
+                    .text_size(px(10.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(ui.muted)
+                    .child(format!("+{overflow}")),
+            )
+        })
+        .into_any_element()
+}
+
+/// `row_key` scopes the element and animation ids to one sidebar row. It is a
+/// string, not an id: workspace ids and tab ids come from independent counters,
+/// so a folder row and a tab row could otherwise collide on the same numeric
+/// key inside the same list.
 fn render_workspace_agent_summary(
     summary: SidebarAgentSummary,
-    workspace_id: u64,
+    row_key: &str,
     tooltip: SharedString,
     ui: crate::theme::UiColors,
 ) -> AnyElement {
-    let (color, glyph, label): (gpui::Hsla, AnyElement, Option<String>) = match summary.state {
+    let (color, glyph, label) = agent_summary_visual(summary, row_key, ui);
+
+    div()
+        .id(SharedString::from(format!("agent-status-{row_key}")))
+        .w(px(summary.slot_width()))
+        .h(px(20.))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .gap(px(3.))
+        .text_size(px(10.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(color)
+        .delayed_tooltip(move |_w, cx| {
+            cx.new(|_| SidebarTooltip {
+                label: tooltip.clone(),
+            })
+            .into()
+        })
+        .child(glyph)
+        .when_some(label, |d, label| d.child(label))
+        .into_any_element()
+}
+
+/// US-012: on a tab row the activity badge leads the title instead of trailing
+/// it - the trailing lane belongs to the pane-icon cluster. It occupies exactly
+/// the folder-icon slot the invisible placeholder would have taken, so the tab
+/// title keeps the same X whether or not an agent is running, and the count
+/// stays in the tooltip rather than widening the slot and shifting the title.
+fn render_tab_agent_summary(
+    summary: SidebarAgentSummary,
+    row_key: &str,
+    tooltip: SharedString,
+    ui: crate::theme::UiColors,
+) -> AnyElement {
+    let (_, glyph, _) = agent_summary_visual(summary, row_key, ui);
+
+    div()
+        .id(SharedString::from(format!("agent-status-{row_key}")))
+        .w(px(SIDEBAR_FOLDER_ICON_WIDTH))
+        .h(px(20.))
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .delayed_tooltip(move |_w, cx| {
+            cx.new(|_| SidebarTooltip {
+                label: tooltip.clone(),
+            })
+            .into()
+        })
+        .child(glyph)
+        .into_any_element()
+}
+
+fn agent_summary_visual(
+    summary: SidebarAgentSummary,
+    row_key: &str,
+    ui: crate::theme::UiColors,
+) -> (gpui::Hsla, AnyElement, Option<String>) {
+    match summary.state {
         SidebarAgentState::NeedsInput => (
             rgb(0xFBBF24).into(),
             svg()
@@ -1061,7 +2009,7 @@ fn render_workspace_agent_summary(
             let color = ui.muted;
             (
                 color,
-                render_comet_trail_loader(workspace_id, color),
+                render_comet_trail_loader(row_key, color),
                 (summary.count > 1).then(|| summary.count.to_string()),
             )
         }
@@ -1080,38 +2028,13 @@ fn render_workspace_agent_summary(
                 None,
             )
         }
-    };
-
-    div()
-        .id(SharedString::from(format!(
-            "workspace-agent-status-{workspace_id}"
-        )))
-        .w(px(summary.slot_width()))
-        .h(px(20.))
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_end()
-        .gap(px(3.))
-        .text_size(px(10.))
-        .font_weight(FontWeight::MEDIUM)
-        .text_color(color)
-        .tooltip(move |_w, cx| {
-            cx.new(|_| SidebarTooltip {
-                label: tooltip.clone(),
-            })
-            .into()
-        })
-        .child(glyph)
-        .when_some(label, |d, label| d.child(label))
-        .into_any_element()
+    }
 }
 
 /// Compact GPUI adaptation of Dot Matrix's `Comet Trail` loader. The 3x3
 /// perimeter leaves room for larger dots while keeping the native sidebar free
 /// of a web runtime, glow, or accent color.
-fn render_comet_trail_loader(workspace_id: u64, color: gpui::Hsla) -> AnyElement {
+fn render_comet_trail_loader(row_key: &str, color: gpui::Hsla) -> AnyElement {
     static SYNC_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 
     const MATRIX_SIZE: usize = 3;
@@ -1131,7 +2054,7 @@ fn render_comet_trail_loader(workspace_id: u64, color: gpui::Hsla) -> AnyElement
         .justify_center()
         .gap(px(DOT_GAP))
         .with_animation(
-            SharedString::from(format!("workspace-comet-trail-{workspace_id}")),
+            SharedString::from(format!("comet-trail-{row_key}")),
             Animation::new(std::time::Duration::from_millis(CYCLE_MS)).repeat(),
             move |loader, _delta| {
                 let cycle_elapsed = SYNC_EPOCH
@@ -1181,8 +2104,7 @@ fn render_comet_trail_loader(workspace_id: u64, color: gpui::Hsla) -> AnyElement
 }
 
 /// Lightweight tooltip body reused by sidebar affordances that just
-/// need to show one short label. Mirrors the `WorkspaceCwdTooltip`
-/// style minus the monospace font so prose reads naturally.
+/// need to show one short label.
 /// `pub(crate)`: the tab identity pill (EP-005, pane.rs) reuses it rather
 /// than duplicating a fourth one-label tooltip body.
 pub(crate) struct SidebarTooltip {
@@ -1191,89 +2113,212 @@ pub(crate) struct SidebarTooltip {
 
 impl Render for SidebarTooltip {
     fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = crate::theme::active_theme();
-        let ui = crate::theme::ui_colors();
-        div()
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(6.))
-            .bg(theme.title_bar_background)
-            .border_1()
-            .border_color(ui.border)
-            .text_color(ui.text)
-            .text_size(px(11.))
-            .child(self.label.clone())
-    }
-}
-
-/// Tooltip body for a workspace card. Surfaces the full cwd path so
-/// it can stay off-screen on the card itself (the title is enough
-/// signal at idle; the path is only relevant when the user needs to
-/// distinguish two workspaces with similar titles or open a shell at
-/// that exact location).
-struct WorkspaceCwdTooltip {
-    path: SharedString,
-}
-
-impl Render for WorkspaceCwdTooltip {
-    fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = crate::theme::active_theme();
-        let ui = crate::theme::ui_colors();
-        div()
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(6.))
-            .bg(theme.title_bar_background)
-            .border_1()
-            .border_color(ui.border)
-            .text_color(ui.text)
-            .text_size(px(11.))
-            .font_family("monospace")
-            .child(self.path.clone())
+        crate::ui_primitives::tooltip_shell().child(self.label.clone())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        SIDEBAR_AGENT_ICON_SLOT_WIDTH, SIDEBAR_AGENT_STATUS_SLOT_WIDTH, SIDEBAR_TITLE_ROW_GAP,
-        SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH, SidebarAgentState, SidebarAgentSummary,
-        SidebarDiffSummary, SidebarServiceSummary, WorkspaceDropEdge, collapse_home,
-        sidebar_agent_summary, sidebar_diff_summary, sidebar_file_change_label,
-        sidebar_service_summary, sidebar_workspace_title_slot_width, visible_service_ports,
-        workspace_drop_edge, workspace_row_shell,
+        ROW_RADIUS, SIDEBAR_ACTION_BUTTON_GAP, SIDEBAR_ACTION_BUTTON_SIZE,
+        SIDEBAR_ACTION_LANE_WIDTH, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX,
+        SIDEBAR_FOLDER_ICON_WIDTH, SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X,
+        SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_TAB_CARD_HEIGHT,
+        SIDEBAR_TAB_CARD_ICON_SIZE, SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_ICON_CAP,
+        SIDEBAR_TAB_ICON_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WIDTH, SidebarAgentState,
+        SidebarAgentSummary, SidebarDropSlot, SidebarRow, SidebarServiceSummary,
+        folder_row_sessions, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
+        sidebar_row_shell, sidebar_service_summary, tab_display_title, tab_icon_cluster_split,
+        tab_row_sessions, visible_service_ports,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
     use crate::terminal::ServiceInfo;
-    use crate::workspace::GitDiffStats;
+    use crate::workspace::Tab;
     use gpui::{
-        AvailableSpace, InteractiveElement, ParentElement, SharedString, Styled, TestAppContext,
-        div, point, px, size,
+        AvailableSpace, InteractiveElement, ParentElement, Styled, TestAppContext, div, point, px,
+        size,
     };
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     fn session(state: AgentState) -> AgentSession {
         AgentSession::new(TerminalAgent::ClaudeCode, state)
     }
 
     #[test]
-    fn workspace_drop_edge_matches_reorder_insertion_side() {
-        let drag = crate::WorkspaceDrag {
-            id: 7,
-            source_idx: 2,
-            title: SharedString::from("source"),
-            branch: None,
-        };
+    fn reorder_target_accounts_for_the_removed_source() {
+        // Moving down: the source leaves first, so everything after it slides
+        // up and the gap the line pointed at is one index lower.
+        assert_eq!(reorder_target(0, 3), 2);
+        // Moving up: nothing before the gap moves.
+        assert_eq!(reorder_target(4, 1), 1);
+        // The two gaps around the source are both no-ops.
+        assert_eq!(reorder_target(2, 2), 2);
+        assert_eq!(reorder_target(2, 3), 2);
+    }
 
-        assert_eq!(workspace_drop_edge(&drag, 7, 2), None);
+    #[test]
+    fn drop_slots_sit_between_the_rendered_rows() {
+        // One expanded workspace with two tabs, then a collapsed one.
+        let rows = [
+            SidebarRow::Folder(0),
+            SidebarRow::Tab(0, 0),
+            SidebarRow::Tab(0, 1),
+            SidebarRow::Folder(1),
+        ];
+        let slots = sidebar_drop_slots(&rows, 2);
+
+        assert_eq!(slots.len(), rows.len() + 1);
+        // Above everything: a folder lands first, a tab has nowhere to go.
         assert_eq!(
-            workspace_drop_edge(&drag, 3, 0),
-            Some(WorkspaceDropEdge::Before)
+            slots[0],
+            SidebarDropSlot {
+                tab: None,
+                workspace: Some(0)
+            }
+        );
+        // Under a folder row: that workspace's first tab. Not a folder gap.
+        assert_eq!(
+            slots[1],
+            SidebarDropSlot {
+                tab: Some((0, 0)),
+                workspace: None
+            }
         );
         assert_eq!(
-            workspace_drop_edge(&drag, 9, 5),
-            Some(WorkspaceDropEdge::After)
+            slots[2],
+            SidebarDropSlot {
+                tab: Some((0, 1)),
+                workspace: None
+            }
+        );
+        // Between two folders: appends to the one above, and reorders folders.
+        assert_eq!(
+            slots[3],
+            SidebarDropSlot {
+                tab: Some((0, 2)),
+                workspace: Some(1)
+            }
+        );
+        // Past the last row: appends to the collapsed workspace, folder last.
+        assert_eq!(
+            slots[4],
+            SidebarDropSlot {
+                tab: Some((1, 0)),
+                workspace: Some(2)
+            }
+        );
+    }
+
+    #[gpui::test]
+    /// The divider carries the insertion line as an absolutely positioned band
+    /// so it can reach over its neighbors without displacing them - a geometry
+    /// worth pinning, since getting it wrong paints nothing at all.
+    fn a_drop_divider_spans_the_rail_and_reaches_over_its_neighbors(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(SIDEBAR_WIDTH)),
+                AvailableSpace::Definite(px(100.)),
+            ),
+            |_, _| {
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .child(div().h(px(30.)))
+                    .child(
+                        div()
+                            .h(px(SIDEBAR_ROW_SPACING))
+                            .flex_none()
+                            .relative()
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(-SIDEBAR_DROP_BAND_REACH))
+                                    .w_full()
+                                    .px(px(SIDEBAR_ROW_MARGIN_X))
+                                    .h(px(SIDEBAR_ROW_SPACING + SIDEBAR_DROP_BAND_REACH * 2.0))
+                                    .flex()
+                                    .flex_col()
+                                    .justify_center()
+                                    .debug_selector(|| "band".into())
+                                    .child(
+                                        div()
+                                            .h(px(SIDEBAR_DROP_LINE_PX))
+                                            .w_full()
+                                            .bg(gpui::rgb(0xff0000))
+                                            .debug_selector(|| "line".into()),
+                                    ),
+                            ),
+                    )
+            },
+        );
+        let band = cx.debug_bounds("band").expect("drop band not painted");
+        let line = cx.debug_bounds("line").expect("drop line not painted");
+
+        // Sized by a width, never by a `left`/`right` inset pair: insets alone
+        // leave an absolutely positioned element 0 px wide, and a zero-width
+        // band is both invisible and impossible to hover.
+        assert_eq!(band.size.width, px(SIDEBAR_WIDTH));
+        assert_eq!(
+            line.size.width,
+            px(SIDEBAR_WIDTH - 2. * SIDEBAR_ROW_MARGIN_X)
+        );
+        // Reaches half a row above the gap it owns, so consecutive bands tile
+        // the rail: every drop aims at the nearest gap.
+        assert_eq!(band.origin.y, px(30.) - px(SIDEBAR_DROP_BAND_REACH));
+        assert_eq!(
+            band.size.height,
+            px(SIDEBAR_ROW_SPACING + SIDEBAR_DROP_BAND_REACH * 2.0)
+        );
+        // The line rests in the gap itself, centered in the band.
+        assert_eq!(line.origin.y, px(30.) + px(SIDEBAR_ROW_SPACING / 2.0 - 1.0));
+    }
+
+    #[gpui::test]
+    fn a_single_line_row_is_thirty_pixels_tall(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        cx.draw(
+            point(px(0.), px(0.)),
+            size(
+                AvailableSpace::Definite(px(SIDEBAR_WIDTH)),
+                AvailableSpace::Definite(px(100.)),
+            ),
+            |_, _| {
+                sidebar_row_shell()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .child(div().flex_none().size(px(SIDEBAR_FOLDER_ICON_WIDTH)))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                                    .child("paneflow"),
+                            ),
+                    )
+                    .debug_selector(|| "row".into())
+            },
+        );
+
+        let bounds = cx.debug_bounds("row").expect("row not painted");
+        assert_eq!(
+            bounds.size.height,
+            px(SIDEBAR_ROW_LINE_HEIGHT + 2. * SIDEBAR_ROW_PADDING_Y),
+            "a title line must not let the font's own line height set the row height"
+        );
+        assert_eq!(bounds.size.height, px(30.));
+        // `squircle::trace` silently clamps the radius to half the shorter
+        // side, so a corner larger than this would stop being the corner the
+        // constant claims.
+        assert!(
+            ROW_RADIUS <= bounds.size.height / 2.,
+            "row corner {ROW_RADIUS:?} exceeds half of a {:?} row",
+            bounds.size.height
         );
     }
 
@@ -1308,7 +2353,7 @@ mod tests {
 
                 for selector in ROWS {
                     list = list.child(
-                        workspace_row_shell()
+                        sidebar_row_shell()
                             .child(div().h(px(20.)).flex_none())
                             .child(div().h(px(14.)).flex_none())
                             .debug_selector(move || selector.into()),
@@ -1322,39 +2367,8 @@ mod tests {
             let bounds = cx
                 .debug_bounds(selector)
                 .unwrap_or_else(|| panic!("{selector} not painted"));
-            assert_eq!(bounds.size.height, px(46.), "{selector}");
+            assert_eq!(bounds.size.height, px(50.), "{selector}");
         }
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn collapses_nested_path_under_home() {
-        assert_eq!(
-            collapse_home("/home/arthur/dev/x", "/home/arthur"),
-            "~/dev/x"
-        );
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn exact_home_collapses_to_tilde() {
-        assert_eq!(collapse_home("/home/arthur", "/home/arthur"), "~");
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn partial_component_is_not_a_prefix() {
-        // US-040 regression: `/home/arth` must NOT match `/home/arthur` - the
-        // old `starts_with` + byte slice produced the bogus "~ur/proj".
-        assert_eq!(
-            collapse_home("/home/arthur/proj", "/home/arth"),
-            "/home/arthur/proj"
-        );
-    }
-
-    #[test]
-    fn empty_home_returns_cwd_verbatim() {
-        assert_eq!(collapse_home("/some/path", ""), "/some/path");
     }
 
     #[test]
@@ -1460,43 +2474,6 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_diff_summary_hides_zero_line_counts() {
-        let binary_only = GitDiffStats {
-            files_changed: 1,
-            insertions: 0,
-            deletions: 0,
-        };
-        assert_eq!(
-            sidebar_diff_summary(&binary_only),
-            SidebarDiffSummary::Files { files_changed: 1 }
-        );
-
-        let deletion_only = GitDiffStats {
-            files_changed: 1,
-            insertions: 0,
-            deletions: 82,
-        };
-        assert_eq!(
-            sidebar_diff_summary(&deletion_only),
-            SidebarDiffSummary::Lines {
-                insertions: 0,
-                deletions: 82
-            }
-        );
-
-        assert_eq!(
-            sidebar_diff_summary(&GitDiffStats::default()),
-            SidebarDiffSummary::None
-        );
-    }
-
-    #[test]
-    fn sidebar_file_change_label_is_compact_for_unmeasured_diffs() {
-        assert_eq!(sidebar_file_change_label(1), "1 changed");
-        assert_eq!(sidebar_file_change_label(2), "2 changed");
-    }
-
-    #[test]
     fn sidebar_agent_summary_hides_idle_without_signal() {
         assert_eq!(sidebar_agent_summary(std::iter::empty(), false), None);
     }
@@ -1564,38 +2541,169 @@ mod tests {
     }
 
     #[test]
-    fn sidebar_workspace_title_slot_width_reserves_agent_status() {
+    fn tab_display_title_falls_back_to_position() {
+        // US-009: a tab is unnamed until it is renamed or created from a named
+        // preset, and a blank sidebar row would be unclickable in practice.
+        let unnamed = Tab::new(String::new(), None);
+        assert_eq!(tab_display_title(&unnamed, 0), "Tab 1");
+        assert_eq!(tab_display_title(&unnamed, 4), "Tab 5");
+
+        let blank = Tab::new("   ".to_string(), None);
+        assert_eq!(tab_display_title(&blank, 1), "Tab 2");
+
+        let named = Tab::new("build".to_string(), None);
+        assert_eq!(tab_display_title(&named, 3), "build");
+    }
+
+    /// US-012: a session bound to a terminal of the tab, one bound elsewhere,
+    /// one never resolved. Only the first may reach the tab row.
+    fn attributed_sessions() -> [AgentSession; 3] {
+        let mut mine = session(AgentState::WaitingForInput);
+        mine.surface_id = Some(11);
+        let mut other_tab = session(AgentState::Errored);
+        other_tab.surface_id = Some(22);
+        let unattributed = session(AgentState::Thinking);
+        [mine, other_tab, unattributed]
+    }
+
+    #[test]
+    fn tab_row_speaks_only_for_the_sessions_of_its_own_surfaces() {
+        let sessions = attributed_sessions();
+        let surfaces = HashSet::from([11u64]);
         assert_eq!(
-            sidebar_workspace_title_slot_width(None),
-            SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH
+            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &surfaces), false),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::NeedsInput,
+                count: 1
+            }),
+            "a tab must not inherit a sibling tab's session, nor an unattributed one"
         );
 
-        let needs_input = Some(SidebarAgentSummary {
-            state: SidebarAgentState::NeedsInput,
-            count: 1,
-        });
+        // FR-03: a tab with no terminal of its own stays silent even while the
+        // workspace is busy.
         assert_eq!(
-            sidebar_workspace_title_slot_width(needs_input),
-            SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH
-                - SIDEBAR_TITLE_ROW_GAP
-                - SIDEBAR_AGENT_STATUS_SLOT_WIDTH
-        );
-
-        let unread_completion = Some(SidebarAgentSummary {
-            state: SidebarAgentState::Finished,
-            count: 1,
-        });
-        assert_eq!(
-            sidebar_workspace_title_slot_width(unread_completion),
-            SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH
-                - SIDEBAR_TITLE_ROW_GAP
-                - SIDEBAR_AGENT_ICON_SLOT_WIDTH
+            sidebar_agent_summary(tab_row_sessions(sessions.iter(), &HashSet::new()), false),
+            None
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
-    fn cwd_outside_home_is_unchanged() {
-        assert_eq!(collapse_home("/etc/hosts", "/home/arthur"), "/etc/hosts");
+    fn expanded_folder_keeps_only_the_unattributed_sessions() {
+        let sessions = attributed_sessions();
+        // FR-04: the residue is the `surface_id: None` session, and nothing
+        // else - the two resolved ones are spoken for by their tab rows.
+        assert_eq!(
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), false),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::Thinking,
+                count: 1
+            })
+        );
+
+        // ... and an expanded folder with no residue paints nothing at all.
+        let resolved = [attributed_sessions()[0].clone()];
+        assert_eq!(
+            sidebar_agent_summary(folder_row_sessions(resolved.iter(), true), false),
+            None
+        );
+    }
+
+    #[test]
+    fn collapsed_folder_re_aggregates_every_tab() {
+        let sessions = attributed_sessions();
+        // FR-05: folding hides no state, so the collapsed row falls back to the
+        // full precedence over every session, resolved or not.
+        assert_eq!(
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), false),
+            Some(SidebarAgentSummary {
+                state: SidebarAgentState::NeedsInput,
+                count: 1
+            })
+        );
+    }
+
+    #[test]
+    fn a_late_resolution_never_double_counts() {
+        // Edge case 6: the two filters partition on `surface_id`, so a session
+        // is counted by the folder or by its tab, never by both.
+        let mut sessions = attributed_sessions().to_vec();
+        let surfaces = HashSet::from([11u64, 33u64]);
+        let folder_before = folder_row_sessions(sessions.iter(), true).count();
+        let tab_before = tab_row_sessions(sessions.iter(), &surfaces).count();
+        assert_eq!((folder_before, tab_before), (1, 1));
+
+        sessions[2].surface_id = Some(33);
+        let folder_after = folder_row_sessions(sessions.iter(), true).count();
+        let tab_after = tab_row_sessions(sessions.iter(), &surfaces).count();
+        assert_eq!((folder_after, tab_after), (0, 2));
+        assert_eq!(folder_before + tab_before, folder_after + tab_after);
+    }
+
+    #[test]
+    fn the_folder_action_lane_holds_both_of_its_buttons() {
+        // The folder row reserves this lane as trailing padding at all times,
+        // so it is the one geometry that must track the cluster's real width:
+        // a lane sized for one button leaves the second one sitting on the
+        // agent badge, which is what the reservation exists to prevent.
+        let cluster =
+            2. * SIDEBAR_ACTION_BUTTON_SIZE + SIDEBAR_ACTION_BUTTON_GAP + SIDEBAR_TITLE_ROW_GAP;
+        assert_eq!(
+            SIDEBAR_ACTION_LANE_WIDTH, cluster,
+            "the reserved lane no longer matches the two-button cluster it holds"
+        );
+        // A tab row reserves nothing: it hides its pane cluster and drops the
+        // button in its place. That only holds while the narrowest cluster - a
+        // lone bare glyph - plus the row's gap still clears the button, or the
+        // `x` would overhang a title it is not covering for.
+        let narrowest_cluster = SIDEBAR_TAB_ICON_SIZE + SIDEBAR_TITLE_ROW_GAP;
+        assert!(
+            narrowest_cluster >= SIDEBAR_ACTION_BUTTON_SIZE,
+            "a tab row's close button now overhangs past its pane cluster onto the title"
+        );
+    }
+
+    #[test]
+    fn tab_card_fits_inside_a_row() {
+        // The pane cards are absolute and overhang the title's line height into
+        // the row's vertical padding. The row shell clips its own overflow, so
+        // a card taller than the whole row paints sliced - which is exactly how
+        // an oversized card failed once. This is the bound that keeps it whole.
+        let row_height = SIDEBAR_ROW_LINE_HEIGHT + 2. * SIDEBAR_ROW_PADDING_Y;
+        assert!(
+            SIDEBAR_TAB_CARD_HEIGHT <= row_height,
+            "a {SIDEBAR_TAB_CARD_HEIGHT}px card overflows a {row_height}px row and would be clipped"
+        );
+        // The glyph must leave breathing room on every side, or the mark reads
+        // as a framed icon instead of a chip.
+        assert!(
+            SIDEBAR_TAB_CARD_ICON_SIZE + 8. <= SIDEBAR_TAB_CARD_WIDTH.min(SIDEBAR_TAB_CARD_HEIGHT),
+            "a {SIDEBAR_TAB_CARD_ICON_SIZE}px glyph leaves under 4px of padding in the card"
+        );
+        // ... and the leftover must split into whole pixels on both axes, or
+        // rounding lands the glyph off center by half a pixel.
+        for side in [SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_CARD_HEIGHT] {
+            let gap = side - SIDEBAR_TAB_CARD_ICON_SIZE;
+            assert_eq!(
+                gap % 2.,
+                0.,
+                "a {gap}px gap around the glyph centers it on a half pixel"
+            );
+        }
+    }
+
+    #[test]
+    fn tab_icon_cluster_caps_at_four_panes() {
+        // US-013: up to the cap every pane gets its own slot; past it the tail
+        // folds into a single `+N`.
+        assert_eq!(tab_icon_cluster_split(0), (0, 0));
+        assert_eq!(tab_icon_cluster_split(1), (1, 0));
+        assert_eq!(
+            tab_icon_cluster_split(SIDEBAR_TAB_ICON_CAP),
+            (SIDEBAR_TAB_ICON_CAP, 0)
+        );
+        assert_eq!(
+            tab_icon_cluster_split(SIDEBAR_TAB_ICON_CAP + 3),
+            (SIDEBAR_TAB_ICON_CAP, 3)
+        );
     }
 }

@@ -219,7 +219,7 @@ printf '%s\\n' '{"jsonrpc":"2.0","method":"system.capabilities","params":{},"id"
 | `workspace.close`          | `index?`                                                                                        | Close a workspace                                        |
 | `workspace.up`             | `name`, `layout`, `panes[]`                                                                     | Declarative spawn used by `up` and flow roots            |
 | `workspace.restore_layout` | `layout`                                                                                        | Apply a layout tree                                      |
-| `surface.list`             | -                                                                                               | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace,scope}]}` |
+| `surface.list`             | -                                                                                               | `{surfaces:[{surface_id,name,title,cwd,cmd,workspace,scope,tab_id,tab_title}]}` |
 | `surface.read`             | `surface_id`, `lines?`, `offset?`, `fenced?`                                                    | Scrollback, `output_generation`, `truncated`             |
 | `surface.search`           | `surface_id`, `pattern`, `max_matches?`                                                         | Case-insensitive substring matches                       |
 | `surface.rename`           | `surface_id`, `name`                                                                            | Rename or clear a pane name                              |

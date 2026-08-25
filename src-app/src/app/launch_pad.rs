@@ -233,7 +233,7 @@ impl PaneFlowApp {
             self.launch_pad_set_error("No git repository for this workspace", cx);
             return;
         };
-        if ws.root.as_ref().is_none_or(|r| r.leaf_count() >= MAX_PANES) {
+        if ws.active_tab().root.is_none() || !ws.active_tab().can_add_pane() {
             self.launch_pad_set_error(format!("Maximum pane count reached ({MAX_PANES})"), cx);
             return;
         }
@@ -332,10 +332,8 @@ impl PaneFlowApp {
             });
 
         // Re-check the pane budget - it may have filled during the run.
-        if self.workspaces[ws_idx]
-            .root
-            .as_ref()
-            .is_none_or(|r| r.leaf_count() >= MAX_PANES)
+        if self.workspaces[ws_idx].active_tab().root.is_none()
+            || !self.workspaces[ws_idx].active_tab().can_add_pane()
         {
             self.launch_pad_set_error(
                 format!(
@@ -353,6 +351,7 @@ impl PaneFlowApp {
             .and_then(|lp| lp.target.upgrade())
             .filter(|t| {
                 self.workspaces[ws_idx]
+                    .active_tab()
                     .root
                     .as_ref()
                     .is_some_and(|r| r.contains_leaf(t))
@@ -368,7 +367,7 @@ impl PaneFlowApp {
             )
         });
         let new_pane = self.create_pane(new_terminal.clone(), plan.ws_id, cx);
-        let Some(root) = self.workspaces[ws_idx].root.as_mut() else {
+        let Some(root) = self.workspaces[ws_idx].active_tab_mut().root.as_mut() else {
             self.launch_pad_set_error("Workspace has no layout root", cx);
             return;
         };

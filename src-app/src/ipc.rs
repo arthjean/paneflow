@@ -46,7 +46,8 @@
 //!   side effects on the UI; no file/system mutation.
 //! - `workspace.create`: spawns a PTY at `cwd`. `cwd` is
 //!   canonicalised (US-014) and rejected if not a directory.
-//! - `surface.split`: layout mutation, bounded by `MAX_PANES`. Bare layout
+//! - `surface.split`: layout mutation, bounded by `MAX_PANES` on the tab
+//!   owning the targeted surface (US-003, `prd-cli-tab-hierarchy`). Bare layout
 //!   splits are navigation-level; spawn fields are gated like `workspace.up`.
 //! - `workspace.up`: multi-pane creation. Navigation-only pane specs are
 //!   allowed for same-UID clients, but `command`, `prompt`, `context`, and

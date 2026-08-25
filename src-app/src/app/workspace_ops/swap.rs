@@ -22,7 +22,7 @@ impl PaneFlowApp {
             self.swap_source = None;
             SWAP_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
         } else if let Some(ws) = self.active_workspace()
-            && let Some(root) = &ws.root
+            && let Some(root) = &ws.active_tab().root
             && root.leaf_count() > 1
         {
             // Enter swap mode: record the currently focused pane

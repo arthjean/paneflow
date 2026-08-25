@@ -8,7 +8,11 @@
 use gpui::{Hsla, Pixels, WindowBackgroundAppearance, px};
 
 /// Sidebar width in pixels - shared between sidebar and title bar for alignment.
-pub(crate) const SIDEBAR_WIDTH: f32 = 240.;
+///
+/// Sized so a tab row keeps at least the title budget of an Agents thread row
+/// once the row margins, the folder lead, and the 48px agent-status slot are
+/// taken out. It also lines up with the files rail, which already sits at 300.
+pub(crate) const SIDEBAR_WIDTH: f32 = 300.;
 /// Outer title-bar inset aligned with workspace rows and the sidebar footer.
 pub(crate) const TITLE_BAR_EDGE_INSET: Pixels = px(8.);
 /// Inter-button rhythm for compact title-bar controls.
@@ -35,10 +39,18 @@ pub(crate) const PANEL_CORNER_RADIUS: Pixels = WINDOW_CORNER_RADIUS;
 /// This is larger than [`PANEL_CORNER_RADIUS`] by design - the cards are the
 /// foreground objects, and it is their corner the eye reads, not the shell's.
 pub(crate) const PANE_CARD_RADIUS: Pixels = px(20.);
-/// Inner CLI content inset, placing tabs and terminal cells this far from the
-/// pane card's edge. The card's hairline is painted as a path rather than
-/// reserved as a border, so it costs no layout and is not folded in here.
-pub(crate) const PANE_CONTENT_INSET: f32 = 3.;
+/// Inner CLI content inset, placing the header row and the terminal cells this
+/// far from the pane card's edges. Mirrors Ghostty's `window-padding-x` /
+/// `window-padding-y` (`src/renderer/size.zig`): an explicit padding subtracted
+/// from the viewport *before* the grid is sized, applied to both edges of each
+/// axis, so the cells never hug the card - on any side. The card's hairline is
+/// painted as a path rather than reserved as a border, so it costs no layout
+/// and is not folded in here.
+pub(crate) const PANE_CONTENT_INSET_X: f32 = 10.;
+/// Vertical half of [`PANE_CONTENT_INSET_X`]. Ghostty splits the two axes for
+/// the same reason: a line box already carries leading, so the horizontal gap
+/// has to be the larger of the two to read as symmetric.
+pub(crate) const PANE_CONTENT_INSET_Y: f32 = 6.;
 /// Selected rows carry a stronger lift than hover rows so current navigation
 /// remains legible without a separate indicator. Linux precomposes these tints
 /// over the opaque chrome color; macOS and Windows keep their native material.
@@ -48,6 +60,12 @@ const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.11;
 const DARK_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.07;
 const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.08;
 const LIGHT_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.04;
+const SIDEBAR_TAB_ICON_CARD_TINT: u32 = 0x000000;
+/// How much darker than the selected tab card the pane-icon card sits. Small
+/// on purpose: the card reads as the same material as the row it lives on,
+/// one step down, not as a second color.
+const DARK_SIDEBAR_TAB_ICON_CARD_DARKEN: f32 = 0.10;
+const LIGHT_SIDEBAR_TAB_ICON_CARD_DARKEN: f32 = 0.05;
 
 /// Shared radius for the Agents search field and its primary navigation rows.
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
@@ -277,6 +295,42 @@ pub(crate) fn sidebar_tab_hover_background() -> Hsla {
         LIGHT_SIDEBAR_TAB_HOVER_OPACITY,
         DARK_SIDEBAR_TAB_HOVER_OPACITY,
     )
+}
+
+/// US-013: fill of one pane-icon card in a tab row's stacked cluster.
+///
+/// Opaque on every platform, unlike the row backgrounds above: the cards
+/// overlap, and a translucent fill doubles up in the seam and lets the card
+/// underneath show through its own right edge. Blending a tint onto an opaque
+/// title-bar background is the recipe `sidebar_tab_background` already uses on
+/// Linux, applied unconditionally here because a 15x18 card is far too small
+/// for the macOS/Windows material to read through anyway.
+pub(crate) fn sidebar_tab_icon_card_background() -> Hsla {
+    let theme = crate::theme::active_theme();
+    let is_light = theme.background.l > 0.5;
+    let (tab_tint, tab_opacity, darken) = if is_light {
+        (
+            LIGHT_SIDEBAR_TAB_TINT,
+            LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY,
+            LIGHT_SIDEBAR_TAB_ICON_CARD_DARKEN,
+        )
+    } else {
+        (
+            DARK_SIDEBAR_TAB_TINT,
+            DARK_SIDEBAR_TAB_ACTIVE_OPACITY,
+            DARK_SIDEBAR_TAB_ICON_CARD_DARKEN,
+        )
+    };
+    // Same material as the selected tab card, one step darker: the card is the
+    // row's own surface pushed back, not a color of its own. The tab tint is
+    // composed here rather than reused from `sidebar_tab_background` because
+    // that one stays translucent off Linux, and this card must be opaque.
+    let card = Hsla {
+        a: 1.0,
+        ..theme.title_bar_background
+    }
+    .blend(Hsla::from(gpui::rgb(tab_tint)).opacity(tab_opacity));
+    card.blend(Hsla::from(gpui::rgb(SIDEBAR_TAB_ICON_CARD_TINT)).opacity(darken))
 }
 
 fn sidebar_tab_background(light_opacity: f32, dark_opacity: f32) -> Hsla {

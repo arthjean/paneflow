@@ -365,37 +365,44 @@ fn announced_port_conflicts(
         .collect()
 }
 
+/// EP-002 US-007: place `pane` in a brand-new workspace tab of `ws_idx` and
+/// make that tab active.
+///
+/// This is where an edgeless drop lands. A pane holds exactly one surface, so
+/// a drop on the center band can no longer append next to the surface already
+/// there, and overwriting it would destroy whatever is running in it - a new
+/// workspace tab is the only placement that keeps both. Returns `false`
+/// without mutating anything when the workspace is at [`MAX_TABS_PER_WORKSPACE`]
+/// (`crate::workspace`); the caller owns the user-facing message.
+fn open_pane_in_new_workspace_tab(
+    workspaces: &mut [crate::workspace::Workspace],
+    ws_idx: usize,
+    pane: Entity<Pane>,
+) -> bool {
+    workspaces.get_mut(ws_idx).is_some_and(|ws| {
+        ws.open_tab(crate::workspace::Tab::new(
+            String::new(),
+            Some(crate::layout::LayoutTree::Leaf(pane)),
+        ))
+    })
+}
+
 impl PaneFlowApp {
-    fn duplicate_tab_content(
+    /// EP-002 US-007: open `pane` as a brand-new workspace tab of `ws_idx` and
+    /// make it active. Toasts and leaves the workspace untouched when the tab
+    /// cap refuses the insert. See [`open_pane_in_new_workspace_tab`] for the
+    /// rule this enforces.
+    pub(crate) fn open_pane_in_new_workspace_tab(
         &mut self,
-        tab: &crate::pane::TabContent,
         ws_idx: usize,
+        pane: Entity<Pane>,
         cx: &mut Context<Self>,
-    ) -> Option<crate::pane::TabContent> {
-        match tab {
-            crate::pane::TabContent::Terminal(t) => {
-                let ws_id = self.workspaces[ws_idx].id;
-                let cwd = t.read(cx).terminal.cwd_now().or_else(|| {
-                    let workspace_cwd = self.workspaces[ws_idx].cwd.as_str();
-                    (!workspace_cwd.is_empty()).then(|| std::path::PathBuf::from(workspace_cwd))
-                });
-                let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
-                cx.subscribe(&terminal, Self::handle_terminal_event)
-                    .detach();
-                Some(crate::pane::TabContent::Terminal(terminal))
-            }
-            crate::pane::TabContent::Markdown(markdown) => {
-                let path = markdown.read(cx).path.clone();
-                let duplicate = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
-                    crate::markdown::MarkdownView::open(path, cx)
-                });
-                Some(crate::pane::TabContent::Markdown(duplicate))
-            }
-            crate::pane::TabContent::Diff(_) => {
-                self.show_toast("Diff tabs cannot be duplicated yet", cx);
-                None
-            }
+    ) -> bool {
+        let opened = open_pane_in_new_workspace_tab(&mut self.workspaces, ws_idx, pane);
+        if !opened {
+            self.show_toast("Tab limit reached for this workspace", cx);
         }
+        opened
     }
 
     pub(crate) fn handle_title_bar_event(
@@ -447,49 +454,58 @@ impl PaneFlowApp {
             pane::PaneEvent::Remove => {
                 // Find the workspace that owns this pane (not necessarily the
                 // active one - shells can exit in background workspaces).
-                let ws_idx = self
-                    .workspaces
-                    .iter()
-                    .position(|ws| ws.contains_pane(&pane));
-                let Some(ws_idx) = ws_idx else {
+                // US-003: also resolve *which* tab owns it - a shell can exit
+                // in a background tab just as it can in a background workspace.
+                let Some((ws_idx, tab_idx)) =
+                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
+                        ws.tab_index_containing_pane(&pane).map(|t| (idx, t))
+                    })
+                else {
                     return;
                 };
 
-                let root_contains = self.workspaces[ws_idx]
+                let Some(tab) = self.workspaces[ws_idx].tabs().get(tab_idx) else {
+                    return;
+                };
+                let root_contains = tab
                     .root
                     .as_ref()
                     .is_some_and(|root| root.contains_leaf(&pane));
-                let saved_contains = self.workspaces[ws_idx]
+                let saved_contains = tab
                     .saved_layout
                     .as_ref()
                     .is_some_and(|saved| saved.contains_leaf(&pane));
 
-                if saved_contains {
-                    if let Some(saved) = self.workspaces[ws_idx].saved_layout.take() {
-                        let (new_saved, _) = saved.remove_pane(&pane);
-                        if root_contains {
-                            self.workspaces[ws_idx].root = new_saved;
-                        } else {
-                            self.workspaces[ws_idx].saved_layout = new_saved;
+                if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
+                    if saved_contains {
+                        if let Some(saved) = tab.saved_layout.take() {
+                            let (new_saved, _) = saved.remove_pane(&pane);
+                            if root_contains {
+                                tab.root = new_saved;
+                            } else {
+                                tab.saved_layout = new_saved;
+                            }
                         }
+                    } else if let Some(root) = tab.root.take() {
+                        let (new_root, _) = root.remove_pane(&pane);
+                        tab.root = new_root;
                     }
-                } else if let Some(root) = self.workspaces[ws_idx].root.take() {
-                    let (new_root, _) = root.remove_pane(&pane);
-                    self.workspaces[ws_idx].root = new_root;
                 }
 
-                // Never leave a workspace without a pane - respawn at the
-                // workspace's root cwd so the user returns to the right folder.
-                if self.workspaces[ws_idx].root.is_none() {
+                // Never leave a tab without a pane - respawn at the workspace's
+                // root cwd so the user returns to the right folder.
+                let tab_is_empty = self.workspaces[ws_idx]
+                    .tabs()
+                    .get(tab_idx)
+                    .is_none_or(|tab| tab.root.is_none());
+                if tab_is_empty {
                     let ws_id = self.workspaces[ws_idx].id;
                     let cwd = std::path::PathBuf::from(&self.workspaces[ws_idx].cwd);
                     let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(cwd), None, cx));
                     let new_pane = self.create_pane(terminal, ws_id, cx);
-                    self.workspaces[ws_idx].root = Some(LayoutTree::Leaf(new_pane));
-                    // The freshly-spawned replacement pane starts with an
-                    // empty `custom_buttons` list - push the workspace's
-                    // persisted set so the tab bar renders them again.
-                    self.workspaces[ws_idx].propagate_custom_buttons(cx);
+                    if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
+                        tab.root = Some(LayoutTree::Leaf(new_pane));
+                    }
                 }
                 self.save_session(cx);
                 cx.notify();
@@ -517,208 +533,15 @@ impl PaneFlowApp {
                 }
                 self.toggle_files_sidebar(cx);
             }
-            pane::PaneEvent::CopySurfaceRef(surface_id) => {
-                // US-010: resolve the globally-disambiguated name (matching the
-                // MCP `list_panes` tool) and copy it to the clipboard. Fall back
-                // to the raw id if the surface vanished between click and here.
-                let sid = *surface_id;
-                let reference = self
-                    .collect_surface_meta(cx)
-                    .into_iter()
-                    .find(|m| m.surface_id == sid)
-                    .map(|m| m.name)
-                    .unwrap_or_else(|| sid.to_string());
-                cx.write_to_clipboard(gpui::ClipboardItem::new_string(reference.clone()));
-                self.show_toast(format!("Copied surface ref: {reference}"), cx);
-            }
-            pane::PaneEvent::SurfaceRenamed => {
-                // US-013: a tab's custom name changed - persist so it survives
-                // restart (the name rides in the layout's SurfaceDefinition).
-                self.save_session(cx);
-                cx.notify();
-            }
-            pane::PaneEvent::TabsChanged => {
-                self.save_session(cx);
-                cx.notify();
-            }
-            pane::PaneEvent::OpenTabMenu { tab_id, position } => {
-                // EP-002 US-006: open the "Move to pane…" menu for this tab.
-                // Mutually exclusive with the other popovers, matching the
-                // workspace/profile/sessions menu pattern.
+            pane::PaneEvent::OpenPaneMenu { position } => {
+                // EP-002 US-007: open the pane header menu. Mutually exclusive
+                // with the other popovers, matching the workspace/profile/
+                // sessions menu pattern.
                 self.dismiss_transient_surfaces();
-                self.tab_menu_open = Some(crate::TabContextMenu {
-                    source_pane: pane.clone(),
-                    tab_id: *tab_id,
+                self.pane_menu_open = Some(crate::PaneContextMenu {
+                    pane: pane.clone(),
                     position: *position,
                 });
-                cx.notify();
-            }
-            pane::PaneEvent::DropSplit {
-                edge,
-                source_pane,
-                source_tab_id,
-                duplicate,
-            } => {
-                let edge = *edge;
-                let source_tab_id = *source_tab_id;
-                let duplicate = *duplicate;
-                let source_pane = source_pane.clone();
-                let target = &pane; // the emitting pane is the split target
-
-                // Resolve the workspace owning the target pane.
-                let Some(ws_idx) = self
-                    .workspaces
-                    .iter()
-                    .position(|ws| ws.contains_pane(target))
-                else {
-                    return;
-                };
-
-                // A split adds one pane - refuse at the cap (edge case #5).
-                if self.workspaces[ws_idx]
-                    .root
-                    .as_ref()
-                    .map(|r| r.leaf_count())
-                    .unwrap_or(0)
-                    >= MAX_PANES
-                {
-                    return;
-                }
-
-                // Refuse a meaningless self-split: promoting a pane's *only*
-                // tab onto its own edge just replaces it with an identical
-                // single-tab pane (edge case #9). A pane with >1 tab can
-                // legitimately split one tab out.
-                if !duplicate && &source_pane == target && source_pane.read(cx).tabs.len() <= 1 {
-                    return;
-                }
-
-                let ws_id = self.workspaces[ws_idx].id;
-
-                // Build the new pane: a fresh terminal at the dragged tab's cwd
-                // (duplicate, US-010) or the moved tab itself (US-009).
-                let new_pane = if duplicate {
-                    let Some(source_tab) = source_pane
-                        .read(cx)
-                        .tabs
-                        .iter()
-                        .find(|tab| tab.entity_id() == source_tab_id)
-                        .cloned()
-                    else {
-                        return;
-                    };
-                    let Some(tab) = self.duplicate_tab_content(&source_tab, ws_idx, cx) else {
-                        return;
-                    };
-                    self.create_pane_with_existing_tab(tab, ws_id, cx)
-                } else {
-                    let Some(tab) =
-                        source_pane.update(cx, |src, _| src.take_tab_for_move_by_id(source_tab_id))
-                    else {
-                        return;
-                    };
-                    self.create_pane_with_existing_tab(tab, ws_id, cx)
-                };
-
-                let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
-                    split_pane_at_edge(root, target, edge, new_pane.clone())
-                } else {
-                    false
-                };
-                if !inserted {
-                    return;
-                }
-
-                // Move-only: reflow away the source pane if it emptied.
-                if !duplicate {
-                    source_pane.update(cx, |src, src_cx| {
-                        if src.tabs.is_empty() {
-                            src_cx.emit(pane::PaneEvent::Remove);
-                        } else {
-                            src_cx.notify();
-                        }
-                    });
-                }
-
-                self.workspaces[ws_idx].propagate_custom_buttons(cx);
-                // Focus the new pane on next render (no Window here).
-                self.pending_pane_focus = Some(new_pane);
-                self.save_session(cx);
-                cx.notify();
-            }
-            pane::PaneEvent::NewTerminalTab => {
-                // The Pane can't spawn its own terminal at the right cwd (it
-                // knows its `workspace_id` but not the directory) nor wire the
-                // app-level CWD/port/service subscription, so it routes here.
-                // Resolve the owning workspace by id and spawn at its cwd; on
-                // Windows this is what keeps a new tab out of the process
-                // `current_dir()` (`C:\Program Files\PaneFlow`).
-                let ws_id = pane.read(cx).workspace_id;
-                let cwd = self
-                    .workspaces
-                    .iter()
-                    .find(|ws| ws.id == ws_id)
-                    .map(|ws| ws.cwd.as_str())
-                    .filter(|c| !c.is_empty())
-                    .map(std::path::PathBuf::from);
-                let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
-                // App-level subscription so CWD/port/service events route
-                // (mirrors `create_pane` / `DuplicateTabInto`); `add_tab` wires
-                // the pane-level subscription.
-                cx.subscribe(&terminal, Self::handle_terminal_event)
-                    .detach();
-                pane.update(cx, |p, cx| p.add_tab(terminal, cx));
-                self.pending_pane_focus = Some(pane.clone());
-                self.save_session(cx);
-                cx.notify();
-            }
-            pane::PaneEvent::DuplicateTabInto {
-                source_pane,
-                source_tab_id,
-                dest_idx,
-            } => {
-                // EP-003 US-010: a strip/center drop with the duplicate modifier
-                // held. Spawn a fresh terminal at the dragged tab's CWD and
-                // insert it into the emitting (destination) pane; the original
-                // stays put. Spawning here (not in the Pane) is required so the
-                // app-level CWD/port subscription gets wired, exactly like the
-                // `DropSplit` duplicate path and `create_pane`.
-                let source_tab_id = *source_tab_id;
-                let dest_idx = *dest_idx;
-                let source_pane = source_pane.clone();
-                let dest = pane.clone(); // the emitting pane is the destination
-
-                // Resolve the workspace owning the destination pane (for ws_id).
-                // A bail here also covers the race where `dest` was removed from
-                // the tree between the drop emit and this handler.
-                let Some(ws_idx) = self
-                    .workspaces
-                    .iter()
-                    .position(|ws| ws.contains_pane(&dest))
-                else {
-                    return;
-                };
-                let Some(source_tab) = source_pane
-                    .read(cx)
-                    .tabs
-                    .iter()
-                    .find(|tab| tab.entity_id() == source_tab_id)
-                    .cloned()
-                else {
-                    return;
-                };
-                let Some(tab) = self.duplicate_tab_content(&source_tab, ws_idx, cx) else {
-                    return;
-                };
-
-                dest.update(cx, |p, cx| {
-                    p.insert_duplicated_tab(tab, dest_idx, cx);
-                });
-                self.workspaces[ws_idx].propagate_custom_buttons(cx);
-                // Focus the destination pane (its newly-selected duplicate tab)
-                // on next render (no Window here).
-                self.pending_pane_focus = Some(dest);
-                self.save_session(cx);
                 cx.notify();
             }
             pane::PaneEvent::DropSessionSplit {
@@ -729,32 +552,35 @@ impl PaneFlowApp {
             } => {
                 // A session row was dropped out of the sidebar onto a pane.
                 // Spawn a fresh terminal at the session's cwd running the
-                // agent's resume command, then split the target pane toward the
-                // previewed edge (or append it here as a tab for center).
+                // agent's resume command, then split the target pane toward
+                // the previewed edge. EP-002 US-007: the center band no longer
+                // appends a pane-level tab (panes are mono-surface) - it opens
+                // the new surface in a new *workspace* tab instead, via
+                // `open_pane_in_new_workspace_tab`.
                 let edge = *edge;
                 let agent = *agent;
                 let session_id = session_id.clone();
                 let cwd = cwd.clone();
                 let target = pane.clone(); // the emitting pane is the target
 
-                let Some(ws_idx) = self
-                    .workspaces
-                    .iter()
-                    .position(|ws| ws.contains_pane(&target))
+                // US-003: the pane cap bounds a tab, so resolve the owning
+                // tab and count (and later mutate) that one.
+                let Some((ws_idx, tab_idx)) =
+                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
+                        ws.tab_index_containing_pane(&target).map(|t| (idx, t))
+                    })
                 else {
                     return;
                 };
 
-                // A split adds one pane - refuse at the cap (edge case #5). A
-                // center drop appends a tab to an existing pane, so it doesn't
-                // grow the count and isn't capped.
+                // A split adds one pane to the current tab - refuse at the cap
+                // (edge case #5). A center drop opens its own workspace tab, so
+                // it does not grow this tab's count and isn't capped here.
                 if edge.is_some()
-                    && self.workspaces[ws_idx]
-                        .root
-                        .as_ref()
-                        .map(|r| r.leaf_count())
-                        .unwrap_or(0)
-                        >= MAX_PANES
+                    && !self.workspaces[ws_idx]
+                        .tabs()
+                        .get(tab_idx)
+                        .is_some_and(|tab| tab.can_add_pane())
                 {
                     return;
                 }
@@ -786,7 +612,10 @@ impl PaneFlowApp {
                         // `create_pane` wires the app-level CWD/port subscription
                         // and the pane-event subscription (mirrors `DropSplit`).
                         let new_pane = self.create_pane(term, ws_id, cx);
-                        let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
+                        let inserted = if let Some(root) = self.workspaces[ws_idx]
+                            .tab_mut(tab_idx)
+                            .and_then(|tab| tab.root.as_mut())
+                        {
                             split_pane_at_edge(root, &target, edge, new_pane.clone())
                         } else {
                             false
@@ -794,55 +623,153 @@ impl PaneFlowApp {
                         if !inserted {
                             return;
                         }
-                        self.workspaces[ws_idx].propagate_custom_buttons(cx);
                         self.pending_pane_focus = Some(new_pane);
                     }
                     None => {
-                        // Center drop: append the resumed session as a new tab in
-                        // the target pane (mirrors `DuplicateTabInto`).
-                        cx.subscribe(&term, Self::handle_terminal_event).detach();
-                        target.update(cx, |p, cx| {
-                            let dest_idx = p.tabs.len();
-                            p.insert_duplicated_tab(
-                                crate::pane::TabContent::Terminal(term),
-                                dest_idx,
-                                cx,
-                            );
-                        });
-                        self.workspaces[ws_idx].propagate_custom_buttons(cx);
-                        self.pending_pane_focus = Some(target);
+                        // EP-002 US-007: a center drop opens the resumed
+                        // session in a NEW WORKSPACE TAB. The pane is
+                        // mono-surface, so there is no strip to append to and
+                        // overwriting the target's live terminal is not an
+                        // option.
+                        let new_pane = self.create_pane(term, ws_id, cx);
+                        if !self.open_pane_in_new_workspace_tab(ws_idx, new_pane.clone(), cx) {
+                            return;
+                        }
+                        self.pending_pane_focus = Some(new_pane);
                     }
                 }
+                self.save_session(cx);
+                cx.notify();
+            }
+            pane::PaneEvent::DropPaneMove {
+                source_pane_id,
+                edge,
+            } => {
+                // A pane was dropped on another pane of the same tab. This is
+                // the pre-EP-002 `DropSplit` gesture rebuilt for mono-surface
+                // panes: `Some(edge)` detaches the source from wherever it sits
+                // and re-inserts it as a split of the target toward that edge
+                // (drop it under a pane, to its right, ...); the center band
+                // makes the two trade places. Either way the pane count is
+                // unchanged, so there is no cap to check and no surface to
+                // spawn or destroy.
+                //
+                // The source is re-resolved by entity id inside the tab that
+                // owns the *target*, so a stale drag (source closed mid-gesture,
+                // or dragged from another tab) is a no-op.
+                let source_pane_id = *source_pane_id;
+                let edge = *edge;
+                let target = pane.clone(); // the emitting pane is the target
+                if target.entity_id().as_u64() == source_pane_id {
+                    return;
+                }
+                let Some((ws_idx, tab_idx)) =
+                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
+                        ws.tab_index_containing_pane(&target).map(|t| (idx, t))
+                    })
+                else {
+                    return;
+                };
+                let Some(root) = self.workspaces[ws_idx]
+                    .tab_mut(tab_idx)
+                    .and_then(|tab| tab.root.as_mut())
+                else {
+                    return;
+                };
+                let Some(source) = root
+                    .collect_leaves()
+                    .into_iter()
+                    .find(|p| p.entity_id().as_u64() == source_pane_id)
+                else {
+                    return;
+                };
+
+                let moved = match edge {
+                    // Center band: swap in place, no restructuring.
+                    None => root.swap_panes(&source, &target),
+                    Some(edge) => {
+                        // Detach then re-insert. `remove_pane` consumes the
+                        // tree, so it is taken out and put back whatever
+                        // happens - a bail must never leave the tab rootless.
+                        // The source pane entity survives the detach (this
+                        // handler holds a strong handle), so its terminal keeps
+                        // running throughout.
+                        let Some(mut tree) = self.workspaces[ws_idx]
+                            .tab_mut(tab_idx)
+                            .and_then(|tab| tab.root.take())
+                        else {
+                            return;
+                        };
+                        let (pruned, removed) = tree.remove_pane(&source);
+                        // `pruned` is `None` only when the source *was* the whole
+                        // tree, which the `target != source` guard above already
+                        // excludes; treat it as a bail rather than dropping the
+                        // layout on the floor.
+                        let mut moved = false;
+                        // `pruned == None` means the tree *was* the source leaf
+                        // alone, so rebuilding it as that leaf restores the
+                        // original layout verbatim.
+                        tree = pruned.unwrap_or_else(|| LayoutTree::Leaf(source.clone()));
+                        if removed && tree.contains_leaf(&target) {
+                            moved = split_pane_at_edge(&mut tree, &target, edge, source.clone());
+                            if !moved {
+                                // Unreachable in practice (the target was just
+                                // proven present), but a detached pane must
+                                // never be orphaned: its terminal would keep
+                                // running with no way back to it. Re-attach it
+                                // anywhere rather than lose it.
+                                moved = tree.first_leaf().is_some_and(|anchor| {
+                                    tree.split_at_pane(
+                                        &anchor,
+                                        crate::layout::SplitDirection::Vertical,
+                                        source.clone(),
+                                    )
+                                });
+                            }
+                        }
+                        if let Some(tab) = self.workspaces[ws_idx].tab_mut(tab_idx) {
+                            tab.root = Some(tree);
+                        }
+                        moved
+                    }
+                };
+                if !moved {
+                    return;
+                }
+                self.pending_pane_focus = Some(source);
                 self.save_session(cx);
                 cx.notify();
             }
             pane::PaneEvent::DropMarkdownSplit { edge, path } => {
                 // A markdown row was dropped out of the Files sidebar onto a
                 // pane (EP-003 US-008). Open it via the existing `MarkdownView`
-                // API, then split the target toward the previewed edge or append
-                // it here as a tab (center). Mirrors `DropSessionSplit`, minus
-                // the terminal spawn.
+                // API, then split the target toward the previewed edge. EP-002
+                // US-007: the center band opens the surface in a new *workspace*
+                // tab (panes are mono-surface, there is no pane-level tab to
+                // append to). Mirrors `DropSessionSplit`, minus the terminal
+                // spawn.
                 let edge = *edge;
                 let path = path.clone();
                 let target = pane.clone(); // the emitting pane is the target
 
-                let Some(ws_idx) = self
-                    .workspaces
-                    .iter()
-                    .position(|ws| ws.contains_pane(&target))
+                // US-003: the pane cap bounds a tab, so resolve the owning
+                // tab and count (and later mutate) that one.
+                let Some((ws_idx, tab_idx)) =
+                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
+                        ws.tab_index_containing_pane(&target).map(|t| (idx, t))
+                    })
                 else {
                     return;
                 };
 
-                // A split adds one pane - refuse at the cap (edge case #9). A
-                // center drop appends a tab, so it isn't capped.
+                // A split adds one pane to the current tab - refuse at the cap
+                // (edge case #9). A center drop opens its own workspace tab, so
+                // it isn't capped here.
                 if edge.is_some()
-                    && self.workspaces[ws_idx]
-                        .root
-                        .as_ref()
-                        .map(|r| r.leaf_count())
-                        .unwrap_or(0)
-                        >= MAX_PANES
+                    && !self.workspaces[ws_idx]
+                        .tabs()
+                        .get(tab_idx)
+                        .is_some_and(|tab| tab.can_add_pane())
                 {
                     return;
                 }
@@ -852,12 +779,15 @@ impl PaneFlowApp {
 
                 match edge {
                     Some(edge) => {
-                        let new_pane = self.create_pane_with_existing_tab(
-                            crate::pane::TabContent::Markdown(markdown),
+                        let new_pane = self.create_pane_with_existing_surface(
+                            crate::pane::PaneSurface::Markdown(markdown),
                             ws_id,
                             cx,
                         );
-                        let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
+                        let inserted = if let Some(root) = self.workspaces[ws_idx]
+                            .tab_mut(tab_idx)
+                            .and_then(|tab| tab.root.as_mut())
+                        {
                             split_pane_at_edge(root, &target, edge, new_pane.clone())
                         } else {
                             false
@@ -865,16 +795,22 @@ impl PaneFlowApp {
                         if !inserted {
                             return;
                         }
-                        self.workspaces[ws_idx].propagate_custom_buttons(cx);
                         self.pending_pane_focus = Some(new_pane);
                     }
                     None => {
-                        // Center drop: append the markdown as a new tab in the
-                        // target pane (mirrors the click-to-open path).
-                        target.update(cx, |p, cx| {
-                            p.add_markdown_tab(markdown, cx);
-                        });
-                        self.pending_pane_focus = Some(target);
+                        // EP-002 US-007: a center drop opens the file in a NEW
+                        // WORKSPACE TAB, for the same reason as
+                        // `DropSessionSplit` - the target pane holds a single
+                        // surface and must not be overwritten.
+                        let new_pane = self.create_pane_with_existing_surface(
+                            crate::pane::PaneSurface::Markdown(markdown),
+                            ws_id,
+                            cx,
+                        );
+                        if !self.open_pane_in_new_workspace_tab(ws_idx, new_pane.clone(), cx) {
+                            return;
+                        }
+                        self.pending_pane_focus = Some(new_pane);
                     }
                 }
                 self.save_session(cx);
@@ -882,75 +818,44 @@ impl PaneFlowApp {
             }
             pane::PaneEvent::Split(direction) => {
                 let direction = *direction;
-                let Some(ws_idx) = self.workspaces.iter().position(|ws| {
-                    ws.root
-                        .as_ref()
-                        .is_some_and(|root| root.contains_leaf(&pane))
-                }) else {
+                // US-003: split into the tab that owns the pane and cap on
+                // that tab's leaf count.
+                let Some((ws_idx, tab_idx)) =
+                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
+                        ws.tabs()
+                            .iter()
+                            .position(|tab| {
+                                tab.root
+                                    .as_ref()
+                                    .is_some_and(|root| root.contains_leaf(&pane))
+                            })
+                            .map(|t| (idx, t))
+                    })
+                else {
                     return;
                 };
-                if self.workspaces[ws_idx].is_zoomed() {
+                if self.workspaces[ws_idx]
+                    .tabs()
+                    .get(tab_idx)
+                    .is_some_and(|tab| tab.is_zoomed())
+                {
                     self.show_toast("Unzoom before splitting panes", cx);
                     return;
                 }
                 if self.workspaces[ws_idx]
-                    .root
-                    .as_ref()
-                    .is_none_or(|root| root.leaf_count() >= MAX_PANES)
+                    .tabs()
+                    .get(tab_idx)
+                    .is_none_or(|tab| tab.root.is_none() || !tab.can_add_pane())
                 {
                     self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
                     return;
                 }
-                // Inherit CWD and estimate initial grid size from the source terminal.
-                // Grid is halved in the split direction; refined to exact size on first prepaint.
-                // US-020: markdown panes have no terminal - fall back to the
-                // workspace's root cwd and a default 80×24 grid so a split
-                // request from a markdown pane still yields a usable terminal.
-                let (source_cwd, initial_size) = match pane.read(cx).active_terminal_opt() {
-                    Some(active) => {
-                        let view = active.read(cx);
-                        let cwd = view.terminal.cwd_now();
-                        let (cols, rows) = view.terminal.session_backend().grid_size();
-                        let size = match direction {
-                            crate::layout::SplitDirection::Horizontal => (cols, (rows / 2).max(1)),
-                            crate::layout::SplitDirection::Vertical => ((cols / 2).max(1), rows),
-                        };
-                        (cwd, size)
-                    }
-                    // Markdown pane (US-020): no terminal to read a cwd from, and
-                    // a default grid. `new_terminal_cwd` supplies the workspace
-                    // root below, exactly like a terminal whose `cwd_now()` is `None`.
-                    None => (None, (80, 24)),
-                };
-                // `cwd_now()` is `None` for a markdown source and on platforms
-                // without child-cwd introspection (always on Windows); fall back
-                // to the workspace root so the split never lands in the process
-                // `current_dir()` (`C:\Program Files\PaneFlow` when installed).
-                let source_cwd = source_cwd.or_else(|| {
-                    let cwd = self.workspaces[ws_idx].cwd.as_str();
-                    (!cwd.is_empty()).then(|| std::path::PathBuf::from(cwd))
-                });
-                let ws_id = self.workspaces[ws_idx].id;
-                let new_terminal =
-                    cx.new(|cx| TerminalView::with_cwd(ws_id, source_cwd, Some(initial_size), cx));
-                let new_pane = self.create_pane(new_terminal, ws_id, cx);
-                let inserted = if let Some(root) = &mut self.workspaces[ws_idx].root {
-                    root.split_at_pane(&pane, direction, new_pane.clone())
-                } else {
-                    false
-                };
-                if !inserted {
-                    return;
-                }
-                // The freshly-spawned pane starts with an empty
-                // `custom_buttons` list - push the workspace's current set
-                // so the new pane's tab bar matches its siblings.
-                if let Some(ws) = self.workspaces.get(ws_idx) {
-                    ws.propagate_custom_buttons(cx);
-                }
-                self.pending_pane_focus = Some(new_pane);
-                self.save_session(cx);
-                cx.notify();
+                // EP-005: the header's split buttons ask *what* to launch
+                // instead of dropping a bare shell in the new half. The picker
+                // stands in that half and only splits once a preset is picked,
+                // so both guards above still run first and Escape leaves the
+                // tab untouched.
+                self.open_split_palette(pane, direction, cx);
             }
         }
     }
@@ -1044,6 +949,11 @@ impl PaneFlowApp {
     /// make markdown a peer tab inside the same pane - the user keeps the
     /// terminal+markdown pair via Ctrl+Tab / mouse-click, and the layout tree
     /// is untouched.
+    /// Open a markdown file requested from a terminal surface (OSC path click).
+    ///
+    /// EP-002 US-007: a pane holds one surface, so the file opens in a new
+    /// workspace tab instead of being appended next to the terminal that asked
+    /// for it - the terminal keeps running.
     fn open_markdown_in_pane(
         &mut self,
         source_terminal: &Entity<TerminalView>,
@@ -1053,24 +963,19 @@ impl PaneFlowApp {
         let Some(ws_idx) = self.workspace_idx_for_terminal(source_terminal, cx) else {
             return;
         };
-        let source_pane = self.workspaces[ws_idx].root.as_ref().and_then(|root| {
-            root.collect_leaves()
-                .into_iter()
-                .find(|pane| pane.read(cx).contains_terminal(source_terminal))
-        });
-        let Some(source_pane) = source_pane else {
-            return;
-        };
-
-        let path_for_pane = path.clone();
+        let ws_id = self.workspaces[ws_idx].id;
         let markdown = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
-            crate::markdown::MarkdownView::open(path_for_pane, cx)
+            crate::markdown::MarkdownView::open(path, cx)
         });
-
-        source_pane.update(cx, |pane, cx| {
-            pane.add_markdown_tab(markdown, cx);
-            cx.notify();
-        });
+        let new_pane = self.create_pane_with_existing_surface(
+            crate::pane::PaneSurface::Markdown(markdown),
+            ws_id,
+            cx,
+        );
+        if !self.open_pane_in_new_workspace_tab(ws_idx, new_pane.clone(), cx) {
+            return;
+        }
+        self.pending_pane_focus = Some(new_pane);
         self.save_session(cx);
         cx.notify();
     }
@@ -1539,7 +1444,7 @@ impl PaneFlowApp {
         // US-020: skip markdown panes - they have no active terminal, so the
         // identity check via `active_terminal_opt` returns None for them.
         let ws_idx = self.workspaces.iter().position(|ws| {
-            ws.root.as_ref().is_some_and(|root| {
+            ws.active_tab().root.as_ref().is_some_and(|root| {
                 root.any_leaf(&mut |pane| {
                     pane.read(cx)
                         .active_terminal_opt()
@@ -1958,6 +1863,92 @@ mod tests {
         assert_eq!(
             announced_port_conflicts(&[5173], 2, &owner, &shared, &display_names),
             vec![(5173, "vite pane".to_string())]
+        );
+    }
+
+    /// EP-002 US-007: an edgeless drop (`DropSessionSplit` / `DropMarkdownSplit`
+    /// with `edge: None`, i.e. the center band) opens a NEW workspace tab. The
+    /// pane it was dropped on is mono-surface, so this proves the drop never
+    /// evicts the surface already running there.
+    #[gpui::test]
+    fn edgeless_drop_opens_a_new_workspace_tab(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let new_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            cx.new(|cx| crate::pane::Pane::new(terminal, 1, cx))
+        };
+
+        let target = new_pane(cx);
+        let target_surface = cx.update(|_, cx| target.read(cx).surface.as_terminal().cloned());
+        let mut workspaces = vec![crate::workspace::Workspace::with_layout_and_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            crate::layout::LayoutTree::Leaf(target.clone()),
+        )];
+
+        // The center band resolves to no edge, which is what routes here.
+        assert_eq!(
+            crate::pane_drag::compute_drop_edge(
+                100.0,
+                100.0,
+                50.0,
+                50.0,
+                crate::pane_drag::SPLIT_EDGE_BAND
+            ),
+            None
+        );
+
+        let dropped = new_pane(cx);
+        assert!(super::open_pane_in_new_workspace_tab(
+            &mut workspaces,
+            0,
+            dropped.clone()
+        ));
+
+        assert_eq!(workspaces[0].tab_count(), 2, "the drop opened a new tab");
+        assert_eq!(
+            workspaces[0].active_tab_idx(),
+            1,
+            "the new tab is the active one"
+        );
+        assert_eq!(
+            workspaces[0].tabs()[1]
+                .root
+                .as_ref()
+                .map(|root| root.collect_leaves()),
+            Some(vec![dropped]),
+            "the new tab holds the dropped surface alone"
+        );
+        // The target pane is untouched: same tab, same surface, still running.
+        assert_eq!(
+            workspaces[0].tabs()[0]
+                .root
+                .as_ref()
+                .map(|root| root.collect_leaves()),
+            Some(vec![target.clone()])
+        );
+        assert_eq!(
+            cx.update(|_, cx| target.read(cx).surface.as_terminal().cloned()),
+            target_surface,
+            "the pane dropped onto keeps its own surface"
+        );
+
+        // At the tab cap the insert is refused and nothing is mutated.
+        while workspaces[0].tab_count() < crate::workspace::MAX_TABS_PER_WORKSPACE {
+            assert!(workspaces[0].open_tab(crate::workspace::Tab::empty()));
+        }
+        let refused = new_pane(cx);
+        assert!(!super::open_pane_in_new_workspace_tab(
+            &mut workspaces,
+            0,
+            refused
+        ));
+        assert_eq!(
+            workspaces[0].tab_count(),
+            crate::workspace::MAX_TABS_PER_WORKSPACE
         );
     }
 }

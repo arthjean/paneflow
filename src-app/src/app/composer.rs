@@ -15,7 +15,6 @@
 //! called from the `ai.*` hook handlers on the GPUI main thread (serialized
 //! no race between transition and flush), and only ever pre-fills.
 
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui::{App, AppContext as _, Context, Entity, SharedString, WeakEntity, Window};
@@ -409,15 +408,12 @@ impl PaneFlowApp {
     /// the pending-buffer truth.
     pub(crate) fn sync_pending_chips(&self, cx: &mut Context<Self>) {
         for ws in &self.workspaces {
-            if let Some(root) = &ws.root {
+            if let Some(root) = &ws.active_tab().root {
                 for pane in root.collect_leaves() {
-                    let subset: HashSet<gpui::EntityId> = pane
-                        .read(cx)
-                        .terminals()
-                        .filter(|t| self.broadcast.pending.contains_key(&t.entity_id().as_u64()))
-                        .map(|t| t.entity_id())
-                        .collect();
-                    pane.update(cx, |p, cx| p.set_pending_prefill(subset, cx));
+                    let pending = pane.read(cx).active_terminal_opt().is_some_and(|t| {
+                        self.broadcast.pending.contains_key(&t.entity_id().as_u64())
+                    });
+                    pane.update(cx, |p, cx| p.set_pending_prefill(pending, cx));
                 }
             }
         }

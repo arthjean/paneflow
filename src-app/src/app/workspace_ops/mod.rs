@@ -19,14 +19,15 @@ mod layout;
 mod swap;
 mod tab;
 
-use gpui::{App, AppContext, ClipboardItem, Context, Focusable, PathPromptOptions, Window};
+use gpui::{App, AppContext, ClipboardItem, Context, Entity, Focusable, PathPromptOptions, Window};
+use paneflow_config::schema::TerminalSurfaceProfile;
 use paneflow_process::spawn_detached;
 
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
 use crate::terminal::TerminalView;
 use crate::workspace::{MAX_WORKSPACES, Workspace, next_workspace_id};
 use crate::{
-    ClosePane, CloseWorkspace, ClosedPaneRecord, ClosedTabRecord, CopyWorkspacePath,
+    ClosePane, CloseWorkspace, ClosedPaneRecord, ClosedSurfaceRecord, CopyWorkspacePath,
     MAX_CLOSED_PANE_SCROLLBACK_BYTES, MAX_CLOSED_PANES, NewWorkspace, NextWorkspace,
     OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
     PaneFlowApp, RevealWorkspaceInFileManager, SelectWorkspace1, SelectWorkspace2,
@@ -37,21 +38,18 @@ use crate::{
 #[derive(Clone)]
 pub(crate) enum WorkspaceFocusTarget {
     FirstPane,
-    PaneTab {
+    Pane {
         pane: gpui::Entity<crate::pane::Pane>,
-        tab_idx: usize,
     },
 }
 
 fn push_closed_pane_record(records: &mut Vec<ClosedPaneRecord>, mut record: ClosedPaneRecord) {
-    for tab in &mut record.tabs {
-        if let ClosedTabRecord::Terminal {
-            scrollback: Some(scrollback),
-            ..
-        } = tab
-        {
-            scrollback.shrink_to_fit();
-        }
+    if let ClosedSurfaceRecord::Terminal {
+        scrollback: Some(scrollback),
+        ..
+    } = &mut record.surface
+    {
+        scrollback.shrink_to_fit();
     }
     if records.len() >= MAX_CLOSED_PANES {
         records.remove(0);
@@ -69,15 +67,10 @@ fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedPaneRecord], budge
         if total <= budget {
             break;
         }
-        for tab in &mut record.tabs {
-            if total <= budget {
-                break;
-            }
-            if let ClosedTabRecord::Terminal { scrollback, .. } = tab
-                && let Some(scrollback) = scrollback.take()
-            {
-                total = total.saturating_sub(scrollback.len());
-            }
+        if let ClosedSurfaceRecord::Terminal { scrollback, .. } = &mut record.surface
+            && let Some(scrollback) = scrollback.take()
+        {
+            total = total.saturating_sub(scrollback.len());
         }
     }
 }
@@ -85,10 +78,10 @@ fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedPaneRecord], budge
 fn closed_pane_scrollback_bytes(records: &[ClosedPaneRecord]) -> usize {
     records
         .iter()
-        .flat_map(|record| &record.tabs)
+        .map(|record| &record.surface)
         .filter_map(|tab| match tab {
-            ClosedTabRecord::Terminal { scrollback, .. } => scrollback.as_ref(),
-            ClosedTabRecord::Markdown { .. } => None,
+            ClosedSurfaceRecord::Terminal { scrollback, .. } => scrollback.as_ref(),
+            ClosedSurfaceRecord::Markdown { .. } => None,
         })
         .map(String::len)
         .sum()
@@ -100,48 +93,41 @@ fn capture_closed_pane_record(
     cx: &App,
 ) -> Option<ClosedPaneRecord> {
     let pane_ref = pane.read(cx);
-    let mut tabs = Vec::new();
-    for tab in &pane_ref.tabs {
-        match tab {
-            crate::pane::TabContent::Terminal(tv) => {
-                let tv_ref = tv.read(cx);
-                tabs.push(ClosedTabRecord::Terminal {
-                    cwd: tv_ref
-                        .terminal
-                        .current_cwd
-                        .as_ref()
-                        .map(std::path::PathBuf::from)
-                        .or_else(|| tv_ref.terminal.cwd_now()),
-                    scrollback: tv_ref.terminal.extract_scrollback(),
-                    custom_name: tv_ref.terminal.custom_name.clone(),
-                    font_size: tv_ref.terminal.font_size_override,
-                });
+    // A diff surface is not restorable (derived state, not a document), so
+    // closing one leaves nothing to undo.
+    let surface = match &pane_ref.surface {
+        crate::pane::PaneSurface::Terminal(tv) => {
+            let tv_ref = tv.read(cx);
+            ClosedSurfaceRecord::Terminal {
+                cwd: tv_ref
+                    .terminal
+                    .current_cwd
+                    .as_ref()
+                    .map(std::path::PathBuf::from)
+                    .or_else(|| tv_ref.terminal.cwd_now()),
+                scrollback: tv_ref.terminal.extract_scrollback(),
+                custom_name: tv_ref.terminal.custom_name.clone(),
+                font_size: tv_ref.terminal.font_size_override,
             }
-            crate::pane::TabContent::Markdown(markdown) => {
-                tabs.push(ClosedTabRecord::Markdown {
-                    path: markdown.read(cx).path.clone(),
-                });
-            }
-            crate::pane::TabContent::Diff(_) => {}
         }
-    }
-    if tabs.is_empty() {
-        return None;
-    }
+        crate::pane::PaneSurface::Markdown(markdown) => ClosedSurfaceRecord::Markdown {
+            path: markdown.read(cx).path.clone(),
+        },
+        crate::pane::PaneSurface::Diff(_) => return None,
+    };
     Some(ClosedPaneRecord {
-        tabs,
-        selected_idx: pane_ref.selected_idx,
+        surface,
         workspace_idx,
     })
 }
 
-fn restore_closed_tab_record(
-    tab: ClosedTabRecord,
+fn restore_closed_surface_record(
+    tab: ClosedSurfaceRecord,
     ws_id: u64,
     cx: &mut Context<PaneFlowApp>,
-) -> crate::pane::TabContent {
+) -> crate::pane::PaneSurface {
     match tab {
-        ClosedTabRecord::Terminal {
+        ClosedSurfaceRecord::Terminal {
             cwd,
             scrollback,
             custom_name,
@@ -157,13 +143,13 @@ fn restore_closed_tab_record(
             }
             cx.subscribe(&terminal, PaneFlowApp::handle_terminal_event)
                 .detach();
-            crate::pane::TabContent::Terminal(terminal)
+            crate::pane::PaneSurface::Terminal(terminal)
         }
-        ClosedTabRecord::Markdown { path } => {
+        ClosedSurfaceRecord::Markdown { path } => {
             let markdown = cx.new(|cx: &mut Context<crate::markdown::MarkdownView>| {
                 crate::markdown::MarkdownView::open(path, cx)
             });
-            crate::pane::TabContent::Markdown(markdown)
+            crate::pane::PaneSurface::Markdown(markdown)
         }
     }
 }
@@ -174,11 +160,10 @@ impl PaneFlowApp {
         self.title_bar_help_menu_open = None;
         self.workspace_menu_open = None;
         self.tab_menu_open = None;
+        self.pane_menu_open = None;
         self.profile_menu_open = None;
         self.files_menu_open = None;
         self.agents_view.agents_menu_open = None;
-        self.agents_view.sidebar_actions_menu_open = false;
-        self.agents_view.sidebar_mode_picker_open = false;
     }
 
     pub(crate) fn active_workspace(&self) -> Option<&Workspace> {
@@ -221,13 +206,8 @@ impl PaneFlowApp {
             WorkspaceFocusTarget::FirstPane => {
                 self.workspaces[idx].focus_first(window, cx);
             }
-            WorkspaceFocusTarget::PaneTab { pane, tab_idx } => {
-                pane.update(cx, |p, cx| {
-                    if p.selected_idx != tab_idx {
-                        p.selected_idx = tab_idx;
-                    }
-                    cx.notify();
-                });
+            WorkspaceFocusTarget::Pane { pane } => {
+                pane.update(cx, |_p, cx| cx.notify());
                 pane.read(cx).focus_handle(cx).focus(window, cx);
             }
         }
@@ -236,6 +216,7 @@ impl PaneFlowApp {
         if self.agent_sessions.sessions_sidebar_open {
             let keep_sidebar_focus = self.agent_sessions.sessions_focus.is_focused(window);
             match self.workspaces[idx]
+                .active_tab()
                 .root
                 .as_ref()
                 .and_then(|root| root.first_leaf())
@@ -307,24 +288,87 @@ impl PaneFlowApp {
         }
     }
 
+    /// Add a workspace rooted at the implicit launch directory.
+    ///
+    /// EP-003: the workspace is born empty - no tab, no pane, no PTY. Opening
+    /// a project is a filing gesture, not a request to run a shell; the user
+    /// picks what runs in it from the folder's `+` action or the launch pad.
     #[allow(dead_code)]
-    pub(crate) fn create_workspace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn create_workspace(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.workspaces.len() >= MAX_WORKSPACES {
             return;
         }
         let n = self.workspaces.len() + 1;
         let ws_id = next_workspace_id();
-        let terminal = cx.new(|cx| TerminalView::new(ws_id, cx));
-        let pane = self.create_pane(terminal, ws_id, cx);
-        let ws = Workspace::with_id(ws_id, format!("Terminal {n}"), pane);
+        let ws = Workspace::empty_with_cwd_and_id(
+            ws_id,
+            format!("Terminal {n}"),
+            crate::launch_cwd::implicit_launch_cwd(),
+        );
         // US-013: deferred git-stats probe off the render thread.
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
         self.watch_git_dir(&ws);
         self.workspaces.push(ws);
         self.active_idx = self.workspaces.len() - 1;
-        self.workspaces[self.active_idx].focus_first(window, cx);
         self.save_session(cx);
         cx.notify();
+    }
+
+    /// Open one workspace per directory in `paths`.
+    ///
+    /// Shared by the folder picker and the sidebar's file-manager drop: both
+    /// hand over a list of paths the user pointed at, and both want the same
+    /// filing gesture. A path that is not a directory is ignored rather than
+    /// guessed at - the gesture names a project root, and a file's parent
+    /// directory is not reliably one.
+    pub(crate) fn open_workspace_folders(
+        &mut self,
+        paths: &[std::path::PathBuf],
+        cx: &mut Context<Self>,
+    ) {
+        let mut opened = false;
+        for path in paths {
+            if self.workspaces.len() >= MAX_WORKSPACES {
+                break;
+            }
+            // A drop carries whatever the file manager had selected, so the
+            // directory check is what keeps a stray file out of the rail. The
+            // picker is already restricted to directories and passes through.
+            if !path.is_dir() {
+                continue;
+            }
+            let cwd = path.display().to_string();
+            // Re-opening a folder that is already filed selects its row
+            // instead of stacking a second one on the same root.
+            if let Some(at) = self.workspaces.iter().position(|ws| ws.cwd == cwd) {
+                self.active_idx = at;
+                opened = true;
+                continue;
+            }
+            let n = self.workspaces.len() + 1;
+            let title = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| format!("Terminal {n}"));
+            let ws_id = next_workspace_id();
+            // EP-003: an opened folder starts empty - no tab and no PTY until
+            // the user asks for one.
+            let ws = Workspace::empty_with_cwd_and_id(ws_id, title, path.clone());
+            // US-013: deferred git-stats probe off the render thread.
+            Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
+            self.watch_git_dir(&ws);
+            self.workspaces.push(ws);
+            self.active_idx = self.workspaces.len() - 1;
+            opened = true;
+        }
+        if !opened {
+            return;
+        }
+        self.save_session(cx);
+        cx.notify();
+        // US-016 (prd-git-diff-mode-2026-Q3.md): a new repo must surface in
+        // Multi-project / re-target the diff.
+        self.reconcile_diff_after_workspace_change(cx);
     }
 
     pub(crate) fn create_workspace_with_picker(
@@ -346,32 +390,7 @@ impl PaneFlowApp {
                 if let Ok(Ok(Some(paths))) = receiver.await {
                     let _ = cx.update(|cx| {
                         this.update(cx, |app, cx| {
-                            for path in paths {
-                                if app.workspaces.len() >= MAX_WORKSPACES {
-                                    break;
-                                }
-                                let n = app.workspaces.len() + 1;
-                                let dir = path.clone();
-                                let title = dir
-                                    .file_name()
-                                    .map(|n| n.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| format!("Terminal {n}"));
-                                let ws_id = next_workspace_id();
-                                let terminal = cx
-                                    .new(|cx| TerminalView::with_cwd(ws_id, Some(path), None, cx));
-                                let pane = app.create_pane(terminal, ws_id, cx);
-                                let ws = Workspace::with_cwd_and_id(ws_id, title, dir, pane);
-                                // US-013: deferred git-stats probe off the render thread.
-                                Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
-                                app.watch_git_dir(&ws);
-                                app.workspaces.push(ws);
-                            }
-                            app.active_idx = app.workspaces.len() - 1;
-                            app.save_session(cx);
-                            cx.notify();
-                            // US-016 (prd-git-diff-mode-2026-Q3.md): a new repo
-                            // must surface in Multi-project / re-target the diff.
-                            app.reconcile_diff_after_workspace_change(cx);
+                            app.open_workspace_folders(&paths, cx);
                         })
                     });
                 }
@@ -416,10 +435,10 @@ impl PaneFlowApp {
             self.show_toast("Unzoom before splitting panes", cx);
             return;
         }
-        let Some(root) = &ws.root else {
+        let Some(root) = &ws.active_tab().root else {
             return;
         };
-        if root.leaf_count() >= MAX_PANES {
+        if !ws.active_tab().can_add_pane() {
             self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
             return;
         }
@@ -427,34 +446,80 @@ impl PaneFlowApp {
             self.show_toast("No focused pane to split", cx);
             return;
         };
+        if let Err(message) = self.split_with_target(
+            focused,
+            direction,
+            TerminalSurfaceProfile::Normal,
+            None,
+            window,
+            cx,
+        ) {
+            self.show_toast(message, cx);
+        }
+    }
+
+    /// Split `target` and return the refusal as a value instead of a toast.
+    ///
+    /// EP-005: the preset palette owns the focus while it is open, so it cannot
+    /// resolve a target from the focus chain and must surface a refusal (the
+    /// `MAX_PANES` cap in particular) inside the palette rather than behind it.
+    /// `profile` and `command` let it drop an agent or a custom command
+    /// straight into the new pane.
+    pub(crate) fn split_with_target(
+        &mut self,
+        target: Entity<crate::pane::Pane>,
+        direction: SplitDirection,
+        profile: TerminalSurfaceProfile,
+        command: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(ws) = self.active_workspace() else {
+            return Err("No active project".to_string());
+        };
+        if ws.is_zoomed() {
+            return Err("Unzoom before splitting panes".to_string());
+        }
+        if ws.active_tab().root.is_none() {
+            return Err("This tab has no pane to split".to_string());
+        }
+        if !ws.active_tab().can_add_pane() {
+            return Err(format!("Maximum pane count reached ({MAX_PANES})"));
+        }
         let ws_id = ws.id;
 
-        // Inherit CWD from the focused pane's active terminal. `cwd_now()` is
+        // Inherit CWD from the target pane's active terminal. `cwd_now()` is
         // best-effort: `None` for a markdown pane (US-020) and on platforms
         // without child-cwd introspection (always on Windows). `new_terminal_cwd`
         // then falls back to the workspace root, so the new pane never drops to
         // the process `current_dir()` (`C:\Program Files\PaneFlow` when installed).
-        let source_cwd = focused
+        let source_cwd = target
             .read(cx)
             .active_terminal_opt()
             .and_then(|tv| tv.read(cx).terminal.cwd_now());
         let source_cwd = self.new_terminal_cwd(source_cwd);
-        let new_terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, source_cwd, None, cx));
-        let new_pane = self.create_pane(new_terminal, ws_id, cx);
+        let new_terminal =
+            cx.new(|cx| TerminalView::with_cwd_and_profile(ws_id, source_cwd, None, profile, cx));
+        let new_pane = self.create_pane(new_terminal.clone(), ws_id, cx);
         let inserted = if let Some(ws) = self.active_workspace_mut()
-            && let Some(root) = &mut ws.root
+            && let Some(root) = &mut ws.active_tab_mut().root
         {
-            root.split_at_pane(&focused, direction, new_pane.clone())
+            root.split_at_pane(&target, direction, new_pane.clone())
         } else {
             false
         };
         if !inserted {
-            self.show_toast("Focused pane no longer exists", cx);
-            return;
+            return Err("That pane no longer exists".to_string());
+        }
+        if let Some(command) = command {
+            // Buffered until `TerminalState::promote` hands over the live PTY -
+            // same contract as the tab path.
+            new_terminal.read(cx).send_command(command);
         }
         new_pane.read(cx).focus_handle(cx).focus(window, cx);
         self.save_session(cx);
         cx.notify();
+        Ok(())
     }
 
     pub(crate) fn handle_split_h(
@@ -484,7 +549,7 @@ impl PaneFlowApp {
         // Must happen BEFORE the tree mutation that drops the pane entity.
         let workspace_idx = self.active_idx;
         if let Some(ws) = self.active_workspace()
-            && let Some(root) = &ws.root
+            && let Some(root) = &ws.active_tab().root
         {
             let closing_pane = if ws.is_zoomed() {
                 root.first_leaf()
@@ -502,24 +567,24 @@ impl PaneFlowApp {
             && ws.is_zoomed()
         {
             if let Some(pane) = ws.exit_zoom(cx)
-                && let Some(root) = ws.root.take()
+                && let Some(root) = ws.active_tab_mut().root.take()
             {
                 let (new_root, _) = root.remove_pane(&pane);
-                ws.root = new_root;
+                ws.active_tab_mut().root = new_root;
             }
-            if let Some(ref root) = ws.root {
+            if let Some(ref root) = ws.active_tab().root {
                 root.focus_first(window, cx);
             }
         } else if let Some(ws) = self.active_workspace_mut()
-            && let Some(root) = ws.root.take()
+            && let Some(root) = ws.active_tab_mut().root.take()
         {
             let (new_root, _closed, focus_target) = root.close_focused(window, cx);
-            ws.root = new_root;
+            ws.active_tab_mut().root = new_root;
 
-            if ws.root.is_some() {
+            if ws.active_tab().root.is_some() {
                 if let Some(target) = focus_target {
                     target.read(cx).focus_handle(cx).focus(window, cx);
-                } else if let Some(ref root) = ws.root {
+                } else if let Some(ref root) = ws.active_tab().root {
                     root.focus_first(window, cx);
                 }
             }
@@ -529,7 +594,7 @@ impl PaneFlowApp {
         // fresh terminal at the workspace's root cwd. Workspaces are only
         // removed via the explicit "Close workspace" action.
         if let Some(ws) = self.active_workspace()
-            && ws.root.is_none()
+            && ws.active_tab().root.is_none()
         {
             let ws_id = ws.id;
             let cwd = std::path::PathBuf::from(&ws.cwd);
@@ -541,7 +606,7 @@ impl PaneFlowApp {
             // `create_workspace` prove the correct pattern (no manual subscribe).
             let new_pane = self.create_pane(terminal, ws_id, cx);
             if let Some(ws) = self.active_workspace_mut() {
-                ws.root = Some(LayoutTree::Leaf(new_pane));
+                ws.active_tab_mut().root = Some(LayoutTree::Leaf(new_pane));
             }
             self.workspaces[self.active_idx].focus_first(window, cx);
         }
@@ -571,28 +636,18 @@ impl PaneFlowApp {
             self.show_toast("No active workspace to restore pane", cx);
             return;
         };
-        let selected_idx = record.selected_idx;
-        let tabs = record
-            .tabs
-            .into_iter()
-            .map(|tab| restore_closed_tab_record(tab, ws_id, cx))
-            .collect::<Vec<_>>();
-        if tabs.is_empty() {
-            self.show_toast("Closed pane had no restorable tabs", cx);
-            return;
-        }
-
-        let new_pane = self.create_pane_with_existing_tabs(tabs, selected_idx, ws_id, cx);
+        let surface = restore_closed_surface_record(record.surface, ws_id, cx);
+        let new_pane = self.create_pane_with_existing_surface(surface, ws_id, cx);
 
         // Insert via split from the currently focused pane
         let inserted = if let Some(ws) = self.active_workspace_mut() {
-            if let Some(root) = &mut ws.root {
+            if let Some(root) = &mut ws.active_tab_mut().root {
                 if !root.split_at_focused(SplitDirection::Horizontal, new_pane.clone(), window, cx)
                 {
                     root.split_first_leaf(SplitDirection::Horizontal, new_pane.clone());
                 }
             } else {
-                ws.root = Some(LayoutTree::Leaf(new_pane.clone()));
+                ws.active_tab_mut().root = Some(LayoutTree::Leaf(new_pane.clone()));
             }
             true
         } else {
@@ -821,6 +876,20 @@ impl PaneFlowApp {
                 && let Some(ws) = self.workspaces.get_mut(idx)
             {
                 ws.title = text;
+                self.save_session(cx);
+            }
+        }
+        // US-010: the sidebar tab rows share `rename_text` with the workspace
+        // rename, so one commit settles whichever inline rename was live.
+        if let Some((ws_idx, tab_idx)) = self.renaming_tab.take() {
+            let text = std::mem::take(&mut self.rename_text);
+            if !text.is_empty()
+                && let Some(tab) = self
+                    .workspaces
+                    .get_mut(ws_idx)
+                    .and_then(|ws| ws.tab_mut(tab_idx))
+            {
+                tab.title = text;
                 self.save_session(cx);
             }
         }
@@ -1329,13 +1398,12 @@ mod tests {
 
     fn closed_pane_record_with_scrollback(len: usize) -> ClosedPaneRecord {
         ClosedPaneRecord {
-            tabs: vec![ClosedTabRecord::Terminal {
+            surface: ClosedSurfaceRecord::Terminal {
                 cwd: None,
                 scrollback: Some("x".repeat(len)),
                 custom_name: None,
                 font_size: None,
-            }],
-            selected_idx: 0,
+            },
             workspace_idx: 0,
         }
     }
@@ -1353,27 +1421,27 @@ mod tests {
         assert_eq!(records.len(), 3, "budget must preserve undo records");
         assert!(
             matches!(
-                records[0].tabs.first(),
-                Some(ClosedTabRecord::Terminal {
+                &records[0].surface,
+                ClosedSurfaceRecord::Terminal {
                     scrollback: None,
                     ..
-                })
+                }
             ),
             "oldest scrollback should be released first"
         );
         assert!(matches!(
-            records[1].tabs.first(),
-            Some(ClosedTabRecord::Terminal {
+            &records[1].surface,
+            ClosedSurfaceRecord::Terminal {
                 scrollback: Some(_),
                 ..
-            })
+            }
         ));
         assert!(matches!(
-            records[2].tabs.first(),
-            Some(ClosedTabRecord::Terminal {
+            &records[2].surface,
+            ClosedSurfaceRecord::Terminal {
                 scrollback: Some(_),
                 ..
-            })
+            }
         ));
         assert_eq!(
             closed_pane_scrollback_bytes(&records),
@@ -1387,24 +1455,23 @@ mod tests {
         push_closed_pane_record(
             &mut records,
             ClosedPaneRecord {
-                tabs: vec![ClosedTabRecord::Terminal {
+                surface: ClosedSurfaceRecord::Terminal {
                     cwd: None,
                     scrollback: None,
                     custom_name: None,
                     font_size: None,
-                }],
-                selected_idx: 0,
+                },
                 workspace_idx: 0,
             },
         );
 
         assert_eq!(records.len(), 1);
         assert!(matches!(
-            records[0].tabs.first(),
-            Some(ClosedTabRecord::Terminal {
+            &records[0].surface,
+            ClosedSurfaceRecord::Terminal {
                 scrollback: None,
                 ..
-            })
+            }
         ));
         assert_eq!(closed_pane_scrollback_bytes(&records), 0);
     }
