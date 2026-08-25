@@ -28,6 +28,7 @@ mod state;
 pub(crate) use context_menus::render_open_agents_menu;
 pub(crate) use state::{AgentsContextMenu, AgentsDeleteTarget, AgentsRenameTarget};
 
+use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     Animation, AnimationExt, ClickEvent, Context, Font, FontFeatures, FontStyle, FontWeight, Hsla,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Role, SharedString,
@@ -173,9 +174,7 @@ impl PaneFlowApp {
         if filtering && filter::nothing_matches(&self.projects, &self.chats, &query_lower) {
             list = list.child(no_matches_hint(&query, ui));
             sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
-            sidebar =
-                sidebar.child(self.render_sidebar_settings_footer(self.agents_menu_items(), cx));
-            sidebar = sidebar.child(self.render_mode_toggle(cx));
+            sidebar = sidebar.child(self.render_sidebar_settings_footer(cx));
             return sidebar.into_any_element();
         }
 
@@ -367,8 +366,7 @@ impl PaneFlowApp {
         }
 
         sidebar = sidebar.child(self.sidebar_list_wrapper(list, cx));
-        sidebar = sidebar.child(self.render_sidebar_settings_footer(self.agents_menu_items(), cx));
-        sidebar = sidebar.child(self.render_mode_toggle(cx));
+        sidebar = sidebar.child(self.render_sidebar_settings_footer(cx));
         sidebar.into_any_element()
     }
 
@@ -414,48 +412,6 @@ impl PaneFlowApp {
             },
             cx,
         )
-    }
-
-    /// Items rendered inside the bottom Settings popover when in
-    /// Agents mode. Order: creation actions first, then navigation,
-    /// then escape hatch to the real Settings window.
-    fn agents_menu_items(&self) -> Vec<crate::app::sidebar_actions_menu::SidebarMenuItem> {
-        use crate::app::sidebar_actions_menu::SidebarMenuItem;
-        vec![
-            SidebarMenuItem {
-                id: "agents-menu-skills".into(),
-                icon: "icons/tool.svg",
-                label: "Skills".into(),
-                on_click: Box::new(|app, _w, cx| {
-                    app.show_agents_skills(cx);
-                }),
-            },
-            SidebarMenuItem {
-                id: "agents-menu-themes".into(),
-                icon: "icons/palette.svg",
-                label: "Themes".into(),
-                on_click: Box::new(|app, w, cx| {
-                    app.open_theme_picker(w, cx);
-                }),
-            },
-            SidebarMenuItem {
-                id: "agents-menu-about".into(),
-                icon: "icons/info-circle.svg",
-                label: "About Paneflow".into(),
-                on_click: Box::new(|app, _w, cx| {
-                    app.show_about_dialog = true;
-                    cx.notify();
-                }),
-            },
-            SidebarMenuItem {
-                id: "agents-menu-open-settings".into(),
-                icon: "icons/settings.svg",
-                label: "Settings".into(),
-                on_click: Box::new(|app, w, cx| {
-                    app.open_settings_window(w, cx);
-                }),
-            },
-        ]
     }
 
     fn project_header_row(
@@ -1028,7 +984,7 @@ fn section_eyebrow(
                         .text_color(icon_color)
                         .into_any_element()]);
                 })
-                .tooltip(crate::ui_primitives::text_tooltip("New project"))
+                .delayed_tooltip(crate::ui_primitives::text_tooltip("New project"))
                 .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                     this.create_agents_project_with_picker(cx);
                 })),
@@ -1255,7 +1211,7 @@ fn hover_actions_cluster(
                 .bg(lerp_color(resting_background, hover_background, delta))
                 .text_color(lerp_color(pin_resting_text, ui.text, delta));
         })
-        .tooltip(crate::ui_primitives::text_tooltip(pin_tooltip))
+        .delayed_tooltip(crate::ui_primitives::text_tooltip(pin_tooltip))
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             this.toggle_pin_for_target(target, cx);
             cx.stop_propagation();
@@ -1297,7 +1253,7 @@ fn hover_actions_cluster(
                 .text_color(icon_color)
                 .into_any_element()]);
         })
-        .tooltip(crate::ui_primitives::text_tooltip("Delete"))
+        .delayed_tooltip(crate::ui_primitives::text_tooltip("Delete"))
         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
             // First click arms the inline delete-confirm (no dialog): the row's
             // cluster flips to a red "Delete" button (see the `armed` branch).

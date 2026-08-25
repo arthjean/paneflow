@@ -67,8 +67,7 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .child(self.render_diff_files(ui, cx))
-            .child(self.render_sidebar_settings_footer(self.diff_menu_items(), cx))
-            .child(self.render_mode_toggle(cx))
+            .child(self.render_sidebar_settings_footer(cx))
             .into_any_element()
     }
 
@@ -596,36 +595,5 @@ impl PaneFlowApp {
                 .children(self.render_diff_file_rows(col_idx, is_active, state, filter_lc, ui, cx));
         }
         section.into_any_element()
-    }
-
-    /// Items in the bottom Settings popover when in Diff mode. The
-    /// workspace-creation actions from the CLI menu are dropped (not
-    /// meaningful in a read-only diff surface); the escape hatches
-    /// (Themes / About / Settings) are kept.
-    fn diff_menu_items(&self) -> Vec<crate::app::sidebar_actions_menu::SidebarMenuItem> {
-        use crate::app::sidebar_actions_menu::SidebarMenuItem;
-        vec![
-            SidebarMenuItem {
-                id: "diff-menu-themes".into(),
-                icon: "icons/palette.svg",
-                label: "Themes".into(),
-                on_click: Box::new(|app, w, cx| app.open_theme_picker(w, cx)),
-            },
-            SidebarMenuItem {
-                id: "diff-menu-about".into(),
-                icon: "icons/info-circle.svg",
-                label: "About Paneflow".into(),
-                on_click: Box::new(|app, _w, cx| {
-                    app.show_about_dialog = true;
-                    cx.notify();
-                }),
-            },
-            SidebarMenuItem {
-                id: "diff-menu-open-settings".into(),
-                icon: "icons/settings.svg",
-                label: "Settings".into(),
-                on_click: Box::new(|app, w, cx| app.open_settings_window(w, cx)),
-            },
-        ]
     }
 }

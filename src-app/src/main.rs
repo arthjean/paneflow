@@ -837,12 +837,6 @@ struct AgentsViewState {
     /// Stable id of the skill whose Copy button was just clicked. The card
     /// flips its label to "Copied" while this matches; a timer reverts it.
     pub(crate) agents_skills_copied: Option<String>,
-    /// True while the bottom-of-sidebar "Settings" popover is open.
-    /// Shared between CLI and Agents sidebars - only one popover is
-    /// ever visible because only one sidebar is rendered at a time.
-    pub(crate) sidebar_actions_menu_open: bool,
-    /// Whether the compact interface picker above the sidebar footer is open.
-    pub(crate) sidebar_mode_picker_open: bool,
     /// Open branch selector for the Agents environment card. The menu is
     /// scoped to a cwd because project threads and free chats can point at
     /// different repositories.
