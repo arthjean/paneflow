@@ -1,6 +1,9 @@
 # Rust
 /target/
 **/target/
+# `**/target/` only matches directories; the fuzz crate's build dir is a
+# symlink out of the tree, which the pattern above lets through.
+/fuzz/target
 **/*.rs.bk
 
 # Packaging output: scripts/bundle-{macos,tarball,appimage}.sh write here.
