@@ -1,5 +1,6 @@
 use crate::PaneFlowApp;
 use crate::theme::UiColors;
+use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::{AnimatedHover, AnimatedHoverExt};
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
@@ -26,7 +27,7 @@ fn header_icon_button(
         .size(px(28.))
         .rounded(px(REVIEW_SIDEBAR_ROW_RADIUS))
         .animated_hover_bg(row_background.opacity(0.0), row_background)
-        .tooltip(crate::ui_primitives::text_tooltip(tooltip))
+        .delayed_tooltip(crate::ui_primitives::text_tooltip(tooltip))
         .child(
             svg()
                 .size(px(13.))

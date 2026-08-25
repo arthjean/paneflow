@@ -5,6 +5,7 @@
 //! tab share the visual language of the Agents welcome page
 //! (`ui.surface` background, neutral border, 10 px radius).
 
+use crate::ui_primitives::TooltipDelayExt;
 use crate::{
     PaneFlowApp,
     ui_primitives::{AnimatedHoverExt, lerp_color},
@@ -220,7 +221,7 @@ fn render_refresh_button(
                 .path("icons/refresh.svg")
                 .text_color(if loading { ui.accent } else { ui.muted }),
         )
-        .tooltip(crate::ui_primitives::text_tooltip("Refresh skills"))
+        .delayed_tooltip(crate::ui_primitives::text_tooltip("Refresh skills"))
         .into_any_element()
 }
 

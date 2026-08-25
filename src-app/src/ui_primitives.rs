@@ -370,6 +370,121 @@ pub(crate) const TITLE: Pixels = px(14.);
 
 // ── Tooltip ───────────────────────────────────────────────────────────────
 
+/// Corner of a rail row, and of every control skinned to sit next to one.
+///
+/// Deliberately larger than the circular radius it replaces: at the same
+/// nominal radius a superellipse hugs the corner far more tightly near the
+/// edges - `u^4 + v^4 = 1` leaves the edge much later than a quarter circle
+/// does - so a squircle at radius 10 measured about 5 px of inset on a row's
+/// first scanline where a 9 px arc measures 8. Roughly 1.5x the circular
+/// radius restores the silhouette.
+pub(crate) const ROW_RADIUS: Pixels = px(14.);
+
+/// Skins a control with the rail's continuous-corner fills: `resting` painted
+/// always, `hovered` swapped in while the pointer is over it. Both are `None`
+/// for a control that stays flat.
+///
+/// The fills are paths rather than `bg()` + `rounded()` because GPUI resolves
+/// `corner_radii` with a circular-arc SDF and exposes no corner smoothing, and
+/// they are added before the caller's content: GPUI paints children in order
+/// and does not clip them to a parent radius, so a fill added afterwards would
+/// paint over the control's own label.
+///
+/// Hover is a plain visibility toggle rather than an interpolated color: the
+/// rail is a long list, and an animated fill asks GPUI for an animation frame
+/// per hovered control for the whole transition. It must be `visibility` and
+/// never `display` - `Div::prepaint` skips children of a `display: none`
+/// subtree while `Div::paint` paints them, and the two phases can disagree on
+/// hover within one frame, which panics with "must call prepaint before
+/// paint". `visibility` is only read in `Interactivity::paint`.
+pub(crate) fn squircle_skin(
+    element: Stateful<Div>,
+    group: impl Into<SharedString>,
+    radius: Pixels,
+    resting: Option<Hsla>,
+    hovered: Option<Hsla>,
+) -> Stateful<Div> {
+    let group: SharedString = group.into();
+    let mut element = element.relative().group(group.clone());
+    if let Some(resting) = resting {
+        element = element.child(squircle::squircle_fill(radius, resting));
+    }
+    if let Some(hovered) = hovered {
+        element = element.child(
+            div()
+                .absolute()
+                .inset_0()
+                .invisible()
+                .group_hover(group, |style| style.visible())
+                .child(squircle::squircle_fill(radius, hovered)),
+        );
+    }
+    element
+}
+
+/// How long the pointer must rest on a control before its tooltip appears.
+///
+/// GPUI's own default is 500 ms, which reads as instant on a dense rail: a
+/// pointer crossing the sidebar to reach something else triggers tooltips on
+/// the way past.
+pub(crate) const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(800);
+
+/// `.tooltip()` at Paneflow's dwell delay, so the delay has one definition
+/// instead of one per call site.
+pub(crate) trait TooltipDelayExt: Sized {
+    fn delayed_tooltip(
+        self,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self;
+}
+
+impl<E: StatefulInteractiveElement> TooltipDelayExt for E {
+    fn delayed_tooltip(
+        self,
+        build_tooltip: impl Fn(&mut Window, &mut App) -> AnyView + 'static,
+    ) -> Self {
+        self.tooltip(build_tooltip)
+            .tooltip_show_delay(TOOLTIP_SHOW_DELAY)
+    }
+}
+
+/// Corner of a tooltip, painted as a superellipse rather than a circular arc
+/// (see [`squircle`]).
+///
+/// The same corner a rail row uses, and for the same reason: a superellipse
+/// leaves the edge much later than a quarter circle, so it needs roughly 1.5x
+/// the circular radius to read as equally round. A one-line tooltip is about
+/// 30 px tall, and `squircle::trace` clamps the radius to half the shorter
+/// side, so this is also near the largest corner a single line can carry -
+/// past it the ends simply flatten into a stadium.
+pub(crate) const TOOLTIP_RADIUS: Pixels = px(14.);
+
+/// The continuous-corner skin every tooltip body shares: fill, hairline, and
+/// padding. Callers append their own content and text size.
+///
+/// The silhouette is a path rather than `bg()` + `rounded()` because GPUI
+/// resolves `corner_radii` with a circular-arc SDF and exposes no corner
+/// smoothing, so a plain rounded rectangle joins the straight edge with a
+/// visible curvature step. Both layers must come before the content: GPUI
+/// paints children in order and does not clip them to a parent radius.
+pub(crate) fn tooltip_shell() -> Div {
+    let theme = crate::theme::active_theme();
+    let ui = crate::theme::ui_colors();
+    div()
+        .relative()
+        .px(px(8.))
+        .py(px(6.))
+        .text_color(ui.text)
+        // Same size as a sidebar row's label: a tooltip explains a row, so
+        // reading one must not mean switching type scale.
+        .text_sm()
+        .child(squircle::squircle_fill(
+            TOOLTIP_RADIUS,
+            theme.title_bar_background,
+        ))
+        .child(squircle::squircle_border(TOOLTIP_RADIUS, px(1.), ui.border))
+}
+
 /// The shared hover-tooltip body. Replaces the formerly-duplicated
 /// `DiffHeaderTooltip` (diff view) and `HoverActionTooltip` (agents sidebar),
 /// which were byte-for-byte identical.
@@ -379,22 +494,11 @@ pub(crate) struct PaneflowTooltip {
 
 impl Render for PaneflowTooltip {
     fn render(&mut self, _w: &mut Window, _cx: &mut gpui::Context<Self>) -> impl IntoElement {
-        let theme = crate::theme::active_theme();
-        let ui = crate::theme::ui_colors();
-        div()
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(6.))
-            .bg(theme.title_bar_background)
-            .border_1()
-            .border_color(ui.border)
-            .text_color(ui.text)
-            .text_size(LABEL_SM)
-            .child(self.label.clone())
+        tooltip_shell().child(self.label.clone())
     }
 }
 
-/// Convenience builder for `.tooltip(text_tooltip("…"))` - a plain text tooltip
+/// Convenience builder for `.delayed_tooltip(text_tooltip("…"))` - a plain text tooltip
 /// using [`PaneflowTooltip`].
 pub(crate) fn text_tooltip(
     label: impl Into<SharedString>,

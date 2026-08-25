@@ -12,6 +12,7 @@
 //! stay alive until the user closes them. PTY env ids stay below the Agents
 //! thread namespace so shell hooks cannot misroute bottom terminals as threads.
 
+use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, AppContext, ClickEvent, Context, CursorStyle, Focusable, InteractiveElement,
     IntoElement, MouseButton, MouseDownEvent, ParentElement, SharedString,
@@ -637,7 +638,7 @@ fn render_bottom_restart_button(
                 .path("icons/refresh.svg")
                 .text_color(ui.muted),
         )
-        .tooltip(crate::ui_primitives::text_tooltip("Restart terminal"))
+        .delayed_tooltip(crate::ui_primitives::text_tooltip("Restart terminal"))
         .into_any_element()
 }
 

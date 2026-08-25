@@ -21,7 +21,7 @@ use gpui::{
     Window, div, prelude::*, px, svg,
 };
 
-use crate::ui_primitives::AnimatedHoverExt;
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
@@ -180,7 +180,10 @@ impl PaneFlowApp {
         let theme = crate::theme::active_theme();
         let active = self.settings_section.unwrap_or(SettingsSection::General);
         let query = self.settings_search_input.read(cx).value().to_lowercase();
-        let nav_row_background = crate::app::constants::sidebar_tab_active_background();
+        // One tint for both states: the open section rests on exactly the fill
+        // a hovered row lifts to, so pointing at a row previews the selection
+        // instead of showing a second, brighter one.
+        let row_background = crate::app::constants::sidebar_tab_hover_background();
 
         // ── Search box ──────────────────────────────────────────────────
         let search = self.render_settings_search(ui, window, cx);
@@ -225,47 +228,45 @@ impl PaneFlowApp {
             for it in items {
                 let section = it.section;
                 let is_active = section == active;
-                // Every section row renders in full-strength text (white),
-                // active or not - Codex keeps all labels at one legible color
-                // and signals the active row through the pill fill + the medium
-                // font weight alone, not a muted/bright color split.
-                let resting_background = if is_active {
-                    nav_row_background
-                } else {
-                    nav_row_background.opacity(0.0)
-                };
-                let row = div()
-                    .id(SharedString::from(format!("settings-nav-{}", it.label)))
-                    .mx(px(8.))
-                    .px(px(8.))
-                    .py(px(6.))
-                    .rounded(px(8.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.))
-                    .animated_hover_bg(resting_background, nav_row_background)
-                    .child(
-                        svg()
-                            .size(px(15.))
-                            .flex_none()
-                            .path(it.icon)
-                            .text_color(ui.muted),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_size(px(13.))
-                            .font_weight(if is_active {
-                                FontWeight::MEDIUM
-                            } else {
-                                FontWeight::NORMAL
-                            })
-                            .text_color(ui.text)
-                            .truncate()
-                            .child(it.label),
-                    );
+                // Every section row renders in full-strength text (white) at one
+                // weight, active or not: the pill fill alone marks the open
+                // section, so nothing about the label reflows when it changes.
+                //
+                // The fill is the rail's continuous-corner skin, not a rounded
+                // rect with an animated tint: the settings nav is a rail like
+                // the workspace one, so it borrows the same silhouette and the
+                // same instant hover.
+                let row = squircle_skin(
+                    div()
+                        .id(SharedString::from(format!("settings-nav-{}", it.label)))
+                        .mx(px(8.))
+                        .px(px(8.))
+                        .py(px(6.))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.)),
+                    SharedString::from(format!("settings-nav-{}-group", it.label)),
+                    ROW_RADIUS,
+                    is_active.then_some(row_background),
+                    (!is_active).then_some(row_background),
+                )
+                .child(
+                    svg()
+                        .size(px(15.))
+                        .flex_none()
+                        .path(it.icon)
+                        .text_color(ui.muted),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_size(px(13.))
+                        .text_color(ui.text)
+                        .truncate()
+                        .child(it.label),
+                );
                 let row = if is_active {
                     row.into_any_element()
                 } else {
@@ -280,16 +281,21 @@ impl PaneFlowApp {
 
         if !any_match {
             list = list.child(
-                div()
-                    .mx(px(8.))
-                    .my(px(8.))
-                    .px(px(8.))
-                    .py(px(10.))
-                    .rounded(px(6.))
-                    .bg(ui.subtle)
-                    .text_size(px(12.))
-                    .text_color(ui.muted)
-                    .child("No matching settings"),
+                squircle_skin(
+                    div()
+                        .id("settings-nav-empty")
+                        .mx(px(8.))
+                        .my(px(8.))
+                        .px(px(8.))
+                        .py(px(10.)),
+                    "settings-nav-empty-group",
+                    ROW_RADIUS,
+                    Some(ui.subtle),
+                    None,
+                )
+                .text_size(px(12.))
+                .text_color(ui.muted)
+                .child("No matching settings"),
             );
         }
 

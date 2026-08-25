@@ -5,6 +5,7 @@
 //! DAG editor: users can compose panes, agents, shell commands, cwd and prompt
 //! prefill, then launch through the same `workspace.up` path the CLI uses.
 
+use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, ElementId, FontWeight, Hsla, InteractiveElement,
     IntoElement, MouseButton, ParentElement, PathPromptOptions, SharedString, Styled, div, img,
@@ -1878,7 +1879,7 @@ fn pane_delete_button(id: impl Into<ElementId>, ui: crate::theme::UiColors) -> A
         .rounded(px(7.))
         .text_color(icon_color)
         .animated_hover_bg(resting_background, hover_bg)
-        .tooltip(crate::ui_primitives::text_tooltip("Delete pane"))
+        .delayed_tooltip(crate::ui_primitives::text_tooltip("Delete pane"))
         .child(
             svg()
                 .size(px(13.))

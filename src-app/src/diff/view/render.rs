@@ -1,6 +1,7 @@
 //! Render-oriented helpers shared by the DiffView host and its column model.
 
 use super::*;
+use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::{
     AnimatedHoverExt, BODY, LABEL_SM, LABEL_XS, lerp_color, panel_empty_state,
 };
@@ -442,7 +443,7 @@ impl DiffView {
                         ui,
                         review_open,
                     )
-                    .tooltip(crate::ui_primitives::text_tooltip(
+                    .delayed_tooltip(crate::ui_primitives::text_tooltip(
                         "Review this branch with an AI agent",
                     ))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -470,7 +471,7 @@ impl DiffView {
                     .size(px(18.))
                     .rounded(px(4.))
                     .animated_hover_bg(ui.text.opacity(0.0), ui.text.opacity(0.12))
-                    .tooltip(crate::ui_primitives::text_tooltip(
+                    .delayed_tooltip(crate::ui_primitives::text_tooltip(
                         "Open a shell here to run git commands in this worktree",
                     ))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
@@ -814,7 +815,9 @@ impl DiffView {
                         .ml(px(4.))
                         .child(
                             nav_btn("diff-hunk-prev", "icons/chevron_up.svg")
-                                .tooltip(crate::ui_primitives::text_tooltip("Previous hunk ([)"))
+                                .delayed_tooltip(crate::ui_primitives::text_tooltip(
+                                    "Previous hunk ([)",
+                                ))
                                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                     this.goto_hunk(false, window, cx);
                                 })),
@@ -829,7 +832,9 @@ impl DiffView {
                         )
                         .child(
                             nav_btn("diff-hunk-next", "icons/chevron-down.svg")
-                                .tooltip(crate::ui_primitives::text_tooltip("Next hunk (])"))
+                                .delayed_tooltip(crate::ui_primitives::text_tooltip(
+                                    "Next hunk (])",
+                                ))
                                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                                     this.goto_hunk(true, window, cx);
                                 })),
@@ -884,7 +889,7 @@ impl DiffView {
                                     ui,
                                     review_open,
                                 )
-                                .tooltip(crate::ui_primitives::text_tooltip(
+                                .delayed_tooltip(crate::ui_primitives::text_tooltip(
                                     "Review this branch with an AI agent",
                                 ))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -911,7 +916,7 @@ impl DiffView {
                         ui.muted,
                         ui.text.opacity(0.12),
                     )
-                    .tooltip(crate::ui_primitives::text_tooltip(
+                    .delayed_tooltip(crate::ui_primitives::text_tooltip(
                         "Open a shell here to run git commands in this worktree",
                     ))
                     .on_click(cx.listener(
@@ -953,7 +958,7 @@ impl DiffView {
                 d.child(
                     control("diff-sync-toggle", self.sync_scroll)
                         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| this.toggle_sync(cx)))
-                        .tooltip(crate::ui_primitives::text_tooltip(if self.sync_scroll {
+                        .delayed_tooltip(crate::ui_primitives::text_tooltip(if self.sync_scroll {
                             "Columns scroll together (s)"
                         } else {
                             "Columns scroll independently (s)"
@@ -987,7 +992,7 @@ impl DiffView {
                             "icons/list.svg",
                             effective == ViewMode::Unified,
                         )
-                        .tooltip(crate::ui_primitives::text_tooltip("Unified view (u)"))
+                        .delayed_tooltip(crate::ui_primitives::text_tooltip("Unified view (u)"))
                         .when(effective != ViewMode::Unified, |d| {
                             d.on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                                 this.set_view_mode(ViewMode::Unified, cx);
@@ -1001,7 +1006,7 @@ impl DiffView {
                             "icons/split_vertical.svg",
                             effective == ViewMode::Split,
                         )
-                        .tooltip(crate::ui_primitives::text_tooltip("Split view (u)"))
+                        .delayed_tooltip(crate::ui_primitives::text_tooltip("Split view (u)"))
                         .when(effective != ViewMode::Split, |d| {
                             d.on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
                                 this.set_view_mode(ViewMode::Split, cx);

@@ -14,6 +14,7 @@
 //! "Show more" / collapse caret and the per-group "new session" affordance land
 //! in EP-002 - this slice swaps the surface and renders flat groups.
 
+use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
     KeyDownEvent, ParentElement, Pixels, SharedString, Styled, Window, div, img, prelude::*, px,
@@ -234,7 +235,9 @@ impl PaneFlowApp {
                                 .text_ellipsis()
                                 .text_size(px(10.))
                                 .text_color(ui.muted)
-                                .tooltip(crate::ui_primitives::text_tooltip(cwd.to_string()))
+                                .delayed_tooltip(crate::ui_primitives::text_tooltip(
+                                    cwd.to_string(),
+                                ))
                                 .child(compact_cwd_label(cwd)),
                         )
                     }),

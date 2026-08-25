@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::pricing;
+use crate::ui_primitives::TooltipDelayExt;
 use gpui::Hsla;
 
 /// Brand accent for a session agent's glyph - mirrors the sessions sidebar /
@@ -60,17 +61,8 @@ pub(super) struct AttributionTooltip {
 
 impl Render for AttributionTooltip {
     fn render(&mut self, _w: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = crate::theme::active_theme();
         let ui = crate::theme::ui_colors();
-        div()
-            .px(px(8.))
-            .py(px(6.))
-            .rounded(px(6.))
-            .bg(theme.title_bar_background)
-            .border_1()
-            .border_color(ui.border)
-            .text_color(ui.text)
-            .text_size(crate::ui_primitives::LABEL_SM)
+        crate::ui_primitives::tooltip_shell()
             .flex()
             .flex_col()
             .gap(px(2.))
@@ -195,7 +187,7 @@ impl DiffView {
             .border_color(ui.border)
             .text_size(crate::ui_primitives::LABEL_XS)
             .text_color(ui.muted)
-            .tooltip(move |_w, cx| {
+            .delayed_tooltip(move |_w, cx| {
                 let lines = lines.clone();
                 cx.new(|_| AttributionTooltip { lines }).into()
             })
