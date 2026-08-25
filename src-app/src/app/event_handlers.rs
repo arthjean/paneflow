@@ -533,6 +533,21 @@ impl PaneFlowApp {
                 }
                 self.toggle_files_sidebar(cx);
             }
+            pane::PaneEvent::ToggleDiffDock => {
+                // The dock diffs the pane's *workspace folder*, not the shell's
+                // current directory: the folder is the unit the git pipeline
+                // operates on.
+                let owner_id = pane.read(cx).workspace_id;
+                let Some(cwd) = self
+                    .workspaces
+                    .iter()
+                    .find(|ws| ws.id == owner_id)
+                    .map(|ws| ws.cwd.clone())
+                else {
+                    return;
+                };
+                self.toggle_cli_diff_dock(cwd, cx);
+            }
             pane::PaneEvent::OpenPaneMenu { position } => {
                 // EP-002 US-007: open the pane header menu. Mutually exclusive
                 // with the other popovers, matching the workspace/profile/

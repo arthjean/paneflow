@@ -1725,6 +1725,9 @@ impl Render for PaneFlowApp {
                 )
                 .into_any_element()
         };
+        // The right diff dock rides beside the CLI pane grid, opened from a
+        // pane header. A no-op in every other mode.
+        let main_content = self.wrap_cli_diff_dock(main_content, cx);
         // Update title bar with current workspace name. US-010: in Agents
         // mode the brand slot carries the thread/chat context instead, so the
         // center workspace breadcrumb is suppressed (a CLI workspace name is

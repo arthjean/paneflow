@@ -235,6 +235,9 @@ pub enum PaneEvent {
     /// resolves the active workspace's `cwd` to the tree root and enforces
     /// mutual exclusion with the sessions sidebar.
     ToggleFilesSidebar,
+    /// Toggle the right-docked git diff on this pane's workspace folder. The
+    /// parent resolves the folder from the pane's workspace id.
+    ToggleDiffDock,
     /// Right-click on the pane header: open the pane context menu at
     /// `position` (EP-002 US-007). This replaces the former tab context menu,
     /// which the removed tab strip used to anchor; it carries no index, and it
@@ -1670,11 +1673,12 @@ impl Pane {
     }
 
     /// Trailing action-button cluster of the pane header (US-051: code-motion
-    /// out of the former tab bar). Zoom badge + the four header actions: the
-    /// two splits, the agent-sessions sidebar and the files tree. Deliberately
-    /// fixed - the agent launchers and the per-workspace custom buttons moved
-    /// out of the header (they stay reachable from the pane palette), so the
-    /// cluster needs neither a fold toggle nor a computed width.
+    /// out of the former tab bar). Zoom badge + the five header actions: the
+    /// two splits, the files tree, the agent-sessions sidebar and the diff
+    /// dock. Deliberately fixed - the agent launchers and the per-workspace
+    /// custom buttons moved out of the header (they stay reachable from the
+    /// pane palette), so the cluster needs neither a fold toggle nor a
+    /// computed width.
     /// Self-contained - recomputes the palette it needs.
     fn render_end_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = pane_colors();
@@ -1774,7 +1778,18 @@ impl Pane {
                     }),
                     cx,
                 ))
-            });
+            })
+            // Right-docked git diff for this pane's workspace folder. Trails
+            // the cluster so the two splits keep their leading slots.
+            .child(self.action_button(
+                "pane-btn-diff-dock",
+                "icons/git-pull-request.svg",
+                cx.listener(|_this, _e: &ClickEvent, _window, cx| {
+                    cx.emit(PaneEvent::ToggleDiffDock);
+                    cx.stop_propagation();
+                }),
+                cx,
+            ));
 
         end_section.child(action_cluster)
     }
