@@ -384,7 +384,7 @@ fn sanitize_layout_node(node: LayoutNode, leaf_budget: &mut usize) -> Option<Lay
     }
 }
 
-fn default_layout_pane() -> LayoutNode {
+pub(crate) fn default_layout_pane() -> LayoutNode {
     LayoutNode::Pane {
         surfaces: vec![SurfaceDefinition::default()],
     }
