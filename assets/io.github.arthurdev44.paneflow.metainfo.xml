@@ -69,7 +69,7 @@
         <ul>
           <li>Windows keeps the title bar opaque when its dedicated chrome material is disabled, even when the terminal activates the host-window backdrop</li>
           <li>Terminal material no longer bleeds into title-adjacent chrome that is configured to use the theme background</li>
-          <li>Architecture, installation, platform, and Build Week documentation now match the shipped v0.8 terminal stack</li>
+          <li>Architecture, installation, and platform documentation now match the shipped v0.8 terminal stack</li>
         </ul>
       </description>
     </release>
