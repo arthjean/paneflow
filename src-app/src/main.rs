@@ -787,13 +787,6 @@ struct DiffModeState {
     diff_file_filter: gpui::Entity<crate::widgets::text_input::TextInput>,
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) struct AgentsGitState {
-    pub(crate) branch: String,
-    pub(crate) is_repo: bool,
-    pub(crate) stats: crate::workspace::GitDiffStats,
-}
-
 /// US-053: Agents-view sidebar state extracted from the `PaneFlowApp`
 /// god-struct (terminal-only Agents view: rename, context menu, skills
 /// page, search filter, and the per-thread terminal cache).
@@ -847,21 +840,11 @@ struct AgentsViewState {
     /// Stable id of the skill whose Copy button was just clicked. The card
     /// flips its label to "Copied" while this matches; a timer reverts it.
     pub(crate) agents_skills_copied: Option<String>,
-    /// Open branch selector for the Agents environment card. The menu is
-    /// scoped to a cwd because project threads and free chats can point at
-    /// different repositories.
-    pub(crate) agents_branch_menu: Option<AgentsBranchMenuState>,
-    /// Last git metadata refresh by Agents environment cwd. This covers free
-    /// chats as well as projects, so the floating card does not depend on a
-    /// matching workspace/project cache.
-    pub(crate) agents_environment_git: std::collections::HashMap<String, AgentsGitState>,
-    /// Whether the floating Agents environment card is visible. The toolbar
-    /// remains visible so the same button can reopen it.
-    pub(crate) agents_environment_panel_open: bool,
     /// Whether the editor selector attached to the Agents toolbar is open.
     pub(crate) agents_editor_menu_open: bool,
-    /// Whether the Codex-style git diff dock is open on the right of the thread
-    /// surface (toggled by the `layout-sidebar-right` toolbar button).
+    /// Whether the Codex-style git diff dock is open on the right of the CLI
+    /// pane grid (toggled from a pane header, closed from its own
+    /// header).
     pub(crate) agents_diff_open: bool,
     /// The diff snapshot rendered by the dock, computed off-thread for the
     /// active thread's cwd. Retained while hidden so same-cwd reopen is warm.
@@ -872,7 +855,7 @@ struct AgentsViewState {
     /// Mirrors Review's fold-marker interaction without re-shelling git.
     pub(crate) agents_diff_expanded_folds: std::collections::HashSet<String>,
     /// Diff dock view mode: `false` = unified (inline), `true` = split (old left,
-    /// new right). Toggled from the header.
+    /// new right). Defaults to split; toggled from the header.
     pub(crate) agents_diff_split: bool,
     /// Monotonic token for same-cwd diff builds. Completion must match this
     /// generation so an older refresh cannot overwrite a newer snapshot.
@@ -881,6 +864,20 @@ struct AgentsViewState {
     /// (hosted in an `overflow_y_scroll` div, the same render path as the Review
     /// view's columns). Survives ordinary repaints so scroll position is kept.
     pub(crate) agents_diff_scroll: gpui::ScrollHandle,
+    /// Whether the diff dock's `...` overflow menu (layout, expand-all, refresh)
+    /// is open, and whether its "Layout" side submenu is unfolded inside it.
+    pub(crate) diff_options_menu_open: bool,
+    pub(crate) diff_layout_submenu_open: bool,
+    /// Whether the tab strip's `+` menu (which surface a new tab opens) is up.
+    pub(crate) diff_new_tab_menu_open: bool,
+    /// The dock's tabs. Index 0 is always the permanent `Changes` diff; the
+    /// rest are terminals opened from the `+` menu, closable from their tab.
+    pub(crate) diff_tabs: Vec<crate::app::agents_diff::DiffDockTab>,
+    /// Index into `diff_tabs` of the tab whose body the dock renders.
+    pub(crate) diff_active_tab: usize,
+    /// Open branch picker anchored to the diff dock's toolbar chip; `None` when
+    /// closed. Holds the branch list, the search field and the focus to restore.
+    pub(crate) diff_branch_menu: Option<crate::app::agents_diff::DiffBranchMenuState>,
     /// Width in px of the diff dock; user-resizable by dragging its left edge.
     /// Clamped to `[AGENTS_DIFF_PANEL_MIN_WIDTH, AGENTS_DIFF_PANEL_MAX_WIDTH]`.
     pub(crate) agents_diff_width: f32,
@@ -926,18 +923,6 @@ struct AgentsViewState {
     /// Last access timestamp for cached agent terminals. Expired entries are
     /// pruned opportunistically when the cache is touched.
     pub(crate) agents_terminal_cache_touched_at: std::collections::HashMap<u64, std::time::Instant>,
-}
-
-#[derive(Clone)]
-pub(crate) struct AgentsBranchMenuState {
-    pub(crate) cwd: String,
-    pub(crate) current: String,
-    pub(crate) branches: Vec<String>,
-    pub(crate) loading: bool,
-    pub(crate) error: Option<String>,
-    /// Codex branch picker search field. A real `TextInput` keeps cursor,
-    /// selection, paste and IME behavior consistent with the sidebar filter.
-    pub(crate) query_input: gpui::Entity<crate::widgets::text_input::TextInput>,
 }
 
 /// One shell terminal hosted as a tab in the Agents bottom dock. The `view`

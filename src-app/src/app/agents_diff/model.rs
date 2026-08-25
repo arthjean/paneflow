@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use gpui::{Hsla, Pixels};
+use gpui::Pixels;
 
 use super::git::AgentsDiffBuilt;
 use crate::diff::{
@@ -13,17 +13,37 @@ use crate::diff::{
     unified_offsets,
 };
 
-/// Default width of the docked panel. Wide enough to read code without constant
-/// wrapping, narrow enough to leave the terminal column usable beside it. The
-/// panel is user-resizable by dragging its left edge; the live width lives on
-/// [`crate::AgentsViewState::agents_diff_width`], clamped to the bounds below.
-pub(crate) const AGENTS_DIFF_PANEL_WIDTH: f32 = 540.0;
+/// Default width of the docked panel. Sized for the default split mode: two
+/// readable code columns side by side, while still leaving the terminal column
+/// usable beside it. The panel is user-resizable by dragging its left edge; the
+/// live width lives on [`crate::AgentsViewState::agents_diff_width`], clamped to
+/// the bounds below.
+pub(crate) const AGENTS_DIFF_PANEL_WIDTH: f32 = 880.0;
 
 /// Resize clamp for the diff dock's user-dragged width. The floor keeps the
 /// gutters plus a readable code column; the ceiling stops the dock from
 /// swallowing the whole main area on a wide window.
 pub(super) const AGENTS_DIFF_PANEL_MIN_WIDTH: f32 = 360.0;
-pub(super) const AGENTS_DIFF_PANEL_MAX_WIDTH: f32 = 1100.0;
+pub(super) const AGENTS_DIFF_PANEL_MAX_WIDTH: f32 = 1400.0;
+
+/// One tab of the dock's strip. `Changes` is the permanent diff tab (index 0);
+/// `Terminal` tabs are opened from the strip's `+` menu and are closable.
+#[derive(Clone)]
+pub(crate) enum DiffDockTab {
+    Changes,
+    Terminal(gpui::Entity<crate::terminal::TerminalView>),
+}
+
+/// The chrome's read-only view of the dock state, bundled so the header and its
+/// overflow menu take one parameter instead of a long positional list.
+pub(super) struct DiffChrome<'a> {
+    pub(super) data: &'a Option<AgentsDiffData>,
+    pub(super) cwd: String,
+    pub(super) split: bool,
+    pub(super) options_open: bool,
+    pub(super) layout_submenu_open: bool,
+    pub(super) collapsed: &'a HashSet<String>,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct AgentsDiffHScrollDrag {
@@ -33,16 +53,6 @@ pub(crate) struct AgentsDiffHScrollDrag {
     pub(super) max_scroll: f32,
     pub(super) track_width: f32,
     pub(super) thumb_width: f32,
-}
-
-/// Added/deleted *text* colors for diff counters rendered outside the diff
-/// panel (e.g. the Environment card's "Changes" row), kept in lockstep with the
-/// panel's own palette so the +/- counts match the washes on every theme. The
-/// canonical diff palette lives on [`crate::theme::UiColors::diff_colors`] so
-/// the Agents dock, the Diff/Review view, and the diff sidebar share one source.
-pub(crate) fn agents_diff_count_colors(ui: crate::theme::UiColors) -> (Hsla, Hsla) {
-    let diff = ui.diff_colors();
-    (diff.added, diff.deleted)
 }
 
 /// Render-ready snapshot of the panel's data. Cheap to clone every frame: every

@@ -1,8 +1,8 @@
-//! Codex-style git diff side panel for the Agents view.
+//! Codex-style git diff side panel for the CLI cockpit.
 //!
-//! A right-docked panel (toggled by the `layout-sidebar-right` button in the
-//! environment toolbar) that shows what the agent changed in the current
-//! thread's working directory: the working-tree diff against `HEAD` (staged +
+//! A right-docked panel (toggled from a pane header, see
+//! [`crate::app::cli_diff_dock`]) that shows what the agent changed
+//! in a workspace folder: the working-tree diff against `HEAD` (staged +
 //! unstaged tracked changes) plus untracked files.
 //!
 //! EP-001 (review redesign, US-001/US-002): the dock no longer
@@ -20,16 +20,18 @@
 //! helpers). This module owns the [`PaneFlowApp`] panel orchestration: the
 //! open/refresh/collapse lifecycle, the panel + body render, and the body click.
 
+mod branch;
 mod git;
 mod model;
+mod new_tab_menu;
+mod options_menu;
 mod render;
+mod tabs;
 
+pub(crate) use branch::DiffBranchMenuState;
 pub(crate) use model::{
-    AGENTS_DIFF_PANEL_WIDTH, AgentsDiffData, AgentsDiffHScrollDrag, agents_diff_count_colors,
+    AGENTS_DIFF_PANEL_WIDTH, AgentsDiffData, AgentsDiffHScrollDrag, DiffDockTab,
 };
-pub(crate) use render::render_agents_diff_toggle_button;
-
-use std::path::Path;
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -37,11 +39,12 @@ use gpui::{
     Styled, Window, div, px,
 };
 
+use self::branch::render_diff_branch_chip;
 use self::git::build_agents_diff;
-use self::model::{AGENTS_DIFF_PANEL_MAX_WIDTH, AGENTS_DIFF_PANEL_MIN_WIDTH};
+use self::model::{AGENTS_DIFF_PANEL_MAX_WIDTH, AGENTS_DIFF_PANEL_MIN_WIDTH, DiffChrome};
 use self::render::{
-    diff_panel_centered, render_diff_files_toolbar, render_diff_panel_header,
-    render_diff_resize_handle,
+    diff_panel_centered, render_diff_files_toolbar, render_diff_resize_handle,
+    render_diff_tab_strip,
 };
 use crate::PaneFlowApp;
 use crate::diff::{
@@ -50,29 +53,12 @@ use crate::diff::{
     h_scrollbar_click_offset, h_scrollbar_segments, palette, row_at_offset, set_file_side_offset,
     split_right_side_at_x,
 };
+use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 
 impl PaneFlowApp {
-    /// Toggle the Codex-style diff dock. Opening computes the diff for the
-    /// current thread's cwd off-thread; closing drops the retained snapshot so a
-    /// large hidden dock cannot keep old rows or stale content alive.
-    pub(crate) fn toggle_agents_diff_panel(
-        &mut self,
-        _: &ClickEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.agents_view.agents_diff_open {
-            self.close_agents_diff_panel(cx);
-            return;
-        }
-        let cwd = self
-            .current_thread_view_target()
-            .and_then(|target| self.thread_for_target(target))
-            .map(|thread| thread.cwd.clone())
-            .unwrap_or_default();
-        self.open_agents_diff_panel(cwd, cx);
-    }
-
+    /// Open the Codex-style diff dock on `cwd`, computing the diff off-thread.
+    /// Closing (see [`Self::close_agents_diff_panel`]) drops the retained
+    /// snapshot so a large hidden dock cannot keep old rows alive.
     pub(crate) fn open_agents_diff_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
         let split = self.agents_view.agents_diff_split;
@@ -317,14 +303,35 @@ impl PaneFlowApp {
         self.refresh_agents_diff_if_theme_changed(cx);
         let data = self.agents_view.agents_diff.clone();
         let cwd = data.as_ref().map(|d| d.cwd.clone()).unwrap_or_default();
-        let folder = Path::new(&cwd)
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let split = self.agents_view.agents_diff_split;
-        let header = render_diff_panel_header(&data, &folder, cwd, split, ui, cx);
-        let body = self.render_agents_diff_body(&data, ui, cx);
+        let active = self
+            .agents_view
+            .diff_active_tab
+            .min(self.agents_view.diff_tabs.len().saturating_sub(1));
+        let tabs = self.agents_view.diff_tabs.clone();
+        let header = render_diff_tab_strip(
+            &tabs,
+            active,
+            self.agents_view.diff_new_tab_menu_open,
+            ui,
+            cx,
+        );
+        // A terminal tab owns the whole body: the files toolbar describes the
+        // diff (scope, +/- totals, branch, layout menu) and has nothing to say
+        // about a shell.
+        let (toolbar, body) = match tabs.get(active) {
+            Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
+            _ => (
+                Some(self.render_diff_toolbar(&cwd, &data, ui, cx)),
+                self.render_agents_diff_body(&data, ui, cx),
+            ),
+        };
 
+        // The dock is a floating card beside the pane grid, drawn with the same
+        // silhouette the panes use (see `crate::pane`): a superellipse fill
+        // under the subtree and a hairline over it. Nothing between the two may
+        // paint its own background, or it repaints the corners square - GPUI
+        // clips no child to a parent radius.
+        let radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
             .relative()
             .w(px(self.agents_view.agents_diff_width))
@@ -332,19 +339,19 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
-            .bg(ui.base)
-            .border_l_1()
-            .border_color(ui.border)
+            .child(squircle_fill(radius, ui.base))
             .child(render_diff_resize_handle(ui, cx))
             .child(header)
+            .children(toolbar)
             .child(body)
+            .child(squircle_border(radius, px(1.), ui.border))
             .into_any_element()
     }
 
     /// Apply a live resize drag: set the dock width so its left edge tracks the
-    /// cursor. Driven by the Agents main area's `on_mouse_move` (a full-height
+    /// cursor. Driven by the CLI dock wrapper's `on_mouse_move` (a full-height
     /// capture surface, so the drag survives the cursor leaving the dock for the
-    /// terminal column beside it). No-op when no drag is in progress.
+    /// pane grid beside it). No-op when no drag is in progress.
     pub(crate) fn drag_agents_diff_resize(&mut self, cursor_x: f32, cx: &mut Context<Self>) {
         if let Some((anchor_x, anchor_w)) = self.agents_view.agents_diff_resize {
             // The panel docks right and the handle is on its left edge, so
@@ -368,9 +375,42 @@ impl PaneFlowApp {
         }
     }
 
-    /// The diff body: a thin files toolbar over the shared [`DiffElement`] in an
-    /// `overflow_y_scroll` host (the same render path as the Review view). Empty,
-    /// loading and error states render a centered placeholder instead.
+    /// The always-present summary row under the title strip. Owns the branch
+    /// chip (which needs `self` for the picker state) and hands the rest of the
+    /// dock state to the row renderer as a [`DiffChrome`].
+    fn render_diff_toolbar(
+        &mut self,
+        cwd: &str,
+        data: &Option<AgentsDiffData>,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let chip = self
+            .diff_branch_for_cwd(cwd)
+            .map(|(branch, files_changed)| {
+                render_diff_branch_chip(
+                    cwd.to_string(),
+                    branch,
+                    files_changed,
+                    self.agents_view.diff_branch_menu.as_ref(),
+                    ui,
+                    cx,
+                )
+            });
+        let chrome = DiffChrome {
+            data,
+            cwd: cwd.to_string(),
+            split: self.agents_view.agents_diff_split,
+            options_open: self.agents_view.diff_options_menu_open,
+            layout_submenu_open: self.agents_view.diff_layout_submenu_open,
+            collapsed: &self.agents_view.agents_diff_collapsed,
+        };
+        render_diff_files_toolbar(&chrome, chip, ui, cx)
+    }
+
+    /// The diff body: the shared [`DiffElement`] in an `overflow_y_scroll` host
+    /// (the same render path as the Review view). Empty, loading and error
+    /// states render a centered placeholder instead.
     fn render_agents_diff_body(
         &mut self,
         data: &Option<AgentsDiffData>,
@@ -394,10 +434,7 @@ impl PaneFlowApp {
             return diff_panel_centered("icons/check.svg", "No uncommitted changes.", ui);
         }
 
-        let entity = cx.entity();
-        let collapsed = self.agents_view.agents_diff_collapsed.clone();
         let split = self.agents_view.agents_diff_split;
-        let toolbar = render_diff_files_toolbar(data, &collapsed, ui, &entity);
 
         // Horizontal offsets, lazily resized to the current mode's slot count.
         // Unified uses one slot per file; split keeps detached left/right slots.
@@ -498,7 +535,6 @@ impl PaneFlowApp {
             .w_full()
             .flex()
             .flex_col()
-            .child(toolbar)
             .child(element)
             .into_any_element()
     }

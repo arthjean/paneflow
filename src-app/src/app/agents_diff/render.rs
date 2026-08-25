@@ -1,24 +1,24 @@
 //! Free render helpers for the Agents diff dock chrome: the resize handle, the
-//! toolbar toggle button, the panel header, the files toolbar, and the
+//! toolbar toggle button, the tab strip, the files toolbar, and the
 //! empty/loading/error placeholder. The body (the shared `DiffElement`) and the
 //! panel orchestration live on `PaneFlowApp` in [`super`].
 
-use std::collections::HashSet;
-
 use gpui::{
-    AnyElement, ClickEvent, Context, CursorStyle, Entity, FontWeight, Hsla, InteractiveElement,
+    AnyElement, ClickEvent, Context, CursorStyle, FontWeight, Hsla, InteractiveElement,
     IntoElement, MouseButton, MouseDownEvent, ParentElement, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, px, svg,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, svg,
 };
 
-use super::model::AgentsDiffData;
+use super::model::{DiffChrome, DiffDockTab};
+use super::new_tab_menu::render_diff_new_tab_menu;
+use super::options_menu::render_diff_options_button;
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
 use crate::ui_primitives::AnimatedHoverExt;
 
 /// The thin, column-resize hit target straddling the panel's left border.
 /// Captures the drag anchor `(cursor_x, width_at_grab)`; the actual resize math
-/// runs in the Agents main area's `on_mouse_move` (a wide capture surface, so
+/// runs in the CLI dock wrapper's `on_mouse_move` (a wide capture surface, so
 /// the drag survives the cursor leaving the dock).
 pub(super) fn render_diff_resize_handle(
     ui: crate::theme::UiColors,
@@ -44,117 +44,68 @@ pub(super) fn render_diff_resize_handle(
         .into_any_element()
 }
 
-/// Toolbar button (sibling to the environment-panel toggle) that opens the diff
-/// dock. Visually identical to [`super::super::agents_view_actions`]'s list
-/// toggle: a bare glyph at rest, a whisper fill on hover or while the dock is
-/// open.
-pub(crate) fn render_agents_diff_toggle_button(
-    open: bool,
+/// The dock's tab strip: the permanent "Changes" diff tab, then one tab per
+/// terminal opened from the trailing `+` (which opens the surface picker in
+/// [`super::new_tab_menu`]). The dock's own close button is pinned right, so it
+/// stays reachable from every tab.
+pub(super) fn render_diff_tab_strip(
+    tabs: &[DiffDockTab],
+    active: usize,
+    new_tab_menu_open: bool,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let fill = with_alpha(ui.text, if open { 0.08 } else { 0.0 });
-    let hover = with_alpha(ui.text, 0.08);
-    div()
-        .id("agents-env-toolbar-diff")
+    let mut strip = div()
+        .h(px(40.))
         .flex_none()
-        .h(px(28.))
-        .w(px(30.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(10.))
-        .bg(fill)
-        .animated_hover_bg(fill, hover)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-            this.toggle_agents_diff_panel(event, window, cx);
-        }))
-        .child(
-            svg()
-                .size(px(16.))
-                .flex_none()
-                .path("icons/layout-sidebar-right.svg")
-                .text_color(with_alpha(ui.text, 0.7)),
-        )
-        .into_any_element()
-}
-
-pub(super) fn render_diff_panel_header(
-    data: &Option<AgentsDiffData>,
-    folder: &str,
-    cwd: String,
-    split: bool,
-    ui: crate::theme::UiColors,
-    cx: &mut Context<PaneFlowApp>,
-) -> AnyElement {
-    let loaded = data
-        .as_ref()
-        .is_some_and(|d| !d.loading && d.error.is_none());
-    let (added, removed) = data
-        .as_ref()
-        .map(|d| (d.added, d.removed))
-        .unwrap_or((0, 0));
-    let diff = ui.diff_colors();
-
-    let mut title_row = div()
-        .flex_1()
-        .min_w_0()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.))
-        .child(
-            div()
-                .flex_none()
-                .text_size(crate::ui_primitives::BODY_EMPHASIS)
-                .font_weight(FontWeight::SEMIBOLD)
-                .text_color(ui.text)
-                .child("Changes"),
-        );
-    if !folder.is_empty() {
-        title_row = title_row.child(
-            div()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(crate::ui_primitives::BODY)
-                .text_color(ui.muted)
-                .child(SharedString::from(folder.to_string())),
-        );
+        .gap(px(4.))
+        .px(px(8.))
+        .border_b_1()
+        .border_color(ui.border);
+
+    for (index, tab) in tabs.iter().enumerate() {
+        strip = strip.child(render_diff_tab(tab, index, index == active, ui, cx));
     }
 
-    let mut right = div()
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(2.));
-    if loaded {
-        right = right.child(
+    // Toggle off the render-time snapshot, not the live flag: the open menu's
+    // `on_mouse_up_out` fires on this same release and has already cleared it,
+    // so a live toggle would re-open the menu on every second press.
+    let open = new_tab_menu_open;
+    let new_tab_rest = with_alpha(ui.text, if open { 0.08 } else { 0.0 });
+
+    strip
+        .child(
             div()
+                .id("agents-diff-tab-new")
+                .relative()
+                .flex_none()
+                .size(px(24.))
                 .flex()
-                .flex_row()
                 .items_center()
-                .gap(px(6.))
-                .mr(px(4.))
-                .text_size(crate::ui_primitives::BODY)
-                .child(div().text_color(diff.added).child(format!("+{added}")))
-                .child(div().text_color(diff.deleted).child(format!("-{removed}"))),
-        );
-        right = right.child(render_diff_split_button(split, ui, cx));
-    }
-    right = right
-        .child(render_diff_header_icon_button(
-            "agents-diff-refresh",
-            "icons/refresh.svg",
-            ui,
-            cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.refresh_agents_diff(cwd.clone(), cx);
-            }),
-            ui.muted,
-        ))
+                .justify_center()
+                .rounded(px(6.))
+                .cursor(CursorStyle::PointingHand)
+                .bg(new_tab_rest)
+                .animated_hover_bg(new_tab_rest, with_alpha(ui.text, 0.08))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    this.toggle_diff_new_tab_menu(!open, cx);
+                }))
+                .child(
+                    svg()
+                        .size(px(14.))
+                        .flex_none()
+                        .path("icons/plus.svg")
+                        .text_color(ui.muted),
+                )
+                .when(open, |trigger| {
+                    trigger.child(render_diff_new_tab_menu(ui, cx))
+                }),
+        )
+        .child(div().flex_1().min_w_0())
         .child(render_diff_header_icon_button(
             "agents-diff-close",
             "icons/close.svg",
@@ -163,22 +114,93 @@ pub(super) fn render_diff_panel_header(
                 this.close_agents_diff_panel(cx);
             }),
             ui.muted,
-        ));
+        ))
+        .into_any_element()
+}
 
-    div()
-        .h(px(48.))
+/// One tab chip. The active one carries the raised fill and hairline; the rest
+/// stay flat until hovered. Terminal tabs get a trailing close button; the
+/// `Changes` tab is permanent and has none.
+fn render_diff_tab(
+    tab: &DiffDockTab,
+    index: usize,
+    active: bool,
+    ui: crate::theme::UiColors,
+    cx: &mut Context<PaneFlowApp>,
+) -> AnyElement {
+    let (icon, label) = match tab {
+        DiffDockTab::Changes => ("icons/plus-minus.svg", "Changes"),
+        DiffDockTab::Terminal(_) => ("icons/terminal.svg", "Terminal"),
+    };
+    let rest = with_alpha(ui.text, if active { 0.05 } else { 0.0 });
+    let hover = with_alpha(ui.text, if active { 0.05 } else { 0.04 });
+    let text = if active { ui.text } else { ui.muted };
+
+    let mut chip = div()
+        .id(SharedString::from(format!("agents-diff-tab-{index}")))
         .flex_none()
+        .h(px(26.))
         .flex()
         .flex_row()
         .items_center()
-        .justify_between()
-        .gap(px(8.))
-        .px(px(14.))
-        .border_b_1()
-        .border_color(ui.border)
-        .child(title_row)
-        .child(right)
-        .into_any_element()
+        .gap(px(6.))
+        .px(px(9.))
+        .rounded(px(7.))
+        .cursor(CursorStyle::PointingHand)
+        .bg(rest)
+        .border_1()
+        .border_color(if active {
+            ui.border
+        } else {
+            gpui::transparent_black()
+        })
+        .animated_hover_bg(rest, hover)
+        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            this.select_diff_tab(index, cx);
+        }))
+        .child(
+            svg()
+                .size(px(13.))
+                .flex_none()
+                .path(icon)
+                .text_color(if active { ui.muted } else { text }),
+        )
+        .child(
+            div()
+                .flex_none()
+                .whitespace_nowrap()
+                .text_size(crate::ui_primitives::BODY)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(text)
+                .child(label),
+        );
+
+    if matches!(tab, DiffDockTab::Terminal(_)) {
+        chip = chip.child(
+            div()
+                .id(SharedString::from(format!("agents-diff-tab-close-{index}")))
+                .flex_none()
+                .size(px(16.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.))
+                .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.10))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    this.close_diff_tab(index, cx);
+                }))
+                .child(
+                    svg()
+                        .size(px(11.))
+                        .flex_none()
+                        .path("icons/close.svg")
+                        .text_color(ui.muted),
+                ),
+        );
+    }
+
+    chip.into_any_element()
 }
 
 fn render_diff_header_icon_button(
@@ -202,112 +224,71 @@ fn render_diff_header_icon_button(
         .into_any_element()
 }
 
-/// Single toggle for the split (side-by-side) view, shown in the header once a
-/// diff is loaded. The glyph is a fixed red/green two-pane image, rendered via
-/// `img` because `svg` would flatten it to a monochrome mask. While split is on
-/// the button wears the hover wash as a resting fill; clicking flips the mode.
-fn render_diff_split_button(
-    split: bool,
+/// The summary row under the tab strip, shown with the `Changes` tab: the scope
+/// ("Uncommitted" plus its +/- totals), the branch chip, then the overflow menu
+/// pushed to the right edge.
+pub(super) fn render_diff_files_toolbar(
+    chrome: &DiffChrome<'_>,
+    branch_chip: Option<AnyElement>,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let rest = with_alpha(ui.text, if split { 0.08 } else { 0.0 });
-    let hover = with_alpha(ui.text, 0.08);
-    let icon = if split {
-        "icons/diff-split.svg"
-    } else {
-        "icons/diff-unified.svg"
-    };
-    div()
-        .id("agents-diff-view-split")
-        .size(px(28.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .bg(rest)
-        .animated_hover_bg(rest, hover)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.set_agents_diff_split(!split, cx);
-        }))
-        .child(gpui::img(icon).size(px(16.)).flex_none())
-        .into_any_element()
-}
+    let loaded = chrome
+        .data
+        .as_ref()
+        .filter(|d| !d.loading && d.error.is_none());
+    let diff = ui.diff_colors();
 
-/// The top "files toolbar": a muted file count on the left, a collapse-all /
-/// expand-all toggle on the right. Its label + glyph flip based on whether
-/// every file is already folded.
-pub(super) fn render_diff_files_toolbar(
-    data: &AgentsDiffData,
-    collapsed: &HashSet<String>,
-    ui: crate::theme::UiColors,
-    entity: &Entity<PaneFlowApp>,
-) -> AnyElement {
-    let count = data.file_count;
-    let all_collapsed = data.all_collapsed(collapsed);
-    let (label, icon, next_collapse) = if all_collapsed {
-        ("Expand all", "icons/chevron_down.svg", false)
-    } else {
-        ("Collapse all", "icons/chevron_up.svg", true)
-    };
-    let paths = data.paths();
-    let entity = entity.clone();
-
-    div()
+    let mut row = div()
         .flex_none()
-        .h(px(34.))
+        .h(px(36.))
         .w_full()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(8.))
-        .px(px(12.))
+        .gap(px(6.))
+        .px(px(10.))
         .border_b_1()
         .border_color(ui.border)
         .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(crate::ui_primitives::LABEL_SM)
-                .text_color(ui.muted)
-                .child(format!("{count} file{}", if count == 1 { "" } else { "s" })),
+            svg()
+                .size(px(14.))
+                .flex_none()
+                .path("icons/file-text.svg")
+                .text_color(ui.muted),
         )
         .child(
             div()
-                .id("agents-diff-collapse-all")
                 .flex_none()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(5.))
-                .h(px(24.))
-                .px(px(8.))
-                .rounded(px(6.))
-                .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.08))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(
-                    move |_e: &ClickEvent, _w: &mut Window, cx: &mut gpui::App| {
-                        let paths = paths.clone();
-                        entity.update(cx, |this, cx| {
-                            this.set_all_diff_collapsed(&paths, next_collapse, cx);
-                        });
-                    },
-                )
-                .child(
-                    svg()
-                        .size(px(13.))
-                        .flex_none()
-                        .path(icon)
-                        .text_color(ui.muted),
-                )
-                .child(
-                    div()
-                        .text_size(crate::ui_primitives::LABEL_SM)
-                        .text_color(ui.muted)
-                        .child(label),
-                ),
-        )
+                .text_size(crate::ui_primitives::BODY)
+                .text_color(ui.text)
+                .child("Uncommitted"),
+        );
+
+    if let Some(data) = loaded {
+        row = row
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(crate::ui_primitives::BODY)
+                    .text_color(diff.added)
+                    .child(format!("+{}", data.added)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(crate::ui_primitives::BODY)
+                    .text_color(diff.deleted)
+                    .child(format!("-{}", data.removed)),
+            );
+    }
+
+    if let Some(chip) = branch_chip {
+        row = row.child(chip);
+    }
+
+    row.child(div().flex_1().min_w_0())
+        .child(render_diff_options_button(chrome, ui, cx))
         .into_any_element()
 }
 
