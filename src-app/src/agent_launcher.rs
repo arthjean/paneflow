@@ -140,7 +140,7 @@ impl TerminalAgent {
     pub fn icon_path(self) -> &'static str {
         match self {
             TerminalAgent::ClaudeCode => "icons/claude-color.svg",
-            TerminalAgent::Codex => "icons/codex-color.svg",
+            TerminalAgent::Codex => "icons/codex.svg",
             TerminalAgent::OpenCode => "icons/opencode-color.svg",
             TerminalAgent::Pi => "icons/pi-coding-agent.svg",
             TerminalAgent::Hermes => "icons/hermesagent.svg",
@@ -160,11 +160,11 @@ impl TerminalAgent {
 
     /// Brand accent for the icon tint, as a packed `0xRRGGBB`. `None`
     /// means "use the theme's primary text color" -- the OpenCode / Pi /
-    /// Hermes logos are monochrome `currentColor` SVGs.
+    /// Hermes logos are monochrome `currentColor` SVGs (so is Codex, which
+    /// carries the OpenAI blossom mark).
     pub fn accent(self) -> Option<u32> {
         match self {
             TerminalAgent::ClaudeCode => Some(0xd97757),
-            TerminalAgent::Codex => Some(0x7a9dff),
             // Single-color brand logos: `svg()` renders a monochrome alpha
             // mask, so the silhouette is painted in this brand color.
             TerminalAgent::Amp => Some(0xF34E3F),
@@ -174,7 +174,8 @@ impl TerminalAgent {
             // every theme) or multi-color logos rendered in their native
             // palette via `img()` (see `icon_multicolor`), where `accent`
             // is unused.
-            TerminalAgent::OpenCode
+            TerminalAgent::Codex
+            | TerminalAgent::OpenCode
             | TerminalAgent::Pi
             | TerminalAgent::Hermes
             | TerminalAgent::Grok
