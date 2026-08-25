@@ -5,6 +5,14 @@ use gpui::{Bounds, Hsla, Pixels, Point, Window, fill, px};
 use super::super::LayoutState;
 use super::super::geometry::CellGeometry;
 
+/// Height of the cell grid inside an element's bounds: the raw height minus the
+/// pane's vertical inset on both edges (Ghostty's `window-padding-y`). The track
+/// spans the grid, not the padding, so the thumb stays aligned with the rows it
+/// indexes - `geom.origin.y` is already offset by the same inset.
+fn grid_height(bounds: Bounds<Pixels>) -> Pixels {
+    (bounds.size.height - px(crate::app::constants::PANE_CONTENT_INSET_Y) * 2.).max(px(0.0))
+}
+
 /// EP-006 US-017: match-rail tick height AND bucket size. One tick per
 /// occupied 2 px bucket bounds the paint cost by the track height, never
 /// by the match count (which is capped at 10 000 upstream anyway).
@@ -58,9 +66,10 @@ pub fn paint_match_ticks(
     // Keep this visible_rows/total_lines derivation IDENTICAL to
     // `scrollbar_metrics` above - the rail and the thumb must agree on the
     // document space or ticks drift off the offsets the track click jumps to.
-    let visible_rows = (bounds.size.height / geom.line_height).floor().max(1.0) as usize;
+    let grid_height = grid_height(bounds);
+    let visible_rows = (grid_height / geom.line_height).floor().max(1.0) as usize;
     let total_lines = layout.history_size + visible_rows;
-    let track_height = bounds.size.height.as_f32();
+    let track_height = grid_height.as_f32();
     let strip_width = px(4.0);
     let strip_left = bounds.origin.x + bounds.size.width - strip_width;
     for y in match_tick_offsets(lines_from_bottom.iter().copied(), total_lines, track_height) {
@@ -149,7 +158,7 @@ pub(crate) fn scrollbar_metrics(
     bounds: Bounds<Pixels>,
 ) -> Option<ScrollbarMetrics> {
     let line_height = geom.line_height;
-    let visible_rows = (bounds.size.height / line_height).floor().max(1.0) as usize;
+    let visible_rows = (grid_height(bounds) / line_height).floor().max(1.0) as usize;
     let total_lines = history_size + visible_rows;
     if history_size == 0 || total_lines == 0 {
         return None;
@@ -161,7 +170,7 @@ pub(crate) fn scrollbar_metrics(
     // Past the edge it gets scissored away by the `bounds` content mask, making
     // both the painted thumb and the hit zone invisible.
     let strip_left = bounds.origin.x + bounds.size.width - strip_width;
-    let track_height = bounds.size.height;
+    let track_height = grid_height(bounds);
     let visible_ratio = visible_rows as f32 / total_lines as f32;
     let thumb_height = (track_height * visible_ratio)
         .max(px(16.0))

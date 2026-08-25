@@ -35,8 +35,13 @@ pub fn paint_cell_backgrounds(
     y_boundaries: &[Pixels],
     window: &mut Window,
 ) {
-    let widget_top = bounds.origin.y;
-    let widget_bottom = bounds.origin.y + bounds.size.height;
+    // Vertical extension targets the GRID band, not the raw element bounds:
+    // the pane inset (Ghostty's `window-padding-y`) is deliberate empty space,
+    // so a full-width cell background must stop at the first/last row's edge
+    // instead of bleeding into it.
+    let inset_y = px(crate::app::constants::PANE_CONTENT_INSET_Y);
+    let widget_top = bounds.origin.y + inset_y;
+    let widget_bottom = bounds.origin.y + bounds.size.height - inset_y;
 
     let col_count = layout.desired_cols;
     let row_count = layout.desired_rows;

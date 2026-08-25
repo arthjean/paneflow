@@ -727,10 +727,14 @@ impl TerminalElement {
         let dims = self.frame_metrics.dimensions;
         let theme = crate::theme::active_theme();
 
-        // Keep the terminal grid aligned with the tab strip. The Pane's
-        // reserved 1px border completes the shared 8px visual inset.
-        let gutter = px(crate::app::constants::PANE_CONTENT_INSET);
-        let available_width = (bounds.size.width - gutter).max(px(0.0));
+        // Ghostty's window padding model (`src/renderer/size.zig`): the inset
+        // is subtracted from the viewport on BOTH edges of each axis before the
+        // grid is sized, so the cells sit the same distance from every side of
+        // the pane card instead of hugging the right and bottom edges.
+        let inset_x = px(crate::app::constants::PANE_CONTENT_INSET_X);
+        let inset_y = px(crate::app::constants::PANE_CONTENT_INSET_Y);
+        let available_width = (bounds.size.width - inset_x * 2.).max(px(0.0));
+        let available_height = (bounds.size.height - inset_y * 2.).max(px(0.0));
         // `next_up().floor()` guards against f32 rounding error: when pixel
         // bounds are an exact multiple of the cell metric (24 lines × 16 px),
         // direct `.floor()` can drop one cell because the division yields
@@ -743,7 +747,7 @@ impl TerminalElement {
         // `.max(1.0)` mirrors `desired_cols` above (U-046): on a zero/near-zero
         // -height pane this keeps the row count ≥ 1 so no downstream consumer
         // can underflow a `desired_rows - 1` or index a 0-len boundary array.
-        let desired_rows = (bounds.size.height / dims.line_height)
+        let desired_rows = (available_height / dims.line_height)
             .next_up()
             .floor()
             .max(1.0) as usize;
@@ -755,10 +759,13 @@ impl TerminalElement {
         let content_mask = window.content_mask();
         let visible_top = content_mask.bounds.origin.y;
         let visible_bottom = visible_top + content_mask.bounds.size.height;
-        let first_visible_row = ((visible_top - bounds.origin.y) / dims.line_height)
+        // Row 0 starts one vertical inset below the element's own top edge, so
+        // the culling range is measured from the grid origin, not from `bounds`.
+        let grid_top = bounds.origin.y + inset_y;
+        let first_visible_row = ((visible_top - grid_top) / dims.line_height)
             .floor()
             .max(0.0) as i32;
-        let last_visible_row = ((visible_bottom - bounds.origin.y) / dims.line_height)
+        let last_visible_row = ((visible_bottom - grid_top) / dims.line_height)
             .ceil()
             .max(0.0) as i32;
 
@@ -1528,18 +1535,18 @@ impl Element for TerminalElement {
         };
 
         let cell_width = layout.dimensions.cell_width;
-        let gutter = px(crate::app::constants::PANE_CONTENT_INSET);
-        // Offset the grid origin by the same fixed inset reserved in layout.
+        // Offset the grid origin by the same fixed insets reserved in layout,
+        // on both axes (Ghostty's `padding.left` / `padding.top`).
         let mut origin = Point {
-            x: bounds.origin.x + gutter,
-            y: bounds.origin.y,
+            x: bounds.origin.x + px(crate::app::constants::PANE_CONTENT_INSET_X),
+            y: bounds.origin.y + px(crate::app::constants::PANE_CONTENT_INSET_Y),
         };
         // US-017: snap the origin to physical-pixel boundaries so the grid
         // doesn't shiver between sub-pixel positions while resizing the window
         // or a pane divider on a HiDPI display. Snap the ORIGIN ONLY - never
         // cell_width / line_height (Zed reverted metric-snapping in #54836; it
         // breaks scroll math when rows × snapped_line_height ≠ viewport height).
-        // At scale 1.0 this floors the gutter-adjusted origin to whole pixels,
+        // At scale 1.0 this floors the inset-adjusted origin to whole pixels,
         // which is also the right thing (no regression). Mirrors Zed
         // terminal_element.rs:1062-1070 (PR #47195). `.max(1.0)` guards against
         // a 0.0 scale on headless/test windows (would divide by zero).
@@ -1547,7 +1554,7 @@ impl Element for TerminalElement {
         let snap_px = |v: Pixels| px((f32::from(v) * scale_factor).floor() / scale_factor);
         origin.x = snap_px(origin.x);
         origin.y = snap_px(origin.y);
-        // Store the gutter-adjusted, SNAPPED origin for mouse → grid coordinate
+        // Store the inset-adjusted, SNAPPED origin for mouse → grid coordinate
         // conversion so hit-testing stays coherent with what was painted.
         // Poison-safe: a prior panic inside paint() could have poisoned the
         // Mutex. The inner Point is still a valid value; recover and continue.
