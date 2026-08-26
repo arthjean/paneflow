@@ -5,21 +5,95 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-26
+
 ### Added
 
-- Settings, Themes now leads with three full-bleed window mockups for Light,
-  Dark and System (the System tile splits light against dark down the middle),
-  followed by a live terminal sample painted from the active theme: prompt,
-  build output, the ANSI swatch row, a selection run and the cursor. Switching a
-  mode or a preset repaints the sample in place.
+- A tab level between the workspace and the layout. A workspace owns a list of
+  tabs, each carrying the layout tree the workspace used to carry, with per-tab
+  zoom. The CLI sidebar workspace row becomes a collapsible folder and each tab
+  a child row with inline rename, hover actions and reordering by id. New
+  bindings `secondary-]` (`next_tab`) and `secondary-[` (`previous_tab`);
+  `secondary-alt-t`, `secondary-w` and `secondary-tab` keep their meaning.
+  Workspace tabs cap at 32.
+- Editable `File` tabs in the diff dock, backed by a `ropey::Rope` loaded
+  off-thread, incremental tree-sitter highlighting shared with the diff, native
+  input and IME, undo and redo, save with a modified marker, and a conflict path
+  for a file an agent rewrites underneath. File tabs cap at 8. New bindings
+  `secondary-g` (file tab) and `secondary-j` (terminal tab), scoped off shells
+  and text surfaces.
+- The diff dock is reachable from a CLI pane. A `git-pull-request` button in the
+  pane header toggles it on the pane's workspace root.
+- The files sidebar opens any file, not just markdown, and filters as you type.
+  Rows the editor would refuse stay dimmed but clickable, so the refusal is
+  stated inside the tab.
+- Theme presets: Paneflow, Vercel, Claude and Cursor, each in a light and a dark
+  variant. `theme` stores the resolved variant; pre-preset names still resolve
+  through an alias table. Settings, Themes leads with three full-bleed window
+  mockups and a live terminal sample painted from the active theme.
 - New `reduce_motion` config key (Settings, Themes, Preferences). When enabled,
   hover transitions settle instantly and the primary sidebar toggles without the
   slide.
 - Panes that do not hold focus now fade to 70% opacity when a workspace holds
-  more than one pane, so the focused pane reads at a glance without a colored
-  border. Tune or disable it with `unfocused_pane_opacity` (`0.15` to `1.0`,
-  `1.0` disables) in `paneflow.json`. The tab bar, attention glow, broadcast
-  stripe and Composer stay at full contrast.
+  more than one pane. Tune or disable it with `unfocused_pane_opacity` (`0.15`
+  to `1.0`, `1.0` disables). The tab bar, attention glow, broadcast stripe and
+  Composer stay at full contrast.
+- `surface.*` IPC methods export a stable `workspace_id` and accept it as an
+  optional parameter; a surface outside the requested workspace is rejected with
+  `invalid_params`. Omitting the parameter keeps the previous behavior.
+- `list_panes` over the MCP bridge names the holding tab.
+- CLI panes float as continuous-corner cards, with matching row skins and
+  delayed tooltips. A Linux-only application icon ships alongside.
+
+### Changed
+
+- Session schema v2. A workspace session carries a list of tab sessions rather
+  than a single layout tree. v1 files are migrated on load, not rejected.
+- A pane holds one surface. The in-pane tab strip gives way to a card header
+  with the surface name, the agent pill and the actions.
+- `BoundedOutput` fails with `ProcError::OutputLimitExceeded` instead of
+  returning partial data with a truncation flag. Editors and file managers
+  launched from Paneflow are spawned detached, backed on Windows by a job
+  object.
+- Find-in-buffer in the terminal is chunked, cancellable and budgeted, and the
+  agent identity is declared at launch instead of discovered by scanning.
+- GPUI is pinned back to upstream `zed-industries/zed` and the Paneflow fork is
+  retired; only `gpui` and `gpui_platform` remain declared. Affects builds from
+  source only.
+
+### Removed
+
+- The Agents view, its sidebar, bottom panel, view actions and project store.
+  The mode switch drops to CLI and Review, and the `secondary-shift-a` binding
+  is removed. A `session.json` from an older build restores in CLI mode with its
+  workspaces intact. The CLI mode tab is now named "Agents".
+- The agent identity pill and the Files sidebar button from the pane header,
+  Rename from the workspace context menu, word-level intra-line highlighting in
+  the diff, the `paneflow-acp` crate, and the Zed markdown global-theme
+  bootstrap.
+
+### Fixed
+
+- Windows: the title bar minimum height matches the Win11 caption strip.
+- Codex 0.149.1 user turns are read correctly and subagent rollouts are dropped.
+- Synthetic Claude records stay out of sidebar titles, project slugs with
+  trailing separators are normalized, and bound Claude sessions are resumed
+  instead of re-minted.
+- The launching agent session's environment markers are stripped from child
+  PTYs, and every conflict-watcher wake in the code editor stays on the view's
+  thread.
+- The branches popover stays anchored while its list scrolls, the delete and
+  clear icons paint instead of leaving blank space, and the tab-cycling chord
+  assertion is platform-aware.
+
+### Security
+
+- Telemetry capture is gated behind a closed event schema. `TelemetryEvent` is
+  now the only way to name an event or attach properties and the client owns the
+  reserved keys, so the no-PII rule is held by the type system rather than by
+  review. The queue is bounded on event count and serialized bytes, with an
+  explicit shutdown flush deadline.
+- The agent-config lease ownership bit is stored outside the locked file.
 
 ## [0.8.1] - 2026-07-21
 

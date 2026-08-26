@@ -63,6 +63,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.9.0" date="2026-08-26">
+      <description>
+        <p>Workspace tabs, an editable file tab in the diff dock, and theme presets.</p>
+        <ul>
+          <li>A workspace owns a list of tabs instead of one layout tree, and a pane holds a single surface, so the product drops from two nested tab levels to one</li>
+          <li>The diff dock gains a File tab with a real editor: incremental highlighting shared with the diff, native input and IME, undo and redo, save, and a conflict path</li>
+          <li>The files sidebar opens any file and filters as you type, and the dock is reachable from a CLI pane header</li>
+          <li>Themes become four presets with light and dark variants, with pre-preset names still resolving to the same colors</li>
+          <li>The Agents view is removed; sessions written by older builds restore in CLI mode with their workspaces intact</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.8.2" date="2026-07-21">
       <description>
         <p>Windows title bar material isolation and documentation update.</p>
