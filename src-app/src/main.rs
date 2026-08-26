@@ -879,9 +879,19 @@ struct AgentsViewState {
     /// tab (see `agents_diff::surface_picker`). Set by the pane-header toggle on
     /// the workspace's first open of the dock.
     pub(crate) diff_dock_picker: bool,
-    /// Whether the picker has been answered at least once. Once it has,
-    /// opening the dock restores the last active tab rather than asking again.
+    /// Whether the picker has been answered at least once *for the workspace
+    /// that owns the live dock*. Once it has, opening the dock there restores
+    /// the last active tab rather than asking again.
     pub(crate) diff_dock_picked: bool,
+    /// Which workspace the live dock fields above describe. `None` until the
+    /// dock is first opened. [`PaneFlowApp::sync_diff_dock_workspace`] parks and
+    /// swaps them whenever this drifts from the active workspace.
+    pub(crate) diff_dock_owner: Option<u64>,
+    /// Dock state parked per workspace id, for every workspace that is not
+    /// [`Self::diff_dock_owner`]. The dock is detached per workspace: opening it
+    /// in one project leaves the next one untouched.
+    pub(crate) diff_dock_parked:
+        std::collections::HashMap<u64, crate::app::cli_diff_dock::DiffDockSlot>,
     /// The dock's tabs. Index 0 is always the permanent `Changes` diff; the
     /// rest are terminals opened from the `+` menu, closable from their tab.
     pub(crate) diff_tabs: Vec<crate::app::agents_diff::DiffDockTab>,

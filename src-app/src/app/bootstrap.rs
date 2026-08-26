@@ -1057,6 +1057,8 @@ impl PaneFlowApp {
                 diff_new_tab_menu_open: false,
                 diff_dock_picker: false,
                 diff_dock_picked: false,
+                diff_dock_owner: None,
+                diff_dock_parked: std::collections::HashMap::new(),
                 diff_tabs: vec![crate::app::agents_diff::DiffDockTab::Changes],
                 diff_active_tab: 0,
                 diff_tab_close_armed: None,

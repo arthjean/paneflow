@@ -66,6 +66,10 @@ impl PaneFlowApp {
     /// snapshot so a large hidden dock cannot keep old rows alive.
     pub(crate) fn open_agents_diff_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
+        // The single door to an open dock, so the single place that records
+        // which workspace owns it - `sync_diff_dock_workspace` would otherwise
+        // read the open as a drift and park it on the next frame.
+        self.agents_view.diff_dock_owner = self.active_workspace().map(|ws| ws.id);
         let split = self.agents_view.agents_diff_split;
         let has_current_snapshot = self.agents_view.agents_diff.as_ref().is_some_and(|data| {
             data.cwd == cwd
