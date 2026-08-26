@@ -2705,7 +2705,8 @@ fn main() {
             // US-011: reserve space on the left of the custom titlebar
             // for macOS traffic lights. The three red/yellow/green circles
             // live at x≈12-78px; the sidebar-aligned title-bar slot starts at
-            // x=80 (see title_bar.rs). `..Default::default()` is load-bearing on
+            // x=80 (see title_bar.rs). y=10 centers the 12px lights in the
+            // 32px bar (`TITLE_BAR_MIN_HEIGHT`). `..Default::default()` is load-bearing on
             // non-macOS (GPUI's TitlebarOptions may grow platform-specific
             // fields we don't set); clippy only flags it needless under
             // target_os = "macos" where traffic_light_position makes the
@@ -2715,7 +2716,7 @@ fn main() {
                 title: None,
                 appears_transparent: true,
                 #[cfg(target_os = "macos")]
-                traffic_light_position: Some(point(px(12.0), px(12.0))),
+                traffic_light_position: Some(point(px(12.0), px(10.0))),
                 ..Default::default()
             };
 

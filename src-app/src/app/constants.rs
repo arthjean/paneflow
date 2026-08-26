@@ -19,8 +19,11 @@ pub(crate) const TITLE_BAR_EDGE_INSET: Pixels = px(8.);
 pub(crate) const TITLE_BAR_CONTROL_SPACING: Pixels = px(12.);
 /// Compact custom control size used by Linux CSD title bars.
 pub(crate) const TITLE_BAR_CONTROL_SIZE: Pixels = px(20.);
-/// Minimum title-bar height preserving an 8px inset around compact controls.
-pub(crate) const TITLE_BAR_MIN_HEIGHT: Pixels = px(36.);
+/// Minimum title-bar height: the native Win11 caption strip is exactly 32px,
+/// and the Windows control cluster paints at full bar height (46x`height`), so
+/// anything taller reads as an oversized caption there. It still leaves a 6px
+/// inset around the 20px compact controls Linux and the brand cluster use.
+pub(crate) const TITLE_BAR_MIN_HEIGHT: Pixels = px(32.);
 /// Inset between the window shell and the main panel.
 pub(crate) const PANEL_INSET: f32 = 4.;
 /// The main panel's structural corner language.
