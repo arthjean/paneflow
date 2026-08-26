@@ -367,7 +367,11 @@ jobs:
             image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
             format: rpm
           - distro: opensuse
-            image: registry.opensuse.org/opensuse/tumbleweed:latest@sha256:362c1e2f5a2313e3d1e8713d28e06d13ee7f5a68399f8f86ffa1aa8a2a320c43
+            # Tag rather than digest, unlike every other leg: Tumbleweed rolls
+            # daily and its registry drops the superseded manifests, so a pin
+            # turns this job red with "manifest unknown" within weeks. The smoke
+            # test wants today's Tumbleweed anyway. Matches release.yml.
+            image: registry.opensuse.org/opensuse/tumbleweed:latest
             format: rpm
           - distro: arch
             image: archlinux:base@sha256:fe6972d4dc1f660c0c10f4c41b2de8986bab89e7e2955378f8beadb8ebcd7433
