@@ -25,11 +25,11 @@ use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
-/// Width of the settings nav rail. Wider than the app rails (Codex's settings
-/// sidebar fits grouped, spelled-out section labels). Same units as
-/// `SIDEBAR_WIDTH` (raw `f32`, wrapped in `px()` at the use site) so it can
-/// feed `sidebar_px` for title-bar brand-slot alignment.
-pub(crate) const SETTINGS_NAV_WIDTH: f32 = 260.;
+/// Width of the settings nav rail. Pinned to [`SIDEBAR_WIDTH`] so every rail
+/// in the app measures the same and the title-bar brand slot never shifts
+/// when Settings opens. Raw `f32`, wrapped in `px()` at the use site, so it
+/// can feed `sidebar_px` directly.
+pub(crate) const SETTINGS_NAV_WIDTH: f32 = crate::SIDEBAR_WIDTH;
 
 /// Content-panel background - `ui.base` (`#181818`), the same opaque surface the
 /// Review / Agents content panels use. Deliberately *lighter* than the `#141414`
