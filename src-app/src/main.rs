@@ -1091,6 +1091,9 @@ struct PaneFlowApp {
     files_tree_scroll: gpui::ScrollHandle,
     /// Keyboard-selected visible Files row. The index is over visible rows only.
     files_selected: usize,
+    /// US-020: the Files sidebar type-to-filter needle. A real single-line
+    /// `TextInput`, observed at bootstrap so each keystroke re-renders.
+    pub(crate) files_filter_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     /// Focus target for keyboard navigation inside the docked Files sidebar.
     files_focus: FocusHandle,
     /// Surface id of the terminal that opened the Files sidebar. Markdown

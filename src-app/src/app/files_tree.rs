@@ -16,12 +16,20 @@ use std::path::{Path, PathBuf};
 /// One entry in a directory listing. Ignored and hidden entries are filtered
 /// before becoming nodes; the flags remain for callers that construct nodes in
 /// tests or future "show ignored" UI.
+///
+/// `size` is the byte length reported by the directory read (0 for
+/// directories, and 0 when the stat fails). US-019 needs it to tell, without
+/// touching the disk again on the render thread, whether the editor would
+/// refuse the file for being over [`code::load::MAX_FILE_BYTES`].
+///
+/// [`code::load::MAX_FILE_BYTES`]: crate::app::agents_diff::code::load::MAX_FILE_BYTES
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileNode {
     pub path: PathBuf,
     pub is_dir: bool,
     pub is_ignored: bool,
     pub is_hidden: bool,
+    pub size: u64,
 }
 
 /// A flattened, render-ready row: the node, its indentation depth (component
@@ -112,6 +120,45 @@ pub(crate) fn is_markdown(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Extensions whose bytes are binary by construction. Presentation-only
+/// heuristic: the editor still sniffs the actual bytes when the file is opened
+/// ([`code::load::looks_binary`]), so a mis-classified extension costs a dimmed
+/// row, never a wrong read.
+///
+/// [`code::load::looks_binary`]: crate::app::agents_diff::code::load
+const BINARY_EXTENSIONS: &[&str] = &[
+    // images
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif", "tiff", "tif", "psd", "heic",
+    // audio / video
+    "mp3", "wav", "flac", "ogg", "m4a", "aac", "mp4", "mkv", "mov", "avi", "webm", "wmv",
+    // archives
+    "zip", "gz", "bz2", "xz", "zst", "7z", "rar", "tar", "tgz", "jar", "whl",
+    // executables / objects
+    "exe", "dll", "so", "dylib", "o", "a", "lib", "obj", "pdb", "class", "wasm", "bin", "msi",
+    "appimage", "dmg", "deb", "rpm", // fonts / documents / databases
+    "ttf", "otf", "woff", "woff2", "eot", "pdf", "db", "sqlite", "sqlite3", "bcmap", "pyc",
+];
+
+/// Case-insensitive "this extension is binary" predicate.
+pub(crate) fn is_binary_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| {
+            let e = e.to_ascii_lowercase();
+            BINARY_EXTENSIONS.contains(&e.as_str())
+        })
+        .unwrap_or(false)
+}
+
+/// US-019: would the editor refuse this file? Refused rows stay dimmed in the
+/// sidebar but remain clickable - opening one surfaces the US-003 error inside
+/// the tab rather than silently doing nothing.
+pub(crate) fn editor_refuses(node: &FileNode) -> bool {
+    !node.is_dir
+        && (is_binary_extension(&node.path)
+            || node.size > crate::app::agents_diff::code::load::MAX_FILE_BYTES as u64)
+}
+
 /// Display name (the final path component) of a node, lossy for non-UTF-8.
 pub(crate) fn node_name(node: &FileNode) -> String {
     node.path
@@ -152,11 +199,22 @@ pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
             if is_hidden || is_ignored {
                 return None;
             }
+            // Stat only what survives the filter, and only for files: the
+            // sort, the gitignore pass and the watcher are untouched, this
+            // just carries the size US-019 dims on. A failed stat reads as 0,
+            // i.e. "not too large" - `code::load` still checks the real length
+            // when the file is actually opened.
+            let size = if is_dir {
+                0
+            } else {
+                entry.metadata().map(|m| m.len()).unwrap_or(0)
+            };
             Some(FileNode {
                 path,
                 is_dir,
                 is_ignored,
                 is_hidden,
+                size,
             })
         })
         .collect();
@@ -344,6 +402,7 @@ mod tests {
             is_dir: true,
             is_ignored: false,
             is_hidden: false,
+            size: 0,
         }
     }
 
@@ -353,6 +412,7 @@ mod tests {
             is_dir: false,
             is_ignored: false,
             is_hidden: false,
+            size: 0,
         }
     }
 
@@ -538,5 +598,64 @@ mod tests {
                 .iter()
                 .any(|node| node.path == src.join("lib.rs"))
         );
+    }
+
+    // ── US-019: editor-refusal tiers ────────────────────────────────────────
+
+    #[test]
+    fn binary_extensions_are_recognized_case_insensitively() {
+        assert!(is_binary_extension(Path::new("/w/logo.PNG")));
+        assert!(is_binary_extension(Path::new("/w/app.wasm")));
+        assert!(is_binary_extension(Path::new("/w/lib.so")));
+        assert!(!is_binary_extension(Path::new("/w/main.rs")));
+        assert!(!is_binary_extension(Path::new("/w/README")));
+        assert!(!is_binary_extension(Path::new("/w/notes.md")));
+    }
+
+    #[test]
+    fn editor_refuses_binary_and_oversized_files_only() {
+        let limit = crate::app::agents_diff::code::load::MAX_FILE_BYTES as u64;
+
+        let mut png = file("/w/logo.png");
+        png.size = 12;
+        assert!(editor_refuses(&png));
+
+        let mut huge = file("/w/dump.log");
+        huge.size = limit + 1;
+        assert!(editor_refuses(&huge));
+
+        let mut at_limit = file("/w/dump.log");
+        at_limit.size = limit;
+        assert!(!editor_refuses(&at_limit));
+
+        let mut source = file("/w/main.rs");
+        source.size = 4_096;
+        assert!(!editor_refuses(&source));
+
+        // A directory is never "refused" - it toggles, it never opens.
+        let mut d = dir("/w/target");
+        d.size = limit + 1;
+        assert!(!editor_refuses(&d));
+    }
+
+    #[test]
+    fn read_dir_sorted_reports_file_sizes() {
+        let tmp = std::env::temp_dir().join(format!("paneflow-files-size-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).expect("tmp dir");
+        std::fs::write(tmp.join("a.txt"), b"hello").expect("write");
+        std::fs::create_dir_all(tmp.join("sub")).expect("subdir");
+
+        let nodes = read_dir_sorted(&tmp, &tmp);
+        let a = nodes
+            .iter()
+            .find(|n| n.path.ends_with("a.txt"))
+            .expect("a.txt");
+        assert_eq!(a.size, 5);
+        let sub = nodes.iter().find(|n| n.path.ends_with("sub")).expect("sub");
+        assert!(sub.is_dir);
+        assert_eq!(sub.size, 0);
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

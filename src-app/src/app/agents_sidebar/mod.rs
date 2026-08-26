@@ -21,7 +21,7 @@
 
 mod affordances;
 mod context_menus;
-mod filter;
+pub(crate) mod filter;
 mod header;
 mod state;
 

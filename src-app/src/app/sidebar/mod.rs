@@ -88,9 +88,9 @@ struct SidebarServiceSummary {
     overflow: usize,
 }
 
-const SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
-const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
-const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
+pub(crate) const SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
+pub(crate) const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
+pub(crate) const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
 /// Separates a row's title line from its meta line (a detected service).
 const SIDEBAR_ROW_GAP: f32 = 4.0;
 /// Height of a row's title line, and with it the height of a single-line row:
@@ -100,7 +100,7 @@ const SIDEBAR_ROW_GAP: f32 = 4.0;
 /// size, so the rail's row height moved with the font metrics - it measured 23
 /// px here and made every row 35 px tall. Pinning it keeps the row at 30 px,
 /// the height the rail is designed against, whatever font resolves.
-const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
+pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
 const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 const SIDEBAR_AGENT_STATUS_SLOT_WIDTH: f32 = 48.0;
 const SIDEBAR_AGENT_ICON_SLOT_WIDTH: f32 = 20.0;

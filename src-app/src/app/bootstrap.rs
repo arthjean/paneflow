@@ -805,6 +805,15 @@ impl PaneFlowApp {
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search threads", cx));
         cx.observe(&agents_filter_input, |_, _, cx| cx.notify())
             .detach();
+        // US-020: the Files sidebar type-to-filter field - same pattern.
+        let files_filter_input =
+            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Filter files", cx));
+        cx.observe(&files_filter_input, |app: &mut PaneFlowApp, _, cx| {
+            // A new needle rebuilds the list, so the old index means nothing.
+            app.files_selected = 0;
+            cx.notify();
+        })
+        .detach();
         // Codex settings nav search field - same pattern: a real single-line
         // TextInput, observed so each keystroke re-renders the nav to re-filter.
         let settings_search_input =
@@ -919,6 +928,7 @@ impl PaneFlowApp {
             files_tree: crate::app::files_tree::FilesTreeState::default(),
             files_tree_scroll: gpui::ScrollHandle::new(),
             files_selected: 0,
+            files_filter_input,
             files_focus: cx.focus_handle(),
             files_surface_id: None,
             files_watcher: None,

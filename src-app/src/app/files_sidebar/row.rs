@@ -1,45 +1,88 @@
 //! Single Files-tree row render: indent + chevron + icon + name, with the
-//! markdown/greyed styling (US-004), click-to-open / expand (US-003/004),
+//! editor-refusal styling (US-019), click-to-open / expand (US-003/004),
 //! markdown drag-to-pane (US-008), and the right-click copy-path menu trigger
 //! (US-009). Split out of `view.rs` to keep each file under the 250-line budget.
 
+use std::ops::Range;
+
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
-    Styled, div, prelude::*, px, svg,
+    AnyElement, ClickEvent, Context, FontWeight, HighlightStyle, InteractiveElement, IntoElement,
+    ParentElement, SharedString, Styled, StyledText, div, img, prelude::*, px, svg,
 };
 
-use super::{DIMMED_OPACITY, INDENT_STEP, ROW_HEIGHT};
+use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
 use crate::PaneFlowApp;
 use crate::app::files_tree::{self, VisibleRowRef};
+use crate::app::sidebar::{SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_X};
 use crate::pane_drag::{DragPreview, MarkdownFileDrag};
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
+
+/// What a row prints on its name line. In tree mode this is the node's own file
+/// name with no highlight; under the US-020 filter it is the workspace-relative
+/// path with the matched byte range picked out.
+pub(super) struct FilesRowLabel {
+    pub text: SharedString,
+    pub highlight: Option<Range<usize>>,
+}
+
+impl FilesRowLabel {
+    pub(super) fn plain(text: SharedString) -> Self {
+        Self {
+            text,
+            highlight: None,
+        }
+    }
+}
 
 impl PaneFlowApp {
     pub(super) fn files_row(
         &self,
         row: VisibleRowRef<'_>,
+        label: FilesRowLabel,
         selected: bool,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let node = row.node;
-        let name: SharedString = files_tree::node_name(node).into();
         let is_md = !node.is_dir && files_tree::is_markdown(&node.path);
-        let actionable = node.is_dir || is_md;
+        // US-019: the markdown lock is gone - every file is clickable and read
+        // at full text color. The one remaining muted tier is a file the editor
+        // would refuse (binary extension or over `MAX_FILE_BYTES`); it stays
+        // clickable so opening it surfaces the US-003 error inside the tab.
+        let refused = files_tree::editor_refuses(node);
         let dimmed = node.is_ignored || node.is_hidden;
-        // US-004: directories + markdown read at full text color; every other
-        // file is greyed (muted). Ignored/hidden adds an opacity knock-down.
-        let text_color = if actionable { ui.text } else { ui.muted };
-        let indent = px(8. + row.depth as f32 * INDENT_STEP);
+        let text_color = if refused { ui.muted } else { ui.text };
+        let indent = px(SIDEBAR_ROW_PADDING_X + row.depth as f32 * INDENT_STEP);
         let path = node.path.clone();
         let is_dir = node.is_dir;
+        // Same card as a workspace-rail row: the rail's fills, traced by the
+        // shared `squircle` primitive at `ROW_RADIUS` rather than GPUI's
+        // circular `rounded()`. A selected row rests filled and drops its hover
+        // layer, exactly like the rail's visible tab.
+        let group = SharedString::from(format!("files-row-group-{}", node.path.display()));
+        let (resting, hovered) = if selected {
+            (
+                Some(crate::app::constants::sidebar_tab_active_background()),
+                None,
+            )
+        } else {
+            (
+                None,
+                Some(crate::app::constants::sidebar_tab_hover_background()),
+            )
+        };
 
-        // Leading 14px slot: a chevron for directories (right = collapsed,
-        // down = expanded - a static swap, legible under reduced motion), an
-        // invisible spacer for files so names align.
-        let chevron = if is_dir {
+        // One leading slot, never two: a directory prints its chevron there
+        // (right = collapsed, down = expanded - a static swap, legible under
+        // reduced motion) and a file its language icon, so both start on the
+        // same pixel and the name column stays straight. Directories carry no
+        // folder glyph; the chevron alone says "container".
+        //
+        // The language icons ship their own `fill`, so they are painted as
+        // images. `svg()` would flatten each one to a single text color.
+        let slot = if is_dir {
             svg()
-                .size(px(14.))
+                .size(px(ROW_SLOT))
                 .flex_none()
                 .path(if row.expanded {
                     "icons/chevron-down.svg"
@@ -49,44 +92,63 @@ impl PaneFlowApp {
                 .text_color(ui.muted)
                 .into_any_element()
         } else {
-            div().size(px(14.)).flex_none().into_any_element()
+            img(crate::file_icons::language_icon_path(
+                &files_tree::node_name(node),
+            ))
+            .size(px(ROW_SLOT))
+            .flex_none()
+            .into_any_element()
         };
 
-        let icon = if is_dir {
-            if row.expanded {
-                "icons/folder-open.svg"
-            } else {
-                "icons/folder.svg"
-            }
-        } else {
-            "icons/file-text.svg"
-        };
+        // One hairline per ancestor level, centered on that ancestor's slot, so
+        // a deep row stays visually tied to the folder that holds it. Painted
+        // after the card fill and before the content, which is why they read
+        // over a selected row instead of under it.
+        let guide_color = ui.text.opacity(0.08);
+        let guides = (0..row.depth)
+            .map(|level| {
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .left(px(SIDEBAR_ROW_PADDING_X
+                        + level as f32 * INDENT_STEP
+                        + (ROW_SLOT / 2.).floor()))
+                    .w(px(1.))
+                    .bg(guide_color)
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
 
-        let mut el = div()
-            .id(SharedString::from(format!(
+        let mut el = squircle_skin(
+            div().id(SharedString::from(format!(
                 "files-row-{}",
                 node.path.display()
-            )))
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.))
-            .h(ROW_HEIGHT)
-            // Quiet-row geometry (matches the sessions sidebar): inset rounded
-            // rows so the hover fill reads as a discrete pill, not a full-bleed
-            // band.
-            .mx(px(6.))
-            .rounded(px(6.))
-            .pl(indent)
-            .pr(px(8.))
-            .when(selected, |s| {
-                s.bg(crate::app::constants::sidebar_tab_active_background())
-            })
-            .when(dimmed, |s| s.opacity(DIMMED_OPACITY));
+            ))),
+            group,
+            ROW_RADIUS,
+            resting,
+            hovered,
+        )
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(ROW_GAP))
+        .h(ROW_HEIGHT)
+        .flex_none()
+        .overflow_x_hidden()
+        // Rail inset and padding box; only the left padding differs, and only
+        // by the tree indent it carries. The name is centered by `items_center`
+        // rather than vertical padding, so the row keeps its 28px whatever font
+        // resolves.
+        .mx(px(SIDEBAR_ROW_MARGIN_X))
+        .pl(indent)
+        .pr(px(SIDEBAR_ROW_PADDING_X))
+        .when(dimmed, |s| s.opacity(DIMMED_OPACITY))
+        .children(guides);
 
-        // US-009: right-click any row (markdown, greyed file, or directory) to
-        // open the copy-path menu. Sits on the base row so it works regardless
-        // of actionability.
+        // US-009: right-click any row (file or directory) to open the copy-path
+        // menu.
         let menu_path = path.clone();
         el = el.on_aux_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
             if e.is_right_click()
@@ -94,7 +156,7 @@ impl PaneFlowApp {
             {
                 this.dismiss_transient_surfaces();
                 this.files_focus.focus(window, cx);
-                this.select_files_row(&menu_path);
+                this.select_files_row(&menu_path, cx);
                 this.files_menu_open = Some(crate::FilesContextMenu {
                     path: menu_path.clone(),
                     position,
@@ -104,27 +166,29 @@ impl PaneFlowApp {
             }
         }));
 
-        if actionable {
-            // Whole row toggles a directory (US-003) / opens a markdown (US-004).
-            let click_path = path.clone();
-            el = el.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.files_focus.focus(window, cx);
-                this.select_files_row(&click_path);
-                if is_dir {
-                    this.toggle_dir(&click_path, cx);
-                } else {
-                    this.open_markdown_in_active_pane(click_path.clone(), window, cx);
-                }
-                cx.stop_propagation();
-            }));
-        }
+        // Whole row toggles a directory (US-003), opens a markdown in the active
+        // pane (US-004), or opens any other file in the diff dock's editor
+        // (US-019).
+        let click_path = path.clone();
+        el = el.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.files_focus.focus(window, cx);
+            this.select_files_row(&click_path, cx);
+            if is_dir {
+                this.toggle_dir(&click_path, cx);
+            } else if is_md {
+                this.open_markdown_in_active_pane(click_path.clone(), window, cx);
+            } else {
+                this.open_file_in_diff_dock(click_path.clone(), window, cx);
+            }
+            cx.stop_propagation();
+        }));
 
         // US-008: only markdown rows are draggable into a pane. The ghost reuses
-        // the shared tab-drag preview; non-markdown rows have no drag path.
+        // the shared tab-drag preview; US-019 deliberately leaves drag alone.
         if is_md {
             let drag = MarkdownFileDrag {
                 path: path.clone(),
-                title: name.clone(),
+                title: SharedString::from(files_tree::node_name(node)),
                 icon: SharedString::from("icons/file-text.svg"),
             };
             el = el.on_drag(drag, |drag, _offset, _window, cx| {
@@ -135,40 +199,38 @@ impl PaneFlowApp {
             });
         }
 
-        let el = el
-            .child(chevron)
-            .child(
-                svg()
-                    .size(px(14.))
-                    .flex_none()
-                    .path(icon)
-                    .text_color(if is_md { ui.accent } else { ui.muted }),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(12.))
-                    .text_color(text_color)
-                    .overflow_x_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(name),
-            );
+        // US-020: the matched segment is picked out with `StyledText`'s
+        // highlight list - one text element with a styled byte range, not
+        // nested spans.
+        let name = match label.highlight {
+            Some(range) => StyledText::new(label.text)
+                .with_highlights([(
+                    range,
+                    HighlightStyle {
+                        color: Some(ui.accent),
+                        font_weight: Some(FontWeight::SEMIBOLD),
+                        ..Default::default()
+                    },
+                )])
+                .into_any_element(),
+            None => label.text.into_any_element(),
+        };
 
-        if actionable {
-            let hover_background = crate::app::constants::sidebar_tab_hover_background();
-            let resting_background = if selected {
-                crate::app::constants::sidebar_tab_active_background()
-            } else {
-                hover_background.opacity(0.0)
-            };
-            el.animated_hover(move |style, delta| {
-                style.bg(lerp_color(resting_background, hover_background, delta));
-            })
-            .into_any_element()
-        } else {
-            el.into_any_element()
-        }
+        let el = el.child(slot).child(
+            div()
+                .flex_1()
+                .min_w_0()
+                // Rail type scale: `text_sm` on a pinned line height, so the
+                // row keeps its height whatever font resolves.
+                .text_sm()
+                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                .text_color(text_color)
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .child(name),
+        );
+
+        el.into_any_element()
     }
 }
