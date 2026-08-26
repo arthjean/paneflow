@@ -561,6 +561,7 @@ impl PaneFlowApp {
             // Buffered until `TerminalState::promote` hands over the live PTY -
             // same contract as the tab path.
             new_terminal.read(cx).send_command(command);
+            new_terminal.update(cx, |view, _cx| view.declare_agent_from_command(command));
         }
         new_pane.read(cx).focus_handle(cx).focus(window, cx);
         self.save_session(cx);

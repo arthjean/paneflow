@@ -231,6 +231,26 @@ fn scan_workspace_ports(
     ports
 }
 
+/// Whether a scan deposit must LEAVE a launch-declared identity alone.
+///
+/// A launch-declared agent ([`crate::terminal::TerminalView::declare_agent`])
+/// exists before its process does: the shell still has to start and `exec` the
+/// CLI, and the first scan lands inside that window with an empty subtree.
+/// Without this, the deposit would clear the logo the launch had just set and
+/// the next tick would put it back - a visible flicker.
+///
+/// Evidence always wins: a scan that SAW an agent resolves the surface
+/// immediately, whether it confirms the declaration or corrects it. Only the
+/// absence of evidence is deferred, and only until the declared deadline, so a
+/// declaration that never materializes is still cleared.
+fn declaration_survives_scan(
+    scanned: Option<crate::agent_launcher::TerminalAgent>,
+    declared_until: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    scanned.is_none() && declared_until.is_some_and(|until| now < until)
+}
+
 fn scan_detected_agents(
     scan: &std::collections::HashMap<u64, crate::workspace::PaneScan>,
 ) -> std::collections::HashSet<String> {
@@ -608,6 +628,7 @@ impl PaneFlowApp {
                     &self.cached_config,
                 ) {
                     term.read(cx).send_command(&resume);
+                    term.update(cx, |view, _cx| view.declare_agent(agent.terminal_agent()));
                 }
 
                 match edge {
@@ -1133,6 +1154,26 @@ impl PaneFlowApp {
         }
     }
 
+    /// True when a live surface in this workspace has never been resolved by a
+    /// scan (`child_pid > 0` but still not `agent_confirmed`).
+    ///
+    /// This is the "identity not settled yet" predicate, and it is
+    /// self-extinguishing: every deposit confirms every root it was handed, so
+    /// it goes false after one complete pass and stays false for the rest of
+    /// the surface's life. Both the debounce skip and the ladder re-arm below
+    /// key off it, which is what keeps them from turning into a permanent
+    /// scan loop under sustained agent output.
+    fn has_unscanned_surface(&self, ws_idx: usize, cx: &Context<Self>) -> bool {
+        self.workspaces.get(ws_idx).is_some_and(|ws| {
+            ws.collect_panes().iter().any(|pane| {
+                pane.read(cx).terminals().any(|tv| {
+                    let t = &tv.read(cx).terminal;
+                    t.child_pid > 0 && !t.agent_confirmed
+                })
+            })
+        })
+    }
+
     /// Schedule a debounced port-scan ladder for the given workspace.
     ///
     /// `port_scan_pending` absorbs bursts while a ladder is in flight: the
@@ -1141,7 +1182,16 @@ impl PaneFlowApp {
     /// over and over and no scan ran until the terminal went quiet. The
     /// generation counter stays as the cancellation belt for workspace
     /// close/reuse.
+    ///
+    /// Two carve-outs exist for identity, which unlike ports must feel
+    /// instantaneous. A workspace holding a never-scanned surface skips the
+    /// debounce entirely, and a ladder that absorbed such a surface's burst
+    /// re-arms itself the moment it ends instead of leaving that pane
+    /// unidentified for a whole ladder (up to ~8.5s). Both are gated on
+    /// [`Self::has_unscanned_surface`], so they cannot outlive the first
+    /// successful deposit.
     fn schedule_port_scan(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
+        let unscanned = self.has_unscanned_surface(ws_idx, cx);
         let ws = &mut self.workspaces[ws_idx];
         if ws.port_scan_pending {
             return;
@@ -1153,8 +1203,12 @@ impl PaneFlowApp {
 
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                // Debounce: wait 500ms for activity to settle
-                smol::Timer::after(std::time::Duration::from_millis(500)).await;
+                // Debounce: wait 500ms for activity to settle - skipped while a
+                // surface still has no scanned identity, so a freshly launched
+                // pane resolves on this burst rather than half a second later.
+                if !unscanned {
+                    smol::Timer::after(std::time::Duration::from_millis(500)).await;
+                }
 
                 // Burst scan at 0s, +2s, +6s after debounce
                 for delay_ms in [0u64, 2000, 6000] {
@@ -1173,11 +1227,18 @@ impl PaneFlowApp {
                 }
 
                 // Re-arm regardless of how the ladder ended - the next
-                // ActivityBurst starts a fresh one.
+                // ActivityBurst starts a fresh one. A pane launched *during*
+                // this ladder had its burst absorbed above, so relaunch
+                // immediately rather than make it wait for the next burst.
                 let _ = cx.update(|cx| {
-                    this.update(cx, |app: &mut Self, _cx| {
-                        if let Some(ws) = app.workspaces.iter_mut().find(|ws| ws.id == ws_id) {
-                            ws.port_scan_pending = false;
+                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                        let Some(ws_idx) = app.workspaces.iter().position(|ws| ws.id == ws_id)
+                        else {
+                            return;
+                        };
+                        app.workspaces[ws_idx].port_scan_pending = false;
+                        if app.has_unscanned_surface(ws_idx, cx) {
+                            app.schedule_port_scan(ws_idx, cx);
                         }
                     })
                 });
@@ -1231,13 +1292,15 @@ impl PaneFlowApp {
             return true;
         }
 
+        let submitted: Vec<u64> = roots.iter().map(|(key, _)| *key).collect();
+
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 // One unified subtree walk per tick feeds ports AND agent
                 // identity (the pre-refactor code walked the descendants
                 // once for each - this is the strictly-cheaper single pass,
                 // US-012 cost contract).
-                let scan = smol::unblock(move || {
+                let mut scan = smol::unblock(move || {
                     let agent_binaries: Vec<&'static str> =
                         crate::agent_launcher::TerminalAgent::ALL
                             .iter()
@@ -1246,6 +1309,15 @@ impl PaneFlowApp {
                     crate::workspace::scan_panes(&roots, &agent_binaries)
                 })
                 .await;
+                // A submitted root that produced no entry HAS been answered:
+                // the answer is "nothing". Materializing it keeps "no entry"
+                // meaning only "this surface was never submitted" (a pane born
+                // after root collection), which is what the deposit's skip and
+                // the ladder's identity re-arm both rely on to terminate - on
+                // the platforms whose scanner is a stub, every root lands here.
+                for key in submitted {
+                    scan.entry(key).or_default();
+                }
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         app.apply_pane_scan(ws_id, generation, scan, cx);
@@ -1368,13 +1440,21 @@ impl PaneFlowApp {
                     // re-fire ServiceDetected (the dedup was previously
                     // cleared only on ChildExit).
                     t.retain_reported_ports(&live_ports);
-                    if t.detected_agent != agent || !t.agent_confirmed {
-                        // The live scan owns the value from here on - this
-                        // both confirms a restored "last known" pill and
-                        // clears a stale one (US-013).
-                        t.detected_agent = agent;
-                        t.agent_confirmed = true;
-                        pane_changed = true;
+                    let in_grace = declaration_survives_scan(
+                        agent,
+                        t.agent_declared_until,
+                        std::time::Instant::now(),
+                    );
+                    if !in_grace {
+                        t.agent_declared_until = None;
+                        if t.detected_agent != agent || !t.agent_confirmed {
+                            // The live scan owns the value from here on - this
+                            // both confirms a declared or restored "last known"
+                            // pill and clears a stale one (US-013).
+                            t.detected_agent = agent;
+                            t.agent_confirmed = true;
+                            pane_changed = true;
+                        }
                     }
                     let ports_with_links: Vec<(u16, Option<String>)> = s
                         .ports
@@ -1554,8 +1634,8 @@ impl PaneFlowApp {
 #[cfg(test)]
 mod tests {
     use super::{
-        announced_port_conflicts, keep_session_after_surface_purge, merge_scan_workspace_state,
-        merge_service_label, parse_proc_stat_starttime, port_ownership,
+        announced_port_conflicts, declaration_survives_scan, keep_session_after_surface_purge,
+        merge_scan_workspace_state, merge_service_label, parse_proc_stat_starttime, port_ownership,
         stale_sweep_keeps_without_pid_probe,
     };
     use crate::agent_launcher::TerminalAgent;
@@ -1645,6 +1725,36 @@ mod tests {
         assert_eq!(info.label.as_deref(), Some("Next.js"));
         assert_eq!(info.url.as_deref(), Some("http://localhost:3000/app"));
         assert!(info.is_frontend);
+    }
+
+    // A launch declaration must survive the scans that run before the shell
+    // has `exec`ed the CLI, but must never outlive its deadline nor override
+    // what the scan actually saw.
+    #[test]
+    fn declaration_survives_only_absent_evidence_before_its_deadline() {
+        use crate::agent_launcher::TerminalAgent;
+        let now = std::time::Instant::now();
+        let future = now.checked_add(std::time::Duration::from_secs(5));
+        let past = now.checked_sub(std::time::Duration::from_secs(5));
+
+        // Declared, process not up yet: keep the logo.
+        assert!(declaration_survives_scan(None, future, now));
+        // Declared but the deadline passed: the declaration was wrong, clear it.
+        assert!(!declaration_survives_scan(None, past, now));
+        // Never declared (a restored "last known" value): the first scan owns it.
+        assert!(!declaration_survives_scan(None, None, now));
+        // Evidence always wins, confirming...
+        assert!(!declaration_survives_scan(
+            Some(TerminalAgent::ClaudeCode),
+            future,
+            now
+        ));
+        // ...or correcting a wrong declaration, without waiting for the deadline.
+        assert!(!declaration_survives_scan(
+            Some(TerminalAgent::Codex),
+            future,
+            now
+        ));
     }
 
     #[test]

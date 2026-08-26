@@ -1464,7 +1464,6 @@ impl PaneFlowApp {
             keybindings::apply_keybindings(cx, &config.shortcuts);
             self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
             crate::theme::invalidate_theme_cache();
-            crate::theme::sync_markdown_global_theme(cx);
             // US-014 (telemetry): reconcile the telemetry consent state. On any
             // change, rebuild the `TelemetryClient` handle (disabled/active) so
             // future emissions reflect the new choice; show a confirmation
@@ -1501,7 +1500,6 @@ impl PaneFlowApp {
             .theme_changed
             .swap(false, std::sync::atomic::Ordering::AcqRel)
         {
-            crate::theme::sync_markdown_global_theme(cx);
             cx.notify();
         }
     }
@@ -1953,6 +1951,10 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) {
         let prompt = prompt.filter(|p| !p.is_empty());
+        // Declare the identity NOW, not after the settle wait below: the whole
+        // point is that the pane shows its agent from frame zero, and this path
+        // deliberately holds the command back for up to `UP_LAUNCH_MAX`.
+        terminal.update(cx, |view, _cx| view.declare_agent_from_command(&command));
         let weak = terminal.downgrade();
         cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
             let Some(settled) = Self::wait_for_terminal_settle(

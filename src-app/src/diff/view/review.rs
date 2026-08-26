@@ -109,6 +109,7 @@ impl DiffView {
             // Launch the CLI in the embedded terminal's shell.
             let command = cli.launch_command(&config);
             term.read(cx).send_command(&command);
+            term.update(cx, |view, _cx| view.declare_agent_from_command(&command));
             // Pre-fill the prompt once the CLI has booted (tmux send-keys style):
             // a delayed write with NO Enter - the human reviews + submits. The
             // clipboard fallback (below) covers a missed timing window.

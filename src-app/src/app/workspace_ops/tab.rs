@@ -88,6 +88,9 @@ impl PaneFlowApp {
             // flushes it when the real PTY arrives (US-012), the same contract
             // the sidebar relies on.
             terminal.read(cx).send_command(&command);
+            // Carry the agent identity from frame zero when the command names
+            // one - the sidebar logo no longer waits for the process scan.
+            terminal.update(cx, |view, _cx| view.declare_agent_from_command(&command));
         }
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             // A tab created from a collapsed folder row must be visible.

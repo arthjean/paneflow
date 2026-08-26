@@ -665,6 +665,9 @@ impl PaneFlowApp {
             return ResumeSendResult::WrongCwd;
         }
         terminal.read(cx).send_command(command);
+        // A resume command names its agent - declare it so the surface's logo
+        // updates with the resume instead of one scan tick later.
+        terminal.update(cx, |view, _cx| view.declare_agent_from_command(command));
         ResumeSendResult::Sent
     }
 

@@ -198,6 +198,35 @@ impl TerminalAgent {
             .find(|a| a.binary() == name)
     }
 
+    /// Declared identity of a launch command: the first pipeline segment
+    /// whose leading token names a known agent binary.
+    ///
+    /// This is the cmux model - the agent an entry point is *about to run* is
+    /// known before any process exists, so the surface can carry its identity
+    /// from frame zero instead of waiting for the process scan. The input is
+    /// always a command Paneflow itself composed or a local IPC client sent;
+    /// it is NEVER terminal output, so this cannot be spoofed by a remote
+    /// shell the way an OSC title can. The per-pane scan stays the
+    /// PID-authoritative belt that confirms or corrects the declaration.
+    ///
+    /// Segmenting on the shell operators is what makes [`Self::launch_command`]
+    /// resolve at all: every agent command is prefixed with a clear
+    /// (`clear && claude`, `cls && codex`, `Clear-Host; claude`), so a
+    /// naive first-token read would only ever see the clear. Within a segment
+    /// the leading token must BE the binary - `npm run claude` names npm, not
+    /// Claude, and correctly declares nothing. Leading `KEY=value` env
+    /// assignments are skipped, a path prefix is stripped, and the Windows
+    /// executable suffixes are trimmed.
+    pub fn from_launch_command(command: &str) -> Option<TerminalAgent> {
+        command.split(['&', '|', ';', '\n']).find_map(|segment| {
+            let token = segment
+                .split_whitespace()
+                .find(|token| !is_env_assignment(token))?;
+            let base = token.rsplit(['/', '\\']).next().unwrap_or(token);
+            TerminalAgent::from_binary(strip_windows_exec_suffix(base))
+        })
+    }
+
     pub fn from_tag(tag: &str) -> Option<TerminalAgent> {
         match tag {
             "claude_code" => Some(TerminalAgent::ClaudeCode),
@@ -457,6 +486,46 @@ fn installed_binaries_contains(binary: &'static str) -> bool {
 mod tests {
     use super::*;
 
+    // Every agent's own launch command must declare that agent - otherwise a
+    // pane launched from the palette shows no logo until the process scan
+    // lands, which is exactly the latency this declaration removes.
+    #[test]
+    fn launch_command_declares_its_own_agent() {
+        let config = PaneFlowConfig::default();
+        for agent in TerminalAgent::ALL {
+            assert_eq!(
+                TerminalAgent::from_launch_command(&agent.launch_command(&config)),
+                Some(agent),
+                "{} launch command must declare itself",
+                agent.display_name()
+            );
+        }
+    }
+
+    #[test]
+    fn from_launch_command_handles_paths_env_and_windows_suffixes() {
+        assert_eq!(
+            TerminalAgent::from_launch_command("/usr/local/bin/claude --resume abc"),
+            Some(TerminalAgent::ClaudeCode)
+        );
+        assert_eq!(
+            TerminalAgent::from_launch_command("RUST_LOG=info NO_COLOR=1 codex"),
+            Some(TerminalAgent::Codex)
+        );
+        assert_eq!(
+            TerminalAgent::from_launch_command("C:\\Users\\a\\bin\\claude.CMD"),
+            Some(TerminalAgent::ClaudeCode)
+        );
+        // A wrapper is not the agent: the declaration must stay silent and let
+        // the PID-authoritative scan speak.
+        assert_eq!(TerminalAgent::from_launch_command("npm run claude"), None);
+        assert_eq!(TerminalAgent::from_launch_command("claude-wrapper"), None);
+        assert_eq!(TerminalAgent::from_launch_command(""), None);
+        assert_eq!(TerminalAgent::from_launch_command("   "), None);
+        // A flag that looks like an assignment must not be skipped as env.
+        assert_eq!(TerminalAgent::from_launch_command("--model=x codex"), None);
+    }
+
     #[test]
     fn tag_roundtrip() {
         for agent in TerminalAgent::ALL {
@@ -660,4 +729,32 @@ mod tests {
         assert_eq!(TerminalAgent::Kiro.command(&cfg), "kiro-cli chat");
         assert_eq!(TerminalAgent::Openclaw.command(&cfg), "openclaw tui");
     }
+}
+
+/// `KEY=value` shell prefix in front of a command (`RUST_LOG=info codex`).
+/// Conservative: the key must be a non-empty identifier, so `--flag=x` and a
+/// bare `=foo` are not mistaken for assignments.
+fn is_env_assignment(token: &str) -> bool {
+    match token.split_once('=') {
+        Some((key, _)) => {
+            !key.is_empty()
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !key.starts_with(|c: char| c.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
+/// Trim the Windows executable suffixes so `claude.cmd` matches `claude`.
+/// Case-insensitive: the shell resolves `CLAUDE.CMD` just as happily.
+fn strip_windows_exec_suffix(base: &str) -> &str {
+    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
+        if base
+            .get(base.len().saturating_sub(suffix.len())..)
+            .is_some_and(|s| s.eq_ignore_ascii_case(suffix))
+        {
+            return &base[..base.len() - suffix.len()];
+        }
+    }
+    base
 }

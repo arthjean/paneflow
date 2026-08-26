@@ -387,6 +387,9 @@ impl PaneFlowApp {
         new_terminal
             .read(cx)
             .send_command(&plan.agent.launch_command(&self.cached_config));
+        // The plan already names the agent - declare it so the pane carries its
+        // logo immediately instead of waiting for the per-pane scan.
+        new_terminal.update(cx, |view, _cx| view.declare_agent(plan.agent));
         if !plan.prompt.trim().is_empty() {
             // Existing settle-poll: waits for the CLI to go quiet, then
             // pre-fills WITHOUT a carriage return - human-in-loop (FR-01).

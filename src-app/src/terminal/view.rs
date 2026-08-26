@@ -1293,6 +1293,37 @@ impl TerminalView {
             .contains(Modes::BRACKETED_PASTE)
     }
 
+    /// Grace window during which a launch-declared agent survives a scan that
+    /// has not yet seen its process. Wide enough for a heavy shell rc plus the
+    /// CLI's own `exec`; the scan ladder ticks several times inside it, so a
+    /// wrong declaration is still corrected well before the window closes.
+    const DECLARED_AGENT_GRACE: std::time::Duration = std::time::Duration::from_secs(10);
+
+    /// Declare which agent this surface is about to run, before any process
+    /// exists (cmux's `SessionAgent` model).
+    ///
+    /// The sidebar logo is then correct on the very next frame instead of
+    /// waiting for the process scan. The declaration is deliberately NOT
+    /// `agent_confirmed`: the PID-authoritative per-pane scan remains the
+    /// truth and confirms, corrects, or (once the grace window closes)
+    /// clears it.
+    pub fn declare_agent(&mut self, agent: crate::agent_launcher::TerminalAgent) {
+        self.terminal.detected_agent = Some(agent);
+        self.terminal.agent_confirmed = false;
+        self.terminal.agent_declared_until =
+            std::time::Instant::now().checked_add(Self::DECLARED_AGENT_GRACE);
+    }
+
+    /// [`Self::declare_agent`] for a launch command whose agent is only known
+    /// as text (a local IPC `up` payload, a configured command button). A
+    /// command that names no known agent leaves the surface untouched, so the
+    /// scan stays the only source of identity there.
+    pub fn declare_agent_from_command(&mut self, command: &str) {
+        if let Some(agent) = crate::agent_launcher::TerminalAgent::from_launch_command(command) {
+            self.declare_agent(agent);
+        }
+    }
+
     /// Send a shell command to the PTY and execute it (appends `\r`).
     /// Used by tab-bar command buttons.
     pub fn send_command(&self, command: &str) {
