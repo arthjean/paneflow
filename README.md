@@ -21,22 +21,13 @@ Written in Rust on [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/
 
 ### 1. Quick start
 
-Release builds are attached to the [latest release](https://github.com/arthjean/paneflow/releases/latest). You do not need Rust unless you build from source.
+On macOS:
 
 ```bash
-# Linux x86_64 / aarch64
-VER=$(curl -fsSL https://api.github.com/repos/arthjean/paneflow/releases/latest \
-      | grep -oE '"tag_name":\s*"v[^"]+"' | cut -d\" -f4 | sed 's/^v//')
-curl -LO "https://github.com/arthjean/paneflow/releases/latest/download/paneflow-${VER}-$(uname -m).AppImage"
-chmod +x paneflow-${VER}-*.AppImage && ./paneflow-${VER}-*.AppImage
+brew install --cask arthjean/paneflow/paneflow
 ```
 
-```bash
-# macOS Apple Silicon
-brew tap arthjean/paneflow && brew install --cask paneflow
-```
-
-On Windows, download `paneflow-X.Y.Z-x86_64-pc-windows-msvc.msi` and double-click it. `.deb`, `.rpm`, `.tar.gz`, SHA-256 sidecars, and Minisign signatures ship with every release.
+Everywhere else, take the build for your machine from the [latest release](https://github.com/arthjean/paneflow/releases/latest): the `.AppImage` runs on any Linux, the `.deb` and `.rpm` also register the package repo so later versions arrive through `apt upgrade` or `dnf upgrade`, and the `.msi` installs on Windows. Every artifact ships a SHA-256 sidecar and a Minisign signature.
 
 [Install docs →](https://paneflow.dev/docs/installation)
 
