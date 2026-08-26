@@ -30,6 +30,19 @@ use super::types::{
     SelectionRange, SelectionSide, TerminalWindowSize,
 };
 
+// The session is written against exactly two process models: the POSIX one
+// (`cfg(unix)`: `getpgid`, `waitid`, `kill(-pid, ...)`, `strsignal`) and the
+// Win32 one. Every other target would silently assemble a half-configured
+// session type out of whichever arms happened to match, so it is rejected
+// here, at one named location, instead. `ghostty_native` is only emitted for
+// declared targets - see `ghostty_native_target` in `src-app/build.rs` - so
+// this is a backstop against a predicate mistake, never a normal build state.
+#[cfg(not(any(unix, windows)))]
+compile_error!(
+    "terminal::ghostty_session requires a Unix or Windows target; \
+     `ghostty_native` must not be emitted for this target"
+);
+
 const CONTROL_CAPACITY: usize = 256;
 const OUTPUT_BUFFER_COUNT: usize = 4;
 const OUTPUT_CHUNK_BYTES: usize = 32 * 1024;
@@ -41,7 +54,7 @@ const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
 const FINAL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
 #[cfg(target_os = "windows")]
 const WINDOWS_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
@@ -1725,7 +1738,7 @@ fn write_input_bytes<W: Write>(
                     "Ghostty PTY write failed: {error}"
                 )));
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
             *runtime_failed = !expected_close;
         }
@@ -1785,7 +1798,7 @@ fn run_runtime(
             return;
         }
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let master = pair.master;
     #[cfg(target_os = "windows")]
     let master_closer = match PtyCloser::<Box<dyn portable_pty::MasterPty + Send>>::new(
@@ -1837,7 +1850,7 @@ fn run_runtime(
     startup_state.mark_child_spawned(child_pid);
     let termination_target = child_termination_target(child_pid);
     let mut startup_child = StartupChildGuard::new(child, termination_target);
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let reader = master.try_clone_reader();
     #[cfg(target_os = "windows")]
     let reader = master
@@ -1855,7 +1868,7 @@ fn run_runtime(
             return;
         }
     };
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let writer = master.take_writer();
     #[cfg(target_os = "windows")]
     let writer = master
@@ -1890,7 +1903,7 @@ fn run_runtime(
     };
     #[cfg(target_os = "windows")]
     let mut reader_worker = Some(reader_worker);
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(unix)]
     drop(reader_worker);
 
     drop(pair.slave);
@@ -1916,13 +1929,13 @@ fn run_runtime(
     let mut service_output_tail = ServiceOutputTail::default();
     let mut last_recent_output_refresh = None;
     let mut recent_output_pending = false;
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let mut eof = false;
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let mut exit = None;
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let mut exit_seen_at = None;
-    #[cfg(target_os = "linux")]
+    #[cfg(unix)]
     let mut child_cleaned = false;
     #[cfg(target_os = "windows")]
     let mut lifecycle = RuntimeLifecycle::new();
@@ -1936,7 +1949,7 @@ fn run_runtime(
 
     loop {
         if inner.shutdown_sent.load(Ordering::Acquire) {
-            #[cfg(target_os = "linux")]
+            #[cfg(unix)]
             {
                 if exit.is_none() {
                     terminate_child(child.child_mut(), termination_target);
@@ -1983,7 +1996,7 @@ fn run_runtime(
                 }
             }
             Ok(RuntimeMessage::Eof) => {
-                #[cfg(target_os = "linux")]
+                #[cfg(unix)]
                 {
                     eof = true;
                 }
@@ -2050,7 +2063,7 @@ fn run_runtime(
             }
             Ok(RuntimeMessage::Resize(command)) => {
                 let size = command.size;
-                #[cfg(target_os = "linux")]
+                #[cfg(unix)]
                 let resize_allowed = true;
                 #[cfg(target_os = "windows")]
                 let resize_allowed = lifecycle.is_running();
@@ -2073,7 +2086,7 @@ fn run_runtime(
                             Ok(())
                         })
                         .and_then(|()| {
-                            #[cfg(target_os = "linux")]
+                            #[cfg(unix)]
                             let active_master = Some(master.as_ref());
                             #[cfg(target_os = "windows")]
                             let active_master = master.get().map(|master| master.as_ref());
@@ -2276,7 +2289,7 @@ fn run_runtime(
                 panic!("Ghostty runtime worker failure injected for test");
             }
             Ok(RuntimeMessage::Shutdown) => {
-                #[cfg(target_os = "linux")]
+                #[cfg(unix)]
                 {
                     if exit.is_none() {
                         terminate_child(child.child_mut(), termination_target);
@@ -2290,7 +2303,7 @@ fn run_runtime(
                 }
             }
             Err(MailboxRecvError::Disconnected) => {
-                #[cfg(target_os = "linux")]
+                #[cfg(unix)]
                 {
                     if exit.is_none() {
                         terminate_child(child.child_mut(), termination_target);
@@ -2319,7 +2332,7 @@ fn run_runtime(
 
         notify_command_capacity(&inner);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
             if runtime_failed && exit.is_none() {
                 inner.shutdown_sent.store(true, Ordering::Release);
@@ -2882,13 +2895,13 @@ fn current_ghostty_appearance() -> ghostty::TerminalAppearance {
     )
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 type ChildTerminationTarget = Option<i32>;
 
 #[cfg(target_os = "windows")]
 type ChildTerminationTarget = u32;
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
     verified_process_group(child_pid)
 }
@@ -2898,7 +2911,7 @@ fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
     child_pid
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn verified_process_group(child_pid: u32) -> Option<i32> {
     let pid = i32::try_from(child_pid).ok().filter(|pid| *pid > 0)?;
     // SAFETY: getpgid only observes the freshly-spawned child. portable-pty
@@ -2907,7 +2920,7 @@ fn verified_process_group(child_pid: u32) -> Option<i32> {
     (unsafe { libc::getpgid(pid) } == pid).then_some(pid)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn observe_child_exit(
     _child: &mut dyn portable_pty::Child,
     child_pid: u32,
@@ -2991,7 +3004,7 @@ fn observe_windows_child_exit(
     Ok(Some(exit))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn terminate_child(child: &mut dyn portable_pty::Child, process_group_id: ChildTerminationTarget) {
     if let Some(pid) = process_group_id {
         unsafe {
