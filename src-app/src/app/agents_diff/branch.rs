@@ -14,7 +14,7 @@ use gpui::{
 
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
-use crate::ui_primitives::AnimatedHoverExt;
+use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
 
 /// Wall-clock ceiling and stdout/stderr cap for the picker's `git` calls.
@@ -201,63 +201,72 @@ pub(super) fn render_diff_branch_chip(
     let current = branch.clone();
     let chip_cwd = cwd.clone();
 
-    div()
-        .id("diff-branch-chip")
-        .relative()
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .gap(px(5.))
-        .h(px(24.))
-        .px(px(8.))
-        .rounded(px(6.))
-        .max_w(px(220.))
-        .animated_hover_bg(with_alpha(ui.text, 0.0), with_alpha(ui.text, 0.08))
-        // Toggle on press, off the render-time `menu_open` snapshot. Both parts
-        // matter: the picker dismisses on `on_mouse_down_out` (capture phase of
-        // this very press), which repaints before the release - so an `on_click`
-        // would run against a *newer* frame whose snapshot already reads closed,
-        // and the chip would re-open the menu it just dismissed.
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
-                cx.stop_propagation();
-                if menu_open {
-                    this.close_diff_branch_menu(window, cx);
-                } else {
-                    this.open_diff_branch_menu(chip_cwd.clone(), current.clone(), window, cx);
-                }
-            }),
-        )
-        .child(
-            svg()
-                .size(px(13.))
-                .flex_none()
-                .path("icons/git-branch.svg")
-                .text_color(ui.muted),
-        )
-        .child(
-            div()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_size(crate::ui_primitives::LABEL_SM)
-                .text_color(ui.text)
-                .child(SharedString::from(branch)),
-        )
-        .child(
-            svg()
-                .size(px(12.))
-                .flex_none()
-                .path("icons/chevron-down.svg")
-                .text_color(ui.muted),
-        )
-        .when_some(menu.filter(|_| menu_open), |chip, menu| {
-            chip.child(render_diff_branch_menu(menu, files_changed, ui, cx))
-        })
-        .into_any_element()
+    // The rail's row skin: `ROW_RADIUS` superellipse instead of GPUI's circular
+    // `rounded()`, the rail's own hover tint, and its 26 px row box. While the
+    // picker is up that hover fill is pinned on as the resting fill, so the chip
+    // stays lit for as long as the menu it owns.
+    let rail_hover = crate::app::constants::sidebar_tab_hover_background();
+
+    squircle_skin(
+        div()
+            .id("diff-branch-chip")
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(5.))
+            .h(px(26.))
+            .px(px(8.))
+            .max_w(px(220.)),
+        "diff-branch-chip-group",
+        ROW_RADIUS,
+        menu_open.then_some(rail_hover),
+        Some(rail_hover),
+    )
+    // Toggle on press, off the render-time `menu_open` snapshot. Both parts
+    // matter: the picker dismisses on `on_mouse_down_out` (capture phase of
+    // this very press), which repaints before the release - so an `on_click`
+    // would run against a *newer* frame whose snapshot already reads closed,
+    // and the chip would re-open the menu it just dismissed.
+    .on_mouse_down(
+        MouseButton::Left,
+        cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
+            cx.stop_propagation();
+            if menu_open {
+                this.close_diff_branch_menu(window, cx);
+            } else {
+                this.open_diff_branch_menu(chip_cwd.clone(), current.clone(), window, cx);
+            }
+        }),
+    )
+    .child(
+        svg()
+            .size(px(13.))
+            .flex_none()
+            .path("icons/git-branch.svg")
+            .text_color(ui.muted),
+    )
+    .child(
+        div()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_size(crate::ui_primitives::LABEL_SM)
+            .text_color(ui.text)
+            .child(SharedString::from(branch)),
+    )
+    .child(
+        svg()
+            .size(px(12.))
+            .flex_none()
+            .path("icons/chevron-down.svg")
+            .text_color(ui.muted),
+    )
+    .when_some(menu.filter(|_| menu_open), |chip, menu| {
+        chip.child(render_diff_branch_menu(menu, files_changed, ui, cx))
+    })
+    .into_any_element()
 }
 
 fn render_diff_branch_menu(

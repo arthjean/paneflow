@@ -14,8 +14,8 @@ use gpui::{
 
 use super::model::DiffChrome;
 use crate::PaneFlowApp;
-use crate::settings::components::{menu_divider_color, menu_surface, select_item, with_alpha};
-use crate::ui_primitives::AnimatedHoverExt;
+use crate::settings::components::{menu_divider_color, menu_surface, select_item};
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
 /// Width of the overflow popover. Sized so "Refresh Changes" and the "Layout /
 /// Split" pair breathe without the menu overhanging a narrow dock.
@@ -48,37 +48,43 @@ pub(super) fn render_diff_options_button(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let open = chrome.options_open;
-    let rest = with_alpha(ui.text, if open { 0.08 } else { 0.0 });
+    // Same skin as the sidebar's rail actions (28 px box, `ROW_RADIUS`
+    // superellipse, rail hover tint); while the menu is up the hover fill is
+    // pinned on as the resting fill so the trigger stays lit.
+    let hover = crate::app::constants::sidebar_tab_hover_background();
 
-    div()
-        .id("agents-diff-options")
-        .relative()
-        .size(px(28.))
-        .flex()
-        .items_center()
-        .justify_center()
-        .rounded(px(6.))
-        .bg(rest)
-        .animated_hover_bg(rest, with_alpha(ui.text, 0.08))
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        // Toggle off the render-time `open` snapshot, not the live state: while
-        // the menu is up, its `on_mouse_up_out` fires on this same release and
-        // has already cleared the flag, so a live toggle would re-open it and a
-        // second press on the trigger could never close the menu.
-        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            this.set_diff_options_menu(!open, cx);
-        }))
-        .child(
-            svg()
-                .size(px(16.))
-                .flex_none()
-                .path("icons/dots.svg")
-                .text_color(ui.muted),
-        )
-        .when(open, |trigger| {
-            trigger.child(render_diff_options_menu(chrome, ui, cx))
-        })
-        .into_any_element()
+    squircle_skin(
+        div()
+            .id("agents-diff-options")
+            .flex_none()
+            .size(px(28.))
+            .flex()
+            .items_center()
+            .justify_center(),
+        "agents-diff-options-group",
+        ROW_RADIUS,
+        open.then_some(hover),
+        Some(hover),
+    )
+    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+    // Toggle off the render-time `open` snapshot, not the live state: while
+    // the menu is up, its `on_mouse_up_out` fires on this same release and has
+    // already cleared the flag, so a live toggle would re-open it and a second
+    // press on the trigger could never close the menu.
+    .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+        this.set_diff_options_menu(!open, cx);
+    }))
+    .child(
+        svg()
+            .size(px(16.))
+            .flex_none()
+            .path("icons/dots.svg")
+            .text_color(ui.muted),
+    )
+    .when(open, |trigger| {
+        trigger.child(render_diff_options_menu(chrome, ui, cx))
+    })
+    .into_any_element()
 }
 
 fn render_diff_options_menu(
