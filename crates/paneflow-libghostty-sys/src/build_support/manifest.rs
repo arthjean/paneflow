@@ -53,6 +53,15 @@ enum TargetConfig {
         system_libraries: Vec<String>,
         build_info_symbol: String,
     },
+    Macos {
+        archive_path: PathBuf,
+        archive_sha256: String,
+        archive_normalization: String,
+        zig_target: String,
+        link_name: String,
+        system_libraries: Vec<String>,
+        build_info_symbol: String,
+    },
     Windows {
         archive_path: PathBuf,
         archive_sha256: String,
@@ -70,12 +79,14 @@ enum TargetConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NativePlatform {
     Linux,
+    Macos,
     Windows,
 }
 
 #[derive(Debug)]
 pub(crate) enum PlatformContract {
     Linux { build_info_symbol: String },
+    Macos { build_info_symbol: String },
     Windows(Box<WindowsContract>),
 }
 
@@ -199,6 +210,26 @@ impl Manifest {
                 link_name.clone(),
                 system_libraries.clone(),
                 PlatformContract::Linux {
+                    build_info_symbol: build_info_symbol.clone(),
+                },
+            ),
+            TargetConfig::Macos {
+                archive_path,
+                archive_sha256,
+                archive_normalization,
+                zig_target,
+                link_name,
+                system_libraries,
+                build_info_symbol,
+            } => (
+                NativePlatform::Macos,
+                archive_path.clone(),
+                archive_sha256.clone(),
+                archive_normalization.clone(),
+                zig_target.clone(),
+                link_name.clone(),
+                system_libraries.clone(),
+                PlatformContract::Macos {
                     build_info_symbol: build_info_symbol.clone(),
                 },
             ),
@@ -346,14 +377,14 @@ impl TargetContract {
         &self.system_libraries
     }
 
-    pub(crate) fn is_windows(&self) -> bool {
-        self.platform == NativePlatform::Windows
+    pub(crate) fn platform(&self) -> NativePlatform {
+        self.platform
     }
 
     pub(crate) fn windows(&self) -> Option<&WindowsContract> {
         match &self.platform_contract {
             PlatformContract::Windows(contract) => Some(contract),
-            PlatformContract::Linux { .. } => None,
+            PlatformContract::Linux { .. } | PlatformContract::Macos { .. } => None,
         }
     }
 
@@ -370,6 +401,10 @@ impl TargetContract {
         match self.platform {
             NativePlatform::Linux => format!(
                 "restore native/libghostty/prebuilt/{}, or run scripts/build-libghostty-linux.sh --target {} and set PANEFLOW_LIBGHOSTTY_DIR to its output; Cargo performs no downloads",
+                self.target, self.target
+            ),
+            NativePlatform::Macos => format!(
+                "restore native/libghostty/prebuilt/{}, or run scripts/build-libghostty-macos.sh --target {} and set PANEFLOW_LIBGHOSTTY_DIR to its output; Cargo performs no downloads",
                 self.target, self.target
             ),
             NativePlatform::Windows => format!(
@@ -391,7 +426,8 @@ impl TargetContract {
             ("archive_normalization", self.archive_normalization.clone()),
         ];
         match &self.platform_contract {
-            PlatformContract::Linux { build_info_symbol } => {
+            PlatformContract::Linux { build_info_symbol }
+            | PlatformContract::Macos { build_info_symbol } => {
                 expected.push(("build_info_symbol", build_info_symbol.clone()));
             }
             PlatformContract::Windows(contract) => {
@@ -473,6 +509,29 @@ fn validate_target_config(target: &str, config: &TargetConfig) -> BuildResult<()
             if !system_libraries.is_empty() {
                 return Err(build_error(format!(
                     "Linux libghostty target `{target}` must not declare system libraries"
+                )));
+            }
+            validate_token(build_info_symbol, "build_info_symbol")?;
+            (
+                archive_path,
+                archive_sha256,
+                zig_target,
+                link_name,
+                system_libraries,
+            )
+        }
+        TargetConfig::Macos {
+            archive_path,
+            archive_sha256,
+            zig_target,
+            link_name,
+            system_libraries,
+            build_info_symbol,
+            ..
+        } => {
+            if !system_libraries.is_empty() {
+                return Err(build_error(format!(
+                    "macOS libghostty target `{target}` must not declare system libraries: libghostty-vt requires none on macOS"
                 )));
             }
             validate_token(build_info_symbol, "build_info_symbol")?;
@@ -585,10 +644,42 @@ fn validate_safe_relative_path(path: &Path, key: &str) -> BuildResult<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
 
     const MANIFEST: &str = include_str!("../../../../native/libghostty/manifest.toml");
+    pub(crate) const MACOS_TARGET: &str = "aarch64-apple-darwin";
+
+    /// The reviewed manifest with the macOS target's archive digest and system
+    /// library list overridden.
+    ///
+    /// `native/libghostty/manifest.toml` declares the target since US-007, so
+    /// the fixture rewrites that block in place rather than appending a second
+    /// one, which TOML would reject as a duplicate table. Every other field
+    /// stays exactly as reviewed, and the contract is still exercised from the
+    /// same `Manifest::parse` entry point the build script uses.
+    pub(crate) fn macos_manifest(archive_sha256: &str, system_libraries: &str) -> String {
+        let header = format!("[targets.\"{MACOS_TARGET}\"]");
+        let start = MANIFEST
+            .find(&header)
+            .expect("the reviewed manifest declares the macOS target");
+        let end = MANIFEST[start + header.len()..]
+            .find("\n[")
+            .map_or(MANIFEST.len(), |offset| start + header.len() + offset + 1);
+        let patched: String = MANIFEST[start..end]
+            .split_inclusive('\n')
+            .map(|line| {
+                if line.starts_with("archive_sha256 = ") {
+                    format!("archive_sha256 = \"{archive_sha256}\"\n")
+                } else if line.starts_with("system_libraries = ") {
+                    format!("system_libraries = {system_libraries}\n")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect();
+        format!("{}{patched}{}", &MANIFEST[..start], &MANIFEST[end..])
+    }
 
     #[test]
     fn current_manifest_builds_typed_target_contracts() -> BuildResult<()> {
@@ -597,6 +688,12 @@ mod tests {
         assert_eq!(linux.zig_target, "aarch64-linux-gnu");
         assert_eq!(linux.link_name(), "ghostty-vt");
         assert!(linux.system_libraries().is_empty());
+
+        let macos = manifest.target_contract("aarch64-apple-darwin")?;
+        assert_eq!(macos.platform(), NativePlatform::Macos);
+        assert_eq!(macos.zig_target, "aarch64-macos");
+        assert_eq!(macos.link_name(), "ghostty-vt");
+        assert!(macos.system_libraries().is_empty());
 
         let windows = manifest.target_contract("x86_64-pc-windows-msvc")?;
         assert_eq!(windows.zig_target, "x86_64-windows-msvc");
@@ -629,11 +726,107 @@ mod tests {
     #[test]
     fn rejects_undeclared_link_target() -> BuildResult<()> {
         let manifest = Manifest::parse(MANIFEST)?;
+        // `aarch64-apple-darwin` is declared, so the undeclared-target
+        // assertion uses the Intel Mac triple, which stays closed until a
+        // separate PRD opens that target.
         let error = manifest
-            .target_contract("aarch64-apple-darwin")
+            .target_contract("x86_64-apple-darwin")
             .expect_err("undeclared targets must not silently skip linking");
         assert!(error.to_string().contains("linking is unsupported"));
         Ok(())
+    }
+
+    #[test]
+    fn builds_the_macos_target_contract() -> BuildResult<()> {
+        let manifest = Manifest::parse(&macos_manifest(&"0".repeat(64), "[]"))?;
+        let macos = manifest.target_contract(MACOS_TARGET)?;
+        assert_eq!(macos.platform(), NativePlatform::Macos);
+        assert_eq!(macos.zig_target, "aarch64-macos");
+        assert_eq!(macos.link_name(), "ghostty-vt");
+        // `build_support::run` emits one `dylib` directive per system library,
+        // so an empty list is what keeps the macOS link line to a single
+        // `rustc-link-lib=static=ghostty-vt` with no `dylib` and no
+        // `framework` entry.
+        assert!(macos.system_libraries().is_empty());
+        assert!(
+            macos
+                .corrective_action()
+                .contains("scripts/build-libghostty-macos.sh")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn macos_contract_requires_the_ten_keys_the_build_script_writes() -> BuildResult<()> {
+        let manifest = Manifest::parse(&macos_manifest(&"0".repeat(64), "[]"))?;
+        let macos = manifest.target_contract(MACOS_TARGET)?;
+        let mut required = macos
+            .expected_build_info()
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect::<Vec<_>>();
+        // `archive_sha256` is required by `ArtifactBundle::validate` rather
+        // than compared against a manifest string, so it completes the set
+        // that `scripts/build-libghostty-macos.sh` writes.
+        required.push("archive_sha256");
+        required.sort_unstable();
+        assert_eq!(
+            required,
+            [
+                "archive_normalization",
+                "archive_sha256",
+                "bindings_sha256",
+                "build_info_symbol",
+                "header_sha256",
+                "optimize",
+                "rust_target",
+                "source_sha",
+                "zig_target",
+                "zig_version",
+            ]
+        );
+        assert!(
+            macos
+                .expected_build_info()
+                .contains(&("rust_target", MACOS_TARGET.to_owned()))
+        );
+        assert!(
+            macos
+                .expected_build_info()
+                .contains(&("build_info_symbol", "ghostty_build_info".to_owned()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_macos_system_libraries() {
+        let source = macos_manifest(&"0".repeat(64), "[\"System\"]");
+        let error = Manifest::parse(&source)
+            .expect_err("libghostty-vt requires no system libraries on macOS");
+        assert!(
+            error
+                .to_string()
+                .contains("must not declare system libraries"),
+            "unexpected error: {error}"
+        );
+        assert!(error.to_string().contains("requires none on macOS"));
+    }
+
+    #[test]
+    fn rejects_an_unrecognized_platform_tag() {
+        let source = macos_manifest(&"0".repeat(64), "[]")
+            .replace("platform = \"macos\"", "platform = \"darwin\"");
+        let error = Manifest::parse(&source)
+            .expect_err("an unknown platform must be rejected")
+            .to_string();
+        assert!(
+            error.contains("unknown variant `darwin`"),
+            "the error must name the unrecognized platform: {error}"
+        );
+        assert!(
+            error.contains("linux") && error.contains("macos") && error.contains("windows"),
+            "the error must list the recognized platforms: {error}"
+        );
     }
 
     #[test]

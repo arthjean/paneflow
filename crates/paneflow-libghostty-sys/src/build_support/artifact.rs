@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use super::checksum::{validate_sha256, verify_hash, verify_text_hash};
-use super::manifest::{TargetContract, WindowsContract};
+use super::manifest::{NativePlatform, TargetContract, WindowsContract};
 use super::{BuildResult, artifact_error, build_error};
 
 pub(crate) struct ArtifactBundle {
@@ -16,7 +16,7 @@ pub(crate) struct ArtifactBundle {
     headers_index: PathBuf,
     symbols: PathBuf,
     uses_bundled_archive: bool,
-    is_windows: bool,
+    platform: NativePlatform,
 }
 
 #[derive(Debug)]
@@ -46,7 +46,7 @@ impl ArtifactBundle {
             symbols: root.join("symbols.txt"),
             root,
             uses_bundled_archive,
-            is_windows: contract.is_windows(),
+            platform: contract.platform(),
         }
     }
 
@@ -61,14 +61,34 @@ impl ArtifactBundle {
             self.bindings.as_path(),
             self.build_info.as_path(),
         ];
-        if self.is_windows {
-            inputs.extend([self.headers_index.as_path(), self.symbols.as_path()]);
+        match self.platform {
+            NativePlatform::Linux | NativePlatform::Macos => {}
+            NativePlatform::Windows => {
+                inputs.extend([self.headers_index.as_path(), self.symbols.as_path()]);
+            }
         }
         inputs
     }
 
     pub(crate) fn requires_directory_watch(&self) -> bool {
-        self.is_windows
+        self.has_windows_inventory()
+    }
+
+    /// Whether this bundle carries the Windows-only inventory.
+    ///
+    /// Windows is the only platform whose prepared tree ships
+    /// `headers.sha256` and `symbols.txt`, is enumerated in full, and whose
+    /// `build-info.txt` is itself hash-pinned in the manifest, which is why
+    /// its recorded archive digest must match the manifest even for a
+    /// `PANEFLOW_LIBGHOSTTY_DIR` override.
+    ///
+    /// The match is exhaustive on purpose: a new platform has to state its own
+    /// answer here rather than being misrouted into the Windows inventory.
+    fn has_windows_inventory(&self) -> bool {
+        match self.platform {
+            NativePlatform::Linux | NativePlatform::Macos => false,
+            NativePlatform::Windows => true,
+        }
     }
 
     pub(crate) fn link_directory(&self) -> BuildResult<&Path> {
@@ -127,7 +147,7 @@ impl ArtifactBundle {
         validate_sha256(prepared_archive_hash).map_err(|detail| {
             artifact_error(contract.target(), &self.build_info, detail, action)
         })?;
-        if (self.uses_bundled_archive || self.is_windows)
+        if (self.uses_bundled_archive || self.has_windows_inventory())
             && prepared_archive_hash != contract.archive_sha256
         {
             return Err(artifact_error(
@@ -140,7 +160,7 @@ impl ArtifactBundle {
                 action,
             ));
         }
-        let archive_hash = if self.uses_bundled_archive || self.is_windows {
+        let archive_hash = if self.uses_bundled_archive || self.has_windows_inventory() {
             contract.archive_sha256.as_str()
         } else {
             prepared_archive_hash
@@ -476,6 +496,7 @@ fn collect_artifact_files(
 #[cfg(test)]
 mod tests {
     use super::super::manifest::Manifest;
+    use super::super::manifest::tests::{MACOS_TARGET, macos_manifest};
     use super::*;
     use sha2::{Digest, Sha256};
 
@@ -534,8 +555,23 @@ mod tests {
 
     #[test]
     fn validates_the_reviewed_linux_bundle_as_one_unit() -> BuildResult<()> {
+        validates_the_reviewed_bundle("x86_64-unknown-linux-gnu")
+    }
+
+    /// The committed macOS tree is validated on every host, not only on Darwin.
+    ///
+    /// `ArtifactBundle::validate` is pure path and checksum work, so a Linux
+    /// developer editing `native/libghostty/prebuilt/aarch64-apple-darwin/`
+    /// gets the same failure the macOS build script would raise, instead of
+    /// waiting for the `macos_check` job.
+    #[test]
+    fn validates_the_reviewed_macos_bundle_as_one_unit() -> BuildResult<()> {
+        validates_the_reviewed_bundle(MACOS_TARGET)
+    }
+
+    fn validates_the_reviewed_bundle(target: &str) -> BuildResult<()> {
         let manifest = Manifest::parse(MANIFEST)?;
-        let contract = manifest.target_contract("x86_64-unknown-linux-gnu")?;
+        let contract = manifest.target_contract(target)?;
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let workspace = crate_dir
             .parent()
@@ -543,6 +579,193 @@ mod tests {
             .ok_or_else(|| build_error("test crate must live under <workspace>/crates"))?;
         let bundle = ArtifactBundle::resolve(workspace, &contract, None);
         bundle.validate(&contract, "replace reviewed fixture")
+    }
+
+    /// A macOS bundle laid out exactly as `scripts/build-libghostty-macos.sh`
+    /// writes it, paired with the manifest that declares its target.
+    ///
+    /// Returns the manifest source and the ten `build-info.txt` entries.
+    fn macos_fixture(root: &Path) -> BuildResult<(String, Vec<(String, String)>)> {
+        const HEADER: &str = "#define GHOSTTY_VT 1\n";
+        const BINDINGS: &str = "// generated bindings\n";
+        const ARCHIVE: &[u8] = b"!<arch>\nfixture";
+        const NORMALIZATION: &str =
+            "fixed-zig-source-cache-prefix+zig-build-seed0-j1+llvm-strip-debug+llvm-ar-D-darwin";
+
+        fs::create_dir_all(root.join("include/ghostty"))?;
+        fs::create_dir_all(root.join("lib"))?;
+        fs::write(root.join("include/ghostty/vt.h"), HEADER)?;
+        fs::write(root.join("bindings.rs"), BINDINGS)?;
+        fs::write(root.join("lib/libghostty-vt.a"), ARCHIVE)?;
+
+        let archive_sha256 = format!("{:x}", Sha256::digest(ARCHIVE));
+        let header_sha256 = format!("{:x}", Sha256::digest(HEADER.as_bytes()));
+        let bindings_sha256 = format!("{:x}", Sha256::digest(BINDINGS.as_bytes()));
+        let source = macos_manifest(&archive_sha256, "[]");
+        let source = replace_manifest_value(&source, "header_sha256", &header_sha256);
+        let source = replace_manifest_value(&source, "bindings_sha256", &bindings_sha256);
+
+        let build_info = [
+            ("source_sha", "ae52f97dcac558735cfa916ea3965f247e5c6e9e"),
+            ("zig_version", "0.15.2"),
+            ("header_sha256", header_sha256.as_str()),
+            ("bindings_sha256", bindings_sha256.as_str()),
+            ("rust_target", MACOS_TARGET),
+            ("zig_target", "aarch64-macos"),
+            ("optimize", "ReleaseFast"),
+            ("archive_normalization", NORMALIZATION),
+            ("archive_sha256", archive_sha256.as_str()),
+            ("build_info_symbol", "ghostty_build_info"),
+        ]
+        .into_iter()
+        .map(|(key, value)| (key.to_owned(), value.to_owned()))
+        .collect::<Vec<_>>();
+        write_build_info(root, &build_info)?;
+        Ok((source, build_info))
+    }
+
+    fn write_build_info(root: &Path, entries: &[(String, String)]) -> BuildResult<()> {
+        let body = entries
+            .iter()
+            .map(|(key, value)| format!("{key}={value}\n"))
+            .collect::<String>();
+        fs::write(root.join("build-info.txt"), body)?;
+        Ok(())
+    }
+
+    fn replace_manifest_value(source: &str, key: &str, value: &str) -> String {
+        source
+            .lines()
+            .map(|line| {
+                if line.starts_with(&format!("{key} = \"")) {
+                    format!("{key} = \"{value}\"")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn macos_bundle_requires_only_the_platform_neutral_inputs() -> BuildResult<()> {
+        let root = tempfile::tempdir()?;
+        let (source, _) = macos_fixture(root.path())?;
+        let manifest = Manifest::parse(&source)?;
+        let contract = manifest.target_contract(MACOS_TARGET)?;
+        let bundle = ArtifactBundle::resolve(root.path(), &contract, Some(root.path().into()));
+        let inputs = bundle
+            .required_inputs()
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(inputs.len(), 4, "unexpected macOS inventory: {inputs:?}");
+        assert!(inputs.iter().any(|path| path.ends_with("libghostty-vt.a")));
+        assert!(inputs.iter().any(|path| path.ends_with("vt.h")));
+        assert!(inputs.iter().any(|path| path.ends_with("bindings.rs")));
+        assert!(inputs.iter().any(|path| path.ends_with("build-info.txt")));
+        assert!(!inputs.iter().any(|path| path.ends_with("headers.sha256")));
+        assert!(!inputs.iter().any(|path| path.ends_with("symbols.txt")));
+        assert!(!bundle.requires_directory_watch());
+        bundle.validate(&contract, &contract.corrective_action())
+    }
+
+    #[test]
+    fn macos_bundle_names_every_missing_build_info_key() -> BuildResult<()> {
+        let root = tempfile::tempdir()?;
+        let (source, build_info) = macos_fixture(root.path())?;
+        let manifest = Manifest::parse(&source)?;
+        let contract = manifest.target_contract(MACOS_TARGET)?;
+        let action = contract.corrective_action();
+        assert_eq!(build_info.len(), 10);
+        for (key, _) in &build_info {
+            let reduced = build_info
+                .iter()
+                .filter(|(candidate, _)| candidate != key)
+                .cloned()
+                .collect::<Vec<_>>();
+            write_build_info(root.path(), &reduced)?;
+            let bundle = ArtifactBundle::resolve(root.path(), &contract, Some(root.path().into()));
+            let error = bundle
+                .validate(&contract, &action)
+                .expect_err("a truncated build-info.txt must be rejected");
+            let error = error.to_string();
+            assert!(
+                error.contains(&format!("missing `{key}`")),
+                "error must name the missing key `{key}`: {error}"
+            );
+            assert!(error.contains("scripts/build-libghostty-macos.sh"));
+        }
+        write_build_info(root.path(), &build_info)?;
+        Ok(())
+    }
+
+    #[test]
+    fn macos_bundled_tree_is_pinned_to_the_manifest_checksum() -> BuildResult<()> {
+        let workspace = tempfile::tempdir()?;
+        let root = workspace
+            .path()
+            .join("native/libghostty/prebuilt")
+            .join(MACOS_TARGET);
+        fs::create_dir_all(&root)?;
+        let (source, _) = macos_fixture(&root)?;
+        let manifest = Manifest::parse(&source)?;
+        let contract = manifest.target_contract(MACOS_TARGET)?;
+        let action = contract.corrective_action();
+        ArtifactBundle::resolve(workspace.path(), &contract, None).validate(&contract, &action)?;
+
+        fs::write(root.join("lib/libghostty-vt.a"), b"!<arch>\ntampered")?;
+        let error = ArtifactBundle::resolve(workspace.path(), &contract, None)
+            .validate(&contract, &action)
+            .expect_err("a tampered bundled archive must be rejected")
+            .to_string();
+        assert!(error.contains("checksum"), "{error}");
+        assert!(
+            error.contains("scripts/build-libghostty-macos.sh"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn macos_bundle_names_a_missing_required_file() -> BuildResult<()> {
+        let root = tempfile::tempdir()?;
+        let (source, _) = macos_fixture(root.path())?;
+        let manifest = Manifest::parse(&source)?;
+        let contract = manifest.target_contract(MACOS_TARGET)?;
+        fs::remove_file(root.path().join("lib/libghostty-vt.a"))?;
+        let bundle = ArtifactBundle::resolve(root.path(), &contract, Some(root.path().into()));
+        let error = bundle
+            .validate(&contract, &contract.corrective_action())
+            .expect_err("a truncated macOS bundle must be rejected");
+        let error = error.to_string();
+        assert!(error.contains("libghostty-vt.a"), "{error}");
+        assert!(
+            error.contains("scripts/build-libghostty-macos.sh"),
+            "{error}"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_bundle_rejects_a_symlinked_required_input() -> BuildResult<()> {
+        use std::os::unix::fs::symlink;
+
+        let root = tempfile::tempdir()?;
+        let (source, _) = macos_fixture(root.path())?;
+        let manifest = Manifest::parse(&source)?;
+        let contract = manifest.target_contract(MACOS_TARGET)?;
+        let bindings = root.path().join("bindings.rs");
+        let elsewhere = root.path().join("bindings.real.rs");
+        fs::rename(&bindings, &elsewhere)?;
+        symlink(&elsewhere, &bindings)?;
+        let bundle = ArtifactBundle::resolve(root.path(), &contract, Some(root.path().into()));
+        let error = bundle
+            .validate(&contract, &contract.corrective_action())
+            .expect_err("symlinked required inputs must be rejected");
+        assert!(error.to_string().contains("contains symlink"), "{error}");
+        Ok(())
     }
 
     #[cfg(unix)]
