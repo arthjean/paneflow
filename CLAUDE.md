@@ -24,13 +24,20 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --check
 ```
 
-### Fork-pin maintenance (Zed Markdown widget)
+### GPUI pin maintenance
 
-The eight Zed git deps in `src-app/Cargo.toml` pin `arthjean/zed@3aaba57b95c22f4d21bbbf9f4b10b513173209db`, published from `paneflow/gpui-2026-07-14`. That commit is based on `zed-industries/zed@afc13dc8` and carries the Paneflow Markdown streaming optimization. To bump it, choose and freeze a tested upstream revision, create a new dated fork branch from that revision, reapply the Markdown patch while preserving Zed's current public API, validate and publish the fork commit, update all eight exact `rev` values, run `cargo update`, then run the workspace test, Clippy, and format gates. Once the optimization lands upstream, switch all eight entries back to `zed-industries/zed` at the exact tested merge revision.
+`src-app/Cargo.toml` pins `gpui` and `gpui_platform` to an exact revision of upstream `zed-industries/zed` (four `rev` occurrences: the default dependency, the Linux `wayland`/`x11` override, and the `test-support` dev-dependency). There is no Paneflow fork of Zed any more - the `Markdown::append` patch it carried lost its only consumer when the in-app chat was removed, and the fork was dropped on 2026-08-26.
+
+To bump: pick an upstream revision, replace every `rev` value with that exact sha (never a branch - a moving target breaks reproducible builds), run `cargo update`, then run the workspace test, Clippy, format, and `cargo deny check` gates. GPUI's public API changes often enough that a bump should be treated as a real change, not a chore.
+
+Two gates fail for reasons that are not compile errors, so run them explicitly:
+
+- `cargo deny check sources` - a bump can pull in new git sources through GPUI's own dependencies (the 2026-08-26 bump added `zed-industries/scap` and `zed-industries/wasm_thread`, both target-gated away from our three platforms). Each one needs a reviewed entry in `deny.toml`'s `allow-git`.
+- `cargo test --workspace` - `cargo build` does not compile test targets, so GPUI API breaks in `#[cfg(test)]` code stay invisible until the test build runs. The 2026-08-26 bump broke three test-only call sites this way.
 
 ### Perf / heap profiling
 
-See `tasks/heaptrack-runbook.md` (US-029 of `prd-cli-hardening-followup-2026-Q3.md`) for the reproducible procedures behind every perf claim shipped by EP-001 / EP-004 / EP-005: heaptrack diffs for RAM stories, `cargo flamegraph` for CPU stories, `cargo bench -p paneflow-threads` for the criterion baselines (`blob_compress`, `markdown_append`), Linux `kill -9` orphan smoke for US-016, and the `ulimit -u 1` IPC-degradation smoke for US-005.
+See `tasks/heaptrack-runbook.md` (US-029 of `prd-cli-hardening-followup-2026-Q3.md`) for the reproducible procedures behind every perf claim shipped by EP-001 / EP-004 / EP-005: heaptrack diffs for RAM stories, `cargo flamegraph` for CPU stories, Linux `kill -9` orphan smoke for US-016, and the `ulimit -u 1` IPC-degradation smoke for US-005.
 
 ## Pre-commit checks (mandatory)
 
@@ -148,13 +155,14 @@ KeyDownEvent → TerminalView::handle_key_down() → keys::to_esc_str()
 
 ## Critical external dependencies
 
-GPUI and related crates are **git dependencies** pinned to the Paneflow Zed fork while the markdown streaming patch is in flight:
+GPUI is a **git dependency** pinned to an exact upstream Zed revision:
 
 ```toml
-gpui = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
-gpui_platform = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
-collections = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["font-kit"] }
 ```
+
+Only these two crates are declared. `collections`, `markdown`, `theme`, and `ui` used to be direct deps for the deleted in-app chat; dropping them (and the fork) cut the lockfile from 1129 to 851 packages and removed every `GPL-3.0` crate from the tree. `gpui_platform` MUST keep `features = ["font-kit"]` or macOS renders empty glyph bitmaps - see the comment above the declaration. The `test-support` dev-dependency also enables `profiler`, which gates `gpui::profiler::FrameTimingCollector`; it never reaches the shipped binary because `cargo build` does not resolve dev-dependencies.
 
 Cargo fetches GPUI from git automatically - no local checkout required. Two crates-io patches are required by GPUI:
 - `async-task` → `smol-rs/async-task` (specific git commit)
