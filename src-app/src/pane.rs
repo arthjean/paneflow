@@ -1415,46 +1415,26 @@ impl Pane {
                 .into_any_element()
         });
 
-        // EP-005 US-013 + EP-006 US-018 - identity pill and the transient
-        // fleet-match badge, governed by the FR-11 anatomy: at most 2
-        // adornments, in priority order state dot > queued chip > identity
-        // pill > match badge. The pill degrades to its icon alone ("point
-        // coloré") when it shares the header with another adornment; the match
-        // badge - lowest priority, "s'efface en premier" - takes the last slot
-        // if any.
-        let (agent_pill, match_badge) = {
-            let term_meta = self.surface.as_terminal().map(|t| {
-                let r = t.read(cx);
-                (r.terminal.detected_agent, r.terminal.agent_confirmed)
-            });
-            let mut slots_used: u8 = u8::from(has_errored || has_attention) + u8::from(has_pending);
-            let mut pill = None;
-            let mut hits_badge = None;
-            if let Some((agent, confirmed)) = term_meta {
-                if let Some(agent) = agent
-                    && slots_used < 2
-                {
-                    let compact = slots_used == 1;
-                    pill = Some(Self::render_agent_pill(agent, confirmed, compact, ui));
-                    slots_used += 1;
-                }
-                if slots_used < 2
-                    && let Some(count) = self.search_hits.filter(|c| *c > 0)
-                {
-                    hits_badge = Some(
-                        div()
-                            .flex_none()
-                            .px(px(4.))
-                            .rounded(px(3.))
-                            .bg(ui.subtle)
-                            .text_size(px(9.))
-                            .text_color(ui.accent)
-                            .child(format!("{count} hits"))
-                            .into_any_element(),
-                    );
-                }
-            }
-            (pill, hits_badge)
+        // EP-006 US-018 - transient fleet-match badge, governed by the FR-11
+        // anatomy: at most 2 adornments, in priority order state dot > queued
+        // chip > match badge (lowest priority, "s'efface en premier").
+        let match_badge = {
+            let slots_used: u8 = u8::from(has_errored || has_attention) + u8::from(has_pending);
+            self.surface
+                .as_terminal()
+                .and(self.search_hits)
+                .filter(|count| *count > 0 && slots_used < 2)
+                .map(|count| {
+                    div()
+                        .flex_none()
+                        .px(px(4.))
+                        .rounded(px(3.))
+                        .bg(ui.subtle)
+                        .text_size(px(9.))
+                        .text_color(ui.accent)
+                        .child(format!("{count} hits"))
+                        .into_any_element()
+                })
         };
 
         // Identity area. `flex_1` + `min_w_0` + `overflow_x_hidden` is what
@@ -1485,7 +1465,6 @@ impl Pane {
             .child(self.render_surface_title(cx))
             .children(status_dot)
             .children(pending_chip)
-            .children(agent_pill)
             .children(match_badge);
 
         // Close the pane. It lives in the header's leading corner, alone and
@@ -1597,74 +1576,6 @@ impl Pane {
                     .h_full()
                     .child(self.render_end_section(cx)),
             )
-    }
-
-    /// EP-005 US-013: compact agent identity pill for this pane's surface.
-    /// PID-sourced (never the OSC title); `compact` renders the icon alone (the
-    /// FR-11 "point coloré" degradation); an unconfirmed (session-restored,
-    /// pre-first-scan) pill renders at 0.6 opacity with a "last known"
-    /// tooltip.
-    fn render_agent_pill(
-        agent: crate::agent_launcher::TerminalAgent,
-        confirmed: bool,
-        compact: bool,
-        ui: crate::theme::UiColors,
-    ) -> gpui::AnyElement {
-        // Multi-color brand logos need `img()` (resvg keeps every fill);
-        // monochrome logos are `svg()` masks tinted with the brand accent
-        // or the theme text color - same split as the header launchers.
-        let icon: gpui::AnyElement = if agent.icon_multicolor() {
-            img(agent.icon_path())
-                .w(px(11.))
-                .h(px(11.))
-                .flex_none()
-                .into_any_element()
-        } else {
-            let tint: Hsla = agent.accent().map(|c| rgb(c).into()).unwrap_or(ui.text);
-            svg()
-                .size(px(11.))
-                .flex_none()
-                .path(agent.icon_path())
-                .text_color(tint)
-                .into_any_element()
-        };
-        let tooltip_label: SharedString = if confirmed {
-            agent.display_name().into()
-        } else {
-            format!("{} (last known - awaiting scan)", agent.display_name()).into()
-        };
-        let mut pill = div()
-            .id("pane-header-agent-pill")
-            .flex()
-            .flex_none()
-            .flex_row()
-            .items_center()
-            .gap(px(3.))
-            .px(px(4.))
-            .h(px(14.))
-            .rounded(px(7.))
-            .bg(ui.subtle)
-            .child(icon);
-        if !compact {
-            // Short name: first word of the display name ("Claude Code" →
-            // "Claude") keeps the pill compact under header truncation.
-            let short = agent
-                .display_name()
-                .split_whitespace()
-                .next()
-                .unwrap_or(agent.display_name())
-                .to_string();
-            pill = pill.child(div().text_size(px(9.)).text_color(ui.text).child(short));
-        }
-        if !confirmed {
-            pill = pill.opacity(0.6);
-        }
-        pill.delayed_tooltip(move |_w, cx| {
-            let label = tooltip_label.clone();
-            cx.new(|_| crate::app::sidebar::SidebarTooltip { label })
-                .into()
-        })
-        .into_any_element()
     }
 
     /// Trailing action-button cluster of the pane header (US-051: code-motion
