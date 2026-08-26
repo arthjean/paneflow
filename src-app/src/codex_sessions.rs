@@ -5,10 +5,11 @@
 //!
 //! Format reference: PR openai/codex#3380 (RolloutItem envelope) and
 //! community discussion #3827. The first line of every rollout file is a
-//! `type:"session_meta"` envelope with `payload.id`, `payload.cwd`, and
-//! `payload.timestamp`. Codex doesn't emit an `ai-title`-equivalent
-//! record, so the title falls back to the first
-//! `event_msg.user_message.message` content.
+//! `type:"session_meta"` envelope with `payload.id`, `payload.cwd`,
+//! `payload.timestamp`, `payload.thread_source` and `payload.git.branch`.
+//! Codex doesn't emit an `ai-title`-equivalent record, so the title falls
+//! back to the first human-authored message (see
+//! [`user_text_from_record`] for the three record shapes that carry one).
 //!
 //! All filesystem work happens off the GPUI main thread - call
 //! [`read_sessions_for_cwd`] from inside `smol::unblock`.
@@ -21,10 +22,43 @@ use std::time::SystemTime;
 use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta, clean_session_label};
 
 /// Maximum number of leading lines to scan for the first user message.
-/// In practice this lands within the first ~10 lines (after
-/// `session_meta` + `turn_context` + a few state events). The cap is
-/// generous so unusual prelude sequences still produce a label.
+/// In practice this lands within the first ~10 lines (measured on real
+/// 0.149.1 rollouts: `session_meta`, `task_started`, three `developer`
+/// preludes, one injected `user` envelope, `world_state`, `turn_context`,
+/// then the prompt on line 9). The cap is generous so unusual prelude
+/// sequences still produce a label.
 const TITLE_SCAN_LIMIT: usize = 256;
+
+/// Byte budget for the same scan, and the binding constraint in practice:
+/// those prelude lines are large (30-56 KB each), so line 9 sits at ~178 KB
+/// into the file. 1 MiB leaves ~5x headroom while bounding the read - the
+/// line cap alone would allow 256 x [`MAX_LINE_BYTES`] = 16 MiB per file, on
+/// every sidebar refresh, for every rollout on disk.
+const TITLE_SCAN_BYTES: u64 = 1024 * 1024;
+
+/// Dedicated cap for line 1. [`MAX_LINE_BYTES`] (64 KiB) is the right bound
+/// for body records but not for `session_meta`, which embeds
+/// `base_instructions` + `dynamic_tools`: 49.6 KB measured on a current
+/// rollout, and it grows with every tool Codex ships. Overrunning the cap
+/// costs the whole file (id and cwd live nowhere else), so this one line gets
+/// its own, much larger bound. Still bounded, and still one line per file.
+const SESSION_META_MAX_BYTES: u64 = 1024 * 1024;
+
+/// Prefixes of the synthetic `role:"user"` records Codex injects around a real
+/// prompt: repo instructions, skill bodies, plugin catalogs, desktop context.
+/// They are indistinguishable from human input at the record level, so the
+/// title scan filters them by prefix - the same approach as cmux's
+/// `realCodexUserMessage`, extended with the envelopes 0.149.1 added.
+const SYNTHETIC_USER_PREFIXES: [&str; 8] = [
+    "# AGENTS.md",
+    "<app-context",
+    "<environment_context",
+    "<permissions",
+    "<recommended_plugins",
+    "<skill>",
+    "<system",
+    "<user_instructions",
+];
 
 /// EP-004 US-016: deeper line cap for the attribution scan, which walks the
 /// whole rollout to capture the model (`turn_context.payload.model`) and the
@@ -52,9 +86,10 @@ pub fn sessions_root() -> Option<PathBuf> {
 /// `cx.background_executor`. Codex's flat date-bucketed layout
 /// (`YYYY/MM/DD`) means we must scan every rollout file and read the
 /// first line to filter by `cwd`. For the typical user (≤ 200 sessions)
-/// this is comfortably under 100 ms; cap heavy users via the
-/// per-file fast bail-out (we stop after the session_meta line if cwd
-/// doesn't match).
+/// this is comfortably under 100 ms, because a file whose `session_meta`
+/// records another `cwd` is abandoned on line 1 (see the `cwd_filter`
+/// argument of [`read_session_meta_inner`]) instead of having its body
+/// scanned for a title that would then be thrown away.
 pub fn read_sessions_for_cwd(cwd: &str) -> Vec<SessionMeta> {
     read_sessions_for_cwd_with_omitted(cwd).0
 }
@@ -80,9 +115,7 @@ pub fn read_sessions_with_usage_for_attribution(cwd: &str, branch: &str) -> Vec<
 
     let mut candidates: Vec<(SessionMeta, PathBuf)> = Vec::new();
     walk_jsonl_files(&root, &mut |path| {
-        if let Some(meta) = read_session_meta_inner(path, false)
-            && crate::agent_sessions::cwd_matches(&meta.cwd, cwd)
-        {
+        if let Some(meta) = read_session_meta_inner(path, false, Some(cwd)) {
             crate::agent_sessions::push_ranked_attribution(
                 &mut candidates,
                 meta,
@@ -95,13 +128,12 @@ pub fn read_sessions_with_usage_for_attribution(cwd: &str, branch: &str) -> Vec<
 
     let enriched: Vec<SessionMeta> = candidates
         .into_iter()
-        .filter_map(
-            |(fallback, path)| match read_session_meta_inner(&path, true) {
-                Some(meta) if crate::agent_sessions::cwd_matches(&meta.cwd, cwd) => Some(meta),
-                Some(_) => None,
-                None => Some(fallback),
-            },
-        )
+        .map(|(fallback, path)| {
+            // The deep re-read can fail where the cheap head scan succeeded
+            // (an I/O error, a body that outruns the usage budget); keep the
+            // already-matched head result rather than dropping the column.
+            read_session_meta_inner(&path, true, Some(cwd)).unwrap_or(fallback)
+        })
         .collect();
     crate::agent_sessions::match_sessions_to_column(enriched, cwd, branch)
 }
@@ -129,9 +161,7 @@ fn read_sessions_for_cwd_inner(
         Some(cap) => {
             let mut collector = crate::agent_sessions::RecentSessionCollector::new(cap);
             walk_jsonl_files(&root, &mut |path| {
-                if let Some(meta) = read_session_meta_inner(path, scan_usage)
-                    && crate::agent_sessions::cwd_matches(&meta.cwd, cwd)
-                {
+                if let Some(meta) = read_session_meta_inner(path, scan_usage, Some(cwd)) {
                     collector.push(meta);
                 }
             });
@@ -140,9 +170,7 @@ fn read_sessions_for_cwd_inner(
         None => {
             let mut all = Vec::new();
             walk_jsonl_files(&root, &mut |path| {
-                if let Some(meta) = read_session_meta_inner(path, scan_usage)
-                    && crate::agent_sessions::cwd_matches(&meta.cwd, cwd)
-                {
+                if let Some(meta) = read_session_meta_inner(path, scan_usage, Some(cwd)) {
                     all.push(meta);
                 }
             });
@@ -234,14 +262,27 @@ fn is_jsonl_file(path: &Path) -> bool {
 /// [`read_sessions_for_cwd_inner`] → [`read_session_meta_inner`] directly).
 #[cfg(test)]
 fn read_session_meta(path: &Path) -> Option<SessionMeta> {
-    read_session_meta_inner(path, false)
+    read_session_meta_inner(path, false, None)
 }
 
 /// Read the head of a rollout file: extract the `session_meta` envelope
 /// (line 1) and the first user message (typically a few lines later). When
 /// `scan_usage` (EP-004 attribution path) the tail scan also captures the model
 /// (`turn_context`) and the last cumulative `token_count` usage.
-fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta> {
+///
+/// `cwd_filter` short-circuits the scan: Codex's store is one flat date tree
+/// for every project, so most files on disk belong to another directory and
+/// their body is pure waste to read. Passing the caller's cwd stops those
+/// files at line 1, which is what makes [`TITLE_SCAN_BYTES`] affordable.
+///
+/// Returns `None` for a rollout that is not worth a row: a sub-agent thread
+/// (it belongs to its parent, not to the sidebar) or a session that never ran
+/// a turn.
+fn read_session_meta_inner(
+    path: &Path,
+    scan_usage: bool,
+    cwd_filter: Option<&str>,
+) -> Option<SessionMeta> {
     let file = fs::File::open(path).ok()?;
     let mut reader = BufReader::new(file);
     let mut buf = String::new();
@@ -249,21 +290,21 @@ fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta>
     // Line 1 must be session_meta or we skip the file.
     buf.clear();
     // US-010 (cli-hardening-followup-2026-Q3): cap line read at
-    // MAX_LINE_BYTES. Truncated line fails serde_json parse below
+    // SESSION_META_MAX_BYTES. Truncated line fails serde_json parse below
     // and the file is skipped -- same outcome as a malformed line.
     let n = reader
         .by_ref()
-        .take(MAX_LINE_BYTES)
+        .take(SESSION_META_MAX_BYTES)
         .read_line(&mut buf)
         .ok()?;
     if n == 0 {
         return None;
     }
-    if n as u64 == MAX_LINE_BYTES && !buf.ends_with('\n') {
+    if n as u64 == SESSION_META_MAX_BYTES && !buf.ends_with('\n') {
         log::warn!(
             target: "paneflow_app::codex_sessions",
             "session JSONL line truncated at {} bytes for {} -- skipping file",
-            MAX_LINE_BYTES,
+            SESSION_META_MAX_BYTES,
             path.display(),
         );
         return None;
@@ -273,9 +314,24 @@ fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta>
         return None;
     }
     let payload = first_value.get("payload")?;
+    // A sub-agent spawned by `/root` gets its own rollout file, tagged
+    // `thread_source:"subagent"` with the spawning thread in
+    // `payload.source.subagent.thread_spawn.parent_thread_id`. Its
+    // `payload.id` is its own, so without this guard every sub-agent turn
+    // surfaced in the sidebar as a first-class session (four such rows in a
+    // single day of real use, all untitled). The parent thread already
+    // represents that work.
+    if payload.get("thread_source").and_then(|v| v.as_str()) == Some("subagent") {
+        return None;
+    }
     let session_id = payload.get("id").and_then(|v| v.as_str())?.to_string();
     let cwd = payload.get("cwd").and_then(|v| v.as_str())?.to_string();
     if cwd.is_empty() {
+        return None;
+    }
+    if let Some(want) = cwd_filter
+        && !crate::agent_sessions::cwd_matches(&cwd, want)
+    {
         return None;
     }
     // session_id lands verbatim in `codex resume <id>`, so hold it to the
@@ -304,27 +360,54 @@ fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta>
         .unwrap_or("")
         .to_string();
 
+    // Codex records the branch it started on in `session_meta.payload.git`
+    // (alongside `commit_hash` and `repository_url`). Control-char guard for
+    // the same reason as `cwd` above: it is display-only today.
+    let git_branch = payload
+        .get("git")
+        .and_then(|g| g.get("branch"))
+        .and_then(|v| v.as_str())
+        .filter(|b| !b.chars().any(char::is_control))
+        .unwrap_or("")
+        .to_string();
+
     // Title-only path keeps the cheap first-user-message scan untouched. The
     // attribution path runs the deeper tail scan (model + usage).
-    let (summary, model, usage) = if scan_usage {
+    let scan = if scan_usage {
         scan_tail_with_usage(&mut reader)
     } else {
-        (scan_first_user_message(&mut reader), None, None)
+        scan_head_for_title(&mut reader)
     };
+
+    // A rollout whose only line is `session_meta` is a thread the user opened
+    // and closed without sending anything. It has no title and nothing to
+    // resume, so it must not take a sidebar row - it would render as a raw
+    // hex id. Keyed on "the scan saw a body record at all" rather than on the
+    // summary, so a session whose prompt is unlabelable still gets its row.
+    if !scan.saw_activity {
+        return None;
+    }
 
     Some(SessionMeta {
         agent: SessionAgent::Codex,
         session_id,
         timestamp,
         cwd,
-        // Codex doesn't record git branch in `session_meta`. Leave empty
-        // so the row collapses to `<time>` only - matches what the user
-        // sees when they run `codex resume`.
-        git_branch: String::new(),
-        summary,
-        model,
-        usage,
+        git_branch,
+        summary: scan.summary,
+        model: scan.model,
+        usage: scan.usage,
     })
+}
+
+/// What one head/tail scan pass recovered from a rollout body.
+#[derive(Default)]
+struct RolloutScan {
+    summary: Option<String>,
+    model: Option<String>,
+    usage: Option<AssistantUsage>,
+    /// Whether any body record was parsed at all - the empty-session signal.
+    saw_activity: bool,
 }
 
 /// EP-004 US-016: deeper tail scan for the attribution path. Walks up to
@@ -334,12 +417,8 @@ fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta>
 /// so the last one wins (not summed). Usage is normalized to the shared
 /// [`AssistantUsage`] tier semantics (input = uncached input, cache_read =
 /// cached subset) so the pricing table treats Claude and Codex uniformly.
-fn scan_tail_with_usage(
-    reader: &mut BufReader<fs::File>,
-) -> (Option<String>, Option<String>, Option<AssistantUsage>) {
-    let mut summary: Option<String> = None;
-    let mut model: Option<String> = None;
-    let mut usage: Option<AssistantUsage> = None;
+fn scan_tail_with_usage(reader: &mut BufReader<fs::File>) -> RolloutScan {
+    let mut scan = RolloutScan::default();
     let mut buf = String::new();
     for _ in 0..MODEL_USAGE_SCAN_LIMIT {
         buf.clear();
@@ -358,70 +437,65 @@ fn scan_tail_with_usage(
             Ok(v) => v,
             Err(_) => continue,
         };
-        match value.get("type").and_then(|v| v.as_str()) {
+        let record_type = value.get("type").and_then(|v| v.as_str());
+        if is_activity_record(record_type) {
+            scan.saw_activity = true;
+        }
+        if scan.summary.is_none() {
+            scan.summary = user_text_from_record(&value);
+        }
+        match record_type {
             Some("turn_context") => {
-                if model.is_none()
+                if scan.model.is_none()
                     && let Some(m) = value
                         .get("payload")
                         .and_then(|p| p.get("model"))
                         .and_then(|v| v.as_str())
                     && !m.is_empty()
                 {
-                    model = Some(m.to_string());
+                    scan.model = Some(m.to_string());
                 }
             }
             Some("event_msg") => {
                 let Some(payload) = value.get("payload") else {
                     continue;
                 };
-                match payload.get("type").and_then(|v| v.as_str()) {
-                    Some("user_message") if summary.is_none() => {
-                        if let Some(message) = payload.get("message").and_then(|v| v.as_str())
-                            && let Some(cleaned) = clean_user_message(message)
-                        {
-                            summary = Some(cleaned);
-                        }
+                if payload.get("type").and_then(|v| v.as_str()) == Some("token_count")
+                    && let Some(total) =
+                        payload.get("info").and_then(|i| i.get("total_token_usage"))
+                {
+                    let input_total = total
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let cached = total
+                        .get("cached_input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let output = total
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let u = AssistantUsage {
+                        input: input_total.saturating_sub(cached),
+                        output,
+                        cache_read: cached,
+                        cache_creation: 0,
+                    };
+                    // Cumulative - last non-empty wins.
+                    if !u.is_empty() {
+                        scan.usage = Some(u);
                     }
-                    Some("token_count") => {
-                        if let Some(total) =
-                            payload.get("info").and_then(|i| i.get("total_token_usage"))
-                        {
-                            let input_total = total
-                                .get("input_tokens")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            let cached = total
-                                .get("cached_input_tokens")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            let output = total
-                                .get("output_tokens")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0);
-                            let u = AssistantUsage {
-                                input: input_total.saturating_sub(cached),
-                                output,
-                                cache_read: cached,
-                                cache_creation: 0,
-                            };
-                            // Cumulative - last non-empty wins.
-                            if !u.is_empty() {
-                                usage = Some(u);
-                            }
-                        }
-                    }
-                    _ => {}
                 }
             }
             _ => {}
         }
     }
-    (summary, model, usage)
+    scan
 }
 
-/// Scan up to [`TITLE_SCAN_LIMIT`] lines looking for the first
-/// `event_msg.user_message`. Codex wraps user input as
-/// `{"type":"event_msg","payload":{"type":"user_message","message":"..."}}`.
+/// Scan the head of a rollout for the first human-authored message, bounded by
+/// [`TITLE_SCAN_LIMIT`] lines AND [`TITLE_SCAN_BYTES`].
 ///
 /// Signature is concrete on `BufReader<File>` rather than the
 /// generic `R: BufRead` it used to be: the `by_ref().take()`
@@ -429,22 +503,31 @@ fn scan_tail_with_usage(
 /// type-check against `&mut R` (the compiler auto-derefs to `R`
 /// and the move blocks the borrow). The only call site already
 /// passes a `BufReader<File>`, so the generic was vestigial.
-fn scan_first_user_message(reader: &mut BufReader<fs::File>) -> Option<String> {
+fn scan_head_for_title(reader: &mut BufReader<fs::File>) -> RolloutScan {
+    let mut scan = RolloutScan::default();
     let mut buf = String::new();
+    let mut budget = TITLE_SCAN_BYTES;
     for _ in 0..TITLE_SCAN_LIMIT {
+        if budget == 0 {
+            break;
+        }
         buf.clear();
         // US-010 (cli-hardening-followup-2026-Q3): cap each line read.
         // Oversize lines fall through to `serde_json::from_str` which
         // errors and the loop `continue`s -- the scan moves on to the
-        // next line without OOMing.
-        let n = reader
+        // next chunk without OOMing.
+        let n = match reader
             .by_ref()
-            .take(MAX_LINE_BYTES)
+            .take(MAX_LINE_BYTES.min(budget))
             .read_line(&mut buf)
-            .ok()?;
+        {
+            Ok(n) => n,
+            Err(_) => break,
+        };
         if n == 0 {
-            return None;
+            break;
         }
+        budget = budget.saturating_sub(n as u64);
         let trimmed = buf.trim_end();
         if !trimmed.starts_with('{') {
             continue;
@@ -453,26 +536,87 @@ fn scan_first_user_message(reader: &mut BufReader<fs::File>) -> Option<String> {
             Ok(v) => v,
             Err(_) => continue,
         };
-        if value.get("type").and_then(|v| v.as_str()) != Some("event_msg") {
-            continue;
+        if is_activity_record(value.get("type").and_then(|v| v.as_str())) {
+            scan.saw_activity = true;
         }
-        let payload = match value.get("payload") {
-            Some(p) => p,
-            None => continue,
-        };
-        if payload.get("type").and_then(|v| v.as_str()) != Some("user_message") {
-            continue;
-        }
-        if let Some(message) = payload.get("message").and_then(|v| v.as_str())
-            && let Some(cleaned) = clean_user_message(message)
-        {
-            return Some(cleaned);
+        if let Some(text) = user_text_from_record(&value) {
+            scan.summary = Some(text);
+            break;
         }
     }
-    None
+    scan
 }
 
+/// Whether this record proves the rollout carries a real turn. Codex writes a
+/// `session_meta`-only file for a thread the user opened and closed without
+/// sending anything; any body record at all means the session actually ran.
+fn is_activity_record(record_type: Option<&str>) -> bool {
+    matches!(record_type, Some("response_item") | Some("event_msg"))
+}
+
+/// Extract the first human-authored text carried by one rollout record.
+/// Three shapes, all of which appear in the wild:
+///
+/// 1. `event_msg` / `item_completed` with `item.type == "UserMessage"` - the
+///    authoritative marker in Codex 0.149.x. It fires exactly once per real
+///    user turn (three occurrences in a 1675-line rollout with three prompts)
+///    and never for an injected envelope.
+/// 2. `response_item` / `message` / `role == "user"` with `input_text`
+///    content - the same turn, one line earlier, and the only shape older
+///    rollouts carry. It also carries every injected envelope, hence the
+///    [`SYNTHETIC_USER_PREFIXES`] filter in [`clean_user_message`].
+/// 3. `event_msg` / `user_message` / `message` - the pre-0.149 shape. Codex no
+///    longer emits it (zero occurrences across current rollouts), which is why
+///    the sidebar fell back to raw hex ids; kept so older sessions keep their
+///    label.
+fn user_text_from_record(value: &serde_json::Value) -> Option<String> {
+    let payload = value.get("payload")?;
+    match value.get("type").and_then(|v| v.as_str())? {
+        "event_msg" => match payload.get("type").and_then(|v| v.as_str())? {
+            "item_completed" => {
+                let item = payload.get("item")?;
+                if item.get("type").and_then(|v| v.as_str()) != Some("UserMessage") {
+                    return None;
+                }
+                first_labelable_block(item.get("content")?.as_array()?, "text")
+            }
+            "user_message" => clean_user_message(payload.get("message")?.as_str()?),
+            _ => None,
+        },
+        "response_item" => {
+            if payload.get("type").and_then(|v| v.as_str()) != Some("message")
+                || payload.get("role").and_then(|v| v.as_str()) != Some("user")
+            {
+                return None;
+            }
+            first_labelable_block(payload.get("content")?.as_array()?, "input_text")
+        }
+        _ => None,
+    }
+}
+
+/// First content block of type `kind` that survives [`clean_user_message`].
+/// Codex packs several blocks into one record (a real 0.149.1 prompt line
+/// carries three), and the envelopes come first, so this walks past them
+/// rather than judging the record on its opening block alone.
+fn first_labelable_block(blocks: &[serde_json::Value], kind: &str) -> Option<String> {
+    blocks
+        .iter()
+        .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some(kind))
+        .filter_map(|b| b.get("text").and_then(|v| v.as_str()))
+        .find_map(clean_user_message)
+}
+
+/// Clean one candidate label, rejecting the synthetic envelopes Codex injects
+/// as `role:"user"` records around the real prompt.
 fn clean_user_message(raw: &str) -> Option<String> {
+    let trimmed = raw.trim_start();
+    if SYNTHETIC_USER_PREFIXES
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+    {
+        return None;
+    }
     clean_session_label(raw, LABEL_MAX_CHARS)
 }
 
@@ -534,11 +678,11 @@ mod tests {
         )
         .expect("write fixture");
 
-        let title_only = read_session_meta_inner(&path, false).expect("meta");
+        let title_only = read_session_meta_inner(&path, false, None).expect("meta");
         assert!(title_only.model.is_none());
         assert!(title_only.usage.is_none());
 
-        let with_usage = read_session_meta_inner(&path, true).expect("meta");
+        let with_usage = read_session_meta_inner(&path, true, None).expect("meta");
         assert_eq!(with_usage.model.as_deref(), Some("gpt-5"));
         let usage = with_usage.usage.expect("usage parsed");
         // Last cumulative event wins: 900 total input, 300 cached → 600 uncached.
@@ -637,11 +781,135 @@ mod tests {
             concat!(
                 r#"{"type":"session_meta","payload":{"id":"019dc9ea-38d7-7372-9cc4-253ce944d41b","cwd":"/tmp/proj","timestamp":"2026-04-26T13:11:03.694Z"}}"#,
                 "\n",
+                r#"{"type":"event_msg","payload":{"type":"task_started"}}"#,
+                "\n",
             ),
         )
         .expect("write fixture");
         let meta = read_session_meta(&path).expect("legitimate UUID must pass the guard");
         assert_eq!(meta.session_id, "019dc9ea-38d7-7372-9cc4-253ce944d41b");
+    }
+
+    /// Codex 0.149.1 shape: the real prompt arrives as a `response_item`
+    /// `role:"user"` line and again as an `event_msg` `item_completed`
+    /// `UserMessage`. Neither existed in the matcher, which is why every
+    /// recent Codex row rendered as a raw hex id. The injected envelopes that
+    /// precede it (`<app-context>`, `# AGENTS.md`, `<recommended_plugins>`)
+    /// must not win the title race.
+    #[test]
+    fn read_session_meta_skips_injected_envelopes_and_takes_the_real_prompt() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("rollout-0149.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"01a0323c-fb2b-7af3-9386-742cd0cfb4a6","cwd":"/home/arthur/dev/paneflow","timestamp":"2026-08-24T05:27:32.000Z","thread_source":"user","git":{"branch":"main","commit_hash":"04e0ae0b"}}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"task_started"}}"#,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<app-context>desktop</app-context>"}]}}"#,
+                "\n",
+                r##"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<recommended_plugins>\nnope\n</recommended_plugins>"},{"type":"input_text","text":"# AGENTS.md instructions for /home/arthur/dev/paneflow"}]}}"##,
+                "\n",
+                r#"{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Corrige la sidebar agent sessions"}]}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"Corrige la sidebar agent sessions"}]}}}"#,
+                "\n",
+            ),
+        )
+        .expect("write fixture");
+
+        let meta = read_session_meta(&path).expect("meta");
+        assert_eq!(
+            meta.summary.as_deref(),
+            Some("Corrige la sidebar agent sessions")
+        );
+        // session_meta.payload.git.branch, not the hardcoded empty string the
+        // reader used to emit.
+        assert_eq!(meta.git_branch, "main");
+    }
+
+    /// The `item_completed` marker alone must produce a label: it is the only
+    /// user-turn signal a rollout carries once the `response_item` line
+    /// outruns the per-line cap.
+    #[test]
+    fn item_completed_user_message_yields_the_label() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("item-completed.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"s","cwd":"/p","timestamp":"2026-08-24T05:27:32.000Z"}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"ship it"}]}}}"#,
+                "\n",
+            ),
+        )
+        .expect("write fixture");
+        let meta = read_session_meta(&path).expect("meta");
+        assert_eq!(meta.summary.as_deref(), Some("ship it"));
+    }
+
+    /// A sub-agent thread carries its own `payload.id` and would otherwise
+    /// list as a first-class session next to its parent.
+    #[test]
+    fn subagent_rollout_is_not_a_session_row() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("subagent.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"01a032cf-f359-7571-87e2-fb9c9d351de9","session_id":"01a032cd-d49f-7732-b6de-ab083bbcca92","cwd":"/p","timestamp":"2026-08-24T10:08:04.000Z","thread_source":"subagent","source":{"subagent":{"thread_spawn":{"parent_thread_id":"01a032cd-d49f-7732-b6de-ab083bbcca92","depth":1}}}}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"review the standards"}]}}}"#,
+                "\n",
+            ),
+        )
+        .expect("write fixture");
+        assert!(
+            read_session_meta(&path).is_none(),
+            "a subagent thread belongs to its parent, not to the sidebar"
+        );
+    }
+
+    /// A thread opened and closed without a turn is a `session_meta`-only
+    /// file. It has no title and nothing to resume.
+    #[test]
+    fn session_meta_only_rollout_is_dropped() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("empty.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"01a037fc-4515-7800-9a3c-000000000000","cwd":"/p","timestamp":"2026-08-25T10:14:34.000Z","thread_source":"user"}}"#,
+                "\n",
+            ),
+        )
+        .expect("write fixture");
+        assert!(read_session_meta(&path).is_none());
+    }
+
+    /// `cwd_filter` is what keeps the byte budget affordable: a rollout from
+    /// another project must be abandoned before its body is read.
+    #[test]
+    fn cwd_filter_rejects_a_foreign_rollout_at_line_one() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("other-project.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"session_meta","payload":{"id":"s","cwd":"/home/arthur/dev/other","timestamp":"2026-08-24T05:27:32.000Z"}}"#,
+                "\n",
+                r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"UserMessage","content":[{"type":"text","text":"hello"}]}}}"#,
+                "\n",
+            ),
+        )
+        .expect("write fixture");
+        assert!(read_session_meta_inner(&path, false, Some("/home/arthur/dev/paneflow")).is_none());
+        assert!(
+            read_session_meta_inner(&path, false, Some("/home/arthur/dev/other")).is_some(),
+            "the matching cwd must still produce a row"
+        );
     }
 
     #[test]
