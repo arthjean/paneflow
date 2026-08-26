@@ -240,7 +240,7 @@ impl PaneFlowApp {
     /// all three of its conditions hold, and the Files sidebar is a layout
     /// child of the root row - reachable from every mode and from behind
     /// Settings via the global `toggle_files_sidebar` chord - so satisfying
-    /// `agents_diff_open` alone would leave the click opening a tab nobody can
+    /// `open` alone would leave the click opening a tab nobody can
     /// see. Settings is dismissed and the app returns to Cli mode before the
     /// tab is pushed.
     ///
@@ -260,15 +260,15 @@ impl PaneFlowApp {
         // and hands focus to the active pane, which `open_diff_file_tab` then
         // takes back for the editor.
         self.enter_cli_mode(window, cx);
-        if !self.agents_view.agents_diff_open {
+        if !self.diff_dock.open {
             let cwd = self.files_tree.root.to_string_lossy().into_owned();
-            self.open_agents_diff_panel(cwd, cx);
+            self.open_diff_dock_panel(cwd, cx);
         }
         // Opening a document *is* an answer to the dock's surface picker: the
         // dock must come up on the file, both now and the next time this
         // workspace toggles it from a pane header.
-        self.agents_view.diff_dock_picker = false;
-        self.agents_view.diff_dock_picked = true;
+        self.diff_dock.picker = false;
+        self.diff_dock.picked = true;
         self.open_diff_file_tab(path, window, cx);
     }
 

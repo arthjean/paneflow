@@ -149,8 +149,7 @@ const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
 /// A tab row reserves the icon width with an invisible placeholder and nothing
 /// more, so every title in the rail - folder and tab alike - starts on the same
 /// X. The folder icon is then the only thing that distinguishes a workspace
-/// from its tabs, which is the alignment rule the Agents sidebar documents at
-/// `agents_sidebar/mod.rs` (thread rows vs project header).
+/// from its tabs.
 const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 14.0;
 /// US-013: geometry of the per-pane icon cluster carried by a tab row.
 ///
@@ -629,7 +628,7 @@ impl PaneFlowApp {
             .w(px(SIDEBAR_WIDTH))
             .flex_shrink_0()
             .h_full()
-            // Cockpit rail (#141414), matching the Agents sidebar. The
+            // Cockpit rail (#141414). The
             // border-right is gone: the rail and the #181818 content gutter
             // separate by a luminance step, not a drawn divider (the OpenAI
             // surface system - separation by luminance, not borders).

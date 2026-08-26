@@ -155,6 +155,53 @@ fn restore_closed_surface_record(
 }
 
 impl PaneFlowApp {
+    /// Fold a freshly probed git state (branch, repo-ness, diff stats) into
+    /// every workspace rooted at `cwd`. Returns whether anything actually
+    /// changed, so the caller only repaints on a real delta.
+    pub(crate) fn apply_git_state_for_cwd(
+        &mut self,
+        cwd: &str,
+        branch: String,
+        is_repo: bool,
+        stats: crate::workspace::GitDiffStats,
+    ) -> bool {
+        let mut changed = false;
+        for workspace in &mut self.workspaces {
+            if workspace.cwd == cwd {
+                if workspace.git_branch != branch {
+                    workspace.git_branch = branch.clone();
+                    changed = true;
+                }
+                if workspace.is_git_repo != is_repo {
+                    workspace.is_git_repo = is_repo;
+                    changed = true;
+                }
+                if workspace.git_stats != stats {
+                    workspace.git_stats = stats.clone();
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
+    /// Narrower sibling of [`Self::apply_git_state_for_cwd`]: refresh only the
+    /// diff stats, for probes that never re-read the branch.
+    pub(crate) fn apply_git_stats_for_cwd(
+        &mut self,
+        cwd: &str,
+        stats: crate::workspace::GitDiffStats,
+    ) -> bool {
+        let mut changed = false;
+        for workspace in &mut self.workspaces {
+            if workspace.cwd == cwd && workspace.git_stats != stats {
+                workspace.git_stats = stats.clone();
+                changed = true;
+            }
+        }
+        changed
+    }
+
     pub(crate) fn dismiss_transient_surfaces(&mut self) {
         self.title_bar_files_menu_open = None;
         self.title_bar_help_menu_open = None;
@@ -163,7 +210,6 @@ impl PaneFlowApp {
         self.pane_menu_open = None;
         self.profile_menu_open = None;
         self.files_menu_open = None;
-        self.agents_view.agents_menu_open = None;
     }
 
     pub(crate) fn active_workspace(&self) -> Option<&Workspace> {
@@ -1055,40 +1101,6 @@ pub(crate) fn reveal_in_file_manager(path: &std::path::Path) -> Result<(), Strin
     }
 }
 
-/// Open a directory in the platform file manager without going through the
-/// `open` crate's generic shell dispatch. Used for "System default" folder
-/// actions where Windows packaged launches can reject `cmd /C start`-style
-/// dispatch with `ERROR_NOT_SUPPORTED`.
-#[allow(clippy::needless_return)]
-pub(crate) fn open_folder_in_file_manager(path: &std::path::Path) -> Result<(), String> {
-    #[cfg(target_os = "linux")]
-    {
-        let result = spawn_detached(std::process::Command::new("xdg-open").arg(path));
-        return result.map_err(|err| {
-            if err.kind() == std::io::ErrorKind::NotFound {
-                "xdg-open not found - install xdg-utils to use this feature".to_string()
-            } else {
-                format!("Could not open file manager: {err}")
-            }
-        });
-    }
-    #[cfg(target_os = "macos")]
-    {
-        let result = spawn_detached(std::process::Command::new("open").arg(path));
-        return result.map_err(|err| format!("Could not open Finder: {err}"));
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let result = spawn_detached(std::process::Command::new("explorer").arg(path));
-        return result.map_err(|err| format!("Could not open Explorer: {err}"));
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-    {
-        spawn_detached(std::process::Command::new("xdg-open").arg(path))
-            .map_err(|err| format!("Could not open file manager: {err}"))
-    }
-}
-
 /// Resolve an editor command (e.g. `"zed"`, `"code"`) to a concrete path.
 ///
 /// `Command::new(command).spawn()` only consults the spawning process's PATH,
@@ -1278,13 +1290,6 @@ mod tests {
         // without a default file-manager registered. We verify the
         // type-shape compiles and the helper is reachable from tests.
         let _callable: fn(&std::path::Path) -> Result<(), String> = reveal_in_file_manager;
-        let _ = tmp.path();
-    }
-
-    #[test]
-    fn open_folder_accepts_regular_path() {
-        let tmp = tempfile::TempDir::new().unwrap();
-        let _callable: fn(&std::path::Path) -> Result<(), String> = open_folder_in_file_manager;
         let _ = tmp.path();
     }
 

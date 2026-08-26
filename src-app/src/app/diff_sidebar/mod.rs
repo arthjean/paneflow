@@ -56,7 +56,7 @@ impl PaneFlowApp {
             .w(px(DIFF_SIDEBAR_WIDTH))
             .flex_shrink_0()
             .h_full()
-            // Cockpit rail (#141414), matching the Cli/Agents sidebars. No
+            // Cockpit rail (#141414), matching the Cli sidebar. No
             // border-right: the rail and the ui.base panel separate by a
             // luminance step, not a drawn divider.
             .bg(crate::app::constants::cockpit_chrome_background(
@@ -175,7 +175,7 @@ impl PaneFlowApp {
 
         // Always-on filter field (cursor-aware TextInput). Escape clears it; a
         // clear-(×) button appears once it has content. Shares the [`filter_pill`]
-        // primitive with the Agents sidebar filter.
+        // primitive with the CLI sidebar filter.
         let filter_field = crate::ui_primitives::filter_pill_with_arrow_clear(
             "diff-files-filter",
             "diff-files-filter-clear",

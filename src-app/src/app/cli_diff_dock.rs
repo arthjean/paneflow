@@ -19,7 +19,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::app::diff_dock::{AgentsDiffData, DiffDockTab};
+use crate::app::diff_dock::{DiffDockData, DiffDockTab};
 
 /// The dock state one workspace owns, parked while another workspace is active.
 ///
@@ -35,7 +35,7 @@ pub(crate) struct DiffDockSlot {
     picked: bool,
     tabs: Vec<DiffDockTab>,
     active_tab: usize,
-    data: Option<AgentsDiffData>,
+    data: Option<DiffDockData>,
 }
 
 impl DiffDockSlot {
@@ -57,18 +57,16 @@ impl PaneFlowApp {
     /// against that fact instead of asking every caller to remember it.
     fn sync_diff_dock_workspace(&mut self, cx: &mut Context<Self>) {
         let active = self.active_workspace().map(|ws| ws.id);
-        if self.agents_view.diff_dock_owner == active {
+        if self.diff_dock.owner == active {
             return;
         }
-        let previous = self.agents_view.diff_dock_owner;
-        self.agents_view.diff_dock_owner = active;
+        let previous = self.diff_dock.owner;
+        self.diff_dock.owner = active;
         self.park_live_diff_dock(previous, cx);
         // A workspace closed while its dock was parked never comes back: drop
         // its slot so the terminals and documents it holds die with it.
         let live: Vec<u64> = self.workspaces.iter().map(|ws| ws.id).collect();
-        self.agents_view
-            .diff_dock_parked
-            .retain(|id, _| live.contains(id));
+        self.diff_dock.parked.retain(|id, _| live.contains(id));
         self.restore_diff_dock(active, cx);
     }
 
@@ -76,24 +74,24 @@ impl PaneFlowApp {
     /// state a workspace that has never opened the dock sees.
     fn park_live_diff_dock(&mut self, owner: Option<u64>, cx: &mut Context<Self>) {
         let slot = DiffDockSlot {
-            open: self.agents_view.agents_diff_open,
-            picker: self.agents_view.diff_dock_picker,
-            picked: self.agents_view.diff_dock_picked,
-            tabs: std::mem::replace(&mut self.agents_view.diff_tabs, vec![DiffDockTab::Changes]),
-            active_tab: std::mem::replace(&mut self.agents_view.diff_active_tab, 0),
-            data: self.agents_view.agents_diff.take(),
+            open: self.diff_dock.open,
+            picker: self.diff_dock.picker,
+            picked: self.diff_dock.picked,
+            tabs: std::mem::replace(&mut self.diff_dock.diff_tabs, vec![DiffDockTab::Changes]),
+            active_tab: std::mem::replace(&mut self.diff_dock.diff_active_tab, 0),
+            data: self.diff_dock.data.take(),
         };
         // Everything the parked dock left behind: the closer already drops the
         // snapshot state (folds, scroll, horizontal offsets) and the live
         // drags, and the menus below describe a strip that is no longer here.
-        self.close_agents_diff_panel(cx);
-        self.agents_view.diff_dock_picker = false;
-        self.agents_view.diff_dock_picked = false;
-        self.agents_view.diff_tab_close_armed = None;
-        self.agents_view.diff_options_menu_open = false;
-        self.agents_view.diff_layout_submenu_open = false;
-        self.agents_view.diff_new_tab_menu_open = false;
-        self.agents_view.diff_branch_menu = None;
+        self.close_diff_dock_panel(cx);
+        self.diff_dock.picker = false;
+        self.diff_dock.picked = false;
+        self.diff_dock.diff_tab_close_armed = None;
+        self.diff_dock.diff_options_menu_open = false;
+        self.diff_dock.diff_layout_submenu_open = false;
+        self.diff_dock.diff_new_tab_menu_open = false;
+        self.diff_dock.diff_branch_menu = None;
 
         let owner = owner.filter(|id| self.workspaces.iter().any(|ws| ws.id == *id));
         match owner {
@@ -101,10 +99,10 @@ impl PaneFlowApp {
             // slot here is that workspace's dock teardown.
             None => drop(slot),
             Some(id) if slot.is_idle() => {
-                self.agents_view.diff_dock_parked.remove(&id);
+                self.diff_dock.parked.remove(&id);
             }
             Some(id) => {
-                self.agents_view.diff_dock_parked.insert(id, slot);
+                self.diff_dock.parked.insert(id, slot);
             }
         }
     }
@@ -113,19 +111,19 @@ impl PaneFlowApp {
     /// closed dock the parking reset left, which is the whole point: opening a
     /// dock in one project must not open one in the next.
     fn restore_diff_dock(&mut self, ws_id: Option<u64>, cx: &mut Context<Self>) {
-        let Some(slot) = ws_id.and_then(|id| self.agents_view.diff_dock_parked.remove(&id)) else {
+        let Some(slot) = ws_id.and_then(|id| self.diff_dock.parked.remove(&id)) else {
             return;
         };
-        self.agents_view.diff_dock_picker = slot.picker;
-        self.agents_view.diff_dock_picked = slot.picked;
-        self.agents_view.diff_tabs = slot.tabs;
-        self.agents_view.diff_active_tab = slot.active_tab;
+        self.diff_dock.picker = slot.picker;
+        self.diff_dock.picked = slot.picked;
+        self.diff_dock.diff_tabs = slot.tabs;
+        self.diff_dock.diff_active_tab = slot.active_tab;
         let cwd = slot
             .data
             .as_ref()
             .map(|data| data.cwd.clone())
             .filter(|cwd| !cwd.is_empty());
-        self.agents_view.agents_diff = slot.data;
+        self.diff_dock.data = slot.data;
         if slot.open {
             // Reopening on the snapshot's own folder, not the workspace root:
             // the two are the same today, and asking the data keeps the warm
@@ -133,7 +131,7 @@ impl PaneFlowApp {
             let cwd = cwd
                 .or_else(|| self.active_workspace().map(|ws| ws.cwd.clone()))
                 .unwrap_or_default();
-            self.open_agents_diff_panel(cwd, cx);
+            self.open_diff_dock_panel(cwd, cx);
         }
     }
 
@@ -141,32 +139,32 @@ impl PaneFlowApp {
     /// folder, otherwise (re)open it there.
     pub(crate) fn toggle_cli_diff_dock(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
-        let showing = self.agents_view.agents_diff_open
+        let showing = self.diff_dock.open
             && self
-                .agents_view
-                .agents_diff
+                .diff_dock
+                .data
                 .as_ref()
                 .is_some_and(|data| data.cwd == cwd);
         if showing {
-            self.close_agents_diff_panel(cx);
+            self.close_diff_dock_panel(cx);
         } else {
             // The button opens the dock, not the diff: until this workspace has
             // said once what it wants in it, the dock comes up on its surface
             // picker. Afterwards it restores whatever tab was last active there.
-            self.agents_view.diff_dock_picker = !self.agents_view.diff_dock_picked;
-            self.open_agents_diff_panel(cwd, cx);
+            self.diff_dock.picker = !self.diff_dock.picked;
+            self.open_diff_dock_panel(cwd, cx);
         }
     }
 
     /// Whether the dock is actually on screen.
     ///
-    /// `agents_diff_open` alone is not enough: the flag survives a mode switch
+    /// `open` alone is not enough: the flag survives a mode switch
     /// and a trip through Settings, both of which unmount the dock in
     /// [`Self::wrap_cli_diff_dock`]. Anything that acts *on* the dock without
     /// putting it back on screen has to ask this instead, or it mutates a strip
     /// nobody can see.
     pub(crate) fn diff_dock_visible(&self) -> bool {
-        self.agents_view.agents_diff_open
+        self.diff_dock.open
             && self.settings_section.is_none()
             && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
     }
@@ -192,25 +190,25 @@ impl PaneFlowApp {
             .flex()
             .flex_row()
             .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, _w, cx| {
-                if this.agents_view.agents_diff_h_scroll_drag.is_some() {
+                if this.diff_dock.h_scroll_drag.is_some() {
                     if event.pressed_button == Some(MouseButton::Left) {
-                        this.drag_agents_diff_h_scrollbar(event.position.x, cx);
+                        this.drag_diff_dock_h_scrollbar(event.position.x, cx);
                     } else {
-                        this.end_agents_diff_h_scrollbar_drag(cx);
+                        this.end_diff_dock_h_scrollbar_drag(cx);
                     }
-                } else if this.agents_view.agents_diff_resize.is_some() {
+                } else if this.diff_dock.resize.is_some() {
                     if event.pressed_button == Some(MouseButton::Left) {
-                        this.drag_agents_diff_resize(f32::from(event.position.x), cx);
+                        this.drag_diff_dock_resize(f32::from(event.position.x), cx);
                     } else {
-                        this.end_agents_diff_resize(cx);
+                        this.end_diff_dock_resize(cx);
                     }
                 }
             }))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _e: &gpui::MouseUpEvent, _w, cx| {
-                    this.end_agents_diff_h_scrollbar_drag(cx);
-                    this.end_agents_diff_resize(cx);
+                    this.end_diff_dock_h_scrollbar_drag(cx);
+                    this.end_diff_dock_resize(cx);
                 }),
             )
             .child(div().flex_1().min_w_0().h_full().child(body))
@@ -226,7 +224,7 @@ impl PaneFlowApp {
                     .pt(px(crate::layout::PANE_GUTTER_PX))
                     .pb(px(crate::layout::PANE_GUTTER_PX))
                     .pr(px(crate::layout::PANE_GUTTER_PX))
-                    .child(self.render_agents_diff_panel(ui, cx)),
+                    .child(self.render_diff_dock_panel(ui, cx)),
             )
             .into_any_element()
     }

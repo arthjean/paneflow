@@ -25,17 +25,17 @@ impl PaneFlowApp {
     /// Drive the dock's `...` menu to `open`. Closing it also folds the layout
     /// submenu, so reopening always starts collapsed.
     fn set_diff_options_menu(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.agents_view.diff_options_menu_open = open;
+        self.diff_dock.diff_options_menu_open = open;
         if !open {
-            self.agents_view.diff_layout_submenu_open = false;
+            self.diff_dock.diff_layout_submenu_open = false;
         }
         cx.notify();
     }
 
     pub(crate) fn close_diff_options_menu(&mut self, cx: &mut Context<Self>) {
-        if self.agents_view.diff_options_menu_open {
-            self.agents_view.diff_options_menu_open = false;
-            self.agents_view.diff_layout_submenu_open = false;
+        if self.diff_dock.diff_options_menu_open {
+            self.diff_dock.diff_options_menu_open = false;
+            self.diff_dock.diff_layout_submenu_open = false;
             cx.notify();
         }
     }
@@ -55,13 +55,13 @@ pub(super) fn render_diff_options_button(
 
     squircle_skin(
         div()
-            .id("agents-diff-options")
+            .id("diff-dock-options")
             .flex_none()
             .size(px(28.))
             .flex()
             .items_center()
             .justify_center(),
-        "agents-diff-options-group",
+        "diff-dock-options-group",
         ROW_RADIUS,
         open.then_some(hover),
         Some(hover),
@@ -102,7 +102,7 @@ fn render_diff_options_menu(
     // Built on `menu_surface` rather than `select_menu`: the latter bakes in an
     // `overflow_y_scroll` host, and the layout submenu has to fly out of the
     // menu's own box.
-    let mut menu = menu_surface(div().id("agents-diff-options-menu"), ui)
+    let mut menu = menu_surface(div().id("diff-dock-options-menu"), ui)
         .flex()
         .flex_col()
         .gap(px(1.))
@@ -142,7 +142,7 @@ fn render_diff_options_menu(
         let next_collapse = !all_collapsed;
         let paths = data.paths();
         menu = menu.child(
-            select_item("agents-diff-options-collapse", false, ui)
+            select_item("diff-dock-options-collapse", false, ui)
                 .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                     this.set_all_diff_collapsed(&paths, next_collapse, cx);
                     this.close_diff_options_menu(cx);
@@ -152,9 +152,9 @@ fn render_diff_options_menu(
     }
 
     menu = menu.child(
-        select_item("agents-diff-options-refresh", false, ui)
+        select_item("diff-dock-options-refresh", false, ui)
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                this.refresh_agents_diff(cwd.clone(), cx);
+                this.refresh_diff_dock(cwd.clone(), cx);
                 this.close_diff_options_menu(cx);
             }))
             .child(menu_label("Refresh Changes", ui)),
@@ -183,10 +183,10 @@ fn render_layout_row(
 ) -> AnyElement {
     let value = if split { "Split" } else { "Unified" };
 
-    select_item("agents-diff-options-layout", submenu_open, ui)
+    select_item("diff-dock-options-layout", submenu_open, ui)
         .relative()
         .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
-            this.agents_view.diff_layout_submenu_open = !this.agents_view.diff_layout_submenu_open;
+            this.diff_dock.diff_layout_submenu_open = !this.diff_dock.diff_layout_submenu_open;
             cx.notify();
         }))
         .child(menu_label("Layout", ui))
@@ -215,7 +215,7 @@ fn render_layout_submenu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_surface(div().id("agents-diff-layout-submenu"), ui)
+    let menu = menu_surface(div().id("diff-dock-layout-submenu"), ui)
         .flex()
         .flex_col()
         .gap(px(1.))
@@ -246,15 +246,15 @@ fn render_layout_option(
 ) -> AnyElement {
     select_item(
         if split {
-            "agents-diff-layout-split"
+            "diff-dock-layout-split"
         } else {
-            "agents-diff-layout-unified"
+            "diff-dock-layout-unified"
         },
         selected,
         ui,
     )
     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-        this.set_agents_diff_split(split, cx);
+        this.set_diff_dock_split(split, cx);
         this.close_diff_options_menu(cx);
     }))
     .child(menu_label(label, ui))

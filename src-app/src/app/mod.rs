@@ -4,9 +4,6 @@
 
 pub mod about_dialog;
 pub mod actions;
-pub mod agents_bottom_panel;
-pub mod agents_sidebar;
-pub mod agents_view_actions;
 pub mod attention_queue;
 pub mod bootstrap;
 pub mod broadcast;
@@ -28,7 +25,6 @@ pub mod launch_pad;
 pub mod notifications;
 pub mod pane_palette;
 pub mod profile_menu;
-pub mod project_ops;
 pub mod self_update_flow;
 pub mod session;
 pub mod sessions_sidebar;

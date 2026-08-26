@@ -1,9 +1,8 @@
 //! EP-001 (prd-git-diff-mode-2026-Q3.md): lifecycle + main-area entry
 //! point for the dedicated Git Diff mode ([`AppMode::Diff`]).
 //!
-//! This mirrors `agents_view_actions.rs`: the mode owns the full main
-//! area plus its own left sidebar, entered via the CLI / Review / Agents
-//! tabs in the shared sidebar footer. EP-001 stands up the shell
+//! The mode owns the full main area plus its own left sidebar, entered
+//! via the CLI / Review tabs in the shared sidebar footer. EP-001 stands up the shell
 //! only - `enter_diff_mode` just flips the mode and `render_diff_main`
 //! renders a placeholder. EP-002 (US-004/US-005) mounts the reused
 //! `diff::DiffView` engine here; EP-005 adds the scope selector.
@@ -98,17 +97,16 @@ fn multiproject_signature(groups: &[RepoGroup]) -> u64 {
     h.finish()
 }
 
-/// Sidebar width when in [`AppMode::Diff`]. 360 px matches Zed's git
-/// panel default - the dedicated diff surface deliberately diverges
-/// from the 220/280 px CLI/Agents family for Zed visual parity
-/// (decision: literal Zed; see the PRD §4).
-pub(crate) const DIFF_SIDEBAR_WIDTH: f32 = 360.0;
+/// Sidebar width when in [`AppMode::Diff`]. Pinned to [`SIDEBAR_WIDTH`]:
+/// the mode tabs sit at the bottom of the rail itself, so a per-mode width
+/// would make the rail jump under the pointer that just switched modes.
+/// This deliberately drops the earlier 360 px Zed git-panel parity.
+pub(crate) const DIFF_SIDEBAR_WIDTH: f32 = crate::SIDEBAR_WIDTH;
 
 impl PaneFlowApp {
-    /// Toggle the Git Diff mode. Mirrors `handle_open_agents_view`:
-    /// pressing the binding (or the action) from CLI/Agents enters
-    /// diff mode; pressing it again from within diff mode returns to
-    /// CLI.
+    /// Toggle the Git Diff mode: pressing the binding (or the action)
+    /// from CLI enters diff mode; pressing it again from within diff
+    /// mode returns to CLI.
     pub(crate) fn handle_open_diff_view(
         &mut self,
         _: &OpenDiffView,
@@ -117,7 +115,7 @@ impl PaneFlowApp {
     ) {
         match self.mode {
             AppMode::Diff => self.enter_cli_mode(window, cx),
-            AppMode::Cli | AppMode::Agents => self.enter_diff_mode(cx),
+            AppMode::Cli => self.enter_diff_mode(cx),
         }
     }
 
@@ -514,10 +512,8 @@ impl PaneFlowApp {
     }
 
     /// Return to [`AppMode::Cli`] from any non-CLI mode. Idempotent
-    /// when already in CLI. Tears down whichever non-CLI surface is
-    /// mounted (Agents today; the `DiffView` entity once EP-002 adds
-    /// the field) and restores keyboard focus to the active
-    /// workspace's first pane, matching `exit_agents_mode`'s contract.
+    /// when already in CLI. Tears down the mounted non-CLI surface and
+    /// restores keyboard focus to the active workspace's first pane.
     pub(crate) fn enter_cli_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.mode == AppMode::Cli {
             return;

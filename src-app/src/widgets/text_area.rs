@@ -1,5 +1,4 @@
-//! US-016 (prd-agents-view.md): a focused multi-line text area for
-//! the Agents Composer.
+//! A focused multi-line text area for the Composer.
 //!
 //! Design constraint: the existing single-line [`crate::widgets::text_input::TextInput`]
 //! is a faithful port of GPUI's `examples/input.rs` with full native text
@@ -80,7 +79,7 @@ actions!(
         // in-flight turn. Bound to Ctrl+Shift+Enter (Cmd+Shift+Enter
         // on macOS). Composer routes this to `send_prompt_immediate`.
         TaSubmitImmediate,
-        // US-019 (prd-agents-view.md): the Composer overlays popups
+        // The Composer overlays popups
         // (`+`-menu, `@`-mention, `/`-slash) on top of the textarea.
         // Escape dismisses an open popup; if none is open, the action
         // is a no-op (no default behaviour to swallow). The AC

@@ -1,8 +1,8 @@
-//! Agents-style UI primitives shared across every settings tab.
+//! Cockpit-style UI primitives shared across every settings tab.
 //!
-//! Visual recipes mirror `agents_view::view` + `app::agents_sidebar`:
+//! Visual recipes mirror the cockpit rails:
 //! - **section_header** - lowercase eyebrow (11px, NORMAL, `ui.muted`), no
-//!   border below. Matches `threads_section_header` in the agents sidebar.
+//!   border below.
 //! - **section_header_with_action** - same eyebrow with a right-aligned
 //!   secondary button (used by Shortcuts/Appearance "Reset to defaults").
 //! - **setting_card** - borderless theme-aware panel (white in light, `#232323`
@@ -44,7 +44,6 @@ pub fn with_alpha(color: Hsla, alpha: f32) -> Hsla {
 }
 
 /// Lowercase eyebrow section label (11px, NORMAL, muted). No border below.
-/// Mirrors `app::agents_sidebar::threads_section_header`.
 pub fn section_header(ui: crate::theme::UiColors, label: &'static str) -> impl IntoElement {
     div().pb(px(8.)).child(
         div()

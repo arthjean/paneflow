@@ -59,6 +59,8 @@ PaneFlowApp (Entity<Render>)           ← src-app/src/main.rs
 │   ├── bootstrap.rs                   ← app init, window creation, GPUI setup
 │   ├── event_handlers.rs              ← title-bar/pane/terminal event subscribers + stale-PID sweep
 │   ├── ipc_handler.rs                 ← JSON-RPC handler dispatched to GPUI main thread
+│   ├── diff_dock/                     ← CLI cockpit's right-docked git diff panel
+│   ├── cli_diff_dock.rs               ← per-workspace dock parking + CLI plumbing
 │   ├── self_update_flow.rs            ← check/download/install orchestration
 │   ├── session.rs                     ← persist/restore workspaces to session.json
 │   ├── settings.rs                    ← settings lifecycle: open/close, persist_setting, key handlers

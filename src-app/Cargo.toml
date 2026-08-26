@@ -160,10 +160,9 @@ rfd = "0.17"
 # + strikethrough + footnotes via the event API (we walk events directly into
 # a GPUI element tree rather than rendering HTML).
 pulldown-cmark = { version = "0.10", default-features = false }
-# US-014 of tasks/prd-agents-view.md: syntax highlighting for fenced
-# code blocks in chat messages. `default-fancy` ships the bundled
-# syntax + theme sets plus the FancyRegex engine (~3 MB binary cost,
-# acceptable per the PRD's Technical Considerations section).
+# Syntax highlighting for fenced code blocks in rendered markdown.
+# `default-fancy` ships the bundled syntax + theme sets plus the
+# FancyRegex engine (~3 MB binary cost).
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 ureq.workspace = true
 # Multi-worktree diff engine (prd-multi-worktree-diff-2026-Q3.md, EP-002).
@@ -241,11 +240,11 @@ interprocess.workspace = true
 # deduplicates - the direct declaration is only needed to `use` the trait.
 unicode-segmentation = "1"
 
-# US-019 (prd-agents-view.md) - composer extensions.
+# Composer extensions.
 #
 # `ignore` is the gitignore-respecting walker used by ripgrep. Powers the
-# `@`-mention file completion popup (AC: "recursive, gitignore-respecting,
-# debounced 200ms"). Pulled in directly so the agents composer does not have
+# `@`-mention file completion popup (recursive, gitignore-respecting,
+# debounced 200ms). Pulled in directly so the composer does not have
 # to reimplement .gitignore / .ignore / hidden-file filtering by hand.
 #
 # `base64` encodes image attachments into the ACP `ImageContent.data` field
@@ -276,7 +275,7 @@ notify-rust = "4"
 minisign-verify = "0.2.5"
 
 # US-001 (prd-file-editor-2026-Q3): the rope backing `CodeDocument`
-# (`app/diff_dock/code/document.rs`). An edit in the middle of a large file
+# (`app/agents_diff/code/document.rs`). An edit in the middle of a large file
 # is O(log n) instead of the O(n) memmove a flat `String` would pay, and the
 # rope maintains its own line counters so byte <-> line conversions never
 # rescan. `chunks_at_byte` feeds tree-sitter's `Parser::parse_with` callback

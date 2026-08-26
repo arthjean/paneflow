@@ -373,7 +373,6 @@ fn test_terminal_ligatures_wrong_type_falls_back_to_defaults() {
     assert_eq!(terminal.color_emoji, Some(false));
 }
 
-// US-007 (prd-agents-view.md): SessionState gained `projects`,
-// `active_project`, `mode`. The three tests below cover the AC
-// explicitly: round-trip with mixed state, backward-compat with a
-// pre-US-007 session.json, and AppMode enum serialisation.
+// SessionState carries the top-level UI `mode`. The tests below cover
+// round-trip with mixed state, backward compatibility with a session.json
+// that predates the field, and AppMode serialisation.

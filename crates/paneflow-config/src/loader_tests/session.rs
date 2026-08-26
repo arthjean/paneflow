@@ -34,10 +34,6 @@ fn test_session_roundtrip_single_workspace() {
                 surfaces: vec![make_surface("/home/user/project")],
             })],
         )],
-        projects: Vec::new(),
-        active_project: 0,
-        chats: Vec::new(),
-        agents_target: None,
         mode: AppMode::default(),
         diff_scope: None,
     };
@@ -69,10 +65,6 @@ fn test_session_roundtrip_multiple_workspaces() {
             // An empty folder: one tab, no pane (v2 needs no `empty` marker).
             make_workspace("devops", "/home/user/infra", vec![TabSession::empty()]),
         ],
-        projects: Vec::new(),
-        active_project: 0,
-        chats: Vec::new(),
-        agents_target: None,
         mode: AppMode::default(),
         diff_scope: None,
     };
@@ -115,10 +107,6 @@ fn test_session_roundtrip_nested_splits() {
                 ],
             })],
         )],
-        projects: Vec::new(),
-        active_project: 0,
-        chats: Vec::new(),
-        agents_target: None,
         mode: AppMode::default(),
         diff_scope: None,
     };
@@ -147,10 +135,6 @@ fn test_session_roundtrip_with_scrollback() {
                 }],
             })],
         )],
-        projects: Vec::new(),
-        active_project: 0,
-        chats: Vec::new(),
-        agents_target: None,
         mode: AppMode::default(),
         diff_scope: None,
     };
@@ -196,156 +180,38 @@ fn test_session_scrollback_none_omitted_from_json() {
 // capture layer (US-012).
 
 #[test]
-fn test_session_roundtrip_mixed_workspaces_and_projects() {
-    let state = SessionState {
-        version: SESSION_SCHEMA_VERSION,
-        active_workspace: 0,
-        workspaces: vec![make_workspace(
-            "main",
-            "/home/user",
-            vec![TabSession::with_layout(LayoutNode::Pane {
-                surfaces: vec![make_surface("/home/user")],
-            })],
-        )],
-        projects: vec![ProjectSession {
-            id: 42,
-            title: "Paneflow".to_string(),
-            cwd: "/home/user/dev/paneflow".to_string(),
-            is_expanded: true,
-            threads: vec![ThreadSession {
-                id: 100,
-                title: "Wire up the agents view".to_string(),
-                agent: "claude_code".to_string(),
-                cwd: "/home/user/dev/paneflow".to_string(),
-                created_at: 1_716_336_000_000,
-                model: Some("sonnet".to_string()),
-                mode: Some("default".to_string()),
-                store_id: Some("uuid-abc-123".to_string()),
-                kind: None,
-                terminal_agent: None,
-                pinned: false,
-                session_id: None,
-                title_user_set: false,
-            }],
-        }],
-        active_project: 0,
-        chats: Vec::new(),
-        agents_target: None,
-        mode: AppMode::Agents,
-        diff_scope: None,
-    };
-    let json = serde_json::to_string_pretty(&state).unwrap();
-    let restored: SessionState = serde_json::from_str(&json).unwrap();
-    assert_eq!(state, restored);
-    assert_eq!(restored.projects[0].threads[0].agent, "claude_code");
-    assert_eq!(restored.mode, AppMode::Agents);
-}
-
-// US-001/US-002 (Agents UI redesign): the
-// SessionState gained `chats` and ThreadSession gained `pinned`. These
-// cover the round-trip with both fields populated and the backward-compat
-// default when a pre-refonte session.json lacks the keys.
-#[test]
-fn test_session_roundtrip_with_chats_and_pinned() {
-    let state = SessionState {
-        version: SESSION_SCHEMA_VERSION,
-        active_workspace: 0,
-        workspaces: vec![],
-        projects: vec![ProjectSession {
-            id: 1,
-            title: "Paneflow".to_string(),
-            cwd: "/home/user/dev/paneflow".to_string(),
-            is_expanded: true,
-            threads: vec![ThreadSession {
-                id: 10,
-                title: "Pinned project thread".to_string(),
-                agent: "claude_code".to_string(),
-                cwd: "/home/user/dev/paneflow".to_string(),
-                created_at: 1_716_336_000_000,
-                model: None,
-                mode: None,
-                store_id: None,
-                kind: Some("terminal".to_string()),
-                terminal_agent: Some("claude_code".to_string()),
-                pinned: true,
-                session_id: None,
-                title_user_set: false,
-            }],
-        }],
-        active_project: 0,
-        chats: vec![ThreadSession {
-            id: 20,
-            title: "Quick scratch chat".to_string(),
-            agent: "codex".to_string(),
-            cwd: "/home/user".to_string(),
-            created_at: 1_716_337_000_000,
-            model: None,
-            mode: None,
-            store_id: None,
-            kind: Some("terminal".to_string()),
-            terminal_agent: Some("codex".to_string()),
-            pinned: false,
-            session_id: None,
-            title_user_set: false,
-        }],
-        agents_target: None,
-        mode: AppMode::Agents,
-        diff_scope: None,
-    };
-    let json = serde_json::to_string_pretty(&state).unwrap();
-    let restored: SessionState = serde_json::from_str(&json).unwrap();
-    assert_eq!(state, restored);
-    assert_eq!(restored.chats.len(), 1, "the free chat round-trips");
-    assert_eq!(restored.chats[0].cwd, "/home/user", "chat anchored on home");
-    assert!(
-        restored.projects[0].threads[0].pinned,
-        "the pinned flag round-trips on a project thread"
-    );
-    assert!(!restored.chats[0].pinned, "an unpinned chat stays unpinned");
-}
-
-#[test]
-fn test_session_pre_refonte_defaults_chats_empty_and_unpinned() {
-    // A pre-refonte session.json: a project thread with no `pinned`
-    // key, and no top-level `chats` key. Must restore as `chats = []`
-    // and `pinned = false` everywhere - no migration, no error.
+fn test_session_with_removed_agents_view_restores_in_cli_mode() {
+    // A session.json written by a build that still had the Agents view: an
+    // unknown `"mode"` string plus keys this schema no longer declares. It
+    // must restore silently in CLI mode - a rejected parse would quarantine
+    // the file and cost the user every workspace in it.
     let legacy = r#"{
         "version": 1,
         "active_workspace": 0,
-        "workspaces": [],
+        "workspaces": [
+            { "title": "main", "cwd": "/tmp", "layout": null }
+        ],
         "projects": [
-            {
-                "id": 1,
-                "title": "Paneflow",
-                "cwd": "/home/user/dev/paneflow",
-                "is_expanded": true,
-                "threads": [
-                    {
-                        "id": 10,
-                        "title": "Old thread",
-                        "agent": "claude_code",
-                        "cwd": "/home/user/dev/paneflow",
-                        "created_at": 0
-                    }
-                ]
-            }
+            { "id": 1, "title": "Paneflow", "cwd": "/tmp", "threads": [] }
         ],
         "active_project": 0,
+        "chats": [],
+        "agents_target": { "type": "chat", "thread_id": 3 },
         "mode": "agents"
     }"#;
     let restored: SessionState = serde_json::from_str(legacy).unwrap();
-    assert!(restored.chats.is_empty(), "chats must default to []");
-    assert!(
-        !restored.projects[0].threads[0].pinned,
-        "a thread with no `pinned` key restores as unpinned"
+    assert_eq!(restored.workspaces.len(), 1, "the workspaces survive");
+    assert_eq!(
+        restored.mode,
+        AppMode::Cli,
+        "an unknown mode falls back to CLI"
     );
 }
 
 #[test]
 fn test_session_backward_compat_pre_us007() {
-    // A literal pre-US-007 session.json: no `projects`, no
-    // `active_project`, no `mode` keys. Must deserialise to an
-    // empty project list and the default `AppMode::Cli`.
+    // A literal pre-US-007 session.json: no `mode` key. Must deserialise
+    // to the default `AppMode::Cli`.
     let legacy = r#"{
         "version": 1,
         "active_workspace": 0,
@@ -355,8 +221,6 @@ fn test_session_backward_compat_pre_us007() {
     }"#;
     let restored: SessionState = serde_json::from_str(legacy).unwrap();
     assert_eq!(restored.workspaces.len(), 1);
-    assert!(restored.projects.is_empty(), "projects must default to []");
-    assert_eq!(restored.active_project, 0);
     assert_eq!(
         restored.mode,
         AppMode::Cli,
@@ -367,11 +231,7 @@ fn test_session_backward_compat_pre_us007() {
 #[test]
 fn test_app_mode_serializes_snake_case() {
     assert_eq!(serde_json::to_string(&AppMode::Cli).unwrap(), "\"cli\"");
-    assert_eq!(
-        serde_json::to_string(&AppMode::Agents).unwrap(),
-        "\"agents\""
-    );
-    // US-001 (prd-git-diff-mode-2026-Q3.md): the third mode.
+    // US-001 (prd-git-diff-mode-2026-Q3.md): the Review mode.
     assert_eq!(serde_json::to_string(&AppMode::Diff).unwrap(), "\"diff\"");
 }
 
@@ -410,21 +270,6 @@ fn test_session_diff_scope_round_trips_and_defaults() {
     }"#;
     let restored2: SessionState = serde_json::from_str(with_scope).unwrap();
     assert_eq!(restored2.diff_scope.as_deref(), Some("worktree"));
-}
-
-#[test]
-fn test_project_session_is_expanded_defaults_true_when_absent() {
-    // A ProjectSession written before `is_expanded` existed (or with
-    // the key stripped) must restore expanded -- otherwise the
-    // sidebar would silently hide threads on first relaunch.
-    let json = r#"{
-        "id": 7,
-        "title": "Proj",
-        "cwd": "/tmp",
-        "threads": []
-    }"#;
-    let restored: ProjectSession = serde_json::from_str(json).unwrap();
-    assert!(restored.is_expanded);
 }
 
 #[test]

@@ -55,7 +55,7 @@ impl PaneFlowApp {
         // A preset label reaches the sidebar verbatim, and a custom command's
         // name is user input: strip CLI decoration (spinners, zero-width
         // glyphs) the way every other title path does.
-        let title = crate::project::clean_sidebar_title(&title).unwrap_or_default();
+        let title = crate::sidebar_title::clean_sidebar_title(&title).unwrap_or_default();
         let terminal =
             cx.new(|cx| TerminalView::with_cwd_and_profile(ws_id, cwd, None, profile, cx));
         cx.subscribe(&terminal, Self::handle_terminal_event)
@@ -86,7 +86,7 @@ impl PaneFlowApp {
             // Safe before the PTY is live: `send_command` buffers into the
             // display-only terminal's pending input and `TerminalState::promote`
             // flushes it when the real PTY arrives (US-012), the same contract
-            // the Agents view relies on.
+            // the sidebar relies on.
             terminal.read(cx).send_command(&command);
         }
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {

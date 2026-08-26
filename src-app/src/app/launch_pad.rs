@@ -468,7 +468,7 @@ impl PaneFlowApp {
                 .bg(resting_background)
                 // Multi-color logos render via `img()` (resvg keeps every
                 // native fill); monochrome logos stay a tinted `svg()` mask
-                // - same split as the agents-view launcher.
+                // - same split as the sidebar launcher.
                 .child(if agent.icon_multicolor() {
                     gpui::img(agent.icon_path())
                         .size(px(13.))

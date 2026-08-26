@@ -16,24 +16,47 @@
 //! `+` menu uses, so the two doors into the dock cannot drift apart.
 
 use gpui::{
-    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, px, svg,
+    AnyElement, ClickEvent, Context, Hsla, InteractiveElement, IntoElement, MouseButton,
+    ParentElement, StatefulInteractiveElement, Styled, Window, div, px, rgb, svg,
 };
 
 use super::render::render_diff_header_icon_button;
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
-use crate::ui_primitives::squircle::squircle_border;
-use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
 /// Card side. Two cards plus their gap must clear the dock's minimum width
-/// (`AGENTS_DIFF_PANEL_MIN_WIDTH`, 360 px) with the grid's own padding, which is
+/// (`DIFF_DOCK_PANEL_MIN_WIDTH`, 360 px) with the grid's own padding, which is
 /// what the guard test below pins.
-const CARD_WIDTH: f32 = 108.0;
-const CARD_HEIGHT: f32 = 92.0;
+const CARD_WIDTH: f32 = 122.0;
+const CARD_HEIGHT: f32 = 98.0;
 const CARD_GAP: f32 = 12.0;
+/// Circular corner, not the cockpit's superellipse: the picker matches Cursor's
+/// own surface chooser, whose cards are plain rounded rectangles.
+const CARD_RADIUS: f32 = 10.0;
+/// Glyph-to-label distance inside a card.
+const CARD_ICON_GAP: f32 = 8.0;
 /// Padding around the wrapping grid, so a card never touches the dock edge.
 const GRID_PADDING: f32 = 16.0;
+
+/// The picker's ink: border, glyph, label.
+///
+/// Dark themes spend three literal greys rather than `ui.border` / `ui.muted` /
+/// `ui.text`, all of which sit a step brighter. The picker is a one-shot empty
+/// state, not cockpit chrome - it should recede until the pointer is over a
+/// card, which is exactly the register Cursor's own chooser is drawn in, and
+/// these are its measured values lifted by the four levels our background sits
+/// above theirs. Light themes take the tokens.
+fn card_ink(ui: crate::theme::UiColors) -> (Hsla, Hsla, Hsla) {
+    if ui.base.l > 0.5 {
+        (ui.border, ui.muted, ui.text)
+    } else {
+        (
+            rgb(0x2c2c2c).into(),
+            rgb(0x8b8b8b).into(),
+            rgb(0xb9b9b9).into(),
+        )
+    }
+}
 
 /// One surface the dock can be opened onto.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -53,8 +76,8 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.agents_view.diff_dock_picker = false;
-        self.agents_view.diff_dock_picked = true;
+        self.diff_dock.picker = false;
+        self.diff_dock.picked = true;
         match surface {
             // `Changes` is the permanent tab 0, so choosing it opens nothing -
             // it just selects the tab the dismissed picker was covering.
@@ -84,10 +107,10 @@ pub(super) fn render_diff_picker_header(
         .px(px(8.))
         .child(div().flex_1().min_w_0())
         .child(render_diff_header_icon_button(
-            "agents-diff-picker-close",
+            "diff-dock-picker-close",
             "icons/close.svg",
             cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.close_agents_diff_panel(cx);
+                this.close_diff_dock_panel(cx);
             }),
             ui.muted,
         ))
@@ -116,7 +139,7 @@ pub(super) fn render_diff_surface_picker(
                 .justify_center()
                 .gap(px(CARD_GAP))
                 .child(card(
-                    "agents-diff-picker-changes",
+                    "diff-dock-picker-changes",
                     "icons/git-pull-request.svg",
                     "Changes",
                     DiffDockSurface::Changes,
@@ -124,7 +147,7 @@ pub(super) fn render_diff_surface_picker(
                     cx,
                 ))
                 .child(card(
-                    "agents-diff-picker-terminal",
+                    "diff-dock-picker-terminal",
                     "icons/terminal.svg",
                     "Terminal",
                     DiffDockSurface::Terminal,
@@ -132,7 +155,7 @@ pub(super) fn render_diff_surface_picker(
                     cx,
                 ))
                 .child(card(
-                    "agents-diff-picker-file",
+                    "diff-dock-picker-file",
                     "icons/file-text.svg",
                     "File",
                     DiffDockSurface::File,
@@ -143,9 +166,9 @@ pub(super) fn render_diff_surface_picker(
         .into_any_element()
 }
 
-/// One card: glyph over label, on the app's superellipse skin (a resting tint
-/// plus a hover tint) with a hairline over the top - the same silhouette the
-/// dock itself and the panes are drawn with.
+/// One card: glyph over label in a hairline rounded rectangle, no resting fill.
+/// That is the silhouette Cursor's picker uses, down to the 122x98 box, the
+/// 10 px circular corner and the flat neutral ink ([`card_ink`]).
 fn card(
     id: &'static str,
     icon: &'static str,
@@ -154,49 +177,41 @@ fn card(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    squircle_skin(
-        div()
-            .id(id)
-            .flex_none()
-            .w(px(CARD_WIDTH))
-            .h(px(CARD_HEIGHT))
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(10.))
-            .cursor(gpui::CursorStyle::PointingHand),
-        SharedString::from(format!("{id}-group")),
-        ROW_RADIUS,
-        Some(with_alpha(ui.text, 0.03)),
-        Some(with_alpha(ui.text, 0.07)),
-    )
-    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-        this.choose_diff_dock_surface(surface, window, cx);
-    }))
-    .child(
-        svg()
-            .size(px(18.))
-            .flex_none()
-            .path(icon)
-            .text_color(ui.muted),
-    )
-    .child(
-        div()
-            .whitespace_nowrap()
-            .text_size(px(12.))
-            .text_color(ui.text)
-            .child(label),
-    )
-    .child(squircle_border(ROW_RADIUS, px(1.), ui.border))
-    .into_any_element()
+    let (border, glyph, ink) = card_ink(ui);
+    div()
+        .id(id)
+        .flex_none()
+        .w(px(CARD_WIDTH))
+        .h(px(CARD_HEIGHT))
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(CARD_ICON_GAP))
+        .rounded(px(CARD_RADIUS))
+        .border_1()
+        .border_color(border)
+        .hover(|style| style.bg(with_alpha(ink, 0.05)))
+        .cursor(gpui::CursorStyle::PointingHand)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            this.choose_diff_dock_surface(surface, window, cx);
+        }))
+        .child(svg().size(px(18.)).flex_none().path(icon).text_color(glyph))
+        .child(
+            div()
+                .whitespace_nowrap()
+                .text_size(px(12.))
+                .text_color(ink)
+                .child(label),
+        )
+        .into_any_element()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::diff_dock::model::AGENTS_DIFF_PANEL_MIN_WIDTH;
+    use crate::app::diff_dock::model::DIFF_DOCK_PANEL_MIN_WIDTH;
 
     #[test]
     fn two_cards_fit_the_narrowest_dock() {
@@ -206,8 +221,8 @@ mod tests {
         // would swallow half its own hit target.
         let two_cards = 2. * CARD_WIDTH + CARD_GAP + 2. * GRID_PADDING;
         assert!(
-            two_cards <= AGENTS_DIFF_PANEL_MIN_WIDTH,
-            "{two_cards}px of cards overflow a {AGENTS_DIFF_PANEL_MIN_WIDTH}px dock"
+            two_cards <= DIFF_DOCK_PANEL_MIN_WIDTH,
+            "{two_cards}px of cards overflow a {DIFF_DOCK_PANEL_MIN_WIDTH}px dock"
         );
     }
 }

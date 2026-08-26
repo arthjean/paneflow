@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use gpui::Pixels;
 
-use super::git::AgentsDiffBuilt;
+use super::git::DiffDockBuilt;
 use crate::diff::{
     DisplayRow, FileDiff, FileRowCache, FileSpan, SplitRow, apply_collapse_split,
     apply_collapse_unified, apply_expanded_split_with_sources, apply_expanded_unified_with_sources,
@@ -16,15 +16,15 @@ use crate::diff::{
 /// Default width of the docked panel. Sized for the default split mode: two
 /// readable code columns side by side, while still leaving the terminal column
 /// usable beside it. The panel is user-resizable by dragging its left edge; the
-/// live width lives on [`crate::AgentsViewState::agents_diff_width`], clamped to
+/// live width lives on [`crate::DiffDockState::width`], clamped to
 /// the bounds below.
-pub(crate) const AGENTS_DIFF_PANEL_WIDTH: f32 = 880.0;
+pub(crate) const DIFF_DOCK_PANEL_WIDTH: f32 = 880.0;
 
 /// Resize clamp for the diff dock's user-dragged width. The floor keeps the
 /// gutters plus a readable code column; the ceiling stops the dock from
 /// swallowing the whole main area on a wide window.
-pub(super) const AGENTS_DIFF_PANEL_MIN_WIDTH: f32 = 360.0;
-pub(super) const AGENTS_DIFF_PANEL_MAX_WIDTH: f32 = 1400.0;
+pub(super) const DIFF_DOCK_PANEL_MIN_WIDTH: f32 = 360.0;
+pub(super) const DIFF_DOCK_PANEL_MAX_WIDTH: f32 = 1400.0;
 
 /// How many `File` tabs the dock keeps open at once (US-017). Past the cap the
 /// oldest tab that is neither modified nor active is evicted, so a cap hit can
@@ -53,7 +53,7 @@ pub(crate) enum DiffDockTab {
 /// The chrome's read-only view of the dock state, bundled so the header and its
 /// overflow menu take one parameter instead of a long positional list.
 pub(super) struct DiffChrome<'a> {
-    pub(super) data: &'a Option<AgentsDiffData>,
+    pub(super) data: &'a Option<DiffDockData>,
     pub(super) cwd: String,
     pub(super) split: bool,
     pub(super) options_open: bool,
@@ -62,7 +62,7 @@ pub(super) struct DiffChrome<'a> {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct AgentsDiffHScrollDrag {
+pub(crate) struct DiffDockHScrollDrag {
     pub(super) offset_idx: usize,
     pub(super) start_mouse_x: Pixels,
     pub(super) start_offset: f32,
@@ -76,7 +76,7 @@ pub(crate) struct AgentsDiffHScrollDrag {
 /// single [`crate::diff`] `Column`: the full rows are kept so a collapse toggle
 /// re-derives the filtered `disp_*` views without re-shelling git.
 #[derive(Clone)]
-pub(crate) struct AgentsDiffData {
+pub(crate) struct DiffDockData {
     /// The working directory this diff was computed for. Used to ignore a
     /// stale async result after the user switches threads or closes the panel.
     pub(crate) cwd: String,
@@ -116,7 +116,7 @@ pub(crate) struct AgentsDiffData {
     pub(super) fingerprint: u64,
 }
 
-impl AgentsDiffData {
+impl DiffDockData {
     pub(super) fn loading(cwd: String) -> Self {
         Self {
             cwd,
@@ -179,7 +179,7 @@ impl AgentsDiffData {
 
     pub(super) fn apply_built(
         &mut self,
-        built: AgentsDiffBuilt,
+        built: DiffDockBuilt,
         collapsed: &HashSet<String>,
         expanded: &HashSet<String>,
     ) {

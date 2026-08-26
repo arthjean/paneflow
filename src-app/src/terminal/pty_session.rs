@@ -1642,8 +1642,8 @@ pub struct TerminalState {
     /// still display-only (the PTY opens on a background thread and is
     /// installed later by [`promote`](Self::promote)). The display-only
     /// notifier silently drops every write, so without this queue an
-    /// auto-launch command issued the instant a thread mounts (the
-    /// Agents-view "New thread" picker) - or a keystroke typed in the brief
+    /// auto-launch command issued the instant a terminal mounts (the
+    /// launch pad's agent picker) - or a keystroke typed in the brief
     /// pre-promotion window - would be lost. [`promote`](Self::promote)
     /// flushes it in order. `Mutex` (not `RefCell`) keeps `TerminalState`
     /// `Send` and matches the crate's interior-mutability idiom; the lock is
@@ -2774,7 +2774,7 @@ impl TerminalState {
         self.cursor_blinking = true;
         self.dirty = true;
         // Flush input queued while display-only (US-012): the launch command
-        // an Agents-view thread issues the instant it mounts, plus any
+        // an auto-launched agent issues the instant it mounts, plus any
         // keystrokes typed before the off-thread fork resolved. Order is
         // preserved; the now-live `Pty` notifier delivers each to the child.
         for input in self.drain_pending_legacy_input() {
@@ -3124,7 +3124,7 @@ impl TerminalState {
             // title to their own executable path before the user's profile runs
             // - e.g. `C:\Program Files\PowerShell\7\pwsh.exe`. Adopted verbatim
             // that leaks the shell install dir as the surface label (tab title,
-            // Agents thread title, persisted session `name`) and is never a
+            // persisted session `name`) and is never a
             // meaningful name, so a title that is just an absolute path to an
             // `.exe` is dropped - keep the previous/default name. Real titles
             // (Claude Code, prompt-driven labels) take the guarded arm above.
@@ -3616,7 +3616,7 @@ impl TerminalState {
 
     /// Send input to the live PTY, or queue it when the terminal is still
     /// display-only (US-012 pre-promotion window). The display-only notifier
-    /// drops every write, so an auto-launch command (Agents view) or a
+    /// drops every write, so an auto-launch command or a
     /// keystroke typed before the off-thread fork resolved would otherwise be
     /// lost; [`promote`](Self::promote) flushes the queue in order. Bounded by
     /// [`MAX_PENDING_INPUT_BYTES`] so a never-promoted terminal can't grow it
@@ -5069,8 +5069,8 @@ mod tests {
 
     #[test]
     fn write_to_pty_buffers_input_while_display_only() {
-        // US-012 regression: the Agents-view "New thread" picker writes the
-        // launch command the instant a thread mounts - before the off-thread
+        // US-012 regression: the launch pad's agent picker writes the
+        // launch command the instant a terminal mounts - before the off-thread
         // fork promotes the PTY. The display-only notifier drops writes, so
         // without this queue the command (e.g. `claude`) is lost and the
         // terminal opens to a bare shell. `write_to_pty` must buffer instead.
@@ -5257,7 +5257,7 @@ mod tests {
         // US-012 end-to-end: input written while display-only must reach the
         // child after promotion. Mirrors the synchronous `new` composition
         // (new_pending + open_pty_and_eventloop + promote) but injects a write
-        // *between* new_pending and promote - the exact Agents-view ordering.
+        // *between* new_pending and promote - the exact auto-launch ordering.
         let params = TerminalState::resolve_spawn_params(None, 1, 1, Some((80, 24)), None);
         let (mut state, pending) = TerminalState::new_pending(params.cols, params.rows);
         // Buffered while display-only - the live notifier does not exist yet.

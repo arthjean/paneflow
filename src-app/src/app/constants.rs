@@ -9,7 +9,7 @@ use gpui::{Hsla, Pixels, WindowBackgroundAppearance, px};
 
 /// Sidebar width in pixels - shared between sidebar and title bar for alignment.
 ///
-/// Sized so a tab row keeps at least the title budget of an Agents thread row
+/// Sized so a tab row keeps at least the title budget of a sidebar row
 /// once the row margins, the folder lead, and the 48px agent-status slot are
 /// taken out. It also lines up with the files rail, which already sits at 300.
 pub(crate) const SIDEBAR_WIDTH: f32 = 300.;
@@ -281,7 +281,7 @@ pub(crate) fn cockpit_backdrop_background(
     }
 }
 
-/// Background for the selected tab in the CLI and Agents sidebars.
+/// Background for the selected tab in the CLI sidebar.
 pub(crate) fn sidebar_tab_active_background() -> Hsla {
     sidebar_tab_background(
         LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY,

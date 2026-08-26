@@ -53,7 +53,7 @@ impl PaneFlowApp {
 
         let query_input = cx.new(|cx| TextInput::new("", "Search branches", cx));
         cx.observe(&query_input, |_, _, cx| cx.notify()).detach();
-        self.agents_view.diff_branch_menu = Some(DiffBranchMenuState {
+        self.diff_dock.diff_branch_menu = Some(DiffBranchMenuState {
             cwd: cwd.clone(),
             current,
             branches: Vec::new(),
@@ -74,7 +74,7 @@ impl PaneFlowApp {
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app, cx| {
-                        let Some(menu) = app.agents_view.diff_branch_menu.as_mut() else {
+                        let Some(menu) = app.diff_dock.diff_branch_menu.as_mut() else {
                             return;
                         };
                         if menu.cwd != cwd {
@@ -101,7 +101,7 @@ impl PaneFlowApp {
 
     /// Dismiss the picker and hand keyboard focus back to whoever held it.
     pub(crate) fn close_diff_branch_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(menu) = self.agents_view.diff_branch_menu.take() {
+        if let Some(menu) = self.diff_dock.diff_branch_menu.take() {
             if let Some(handle) = menu.restore_focus {
                 window.focus(&handle, cx);
             }
@@ -118,14 +118,14 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.agents_view.diff_branch_menu.is_none() {
+        if self.diff_dock.diff_branch_menu.is_none() {
             return;
         }
         match event.keystroke.key.as_str() {
             "escape" => self.close_diff_branch_menu(window, cx),
             "enter" => {
                 let resolved = {
-                    let Some(menu) = self.agents_view.diff_branch_menu.as_ref() else {
+                    let Some(menu) = self.diff_dock.diff_branch_menu.as_ref() else {
                         return;
                     };
                     let name = menu.query_input.read(cx).value().trim().to_string();
@@ -157,7 +157,7 @@ impl PaneFlowApp {
                     this.update(cx, |app, cx| match result {
                         Ok((branch_now, is_repo, stats)) => {
                             app.apply_git_state_for_cwd(&cwd, branch_now, is_repo, stats);
-                            app.refresh_agents_diff_if_open_for_cwd(&cwd, cx);
+                            app.refresh_diff_dock_if_open_for_cwd(&cwd, cx);
                             app.show_toast(format!("Switched to {branch}"), cx);
                             cx.notify();
                         }

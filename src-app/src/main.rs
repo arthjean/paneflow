@@ -26,7 +26,6 @@
 mod agent_launcher;
 mod agent_sessions;
 mod agents;
-mod agents_view;
 mod ai_hooks;
 mod ai_types;
 mod app;
@@ -56,10 +55,10 @@ mod pane;
 mod pane_drag;
 mod pi_sessions;
 mod pricing;
-mod project;
 mod runtime_paths;
 mod search;
 mod settings;
+mod sidebar_title;
 mod telemetry;
 mod terminal;
 pub mod theme;
@@ -400,12 +399,6 @@ mod native_material_tests {
         ));
         assert!(!native_backdrop_material_active(
             AppMode::Diff,
-            false,
-            true,
-            false
-        ));
-        assert!(!native_backdrop_material_active(
-            AppMode::Agents,
             false,
             true,
             false
@@ -792,83 +785,33 @@ struct DiffModeState {
     diff_file_filter: gpui::Entity<crate::widgets::text_input::TextInput>,
 }
 
-/// US-053: Agents-view sidebar state extracted from the `PaneFlowApp`
-/// god-struct (terminal-only Agents view: rename, context menu, skills
-/// page, search filter, and the per-thread terminal cache).
-struct AgentsViewState {
-    /// US-011 (prd-agents-view.md): which sidebar row is currently in
-    /// inline-rename mode (mirrors [`Self::renaming_idx`] but for the
-    /// Agents domain). `None` when no rename is active.
-    pub(crate) agents_renaming: Option<crate::app::agents_sidebar::AgentsRenameTarget>,
-    /// Inline rename input. `Some` only while a rename is in flight;
-    /// dropped on commit / cancel. Mirrors the Composer's TextArea
-    /// pattern so users get a real text input (cursor, selection,
-    /// IME, copy/paste, click-to-position, double-click word select)
-    /// instead of a fake `{text}|` shimmer. One entity is enough
-    /// because [`Self::agents_renaming`] enforces a single in-flight
-    /// rename at a time.
-    pub(crate) agents_rename_input: Option<gpui::Entity<crate::widgets::text_area::TextArea>>,
-    /// US-011: the in-progress rename text. Empty when not renaming.
-    pub(crate) agents_rename_text: String,
-    /// US-011: open right-click context menu (project header or
-    /// thread row). `None` when no menu is open.
-    pub(crate) agents_menu_open: Option<crate::app::agents_sidebar::AgentsContextMenu>,
-    /// US-011: pending delete confirmation. The actual mutation
-    /// happens only after the user confirms in the dialog. Still used by the
-    /// context-menu "Delete" path; the hover-trash path uses
-    /// [`Self::agents_delete_armed`] instead (inline confirm, no dialog).
-    pub(crate) agents_confirm_delete: Option<crate::app::agents_sidebar::AgentsDeleteTarget>,
-    /// Inline delete-confirm (ergonomics): the row whose trash icon was just
-    /// clicked. While `Some`, that row's action cluster shows a red "Delete"
-    /// button (click-to-confirm) instead of opening the confirmation dialog.
-    /// Cleared on confirm, on selecting/clicking a row, or on opening a menu.
-    pub(crate) agents_delete_armed: Option<crate::project::AgentsTarget>,
-    /// US-012 (prd-agents-view.md): the Agents sidebar search field - a real
-    /// single-line `TextInput` (cursor, arrow keys, Delete, Ctrl+A/C/V/X,
-    /// mouse selection, click-to-position). The live needle is its `value()`,
-    /// read at render time for the case-insensitive substring filter; the
-    /// sidebar re-renders on edits via a `cx.observe` registered at bootstrap.
-    pub(crate) agents_filter_input: gpui::Entity<crate::widgets::text_input::TextInput>,
-    /// `true` while the Agents-view sidebar's "Skills" affordance is
-    /// active. Takes precedence over the thread / picker surfaces in
-    /// `render_agents_main_body`. Cleared by `select_thread` and
-    /// anywhere else that navigates away from the skills page.
-    pub(crate) agents_skills_visible: bool,
-    /// Active tab on the Skills page. Persists across re-opens of
-    /// the Skills view within the session; resets on app restart.
-    pub(crate) agents_skills_tab: crate::agents_view::SkillsTab,
-    /// Cached skills snapshot. Discovery runs off the GPUI render path and
-    /// refreshes this vector when the page opens or the user clicks Refresh.
-    pub(crate) agents_skills: Vec<crate::agents_view::SkillEntry>,
-    /// True while the background skills discovery is running.
-    pub(crate) agents_skills_loading: bool,
-    /// Stable id of the skill whose Copy button was just clicked. The card
-    /// flips its label to "Copied" while this matches; a timer reverts it.
-    pub(crate) agents_skills_copied: Option<String>,
-    /// Whether the editor selector attached to the Agents toolbar is open.
-    pub(crate) agents_editor_menu_open: bool,
+/// State of the CLI cockpit's right-docked git diff panel: what it shows,
+/// how it is laid out, and which workspace currently owns it.
+///
+/// Extracted from the `PaneFlowApp` god-struct (US-053).
+struct DiffDockState {
     /// Whether the Codex-style git diff dock is open on the right of the CLI
     /// pane grid (toggled from a pane header, closed from its own
     /// header).
-    pub(crate) agents_diff_open: bool,
+    pub(crate) open: bool,
     /// The diff snapshot rendered by the dock, computed off-thread for the
     /// active thread's cwd. Retained while hidden so same-cwd reopen is warm.
-    pub(crate) agents_diff: Option<crate::app::diff_dock::AgentsDiffData>,
+    pub(crate) data: Option<crate::app::diff_dock::DiffDockData>,
     /// Paths of files folded shut in the diff dock, so a fold survives re-renders.
-    pub(crate) agents_diff_collapsed: std::collections::HashSet<String>,
+    pub(crate) collapsed: std::collections::HashSet<String>,
     /// Stable fold keys for collapsed unchanged regions opened in the dock.
     /// Mirrors Review's fold-marker interaction without re-shelling git.
-    pub(crate) agents_diff_expanded_folds: std::collections::HashSet<String>,
+    pub(crate) expanded_folds: std::collections::HashSet<String>,
     /// Diff dock view mode: `false` = unified (inline), `true` = split (old left,
     /// new right). Defaults to split; toggled from the header.
-    pub(crate) agents_diff_split: bool,
+    pub(crate) split: bool,
     /// Monotonic token for same-cwd diff builds. Completion must match this
     /// generation so an older refresh cannot overwrite a newer snapshot.
-    pub(crate) agents_diff_generation: u64,
+    pub(crate) generation: u64,
     /// Vertical scroll handle for the diff dock's [`crate::diff::DiffElement`]
     /// (hosted in an `overflow_y_scroll` div, the same render path as the Review
     /// view's columns). Survives ordinary repaints so scroll position is kept.
-    pub(crate) agents_diff_scroll: gpui::ScrollHandle,
+    pub(crate) scroll: gpui::ScrollHandle,
     /// Whether the diff dock's `...` overflow menu (layout, expand-all, refresh)
     /// is open, and whether its "Layout" side submenu is unfolded inside it.
     pub(crate) diff_options_menu_open: bool,
@@ -878,20 +821,19 @@ struct AgentsViewState {
     /// Whether the dock is currently showing its surface picker instead of a
     /// tab (see `diff_dock::surface_picker`). Set by the pane-header toggle on
     /// the workspace's first open of the dock.
-    pub(crate) diff_dock_picker: bool,
+    pub(crate) picker: bool,
     /// Whether the picker has been answered at least once *for the workspace
     /// that owns the live dock*. Once it has, opening the dock there restores
     /// the last active tab rather than asking again.
-    pub(crate) diff_dock_picked: bool,
+    pub(crate) picked: bool,
     /// Which workspace the live dock fields above describe. `None` until the
     /// dock is first opened. [`PaneFlowApp::sync_diff_dock_workspace`] parks and
     /// swaps them whenever this drifts from the active workspace.
-    pub(crate) diff_dock_owner: Option<u64>,
+    pub(crate) owner: Option<u64>,
     /// Dock state parked per workspace id, for every workspace that is not
-    /// [`Self::diff_dock_owner`]. The dock is detached per workspace: opening it
+    /// [`Self::owner`]. The dock is detached per workspace: opening it
     /// in one project leaves the next one untouched.
-    pub(crate) diff_dock_parked:
-        std::collections::HashMap<u64, crate::app::cli_diff_dock::DiffDockSlot>,
+    pub(crate) parked: std::collections::HashMap<u64, crate::app::cli_diff_dock::DiffDockSlot>,
     /// The dock's tabs. Index 0 is always the permanent `Changes` diff; the
     /// rest are terminals opened from the `+` menu, closable from their tab.
     pub(crate) diff_tabs: Vec<crate::app::diff_dock::DiffDockTab>,
@@ -905,61 +847,19 @@ struct AgentsViewState {
     /// closed. Holds the branch list, the search field and the focus to restore.
     pub(crate) diff_branch_menu: Option<crate::app::diff_dock::DiffBranchMenuState>,
     /// Width in px of the diff dock; user-resizable by dragging its left edge.
-    /// Clamped to `[AGENTS_DIFF_PANEL_MIN_WIDTH, AGENTS_DIFF_PANEL_MAX_WIDTH]`.
-    pub(crate) agents_diff_width: f32,
+    /// Clamped to `[DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MAX_WIDTH]`.
+    pub(crate) width: f32,
     /// Live drag anchor `(cursor_x, width_at_grab)` while the dock's left edge is
     /// being dragged to resize; `None` when not resizing.
-    pub(crate) agents_diff_resize: Option<(f32, f32)>,
+    pub(crate) resize: Option<(f32, f32)>,
     /// Live horizontal-scrollbar drag inside the dock's shared diff body.
-    pub(crate) agents_diff_h_scroll_drag: Option<crate::app::diff_dock::AgentsDiffHScrollDrag>,
+    pub(crate) h_scroll_drag: Option<crate::app::diff_dock::DiffDockHScrollDrag>,
     /// Per-file horizontal scroll offsets (px) for the diff dock, indexed by
     /// stable file position. Driven by Shift+wheel / trackpad horizontal gestures
-    /// (`apply_agents_diff_hwheel`) and applied per file by `DiffElement`; lazily
+    /// (`apply_diff_dock_hwheel`) and applied per file by `DiffElement`; lazily
     /// resized to the file count at render (collapse/split never change the
     /// count, so offsets stay aligned).
-    pub(crate) agents_diff_h_offsets: std::rc::Rc<Vec<f32>>,
-    /// Whether the Codex-style full-width bottom terminal dock is open. Toggled
-    /// by the `layout-bottombar` toolbar button (and its own × button).
-    pub(crate) bottom_panel_open: bool,
-    /// Height in px of the bottom dock; user-resizable by dragging its top edge.
-    pub(crate) bottom_panel_height: f32,
-    /// The active terminal tab in the bottom dock, by [`BottomTerminal::id`].
-    /// `None` only when the dock holds no terminals (its empty state).
-    pub(crate) bottom_panel_active: Option<u64>,
-    /// Terminals hosted as tabs in the bottom dock. Kept alive while the dock is
-    /// hidden so reopening is warm (mirrors [`Self::agents_terminal_view_cache`]).
-    pub(crate) bottom_terminals: Vec<BottomTerminal>,
-    /// Monotonic counter seeding each bottom terminal's stable tab id and its PTY
-    /// env id (offset into a namespace disjoint from threads/workspaces).
-    pub(crate) bottom_terminal_seq: u64,
-    /// Live drag anchor `(cursor_y, height_at_grab)` while the dock's top edge is
-    /// being dragged to resize; `None` when not resizing.
-    pub(crate) bottom_panel_drag: Option<(f32, f32)>,
-    /// Cache of every Terminal Thread surface mounted this session,
-    /// keyed by [`crate::project::Thread::id`]. The Agents view is
-    /// terminal-only: selecting a thread reuses the existing
-    /// [`crate::terminal::view::TerminalView`] entity so the shell
-    /// process, scrollback, and I/O threads survive the round trip.
-    /// Drop happens on thread deletion (via `remove_thread`'s cache
-    /// cleanup) or on app shutdown.
-    pub(crate) agents_terminal_view_cache:
-        std::collections::HashMap<u64, gpui::Entity<crate::terminal::view::TerminalView>>,
-    /// LRU order for [`Self::agents_terminal_view_cache`], oldest first.
-    pub(crate) agents_terminal_cache_lru: Vec<u64>,
-    /// Last access timestamp for cached agent terminals. Expired entries are
-    /// pruned opportunistically when the cache is touched.
-    pub(crate) agents_terminal_cache_touched_at: std::collections::HashMap<u64, std::time::Instant>,
-}
-
-/// One shell terminal hosted as a tab in the Agents bottom dock. The `view`
-/// entity owns the PTY; dropping this struct (tab close / app shutdown) tears
-/// the shell down via [`crate::terminal::view::TerminalView`]'s `Drop`.
-pub(crate) struct BottomTerminal {
-    /// Stable id: the tab's identity and the seed for its PTY env id.
-    pub(crate) id: u64,
-    /// Tab label. Seeded as "Terminal N", then tracks the PTY's OSC title.
-    pub(crate) title: String,
-    pub(crate) view: gpui::Entity<crate::terminal::view::TerminalView>,
+    pub(crate) h_offsets: std::rc::Rc<Vec<f32>>,
 }
 
 struct PaneFlowApp {
@@ -1231,45 +1131,13 @@ struct PaneFlowApp {
     theme_changed: std::sync::Arc<std::sync::atomic::AtomicBool>,
     /// US-053: Git Diff mode state (see `DiffModeState`).
     diff_mode: DiffModeState,
-    /// US-008 (prd-agents-view.md): top-level UI mode. `Cli` = the
-    /// traditional terminal multiplexer; `Agents` = the projects +
-    /// threads sidebar and chat thread view. Toggled by the
-    /// `OpenAgentsView` action (Ctrl/Cmd+Shift+A) and by the title-bar
-    /// icon (US-009). Persisted to / restored from `session.json`
-    /// (US-009 wires the restore branch).
+    /// Top-level UI mode: `Cli` = the terminal cockpit, `Diff` = the
+    /// full-screen Review surface. Toggled from the sidebar footer and
+    /// persisted to / restored from `session.json`.
     pub(crate) mode: paneflow_config::schema::AppMode,
-    /// US-007 (prd-agents-view.md): in-memory list of Agents-view
-    /// projects, persisted to `session.json` via [`save_session`].
-    /// Empty until the user creates their first project (US-011).
-    pub(crate) projects: Vec<crate::project::Project>,
-    /// US-002 (Agents UI redesign): free chats -
-    /// terminal threads not attached to any project, anchored on the
-    /// user's home dir. A separate list from [`Self::projects`] by design
-    /// (no implicit "~" project). Persisted to `session.json`. Each chat
-    /// is a full [`crate::project::Thread`] with an ID from the shared
-    /// `next_thread_id` counter, so its PTY shares the same warm-resume
-    /// cache (`agents_terminal_view_cache`) as a project thread.
-    pub(crate) chats: Vec<crate::project::Thread>,
-    /// US-007 (prd-agents-view.md): index into [`Self::projects`] of
-    /// the currently active project. `0` when no projects exist
-    /// (the sidebar reads `projects.is_empty()` to decide whether
-    /// to render anything). Stays the rail's focused-project anchor +
-    /// the picker's create-into-project context after US-003.
-    pub(crate) active_project_idx: usize,
-    /// US-003 (Agents UI redesign): explicit center
-    /// selection target. Replaces the old positional `active_thread_idx`
-    /// so the center can address a project thread OR a free chat without
-    /// an ambiguous parallel index. `None` is the picker/home state (the
-    /// project anchor for that state is [`Self::active_project_idx`]).
-    pub(crate) agents_target: Option<crate::project::AgentsTarget>,
-    /// US-005 (Agents UI redesign): in the picker/home
-    /// state (`agents_target == None`), what a launched agent is created
-    /// into - the active project, or a free chat in the home dir (the rail's
-    /// "New chat" header action). Reset to `Project` on every concrete selection.
-    pub(crate) agents_picker_context: crate::project::AgentsPickerContext,
-    /// US-053: Agents-view sidebar state (rename/menu/skills/filter +
-    /// the terminal-thread cache), extracted from the god-struct.
-    pub(crate) agents_view: AgentsViewState,
+    /// US-053: right-docked git diff panel state, extracted from the
+    /// god-struct.
+    pub(crate) diff_dock: DiffDockState,
     /// US-048: memoized sidebar display order (worktree grouping). Recomputed
     /// only when the workspace set / order / repo roots change, keyed by a
     /// cheap content signature - `render_sidebar` runs on every app `notify()`,
@@ -1289,9 +1157,6 @@ impl PaneFlowApp {
             crate::settings::chrome::SETTINGS_NAV_WIDTH
         } else {
             match self.mode {
-                paneflow_config::schema::AppMode::Agents => {
-                    crate::app::agents_view_actions::AGENTS_SIDEBAR_WIDTH
-                }
                 paneflow_config::schema::AppMode::Diff => {
                     crate::app::diff_view_actions::DIFF_SIDEBAR_WIDTH
                 }
@@ -1550,8 +1415,7 @@ impl Render for PaneFlowApp {
                 // so the panel behind them stays empty and lets the window
                 // shell read through the gutter between them.
                 paneflow_config::schema::AppMode::Cli => gpui::transparent_black(),
-                paneflow_config::schema::AppMode::Diff
-                | paneflow_config::schema::AppMode::Agents => ui.base,
+                paneflow_config::schema::AppMode::Diff => ui.base,
             }
         };
         let panel_corner_mask_bg = crate::app::constants::cockpit_backdrop_background(
@@ -1618,14 +1482,8 @@ impl Render for PaneFlowApp {
             // Embedded settings take precedence over the mode screen: the left
             // rail becomes the settings nav (below) and this panel shows the
             // active section body. Checked first so Settings opens correctly
-            // from Agents/Diff mode too.
+            // from Diff mode too.
             self.render_settings_content_panel(cx).into_any_element()
-        } else if matches!(self.mode, paneflow_config::schema::AppMode::Agents) {
-            // US-008 (prd-agents-view.md): mode is the source of truth
-            // for which screen renders. The Agents view is terminal-only
-            // - `render_agents_main` shows the selected thread's PTY, the
-            // agent picker, or an empty state.
-            self.render_agents_main(window, cx)
         } else if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
             // US-003 (prd-git-diff-mode-2026-Q3.md). NOTE: this site is
             // an `if matches!`, not a `match`, so the compiler does NOT
@@ -1745,30 +1603,16 @@ impl Render for PaneFlowApp {
         // The right diff dock rides beside the CLI pane grid, opened from a
         // pane header. A no-op in every other mode.
         let main_content = self.wrap_cli_diff_dock(main_content, cx);
-        // Update title bar with current workspace name. US-010: in Agents
-        // mode the brand slot carries the thread/chat context instead, so the
-        // center workspace breadcrumb is suppressed (a CLI workspace name is
-        // meaningless in the Agents view). Cli/Diff keep it (diff visuel nul).
-        let ws_name = if self.settings_section.is_some()
-            || matches!(self.mode, paneflow_config::schema::AppMode::Agents)
-        {
+        // Update title bar with current workspace name.
+        let ws_name = if self.settings_section.is_some() {
             // Settings open: the title-bar center is left empty (the section
             // title lives in the content panel), matching the Codex reference.
             None
         } else {
             self.active_workspace().map(|ws| ws.title.clone())
         };
-        // US-010/US-011: brand labels + overflow flag, computed only on the
-        // Agents arm and reset to `None`/`false` otherwise so `TitleBar` never
-        // reads `AppMode` (push-only contract; Cli/Diff render identically).
-        let (agents_thread_title, agents_context_label, agents_overflow) =
-            if matches!(self.mode, paneflow_config::schema::AppMode::Agents) {
-                self.agents_titlebar_labels()
-            } else {
-                (None, None, false)
-            };
-        // Update CTA state - extracted to `update_pill_info()` so the Cli/
-        // Agents sidebar banner and the Diff title-bar pill share one source.
+        // Update CTA state - extracted to `update_pill_info()` so the CLI
+        // sidebar banner and the Diff title-bar pill share one source.
         let update_info = self.update_pill_info();
         self.title_bar.update(cx, |tb, _| {
             tb.workspace_name = ws_name;
@@ -1778,15 +1622,8 @@ impl Render for PaneFlowApp {
             tb.help_menu_open = self.title_bar_help_menu_open.is_some();
             tb.update_available = update_info;
             tb.ipc_state = self.ipc_status.state();
-            // US-010/US-011: push the Agents brand context (None/false on
-            // Cli/Diff frames, leaving the brand slot empty).
-            tb.agents_thread_title = agents_thread_title;
-            tb.agents_context_label = agents_context_label;
-            tb.agents_overflow = agents_overflow;
-            tb.is_agents = matches!(self.mode, paneflow_config::schema::AppMode::Agents);
-            // Cockpit chrome (#141414 + no divider) for Cli AND Diff; Agents
-            // paints nothing (is_agents wins).
-            tb.cockpit = !matches!(self.mode, paneflow_config::schema::AppMode::Agents);
+            // Cockpit chrome (#141414 + no divider) for both Cli and Diff.
+            tb.cockpit = true;
             tb.cockpit_material_active = chrome_material_active;
         });
 
@@ -1884,10 +1721,7 @@ impl Render for PaneFlowApp {
             }))
             .on_action(cx.listener(Self::handle_start_self_update))
             .on_action(cx.listener(Self::handle_dismiss_update))
-            .on_action(cx.listener(Self::handle_open_agents_view))
             .on_action(cx.listener(Self::handle_toggle_files_sidebar))
-            // US-011: title-bar `⋯` overflow menu for the current Agents thread.
-            .on_action(cx.listener(Self::handle_open_agents_thread_menu))
             // EP-001 (cli-cockpit): Composer + broadcast groups.
             .on_action(cx.listener(Self::handle_open_composer))
             .on_action(cx.listener(Self::handle_toggle_broadcast_member))
@@ -1912,9 +1746,8 @@ impl Render for PaneFlowApp {
             }))
             .on_mouse_move(|_e, _, cx| cx.stop_propagation())
             // Sidebar + main content area. US-008: branch on the
-            // top-level UI mode so the CLI sidebar (workspace list)
-            // and the Agents sidebar (projects + threads, US-010)
-            // swap atomically with the main content.
+            // top-level UI mode so the CLI sidebar (workspace list) and
+            // the Review sidebar swap atomically with the main content.
             .child(
                 div()
                     .flex()
@@ -1979,19 +1812,6 @@ impl Render for PaneFlowApp {
                             );
                         }
                         row.child(match self.mode {
-                            paneflow_config::schema::AppMode::Agents => div()
-                                .flex()
-                                .flex_col()
-                                .h_full()
-                                .w(px(primary_sidebar_width))
-                                .flex_shrink_0()
-                                .overflow_hidden()
-                                .opacity(primary_sidebar_opacity)
-                                // Clear the transparent title-bar overlay so the
-                                // first rail row sits below the floating controls.
-                                .pt(title_bar_h)
-                                .child(self.render_agents_sidebar(window, cx))
-                                .into_any_element(),
                             paneflow_config::schema::AppMode::Diff => div()
                                 .flex()
                                 .flex_col()
@@ -2294,21 +2114,6 @@ impl Render for PaneFlowApp {
         // files-tree EP-003 US-009: per-file copy-path context menu.
         if let Some(menu) = self.files_menu_open.clone() {
             app_content = app_content.child(self.render_files_context_menu(menu, ui, window, cx));
-        }
-
-        // US-011 (prd-agents-view.md): Agents-mode right-click context
-        // menu (project header or thread row) + delete-confirmation
-        // dialog. Both render only when the corresponding state field
-        // is `Some`; the dispatcher fns guard against stale indices.
-        if let Some(menu) = self.agents_view.agents_menu_open
-            && let Some(el) =
-                crate::app::agents_sidebar::render_open_agents_menu(self, menu, ui, window, cx)
-        {
-            app_content = app_content.child(el);
-        }
-        if let Some(target) = self.agents_view.agents_confirm_delete {
-            app_content =
-                app_content.child(self.render_agents_confirm_delete_dialog(target, ui, cx));
         }
 
         crate::window_chrome::csd::client_side_window_shell(

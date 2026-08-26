@@ -376,7 +376,7 @@ impl PaneFlowApp {
         };
 
         // US-006: the whole header toggles the group's collapse. Styled as a
-        // section eyebrow (the Agents-sidebar language): small semibold muted
+        // section eyebrow: small semibold muted
         // label, brand glyph kept in its native accent - the only color in
         // the rail, carrying real signal (which tool).
         let header = div()

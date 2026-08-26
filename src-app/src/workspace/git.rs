@@ -29,7 +29,7 @@ const GIT_DIFF_STAT_FILE_BYTES_CAP: u64 = 512 * 1024;
 
 impl GitDiffStats {
     /// Run a HEAD-relative diff stat in the given directory and parse the result.
-    /// This matches the Agents diff dock semantics: staged + unstaged tracked
+    /// This matches the diff dock semantics: staged + unstaged tracked
     /// changes against `HEAD`, plus untracked files. On spawn failure, timeout, or
     /// nonzero git exit this returns the empty (`is_empty()`) default - the
     /// "stats unavailable" state the badge renders.

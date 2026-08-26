@@ -152,69 +152,11 @@ impl PaneFlowApp {
         .detach();
     }
 
+    /// The shell only binds when a PTY spawns, so a live terminal keeps the
+    /// one it was started with. Say so rather than restarting anything under
+    /// the user: a running session is work in progress.
     pub(crate) fn handle_default_shell_changed(&mut self, cx: &mut Context<Self>) {
-        let exited_thread_ids: Vec<u64> = self
-            .agents_view
-            .agents_terminal_view_cache
-            .iter()
-            .filter_map(|(thread_id, view)| {
-                view.read(cx)
-                    .terminal
-                    .exited
-                    .is_some()
-                    .then_some(*thread_id)
-            })
-            .collect();
-        let released_threads = exited_thread_ids.len();
-        for thread_id in exited_thread_ids {
-            self.remove_agents_terminal_cache_entry(thread_id);
-        }
-
-        let mut released_bottom = 0;
-        self.agents_view.bottom_terminals.retain(|term| {
-            let keep = term.view.read(cx).terminal.exited.is_none();
-            if !keep {
-                released_bottom += 1;
-            }
-            keep
-        });
-        if self.agents_view.bottom_panel_active.is_some_and(|active| {
-            !self
-                .agents_view
-                .bottom_terminals
-                .iter()
-                .any(|term| term.id == active)
-        }) {
-            self.agents_view.bottom_panel_active =
-                self.agents_view.bottom_terminals.last().map(|term| term.id);
-        }
-
-        let running_threads = self
-            .agents_view
-            .agents_terminal_view_cache
-            .values()
-            .filter(|view| view.read(cx).terminal.exited.is_none())
-            .count();
-        let running_bottom = self
-            .agents_view
-            .bottom_terminals
-            .iter()
-            .filter(|term| term.view.read(cx).terminal.exited.is_none())
-            .count();
-        let released = released_threads + released_bottom;
-        if running_threads + running_bottom > 0 {
-            self.show_toast(
-                "Shell updated. Restart running Agents terminals to switch.",
-                cx,
-            );
-        } else if released > 0 {
-            self.show_toast(
-                "Shell updated. Finished Agents terminals will reopen with it.",
-                cx,
-            );
-        } else {
-            self.show_toast("Shell updated. New terminals will use it.", cx);
-        }
+        self.show_toast("Shell updated. New terminals will use it.", cx);
     }
 
     /// Apply an Agents-panel-scoped settings change. This keeps

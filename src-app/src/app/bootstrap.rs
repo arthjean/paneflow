@@ -158,12 +158,8 @@ impl PaneFlowApp {
         // runs too early in bootstrap to call `self.telemetry`.
         let (saved_session, session_corruption) = Self::load_session();
 
-        // US-009 (prd-agents-view.md): pull the Agents-view bits out of
-        // the saved session BEFORE the workspaces match consumes it.
-        // The mode + project list are applied to the struct literal
-        // below; a no-agents-installed fallback runs afterwards so the
-        // UI never opens onto a blank Agents view if discovery returns
-        // empty (e.g. user uninstalled `bunx` between launches).
+        // Pull the UI-mode bits out of the saved session BEFORE the
+        // workspaces match consumes it.
         let restored_mode = saved_session.as_ref().map(|s| s.mode).unwrap_or_default();
         // US-015 (prd-git-diff-mode-2026-Q3.md): restore the diff scope (an
         // unknown / absent value falls back to the default, Project).
@@ -172,95 +168,12 @@ impl PaneFlowApp {
             .and_then(|s| s.diff_scope.as_deref())
             .and_then(crate::diff::DiffScope::from_persisted)
             .unwrap_or_default();
-        let (restored_projects, restored_chats): (
-            Vec<crate::project::Project>,
-            Vec<crate::project::Thread>,
-        ) = saved_session
-            .as_ref()
-            .map(|s| {
-                let mut remaining_threads = crate::project::MAX_RESTORED_TOTAL_THREADS;
-                if s.projects.len() > crate::project::MAX_RESTORED_PROJECTS {
-                    log::warn!(
-                        "session restore: {} project(s) exceeds cap {}, restoring the first {}",
-                        s.projects.len(),
-                        crate::project::MAX_RESTORED_PROJECTS,
-                        crate::project::MAX_RESTORED_PROJECTS
-                    );
-                }
-                let projects = s
-                    .projects
-                    .iter()
-                    .take(crate::project::MAX_RESTORED_PROJECTS)
-                    .map(|project| {
-                        crate::project::project_from_session_with_budget(
-                            project,
-                            &mut remaining_threads,
-                        )
-                    })
-                    .collect();
-
-                if s.chats.len() > crate::project::MAX_RESTORED_CHATS {
-                    log::warn!(
-                        "session restore: {} chat(s) exceeds cap {}, restoring the first {}",
-                        s.chats.len(),
-                        crate::project::MAX_RESTORED_CHATS,
-                        crate::project::MAX_RESTORED_CHATS
-                    );
-                }
-                let chats = s
-                    .chats
-                    .iter()
-                    .take(crate::project::MAX_RESTORED_CHATS)
-                    .filter_map(|chat| {
-                        crate::project::thread_from_session_with_budget(
-                            chat,
-                            &mut remaining_threads,
-                        )
-                    })
-                    .collect();
-                (projects, chats)
-            })
-            .unwrap_or_else(|| (Vec::new(), Vec::new()));
-        // Bump the in-memory ID counters past anything the session
-        // restored so a freshly-created project/thread/chat can never
-        // collide with a restored ID (US-007's `bump_id_counters_to`
-        // is idempotent and a no-op when the counters already lead).
-        // US-002: chats share the `next_thread_id` counter, so they MUST
-        // be folded into the bump or the next chat ID collides.
-        crate::project::bump_id_counters_to(&restored_projects, &restored_chats);
-        let restored_agents_target = saved_session
-            .as_ref()
-            .and_then(|s| s.agents_target.as_ref())
-            .and_then(|target| {
-                crate::project::agents_target_from_session(
-                    target,
-                    &restored_projects,
-                    &restored_chats,
-                )
-            });
-        let restored_active_project = match restored_agents_target {
-            Some(crate::project::AgentsTarget::Thread { project_idx, .. }) => project_idx,
-            _ => saved_session
-                .as_ref()
-                .map(|s| {
-                    // Clamp to a valid index: a session.json hand-edit (or
-                    // a future migration that drops projects) shouldn't
-                    // leave `active_project_idx` pointing past the end.
-                    if restored_projects.is_empty() {
-                        0
-                    } else {
-                        s.active_project.min(restored_projects.len() - 1)
-                    }
-                })
-                .unwrap_or(0),
-        };
 
         let (workspaces, active_idx) = match saved_session {
             Some(session) => {
                 log::info!(
-                    "restoring session: {} workspace(s), {} project(s), mode={:?}",
+                    "restoring session: {} workspace(s), mode={:?}",
                     session.workspaces.len(),
-                    session.projects.len(),
                     session.mode
                 );
                 let (workspaces, active_idx) = Self::restore_workspaces(&session, cx);
@@ -403,7 +316,7 @@ impl PaneFlowApp {
                                     ) {
                                         changed = true;
                                         refreshed_diff |=
-                                            app.refresh_agents_diff_if_open_for_cwd(cwd, cx);
+                                            app.refresh_diff_dock_if_open_for_cwd(cwd, cx);
                                     }
                                 }
                                 if changed && !refreshed_diff {
@@ -563,9 +476,8 @@ impl PaneFlowApp {
                 loop {
                     smol::Timer::after(std::time::Duration::from_secs(30)).await;
 
-                    // Phase 1: collect CWDs from workspaces + agents
-                    // projects (cheap, main thread). Dedup so a cwd
-                    // shared by a workspace and a project only fires
+                    // Phase 1: collect workspace CWDs (cheap, main thread).
+                    // Dedup so two workspaces on the same folder only fire
                     // one subprocess per tick.
                     let cwds = cx.update(|cx| {
                         this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
@@ -574,11 +486,6 @@ impl PaneFlowApp {
                             for ws in &app.workspaces {
                                 if seen.insert(ws.cwd.clone()) {
                                     out.push(ws.cwd.clone());
-                                }
-                            }
-                            for p in &app.projects {
-                                if seen.insert(p.cwd.clone()) {
-                                    out.push(p.cwd.clone());
                                 }
                             }
                             out
@@ -615,7 +522,7 @@ impl PaneFlowApp {
                                 ) {
                                     changed = true;
                                     refreshed_diff |=
-                                        app.refresh_agents_diff_if_open_for_cwd(cwd, cx);
+                                        app.refresh_diff_dock_if_open_for_cwd(cwd, cx);
                                 }
                             }
                             if changed && !refreshed_diff {
@@ -798,7 +705,7 @@ impl PaneFlowApp {
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Filter files…", cx));
         cx.observe(&diff_file_filter, |_, _, cx| cx.notify())
             .detach();
-        // The Agents sidebar search field (same pattern): a real single-line
+        // The sidebar search field (same pattern): a real single-line
         // TextInput, observed so each keystroke re-renders the sidebar to
         // re-filter (the TextInput only notifies itself).
         let agents_filter_input =
@@ -1010,93 +917,34 @@ impl PaneFlowApp {
                 diff_collapsed_dirs: std::collections::HashSet::new(),
                 diff_file_filter,
             },
-            // US-008 (prd-agents-view.md): start in the mode the user
-            // left on quit. The Agents view is terminal-only and works
-            // without any agent installed, so there is no agent-presence
-            // gate on restore.
+            // Start in the mode the user left on quit.
             mode: restored_mode,
-            // US-007 + US-009 (prd-agents-view.md): rehydrate project
-            // metadata from session.json. Empty for users on first
-            // launch and for legacy session.json (the `#[serde(default)]`
-            // annotations make missing fields resolve to empty).
-            projects: restored_projects,
-            // US-002: free chats restored from session (empty pre-refonte).
-            chats: restored_chats,
-            active_project_idx: restored_active_project,
-            // US-003: restore the selected thread/chat when its stable ID still
-            // exists after capping/filtering; otherwise start at picker/home.
-            agents_target: restored_agents_target,
-            // US-005: default picker context is the active project.
-            agents_picker_context: crate::project::AgentsPickerContext::Project,
-            // US-011: rename / context-menu / confirm-delete state.
-            // All start empty; the affordance handlers set them in
-            // response to user actions.
-            agents_view: crate::AgentsViewState {
-                agents_renaming: None,
-                agents_rename_text: String::new(),
-                agents_rename_input: None,
-                agents_menu_open: None,
-                agents_confirm_delete: None,
-                agents_delete_armed: None,
-                agents_filter_input,
-                agents_skills_visible: false,
-                agents_skills_tab: crate::agents_view::SkillsTab::default(),
-                agents_skills: Vec::new(),
-                agents_skills_loading: false,
-                agents_skills_copied: None,
-                agents_editor_menu_open: false,
-                agents_diff_open: false,
-                agents_diff: None,
-                agents_diff_collapsed: std::collections::HashSet::new(),
-                agents_diff_expanded_folds: std::collections::HashSet::new(),
-                agents_diff_split: true,
-                agents_diff_generation: 0,
-                agents_diff_scroll: gpui::ScrollHandle::new(),
+            diff_dock: crate::DiffDockState {
+                open: false,
+                data: None,
+                collapsed: std::collections::HashSet::new(),
+                expanded_folds: std::collections::HashSet::new(),
+                split: true,
+                generation: 0,
+                scroll: gpui::ScrollHandle::new(),
                 diff_options_menu_open: false,
                 diff_layout_submenu_open: false,
                 diff_new_tab_menu_open: false,
-                diff_dock_picker: false,
-                diff_dock_picked: false,
-                diff_dock_owner: None,
-                diff_dock_parked: std::collections::HashMap::new(),
+                picker: false,
+                picked: false,
+                owner: None,
+                parked: std::collections::HashMap::new(),
                 diff_tabs: vec![crate::app::diff_dock::DiffDockTab::Changes],
                 diff_active_tab: 0,
                 diff_tab_close_armed: None,
                 diff_branch_menu: None,
-                agents_diff_width: crate::app::diff_dock::AGENTS_DIFF_PANEL_WIDTH,
-                agents_diff_resize: None,
-                agents_diff_h_scroll_drag: None,
-                agents_diff_h_offsets: std::rc::Rc::new(Vec::new()),
-                bottom_panel_open: false,
-                bottom_panel_height: crate::app::agents_bottom_panel::BOTTOM_PANEL_DEFAULT_HEIGHT,
-                bottom_panel_active: None,
-                bottom_terminals: Vec::new(),
-                bottom_terminal_seq: 0,
-                bottom_panel_drag: None,
-                agents_terminal_view_cache: std::collections::HashMap::new(),
-                agents_terminal_cache_lru: Vec::new(),
-                agents_terminal_cache_touched_at: std::collections::HashMap::new(),
+                width: crate::app::diff_dock::DIFF_DOCK_PANEL_WIDTH,
+                resize: None,
+                h_scroll_drag: None,
+                h_offsets: std::rc::Rc::new(Vec::new()),
             },
-            // US-012: sidebar search/filter. Empty filter == show
-            // everything; the focus handle is held here so the input
-            // captures Backspace/Escape/Down without conflicting with
-            // the global app key chain.
             sidebar_order_cache: std::cell::RefCell::new(Default::default()),
         };
-
-        for cwd in app
-            .projects
-            .iter()
-            .map(|project| project.cwd.clone())
-            .collect::<Vec<_>>()
-        {
-            app.spawn_agents_environment_git_refresh(cwd, cx);
-        }
-        if matches!(app.mode, paneflow_config::schema::AppMode::Agents)
-            && let Some(target) = app.current_thread_view_target()
-        {
-            app.mount_agents_terminal_for_target(target, cx);
-        }
 
         // US-015 (prd-git-diff-mode-2026-Q3.md): restore Diff mode only when
         // it is reconstructable. The diff derives its repo from the restored
@@ -1133,40 +981,6 @@ impl PaneFlowApp {
         if let Some(info) = session_corruption {
             app.emit_session_corrupted(&info);
         }
-
-        // EP-002 (memory): opportunistically release exited cached agent
-        // terminals after their idle TTL even if the user never selects another
-        // thread. Running PTYs stay protected by the eviction guard.
-        cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                loop {
-                    smol::Timer::after(std::time::Duration::from_secs(60)).await;
-                    let result = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                            let agents_terminal_visible =
-                                matches!(app.mode, paneflow_config::schema::AppMode::Agents)
-                                    && !app.agents_view.agents_skills_visible;
-                            let active_thread_id = agents_terminal_visible
-                                .then(|| {
-                                    app.current_thread_view_target().and_then(|target| {
-                                        app.thread_for_target(target).map(|thread| thread.id)
-                                    })
-                                })
-                                .flatten();
-                            app.enforce_agents_terminal_cache_budget(active_thread_id, cx);
-                            let bottom_panel_visible =
-                                matches!(app.mode, paneflow_config::schema::AppMode::Agents)
-                                    && app.agents_view.bottom_panel_open;
-                            app.enforce_bottom_terminal_cache_budget(bottom_panel_visible, cx);
-                        })
-                    });
-                    if result.is_err() {
-                        break;
-                    }
-                }
-            },
-        )
-        .detach();
 
         // Hydrate the motion switch from the config: it gates the
         // `AnimatedHover` transitions and the primary sidebar slide.

@@ -333,14 +333,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "markdown_find_dismiss",
         context: Some("MarkdownSearch"),
     },
-    // US-005 (prd-agents-view.md): `secondary-shift-a` is Ctrl+Shift+A
-    // on Linux/Windows and Cmd+Shift+A on macOS. US-008 will reuse the
-    // same binding when it lands the full AppMode toggle.
-    DefaultBinding {
-        key: "secondary-shift-a",
-        action_name: "open_agents_view",
-        context: None,
-    },
     // US-003 (prd-git-diff-mode-2026-Q3.md): `secondary-shift-g` is
     // Ctrl+Shift+G on Linux/Windows and Cmd+Shift+G on macOS. Toggles
     // the dedicated Git Diff mode (AppMode::Diff).

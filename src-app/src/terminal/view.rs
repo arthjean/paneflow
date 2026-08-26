@@ -303,7 +303,7 @@ pub struct TerminalView {
     /// Whether the search overlay is visible
     pub(super) search_active: bool,
     /// Real single-line input backing the find bar - the same `TextInput`
-    /// widget the Agents sidebar uses. Focused on open so keystrokes land in
+    /// widget the sidebar uses. Focused on open so keystrokes land in
     /// the field (cursor, selection, IME, clipboard) instead of the PTY.
     pub(super) search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
     /// Current search query string (kept in sync with `search_input` via
@@ -867,7 +867,7 @@ impl TerminalView {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        // Find bar input - same widget as the Agents sidebar filter. Observe it
+        // Find bar input - same widget as the sidebar filter. Observe it
         // so every keystroke re-runs the in-buffer search (no submit needed).
         let search_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search", cx));
@@ -1608,7 +1608,7 @@ impl TerminalView {
         };
 
         // Real input entity (cursor, selection, IME, clipboard) - the same
-        // widget the Agents sidebar uses, focused on open. The caret and
+        // widget the sidebar uses, focused on open. The caret and
         // "Search" placeholder are painted by the widget itself; we only own
         // the wrapper box (width + inherited text size/colour).
         let field = div()

@@ -1,4 +1,4 @@
-//! Cross-surface UI primitives shared by the Agents view and the Review (Git
+//! Cross-surface UI primitives shared by the CLI cockpit and the Review (Git
 //! Diff) view (review redesign, EP-001 US-003).
 //!
 //! Before this module, the Review and Agents surfaces re-coded the same recipes
@@ -382,7 +382,7 @@ impl IntoElement for AnimatedHover {
 // ── Type scale ────────────────────────────────────────────────────────────
 //
 // The named typographic scale for Review/Agents product UI. These are the
-// values the Agents view already used as scattered literals; naming them lets
+// values the cockpit already used as scattered literals; naming them lets
 // new code reference a role instead of a magic number (EP-002 US-007 migrates
 // the remaining literals onto these).
 
@@ -515,7 +515,7 @@ pub(crate) fn tooltip_shell() -> Div {
 }
 
 /// The shared hover-tooltip body. Replaces the formerly-duplicated
-/// `DiffHeaderTooltip` (diff view) and `HoverActionTooltip` (agents sidebar),
+/// `DiffHeaderTooltip` (diff view) and `HoverActionTooltip` (cockpit sidebar),
 /// which were byte-for-byte identical.
 pub(crate) struct PaneflowTooltip {
     pub(crate) label: SharedString,

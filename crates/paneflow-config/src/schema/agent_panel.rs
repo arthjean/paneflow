@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Agents-view-scoped configuration block (US-103).
+/// Agent-scoped configuration block (US-103).
 ///
-/// Lives in its own struct so future Phase B-E stories (thinking
-/// display mode, profile selector, OS notification gate, ...) can
-/// add fields without bloating the top-level [`crate::schema::PaneFlowConfig`].
+/// Lives in its own struct so future stories (thinking display mode,
+/// profile selector, OS notification gate, ...) can add fields without
+/// bloating the top-level [`crate::schema::PaneFlowConfig`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct AgentPanelConfig {

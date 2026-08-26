@@ -80,7 +80,7 @@ pub(crate) fn is_strict_semver(raw: &str) -> bool {
 
 impl PaneFlowApp {
     /// Current update CTA state, shared by every surface that renders it
-    /// (Diff title-bar pill, Cli/Agents sidebar banner). `None` when no
+    /// (Diff title-bar pill, Cli sidebar banner). `None` when no
     /// update is available (or the pill was dismissed for this launch).
     ///
     /// Pill state for in-app installer flows (AppImage, TarGz, AppBundle,

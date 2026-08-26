@@ -156,7 +156,7 @@ pub struct PaneFlowConfig {
     pub external_editor: Option<String>,
     /// When `Some(true)`, the Claude Code terminal launcher adds
     /// `--permission-mode bypassPermissions` to the spawned CLI in the tab bar,
-    /// Agents view, Launch Pad, and session resume paths.
+    /// Launch Pad, and session resume paths.
     ///
     /// `Some(false)` or `None` (the default) keeps the per-tool confirmation
     /// prompts enabled.
@@ -273,10 +273,10 @@ pub struct PaneFlowConfig {
     /// Terminal-scoped settings block for renderer and PTY behavior.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub terminal: Option<TerminalConfig>,
-    /// Agents-view-scoped settings block (US-103 + future Phase B-E
-    /// stories of `tasks/prd-agent-ui-refactor-2026-Q3.md`). Lives in
-    /// its own struct so the dozen-or-so fields the refactor introduces
-    /// stay namespaced under `"agent_panel": { ... }`.
+    /// Agent-scoped settings block (US-103 of
+    /// `tasks/prd-agent-ui-refactor-2026-Q3.md`). Lives in its own
+    /// struct so its fields stay namespaced under
+    /// `"agent_panel": { ... }`.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub agent_panel: Option<AgentPanelConfig>,
     /// Per-tool permission patterns (US-111 of

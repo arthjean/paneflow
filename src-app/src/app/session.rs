@@ -115,33 +115,8 @@ impl PaneFlowApp {
                         .collect(),
                 })
                 .collect(),
-            // US-007 (prd-agents-view.md): persist project + thread
-            // snapshots and the active project index. US-009 will
-            // additionally persist the actual `AppMode` once
-            // `PaneFlowApp` carries it.
-            projects: self
-                .projects
-                .iter()
-                .map(crate::project::project_to_session)
-                .collect(),
-            active_project: self.active_project_idx,
-            // US-002 (Agents UI redesign): persist free
-            // chats alongside projects. Empty list serializes to nothing
-            // (`skip_serializing_if`), so a no-chats session.json is byte-
-            // identical to a pre-refonte one.
-            chats: self
-                .chats
-                .iter()
-                .map(crate::project::thread_to_session)
-                .collect(),
-            agents_target: crate::project::agents_target_to_session(
-                self.agents_target,
-                &self.projects,
-                &self.chats,
-            ),
-            // US-008 (prd-agents-view.md): persist the live UI mode
-            // so US-009's restore branch can reopen Paneflow in the
-            // same screen the user left.
+            // Persist the live UI mode so the restore branch reopens
+            // Paneflow in the same screen the user left.
             mode: self.mode,
             // US-015 (prd-git-diff-mode-2026-Q3.md): persist the diff scope so
             // a session that quit in Diff mode reopens on the same scope.

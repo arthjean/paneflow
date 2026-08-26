@@ -23,8 +23,8 @@ impl PaneFlowApp {
         };
         let ws_id = ws.id;
         let cwd = self
-            .agents_view
-            .agents_diff
+            .diff_dock
+            .data
             .as_ref()
             .map(|data| data.cwd.clone())
             .filter(|cwd| !cwd.is_empty())
@@ -47,11 +47,11 @@ impl PaneFlowApp {
 
         let focus = terminal.read(cx).focus_handle(cx);
         window.focus(&focus, cx);
-        self.agents_view
+        self.diff_dock
             .diff_tabs
             .push(DiffDockTab::Terminal(terminal));
-        self.agents_view.diff_active_tab = self.agents_view.diff_tabs.len() - 1;
-        self.agents_view.diff_tab_close_armed = None;
+        self.diff_dock.diff_active_tab = self.diff_dock.diff_tabs.len() - 1;
+        self.diff_dock.diff_tab_close_armed = None;
         cx.notify();
     }
 
@@ -71,12 +71,12 @@ impl PaneFlowApp {
         // tab still asking for one.
         let pending = self.pending_file_tab();
         if let Some(index) = pending {
-            self.agents_view.diff_tabs.remove(index);
+            self.diff_dock.diff_tabs.remove(index);
         }
 
         if let Some(index) = file_tab_index(&self.diff_tab_facts(cx), &path) {
-            self.agents_view.diff_active_tab = index;
-            self.agents_view.diff_tab_close_armed = None;
+            self.diff_dock.diff_active_tab = index;
+            self.diff_dock.diff_tab_close_armed = None;
             self.focus_diff_tab(index, window, cx);
             cx.notify();
             return;
@@ -89,20 +89,20 @@ impl PaneFlowApp {
         // so the slot is only honored while it still exists; otherwise the tab
         // appends, exactly as it did before the placeholder existed.
         let index = pending
-            .filter(|index| *index <= self.agents_view.diff_tabs.len())
-            .unwrap_or(self.agents_view.diff_tabs.len());
-        self.agents_view
+            .filter(|index| *index <= self.diff_dock.diff_tabs.len())
+            .unwrap_or(self.diff_dock.diff_tabs.len());
+        self.diff_dock
             .diff_tabs
             .insert(index, DiffDockTab::File(view));
-        self.agents_view.diff_active_tab = index;
-        self.agents_view.diff_tab_close_armed = None;
+        self.diff_dock.diff_active_tab = index;
+        self.diff_dock.diff_tab_close_armed = None;
         self.focus_diff_tab(index, window, cx);
         cx.notify();
     }
 
     /// Where the dock's placeholder `File` tab sits, if it has one.
     fn pending_file_tab(&self) -> Option<usize> {
-        self.agents_view
+        self.diff_dock
             .diff_tabs
             .iter()
             .position(|tab| matches!(tab, DiffDockTab::PendingFile))
@@ -119,7 +119,7 @@ impl PaneFlowApp {
 
     /// Project the strip into the facts the lifecycle rules read.
     fn diff_tab_facts(&self, cx: &Context<Self>) -> Vec<DiffTabFact> {
-        self.agents_view
+        self.diff_dock
             .diff_tabs
             .iter()
             .map(|tab| match tab {
@@ -138,7 +138,7 @@ impl PaneFlowApp {
     /// Enforce the [`MAX_DIFF_FILE_TABS`] cap before a new file tab is pushed.
     fn evict_oldest_diff_file_tab(&mut self, cx: &mut Context<Self>) {
         let facts = self.diff_tab_facts(cx);
-        if let Some(index) = file_tab_eviction(&facts, self.agents_view.diff_active_tab) {
+        if let Some(index) = file_tab_eviction(&facts, self.diff_dock.diff_active_tab) {
             self.close_diff_tab(index, cx);
         }
     }
@@ -146,7 +146,7 @@ impl PaneFlowApp {
     /// Move keyboard focus onto whatever the tab at `index` hosts. The
     /// `Changes` tab owns no focus handle of its own, so it is a no-op there.
     fn focus_diff_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let focus = match self.agents_view.diff_tabs.get(index) {
+        let focus = match self.diff_dock.diff_tabs.get(index) {
             Some(DiffDockTab::File(view)) => Some(view.read(cx).focus_handle(cx)),
             Some(DiffDockTab::Terminal(terminal)) => Some(terminal.read(cx).focus_handle(cx)),
             _ => None,
@@ -160,7 +160,7 @@ impl PaneFlowApp {
     /// sidebar so the user picks the file to edit; the picker's click is what
     /// calls [`Self::open_diff_file_tab`]. The chord is inert unless the diff
     /// dock is actually on screen ([`Self::diff_dock_visible`], not the
-    /// `agents_diff_open` flag alone, which survives a trip through Settings or
+    /// `open` flag alone, which survives a trip through Settings or
     /// a mode switch), which is what keeps it from acting as a global "open the
     /// sidebar" shortcut.
     pub(crate) fn handle_diff_new_file_tab(
@@ -200,9 +200,9 @@ impl PaneFlowApp {
         match self.pending_file_tab() {
             Some(index) => self.select_diff_tab(index, cx),
             None => {
-                self.agents_view.diff_tabs.push(DiffDockTab::PendingFile);
-                self.agents_view.diff_active_tab = self.agents_view.diff_tabs.len() - 1;
-                self.agents_view.diff_tab_close_armed = None;
+                self.diff_dock.diff_tabs.push(DiffDockTab::PendingFile);
+                self.diff_dock.diff_active_tab = self.diff_dock.diff_tabs.len() - 1;
+                self.diff_dock.diff_tab_close_armed = None;
                 cx.notify();
             }
         }
@@ -215,11 +215,11 @@ impl PaneFlowApp {
     }
 
     pub(crate) fn select_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.agents_view.diff_tabs.len() && self.agents_view.diff_active_tab != index {
-            self.agents_view.diff_active_tab = index;
+        if index < self.diff_dock.diff_tabs.len() && self.diff_dock.diff_active_tab != index {
+            self.diff_dock.diff_active_tab = index;
             // Moving off a tab drops any pending close confirmation: the arm is
             // a one-gesture state, not a mode the user has to escape.
-            self.agents_view.diff_tab_close_armed = None;
+            self.diff_dock.diff_tab_close_armed = None;
             cx.notify();
         }
     }
@@ -228,15 +228,15 @@ impl PaneFlowApp {
     /// instead of closing: the second press on the armed control is the
     /// confirmation. Every other tab closes on the first press.
     pub(crate) fn request_close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index == 0 || index >= self.agents_view.diff_tabs.len() {
+        if index == 0 || index >= self.diff_dock.diff_tabs.len() {
             return;
         }
         if close_arms_first(
             &self.diff_tab_facts(cx),
             index,
-            self.agents_view.diff_tab_close_armed,
+            self.diff_dock.diff_tab_close_armed,
         ) {
-            self.agents_view.diff_tab_close_armed = Some(index);
+            self.diff_dock.diff_tab_close_armed = Some(index);
             cx.notify();
             return;
         }
@@ -246,23 +246,23 @@ impl PaneFlowApp {
     /// Close the tab at `index`. Index 0 (`Changes`) is permanent, so the call
     /// is a no-op there. The selection falls back to the previous tab.
     pub(crate) fn close_diff_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index == 0 || index >= self.agents_view.diff_tabs.len() {
+        if index == 0 || index >= self.diff_dock.diff_tabs.len() {
             return;
         }
-        self.agents_view.diff_tabs.remove(index);
-        self.agents_view.diff_active_tab =
-            active_tab_after_close(self.agents_view.diff_active_tab, index);
+        self.diff_dock.diff_tabs.remove(index);
+        self.diff_dock.diff_active_tab =
+            active_tab_after_close(self.diff_dock.diff_active_tab, index);
         // The armed index refers to a strip that just shifted, so it is dropped
         // rather than re-mapped: a stale arm would put the confirmation on
         // whatever tab slid into the slot.
-        self.agents_view.diff_tab_close_armed = None;
+        self.diff_dock.diff_tab_close_armed = None;
         cx.notify();
     }
 
     /// Close whichever tab hosts `terminal` (the shell exited under it).
     fn close_diff_terminal_tab(&mut self, terminal: &Entity<TerminalView>, cx: &mut Context<Self>) {
         let found = self
-            .agents_view
+            .diff_dock
             .diff_tabs
             .iter()
             .position(|tab| matches!(tab, DiffDockTab::Terminal(t) if t == terminal));

@@ -20,13 +20,13 @@ const MENU_WIDTH: f32 = 236.0;
 
 impl PaneFlowApp {
     pub(crate) fn toggle_diff_new_tab_menu(&mut self, open: bool, cx: &mut Context<Self>) {
-        self.agents_view.diff_new_tab_menu_open = open;
+        self.diff_dock.diff_new_tab_menu_open = open;
         cx.notify();
     }
 
     pub(crate) fn close_diff_new_tab_menu(&mut self, cx: &mut Context<Self>) {
-        if self.agents_view.diff_new_tab_menu_open {
-            self.agents_view.diff_new_tab_menu_open = false;
+        if self.diff_dock.diff_new_tab_menu_open {
+            self.diff_dock.diff_new_tab_menu_open = false;
             cx.notify();
         }
     }
@@ -38,7 +38,7 @@ pub(super) fn render_diff_new_tab_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let menu = menu_surface(div().id("agents-diff-new-tab-menu"), ui)
+    let menu = menu_surface(div().id("diff-dock-new-tab-menu"), ui)
         .flex()
         .flex_col()
         .gap(px(1.))
@@ -56,7 +56,7 @@ pub(super) fn render_diff_new_tab_menu(
         )
         .child(
             menu_row(
-                "agents-diff-new-tab-file",
+                "diff-dock-new-tab-file",
                 "icons/file-text.svg",
                 "File",
                 "secondary-g",
@@ -69,7 +69,7 @@ pub(super) fn render_diff_new_tab_menu(
         )
         .child(
             menu_row(
-                "agents-diff-new-tab-terminal",
+                "diff-dock-new-tab-terminal",
                 "icons/terminal.svg",
                 "Terminal",
                 "secondary-j",

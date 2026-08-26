@@ -98,11 +98,6 @@ actions!(
         MarkdownFindPrev,
         MarkdownFindDismiss,
         MarkdownCopy,
-        // US-005 of tasks/prd-agents-view.md - toggles the lightweight
-        // Agents-view shell that hosts the auth-required card and the
-        // missing-agents empty state. US-008 will repurpose the same
-        // action as the full AppMode toggle.
-        OpenAgentsView,
         // US-003 of tasks/prd-multi-worktree-diff-2026-Q3.md - open the
         // multi-worktree diff view for the active workspace's repo. Resolves
         // the repo from `active_idx`'s `repo_root` and opens a `DiffView` tab
@@ -111,9 +106,9 @@ actions!(
         OpenMultiDiff,
         // US-003 of tasks/prd-git-diff-mode-2026-Q3.md - toggle the
         // dedicated Git Diff mode (AppMode::Diff): a full-screen diff
-        // surface entered via the CLI / Diff / Agents sidebar toggle.
-        // Distinct from `OpenMultiDiff` (the ephemeral tab path), which
-        // stays alive as a secondary entry.
+        // surface entered via the CLI / Diff sidebar toggle. Distinct from
+        // `OpenMultiDiff` (the ephemeral tab path), which stays alive as a
+        // secondary entry.
         OpenDiffView,
         // US-003 of tasks/prd-ai-in-diff-2026-Q3.md - copy the hunk under the
         // cursor as a unified diff (Ctrl+Shift+C inside the DiffView context).
@@ -130,14 +125,6 @@ actions!(
         DiffToggleView,
         DiffToggleSync,
         DiffDismiss,
-        // US-011 of the Agents UI redesign - open the
-        // overflow (`⋯`) menu for the current Agents thread/chat. Dispatched
-        // by the title-bar `⋯` button (a SEPARATE `TitleBar` entity with no
-        // access to agents state), caught by `PaneFlowApp` which resolves the
-        // selected target and opens the shared thread context menu. The
-        // button never calls agents methods directly - it dispatches this
-        // typed action, mirroring the update pill's `StartSelfUpdate`.
-        OpenAgentsThreadMenu,
         // EP-001 (CLI Cockpit) - CLI cockpit
         // steering. `OpenComposer` (US-001) anchors the multi-line prompt
         // Composer to the focused pane; `ToggleBroadcastMember` and

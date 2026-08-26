@@ -1,7 +1,7 @@
 //! Type-to-filter for the docked Files sidebar (US-020 of
 //! `tasks/prd-file-editor-2026-Q3.md`).
 //!
-//! Pure and GPUI-free, like `agents_sidebar::filter`: the render path imports
+//! Pure and GPUI-free: the render path imports
 //! [`filter_rows`] and only deals with element emission.
 //!
 //! Two properties the acceptance criteria hang on are structural here rather
@@ -22,7 +22,6 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use crate::app::agents_sidebar::filter::match_positions;
 use crate::app::files_tree::{self, FileNode};
 
 /// One row of the filtered result set: the node it points at, its
@@ -37,8 +36,7 @@ pub(super) struct FilterRow<'a> {
 
 /// Filter every cached listing down to the files whose workspace-relative path
 /// contains `lowered_needle`, case-insensitively. `lowered_needle` MUST already
-/// be `to_lowercase()`-ed by the caller (same contract as
-/// `agents_sidebar::filter`). An empty needle yields an empty vector - the
+/// be `to_lowercase()`-ed by the caller. An empty needle yields an empty vector - the
 /// caller renders the unfiltered tree instead of calling this.
 ///
 /// Directories are excluded: the filtered list is flat, so a folder row would
@@ -106,6 +104,58 @@ pub(super) fn filter_rows<'a>(
     out
 }
 
+/// Byte-range of the first case-insensitive substring hit of `lowered_needle`
+/// inside `haystack`, suitable for splitting a string into
+/// `[before, match, after]` for highlight rendering. Returns `None` when the
+/// needle is empty, longer than the haystack, or doesn't match.
+///
+/// `lowered_needle` MUST already be `to_lowercase()`-ed by the caller.
+/// The match preserves the haystack's original byte boundaries so the
+/// caller can slice safely (`&haystack[..start]`, `&haystack[start..end]`,
+/// `&haystack[end..]`). The lowered haystack/needle are only used to
+/// locate the hit - the slices returned point into the original.
+fn match_positions(haystack: &str, lowered_needle: &str) -> Option<(usize, usize)> {
+    if lowered_needle.is_empty() {
+        return None;
+    }
+    // `to_lowercase()` can change byte length and even char count for
+    // non-ASCII text (İ→i̇ is 1→2 chars, ß→ss is 1→2 bytes), so locating the
+    // hit in the lowered string and transferring that byte offset to the
+    // ORIGINAL drifts on non-ASCII titles (the old form fell back to "no
+    // highlight" via char-boundary guards). Build the lowered haystack while
+    // recording, at each original char start, the (lowered_offset,
+    // original_offset) pair, then map the hit back to a valid original
+    // boundary. For ASCII this is identical to the original byte indices.
+    let mut lowered = String::with_capacity(haystack.len());
+    let mut map: Vec<(usize, usize)> = Vec::with_capacity(haystack.len());
+    for (orig_idx, ch) in haystack.char_indices() {
+        map.push((lowered.len(), orig_idx));
+        for lc in ch.to_lowercase() {
+            lowered.push(lc);
+        }
+    }
+    // Sentinel so a match ending exactly at end-of-string maps cleanly.
+    map.push((lowered.len(), haystack.len()));
+
+    let lo_start = lowered.find(lowered_needle)?;
+    let lo_end = lo_start + lowered_needle.len();
+
+    // Map lowered byte offsets back to original byte offsets. A hit that
+    // begins or ends in the MIDDLE of a lowered multi-byte expansion (e.g.
+    // inside the "ss" a lowered ß produced) has no clean original boundary -
+    // render no highlight rather than slice mid-codepoint. `map` is sorted by
+    // lowered offset, so binary-search it.
+    let start = map
+        .binary_search_by_key(&lo_start, |&(lo, _)| lo)
+        .ok()
+        .map(|i| map[i].1)?;
+    let end = map
+        .binary_search_by_key(&lo_end, |&(lo, _)| lo)
+        .ok()
+        .map(|i| map[i].1)?;
+    Some((start, end))
+}
+
 /// Case-insensitive substring search, returning the matched byte range inside
 /// `haystack`.
 ///
@@ -147,6 +197,60 @@ fn find_ignore_case(haystack: &str, lowered_needle: &str) -> Option<Range<usize>
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn match_positions_finds_substring_byte_range() {
+        // Simple ASCII match.
+        assert_eq!(match_positions("Refactor sidebar", "side"), Some((9, 13)));
+        // Case-insensitive: needle is already lowered, haystack mixed.
+        assert_eq!(match_positions("Bug Fix", "bug"), Some((0, 3)));
+        // No match returns None.
+        assert_eq!(match_positions("anything", "xyz"), None);
+        // Empty needle returns None (caller short-circuits but the
+        // contract is "no highlight to render").
+        assert_eq!(match_positions("anything", ""), None);
+        // Needle longer than haystack: None.
+        assert_eq!(match_positions("ab", "abcdef"), None);
+    }
+
+    #[test]
+    fn match_positions_slice_is_safe_to_index() {
+        // The returned byte range must always be a valid UTF-8 slice
+        // boundary in the original haystack, so the render path can
+        // safely split into [before, match, after] without panicking.
+        let title = "Refactor sidebar";
+        let (s, e) = match_positions(title, "side").expect("match");
+        assert_eq!(&title[..s], "Refactor ");
+        assert_eq!(&title[s..e], "side");
+        assert_eq!(&title[e..], "bar");
+    }
+
+    #[test]
+    fn match_positions_maps_non_ascii_offsets_to_original() {
+        // The hit's byte range must index the ORIGINAL string, even
+        // when `to_lowercase()` changed byte lengths before the match.
+        // "Café" - the needle "fé" follows the multi-byte 'é' position.
+        let title = "Café au lait";
+        let (s, e) = match_positions(title, "fé").expect("match");
+        assert_eq!(&title[s..e], "fé", "range must slice the original cleanly");
+        assert_eq!(&title[..s], "Ca");
+
+        // A leading uppercase multi-byte char: needle "é" against "Éclair".
+        let title2 = "Éclair";
+        let (s2, e2) = match_positions(title2, "é").expect("match");
+        assert_eq!(
+            &title2[s2..e2],
+            "É",
+            "lowered 'é' maps back to original 'É'"
+        );
+        assert_eq!(s2, 0);
+
+        // German ß lowercases to itself (already lowercase) - a plain
+        // multi-byte match still slices the original safely.
+        let title3 = "straße";
+        let (s3, e3) = match_positions(title3, "ße").expect("match");
+        assert_eq!(&title3[s3..e3], "ße");
+    }
     use super::*;
     use std::collections::HashSet;
 

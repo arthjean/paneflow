@@ -142,7 +142,7 @@ pub fn split_max_line_no(rows: &[SplitRow]) -> u32 {
 /// and the width (in monospace cells) of its widest code line. The widest-line
 /// width drives the file's horizontal-scroll bound; split rows additionally
 /// store the right-side width. These spans are precomputed off the render path
-/// (in `recompute_display` / `AgentsDiffData::recompute`) and shared with
+/// (in `recompute_display` / `DiffDockData::recompute`) and shared with
 /// `DiffElement`, which offsets each file side's code by its own scroll
 /// position instead of re-measuring every row per frame. Widths count `char`s
 /// (not bytes), matching the monospace-cell estimate the element scrolls by;
@@ -276,7 +276,7 @@ pub struct FoldBlock<T> {
 /// (off the render path) so [`super::element::DiffElement`] paints a structured
 /// header - file-type icon, muted directory prefix, emphasized basename,
 /// right-aligned green/red diffstat, and trailing actions - instead of one
-/// undifferentiated mono string. Shared by the Review view and the Agents diff
+/// undifferentiated mono string. Shared by the Review view and the diff
 /// dock.
 #[derive(Clone)]
 pub struct HeaderParts {
@@ -524,7 +524,7 @@ pub fn build_file_row_caches(files: &[FileDiff], syntax: Option<&DiffSyntax>) ->
 
 /// Resolve a [`RowPalette`] from the active theme's UI colors. The single color
 /// source for [`super::element::DiffElement`], shared by the Review view
-/// ([`super::view`]) and the Agents diff dock ([`crate::app::diff_dock`]) so
+/// ([`super::view`]) and the diff dock ([`crate::app::diff_dock`]) so
 /// both render with identical washes.
 pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
     let diff = ui.diff_colors();
@@ -1134,7 +1134,7 @@ pub fn build_split_rows_with_caches(
 /// only its header row, an expanded file keeps its full segment. `anchors` maps
 /// each file path to its header row index (file order). Returns the filtered
 /// rows plus rebuilt anchors (header index in the output). Shared by the Review
-/// view ([`super::view`]) and the Agents diff dock ([`crate::app::diff_dock`]).
+/// view ([`super::view`]) and the diff dock ([`crate::app::diff_dock`]).
 pub fn apply_collapse_unified(
     rows: &[DisplayRow],
     anchors: &[(String, usize)],

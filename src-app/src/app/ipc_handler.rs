@@ -897,35 +897,10 @@ pub(crate) struct SurfaceMeta {
     pub workspace: Option<usize>,
     pub scope: &'static str,
     /// US-019: stable id of the workspace tab owning this surface, and that
-    /// tab's title. `None` for surfaces that live outside the CLI tab
-    /// hierarchy (Agents threads, the bottom dock). The id is an *identity*,
-    /// not a position - no positional tab index is ever exported (FR-07).
+    /// tab's title. The id is an *identity*, not a position - no positional
+    /// tab index is ever exported (FR-07).
     pub tab_id: Option<u64>,
     pub tab_title: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SurfaceScope {
-    Workspace(usize),
-    AgentsThread(u64),
-    AgentsBottom(u64),
-}
-
-impl SurfaceScope {
-    fn as_wire(self) -> &'static str {
-        match self {
-            SurfaceScope::Workspace(_) => "workspace",
-            SurfaceScope::AgentsThread(_) => "agents_thread",
-            SurfaceScope::AgentsBottom(_) => "agents_bottom",
-        }
-    }
-
-    fn workspace_index(self) -> Option<usize> {
-        match self {
-            SurfaceScope::Workspace(idx) => Some(idx),
-            SurfaceScope::AgentsThread(_) | SurfaceScope::AgentsBottom(_) => None,
-        }
-    }
 }
 
 fn authorize_surface_workspace(
@@ -948,8 +923,9 @@ struct SurfaceEntry {
     title: String,
     cwd: Option<String>,
     cmd: Option<String>,
-    scope: SurfaceScope,
-    /// US-019: the owning workspace tab, `None` outside the CLI hierarchy.
+    /// Positional index of the workspace this surface lives in.
+    workspace_idx: usize,
+    /// US-019: the owning workspace tab.
     tab: Option<(u64, String)>,
 }
 
@@ -965,7 +941,7 @@ fn workspace_surface_entries(workspaces: &[Workspace], cx: &App) -> Vec<SurfaceE
                 for entity in pane.read(cx).terminals() {
                     entries.push(surface_entry_for(
                         entity.clone(),
-                        SurfaceScope::Workspace(ws_idx),
+                        ws_idx,
                         Some((tab.id, tab.title.clone())),
                         cx,
                     ));
@@ -978,7 +954,7 @@ fn workspace_surface_entries(workspaces: &[Workspace], cx: &App) -> Vec<SurfaceE
 
 fn surface_entry_for(
     entity: Entity<TerminalView>,
-    scope: SurfaceScope,
+    workspace_idx: usize,
     tab: Option<(u64, String)>,
     cx: &App,
 ) -> SurfaceEntry {
@@ -998,7 +974,7 @@ fn surface_entry_for(
         title,
         cwd,
         cmd,
-        scope,
+        workspace_idx,
         tab,
     }
 }
@@ -1616,7 +1592,7 @@ impl PaneFlowApp {
 
     /// Walk every mounted terminal surface and build per-surface metadata with
     /// globally-disambiguated human-readable names (US-002). Order is
-    /// deterministic: workspaces first, then Agents threads, then bottom dock.
+    /// deterministic: workspaces in display order, tab by tab.
     pub(crate) fn collect_surface_meta(&self, cx: &App) -> Vec<SurfaceMeta> {
         // Stage 1: gather raw signals per surface in stable order, with an
         // empty `name` placeholder filled in by stage 2.
@@ -1629,9 +1605,9 @@ impl PaneFlowApp {
                 title: entry.title.clone(),
                 cwd: entry.cwd.clone(),
                 cmd: entry.cmd.clone(),
-                workspace_id: self.workspace_id_for_scope(entry.scope),
-                workspace: entry.scope.workspace_index(),
-                scope: entry.scope.as_wire(),
+                workspace_id: self.workspace_id_for_workspace_idx(entry.workspace_idx),
+                workspace: Some(entry.workspace_idx),
+                scope: "workspace",
                 tab_id: entry.tab.as_ref().map(|(id, _)| *id),
                 tab_title: entry.tab.as_ref().map(|(_, title)| title.clone()),
             })
@@ -1663,33 +1639,7 @@ impl PaneFlowApp {
     }
 
     fn collect_surface_entries(&self, cx: &App) -> Vec<SurfaceEntry> {
-        let mut entries = workspace_surface_entries(&self.workspaces, cx);
-        let mut thread_ids: Vec<u64> = self
-            .agents_view
-            .agents_terminal_view_cache
-            .keys()
-            .copied()
-            .collect();
-        thread_ids.sort_unstable();
-        for thread_id in thread_ids {
-            if let Some(entity) = self.agents_view.agents_terminal_view_cache.get(&thread_id) {
-                entries.push(surface_entry_for(
-                    entity.clone(),
-                    SurfaceScope::AgentsThread(thread_id),
-                    None,
-                    cx,
-                ));
-            }
-        }
-        for term in &self.agents_view.bottom_terminals {
-            entries.push(surface_entry_for(
-                term.view.clone(),
-                SurfaceScope::AgentsBottom(term.id),
-                None,
-                cx,
-            ));
-        }
-        entries
+        workspace_surface_entries(&self.workspaces, cx)
     }
 
     fn collect_surface_generations(&self, cx: &App) -> Vec<(u64, u64)> {
@@ -1703,16 +1653,6 @@ impl PaneFlowApp {
                 }
             }
         }
-        for terminal in self.agents_view.agents_terminal_view_cache.values() {
-            let sid = terminal.entity_id().as_u64();
-            let generation = terminal.read(cx).terminal.output_generation;
-            current.push((sid, generation));
-        }
-        for term in &self.agents_view.bottom_terminals {
-            let sid = term.view.entity_id().as_u64();
-            let generation = term.view.read(cx).terminal.output_generation;
-            current.push((sid, generation));
-        }
         current
     }
 
@@ -1722,88 +1662,15 @@ impl PaneFlowApp {
         cx: &App,
     ) -> Option<Entity<TerminalView>> {
         find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
-            .or_else(|| {
-                self.agents_view
-                    .agents_terminal_view_cache
-                    .values()
-                    .find(|terminal| terminal.entity_id().as_u64() == surface_id)
-                    .cloned()
-            })
-            .or_else(|| {
-                self.agents_view
-                    .bottom_terminals
-                    .iter()
-                    .find(|term| term.view.entity_id().as_u64() == surface_id)
-                    .map(|term| term.view.clone())
-            })
     }
 
-    fn surface_scope_by_id(&self, surface_id: u64, cx: &App) -> Option<SurfaceScope> {
-        find_terminal_by_surface_id(&self.workspaces, surface_id, cx)
-            .and_then(|_| {
-                find_pane_by_surface_id(&self.workspaces, surface_id, cx)
-                    .map(|loc| SurfaceScope::Workspace(loc.workspace_idx))
-            })
-            .or_else(|| {
-                self.agents_view
-                    .agents_terminal_view_cache
-                    .iter()
-                    .find(|(_, terminal)| terminal.entity_id().as_u64() == surface_id)
-                    .map(|(thread_id, _)| SurfaceScope::AgentsThread(*thread_id))
-            })
-            .or_else(|| {
-                self.agents_view
-                    .bottom_terminals
-                    .iter()
-                    .find(|term| term.view.entity_id().as_u64() == surface_id)
-                    .map(|term| SurfaceScope::AgentsBottom(term.id))
-            })
+    /// Positional index of the workspace owning `surface_id`.
+    fn surface_workspace_idx(&self, surface_id: u64, cx: &App) -> Option<usize> {
+        find_pane_by_surface_id(&self.workspaces, surface_id, cx).map(|loc| loc.workspace_idx)
     }
 
-    fn workspace_id_for_scope(&self, scope: SurfaceScope) -> Option<u64> {
-        scope
-            .workspace_index()
-            .and_then(|idx| self.workspaces.get(idx).map(|workspace| workspace.id))
-    }
-
-    fn focus_agents_surface(
-        &mut self,
-        surface_id: u64,
-        scope: SurfaceScope,
-        cx: &mut Context<Self>,
-    ) -> Option<serde_json::Value> {
-        let terminal = self.find_surface_terminal_by_id(surface_id, cx)?;
-        match scope {
-            SurfaceScope::AgentsThread(thread_id) => {
-                let target = self.agents_thread_target_by_id(thread_id)?;
-                self.enter_agents_mode(cx);
-                self.select_agents_target(target, cx);
-            }
-            SurfaceScope::AgentsBottom(bottom_id) => {
-                self.enter_agents_mode(cx);
-                self.agents_view.agents_skills_visible = false;
-                self.agents_view.bottom_panel_open = true;
-                self.agents_view.bottom_panel_active = Some(bottom_id);
-            }
-            SurfaceScope::Workspace(_) => return None,
-        }
-        cx.defer(move |cx| {
-            for handle in cx.windows() {
-                if let Some(main) = handle.downcast::<PaneFlowApp>() {
-                    let _ = main.update(cx, |_, window, cx| {
-                        terminal.read(cx).focus_handle(cx).focus(window, cx);
-                    });
-                }
-            }
-        });
-        self.save_session(cx);
-        cx.notify();
-        Some(serde_json::json!({
-            "focused": true,
-            "surface_id": surface_id,
-            "workspace": serde_json::Value::Null,
-            "scope": scope.as_wire(),
-        }))
+    fn workspace_id_for_workspace_idx(&self, idx: usize) -> Option<u64> {
+        self.workspaces.get(idx).map(|workspace| workspace.id)
     }
 
     /// Resolve a `surface.*` target from the request params to a terminal
@@ -1873,8 +1740,8 @@ impl PaneFlowApp {
         let expected_workspace_id = requested_workspace_id(params)?;
         let surface_id = terminal.entity_id().as_u64();
         let actual_workspace_id = self
-            .surface_scope_by_id(surface_id, cx)
-            .and_then(|scope| self.workspace_id_for_scope(scope));
+            .surface_workspace_idx(surface_id, cx)
+            .and_then(|idx| self.workspace_id_for_workspace_idx(idx));
         authorize_surface_workspace(surface_id, expected_workspace_id, actual_workspace_id)?;
         Ok(terminal)
     }
@@ -2811,17 +2678,10 @@ impl PaneFlowApp {
                 let Some(sid) = params.get("surface_id").and_then(|s| s.as_u64()) else {
                     return serde_json::json!({"error": "Missing 'surface_id' parameter"});
                 };
-                let Some(scope) = self.surface_scope_by_id(sid, cx) else {
-                    return serde_json::json!({"error": "Surface not found"});
-                };
-                let SurfaceScope::Workspace(ws_idx) = scope else {
-                    return self
-                        .focus_agents_surface(sid, scope, cx)
-                        .unwrap_or_else(|| serde_json::json!({"error": "Surface not found"}));
-                };
                 let Some(loc) = find_pane_by_surface_id(&self.workspaces, sid, cx) else {
                     return serde_json::json!({"error": "Surface not found"});
                 };
+                let ws_idx = loc.workspace_idx;
                 let pane = loc.pane;
                 // Switch workspace and make the owning workspace tab visible
                 // (US-003: the surface may live in a background tab) - all
@@ -2852,7 +2712,7 @@ impl PaneFlowApp {
                     "focused": true,
                     "surface_id": sid,
                     "workspace": ws_idx,
-                    "scope": scope.as_wire(),
+                    "scope": "workspace",
                 })
             }
             "surface.send_text" => {
@@ -3241,10 +3101,6 @@ impl PaneFlowApp {
                     // session_id/cwd are currently reserved metadata.
                     let _ = (pid, tool, ws);
                     serde_json::json!({"registered": true})
-                } else if self.agents_thread_mut_by_env_id(workspace_id).is_some() {
-                    // Same no-op policy for an Agents thread: the spinner
-                    // only appears once a prompt is actually in flight.
-                    serde_json::json!({"registered": true})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
@@ -3285,12 +3141,6 @@ impl PaneFlowApp {
                     // EP-001 US-003 (cli-cockpit): the target just turned
                     // busy - refresh the Composer chip (no flush can apply).
                     self.agent_sessions_changed(cx);
-                    serde_json::json!({"status": "running"})
-                } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
-                    // The row spinner self-animates (declarative GPUI
-                    // Animation in `thread_row`) - no loader-loop start here.
-                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid);
-                    cx.notify();
                     serde_json::json!({"status": "running"})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
@@ -3336,12 +3186,6 @@ impl PaneFlowApp {
                     self.sync_attention(cx);
                     // EP-001 US-003 (cli-cockpit): see the prompt_submit arm.
                     self.agent_sessions_changed(cx);
-                    serde_json::json!({"status": "running"})
-                } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
-                    // tool_use keeps (or promotes) the thread spinner -
-                    // same Finished-revival rationale as the workspace arm.
-                    apply_agents_thread_state(t, ai_types::AgentState::Thinking, pid);
-                    cx.notify();
                     serde_json::json!({"status": "running"})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
@@ -3395,22 +3239,6 @@ impl PaneFlowApp {
                     // prefill target - flush this pane's queued prompt now
                     // (main thread: transition and flush are serialized).
                     self.agent_sessions_changed(cx);
-                    serde_json::json!({"status": "waiting"})
-                } else if let Some(t) = self.agents_thread_mut_by_env_id(workspace_id) {
-                    apply_agents_thread_state(t, ai_types::AgentState::WaitingForInput, pid);
-                    // Notification body uses the cleaned title so a CLI
-                    // spinner glyph baked into the OSC title never leaks
-                    // into the desktop notification.
-                    let title = crate::project::clean_sidebar_title(&t.title)
-                        .unwrap_or_else(|| t.title.clone());
-                    cx.notify();
-                    fire_attention_notification(
-                        tool,
-                        &title,
-                        message.as_deref(),
-                        &notify_config,
-                        cx.background_executor().clone(),
-                    );
                     serde_json::json!({"status": "waiting"})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
@@ -3537,65 +3365,6 @@ impl PaneFlowApp {
                     .detach();
 
                     serde_json::json!({"status": "idle"})
-                } else if let Some(target) = self.agents_thread_target_by_env_id(workspace_id) {
-                    let interrupt_stop = is_interrupt_lifecycle_event(params);
-                    // Codex-style: the spinner drops the moment the turn
-                    // ends and the relative timestamp returns. No Finished
-                    // hold state - `ThreadStatus` has no such variant and
-                    // the row's timestamp is the natural rest indicator.
-                    let Some(thread) = self.thread_for_target(target) else {
-                        return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
-                    };
-                    let title = crate::project::clean_sidebar_title(&thread.title)
-                        .unwrap_or_else(|| thread.title.clone());
-                    // Snapshot what the off-thread ai-title backfill needs
-                    // before the &mut borrow on `self` ends.
-                    let thread_id = thread.id;
-                    let cwd = thread.cwd.clone();
-                    let session_agent = thread.terminal_agent.and_then(|a| a.session_agent());
-                    let bound_session = thread.session_id.clone();
-                    let title_locked = thread.title_user_set;
-                    let (session_summary, transcript_to_read) = if interrupt_stop {
-                        (None, None)
-                    } else {
-                        read_stop_summary(params)
-                    };
-                    if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
-                        apply_agents_thread_state(t, ai_types::AgentState::Finished, pid);
-                    }
-                    cx.notify();
-                    if !interrupt_stop {
-                        if let Some(path) = transcript_to_read {
-                            Self::schedule_transcript_turn_end(
-                                None,
-                                path,
-                                Some(TranscriptTurnEndNotification {
-                                    agent: tool,
-                                    title: title.clone(),
-                                    config: notify_config.clone(),
-                                    executor: cx.background_executor().clone(),
-                                }),
-                                cx,
-                            );
-                        } else {
-                            fire_turn_end_notification(
-                                tool,
-                                &title,
-                                session_summary.as_deref(),
-                                &notify_config,
-                                cx.background_executor().clone(),
-                            );
-                        }
-                    }
-                    // Parity with `/resume`: at turn end the session's LLM
-                    // `ai-title` exists on disk - adopt it as the sidebar
-                    // label, unless the user pinned the name via a rename.
-                    if !title_locked
-                        && let (Some(agent), Some(bound_session)) = (session_agent, bound_session)
-                    {
-                        self.spawn_thread_title_backfill(thread_id, cwd, agent, bound_session, cx);
-                    }
-                    serde_json::json!({"status": "idle"})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
@@ -3668,32 +3437,6 @@ impl PaneFlowApp {
                     self.sync_attention(cx);
                     self.agent_sessions_changed(cx);
                     serde_json::json!({"status": if errored { "errored" } else { "finished" }})
-                } else if let Some(target) = self.agents_thread_target_by_env_id(workspace_id) {
-                    // Agents view mirrors the workspace exit classifier but
-                    // keeps the row compact: success returns to timestamp,
-                    // crashes become a red indicator (no status text).
-                    let state = ai_types::state_for_exit(exit_code);
-                    let errored = state == ai_types::AgentState::Errored;
-                    let Some(thread) = self.thread_for_target(target) else {
-                        return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
-                    };
-                    let thread_id = thread.id;
-                    let title = crate::project::clean_sidebar_title(&thread.title)
-                        .unwrap_or_else(|| thread.title.clone());
-                    if let Some(t) = self.agents_thread_mut_by_id(thread_id) {
-                        apply_agents_thread_state(t, state, pid);
-                    }
-                    if errored {
-                        fire_agent_exit_notification(
-                            tool,
-                            &title,
-                            exit_code,
-                            &notify_config,
-                            cx.background_executor().clone(),
-                        );
-                    }
-                    cx.notify();
-                    serde_json::json!({"status": if errored { "errored" } else { "finished" }})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
@@ -3761,19 +3504,6 @@ impl PaneFlowApp {
                         cx.notify();
                     }
                     serde_json::json!({"cleared": removed})
-                } else if let Some(target) = self.agents_thread_target_by_env_id(workspace_id) {
-                    let Some(thread) = self.thread_for_target(target) else {
-                        return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
-                    };
-                    let thread_id = thread.id;
-                    let Some(t) = self.agents_thread_mut_by_id(thread_id) else {
-                        return serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")});
-                    };
-                    let was_active = clear_agents_thread_on_session_end(t);
-                    if was_active {
-                        cx.notify();
-                    }
-                    serde_json::json!({"cleared": was_active})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
                 }
@@ -3781,72 +3511,6 @@ impl PaneFlowApp {
             _ => JsonRpcError::method_not_found(format!("Method not found: {method}")).into_value(),
         }
     }
-
-    /// Resolve an `ai.*` frame's `workspace_id` to the Agents thread it was
-    /// emitted from, when the id sits in the Agents PTY-env namespace
-    /// ([`crate::project::AGENTS_THREAD_ENV_ID_BASE`]). CLI-mode workspace
-    /// ids live below the base and return `None` here, so the workspace arm
-    /// and this fallback can never both match one frame. Searches project
-    /// threads and free chats - both spawn through the same mount path.
-    fn agents_thread_mut_by_env_id(&mut self, env_id: u64) -> Option<&mut crate::project::Thread> {
-        let thread_id = crate::project::thread_id_from_env_id(env_id)?;
-        self.agents_thread_mut_by_id(thread_id)
-    }
-
-    fn agents_thread_target_by_env_id(&self, env_id: u64) -> Option<crate::project::AgentsTarget> {
-        let thread_id = crate::project::thread_id_from_env_id(env_id)?;
-        self.agents_thread_target_by_id(thread_id)
-    }
-
-    fn agents_thread_target_by_id(&self, thread_id: u64) -> Option<crate::project::AgentsTarget> {
-        for (project_idx, project) in self.projects.iter().enumerate() {
-            if let Some(thread_idx) = project
-                .threads
-                .iter()
-                .position(|thread| thread.id == thread_id)
-            {
-                return Some(crate::project::AgentsTarget::Thread {
-                    project_idx,
-                    thread_idx,
-                });
-            }
-        }
-        self.chats
-            .iter()
-            .position(|chat| chat.id == thread_id)
-            .map(|chat_idx| crate::project::AgentsTarget::Chat { chat_idx })
-    }
-}
-
-fn apply_agents_thread_state(
-    thread: &mut crate::project::Thread,
-    state: ai_types::AgentState,
-    pid: Option<u32>,
-) {
-    thread.status = crate::project::ThreadStatus::from_agent_state(state);
-    match thread.status {
-        crate::project::ThreadStatus::Idle | crate::project::ThreadStatus::Failed => {
-            thread.agent_pid = None;
-            thread.agent_proc_start = None;
-        }
-        _ => {
-            if let Some(pid) = pid {
-                thread.agent_pid = Some(pid);
-                thread.agent_proc_start = super::event_handlers::pid_start_time(pid);
-            }
-        }
-    }
-}
-
-fn clear_agents_thread_on_session_end(thread: &mut crate::project::Thread) -> bool {
-    if thread.status == crate::project::ThreadStatus::Failed {
-        return false;
-    }
-    let was_active = thread.status != crate::project::ThreadStatus::Idle;
-    thread.status = crate::project::ThreadStatus::Idle;
-    thread.agent_pid = None;
-    thread.agent_proc_start = None;
-    was_active
 }
 
 // ---------------------------------------------------------------------------
@@ -5036,7 +4700,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_meta_value_exposes_scope_and_optional_workspace() {
+    fn surface_meta_value_exposes_scope_and_workspace_identity() {
         let workspace = super::surface_meta_value(super::SurfaceMeta {
             surface_id: 7,
             name: "shell".to_string(),
@@ -5055,25 +4719,6 @@ mod tests {
         // US-019: tab identity is exported, never a positional tab index.
         assert_eq!(workspace["tab_id"], 11);
         assert_eq!(workspace["tab_title"], "build");
-
-        let agents = super::surface_meta_value(super::SurfaceMeta {
-            surface_id: 8,
-            name: "codex".to_string(),
-            title: "codex".to_string(),
-            cwd: None,
-            cmd: Some("codex".to_string()),
-            workspace_id: None,
-            workspace: None,
-            scope: "agents_thread",
-            tab_id: None,
-            tab_title: None,
-        });
-        assert_eq!(agents["workspace_id"], serde_json::Value::Null);
-        assert_eq!(agents["workspace"], serde_json::Value::Null);
-        assert_eq!(agents["scope"], "agents_thread");
-        // A surface outside the CLI hierarchy carries no tab.
-        assert_eq!(agents["tab_id"], serde_json::Value::Null);
-        assert_eq!(agents["tab_title"], serde_json::Value::Null);
     }
 
     #[test]
@@ -5235,58 +4880,6 @@ mod tests {
             Some(100),
             "errored rows are not fallback-removal candidates"
         );
-    }
-
-    #[test]
-    fn agents_thread_state_maps_hook_lifecycle_compactly() {
-        use crate::ai_types::AgentState;
-        use crate::project::{Thread, ThreadStatus};
-
-        let self_pid = std::process::id();
-        let mut thread = Thread::new_terminal("Codex", "/tmp", None);
-
-        super::apply_agents_thread_state(&mut thread, AgentState::Thinking, Some(self_pid));
-        assert_eq!(thread.status, ThreadStatus::Thinking);
-        assert_eq!(thread.agent_pid, Some(self_pid));
-
-        super::apply_agents_thread_state(&mut thread, AgentState::WaitingForInput, None);
-        assert_eq!(thread.status, ThreadStatus::WaitingForInput);
-        assert_eq!(
-            thread.agent_pid,
-            Some(self_pid),
-            "no-pid frames preserve the last known PID for stale sweeping"
-        );
-
-        super::apply_agents_thread_state(&mut thread, AgentState::Finished, None);
-        assert_eq!(thread.status, ThreadStatus::Idle);
-        assert!(thread.agent_pid.is_none());
-        assert!(thread.agent_proc_start.is_none());
-
-        super::apply_agents_thread_state(&mut thread, AgentState::Errored, Some(self_pid));
-        assert_eq!(thread.status, ThreadStatus::Failed);
-        assert!(
-            thread.agent_pid.is_none(),
-            "Failed is a durable compact crash signal, not a sweep target"
-        );
-    }
-
-    #[test]
-    fn agents_session_end_preserves_failed_indicator() {
-        use crate::project::{Thread, ThreadStatus};
-
-        let mut failed = Thread::new_terminal("Codex", "/tmp", None);
-        failed.status = ThreadStatus::Failed;
-        failed.agent_pid = Some(std::process::id());
-        assert!(!super::clear_agents_thread_on_session_end(&mut failed));
-        assert_eq!(failed.status, ThreadStatus::Failed);
-
-        let mut active = Thread::new_terminal("Codex", "/tmp", None);
-        active.status = ThreadStatus::Thinking;
-        active.agent_pid = Some(std::process::id());
-        assert!(super::clear_agents_thread_on_session_end(&mut active));
-        assert_eq!(active.status, ThreadStatus::Idle);
-        assert!(active.agent_pid.is_none());
-        assert!(active.agent_proc_start.is_none());
     }
 
     // -----------------------------------------------------------------

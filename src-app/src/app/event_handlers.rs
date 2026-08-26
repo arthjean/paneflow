@@ -1108,26 +1108,6 @@ impl PaneFlowApp {
                 }
             }
         }
-        // Agents-view threads: a CLI killed mid-turn never sends `ai.stop`,
-        // which would leave the row spinner running forever. Same
-        // conservative policy as above - a thread whose hook frames carried
-        // no PID is kept as-is (cleared by `ai.stop` / `ai.session_end`).
-        for t in self
-            .projects
-            .iter_mut()
-            .flat_map(|p| p.threads.iter_mut())
-            .chain(self.chats.iter_mut())
-        {
-            if t.status != crate::project::ThreadStatus::Idle
-                && let Some(pid) = t.agent_pid
-                && !pid_matches(pid, t.agent_proc_start)
-            {
-                t.status = crate::project::ThreadStatus::Idle;
-                t.agent_pid = None;
-                t.agent_proc_start = None;
-                changed = true;
-            }
-        }
         if changed {
             // US-018 (orchestration-v2): a swept session may have been
             // driving a pane glow - resync so no orphan attention survives.
@@ -1523,7 +1503,7 @@ impl PaneFlowApp {
                         let changed =
                             app.apply_git_state_for_cwd(&tracked_cwd, branch, is_repo, stats);
                         let refreshed_diff =
-                            changed && app.refresh_agents_diff_if_open_for_cwd(&tracked_cwd, cx);
+                            changed && app.refresh_diff_dock_if_open_for_cwd(&tracked_cwd, cx);
                         log::debug!("workspace CWD changed to: {new_cwd}");
                         if changed && !refreshed_diff {
                             cx.notify();
@@ -1558,7 +1538,7 @@ impl PaneFlowApp {
                             let changed =
                                 app.apply_git_state_for_cwd(&cwd_for_apply, branch, is_repo, stats);
                             let refreshed_diff = changed
-                                && app.refresh_agents_diff_if_open_for_cwd(&cwd_for_apply, cx);
+                                && app.refresh_diff_dock_if_open_for_cwd(&cwd_for_apply, cx);
                             if changed && !refreshed_diff {
                                 cx.notify();
                             }

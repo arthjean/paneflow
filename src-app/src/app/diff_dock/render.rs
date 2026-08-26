@@ -1,4 +1,4 @@
-//! Free render helpers for the Agents diff dock chrome: the resize handle, the
+//! Free render helpers for the diff dock chrome: the resize handle, the
 //! toolbar toggle button, the tab strip, the files toolbar, and the
 //! empty/loading/error placeholder. The body (the shared `DiffElement`) and the
 //! panel orchestration live on `PaneFlowApp` in [`super`].
@@ -25,7 +25,7 @@ pub(super) fn render_diff_resize_handle(
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     div()
-        .id("agents-diff-resize")
+        .id("diff-dock-resize")
         .absolute()
         .left(px(-3.))
         .top_0()
@@ -36,8 +36,8 @@ pub(super) fn render_diff_resize_handle(
         .on_mouse_down(
             MouseButton::Left,
             cx.listener(|this, event: &MouseDownEvent, _w, cx| {
-                let w = this.agents_view.agents_diff_width;
-                this.agents_view.agents_diff_resize = Some((f32::from(event.position.x), w));
+                let w = this.diff_dock.width;
+                this.diff_dock.resize = Some((f32::from(event.position.x), w));
                 cx.notify();
             }),
         )
@@ -91,14 +91,14 @@ pub(super) fn render_diff_tab_strip(
         .child(
             squircle_skin(
                 div()
-                    .id("agents-diff-tab-new")
+                    .id("diff-dock-tab-new")
                     .flex_none()
                     .size(px(28.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .cursor(CursorStyle::PointingHand),
-                "agents-diff-tab-new-group",
+                "diff-dock-tab-new-group",
                 ROW_RADIUS,
                 open.then_some(rail_hover),
                 Some(rail_hover),
@@ -120,10 +120,10 @@ pub(super) fn render_diff_tab_strip(
         )
         .child(div().flex_1().min_w_0())
         .child(render_diff_header_icon_button(
-            "agents-diff-close",
+            "diff-dock-close",
             "icons/close.svg",
             cx.listener(|this, _: &ClickEvent, _w, cx| {
-                this.close_agents_diff_panel(cx);
+                this.close_diff_dock_panel(cx);
             }),
             ui.muted,
         ))
@@ -181,11 +181,11 @@ fn render_diff_tab(
         (None, Some(rail_hover))
     };
     let text = if active { ui.text } else { ui.muted };
-    let group = SharedString::from(format!("agents-diff-tab-{index}-group"));
+    let group = SharedString::from(format!("diff-dock-tab-{index}-group"));
 
     let mut chip = squircle_skin(
         div()
-            .id(SharedString::from(format!("agents-diff-tab-{index}")))
+            .id(SharedString::from(format!("diff-dock-tab-{index}")))
             .flex_none()
             .h(px(26.))
             .flex()
@@ -268,7 +268,7 @@ fn render_diff_tab(
         };
         chip = chip.child(
             div()
-                .id(SharedString::from(format!("agents-diff-tab-close-{index}")))
+                .id(SharedString::from(format!("diff-dock-tab-close-{index}")))
                 .flex_none()
                 .size(px(16.))
                 .flex()

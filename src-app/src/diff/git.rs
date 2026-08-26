@@ -771,7 +771,7 @@ const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 /// Compute the diff of `worktree_dir` against `HEAD`: the working tree vs the
 /// last commit (staged + unstaged tracked changes) plus untracked files - the
-/// "what did the agent just touch" semantic used by the Agents diff dock
+/// "what did the agent just touch" semantic used by the diff dock
 /// ([`crate::app::diff_dock`]). When `HEAD` is unborn, everything is diffed
 /// against the empty tree. Reuses [`compute_diff_against`], so the lockfile /
 /// size / count / binary guards are identical to [`compute_worktree_diff`].

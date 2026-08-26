@@ -14,7 +14,7 @@ impl PaneFlowApp {
     pub(crate) fn render_about_dialog(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
         let version = env!("CARGO_PKG_VERSION");
-        let button_hover_bg = gpui::Hsla::from(rgb(0x3a3a3c));
+        let button_hover_bg = gpui::Hsla::from(rgb(0x3a3a3a));
 
         let close_x = div()
             .id("about-close-x")
@@ -55,9 +55,9 @@ impl PaneFlowApp {
             .justify_between()
             .pl(px(10.))
             .pr(px(2.))
-            .bg(rgb(0x222228))
+            .bg(rgb(0x232323))
             .border_b_1()
-            .border_color(rgb(0x343438))
+            .border_color(rgb(0x343434))
             .child(
                 div()
                     .flex()
@@ -126,13 +126,13 @@ impl PaneFlowApp {
             .justify_center()
             .rounded(px(3.))
             .border_1()
-            .border_color(rgb(0x66666a))
-            .bg(rgb(0x2d2d2f))
+            .border_color(rgb(0x666666))
+            .bg(rgb(0x2d2d2d))
             .text_size(px(12.))
             .text_color(ui.text)
             .animated_hover(move |style, delta| {
                 style.bg(lerp_color(
-                    gpui::Hsla::from(rgb(0x2d2d2f)),
+                    gpui::Hsla::from(rgb(0x2d2d2d)),
                     button_hover_bg,
                     delta,
                 ));
@@ -154,7 +154,7 @@ impl PaneFlowApp {
             .px(px(14.))
             .bg(rgb(0x252525))
             .border_t_1()
-            .border_color(rgb(0x343438))
+            .border_color(rgb(0x343434))
             .child(ok_button);
 
         let dialog = div()
@@ -166,7 +166,7 @@ impl PaneFlowApp {
             .overflow_hidden()
             .bg(rgb(0x202020))
             .border_1()
-            .border_color(rgb(0x3a3a3c))
+            .border_color(rgb(0x3a3a3a))
             .rounded(px(10.))
             .shadow_lg()
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())

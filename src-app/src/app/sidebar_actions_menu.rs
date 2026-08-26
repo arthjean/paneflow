@@ -1,5 +1,5 @@
-//! Bottom-of-sidebar mode tabs + Settings button. The CLI, Review, and
-//! Agents sidebars share one persistent mode switch, with Settings kept as
+//! Bottom-of-sidebar mode tabs + Settings button. The CLI and Review
+//! sidebars share one persistent mode switch, with Settings kept as
 //! a compact utility button at the end of the row that opens the settings
 //! surface directly - no intermediate menu.
 
@@ -255,8 +255,8 @@ impl PaneFlowApp {
                            icon: &'static str,
                            is_active: bool,
                            activate: Activate| {
-            // Equal-width compact segments keep the three primary surfaces
-            // visible without letting the Settings utility reclaim the row.
+            // Equal-width compact segments keep both primary surfaces visible
+            // without letting the Settings utility reclaim the row.
             let fg = if is_active { ui.text } else { ui.muted };
             // Same grammar as a workspace card: exactly one segment rests
             // filled - the current mode - and the others are pure hover
@@ -320,13 +320,6 @@ impl PaneFlowApp {
                 "icons/git-pull-request.svg",
                 matches!(mode, AppMode::Diff),
                 Box::new(|this, _window, cx| this.enter_diff_mode(cx)),
-            ))
-            .child(mode_button(
-                "sidebar-mode-agents",
-                "Agents",
-                "icons/sparkles.svg",
-                matches!(mode, AppMode::Agents),
-                Box::new(|this, _window, cx| this.enter_agents_mode(cx)),
             ))
             .child(settings_trigger)
             .into_any_element();
