@@ -1,87 +1,165 @@
-# Repository Guidelines
+# Paneflow agent guidance
 
-## Project Structure & Module Organization
-PaneFlow is a Rust workspace. `src-app/` contains the `paneflow` desktop binary: UI, terminal rendering, pane management, IPC, themes, and bundled helper binaries under `src-app/assets/`. `crates/paneflow-*` contains the shared config, IPC, process, telemetry, ACP, shim, AI-hook, MCP, and installer crates. Top-level `assets/` holds desktop packaging assets, `scripts/` contains utility scripts, and `tasks/` tracks PRDs and story status files.
+Paneflow is a native Rust terminal workspace for running coding agents in
+parallel, built on Zed's GPUI framework. Linux, macOS, and Windows are all
+shipping targets. This file is the canonical instruction source for every agent;
+`CLAUDE.md` imports it.
 
-## Build, Test, and Development Commands
-Run all commands from the repository root.
+## Gates you must not skip
 
-- `cargo build` builds the workspace.
-- `cargo build --release` builds the optimized app binary.
-- `cargo run -p paneflow-app` launches the app locally.
-- `RUST_LOG=info cargo run -p paneflow-app` runs with structured logging enabled.
-- `cargo test --workspace` runs unit and integration tests across both crates.
-- `cargo test -p paneflow-app --test flex_nchild -- --nocapture` runs the GPUI layout integration tests only.
-- `cargo clippy --workspace -- -D warnings` treats lint warnings as errors.
-- `cargo fmt --check` verifies formatting.
+Run from the repository root. The toolchain is pinned in `rust-toolchain.toml`
+(1.96.1), so do not add `+stable` or `+nightly`.
 
-Compilation depends on local path dependencies for Zed GPUI and the Alacritty fork, so keep those checkouts available before changing build configuration.
+```bash
+cargo fmt --check                                   # mandatory before commit and push
+cargo clippy --workspace --locked -- -D warnings
+cargo test --workspace --locked
+cargo deny check advisories licenses sources        # only when dependencies change
+```
 
-## Coding Style & Naming Conventions
-Use standard Rust formatting with `cargo fmt`; the codebase follows 4-space indentation and Rust defaults. Keep modules and files in `snake_case` (`terminal_element.rs`, `config_writer.rs`), types in `UpperCamelCase`, and functions/tests in `snake_case`. Prefer small, focused modules and brief doc comments where behavior is not obvious. Inline GPUI styling is the established pattern; match existing builder-chain style instead of introducing a separate styling layer.
+**`cargo fmt --check` before every `git commit` and every `git push` that
+touches Rust code.** If it reports a diff, run `cargo fmt`, re-stage, then
+commit. The release pipeline runs the same check on all four Build jobs (Linux
+x86_64, Linux aarch64, macOS aarch64, Windows x86_64). One mis-formatted line
+fails all four legs, skips "Publish GitHub Release", and burns a 25 minute run
+for nothing. A dirty tag commit is worse: the tag has to be deleted and
+re-created at the fix commit, because the original tagged build cannot be
+salvaged. For a tag-push release, run `cargo fmt --check` one final time on the
+exact commit you are about to tag.
 
-## Testing Guidelines
-Add unit tests alongside the module when logic is self-contained, as in `src-app/src/workspace.rs` and `crates/paneflow-config/src/*.rs`. Keep broader UI/layout checks in `src-app/tests/`. Name tests descriptively, for example `test_three_children_flex_basis`. Run `cargo test --workspace`, `cargo clippy`, and `cargo fmt --check` before opening a PR. UI changes should still include manual verification because visual smoke CI is useful but not exhaustive.
+rustfmt output drifts between Rust point releases, so code that was clean last
+week can need re-formatting after a toolchain bump. Always run the real
+`cargo fmt`, not an editor formatter, because `cargo fmt` is the CI gate.
 
-## Pre-commit checks (mandatory)
+CI keeps every cargo invocation `--locked`. Never commit a change that requires
+a lockfile update you did not also commit.
 
-**Before EVERY `git commit` and EVERY `git push` that touches Rust code, run `cargo fmt --check`.** If it reports a diff, run `cargo fmt`, re-stage, then commit.
+## `#[cfg(windows)]` code is only linted by the Windows leg
 
-This is the cheapest guard against the most expensive CI failure on this repo: the release pipeline runs `cargo fmt --check` on all four Build jobs (Linux x86_64, Linux aarch64, macOS aarch64, Windows x86_64) - a single mis-formatted line fails all four legs, skips "Publish GitHub Release", and burns a ~25 min run for nothing. Tag-push releases are extra-painful: a dirty tag commit forces a tag delete + re-create at the fix commit because the original tagged build can't be salvaged. Run `cargo fmt --check` one last time on the exact commit you're about to tag, before `git tag` and `git push origin <tag>`.
+Local `cargo clippy --workspace --all-targets` runs on the host target, so every
+item behind `#[cfg(windows)]` is compiled out and never linted. The same holds
+for the `Style (fmt + clippy)` and `Tests (Linux x86_64)` jobs. Windows-gated
+code is first seen by the `Windows x86_64 libghostty check` job in
+`.github/workflows/run_tests.yml` and by `.github/workflows/libghostty-windows.yml`,
+both of which clippy `--target x86_64-pc-windows-msvc` with `-D warnings`.
 
-## Commit & Pull Request Guidelines
-Recent history uses Conventional Commit-style prefixes plus scope, for example `feat(app): US-004 - adapt paneflow-hook for Codex PID env var` and `chore(tasks): ...`. Follow `type(scope): description`; include the story ID when work maps to a tracked task. PRs should explain user-visible behavior, list validation steps, link the relevant issue or PRD entry, and include screenshots or short recordings for UI changes.
+The concrete trap: **when you add an item to a file that already has a
+`mod tests`, declare it before that module, whatever its `cfg`.**
+`clippy::items_after_test_module` fires on any non-test item that follows a test
+module, and a Linux-invisible helper still trips it on the Windows leg. This
+burned two Windows runs on 2026-08-26 (`e61cb61`, `b5e1139`) over two
+`#[cfg(windows)]` helpers appended past `mod tests` in
+`src-app/src/agent_launcher.rs`; the fix, `8022f08`, was a pure code move.
 
-## Configuration Notes
-Do not replace the local-path GPUI dependencies with crates.io versions. Linux is the active target; config files live under `~/.config/paneflow/paneflow.json`.
+You cannot reproduce this on Linux, not even with a cross
+`cargo clippy --target x86_64-pc-windows-msvc`: the target build of
+`paneflow-app` needs `windows.h` and `llvm-rc` through GPUI. Read the file's
+item order instead, and treat any file containing a `mod tests` as having a hard
+boundary after which nothing else may be declared. Where an item genuinely must
+follow the test module, add an `#[allow(clippy::items_after_test_module,
+reason = "...")]` on the module, as `src-app/src/diff/view.rs` does.
 
-## Cross-platform compatibility (mandatory)
+## Cross-platform compatibility is mandatory
 
-Any new code, refactor, or change that touches the codebase in any way **must** be fully compatible with all three target platforms:
+Every change must work on Linux (Fedora, Ubuntu/Debian, Arch, openSUSE, on both
+Wayland and X11), macOS (Intel and Apple Silicon), and Windows 10/11 (x64, and
+ARM64 where applicable). Concretely:
 
-- **Linux** - every major distribution (Fedora, Ubuntu/Debian, Arch, openSUSE, etc.), both Wayland and X11.
-- **macOS (Apple)** - Intel and Apple Silicon.
-- **Windows** - Windows 10 and 11 (x64, and ARM64 where applicable).
+- Never hardcode POSIX-only paths, shell commands, environment variables, or
+  separators. Use `std::path::PathBuf`, `std::env`, and the `dirs` crate.
+- Guard platform-specific code with `#[cfg(target_os = "...")]` and always
+  provide a working path for the other two platforms, at minimum a graceful
+  fallback or a documented stub.
+- Prefer cross-platform crates (`portable-pty`, `notify`, `dirs`, `which`) over
+  POSIX-only APIs. If a POSIX-only crate is unavoidable, isolate it behind a
+  trait with per-OS implementations.
+- PTY, IPC, packaging, auto-update, keybindings, fonts, and file watching each
+  need a Linux, macOS, and Windows path. Never Linux-only.
+- If you cannot verify a platform, say so explicitly instead of assuming.
 
-Always verify every implementation decision against Windows, macOS, and Linux compatibility before considering the work done. For Linux, check the behavior against the major distro families and desktop stacks the project targets: Fedora, Ubuntu/Debian, Arch, openSUSE, Wayland, and X11.
+`paneflow-app`'s `cfg(windows)` branches are not compilable on a Linux host, so
+locally they can only be reviewed by inspection. Windows behavior is verified on
+real hardware after a push, not in a Linux development environment. Say which of
+the two you did.
 
-Concretely this means:
+## Boundaries the code does not reveal
 
-- Never hardcode POSIX-only paths, shell commands, env vars, or separators. Use `std::path::PathBuf`, `std::env`, and the `dirs` crate (or equivalent) for all filesystem and environment access.
-- Guard platform-specific code with `#[cfg(target_os = "…")]` and always provide a working path for the other two platforms (at minimum a graceful fallback or documented stub).
-- Prefer cross-platform crates (`portable-pty`, `notify`, `dirs`, `which`, etc.) over POSIX-only APIs. If a POSIX-only crate is unavoidable, isolate it behind a trait with per-OS implementations.
-- PTY, IPC, packaging, auto-update, keybindings, fonts, and file watching must each have Linux + macOS + Windows paths - never Linux-only.
-- Before shipping a change, mentally (or actually) verify it compiles and behaves correctly on all three platforms. If you cannot verify, say so explicitly rather than assume.
+- **Two terminal backends, one boundary.** libghostty is the default on Linux
+  and Windows x64 MSVC; upstream `alacritty_terminal` 0.26 backs macOS and the
+  `--no-default-features` recovery build. Both sit behind
+  `TerminalSessionBackend` (`src-app/src/terminal/mod.rs:28`). Do not leak a
+  backend-specific type past that boundary. `src-app/src/terminal/types.rs`
+  holds the neutral mirrors, and only six files in `src-app/src/` may name
+  `alacritty_terminal` at all: `search.rs`, `terminal/backend_corpus.rs`,
+  `terminal/listener.rs`, `terminal/mod.rs`, `terminal/pty_session.rs`, and
+  `terminal/types.rs`. Adding a seventh means the boundary leaked.
+- **The render thread never blocks.** No synchronous file I/O, git subprocess,
+  or recursive directory walk on the GPUI main thread. Push that work through
+  `smol::unblock` or the bootstrap path.
+- **Three embedded helper binaries have hard size caps** enforced by the
+  `Release build + binary-size budget (Linux x86_64)` job: `paneflow-shim` 512
+  KiB, `paneflow-ai-hook` ~375 KB, `paneflow-mcp` 512 KiB, and a combined cap
+  that must stay in sync with `src-app/build.rs`. They build under the
+  `release-min` profile. Do not add heavy dependencies to them; `toml_edit`, for
+  instance, is deliberately confined to `paneflow-mcp-install`.
+- **GPUI is pinned to an exact upstream Zed revision** across four `rev` values
+  in `src-app/Cargo.toml`, and `gpui_platform` must keep
+  `features = ["font-kit"]` or macOS renders empty glyph bitmaps. See
+  [docs/gpui-notes.md](docs/gpui-notes.md) before bumping.
+- The project is GPL-3.0-or-later. Keep packaging metadata in sync with the root
+  `LICENSE` and `Cargo.toml`.
 
-The project is actively porting to macOS and Windows, so all new work must land cross-platform by default.
+## Running and testing
 
-## Anti-Friction Rules (claude-doctor)
+```bash
+cargo run                                # debug build, needs Vulkan
+RUST_LOG=info cargo run                  # structured logging
+PANEFLOW_LATENCY_PROBE=1 cargo run       # keystroke to pixel latency, debug only
+cargo build --release                    # thin LTO, strip, codegen-units=1
+cargo test -p paneflow-config            # single crate
+cargo test -p paneflow-app --test flex_nchild -- --nocapture   # layout integration
+```
 
-Règles pour éviter les patterns de friction détectés par `claude-doctor` sur ce projet : edit-thrashing, restart-cluster, repeated-instructions, negative-drift, error-loop, excessive-exploration.
+Put unit tests beside the module when the logic is self-contained; keep broader
+UI and layout checks in `src-app/tests/`. Name tests descriptively, for example
+`test_three_children_flex_basis`. CI is not a substitute for a manual pass on UI
+changes: visual smoke jobs exist but are not exhaustive.
 
-### Editing discipline (anti edit-thrashing)
+Performance claims need evidence: a heaptrack diff for a memory claim, a
+`cargo flamegraph` profile for a CPU claim. Do not ship a perf number you did
+not measure.
 
-- Read the full file before editing. Plan all changes, then make ONE complete edit.
-- If you've edited the same file 3+ times, STOP. Re-read the user's original requirements and re-plan from scratch.
-- Prefer one large coherent edit over multiple small incremental ones.
+`tasks/` is a local, untracked scratch area for PRDs and story status files. It
+is not part of the repository, so never reference it from a tracked document and
+never assume another agent can read it.
 
-### Stay aligned with the user (anti repeated-instructions, rapid-corrections)
+## Commits and pull requests
 
-- Re-read the user's last message before responding. Follow through on every instruction completely - don't partially address requests.
-- Every few turns on a long task, re-read the original request to verify you haven't drifted from the goal.
-- When the user corrects you: stop, re-read their message, quote back what they actually asked for, and confirm understanding before proceeding.
+Use `type(scope): description`, with the story ID when the work maps to a
+tracked task, for example
+`feat(agents): US-004 - adapt paneflow-hook for the Codex PID env var`. Keep
+commits atomic per user story. Branch names look like `feat/description`.
 
-### Act, don't explore (anti excessive-exploration)
+Arthur is the only visible contributor. Never add AI attribution, a
+generated-by note, or a `Co-authored-by` trailer. Never close a GitHub issue or
+use an auto-closing keyword without explicit approval; default to `Refs #...`.
 
-- Don't read more than 3-5 files before making a change. Get a basic understanding, make the change, then iterate.
-- Prefer acting early and correcting via feedback over prolonged reading and planning.
+A PR should explain the user-visible behavior, list the validation steps you
+actually ran, link the issue, and include a screenshot or short recording for UI
+changes.
 
-### Break loops (anti error-loop, restart-cluster)
+## Where the rest of the knowledge lives
 
-- After 2 consecutive tool failures or the same error twice, STOP. Change your approach entirely - don't retry the same strategy. Explain what failed and try something genuinely different.
-- When truly stuck, summarize what you've tried and ask the user for guidance rather than retrying.
+| Topic | File |
+|---|---|
+| Module layout, thread model, keystroke-to-pixel path, agent lifecycle, IPC, self-update | [ARCHITECTURE.md](ARCHITECTURE.md) |
+| GPUI patterns, scroll and wheel gotchas, styling, dependency pin bumps | [docs/gpui-notes.md](docs/gpui-notes.md) |
+| MCP bridge setup and per-agent config | [docs/mcp-bridge.md](docs/mcp-bridge.md) |
+| Agent hook mechanics | [docs/hooks.md](docs/hooks.md) |
+| Rendering diagnostics | [docs/debugging-rendering.md](docs/debugging-rendering.md) |
+| Release, signing, and packaging runbooks | [docs/release-runbook.md](docs/release-runbook.md), [docs/release-signing.md](docs/release-signing.md), [docs/self-update-signing.md](docs/self-update-signing.md), [docs/pkg-repo-runbook.md](docs/pkg-repo-runbook.md) |
+| Windows port status and smoke test | [docs/WINDOWS.md](docs/WINDOWS.md), [docs/WINDOWS-SMOKE-TEST.md](docs/WINDOWS-SMOKE-TEST.md) |
 
-### Verify output (anti negative-drift)
-
-- Before presenting your result, double-check it actually addresses what the user asked for.
-- If the diff doesn't map cleanly to the user's request, don't ship it - re-plan.
+User configuration lives at `~/.config/paneflow/paneflow.json` on Linux, with
+`%APPDATA%` and macOS equivalents resolved through
+`src-app/src/runtime_paths.rs`.
