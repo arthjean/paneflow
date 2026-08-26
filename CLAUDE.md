@@ -211,14 +211,14 @@ Location: `~/.config/paneflow/paneflow.json` (Linux XDG).
 ```json
 {
   "default_shell": "/bin/zsh",
-  "theme": "One Dark",
+  "theme": "Paneflow Dark",
   "window_decorations": "client",
   "shortcuts": {},
   "commands": []
 }
 ```
 
-- **Theme hot-reload**: 500ms mtime polling in a `cx.spawn` loop. 2 bundled themes: One Dark (default), PaneFlow Light.
+- **Theme hot-reload**: 500ms mtime polling in a `cx.spawn` loop. 4 presets x 2 variants: Paneflow (default), Vercel, Claude, Cursor. `theme` stores the resolved variant name; `theme_mode` (light/dark/system) picks which variant of the preset runs.
 - **`window_decorations`**: read at startup only - requires restart. `"client"` = CSD, `"server"` = SSD.
 - **`shortcuts`**: wired via `keybindings::apply_keybindings()` at startup. Users can override default keybindings in config.
 - **`ConfigWatcher`** (notify crate, 300ms debounce): fully wired - background thread detects file changes and deposits new config for the GPUI main thread to apply.

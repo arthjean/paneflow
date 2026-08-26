@@ -131,7 +131,7 @@ Terminal, Search, Markdown, and Diff bindings are scoped.
 
 ### Why is my theme not hot-reloading?
 
-Paneflow ships `"One Dark"`, `"PaneFlow Light"`, `"Vercel"`, `"Claude"`, and `"Cursor"`. Runtime lookup is
+Paneflow ships four presets in two variants each: `"Paneflow Dark"`, `"Paneflow Light"`, `"Vercel Dark"`, `"Vercel Light"`, `"Claude Dark"`, `"Claude Light"`, `"Cursor Dark"`, and `"Cursor Light"`. Runtime lookup is
 case-insensitive, but canonical names keep schema validation clean.
 
 Theme and typography changes hot-reload from `paneflow.json`. Paneflow
@@ -141,7 +141,7 @@ back to a 500 ms `mtime` poll if the watcher cannot start.
 If the theme does not change within a second:
 
 1. Confirm you edited the platform-specific `paneflow.json` above.
-2. Use `"One Dark"`, `"PaneFlow Light"`, `"Vercel"`, `"Claude"`, or `"Cursor"`.
+2. Use one of the eight bundled variant names above.
 3. If the file lives on NFS, a sandbox mount, or a fragile WSL path,
    move it back to the normal config filesystem and restart once.
 
