@@ -182,7 +182,7 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
     // US-011): they are scoped to the `CodeEditor` key context, so they never
     // shadow a global shortcut, but the clear above takes them out with
     // everything else.
-    crate::app::agents_diff::code::view::register_keybindings(cx);
+    crate::app::diff_dock::code::view::register_keybindings(cx);
 }
 
 #[cfg(test)]
@@ -351,7 +351,7 @@ mod tests {
                 "Terminal",
                 "TextInput",
                 "PaneflowTextArea",
-                crate::app::agents_diff::code::view::CODE_KEY_CONTEXT,
+                crate::app::diff_dock::code::view::CODE_KEY_CONTEXT,
             ] {
                 assert!(
                     context.contains(&format!("!{excluded}")),

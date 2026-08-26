@@ -524,7 +524,7 @@ pub fn build_file_row_caches(files: &[FileDiff], syntax: Option<&DiffSyntax>) ->
 
 /// Resolve a [`RowPalette`] from the active theme's UI colors. The single color
 /// source for [`super::element::DiffElement`], shared by the Review view
-/// ([`super::view`]) and the Agents diff dock ([`crate::app::agents_diff`]) so
+/// ([`super::view`]) and the Agents diff dock ([`crate::app::diff_dock`]) so
 /// both render with identical washes.
 pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
     let diff = ui.diff_colors();
@@ -1134,7 +1134,7 @@ pub fn build_split_rows_with_caches(
 /// only its header row, an expanded file keeps its full segment. `anchors` maps
 /// each file path to its header row index (file order). Returns the filtered
 /// rows plus rebuilt anchors (header index in the output). Shared by the Review
-/// view ([`super::view`]) and the Agents diff dock ([`crate::app::agents_diff`]).
+/// view ([`super::view`]) and the Agents diff dock ([`crate::app::diff_dock`]).
 pub fn apply_collapse_unified(
     rows: &[DisplayRow],
     anchors: &[(String, usize)],

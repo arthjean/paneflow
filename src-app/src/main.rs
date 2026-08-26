@@ -853,7 +853,7 @@ struct AgentsViewState {
     pub(crate) agents_diff_open: bool,
     /// The diff snapshot rendered by the dock, computed off-thread for the
     /// active thread's cwd. Retained while hidden so same-cwd reopen is warm.
-    pub(crate) agents_diff: Option<crate::app::agents_diff::AgentsDiffData>,
+    pub(crate) agents_diff: Option<crate::app::diff_dock::AgentsDiffData>,
     /// Paths of files folded shut in the diff dock, so a fold survives re-renders.
     pub(crate) agents_diff_collapsed: std::collections::HashSet<String>,
     /// Stable fold keys for collapsed unchanged regions opened in the dock.
@@ -876,7 +876,7 @@ struct AgentsViewState {
     /// Whether the tab strip's `+` menu (which surface a new tab opens) is up.
     pub(crate) diff_new_tab_menu_open: bool,
     /// Whether the dock is currently showing its surface picker instead of a
-    /// tab (see `agents_diff::surface_picker`). Set by the pane-header toggle on
+    /// tab (see `diff_dock::surface_picker`). Set by the pane-header toggle on
     /// the workspace's first open of the dock.
     pub(crate) diff_dock_picker: bool,
     /// Whether the picker has been answered at least once *for the workspace
@@ -894,7 +894,7 @@ struct AgentsViewState {
         std::collections::HashMap<u64, crate::app::cli_diff_dock::DiffDockSlot>,
     /// The dock's tabs. Index 0 is always the permanent `Changes` diff; the
     /// rest are terminals opened from the `+` menu, closable from their tab.
-    pub(crate) diff_tabs: Vec<crate::app::agents_diff::DiffDockTab>,
+    pub(crate) diff_tabs: Vec<crate::app::diff_dock::DiffDockTab>,
     /// Index into `diff_tabs` of the tab whose body the dock renders.
     pub(crate) diff_active_tab: usize,
     /// Index of the modified file tab whose close button is armed, i.e. waiting
@@ -903,7 +903,7 @@ struct AgentsViewState {
     pub(crate) diff_tab_close_armed: Option<usize>,
     /// Open branch picker anchored to the diff dock's toolbar chip; `None` when
     /// closed. Holds the branch list, the search field and the focus to restore.
-    pub(crate) diff_branch_menu: Option<crate::app::agents_diff::DiffBranchMenuState>,
+    pub(crate) diff_branch_menu: Option<crate::app::diff_dock::DiffBranchMenuState>,
     /// Width in px of the diff dock; user-resizable by dragging its left edge.
     /// Clamped to `[AGENTS_DIFF_PANEL_MIN_WIDTH, AGENTS_DIFF_PANEL_MAX_WIDTH]`.
     pub(crate) agents_diff_width: f32,
@@ -911,7 +911,7 @@ struct AgentsViewState {
     /// being dragged to resize; `None` when not resizing.
     pub(crate) agents_diff_resize: Option<(f32, f32)>,
     /// Live horizontal-scrollbar drag inside the dock's shared diff body.
-    pub(crate) agents_diff_h_scroll_drag: Option<crate::app::agents_diff::AgentsDiffHScrollDrag>,
+    pub(crate) agents_diff_h_scroll_drag: Option<crate::app::diff_dock::AgentsDiffHScrollDrag>,
     /// Per-file horizontal scroll offsets (px) for the diff dock, indexed by
     /// stable file position. Driven by Shift+wheel / trackpad horizontal gestures
     /// (`apply_agents_diff_hwheel`) and applied per file by `DiffElement`; lazily

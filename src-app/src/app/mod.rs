@@ -5,7 +5,6 @@
 pub mod about_dialog;
 pub mod actions;
 pub mod agents_bottom_panel;
-pub mod agents_diff;
 pub mod agents_sidebar;
 pub mod agents_view_actions;
 pub mod attention_queue;
@@ -15,6 +14,7 @@ pub mod cli_diff_dock;
 pub mod composer;
 pub mod constants;
 pub mod custom_buttons_modal;
+pub mod diff_dock;
 pub mod diff_sidebar;
 pub mod diff_view_actions;
 pub mod diff_view_helpers;

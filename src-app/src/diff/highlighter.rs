@@ -19,7 +19,7 @@
 //! by `resolve_runs` so nested inline captures keep their specific colors.
 //!
 //! **Reuse contract (prd-file-editor-2026-Q3, US-004).** The file editor's
-//! incremental driver (`app/agents_diff/code/highlight.rs`) must color a file
+//! incremental driver (`app/diff_dock/code/highlight.rs`) must color a file
 //! exactly like this module colors its diff, so it consumes the same grammars
 //! ([`grammar_for_ext`], [`markdown_inline_grammar`]), the same size cutoff
 //! ([`MAX_HIGHLIGHT_BYTES`]) and the same overlap resolution

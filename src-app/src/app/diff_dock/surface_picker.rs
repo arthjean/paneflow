@@ -196,7 +196,7 @@ fn card(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::agents_diff::model::AGENTS_DIFF_PANEL_MIN_WIDTH;
+    use crate::app::diff_dock::model::AGENTS_DIFF_PANEL_MIN_WIDTH;
 
     #[test]
     fn two_cards_fit_the_narrowest_dock() {

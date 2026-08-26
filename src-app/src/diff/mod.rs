@@ -39,7 +39,7 @@ pub use view::{
 };
 
 // EP-001 (review redesign, US-001/US-002): the Agents diff dock
-// (`crate::app::agents_diff`) renders through the SAME `DiffElement` + git
+// (`crate::app::diff_dock`) renders through the SAME `DiffElement` + git
 // pipeline + row model as the Review view, so these are exposed crate-internally
 // rather than re-implemented. Kept `pub(crate)` (not `pub`) so the unification
 // surface stays inside the binary.

@@ -1,12 +1,12 @@
 //! Right-docked git diff for the CLI cockpit.
 //!
 //! The trailing `layout-sidebar-right` button of a pane header toggles the side
-//! dock ([`crate::app::agents_diff`]) on that pane's *workspace folder*. The
+//! dock ([`crate::app::diff_dock`]) on that pane's *workspace folder*. The
 //! dock hosts three surfaces - the working-tree diff against `HEAD`, a shell,
 //! and open files - and asks which one the first time a workspace opens it
-//! (`agents_diff::surface_picker`). This module owns the CLI plumbing only - the
+//! (`diff_dock::surface_picker`). This module owns the CLI plumbing only - the
 //! toggle, the per-workspace attachment, and the dock host; the panel itself is
-//! rendered once by [`crate::app::agents_diff`].
+//! rendered once by [`crate::app::diff_dock`].
 //!
 //! The dock is *detached per workspace*: it belongs to the folder it was opened
 //! on, so switching workspace parks it and brings up whatever the incoming
@@ -19,7 +19,7 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::app::agents_diff::{AgentsDiffData, DiffDockTab};
+use crate::app::diff_dock::{AgentsDiffData, DiffDockTab};
 
 /// The dock state one workspace owns, parked while another workspace is active.
 ///

@@ -276,7 +276,7 @@ notify-rust = "4"
 minisign-verify = "0.2.5"
 
 # US-001 (prd-file-editor-2026-Q3): the rope backing `CodeDocument`
-# (`app/agents_diff/code/document.rs`). An edit in the middle of a large file
+# (`app/diff_dock/code/document.rs`). An edit in the middle of a large file
 # is O(log n) instead of the O(n) memmove a flat `String` would pay, and the
 # rope maintains its own line counters so byte <-> line conversions never
 # rescan. `chunks_at_byte` feeds tree-sitter's `Parser::parse_with` callback

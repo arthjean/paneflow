@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// touching the disk again on the render thread, whether the editor would
 /// refuse the file for being over [`code::load::MAX_FILE_BYTES`].
 ///
-/// [`code::load::MAX_FILE_BYTES`]: crate::app::agents_diff::code::load::MAX_FILE_BYTES
+/// [`code::load::MAX_FILE_BYTES`]: crate::app::diff_dock::code::load::MAX_FILE_BYTES
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileNode {
     pub path: PathBuf,
@@ -125,7 +125,7 @@ pub(crate) fn is_markdown(path: &Path) -> bool {
 /// ([`code::load::looks_binary`]), so a mis-classified extension costs a dimmed
 /// row, never a wrong read.
 ///
-/// [`code::load::looks_binary`]: crate::app::agents_diff::code::load
+/// [`code::load::looks_binary`]: crate::app::diff_dock::code::load
 const BINARY_EXTENSIONS: &[&str] = &[
     // images
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif", "tiff", "tif", "psd", "heic",
@@ -156,7 +156,7 @@ pub(crate) fn is_binary_extension(path: &Path) -> bool {
 pub(crate) fn editor_refuses(node: &FileNode) -> bool {
     !node.is_dir
         && (is_binary_extension(&node.path)
-            || node.size > crate::app::agents_diff::code::load::MAX_FILE_BYTES as u64)
+            || node.size > crate::app::diff_dock::code::load::MAX_FILE_BYTES as u64)
 }
 
 /// Display name (the final path component) of a node, lossy for non-UTF-8.
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn editor_refuses_binary_and_oversized_files_only() {
-        let limit = crate::app::agents_diff::code::load::MAX_FILE_BYTES as u64;
+        let limit = crate::app::diff_dock::code::load::MAX_FILE_BYTES as u64;
 
         let mut png = file("/w/logo.png");
         png.size = 12;
