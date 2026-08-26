@@ -147,13 +147,7 @@ fn push_match(
     }
 }
 
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 impl crate::engine::DisplayTerminal {
     /// Copy a bounded slice of complete rows from the live grid for search
     /// outside the terminal worker.
