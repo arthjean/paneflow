@@ -482,6 +482,34 @@ fn installed_binaries_contains(binary: &'static str) -> bool {
     cache.found.contains(binary)
 }
 
+/// `KEY=value` shell prefix in front of a command (`RUST_LOG=info codex`).
+/// Conservative: the key must be a non-empty identifier, so `--flag=x` and a
+/// bare `=foo` are not mistaken for assignments.
+fn is_env_assignment(token: &str) -> bool {
+    match token.split_once('=') {
+        Some((key, _)) => {
+            !key.is_empty()
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !key.starts_with(|c: char| c.is_ascii_digit())
+        }
+        None => false,
+    }
+}
+
+/// Trim the Windows executable suffixes so `claude.cmd` matches `claude`.
+/// Case-insensitive: the shell resolves `CLAUDE.CMD` just as happily.
+fn strip_windows_exec_suffix(base: &str) -> &str {
+    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
+        if base
+            .get(base.len().saturating_sub(suffix.len())..)
+            .is_some_and(|s| s.eq_ignore_ascii_case(suffix))
+        {
+            return &base[..base.len() - suffix.len()];
+        }
+    }
+    base
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -729,32 +757,4 @@ mod tests {
         assert_eq!(TerminalAgent::Kiro.command(&cfg), "kiro-cli chat");
         assert_eq!(TerminalAgent::Openclaw.command(&cfg), "openclaw tui");
     }
-}
-
-/// `KEY=value` shell prefix in front of a command (`RUST_LOG=info codex`).
-/// Conservative: the key must be a non-empty identifier, so `--flag=x` and a
-/// bare `=foo` are not mistaken for assignments.
-fn is_env_assignment(token: &str) -> bool {
-    match token.split_once('=') {
-        Some((key, _)) => {
-            !key.is_empty()
-                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && !key.starts_with(|c: char| c.is_ascii_digit())
-        }
-        None => false,
-    }
-}
-
-/// Trim the Windows executable suffixes so `claude.cmd` matches `claude`.
-/// Case-insensitive: the shell resolves `CLAUDE.CMD` just as happily.
-fn strip_windows_exec_suffix(base: &str) -> &str {
-    for suffix in [".exe", ".cmd", ".bat", ".ps1"] {
-        if base
-            .get(base.len().saturating_sub(suffix.len())..)
-            .is_some_and(|s| s.eq_ignore_ascii_case(suffix))
-        {
-            return &base[..base.len() - suffix.len()];
-        }
-    }
-    base
 }
