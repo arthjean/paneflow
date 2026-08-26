@@ -13,7 +13,7 @@ Works with any CLI agent - Claude Code, Codex, Gemini, opencode, Pi, Hermes, you
 
 Everything runs locally: agents are ordinary CLI processes in ordinary terminals, there is no hosted runtime and no proxy in front of your model. Prompts are pre-filled and you press Enter; auto-submit is explicit and gated.
 
-Written in Rust on [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), with native builds for Linux, macOS Apple Silicon, and Windows x64. No Electron, no WSL.
+Written in Rust on [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui), with panes emulated by [Ghostty](https://github.com/ghostty-org/ghostty): the same `libghostty-vt` engine, statically linked, on Linux and Windows x64, with [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal) on macOS and as the rollback everywhere. Native builds for Linux, macOS Apple Silicon, and Windows x64. No Electron, no WSL.
 
 [Website →](https://paneflow.dev)
 
