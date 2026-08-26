@@ -27,6 +27,41 @@ caches and compares the normalized archive, header, bindings, and build info.
 Zig cache paths are removed from ELF debug data with `eu-strip`, then members
 are repacked with deterministic `ar` mode.
 
+## macOS arm64 archive
+
+The reviewed Apple Silicon input is `prebuilt/aarch64-apple-darwin/`. It is
+cross-built from a Linux host, because Ghostty only takes the Apple `libtool`
+combine path when the build host is Darwin; a Linux host keeps the same
+`zig ar -M` combine the Linux targets already normalize.
+
+```sh
+rustup component add llvm-tools
+PANEFLOW_GHOSTTY_SOURCE_DIR=/path/to/ghostty \
+  scripts/build-libghostty-macos.sh --verify-reproducible
+```
+
+Normalization tools come from the `llvm-tools` component of the repository's
+own pinned Rust toolchain, so `macos_llvm_version` moves only when that
+toolchain moves. `PANEFLOW_LLVM_BIN` overrides that search.
+
+Debug sections embed absolute paths, and `llvm-strip -S` drops them without
+renumbering the addresses that followed, so path *length* leaks into the
+stripped object. The recipe therefore pins every path that reaches debug info:
+the pinned tree is exported to `macos_canonical_source_path`, the Zig
+executable and `lib/` tree are staged at `macos_canonical_zig_path` and invoked
+through `--zig-lib-dir`, and the Zig cache and install prefix are nested under
+the canonical source root. Both staged roots are removed on success and on
+failure. `--seed 0 -j1` pins Zig's build order, `llvm-strip -S` strips each
+member, and `llvm-ar crsD --format=darwin` repacks them in `LC_ALL=C` basename
+order.
+
+The produced archive hash is compared against the manifest's `archive_sha256`
+before the bundle is written; a mismatch aborts the build.
+`--allow-hash-drift` downgrades it to a warning and exists only to mint a new
+reviewed archive after a deliberate recipe change. Full rationale and the
+reproducibility findings are in
+[docs/release/macos-libghostty.md](../../docs/release/macos-libghostty.md).
+
 ## Windows x64 MSVC archive
 
 The production Windows input is the SIMD-enabled static archive

@@ -1,0 +1,10 @@
+source_sha=ae52f97dcac558735cfa916ea3965f247e5c6e9e
+zig_version=0.15.2
+header_sha256=4967e3edfc5802648c280246e7aac66f36a28d7c3739727c0d2e2cd85c9f4eee
+bindings_sha256=a1f0876e144e69889ed1d9a5501ee7e254afe674985c93c703d61cee49da81d0
+rust_target=aarch64-apple-darwin
+zig_target=aarch64-macos
+optimize=ReleaseFast
+archive_normalization=fixed-zig-source-cache-prefix+zig-build-seed0-j1+llvm-strip-debug+llvm-ar-D-darwin
+archive_sha256=56fbefeefd7ae4cacc4a2cb30b717d7131e0c4169fd605551639fcc2c5b396ce
+build_info_symbol=ghostty_build_info

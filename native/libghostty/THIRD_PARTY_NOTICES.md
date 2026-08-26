@@ -1,6 +1,6 @@
 # Native third-party notices
 
-PaneFlow Linux and Windows x64 builds statically link a reviewed
+PaneFlow Linux, macOS arm64, and Windows x64 builds statically link a reviewed
 `libghostty-vt` archive.
 This notice covers every archive member, compiler-support object, bundled
 dataset, and generated template distributed through that archive. It is
@@ -13,14 +13,15 @@ Reviewed archive fingerprints:
 
 - `x86_64-unknown-linux-gnu`: `0d3e8fad7503658cb1fca3f1d78f2dc725dd3650264cebaa4ee30af9be619916`
 - `aarch64-unknown-linux-gnu`: `183c81ca54681587e79bceb4cee7751df35db7a0c3e55dd95a608d14b981fc87`
+- `aarch64-apple-darwin`: `56fbefeefd7ae4cacc4a2cb30b717d7131e0c4169fd605551639fcc2c5b396ce`
 - `x86_64-pc-windows-msvc`: `69d3676b4dce995c72b60c9a5b1b0a260e2c1778f623dab82835aa484dd04ac3`
 
 ## Artifact member inventory
 
-The reviewed archives contain equivalent compiled components. Linux uses
-`.o` members while the normalized MSVC archive uses `.obj`; the Zig-generated
-Highway member is named `libhighway_zcu.o` on Linux and `highway_zcu.obj` on
-Windows.
+The reviewed archives contain equivalent compiled components. Linux and macOS
+use `.o` members while the normalized MSVC archive uses `.obj`; the
+Zig-generated Highway member is named `libhighway_zcu.o` on Linux and macOS and
+`highway_zcu.obj` on Windows.
 Ghostty modifications and generated glue remain covered by Ghostty's MIT
 license in addition to the upstream components identified below.
 

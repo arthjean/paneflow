@@ -18,7 +18,7 @@ header_sha256 = "4967e3edfc5802648c280246e7aac66f36a28d7c3739727c0d2e2cd85c9f4ee
 bindings_path = "native/libghostty/bindings.rs"
 bindings_sha256 = "a1f0876e144e69889ed1d9a5501ee7e254afe674985c93c703d61cee49da81d0"
 notice_path = "native/libghostty/THIRD_PARTY_NOTICES.md"
-notice_sha256 = "e0b728ebeea24cb789528c40971464b78ce85ae8f7b263d14fc9c2cf2da89f89"
+notice_sha256 = "f7f11ed7a9980eb084a2bc27dc0cfa570bfa0d02dbdf46de44f97f626561d5f8"
 sbom_path = "native/libghostty/sbom.cdx.json"
 sbom_sha256 = "4b14b53279a78bdadeb6108fddb6e91f93f14ab8a4c4fea69623558ea1b4524a"
 api_version = "0.1.0"
@@ -34,6 +34,11 @@ windows_sdk = "10.0.26100.0"
 windows_llvm_version = "19.1.5"
 windows_crt = "MT_StaticRelease"
 windows_cxx_runtime = "libcpmt.lib"
+macos_build_seed = "0"
+macos_build_jobs = "1"
+macos_llvm_version = "22.1.2-rust-1.96.1-stable"
+macos_canonical_source_path = "/tmp/paneflow-libghostty-ae52f97d"
+macos_canonical_zig_path = "/tmp/paneflow-libghostty-zig-0.15.2"
 
 [targets."x86_64-unknown-linux-gnu"]
 platform = "linux"
@@ -51,6 +56,16 @@ archive_path = "lib/libghostty-vt.a"
 archive_sha256 = "183c81ca54681587e79bceb4cee7751df35db7a0c3e55dd95a608d14b981fc87"
 archive_normalization = "elfutils-strip-debug+ar-D"
 zig_target = "aarch64-linux-gnu"
+link_name = "ghostty-vt"
+system_libraries = []
+build_info_symbol = "ghostty_build_info"
+
+[targets."aarch64-apple-darwin"]
+platform = "macos"
+archive_path = "lib/libghostty-vt.a"
+archive_sha256 = "56fbefeefd7ae4cacc4a2cb30b717d7131e0c4169fd605551639fcc2c5b396ce"
+archive_normalization = "fixed-zig-source-cache-prefix+zig-build-seed0-j1+llvm-strip-debug+llvm-ar-D-darwin"
+zig_target = "aarch64-macos"
 link_name = "ghostty-vt"
 system_libraries = []
 build_info_symbol = "ghostty_build_info"
