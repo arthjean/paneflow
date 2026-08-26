@@ -1,4 +1,4 @@
-<img alt="Paneflow" src="./assets/icons/paneflow-128.png" width="36" height="36">
+<img alt="Paneflow" src="./src-app/assets/icons/paneflow.png" width="36" height="36">
 
 [![version](https://img.shields.io/github/v/release/arthjean/paneflow?sort=semver&style=flat&label=version&colorA=000000&colorB=000000)](https://github.com/arthjean/paneflow/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/arthjean/paneflow/total.svg?style=flat&label=downloads&colorA=000000&colorB=000000)](https://github.com/arthjean/paneflow/releases)
