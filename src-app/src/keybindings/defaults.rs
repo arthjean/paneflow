@@ -393,6 +393,22 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "diff_dismiss",
         context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
+    // EP-005 US-018 (prd-file-editor-2026-Q3): the two chords the diff dock's
+    // `+` menu already advertises on its rows. `secondary-g` / `secondary-j`
+    // were free (only their `shift` variants were taken), and the context keeps
+    // them off shells, where bare Ctrl+G is BEL and Ctrl+J is LF. `CodeEditor`
+    // is excluded for the same reason: it is a text surface, and it is the very
+    // surface these chords open, so a caret inside it must keep its keystrokes.
+    DefaultBinding {
+        key: "secondary-g",
+        action_name: "diff_new_file_tab",
+        context: Some("!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor"),
+    },
+    DefaultBinding {
+        key: "secondary-j",
+        action_name: "diff_new_terminal_tab",
+        context: Some("!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor"),
+    },
     // EP-001 (CLI Cockpit): Composer + broadcast
     // groups. All three are unclaimed `secondary-shift-…` slots (taken set
     // before this block: d/e/w/n/q/j/t/z/=/s/a/g) and none shadows a common

@@ -26,12 +26,22 @@ pub(crate) const AGENTS_DIFF_PANEL_WIDTH: f32 = 880.0;
 pub(super) const AGENTS_DIFF_PANEL_MIN_WIDTH: f32 = 360.0;
 pub(super) const AGENTS_DIFF_PANEL_MAX_WIDTH: f32 = 1400.0;
 
+/// How many `File` tabs the dock keeps open at once (US-017). Past the cap the
+/// oldest tab that is neither modified nor active is evicted, so a cap hit can
+/// never drop unsaved work.
+pub(crate) const MAX_DIFF_FILE_TABS: usize = 8;
+
 /// One tab of the dock's strip. `Changes` is the permanent diff tab (index 0);
 /// `Terminal` tabs are opened from the strip's `+` menu and are closable.
+/// `File` tabs host the editor of `super::code` and are closable too, with a
+/// confirmation step while the document is modified (US-017).
 #[derive(Clone)]
 pub(crate) enum DiffDockTab {
     Changes,
     Terminal(gpui::Entity<crate::terminal::TerminalView>),
+    /// Constructed only by `PaneFlowApp::open_diff_file_tab`, reached from the
+    /// Files sidebar and from the strip's `+` menu (US-017 / US-018).
+    File(gpui::Entity<super::code::view::CodeView>),
 }
 
 /// The chrome's read-only view of the dock state, bundled so the header and its

@@ -153,6 +153,13 @@ actions!(
         // modal.
         ToggleFilesSidebar,
         OpenAttentionQueue,
-        OpenLaunchPad
+        OpenLaunchPad,
+        // EP-005 US-018 (prd-file-editor-2026-Q3): the diff dock's `+` menu
+        // advertises Ctrl+G / Ctrl+J on its two rows. These make both chords
+        // real. Both no-op unless the dock is open, and both are scoped away
+        // from terminals and text widgets so a shell keeps its own Ctrl+G
+        // (BEL) and Ctrl+J (LF).
+        DiffNewFileTab,
+        DiffNewTerminalTab
     ]
 );

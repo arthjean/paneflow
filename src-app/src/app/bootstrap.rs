@@ -1047,6 +1047,7 @@ impl PaneFlowApp {
                 diff_new_tab_menu_open: false,
                 diff_tabs: vec![crate::app::agents_diff::DiffDockTab::Changes],
                 diff_active_tab: 0,
+                diff_tab_close_armed: None,
                 diff_branch_menu: None,
                 agents_diff_width: crate::app::agents_diff::AGENTS_DIFF_PANEL_WIDTH,
                 agents_diff_resize: None,

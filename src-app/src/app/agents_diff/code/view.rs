@@ -1,0 +1,3169 @@
+//! The entity that hosts a [`CodeElement`]: one open file, its scroll state,
+//! its caret, and the mouse plumbing the element cannot own.
+//!
+//! `CodeElement` paints; everything that has to survive between frames lives
+//! here. The split follows Zed's `Editor` / `EditorElement` pair and Paneflow's
+//! own diff dock: state on the entity, geometry on the element, handed back
+//! through a single `Rc<Cell<CodeGeometry>>` the element writes during
+//! `prepaint` and the wheel / scrollbar handlers read.
+//!
+//! ## The two-axis scroll recipe
+//!
+//! Verbatim from `CLAUDE.md` ("GPUI scroll & wheel"), and load-bearing in all
+//! three of its parts:
+//!
+//! - `overflow_y_scroll()` is what actually moves the element. GPUI only pushes
+//!   the scroll offset onto the element-offset stack when the host's overflow
+//!   axis is `Scroll`; under `overflow_hidden` a custom element that positions
+//!   content off its own `bounds.origin` never moves at all.
+//! - `track_scroll()` keeps `offset()` / `bounds()` / `max_offset()` live, which
+//!   is where the vertical scrollbar's geometry comes from.
+//! - `restrict_scroll_to_axis = Some(true)` stops the native Y handler
+//!   back-filling `delta_y` from `delta.x`. Without it, a Shift+wheel gesture
+//!   scrolls the file vertically instead of horizontally.
+//!
+//! Horizontal is fully custom and always reads `delta.x`. X11, Wayland and
+//! Windows all swap Shift+wheel onto the X axis at the platform layer and zero
+//! `delta.y`, and macOS delivers horizontal natively, so branching on
+//! `modifiers.shift` would read a zero on every platform.
+//!
+//! ## Caret and selection (EP-003)
+//!
+//! The caret is a byte offset carried by a [`CodeSelection`], the same shape
+//! `widgets/text_area.rs:441` uses. Every "where does it land" rule lives in
+//! [`super::cursor`], which knows nothing about GPUI; this file only turns an
+//! event into one call and one repaint. Hit-testing goes through the element's
+//! [`CodeHitMap`], i.e. the real `ShapedLine`s of the frame that was painted,
+//! so a click lands on a glyph boundary even with tabs or wide characters.
+//!
+//! ## Editing (EP-004)
+//!
+//! Every mutation of the rope goes through [`CodeView::splice_all`], including
+//! the platform's own text input. That single door is what makes the read-only
+//! refusal, the undo history and the dirty mark impossible to bypass: an action
+//! handler that spliced directly would silently skip all three.
+//!
+//! Three decisions are deliberate and worth stating rather than rediscovering:
+//!
+//! - **The IME composition lives in the document.** US-012 asks that the
+//!   document be "mutated only on commit", but GPUI's `EntityInputHandler`
+//!   protocol reads the marked text back out of the buffer
+//!   (`text_for_range`, `bounds_for_range`), so a preedit held on the side
+//!   would render nothing and place the candidate window nowhere. The preedit
+//!   is spliced in as a single typing transaction, tracked in `marked`, and
+//!   painted underlined so it reads as uncommitted - the same shape as Zed's
+//!   `Editor` and `widgets/text_area.rs`. A commit replaces it in place; an
+//!   abandoned composition is removed, never left pending.
+//! - **This view owns its own conflict watcher.** `diff/view/watcher.rs`
+//!   watches a worktree, on another entity, only while the diff is open. What
+//!   is reused is its shape (parent directory, non-recursive, debounced), not
+//!   its instance.
+//! - **Disk work runs on GPUI's background executor**, not `smol::unblock`.
+//!   Both keep the render thread free; only the former is driven by the test
+//!   scheduler, which is what lets `Ctrl+S` and the conflict refusal be proven
+//!   from the action rather than from `super::save` alone.
+
+use std::cell::{Cell, RefCell};
+use std::ops::Range;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::{Duration, Instant};
+
+use futures::StreamExt;
+use futures::channel::mpsc;
+use futures::future::Either;
+use gpui::{
+    AnyElement, App, AppContext, AsyncApp, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle,
+    EntityInputHandler, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
+    Render, ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled,
+    UTF16Selection, WeakEntity, Window, actions, div, px, size,
+};
+use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+
+use super::cursor::{self, CodeSelection};
+use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
+use super::edit::{self, EditGroup, IndentUnit};
+use super::element::{
+    CODE_ROW_HEIGHT, CodeCaret, CodeColors, CodeElement, CodeGeometry, CodeHitMap, GutterMemo,
+    autoscroll_step, reveal_h_offset, reveal_offset,
+};
+use super::highlight::{CodeHighlighter, DeferredParse, HighlightOutcome, spawn_deferred_parse};
+use super::load::{CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
+use super::save::{self, FileStamp};
+use crate::diff::{DiffSyntax, palette};
+use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
+use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState};
+
+/// Key context the editor's bindings are scoped to (US-009).
+pub(crate) const CODE_KEY_CONTEXT: &str = "CodeEditor";
+
+/// Two presses closer together than this, and within [`MULTI_CLICK_RADIUS`],
+/// chain into a double then a triple click. Same values as
+/// `widgets/text_area.rs`, so the two editors feel identical.
+const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
+const MULTI_CLICK_RADIUS: f32 = 2.0;
+
+/// Rows an out-of-viewport drag scrolls per mouse-move event (US-010).
+const DRAG_SCROLL_ROWS: f32 = 1.0;
+/// Columns the same drag scrolls horizontally. Three columns is close to one
+/// row height on the editor's mono font, so both axes move at a similar visual
+/// speed.
+const DRAG_SCROLL_COLUMNS: f32 = 3.0;
+
+/// How long a refused keystroke lights the read-only banner up (US-012). Long
+/// enough to be noticed, short enough not to linger after a burst of typing.
+const READ_ONLY_FLASH: Duration = Duration::from_millis(600);
+
+/// Quiet period a burst of filesystem events has to end with before the file is
+/// re-read (US-016). Same value, same reasoning as `markdown/view.rs`: an
+/// editor writing through a temp file emits several events per save.
+const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
+
+actions!(
+    paneflow_code_editor,
+    [
+        /// Move the caret one grapheme left.
+        CeLeft,
+        /// Move the caret one grapheme right.
+        CeRight,
+        /// Move the caret one row up, keeping the goal column.
+        CeUp,
+        /// Move the caret one row down, keeping the goal column.
+        CeDown,
+        /// Extend the selection one grapheme left.
+        CeSelectLeft,
+        /// Extend the selection one grapheme right.
+        CeSelectRight,
+        /// Extend the selection one row up.
+        CeSelectUp,
+        /// Extend the selection one row down.
+        CeSelectDown,
+        /// Move the caret to the start of the previous word.
+        CeWordLeft,
+        /// Move the caret to the end of the next word.
+        CeWordRight,
+        /// Extend the selection to the start of the previous word.
+        CeSelectWordLeft,
+        /// Extend the selection to the end of the next word.
+        CeSelectWordRight,
+        /// Move the caret to the first column of its row.
+        CeHome,
+        /// Move the caret past the last column of its row.
+        CeEnd,
+        /// Extend the selection to the first column of its row.
+        CeSelectHome,
+        /// Extend the selection past the last column of its row.
+        CeSelectEnd,
+        /// Move the caret one viewport up.
+        CePageUp,
+        /// Move the caret one viewport down.
+        CePageDown,
+        /// Extend the selection one viewport up.
+        CeSelectPageUp,
+        /// Extend the selection one viewport down.
+        CeSelectPageDown,
+        /// Move the caret to the first byte of the document.
+        CeDocStart,
+        /// Move the caret to the last byte of the document.
+        CeDocEnd,
+        /// Extend the selection to the first byte of the document.
+        CeSelectDocStart,
+        /// Extend the selection to the last byte of the document.
+        CeSelectDocEnd,
+        /// Select the whole document.
+        CeSelectAll,
+        /// Delete the selection, or the grapheme before the caret.
+        CeBackspace,
+        /// Delete the selection, or the grapheme after the caret.
+        CeDelete,
+        /// Insert a newline, repeating the current row's indentation.
+        CeNewline,
+        /// Undo the newest transaction.
+        CeUndo,
+        /// Redo the newest undone transaction.
+        CeRedo,
+        /// Copy the selection, or the whole current row.
+        CeCopy,
+        /// Cut the selection, or the whole current row.
+        CeCut,
+        /// Paste the clipboard, sanitized.
+        CePaste,
+        /// Indent the selected rows by one level.
+        CeIndent,
+        /// Outdent the selected rows by one level.
+        CeOutdent,
+        /// Write the document back to disk.
+        CeSave,
+    ]
+);
+
+/// Register the code editor's key bindings (US-011).
+///
+/// Called from [`crate::keybindings::apply_keybindings`], which clears every
+/// binding before rebuilding them, so this has to run on every apply and not
+/// only at startup.
+///
+/// Each shortcut is declared once, with its platform variants adjacent: the
+/// shared half is unconditional, and the two `cfg` blocks carry only the chords
+/// that genuinely differ (word motion and document ends follow the macOS
+/// Option / Command conventions, everything else is identical). Nothing here
+/// installs a catch-all key handler, so a key with no binding bubbles to the
+/// parent dispatch instead of dying on the editor.
+pub(crate) fn register_keybindings(cx: &mut App) {
+    let ctx = Some(CODE_KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("left", CeLeft, ctx),
+        KeyBinding::new("right", CeRight, ctx),
+        KeyBinding::new("up", CeUp, ctx),
+        KeyBinding::new("down", CeDown, ctx),
+        KeyBinding::new("shift-left", CeSelectLeft, ctx),
+        KeyBinding::new("shift-right", CeSelectRight, ctx),
+        KeyBinding::new("shift-up", CeSelectUp, ctx),
+        KeyBinding::new("shift-down", CeSelectDown, ctx),
+        KeyBinding::new("home", CeHome, ctx),
+        KeyBinding::new("end", CeEnd, ctx),
+        KeyBinding::new("shift-home", CeSelectHome, ctx),
+        KeyBinding::new("shift-end", CeSelectEnd, ctx),
+        KeyBinding::new("pageup", CePageUp, ctx),
+        KeyBinding::new("pagedown", CePageDown, ctx),
+        KeyBinding::new("shift-pageup", CeSelectPageUp, ctx),
+        KeyBinding::new("shift-pagedown", CeSelectPageDown, ctx),
+        // `secondary` is Cmd on macOS and Ctrl elsewhere, so Select All needs
+        // no platform split.
+        KeyBinding::new("secondary-a", CeSelectAll, ctx),
+        // Editing (EP-004). `secondary` covers the Cmd / Ctrl split, so only
+        // the extra Windows-and-Linux redo chord below needs a `cfg`.
+        KeyBinding::new("backspace", CeBackspace, ctx),
+        KeyBinding::new("delete", CeDelete, ctx),
+        KeyBinding::new("enter", CeNewline, ctx),
+        KeyBinding::new("tab", CeIndent, ctx),
+        KeyBinding::new("shift-tab", CeOutdent, ctx),
+        KeyBinding::new("secondary-z", CeUndo, ctx),
+        KeyBinding::new("secondary-shift-z", CeRedo, ctx),
+        KeyBinding::new("secondary-c", CeCopy, ctx),
+        KeyBinding::new("secondary-x", CeCut, ctx),
+        KeyBinding::new("secondary-v", CePaste, ctx),
+        KeyBinding::new("secondary-s", CeSave, ctx),
+    ]);
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
+        KeyBinding::new("alt-left", CeWordLeft, ctx),
+        KeyBinding::new("alt-right", CeWordRight, ctx),
+        KeyBinding::new("alt-shift-left", CeSelectWordLeft, ctx),
+        KeyBinding::new("alt-shift-right", CeSelectWordRight, ctx),
+        KeyBinding::new("cmd-up", CeDocStart, ctx),
+        KeyBinding::new("cmd-down", CeDocEnd, ctx),
+        KeyBinding::new("cmd-shift-up", CeSelectDocStart, ctx),
+        KeyBinding::new("cmd-shift-down", CeSelectDocEnd, ctx),
+    ]);
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([
+        KeyBinding::new("ctrl-left", CeWordLeft, ctx),
+        KeyBinding::new("ctrl-right", CeWordRight, ctx),
+        KeyBinding::new("ctrl-shift-left", CeSelectWordLeft, ctx),
+        KeyBinding::new("ctrl-shift-right", CeSelectWordRight, ctx),
+        KeyBinding::new("ctrl-home", CeDocStart, ctx),
+        KeyBinding::new("ctrl-end", CeDocEnd, ctx),
+        KeyBinding::new("ctrl-shift-home", CeSelectDocStart, ctx),
+        KeyBinding::new("ctrl-shift-end", CeSelectDocEnd, ctx),
+        // The second redo chord Windows and Linux editors also answer to.
+        KeyBinding::new("ctrl-y", CeRedo, ctx),
+    ]);
+}
+
+/// What a mouse drag selects by (US-010): the granularity the opening press
+/// established, kept for the whole drag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DragGrain {
+    Grapheme,
+    Word,
+    Line,
+}
+
+/// A live text drag: its granularity plus the range the opening press selected,
+/// which a word or line drag always keeps covered.
+#[derive(Clone, Debug)]
+struct TextDrag {
+    grain: DragGrain,
+    anchor: Range<usize>,
+}
+
+/// Multi-click accumulator: when and where the last press landed, and how many
+/// presses have chained so far.
+#[derive(Clone, Copy)]
+struct ClickChain {
+    at: Instant,
+    position: Point<Pixels>,
+    count: u8,
+}
+
+/// How the in-memory document stands against the file on disk (US-016).
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+enum DiskState {
+    /// The last stamp the editor took still describes the file.
+    #[default]
+    InSync,
+    /// Someone else wrote the file. Nothing is overwritten until the user
+    /// picks a side.
+    Conflict,
+    /// The file is gone. Saving recreates it.
+    Deleted,
+}
+
+/// One open file inside the diff dock.
+pub(crate) struct CodeView {
+    path: PathBuf,
+    state: CodeLoadState,
+    /// Generation guard: a load that lands after the tab moved on is dropped
+    /// without repainting (US-002).
+    slot: CodeLoadSlot,
+    /// Keyboard focus (US-009). Owning it here is what scopes the
+    /// [`CODE_KEY_CONTEXT`] bindings to this widget, and what tells the element
+    /// whether to paint a caret at all.
+    focus: FocusHandle,
+    /// Vertical scroll, owned by the host div's native handler.
+    scroll: ScrollHandle,
+    /// Live vertical-scrollbar drag, if any (US-007).
+    v_drag: Option<ScrollDragState>,
+    /// Live horizontal offset in pixels, always `>= 0` (US-008).
+    h_offset: f32,
+    /// Caret plus selection anchor, in document bytes (US-009, US-010).
+    selection: CodeSelection,
+    /// Char column vertical motion aims at, so Up/Down across a short row come
+    /// back to where the caret started (US-011).
+    goal_column: usize,
+    /// Live text selection drag (US-010).
+    text_drag: Option<TextDrag>,
+    /// Double / triple click tracking (US-010).
+    click_chain: Option<ClickChain>,
+    /// When the caret last moved. It stops blinking for one interval after
+    /// that, which is the "solid while you work" behavior US-009 asks for.
+    last_motion: Instant,
+    /// Blink phase, mirrored from the app-wide [`BlinkPhaseGlobal`].
+    blink_visible: bool,
+    /// Theme snapshot the highlighter's colors were resolved against (US-005).
+    theme_generation: u64,
+    /// Geometry the element resolves each `prepaint` and the handlers read back.
+    geometry: Rc<Cell<CodeGeometry>>,
+    /// Gutter width memo, keyed on the line-number digit count (US-006).
+    gutter_memo: Rc<Cell<GutterMemo>>,
+    /// The frame's shaped lines, published by the element for hit-testing.
+    hits: Rc<RefCell<CodeHitMap>>,
+    /// Stable element id, built once so the render hot path never formats a
+    /// string per frame.
+    element_id: SharedString,
+    /// Undo / redo stack (US-013).
+    history: edit::UndoHistory,
+    /// Where the history stood when the file last agreed with disk. The dirty
+    /// mark is `history.mark() != saved_mark`, which is what makes undoing back
+    /// to the saved state clear the dot instead of stacking a second change.
+    saved_mark: edit::HistoryMark,
+    /// Indentation Tab inserts, detected from the file at load (US-014).
+    indent: IndentUnit,
+    /// Byte range of the live IME composition (US-012).
+    marked: Option<Range<usize>>,
+    /// When a keystroke was last refused because the document is read-only.
+    /// Drives the banner flash (US-012).
+    read_only_flash: Option<Instant>,
+    /// What the file looked like on disk when it was last read or written
+    /// (US-016). `None` means it is not there.
+    stamp: Option<FileStamp>,
+    /// Whether an agent got to the file first (US-016).
+    disk: DiskState,
+    /// Written explanation of the last failed save (US-015).
+    save_error: Option<String>,
+    /// A save is in flight; a second Ctrl+S is ignored rather than racing it.
+    saving: bool,
+    /// Parent-directory watcher (US-016). Held only to keep it alive: dropping
+    /// it unregisters the watch.
+    _watcher: Option<RecommendedWatcher>,
+}
+
+impl CodeView {
+    /// Open `path`. The read, the rope and the first parse all happen off the
+    /// render thread; the view renders a spinner until they land.
+    pub(crate) fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
+        let mut view = Self {
+            element_id: format!("code-view:{}", path.display()).into(),
+            path,
+            state: CodeLoadState::Loading,
+            slot: CodeLoadSlot::new(),
+            focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+            v_drag: None,
+            h_offset: 0.0,
+            selection: CodeSelection::default(),
+            goal_column: 0,
+            text_drag: None,
+            click_chain: None,
+            last_motion: Instant::now(),
+            blink_visible: true,
+            theme_generation: crate::theme::theme_generation(),
+            geometry: Rc::new(Cell::new(CodeGeometry::default())),
+            gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
+            hits: Rc::new(RefCell::new(CodeHitMap::default())),
+            history: edit::UndoHistory::default(),
+            saved_mark: edit::HistoryMark::default(),
+            indent: IndentUnit::Spaces(4),
+            marked: None,
+            read_only_flash: None,
+            stamp: None,
+            disk: DiskState::default(),
+            save_error: None,
+            saving: false,
+            _watcher: None,
+        };
+        view.observe_blink(cx);
+        view.start_load(cx);
+        view
+    }
+
+    /// Mirror the app-wide cursor blink (US-009). `try_global` rather than
+    /// `global` so a headless or test-built view degrades to a solid caret
+    /// instead of panicking, the same fallback `terminal/view.rs` takes.
+    fn observe_blink(&mut self, cx: &mut Context<Self>) {
+        let Some(global) = cx.try_global::<BlinkPhaseGlobal>() else {
+            log::warn!("BlinkPhaseGlobal not installed - the code caret will not blink");
+            return;
+        };
+        let phase = global.0.clone();
+        cx.observe(&phase, |view: &mut Self, phase, cx: &mut Context<Self>| {
+            // A caret that just moved stays solid for a full interval: blinking
+            // through a burst of navigation is what makes a caret hard to
+            // follow.
+            let visible =
+                view.last_motion.elapsed() < CURSOR_BLINK_INTERVAL || phase.read(cx).visible;
+            if visible != view.blink_visible {
+                view.blink_visible = visible;
+                cx.notify();
+            }
+        })
+        .detach();
+    }
+
+    /// Point the view at a different file, cancelling whatever load is in
+    /// flight.
+    pub(crate) fn open(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.element_id = format!("code-view:{}", path.display()).into();
+        self.path = path;
+        self.state = CodeLoadState::Loading;
+        self.h_offset = 0.0;
+        self.selection = CodeSelection::default();
+        self.goal_column = 0;
+        self.text_drag = None;
+        self.click_chain = None;
+        self.gutter_memo.set(GutterMemo::default());
+        self.geometry.set(CodeGeometry::default());
+        *self.hits.borrow_mut() = CodeHitMap::default();
+        self.scroll.set_offset(Point::new(px(0.), px(0.)));
+        self.history.clear();
+        self.saved_mark = edit::HistoryMark::default();
+        self.marked = None;
+        self.read_only_flash = None;
+        self.stamp = None;
+        self.disk = DiskState::default();
+        self.save_error = None;
+        self.saving = false;
+        self._watcher = None;
+        self.start_load(cx);
+        cx.notify();
+    }
+
+    fn start_load(&mut self, cx: &mut Context<Self>) {
+        let generation = self.slot.begin();
+        let syntax = DiffSyntax::from_theme(&crate::theme::active_theme());
+        self.theme_generation = crate::theme::theme_generation();
+        spawn_code_load(
+            self.path.clone(),
+            generation,
+            syntax,
+            cx,
+            |view: &mut Self, generation, outcome: CodeOpen, cx| {
+                if !view.slot.accept(generation) {
+                    return;
+                }
+                view.state = CodeLoadState::from_outcome(outcome);
+                // The indent unit and the disk stamp are both properties of the
+                // file that just landed, so they are taken here rather than at
+                // the first Tab or the first save, when the file may already
+                // have moved on.
+                if let Some(doc) = view.state.document() {
+                    view.indent = IndentUnit::detect(doc);
+                }
+                view.stamp = FileStamp::read(&view.path);
+                view.start_watcher(cx);
+                cx.notify();
+            },
+        );
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub(crate) fn document(&self) -> Option<&CodeDocument> {
+        self.state.document()
+    }
+
+    pub(crate) fn highlighter(&self) -> Option<&CodeHighlighter> {
+        self.state.highlighter()
+    }
+
+    /// The caret's byte offset (US-009).
+    #[allow(dead_code)] // EP-003 accessor: no caller outside the view reads the cursor yet.
+    pub(crate) fn cursor(&self) -> usize {
+        self.selection.cursor()
+    }
+
+    /// The caret's row. Derived from the selection rather than stored, so the
+    /// gutter highlight and the current-line wash can never drift from the byte
+    /// offset that actually moved.
+    #[allow(dead_code)] // EP-003 accessor: no caller outside the view reads the cursor row yet.
+    pub(crate) fn cursor_row(&self) -> usize {
+        self.document()
+            .map(|doc| doc.byte_to_line(self.selection.cursor()))
+            .unwrap_or(0)
+    }
+
+    /// The caret's 1-based `(line, column)`, for the dock's file header
+    /// (US-018). The column counts characters, not bytes, so a line of accented
+    /// text reports the position the user can actually count to. An unloaded
+    /// document reports the top of an empty file rather than nothing, which is
+    /// what the header shows while the spinner is up.
+    pub(crate) fn cursor_line_column(&self) -> (usize, usize) {
+        let Some(doc) = self.document() else {
+            return (1, 1);
+        };
+        let offset = self.selection.cursor();
+        (
+            doc.byte_to_line(offset) + 1,
+            cursor::goal_column(doc, offset) + 1,
+        )
+    }
+
+    /// The refusal panel (US-003) plus, when a retry could actually clear the
+    /// error, the reload button US-018 asks for. The written sentence and the
+    /// icon still come from `diff_panel_centered`, so every dock state is drawn
+    /// by one component; the button is the only thing layered on top.
+    fn render_load_error(
+        &self,
+        message: String,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let panel =
+            super::super::render::diff_panel_centered("icons/triangle-alert.svg", message, ui);
+        if !self.state.is_retriable() {
+            return panel;
+        }
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .pb(px(20.))
+            .child(panel)
+            .child(
+                div()
+                    .id("code-reload")
+                    .flex_none()
+                    .h(px(26.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(ui.border)
+                    .cursor(CursorStyle::PointingHand)
+                    .hover(|style| style.bg(ui.subtle))
+                    .text_size(crate::ui_primitives::BODY)
+                    .text_color(ui.text)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        let path = this.path.clone();
+                        this.open(path, cx);
+                    }))
+                    .child("Reload"),
+            )
+            .into_any_element()
+    }
+
+    /// The current selection, empty when the caret carries none.
+    #[allow(dead_code)] // EP-003 accessor: no caller outside the view reads the selection yet.
+    pub(crate) fn selection(&self) -> Range<usize> {
+        self.selection.range()
+    }
+
+    /// Put the caret on `row`, column 0, and scroll it into view (US-007). The
+    /// entry point the outline and the diff dock call to jump to a line.
+    #[allow(dead_code)] // EP-003 setter: reserved for a jump-to-line entry point that has no gesture yet.
+    pub(crate) fn set_cursor_row(&mut self, row: usize, cx: &mut Context<Self>) {
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let row = row.min(doc.line_count().saturating_sub(1));
+        let offset = doc.line_to_byte(row);
+        self.place_caret(offset, false, cx);
+    }
+
+    /// Apply a resolved caret offset: clamp it to a legal slot, refresh the
+    /// goal column, keep the caret solid, reveal it, repaint.
+    ///
+    /// Every keyboard motion and every mouse gesture funnels through here,
+    /// which is what keeps the caret, the goal column, the blink and the scroll
+    /// in step.
+    fn place_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
+        self.end_typing_group();
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let offset = cursor::clamp(doc, offset);
+        let goal = cursor::goal_column(doc, offset);
+        self.goal_column = goal;
+        self.selection.apply(offset, extend);
+        self.after_motion(cx);
+    }
+
+    /// Vertical motion, which is the one case that must *not* refresh the goal
+    /// column: preserving it across a shorter row is the whole point (US-011).
+    fn move_rows(&mut self, delta: isize, extend: bool, cx: &mut Context<Self>) {
+        self.end_typing_group();
+        let goal = self.goal_column;
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let offset = cursor::vertical(doc, self.selection.cursor(), goal, delta);
+        self.selection.apply(offset, extend);
+        self.after_motion(cx);
+    }
+
+    fn after_motion(&mut self, cx: &mut Context<Self>) {
+        self.last_motion = Instant::now();
+        self.blink_visible = true;
+        self.reveal_cursor();
+        cx.notify();
+    }
+
+    /// Rows a Page key travels, derived from the live viewport.
+    fn page_rows(&self) -> usize {
+        cursor::page_rows(f32::from(self.scroll.bounds().size.height), CODE_ROW_HEIGHT)
+    }
+
+    /// Scroll so the caret sits inside the viewport with the mandated margin,
+    /// on both axes. A no-op when it is already comfortably visible.
+    pub(crate) fn reveal_cursor(&mut self) {
+        let viewport_h = f32::from(self.scroll.bounds().size.height);
+        let geometry = self.geometry.get();
+        let current = f32::from(self.scroll.offset().y);
+        let h_offset = self.h_offset;
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let offset = self.selection.cursor();
+        let row = doc.byte_to_line(offset);
+        let column = cursor::goal_column(doc, offset);
+        let content_h = doc.line_count() as f32 * CODE_ROW_HEIGHT;
+
+        let target = reveal_offset(row, viewport_h, content_h, current);
+        if (target - current).abs() > f32::EPSILON {
+            self.scroll.set_offset(Point::new(px(0.), px(target)));
+        }
+        // The horizontal reveal uses the monospace advance rather than a shaped
+        // x: the caret's row may not have been shaped this frame (it can be off
+        // screen entirely), and the editor's font is mono by construction.
+        let caret_x = column as f32 * geometry.char_w;
+        self.h_offset = reveal_h_offset(
+            caret_x,
+            geometry.text_viewport_w,
+            geometry.max_h_offset,
+            h_offset,
+        );
+    }
+
+    /// Recolor after a theme hot-reload (US-005).
+    ///
+    /// `set_syntax` re-derives every row's colors from the already-parsed trees,
+    /// so this costs one requery and no reparse. GPUI's shaped-line cache keys
+    /// on the `TextRun`s, colors included, so the new colors invalidate the
+    /// cached glyphs by themselves.
+    fn sync_theme(&mut self) {
+        let generation = crate::theme::theme_generation();
+        if generation == self.theme_generation {
+            return;
+        }
+        self.theme_generation = generation;
+        let syntax = DiffSyntax::from_theme(&crate::theme::active_theme());
+        if let Some((doc, hl)) = self.state.editable() {
+            hl.set_syntax(doc, syntax);
+        }
+    }
+
+    /// Horizontal wheel (US-008). Vertical is the host's native handler; doing
+    /// it here as well would double-scroll the file.
+    fn apply_wheel(&mut self, ev: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let dx = f32::from(ev.delta.pixel_delta(window.line_height()).x);
+        if dx == 0.0 {
+            // Notifying on a bare vertical tick would render the frame twice:
+            // the native handler already requested one.
+            return;
+        }
+        let bounds = self.scroll.bounds();
+        if !bounds.contains(&ev.position) {
+            return;
+        }
+        // GPUI deltas go negative toward the end of the axis; subtract so our
+        // positive offset grows and reveals the right of the line.
+        let max = self.geometry.get().max_h_offset;
+        let next = (self.h_offset - dx).clamp(0.0, max);
+        if next != self.h_offset {
+            self.h_offset = next;
+            cx.notify();
+        }
+    }
+
+    /// True when `x` is inside the vertical scrollbar's grab strip.
+    fn over_v_scrollbar(&self, position: Point<gpui::Pixels>) -> bool {
+        let bounds = self.scroll.bounds();
+        position.x >= bounds.right() - SCROLLBAR_GUTTER && position.x <= bounds.right()
+    }
+
+    /// Grab the vertical thumb, or jump the track (US-007). Returns `true` when
+    /// the press was consumed.
+    fn on_scrollbar_down(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) -> bool {
+        if !self.over_v_scrollbar(ev.position) {
+            return false;
+        }
+        let Some(m) = scrollbar::metrics(&self.scroll) else {
+            return false;
+        };
+        let local_y = f32::from(ev.position.y - self.scroll.bounds().origin.y);
+        if local_y >= m.thumb_top && local_y <= m.thumb_top + m.thumb_h {
+            // On the thumb: start a drag that tracks the pointer pixel for pixel.
+            self.v_drag = Some(scrollbar::begin_drag(&self.scroll, ev.position.y));
+        } else if let Some(offset) = scrollbar::track_click_offset(&self.scroll, ev.position.y) {
+            self.scroll.set_offset(Point::new(px(0.), px(offset)));
+            cx.notify();
+        }
+        true
+    }
+
+    fn on_scrollbar_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+        let Some(drag) = self.v_drag else {
+            return;
+        };
+        // Mouse-move listeners are hitbox-gated, so a release outside the view
+        // never delivers its `MouseUpEvent` here and the drag would survive it.
+        // Any move that arrives without the left button held therefore ends the
+        // drag instead of scrolling the file off a stale anchor.
+        if ev.pressed_button != Some(MouseButton::Left) {
+            self.v_drag = None;
+            cx.notify();
+            return;
+        }
+        if let Some(offset) = scrollbar::drag_offset(&self.scroll, &drag, ev.position.y) {
+            self.scroll.set_offset(Point::new(px(0.), px(offset)));
+            cx.notify();
+        }
+    }
+
+    fn on_scrollbar_up(&mut self, _ev: &MouseUpEvent, cx: &mut Context<Self>) {
+        if self.v_drag.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// Resolve a window position to a caret slot through the frame's shaped
+    /// lines (US-010).
+    fn offset_at(&self, position: Point<Pixels>) -> Option<usize> {
+        let doc = self.state.document()?;
+        Some(self.hits.borrow().offset_at(doc, position))
+    }
+
+    /// Advance the double / triple click chain and return how many presses have
+    /// landed in a row (1, 2 or 3, then back to 1).
+    fn chain_click(&mut self, position: Point<Pixels>, now: Instant) -> u8 {
+        let count = match self.click_chain {
+            Some(prev)
+                if now.duration_since(prev.at) <= MULTI_CLICK_INTERVAL
+                    && f32::from(position.x - prev.position.x).abs() <= MULTI_CLICK_RADIUS
+                    && f32::from(position.y - prev.position.y).abs() <= MULTI_CLICK_RADIUS =>
+            {
+                prev.count % 3 + 1
+            }
+            _ => 1,
+        };
+        self.click_chain = Some(ClickChain {
+            at: now,
+            position,
+            count,
+        });
+        count
+    }
+
+    /// Take focus, place the caret, open a selection drag (US-009, US-010).
+    /// Returns `true` when the press was consumed.
+    fn on_text_down(
+        &mut self,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.scroll.bounds().contains(&ev.position) {
+            return false;
+        }
+        window.focus(&self.focus, cx);
+        self.end_typing_group();
+        let Some(offset) = self.offset_at(ev.position) else {
+            return false;
+        };
+        let count = self.chain_click(ev.position, Instant::now());
+        let Some(doc) = self.state.document() else {
+            return false;
+        };
+        let (grain, range) = match count {
+            2 => (DragGrain::Word, cursor::word_range_at(doc, offset)),
+            3 => (DragGrain::Line, cursor::line_range_at(doc, offset)),
+            _ => (DragGrain::Grapheme, offset..offset),
+        };
+        let goal = cursor::goal_column(doc, range.end);
+        self.goal_column = goal;
+        self.selection = CodeSelection {
+            anchor: range.start,
+            head: range.end,
+        };
+        self.text_drag = Some(TextDrag {
+            grain,
+            anchor: range,
+        });
+        self.after_motion(cx);
+        true
+    }
+
+    /// Extend the live selection, auto-scrolling when the pointer has left the
+    /// viewport (US-010).
+    ///
+    /// The scroll step is applied per mouse-move event rather than on a timer:
+    /// a drag that has left the viewport is a moving pointer by definition, and
+    /// a timer would be a second source of truth for the scroll offset.
+    fn on_text_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if self.text_drag.is_none() {
+            return;
+        }
+        if ev.pressed_button != Some(MouseButton::Left) {
+            // Same hitbox reasoning as the scrollbar drag: a release outside
+            // the view never reaches us, so an unpressed move ends the drag.
+            self.text_drag = None;
+            cx.notify();
+            return;
+        }
+        let scrolled = self.drag_autoscroll(ev.position);
+        let Some(offset) = self.offset_at(ev.position) else {
+            // A pointer outside the shaped rows still owes the scroll a frame.
+            if scrolled {
+                cx.notify();
+            }
+            return;
+        };
+        self.extend_drag_to(offset, cx);
+    }
+
+    /// Grow the live selection so it reaches `offset` at the drag's own
+    /// granularity (US-010).
+    ///
+    /// A word or line drag always keeps the unit the opening press selected
+    /// covered, and puts the head on whichever end the pointer is chasing, so
+    /// dragging back over the anchor flips the direction instead of collapsing
+    /// the selection.
+    fn extend_drag_to(&mut self, offset: usize, cx: &mut Context<Self>) {
+        let Some(drag) = self.text_drag.clone() else {
+            return;
+        };
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let reach = match drag.grain {
+            DragGrain::Grapheme => offset..offset,
+            DragGrain::Word => cursor::word_range_at(doc, offset),
+            DragGrain::Line => cursor::line_range_at(doc, offset),
+        };
+        let selection = if reach.start < drag.anchor.start {
+            CodeSelection {
+                anchor: drag.anchor.end,
+                head: reach.start,
+            }
+        } else {
+            CodeSelection {
+                anchor: drag.anchor.start,
+                head: reach.end.max(drag.anchor.end),
+            }
+        };
+        let goal = cursor::goal_column(doc, selection.cursor());
+        self.selection = selection;
+        self.goal_column = goal;
+        self.last_motion = Instant::now();
+        self.blink_visible = true;
+        cx.notify();
+    }
+
+    /// Scroll toward a pointer that has left the viewport, on either axis
+    /// (US-010). Returns `true` when an offset actually moved.
+    ///
+    /// Both axes matter: the editor scrolls horizontally too (US-008), so a
+    /// selection dragged off the right edge of a long line has to follow the
+    /// pointer the same way one dragged off the bottom does.
+    fn drag_autoscroll(&mut self, position: Point<Pixels>) -> bool {
+        let bounds = self.scroll.bounds();
+        let geometry = self.geometry.get();
+        let mut moved = false;
+
+        let dy = autoscroll_step(
+            f32::from(position.y),
+            f32::from(bounds.origin.y),
+            f32::from(bounds.bottom()),
+            DRAG_SCROLL_ROWS * CODE_ROW_HEIGHT,
+        );
+        if dy != 0.0 {
+            let max = f32::from(self.scroll.max_offset().y);
+            // GPUI's live offset is `<= 0` while `max_offset()` is non-negative
+            // (`widgets/scrollbar.rs`), so scrolling down goes more negative.
+            let current = -f32::from(self.scroll.offset().y);
+            let next = (current + dy).clamp(0.0, max);
+            if next != current {
+                self.scroll.set_offset(Point::new(px(0.), px(-next)));
+                moved = true;
+            }
+        }
+
+        let dx = autoscroll_step(
+            f32::from(position.x),
+            f32::from(bounds.origin.x),
+            f32::from(bounds.right()),
+            DRAG_SCROLL_COLUMNS * geometry.char_w,
+        );
+        if dx != 0.0 {
+            let next = (self.h_offset + dx).clamp(0.0, geometry.max_h_offset);
+            if next != self.h_offset {
+                self.h_offset = next;
+                moved = true;
+            }
+        }
+
+        moved
+    }
+
+    fn on_text_up(&mut self, _ev: &MouseUpEvent, cx: &mut Context<Self>) {
+        if self.text_drag.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn left(&mut self, _: &CeLeft, _w: &mut Window, cx: &mut Context<Self>) {
+        self.horizontal(-1, false, cx);
+    }
+
+    fn right(&mut self, _: &CeRight, _w: &mut Window, cx: &mut Context<Self>) {
+        self.horizontal(1, false, cx);
+    }
+
+    fn select_left(&mut self, _: &CeSelectLeft, _w: &mut Window, cx: &mut Context<Self>) {
+        self.horizontal(-1, true, cx);
+    }
+
+    fn select_right(&mut self, _: &CeSelectRight, _w: &mut Window, cx: &mut Context<Self>) {
+        self.horizontal(1, true, cx);
+    }
+
+    fn up(&mut self, _: &CeUp, _w: &mut Window, cx: &mut Context<Self>) {
+        self.move_rows(-1, false, cx);
+    }
+
+    fn down(&mut self, _: &CeDown, _w: &mut Window, cx: &mut Context<Self>) {
+        self.move_rows(1, false, cx);
+    }
+
+    fn select_up(&mut self, _: &CeSelectUp, _w: &mut Window, cx: &mut Context<Self>) {
+        self.move_rows(-1, true, cx);
+    }
+
+    fn select_down(&mut self, _: &CeSelectDown, _w: &mut Window, cx: &mut Context<Self>) {
+        self.move_rows(1, true, cx);
+    }
+
+    fn word_left(&mut self, _: &CeWordLeft, _w: &mut Window, cx: &mut Context<Self>) {
+        self.word(-1, false, cx);
+    }
+
+    fn word_right(&mut self, _: &CeWordRight, _w: &mut Window, cx: &mut Context<Self>) {
+        self.word(1, false, cx);
+    }
+
+    fn select_word_left(&mut self, _: &CeSelectWordLeft, _w: &mut Window, cx: &mut Context<Self>) {
+        self.word(-1, true, cx);
+    }
+
+    fn select_word_right(
+        &mut self,
+        _: &CeSelectWordRight,
+        _w: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.word(1, true, cx);
+    }
+
+    fn home(&mut self, _: &CeHome, _w: &mut Window, cx: &mut Context<Self>) {
+        self.line_edge(false, false, cx);
+    }
+
+    fn end(&mut self, _: &CeEnd, _w: &mut Window, cx: &mut Context<Self>) {
+        self.line_edge(true, false, cx);
+    }
+
+    fn select_home(&mut self, _: &CeSelectHome, _w: &mut Window, cx: &mut Context<Self>) {
+        self.line_edge(false, true, cx);
+    }
+
+    fn select_end(&mut self, _: &CeSelectEnd, _w: &mut Window, cx: &mut Context<Self>) {
+        self.line_edge(true, true, cx);
+    }
+
+    fn page_up(&mut self, _: &CePageUp, _w: &mut Window, cx: &mut Context<Self>) {
+        self.page(-1, false, cx);
+    }
+
+    fn page_down(&mut self, _: &CePageDown, _w: &mut Window, cx: &mut Context<Self>) {
+        self.page(1, false, cx);
+    }
+
+    fn select_page_up(&mut self, _: &CeSelectPageUp, _w: &mut Window, cx: &mut Context<Self>) {
+        self.page(-1, true, cx);
+    }
+
+    fn select_page_down(&mut self, _: &CeSelectPageDown, _w: &mut Window, cx: &mut Context<Self>) {
+        self.page(1, true, cx);
+    }
+
+    fn doc_start(&mut self, _: &CeDocStart, _w: &mut Window, cx: &mut Context<Self>) {
+        self.doc_edge(false, false, cx);
+    }
+
+    fn doc_end(&mut self, _: &CeDocEnd, _w: &mut Window, cx: &mut Context<Self>) {
+        self.doc_edge(true, false, cx);
+    }
+
+    fn select_doc_start(&mut self, _: &CeSelectDocStart, _w: &mut Window, cx: &mut Context<Self>) {
+        self.doc_edge(false, true, cx);
+    }
+
+    fn select_doc_end(&mut self, _: &CeSelectDocEnd, _w: &mut Window, cx: &mut Context<Self>) {
+        self.doc_edge(true, true, cx);
+    }
+
+    fn select_all(&mut self, _: &CeSelectAll, _w: &mut Window, cx: &mut Context<Self>) {
+        self.take_whole_document(cx);
+    }
+
+    fn horizontal(&mut self, direction: isize, extend: bool, cx: &mut Context<Self>) {
+        // A bare arrow on a live selection collapses onto its edge rather than
+        // stepping off the head, which is what every editor does.
+        let from = match (extend, self.selection.is_empty(), direction < 0) {
+            (false, false, true) => self.selection.range().start,
+            (false, false, false) => self.selection.range().end,
+            _ => self.selection.cursor(),
+        };
+        let collapsing = !extend && !self.selection.is_empty();
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let offset = if collapsing {
+            from
+        } else if direction < 0 {
+            cursor::grapheme_left(doc, from)
+        } else {
+            cursor::grapheme_right(doc, from)
+        };
+        self.place_caret(offset, extend, cx);
+    }
+
+    fn word(&mut self, direction: isize, extend: bool, cx: &mut Context<Self>) {
+        let from = self.selection.cursor();
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let offset = if direction < 0 {
+            cursor::word_left(doc, from)
+        } else {
+            cursor::word_right(doc, from)
+        };
+        self.place_caret(offset, extend, cx);
+    }
+
+    fn line_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
+        let from = self.selection.cursor();
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let offset = if end {
+            cursor::line_end(doc, from)
+        } else {
+            cursor::line_home(doc, from)
+        };
+        self.place_caret(offset, extend, cx);
+    }
+
+    fn page(&mut self, direction: isize, extend: bool, cx: &mut Context<Self>) {
+        let rows = self.page_rows() as isize;
+        self.move_rows(direction * rows, extend, cx);
+    }
+
+    fn doc_edge(&mut self, end: bool, extend: bool, cx: &mut Context<Self>) {
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let offset = if end { cursor::doc_end(doc) } else { 0 };
+        self.place_caret(offset, extend, cx);
+    }
+
+    /// Select All (US-010). Anchored at the start so a following Shift+arrow
+    /// shrinks from the end, the way a dragged selection would.
+    fn take_whole_document(&mut self, cx: &mut Context<Self>) {
+        self.end_typing_group();
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let end = cursor::doc_end(doc);
+        let goal = cursor::goal_column(doc, end);
+        self.selection = CodeSelection {
+            anchor: 0,
+            head: end,
+        };
+        self.goal_column = goal;
+        self.after_motion(cx);
+    }
+
+    // ----------------------------------------------------------------- EP-004
+
+    /// Close the open undo group and drop any IME mark.
+    ///
+    /// Every deliberate caret move calls this: it is what stops a keystroke
+    /// after a click or an arrow from being folded into the transaction that
+    /// preceded it (US-013), and what guarantees a composition interrupted by a
+    /// click is committed rather than left pending (US-012).
+    fn end_typing_group(&mut self) {
+        self.history.close_group();
+        self.marked = None;
+    }
+
+    /// Whether the document differs from what is on disk (US-015).
+    ///
+    /// Compared by transaction identity, not by a counter: undoing back to the
+    /// saved state has to clear the dot, and a counter can only ever grow.
+    pub(crate) fn is_dirty(&self) -> bool {
+        self.history.mark() != self.saved_mark
+    }
+
+    /// Whether a conflict banner is showing, i.e. the user still owes the file
+    /// a decision (US-016).
+    #[allow(dead_code)] // EP-004 accessor: the conflict banner is rendered from the state enum inside the view.
+    pub(crate) fn has_conflict(&self) -> bool {
+        self.disk == DiskState::Conflict
+    }
+
+    /// The one door into the rope.
+    ///
+    /// `ops` are applied in the order given, so a caller touching several
+    /// places must order them back to front for its own offsets to stay valid.
+    /// Every `CodeEdit` the splices produce is handed to the highlighter, which
+    /// is what keeps the reparse incremental, and the whole batch lands as one
+    /// undo transaction.
+    ///
+    /// Returns `false` when nothing changed - a read-only document (refused
+    /// visibly), or a batch that turned out to be a no-op.
+    fn splice_all(
+        &mut self,
+        ops: &[(Range<usize>, String)],
+        after: CodeSelection,
+        group: EditGroup,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.state.document().is_none_or(CodeDocument::is_read_only) {
+            self.flash_read_only(cx);
+            return false;
+        }
+        let before = self.selection;
+        let now = Instant::now();
+        let mut records = Vec::with_capacity(ops.len());
+        let mut deferred: Option<DeferredParse> = None;
+        // The highlighter and the document come out of one borrow, and
+        // `spawn_deferred_parse` needs `&mut self`, so the deferred parse is
+        // collected here and started once the borrow is over.
+        if let Some((doc, hl)) = self.state.editable() {
+            for (range, text) in ops {
+                let Some(applied) = edit::splice(doc, range.clone(), text) else {
+                    continue;
+                };
+                for change in &applied.edits {
+                    if let HighlightOutcome::Deferred(parse) = hl.edit(doc, change) {
+                        deferred = Some(parse);
+                    }
+                }
+                records.push(applied.record);
+            }
+        }
+        if records.is_empty() {
+            return false;
+        }
+        self.history.push(records, before, after, group, now);
+        self.finish_edit(after, deferred, cx);
+        true
+    }
+
+    /// Land a mutation: clamp the caret to the new text, refresh the goal
+    /// column, start whatever reparse was deferred, repaint.
+    fn finish_edit(
+        &mut self,
+        after: CodeSelection,
+        deferred: Option<DeferredParse>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(doc) = self.state.document() {
+            self.selection = CodeSelection {
+                anchor: cursor::clamp(doc, after.anchor),
+                head: cursor::clamp(doc, after.head),
+            };
+            self.goal_column = cursor::goal_column(doc, self.selection.cursor());
+        }
+        if let Some(parse) = deferred {
+            spawn_deferred_parse(parse, cx, |view: &mut Self, parsed, cx| {
+                if let Some((doc, hl)) = view.state.editable()
+                    && hl.apply_parsed(doc, parsed)
+                {
+                    cx.notify();
+                }
+            });
+        }
+        self.after_motion(cx);
+    }
+
+    /// Light the read-only banner up for [`READ_ONLY_FLASH`] (US-012).
+    ///
+    /// The refusal has to be *seen*: `accepts_text_input` deliberately stays at
+    /// its permissive default so the keystroke still reaches
+    /// [`Self::replace_text_in_range`], where it can be turned down loudly
+    /// rather than swallowed by the platform.
+    fn flash_read_only(&mut self, cx: &mut Context<Self>) {
+        self.read_only_flash = Some(Instant::now());
+        cx.notify();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            cx.background_executor().timer(READ_ONLY_FLASH).await;
+            cx.update(|cx| {
+                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                    if view
+                        .read_only_flash
+                        .is_some_and(|at| at.elapsed() >= READ_ONLY_FLASH)
+                    {
+                        view.read_only_flash = None;
+                        cx.notify();
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+
+    /// Replace the selection (or the caret slot) with `text`.
+    ///
+    /// The text is normalized here as well as inside [`edit::splice`], because
+    /// the caret has to land past what the rope really received: a pasted
+    /// `\r\n` is one byte shorter once it is in.
+    fn insert_text(&mut self, text: &str, group: EditGroup, cx: &mut Context<Self>) -> bool {
+        let range = self.replacement_range();
+        let inserted = normalize_newlines(text).into_owned();
+        let caret = CodeSelection::at(range.start + inserted.len());
+        self.splice_all(&[(range, inserted)], caret, group, cx)
+    }
+
+    /// Range the next insertion replaces: the live composition if there is one,
+    /// otherwise the selection.
+    fn replacement_range(&self) -> Range<usize> {
+        match &self.marked {
+            Some(marked) => marked.clone(),
+            None => self.selection.range(),
+        }
+    }
+
+    /// Turn the platform's optional UTF-16 range into document bytes.
+    ///
+    /// `None` means "wherever the editor thinks it is", which is the marked
+    /// range during a composition and the selection otherwise - the same
+    /// resolution `widgets/text_area.rs` performs.
+    fn resolve_replacement(&self, range_utf16: Option<Range<usize>>) -> Option<Range<usize>> {
+        let doc = self.state.document()?;
+        Some(match range_utf16 {
+            Some(range) => {
+                let start = doc.utf16_to_byte(range.start);
+                start..doc.utf16_to_byte(range.end).max(start)
+            }
+            None => self.replacement_range(),
+        })
+    }
+
+    /// Backspace and Delete (US-012). A live selection is what gets removed;
+    /// otherwise one whole grapheme goes, which is why a composed emoji
+    /// disappears in one press instead of losing a modifier at a time.
+    fn delete_grapheme(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let selection = self.selection.range();
+        let range = if !selection.is_empty() {
+            selection
+        } else {
+            let Some(doc) = self.state.document() else {
+                return;
+            };
+            let at = self.selection.cursor();
+            if forward {
+                at..cursor::grapheme_right(doc, at)
+            } else {
+                cursor::grapheme_left(doc, at)..at
+            }
+        };
+        if range.is_empty() {
+            return;
+        }
+        let caret = CodeSelection::at(range.start);
+        self.splice_all(&[(range, String::new())], caret, EditGroup::Typing, cx);
+    }
+
+    /// Enter (US-012): a newline plus whatever indentation the row already had,
+    /// truncated at the caret so splitting a line mid-indent cannot invent
+    /// leading whitespace that was never typed.
+    fn insert_newline(&mut self, cx: &mut Context<Self>) {
+        let mut text = String::from("\n");
+        if let Some(doc) = self.state.document() {
+            let at = self.selection.range().start;
+            let row = doc.byte_to_line(at);
+            let start = doc.line_to_byte(row);
+            if let Some(line) = doc.line_string(row) {
+                let indent = edit::leading_indent(&line);
+                let column = at.saturating_sub(start);
+                text.push_str(&indent[..indent.len().min(column)]);
+            }
+        }
+        self.insert_text(&text, EditGroup::Atomic, cx);
+    }
+
+    /// Rows the current selection touches, as an inclusive row range.
+    fn selected_rows(&self) -> Option<(usize, usize)> {
+        let doc = self.state.document()?;
+        let range = self.selection.range();
+        let first = doc.byte_to_line(range.start);
+        // A selection ending exactly at a row start stops on the row before:
+        // Tab on a full-line selection must not indent the row after it.
+        let last_byte = if range.end > range.start {
+            range.end - 1
+        } else {
+            range.end
+        };
+        Some((first, doc.byte_to_line(last_byte).max(first)))
+    }
+
+    /// Tab and Shift+Tab (US-014).
+    ///
+    /// A bare Tab with no selection inserts one unit at the caret; anything
+    /// else shifts every touched row. The rows are rewritten back to front so
+    /// each splice's offsets are still valid when it runs, and the caret and
+    /// anchor are carried across with [`shift_offset`] rather than re-derived,
+    /// so a selection survives the operation intact.
+    fn shift_lines(&mut self, outdent: bool, cx: &mut Context<Self>) {
+        let Some((first, last)) = self.selected_rows() else {
+            return;
+        };
+        if !outdent && self.selection.is_empty() {
+            let unit = self.indent.as_str().into_owned();
+            self.insert_text(&unit, EditGroup::Atomic, cx);
+            return;
+        }
+        let unit = self.indent;
+        let mut ops: Vec<(Range<usize>, String)> = Vec::new();
+        let mut deltas: Vec<(usize, isize)> = Vec::new();
+        {
+            let Some(doc) = self.state.document() else {
+                return;
+            };
+            for row in (first..=last).rev() {
+                let start = doc.line_to_byte(row);
+                let Some(line) = doc.line_string(row) else {
+                    continue;
+                };
+                if outdent {
+                    let width = edit::dedent_width(&line, unit);
+                    if width == 0 {
+                        continue;
+                    }
+                    ops.push((start..start + width, String::new()));
+                    deltas.push((start, -(width as isize)));
+                } else {
+                    // A blank row gains nothing: indenting whitespace-only
+                    // lines is churn the diff would show and the user did not
+                    // ask for.
+                    if line.trim_end_matches('\n').is_empty() {
+                        continue;
+                    }
+                    let text = unit.as_str().into_owned();
+                    let width = text.len() as isize;
+                    ops.push((start..start, text));
+                    deltas.push((start, width));
+                }
+            }
+        }
+        if ops.is_empty() {
+            return;
+        }
+        let after = CodeSelection {
+            anchor: shift_offset(self.selection.anchor, &deltas),
+            head: shift_offset(self.selection.head, &deltas),
+        };
+        self.splice_all(&ops, after, EditGroup::Atomic, cx);
+    }
+
+    /// The text Copy and Cut act on, and the range Cut removes.
+    ///
+    /// With no selection that is the whole row, newline included (US-014), so
+    /// pasting it back lands a complete line rather than gluing it onto the
+    /// current one.
+    fn clip_range(&self) -> Option<Range<usize>> {
+        let doc = self.state.document()?;
+        let selection = self.selection.range();
+        if selection.is_empty() {
+            Some(cursor::line_range_at(doc, selection.start))
+        } else {
+            Some(selection)
+        }
+    }
+
+    fn copy_selection(&mut self, cut: bool, cx: &mut Context<Self>) {
+        let Some(range) = self.clip_range() else {
+            return;
+        };
+        if range.is_empty() {
+            return;
+        }
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let text = doc.slice_string(range.clone());
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        if cut {
+            let caret = CodeSelection::at(range.start);
+            self.splice_all(&[(range, String::new())], caret, EditGroup::Atomic, cx);
+        }
+    }
+
+    /// Paste (US-014). One transaction whatever the clipboard holds, so a
+    /// multi-line paste is a single Ctrl+Z, and the text goes through
+    /// [`edit::sanitize_paste`] first: control characters and bidi overrides
+    /// from a web page must not end up in a source file.
+    fn paste(&mut self, cx: &mut Context<Self>) {
+        let Some(item) = cx.read_from_clipboard() else {
+            return;
+        };
+        let Some(text) = item.text() else {
+            return;
+        };
+        let text = edit::sanitize_paste(&text);
+        if text.is_empty() {
+            return;
+        }
+        self.end_typing_group();
+        self.insert_text(&text, EditGroup::Atomic, cx);
+    }
+
+    /// Undo / redo (US-013). The document and the highlighter move together:
+    /// every edit the replay produces is fed to `hl.edit`, so the tree stays in
+    /// step with the rope in both directions.
+    fn time_travel(&mut self, redo: bool, cx: &mut Context<Self>) {
+        // A read-only document can still hold history: a silent reload
+        // (US-016) records its transaction with the flag lifted for the
+        // duration of the splice. Replaying that here would move the caret and
+        // the history mark while `CodeDocument` refuses the rope mutation,
+        // leaving a file that matches disk exactly looking modified. The
+        // refusal is the same one a keystroke gets (US-012).
+        if self.state.document().is_none_or(CodeDocument::is_read_only) {
+            self.flash_read_only(cx);
+            return;
+        }
+        self.marked = None;
+        let mut deferred: Option<DeferredParse> = None;
+        let mut restored = None;
+        if let Some((doc, hl)) = self.state.editable() {
+            let step = if redo {
+                self.history.redo(doc)
+            } else {
+                self.history.undo(doc)
+            };
+            if let Some(step) = step {
+                for change in &step.edits {
+                    if let HighlightOutcome::Deferred(parse) = hl.edit(doc, change) {
+                        deferred = Some(parse);
+                    }
+                }
+                restored = Some(step.selection);
+            }
+        }
+        let Some(selection) = restored else {
+            return;
+        };
+        self.finish_edit(selection, deferred, cx);
+    }
+
+    // ------------------------------------------------------------ disk (EP-004)
+
+    /// Ctrl+S (US-015). No autosave anywhere in this file.
+    ///
+    /// The stamp check happens on the worker thread, immediately before the
+    /// write, so a file an agent touched between the last watcher tick and this
+    /// keystroke is still caught. A conflict is reported *without writing*.
+    fn save(&mut self, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        if doc.is_read_only() {
+            self.flash_read_only(cx);
+            return;
+        }
+        if !self.is_dirty() && self.disk == DiskState::InSync {
+            return;
+        }
+        // Closing the group first is what makes the saved mark stable: a
+        // keystroke after the save must open a new transaction, or typing would
+        // silently extend the one the save just blessed.
+        self.history.close_group();
+        let contents = doc.to_disk_string();
+        let path = self.path.clone();
+        let expected = self.stamp;
+        let mark = self.history.mark();
+        self.saving = true;
+        self.save_error = None;
+        cx.notify();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let outcome = cx
+                .background_spawn(async move {
+                    let current = FileStamp::read(&path);
+                    // `expected` is `None` for a file that was not on disk
+                    // when it was last stamped, which is the "deleted, save
+                    // recreates it" path: anything present now is someone
+                    // else's file.
+                    let conflict = match (expected, current) {
+                        (Some(expected), Some(current)) => expected.differs(&current),
+                        (None, Some(_)) => true,
+                        _ => false,
+                    };
+                    if conflict {
+                        return Err(None);
+                    }
+                    save::save_blocking(&path, &contents).map_err(Some)
+                })
+                .await;
+            cx.update(|cx| {
+                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                    view.finish_save(outcome, mark, cx);
+                });
+            });
+        })
+        .detach();
+    }
+
+    /// Land a save's result. `Err(None)` is the refused-before-writing case.
+    fn finish_save(
+        &mut self,
+        outcome: Result<FileStamp, Option<String>>,
+        mark: edit::HistoryMark,
+        cx: &mut Context<Self>,
+    ) {
+        self.saving = false;
+        match outcome {
+            Ok(stamp) => {
+                self.stamp = Some(stamp);
+                self.saved_mark = mark;
+                self.disk = DiskState::InSync;
+                self.save_error = None;
+            }
+            Err(Some(message)) => {
+                // The in-memory edits are untouched: a failed write must never
+                // be able to cost the user their work (US-015).
+                self.save_error = Some(message);
+            }
+            Err(None) => {
+                self.disk = DiskState::Conflict;
+            }
+        }
+        cx.notify();
+    }
+
+    /// Watch the file's parent directory for someone else's write (US-016).
+    ///
+    /// The parent rather than the file: an atomic save renames a sibling over
+    /// the target, which arrives as a directory event and would never reach a
+    /// watch registered on the old inode. Non-recursive, so a deep tree costs
+    /// one watch descriptor - the inotify-exhaustion lesson from
+    /// `reference_gpui_recursive_watcher_main_thread_hang`.
+    fn start_watcher(&mut self, cx: &mut Context<Self>) {
+        self._watcher = None;
+        let Some(parent) = self.path.parent().map(Path::to_path_buf) else {
+            return;
+        };
+        let Some(name) = self.path.file_name().map(|name| name.to_os_string()) else {
+            return;
+        };
+        if !parent.is_dir() {
+            return;
+        }
+        // Unbounded on purpose: events fired between registration and the first
+        // poll below have to queue, not be dropped.
+        let (tx, mut rx) = mpsc::unbounded::<notify::Result<notify::Event>>();
+        let watcher = RecommendedWatcher::new(
+            move |res| {
+                let _ = tx.unbounded_send(res);
+            },
+            notify::Config::default(),
+        );
+        let mut watcher = match watcher {
+            Ok(watcher) => watcher,
+            Err(err) => {
+                log::warn!("could not watch {} for changes: {err}", parent.display());
+                return;
+            }
+        };
+        if let Err(err) = watcher.watch(&parent, RecursiveMode::NonRecursive) {
+            log::warn!("could not watch {} for changes: {err}", parent.display());
+            return;
+        }
+        self._watcher = Some(watcher);
+
+        let path = self.path.clone();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            while let Some(first) = rx.next().await {
+                if !event_is_relevant(&first, &name) {
+                    continue;
+                }
+                // One save is several events. Wait for the burst to go quiet
+                // rather than re-reading the file three times.
+                let deadline = Instant::now() + RELOAD_DEBOUNCE;
+                loop {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    let timer = cx.background_executor().timer(remaining);
+                    match futures::future::select(rx.next(), timer).await {
+                        Either::Left((Some(_), _)) => continue,
+                        Either::Left((None, _)) => return,
+                        Either::Right(_) => break,
+                    }
+                }
+                let probe = path.clone();
+                let (stamp, text) = cx
+                    .background_spawn(async move {
+                        (
+                            FileStamp::read(&probe),
+                            std::fs::read_to_string(&probe).ok(),
+                        )
+                    })
+                    .await;
+                let updated = cx.update(|cx| {
+                    this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                        view.disk_changed(stamp, text, cx);
+                    })
+                });
+                // A closed tab is the loop's exit condition, not an error.
+                if updated.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// React to what the watcher found on disk (US-016).
+    fn disk_changed(
+        &mut self,
+        stamp: Option<FileStamp>,
+        text: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        match (stamp, text) {
+            (None, _) | (_, None) => {
+                if self.disk != DiskState::Deleted {
+                    self.disk = DiskState::Deleted;
+                    cx.notify();
+                }
+            }
+            (Some(stamp), Some(text)) => {
+                // Our own save comes back through the watcher too; the stamp we
+                // recorded when it landed is what tells the two apart.
+                if self.stamp == Some(stamp) && self.disk == DiskState::InSync {
+                    return;
+                }
+                self.stamp = Some(stamp);
+                if self.is_dirty() {
+                    // Nothing is overwritten either way until the user chooses.
+                    self.disk = DiskState::Conflict;
+                    cx.notify();
+                    return;
+                }
+                self.disk = DiskState::InSync;
+                self.adopt_disk_text(&text, cx);
+                self.saved_mark = self.history.mark();
+            }
+        }
+    }
+
+    /// Replace the buffer with `text`, keeping the viewport where the user left
+    /// it.
+    ///
+    /// Applied as a normal transaction rather than a reload, so Ctrl+Z brings
+    /// the previous state back - the recovery US-016 asks for when the reload
+    /// was not what the user wanted. The caret is only preserved when the line
+    /// count is unchanged: past that, a byte offset is a guess.
+    fn adopt_disk_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let previous_lines = doc.line_count();
+        let len = doc.len_bytes();
+        let scroll = self.scroll.offset();
+        let caret = self.selection;
+        // `edit::splice` refuses a read-only document, and a file can be
+        // read-only on disk and still change underneath us. The flag is lifted
+        // for the duration of the reload and put straight back.
+        let reason = doc.read_only_reason();
+        if reason.is_some()
+            && let Some(doc) = self.state.document_mut()
+        {
+            doc.set_read_only(None);
+        }
+        let replaced = self.splice_all(
+            &[(0..len, text.to_string())],
+            CodeSelection::at(0),
+            EditGroup::Atomic,
+            cx,
+        );
+        if let Some(reason) = reason
+            && let Some(doc) = self.state.document_mut()
+        {
+            doc.set_read_only(Some(reason));
+        }
+        if !replaced {
+            return;
+        }
+        let same_shape = self
+            .state
+            .document()
+            .is_some_and(|doc| doc.line_count() == previous_lines);
+        if same_shape {
+            self.selection = caret;
+        }
+        self.scroll.set_offset(scroll);
+        cx.notify();
+    }
+
+    /// "Keep mine" (US-016): the in-memory text wins, and the on-disk stamp is
+    /// adopted so the next Ctrl+S goes through instead of being refused again.
+    fn resolve_keep_mine(&mut self, cx: &mut Context<Self>) {
+        self.disk = DiskState::InSync;
+        let path = self.path.clone();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let stamp = cx
+                .background_spawn(async move { FileStamp::read(&path) })
+                .await;
+            cx.update(|cx| {
+                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                    view.stamp = stamp;
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// "Reload from disk" (US-016). Re-reads rather than trusting a snapshot
+    /// taken when the banner appeared, which may already be stale.
+    fn resolve_reload(&mut self, cx: &mut Context<Self>) {
+        let path = self.path.clone();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let probe = path.clone();
+            let (stamp, text) = cx
+                .background_spawn(async move {
+                    (
+                        FileStamp::read(&probe),
+                        std::fs::read_to_string(&probe).ok(),
+                    )
+                })
+                .await;
+            cx.update(|cx| {
+                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                    let Some(text) = text else {
+                        view.disk = DiskState::Deleted;
+                        cx.notify();
+                        return;
+                    };
+                    view.stamp = stamp;
+                    view.disk = DiskState::InSync;
+                    view.adopt_disk_text(&text, cx);
+                    view.saved_mark = view.history.mark();
+                });
+            });
+        })
+        .detach();
+    }
+
+    // ----------------------------------------------------- EP-004 action glue
+
+    fn backspace(&mut self, _: &CeBackspace, _w: &mut Window, cx: &mut Context<Self>) {
+        self.delete_grapheme(false, cx);
+    }
+
+    fn delete(&mut self, _: &CeDelete, _w: &mut Window, cx: &mut Context<Self>) {
+        self.delete_grapheme(true, cx);
+    }
+
+    fn newline(&mut self, _: &CeNewline, _w: &mut Window, cx: &mut Context<Self>) {
+        self.insert_newline(cx);
+    }
+
+    fn undo(&mut self, _: &CeUndo, _w: &mut Window, cx: &mut Context<Self>) {
+        self.time_travel(false, cx);
+    }
+
+    fn redo(&mut self, _: &CeRedo, _w: &mut Window, cx: &mut Context<Self>) {
+        self.time_travel(true, cx);
+    }
+
+    fn copy(&mut self, _: &CeCopy, _w: &mut Window, cx: &mut Context<Self>) {
+        self.copy_selection(false, cx);
+    }
+
+    fn cut(&mut self, _: &CeCut, _w: &mut Window, cx: &mut Context<Self>) {
+        self.copy_selection(true, cx);
+    }
+
+    fn paste_action(&mut self, _: &CePaste, _w: &mut Window, cx: &mut Context<Self>) {
+        self.paste(cx);
+    }
+
+    fn indent(&mut self, _: &CeIndent, _w: &mut Window, cx: &mut Context<Self>) {
+        self.shift_lines(false, cx);
+    }
+
+    fn outdent(&mut self, _: &CeOutdent, _w: &mut Window, cx: &mut Context<Self>) {
+        self.shift_lines(true, cx);
+    }
+
+    fn save_action(&mut self, _: &CeSave, _w: &mut Window, cx: &mut Context<Self>) {
+        self.save(cx);
+    }
+
+    /// The banners stacked above the file: read-only, conflict, deletion, and
+    /// the last failed write.
+    fn banners(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut out: Vec<AnyElement> = Vec::new();
+        let row = || {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_1p5()
+                .text_xs()
+                .border_b_1()
+                .border_color(ui.border)
+        };
+        if let Some(reason) = self
+            .state
+            .document()
+            .and_then(CodeDocument::read_only_reason)
+        {
+            let flashing = self.read_only_flash.is_some();
+            out.push(
+                row()
+                    .bg(if flashing {
+                        ui.vc_conflict.opacity(0.22)
+                    } else {
+                        ui.overlay
+                    })
+                    .text_color(if flashing { ui.text } else { ui.muted })
+                    .child(read_only_text(reason))
+                    .into_any_element(),
+            );
+        }
+        match self.disk {
+            DiskState::Conflict => out.push(
+                row()
+                    .bg(ui.vc_conflict.opacity(0.16))
+                    .text_color(ui.text)
+                    .child(div().flex_1().child(
+                        "This file changed on disk while you were editing it. Nothing has been \
+                         overwritten.",
+                    ))
+                    .child(conflict_button(
+                        "code-conflict-keep",
+                        "Keep mine",
+                        ui,
+                        cx.listener(|this, _: &MouseDownEvent, _w, cx| this.resolve_keep_mine(cx)),
+                    ))
+                    .child(conflict_button(
+                        "code-conflict-reload",
+                        "Reload from disk",
+                        ui,
+                        cx.listener(|this, _: &MouseDownEvent, _w, cx| this.resolve_reload(cx)),
+                    ))
+                    .into_any_element(),
+            ),
+            DiskState::Deleted => out.push(
+                row()
+                    .bg(ui.vc_conflict.opacity(0.16))
+                    .text_color(ui.text)
+                    .child("This file was deleted on disk. Saving recreates it.")
+                    .into_any_element(),
+            ),
+            DiskState::InSync => {}
+        }
+        if let Some(message) = &self.save_error {
+            out.push(
+                row()
+                    .bg(ui.vc_deleted.opacity(0.16))
+                    .text_color(ui.text)
+                    .child(format!("{message} Your edits are still here."))
+                    .into_any_element(),
+            );
+        }
+        out
+    }
+}
+
+/// Carry `offset` across a batch of line-start insertions and removals.
+///
+/// The batch is what Tab and Shift+Tab produce: one delta per touched row, at
+/// that row's first byte. An insertion pushes everything at or after it along;
+/// a removal only takes back what actually sat between the row start and the
+/// offset, which is what keeps a caret parked inside the indentation from
+/// jumping into the previous line.
+fn shift_offset(offset: usize, deltas: &[(usize, isize)]) -> usize {
+    let mut out = offset as isize;
+    for (start, delta) in deltas {
+        if *delta > 0 {
+            if *start <= offset {
+                out += delta;
+            }
+        } else if *start < offset {
+            let removed = delta.unsigned_abs();
+            out -= removed.min(offset - start) as isize;
+        }
+    }
+    out.max(0) as usize
+}
+
+/// Whether a filesystem event concerns the open file.
+///
+/// An `Err` is not a change: a watcher that lost an event should not be able to
+/// present the user with a conflict that never happened.
+fn event_is_relevant(result: &notify::Result<notify::Event>, target: &std::ffi::OsStr) -> bool {
+    match result {
+        Ok(event) => event
+            .paths
+            .iter()
+            .any(|path| path.file_name() == Some(target)),
+        Err(_) => false,
+    }
+}
+
+/// The banner sentence for a read-only document, plus what a refused keystroke
+/// adds to it.
+fn read_only_text(reason: ReadOnlyReason) -> String {
+    format!(
+        "{} Nothing you type is discarded - it simply is not applied.",
+        reason.banner()
+    )
+}
+
+/// One button inside the conflict banner.
+fn conflict_button(
+    id: &'static str,
+    label: &'static str,
+    ui: crate::theme::UiColors,
+    on_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> AnyElement {
+    div()
+        .id(id)
+        .px_2()
+        .py_0p5()
+        .rounded_sm()
+        .border_1()
+        .border_color(ui.border)
+        .bg(ui.surface)
+        .text_color(ui.text)
+        .cursor_pointer()
+        .hover(|style| style.bg(ui.overlay))
+        .on_mouse_down(MouseButton::Left, on_click)
+        .child(label)
+        .into_any_element()
+}
+
+/// The native text-input and IME target (US-012).
+///
+/// GPUI dispatches actions before it dispatches text (`gpui/src/window.rs:4525`
+/// only reaches `dispatch_input` when the action pass left propagation alive
+/// and the keystroke carries a `key_char`), so Enter, Tab and Backspace land on
+/// their bindings and only genuinely printable input arrives here. All of it
+/// converts between UTF-16 - the unit every platform IME speaks - and the
+/// rope's bytes through [`CodeDocument::byte_to_utf16`] and its inverse.
+impl EntityInputHandler for CodeView {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<String> {
+        let doc = self.state.document()?;
+        let start = doc.utf16_to_byte(range_utf16.start);
+        let end = doc.utf16_to_byte(range_utf16.end).max(start);
+        *adjusted_range = Some(doc.byte_to_utf16(start)..doc.byte_to_utf16(end));
+        Some(doc.slice_string(start..end))
+    }
+
+    fn selected_text_range(
+        &mut self,
+        _ignore_disabled_input: bool,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<UTF16Selection> {
+        let doc = self.state.document()?;
+        let range = self.selection.range();
+        Some(UTF16Selection {
+            range: doc.byte_to_utf16(range.start)..doc.byte_to_utf16(range.end),
+            reversed: self.selection.head < self.selection.anchor,
+        })
+    }
+
+    fn marked_text_range(
+        &self,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Range<usize>> {
+        let doc = self.state.document()?;
+        let marked = self.marked.clone()?;
+        Some(doc.byte_to_utf16(marked.start)..doc.byte_to_utf16(marked.end))
+    }
+
+    /// The platform abandoning a composition. The text stays: it is already in
+    /// the rope and in one undo transaction, so Ctrl+Z is what removes it.
+    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.marked.take().is_some() {
+            self.history.close_group();
+            cx.notify();
+        }
+    }
+
+    fn replace_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        text: &str,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(range) = self.resolve_replacement(range_utf16) else {
+            return;
+        };
+        self.marked = None;
+        let inserted = normalize_newlines(text).into_owned();
+        let caret = CodeSelection::at(range.start + inserted.len());
+        self.splice_all(&[(range, inserted)], caret, EditGroup::Typing, cx);
+    }
+
+    fn replace_and_mark_text_in_range(
+        &mut self,
+        range_utf16: Option<Range<usize>>,
+        new_text: &str,
+        new_selected_range_utf16: Option<Range<usize>>,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(range) = self.resolve_replacement(range_utf16) else {
+            return;
+        };
+        let inserted = normalize_newlines(new_text).into_owned();
+        let start = range.start;
+        let end = start + inserted.len();
+        let caret = CodeSelection::at(end);
+        // Typing, so the whole composition - every intermediate state the IME
+        // pushed - collapses into one undo transaction.
+        if !self.splice_all(&[(range, inserted)], caret, EditGroup::Typing, cx) {
+            return;
+        }
+        self.marked = if start == end { None } else { Some(start..end) };
+        // The IME's own caret inside the composition, expressed relative to it.
+        if let Some(selected) = new_selected_range_utf16
+            && let Some(doc) = self.state.document()
+        {
+            let base = doc.byte_to_utf16(start);
+            let head = doc.utf16_to_byte(base + selected.end);
+            let anchor = doc.utf16_to_byte(base + selected.start);
+            self.selection = CodeSelection { anchor, head };
+        }
+        cx.notify();
+    }
+
+    fn bounds_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        element_bounds: Bounds<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<Bounds<Pixels>> {
+        let geometry = self.geometry.get();
+        let doc = self.state.document()?;
+        let start = doc.utf16_to_byte(range_utf16.start);
+        let row = doc.byte_to_line(start);
+        let column = cursor::goal_column(doc, start);
+        let hits = self.hits.borrow();
+        // The hit map is the frame that was actually painted, so the candidate
+        // window lands on the composition even when the gutter is wide or the
+        // line is scrolled sideways. With no painted frame yet, the element's
+        // own origin is the honest fallback.
+        let (x, y) = if hits.lines.is_empty() {
+            (
+                f32::from(element_bounds.origin.x),
+                f32::from(element_bounds.origin.y),
+            )
+        } else {
+            (
+                hits.text_x + column as f32 * geometry.char_w,
+                hits.top_y + row.saturating_sub(hits.first_row) as f32 * CODE_ROW_HEIGHT,
+            )
+        };
+        Some(Bounds {
+            origin: Point::new(px(x), px(y)),
+            size: size(px(geometry.char_w.max(1.0)), px(CODE_ROW_HEIGHT)),
+        })
+    }
+
+    fn character_index_for_point(
+        &mut self,
+        point: Point<Pixels>,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) -> Option<usize> {
+        let doc = self.state.document()?;
+        let offset = self.hits.borrow().offset_at(doc, point);
+        Some(doc.byte_to_utf16(offset))
+    }
+}
+
+impl Focusable for CodeView {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+impl Render for CodeView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_theme();
+        let ui = crate::theme::ui_colors();
+
+        let Some(doc) = self.state.document() else {
+            return match self.state.error_message() {
+                Some(message) => self.render_load_error(message, ui, cx),
+                None => super::super::render::diff_panel_centered(
+                    "icons/loader-circle.svg",
+                    "Loading file…",
+                    ui,
+                ),
+            };
+        };
+
+        let line_count = doc.line_count();
+        let banners = self.banners(ui, cx);
+        let theme = crate::theme::active_theme();
+        let focused = self.focus.is_focused(window);
+        let element = CodeElement::new(
+            cx.entity(),
+            palette(ui),
+            CodeColors {
+                scrollbar_thumb: theme.scrollbar_thumb,
+                cursor: theme.cursor,
+                selection: theme.selection,
+                selection_fg: theme.selection_foreground,
+            },
+            self.scroll.clone(),
+            self.h_offset,
+            CodeCaret {
+                cursor: self.selection.cursor(),
+                selection: self.selection.range(),
+                focused,
+                visible: self.blink_visible,
+                marked: self.marked.clone().unwrap_or(0..0),
+            },
+            line_count,
+            self.geometry.clone(),
+            self.gutter_memo.clone(),
+            self.hits.clone(),
+        );
+
+        let mut host = div()
+            .id(self.element_id.clone())
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .overflow_y_scroll()
+            .track_scroll(&self.scroll)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                    // The scrollbar strip wins: it overlaps the text column's
+                    // right edge, and a press there is furniture, not a caret.
+                    if this.on_scrollbar_down(ev, cx) || this.on_text_down(ev, window, cx) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
+                this.apply_wheel(ev, window, cx);
+            }))
+            .child(element);
+        // Not a builder method on the pinned fork - set on the style refinement
+        // directly, the same raw mutation Zed uses.
+        host.style().restrict_scroll_to_axis = Some(true);
+
+        div()
+            .id("code-view-body")
+            .key_context(CODE_KEY_CONTEXT)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(Self::left))
+            .on_action(cx.listener(Self::right))
+            .on_action(cx.listener(Self::up))
+            .on_action(cx.listener(Self::down))
+            .on_action(cx.listener(Self::select_left))
+            .on_action(cx.listener(Self::select_right))
+            .on_action(cx.listener(Self::select_up))
+            .on_action(cx.listener(Self::select_down))
+            .on_action(cx.listener(Self::word_left))
+            .on_action(cx.listener(Self::word_right))
+            .on_action(cx.listener(Self::select_word_left))
+            .on_action(cx.listener(Self::select_word_right))
+            .on_action(cx.listener(Self::home))
+            .on_action(cx.listener(Self::end))
+            .on_action(cx.listener(Self::select_home))
+            .on_action(cx.listener(Self::select_end))
+            .on_action(cx.listener(Self::page_up))
+            .on_action(cx.listener(Self::page_down))
+            .on_action(cx.listener(Self::select_page_up))
+            .on_action(cx.listener(Self::select_page_down))
+            .on_action(cx.listener(Self::doc_start))
+            .on_action(cx.listener(Self::doc_end))
+            .on_action(cx.listener(Self::select_doc_start))
+            .on_action(cx.listener(Self::select_doc_end))
+            .on_action(cx.listener(Self::select_all))
+            .on_action(cx.listener(Self::backspace))
+            .on_action(cx.listener(Self::delete))
+            .on_action(cx.listener(Self::newline))
+            .on_action(cx.listener(Self::undo))
+            .on_action(cx.listener(Self::redo))
+            .on_action(cx.listener(Self::copy))
+            .on_action(cx.listener(Self::cut))
+            .on_action(cx.listener(Self::paste_action))
+            .on_action(cx.listener(Self::indent))
+            .on_action(cx.listener(Self::outdent))
+            .on_action(cx.listener(Self::save_action))
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .flex_col()
+            // The drag continuation lives on the root, not on the scroll host:
+            // mouse listeners only fire over their own hitbox, so keeping them
+            // on the host would drop the release the moment the pointer leaves
+            // it. Same placement as the markdown view and the settings pane.
+            .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _w, cx| {
+                this.on_scrollbar_move(ev, cx);
+                this.on_text_move(ev, cx);
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseUpEvent, _w, cx| {
+                    this.on_scrollbar_up(ev, cx);
+                    this.on_text_up(ev, cx);
+                }),
+            )
+            .children(banners)
+            .child(host)
+            .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point};
+
+    use super::super::highlight::CodeHighlighter;
+    use super::super::load::{LoadedCode, build_document};
+    use super::*;
+
+    /// Build a view around `text` inside a real window: the action handlers
+    /// take a `&mut Window`, so the tests need one, and `update_in` is the only
+    /// way to get a genuine one.
+    ///
+    /// The state is assembled by hand rather than through `CodeView::new`,
+    /// whose constructor kicks off an off-thread read the deterministic test
+    /// scheduler refuses. An empty `text` leaves the view loading, which is
+    /// what the scrollbar guard needs.
+    fn view<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+    ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        let path = PathBuf::from("/nonexistent/paneflow-code.rs");
+        let state = if text.is_empty() {
+            CodeLoadState::Loading
+        } else {
+            let document = build_document(path.clone(), text, false);
+            let highlighter = CodeHighlighter::new(
+                &document,
+                DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
+            );
+            CodeLoadState::Ready(Box::new(LoadedCode {
+                document,
+                highlighter,
+            }))
+        };
+        cx.add_window_view(move |_window, cx| CodeView {
+            element_id: "code-view:test".into(),
+            path,
+            state,
+            slot: CodeLoadSlot::new(),
+            focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+            v_drag: None,
+            h_offset: 0.0,
+            selection: CodeSelection::default(),
+            goal_column: 0,
+            text_drag: None,
+            click_chain: None,
+            last_motion: Instant::now(),
+            blink_visible: true,
+            theme_generation: 0,
+            geometry: Rc::new(Cell::new(CodeGeometry::default())),
+            gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
+            hits: Rc::new(RefCell::new(CodeHitMap::default())),
+            history: edit::UndoHistory::default(),
+            saved_mark: edit::HistoryMark::default(),
+            indent: IndentUnit::Spaces(4),
+            marked: None,
+            read_only_flash: None,
+            stamp: None,
+            disk: DiskState::default(),
+            save_error: None,
+            saving: false,
+            _watcher: None,
+        })
+    }
+
+    /// A release outside the view never reaches the mouse-up listener, so the
+    /// drag has to end on the first move that arrives with no button held.
+    /// Without the guard, re-entering the view after such a release scrolled
+    /// the file off the stale anchor with nothing pressed (US-007).
+    #[gpui::test]
+    fn a_move_without_the_left_button_ends_the_drag(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "");
+
+        view.update(cx, |view, cx| {
+            view.v_drag = Some(scrollbar::begin_drag(&view.scroll, px(40.)));
+
+            view.on_scrollbar_move(
+                &MouseMoveEvent {
+                    position: point(px(10.), px(90.)),
+                    pressed_button: None,
+                    modifiers: Modifiers::default(),
+                },
+                cx,
+            );
+            assert!(view.v_drag.is_none());
+
+            // A held button still drives the drag: the guard must not swallow
+            // the normal case.
+            view.v_drag = Some(scrollbar::begin_drag(&view.scroll, px(40.)));
+            view.on_scrollbar_move(
+                &MouseMoveEvent {
+                    position: point(px(10.), px(90.)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                },
+                cx,
+            );
+            assert!(view.v_drag.is_some());
+        });
+    }
+
+    /// EP-005 US-018: the file header reads the caret as 1-based line and
+    /// column, the way every editor's status bar states it, and a document
+    /// that has not loaded yet still answers with a coherent position.
+    #[gpui::test]
+    fn the_header_reads_the_caret_as_one_based_line_and_column(cx: &mut TestAppContext) {
+        let (editor, cx) = view(cx, "let foo = 1;\nbb\nlast line");
+
+        editor.update_in(cx, |view, window, cx| {
+            // Start of the document: line 1, column 1 - never 0.
+            assert_eq!(view.cursor_line_column(), (1, 1));
+
+            view.right(&CeRight, window, cx);
+            view.right(&CeRight, window, cx);
+            view.right(&CeRight, window, cx);
+            assert_eq!(view.cursor_line_column(), (1, 4));
+
+            view.down(&CeDown, window, cx);
+            assert_eq!(
+                view.cursor_line_column().0,
+                2,
+                "the caret moved a line down"
+            );
+
+            view.doc_end(&CeDocEnd, window, cx);
+            assert_eq!(view.cursor_line_column(), (3, 10), "end of `last line`");
+        });
+
+        // A tab whose load is still in flight reports the origin rather than
+        // panicking on the absent document.
+        let (loading, cx) = view(cx, "");
+        loading.update(cx, |view, _cx| {
+            assert!(view.document().is_none());
+            assert_eq!(view.cursor_line_column(), (1, 1));
+        });
+    }
+
+    /// US-011: the actions the key bindings dispatch to walk the document by
+    /// grapheme, by word and to both edges, and plain motion never selects.
+    #[gpui::test]
+    fn the_navigation_actions_walk_the_document(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "let foo = 1;\nbb\nlast line");
+
+        view.update_in(cx, |view, window, cx| {
+            view.right(&CeRight, window, cx);
+            assert_eq!(view.cursor(), 1);
+            view.word_right(&CeWordRight, window, cx);
+            assert_eq!(view.cursor(), 3, "end of `let`");
+            view.end(&CeEnd, window, cx);
+            assert_eq!(view.cursor(), 12);
+            view.right(&CeRight, window, cx);
+            assert_eq!(
+                view.cursor(),
+                13,
+                "right at a row end steps to the next row"
+            );
+            view.home(&CeHome, window, cx);
+            assert_eq!(view.cursor(), 13);
+            view.doc_end(&CeDocEnd, window, cx);
+            assert_eq!(view.cursor(), view.document().unwrap().len_bytes());
+            view.doc_start(&CeDocStart, window, cx);
+            assert_eq!(view.cursor(), 0);
+            assert!(view.selection().is_empty(), "plain motion never selects");
+        });
+    }
+
+    /// US-010 / US-011: Shift extends instead of replacing, a bare arrow
+    /// collapses onto the selection's edge, and Select All takes the document.
+    #[gpui::test]
+    fn shift_extends_and_select_all_takes_the_document(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "abc\ndef");
+
+        view.update_in(cx, |view, window, cx| {
+            view.select_right(&CeSelectRight, window, cx);
+            view.select_right(&CeSelectRight, window, cx);
+            assert_eq!(view.selection(), 0..2);
+            assert_eq!(view.cursor(), 2);
+
+            view.left(&CeLeft, window, cx);
+            assert_eq!(view.cursor(), 0, "collapses onto the near edge");
+            assert!(view.selection().is_empty());
+
+            view.select_all(&CeSelectAll, window, cx);
+            assert_eq!(view.selection(), 0..7);
+        });
+    }
+
+    /// US-011: Up/Down keep the column they started from, even after crossing a
+    /// shorter row.
+    #[gpui::test]
+    fn vertical_motion_restores_the_goal_column(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "aaaaaaa\nbb\ncccccccc");
+
+        view.update_in(cx, |view, window, cx| {
+            view.place_caret(5, false, cx);
+            view.down(&CeDown, window, cx);
+            assert_eq!(view.cursor(), 10, "clamped to the short row");
+            view.down(&CeDown, window, cx);
+            assert_eq!(view.cursor(), 16, "the goal column comes back");
+        });
+    }
+
+    /// US-009: a caret pushed past the end of the file lands on the last legal
+    /// slot rather than panicking, and US-010: a new caret drops the selection
+    /// without touching the content.
+    #[gpui::test]
+    fn the_caret_clamps_and_a_new_caret_clears_the_selection(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "one\ntwo");
+
+        view.update(cx, |view, cx| {
+            view.place_caret(9_999, false, cx);
+            assert_eq!(view.cursor(), 7);
+
+            view.take_whole_document(cx);
+            assert_eq!(view.selection(), 0..7);
+            let before = view.document().unwrap().len_bytes();
+            view.place_caret(2, false, cx);
+            assert!(view.selection().is_empty(), "the selection is gone");
+            assert_eq!(
+                view.document().unwrap().len_bytes(),
+                before,
+                "and the content is untouched"
+            );
+            assert_eq!(view.cursor_row(), 0, "the row follows the byte offset");
+        });
+    }
+
+    /// US-010: presses inside the interval chain into double then triple, and a
+    /// press that is too late or too far restarts the chain.
+    #[gpui::test]
+    fn multi_click_chains_then_resets(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "let foo = 1;\nnext");
+
+        view.update(cx, |view, _cx| {
+            let at = point(px(4.), px(4.));
+            let now = Instant::now();
+            assert_eq!(view.chain_click(at, now), 1);
+            assert_eq!(view.chain_click(at, now), 2);
+            assert_eq!(view.chain_click(at, now), 3);
+            assert_eq!(view.chain_click(at, now), 1, "the chain wraps at three");
+
+            assert_eq!(view.chain_click(at, now), 2);
+            assert_eq!(
+                view.chain_click(point(px(80.), px(4.)), now),
+                1,
+                "too far restarts it"
+            );
+            assert_eq!(
+                view.chain_click(
+                    point(px(80.), px(4.)),
+                    now + MULTI_CLICK_INTERVAL + Duration::from_millis(1)
+                ),
+                1,
+                "too late restarts it"
+            );
+        });
+    }
+
+    /// US-010: a drag started on a word keeps whole words selected, and one
+    /// started on a row keeps whole rows, whichever direction the pointer goes.
+    #[gpui::test]
+    fn a_word_drag_extends_by_whole_words(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "alpha beta gamma");
+
+        view.update(cx, |view, cx| {
+            // Stand in for the press: a double click on `beta`.
+            view.selection = CodeSelection {
+                anchor: 6,
+                head: 10,
+            };
+            view.text_drag = Some(TextDrag {
+                grain: DragGrain::Word,
+                anchor: 6..10,
+            });
+            view.extend_drag_to(2, cx);
+            assert_eq!(view.selection(), 0..10, "backward, whole words");
+            view.extend_drag_to(13, cx);
+            assert_eq!(view.selection(), 6..16, "forward, whole words");
+        });
+    }
+
+    // --------------------------------------------------------------- EP-004
+
+    /// Build a view over a file that really exists, so the save and conflict
+    /// paths have something to stat. Returns the temp dir, which has to outlive
+    /// the view.
+    ///
+    /// `watch` stays off for every test that writes into the directory: a real
+    /// inotify watcher wakes the reload task from the notify thread, which the
+    /// deterministic test scheduler rightly calls non-determinism. Registration
+    /// is proven on its own, by a test that never writes.
+    fn file_view<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+        watch: bool,
+    ) -> (
+        tempfile::TempDir,
+        Entity<CodeView>,
+        &'a mut VisualTestContext,
+    ) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, text).expect("seed");
+        let document = build_document(path.clone(), text, false);
+        let highlighter = CodeHighlighter::new(
+            &document,
+            DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
+        );
+        let state = CodeLoadState::Ready(Box::new(LoadedCode {
+            document,
+            highlighter,
+        }));
+        let stamp = FileStamp::read(&path);
+        let (view, cx) = {
+            let path = path.clone();
+            cx.add_window_view(move |_window, cx| {
+                let mut view = CodeView {
+                    element_id: "code-view:test".into(),
+                    path,
+                    state,
+                    slot: CodeLoadSlot::new(),
+                    focus: cx.focus_handle(),
+                    scroll: ScrollHandle::new(),
+                    v_drag: None,
+                    h_offset: 0.0,
+                    selection: CodeSelection::default(),
+                    goal_column: 0,
+                    text_drag: None,
+                    click_chain: None,
+                    last_motion: Instant::now(),
+                    blink_visible: true,
+                    theme_generation: 0,
+                    geometry: Rc::new(Cell::new(CodeGeometry::default())),
+                    gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
+                    hits: Rc::new(RefCell::new(CodeHitMap::default())),
+                    history: edit::UndoHistory::default(),
+                    saved_mark: edit::HistoryMark::default(),
+                    indent: IndentUnit::Spaces(4),
+                    marked: None,
+                    read_only_flash: None,
+                    stamp,
+                    disk: DiskState::default(),
+                    save_error: None,
+                    saving: false,
+                    _watcher: None,
+                };
+                if watch {
+                    view.start_watcher(cx);
+                }
+                view
+            })
+        };
+        (dir, view, cx)
+    }
+
+    /// Current buffer text.
+    fn text_of(view: &CodeView) -> String {
+        view.document()
+            .map(|doc| doc.slice_string(0..doc.len_bytes()))
+            .unwrap_or_default()
+    }
+
+    /// US-012 AC: typing with a live selection replaces it, through the real
+    /// platform text-input entry point rather than a helper.
+    #[gpui::test]
+    fn typing_replaces_the_live_selection(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "hello world\n");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection { anchor: 0, head: 5 };
+            view.replace_text_in_range(None, "bye", window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "bye world\n");
+            assert_eq!(view.cursor(), 3, "the caret lands past what was inserted");
+            assert!(view.is_dirty(), "an edit marks the document dirty");
+        });
+    }
+
+    /// US-012 AC: Backspace removes a full grapheme, so a composed emoji goes in
+    /// one press instead of shedding its skin-tone modifier first.
+    #[gpui::test]
+    fn backspace_removes_a_whole_composed_emoji(cx: &mut TestAppContext) {
+        let emoji = "\u{1F44D}\u{1F3FD}";
+        let (view, cx) = view(cx, &format!("ok{emoji}\n"));
+        let end = 2 + emoji.len();
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(end);
+            view.backspace(&CeBackspace, window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(
+                text_of(view),
+                "ok\n",
+                "the whole grapheme went in one press"
+            );
+        });
+    }
+
+    /// US-012 AC: Enter repeats the row's indentation.
+    #[gpui::test]
+    fn enter_repeats_the_row_indentation(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "fn main() {\n    let x = 1;\n}\n");
+        // End of the indented row.
+        let at = "fn main() {\n    let x = 1;".len();
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(at);
+            view.newline(&CeNewline, window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "fn main() {\n    let x = 1;\n    \n}\n");
+            assert_eq!(view.cursor(), at + 5, "the caret sits past the new indent");
+        });
+    }
+
+    /// US-012 AC: a keystroke on a read-only document mutates nothing and says
+    /// so. The refusal has to be visible, which is why the input handler is left
+    /// enabled and the keystroke is turned down here rather than by the
+    /// platform.
+    #[gpui::test]
+    fn a_keystroke_on_a_read_only_document_is_refused_visibly(cx: &mut TestAppContext) {
+        let path = PathBuf::from("/nonexistent/paneflow-code.rs");
+        let document = build_document(path.clone(), "locked\n", true);
+        let highlighter = CodeHighlighter::new(
+            &document,
+            DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
+        );
+        let state = CodeLoadState::Ready(Box::new(LoadedCode {
+            document,
+            highlighter,
+        }));
+        let (view, cx) = cx.add_window_view(move |_window, cx| CodeView {
+            element_id: "code-view:test".into(),
+            path,
+            state,
+            slot: CodeLoadSlot::new(),
+            focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+            v_drag: None,
+            h_offset: 0.0,
+            selection: CodeSelection::default(),
+            goal_column: 0,
+            text_drag: None,
+            click_chain: None,
+            last_motion: Instant::now(),
+            blink_visible: true,
+            theme_generation: 0,
+            geometry: Rc::new(Cell::new(CodeGeometry::default())),
+            gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
+            hits: Rc::new(RefCell::new(CodeHitMap::default())),
+            history: edit::UndoHistory::default(),
+            saved_mark: edit::HistoryMark::default(),
+            indent: IndentUnit::Spaces(4),
+            marked: None,
+            read_only_flash: None,
+            stamp: None,
+            disk: DiskState::default(),
+            save_error: None,
+            saving: false,
+            _watcher: None,
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.replace_text_in_range(None, "x", window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "locked\n", "nothing was written");
+            assert!(
+                !view.is_dirty(),
+                "a refused keystroke leaves no transaction"
+            );
+            assert!(
+                view.read_only_flash.is_some(),
+                "the refusal lights the banner up"
+            );
+        });
+    }
+
+    /// US-012 and US-016 AC: a read-only file an agent rewrote reloads
+    /// silently, which leaves a transaction in the history. `Ctrl+Z` must be
+    /// refused like any other edit on that document - replaying it moves the
+    /// caret and the dirty mark while the rope stays put, so a file that
+    /// matches disk exactly starts claiming it is modified.
+    #[gpui::test]
+    fn undo_on_a_read_only_document_is_refused_visibly(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+
+        view.update(cx, |view, _cx| {
+            view.state
+                .document_mut()
+                .expect("document")
+                .set_read_only(Some(ReadOnlyReason::Permissions));
+        });
+
+        std::fs::write(&path, "one\ntwo\nthree\n").expect("external write");
+        let stamp = FileStamp::read(&path);
+        view.update(cx, |view, cx| {
+            view.disk_changed(stamp, Some("one\ntwo\nthree\n".to_string()), cx);
+            assert_eq!(text_of(view), "one\ntwo\nthree\n", "the reload landed");
+            assert!(
+                !view.is_dirty(),
+                "a silent reload leaves the document clean"
+            );
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.undo(&CeUndo, window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "one\ntwo\nthree\n", "nothing was replayed");
+            assert!(!view.is_dirty(), "and the document is still clean");
+            assert!(view.read_only_flash.is_some(), "the refusal is visible");
+        });
+    }
+
+    /// US-013 AC: an undo feeds `Tree::edit` in reverse, so the coloring that
+    /// survives a `Ctrl+Z` is the coloring a fresh parse of the same text
+    /// produces. The oracle is that fresh parse, compared row by row against
+    /// the tree the view kept editing incrementally.
+    #[gpui::test]
+    fn undo_keeps_the_highlighting_a_fresh_parse_would_give(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "fn main() {\n    let value = 1;\n}\n");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(16);
+            view.replace_text_in_range(None, "xyz", window, cx);
+            view.undo(&CeUndo, window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            let doc = view.document().expect("document");
+            let oracle =
+                CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+            let live = view.highlighter().expect("highlighter");
+            assert!(live.is_enabled(), "the grammar is loaded");
+            assert!(
+                !oracle.runs(1).is_empty(),
+                "the oracle colors something, so the comparison means something"
+            );
+            for row in 0..doc.line_count() {
+                assert_eq!(
+                    live.runs(row),
+                    oracle.runs(row),
+                    "row {row} kept its coloring across the undo"
+                );
+            }
+        });
+    }
+
+    /// US-013 AC: consecutive keystrokes undo as one transaction, and a caret
+    /// move closes the group so what follows undoes on its own.
+    #[gpui::test]
+    fn keystrokes_group_until_the_caret_moves(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "\n");
+
+        view.update_in(cx, |view, window, cx| {
+            for letter in ["a", "b", "c"] {
+                view.replace_text_in_range(None, letter, window, cx);
+            }
+            view.left(&CeLeft, window, cx);
+            view.right(&CeRight, window, cx);
+            view.replace_text_in_range(None, "d", window, cx);
+            assert_eq!(text_of(view), "abcd\n");
+
+            view.undo(&CeUndo, window, cx);
+            assert_eq!(
+                text_of(view),
+                "abc\n",
+                "the post-move keystroke undid alone"
+            );
+            view.undo(&CeUndo, window, cx);
+            assert_eq!(
+                text_of(view),
+                "\n",
+                "the three grouped keystrokes undid together"
+            );
+
+            view.redo(&CeRedo, window, cx);
+            assert_eq!(text_of(view), "abc\n", "redo replays the same grouping");
+        });
+    }
+
+    /// US-013 AC: undo restores the caret and the selection the edit started
+    /// from, not merely the text.
+    #[gpui::test]
+    fn undo_restores_the_selection_the_edit_replaced(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "hello world\n");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection {
+                anchor: 6,
+                head: 11,
+            };
+            view.replace_text_in_range(None, "there", window, cx);
+            view.undo(&CeUndo, window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "hello world\n");
+            assert_eq!(view.selection(), 6..11, "the replaced selection came back");
+        });
+    }
+
+    /// US-013 and US-014 AC: a multi-line paste is one transaction and one
+    /// Ctrl+Z, and the caret ends at the end of what was inserted.
+    #[gpui::test]
+    fn a_multi_line_paste_is_one_undo_step(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "start\n");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(6);
+            cx.write_to_clipboard(ClipboardItem::new_string("one\r\ntwo\r\nthree".to_string()));
+            view.paste_action(&CePaste, window, cx);
+            assert_eq!(text_of(view), "start\none\ntwo\nthree");
+            assert_eq!(
+                view.cursor(),
+                text_of(view).len(),
+                "the caret is at the end"
+            );
+
+            view.undo(&CeUndo, window, cx);
+            assert_eq!(text_of(view), "start\n", "the whole paste undid at once");
+        });
+    }
+
+    /// US-014 AC: a paste carrying control characters and a bidi override is
+    /// neutralized before it reaches the rope.
+    #[gpui::test]
+    fn a_paste_is_sanitized_before_insertion(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "\n");
+
+        view.update_in(cx, |view, window, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(
+                "let x = 1;\u{202E}\u{0007}\u{200B}".to_string(),
+            ));
+            view.paste_action(&CePaste, window, cx);
+        });
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(text_of(view), "let x = 1;\n");
+        });
+    }
+
+    /// US-014 AC: Copy with no selection takes the whole row, newline included,
+    /// so pasting it back lands a complete line.
+    #[gpui::test]
+    fn copy_with_no_selection_takes_the_whole_row(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "first\nsecond\n");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(8);
+            view.copy(&CeCopy, window, cx);
+            let clipped = cx
+                .read_from_clipboard()
+                .and_then(|item| item.text())
+                .unwrap_or_default();
+            assert_eq!(clipped, "second\n");
+            assert_eq!(text_of(view), "first\nsecond\n", "copy never mutates");
+        });
+    }
+
+    /// US-014 AC: Tab indents every row a multi-line selection touches, and
+    /// Shift+Tab takes exactly one level back off without ever eating a
+    /// non-blank character.
+    #[gpui::test]
+    fn tab_and_shift_tab_shift_every_touched_row(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "one\ntwo\nthree\n");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection {
+                anchor: 0,
+                head: 8, // into row two
+            };
+            view.indent(&CeIndent, window, cx);
+            assert_eq!(text_of(view), "    one\n    two\nthree\n");
+
+            view.outdent(&CeOutdent, window, cx);
+            assert_eq!(text_of(view), "one\ntwo\nthree\n");
+
+            // Nothing left to take: the row's own characters are safe.
+            view.outdent(&CeOutdent, window, cx);
+            assert_eq!(text_of(view), "one\ntwo\nthree\n");
+        });
+    }
+
+    /// US-015 AC: Ctrl+S writes the file and clears the dirty mark, and undoing
+    /// back to the saved state leaves it clear.
+    #[gpui::test]
+    fn saving_writes_the_file_and_settles_the_dirty_mark(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "two\n", window, cx);
+            assert!(view.is_dirty());
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "one\ntwo\n");
+        view.update_in(cx, |view, window, cx| {
+            assert!(!view.is_dirty(), "a landed save clears the dot");
+            assert!(view.save_error.is_none());
+
+            view.replace_text_in_range(None, "x", window, cx);
+            assert!(view.is_dirty());
+            view.undo(&CeUndo, window, cx);
+            assert!(
+                !view.is_dirty(),
+                "undoing back to the saved state clears the dot again"
+            );
+        });
+    }
+
+    /// US-016 AC: a save is refused *before* writing when the file changed in
+    /// the meantime, and the on-disk bytes are untouched.
+    #[gpui::test]
+    fn a_save_is_refused_when_the_file_changed_underneath(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "mine\n", window, cx);
+        });
+        // An agent gets there first. The stamp carries a length change, so this
+        // does not depend on the filesystem's timestamp granularity.
+        std::fs::write(&path, "written by someone else\n").expect("agent write");
+
+        view.update_in(cx, |view, window, cx| {
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "written by someone else\n",
+            "the refusal happened before the write"
+        );
+        view.update(cx, |view, _cx| {
+            assert!(view.has_conflict(), "the user is asked to choose");
+            assert!(view.is_dirty(), "the in-memory edits survived");
+            assert_eq!(text_of(view), "one\nmine\n");
+        });
+    }
+
+    /// US-016 AC: an external write to a clean document reloads silently,
+    /// keeping the scroll and the caret, and the reload is undoable.
+    #[gpui::test]
+    fn an_external_write_reloads_a_clean_document(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "ONE\nTWO\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update(cx, |view, cx| {
+            view.selection = CodeSelection::at(4);
+            view.disk_changed(stamp, Some("ONE\nTWO\n".to_string()), cx);
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            assert_eq!(text_of(view), "ONE\nTWO\n");
+            assert!(!view.has_conflict(), "a clean document reloads silently");
+            assert!(!view.is_dirty(), "the reload is the new saved state");
+            assert_eq!(
+                view.cursor(),
+                4,
+                "the caret held: the line count is unchanged"
+            );
+
+            view.undo(&CeUndo, window, cx);
+            assert_eq!(
+                text_of(view),
+                "one\ntwo\n",
+                "Ctrl+Z recovers what was replaced"
+            );
+        });
+    }
+
+    /// US-016 AC: the same write against a dirty document raises the banner and
+    /// overwrites nothing.
+    #[gpui::test]
+    fn an_external_write_on_a_dirty_document_raises_a_conflict(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(4);
+            view.replace_text_in_range(None, "mine\n", window, cx);
+        });
+        std::fs::write(&path, "theirs\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update(cx, |view, cx| {
+            view.disk_changed(stamp, Some("theirs\n".to_string()), cx);
+            assert!(view.has_conflict());
+            assert_eq!(text_of(view), "one\nmine\n", "the buffer was not touched");
+        });
+
+        // "Keep mine" adopts the on-disk stamp, so the next save deliberately
+        // wins instead of looping on the same refusal.
+        view.update(cx, |view, cx| view.resolve_keep_mine(cx));
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+        view.update_in(cx, |view, window, cx| {
+            assert!(!view.has_conflict());
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "one\nmine\n");
+    }
+
+    /// US-016 AC: a file deleted on disk is flagged, and saving recreates it.
+    #[gpui::test]
+    fn a_deleted_file_is_flagged_and_saving_recreates_it(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::remove_file(&path).expect("delete");
+
+        view.update(cx, |view, cx| {
+            view.disk_changed(None, None, cx);
+            view.stamp = None;
+            assert_eq!(view.disk, DiskState::Deleted);
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.save_action(&CeSave, window, cx);
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), "one\n");
+        view.update(cx, |view, _cx| assert_eq!(view.disk, DiskState::InSync));
+    }
+
+    /// US-016 AC: detection is wired at load time, on the file's parent
+    /// directory. A rename-based save never reaches a watch on the old inode,
+    /// which is why the watch is registered one level up.
+    #[gpui::test]
+    fn opening_a_real_file_registers_the_conflict_watcher(cx: &mut TestAppContext) {
+        let (_dir, view, cx) = file_view(cx, "one\n", true);
+        view.update(cx, |view, _cx| {
+            assert!(view._watcher.is_some(), "the parent directory is watched");
+            // Stop watching before the temp dir is removed: its deletion would
+            // otherwise wake the reload task from the notify thread once the
+            // test scheduler has finished, which reads as non-determinism.
+            view._watcher = None;
+        });
+    }
+}

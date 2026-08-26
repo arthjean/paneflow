@@ -490,6 +490,23 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         context: "DiffView && !Terminal && !TextInput && !PaneflowTextArea",
         description: "Diff: toggle scroll sync",
     },
+    // EP-005 US-018 (prd-file-editor-2026-Q3): the diff dock's new-tab chords.
+    // Kept off terminals and text widgets - Ctrl+G is BEL and Ctrl+J is LF in a
+    // shell, so a global binding would eat both. `CodeEditor` is excluded for
+    // the same reason, and because it is the surface the file chord opens: a
+    // caret inside the editor must keep its own keystrokes.
+    ActionMeta {
+        name: "diff_new_file_tab",
+        factory: || Box::new(crate::DiffNewFileTab),
+        context: "!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor",
+        description: "Diff dock: open a file tab",
+    },
+    ActionMeta {
+        name: "diff_new_terminal_tab",
+        factory: || Box::new(crate::DiffNewTerminalTab),
+        context: "!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor",
+        description: "Diff dock: open a terminal tab",
+    },
     ActionMeta {
         name: "diff_dismiss",
         factory: || Box::new(crate::DiffDismiss),

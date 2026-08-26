@@ -17,6 +17,18 @@
 //! (`HIGHLIGHT_QUERY_BLOCK`: headings / fences / list markers) and the inline
 //! grammar (`HIGHLIGHT_QUERY_INLINE`: emphasis / links / inline code) - merged
 //! by `resolve_runs` so nested inline captures keep their specific colors.
+//!
+//! **Reuse contract (prd-file-editor-2026-Q3, US-004).** The file editor's
+//! incremental driver (`app/agents_diff/code/highlight.rs`) must color a file
+//! exactly like this module colors its diff, so it consumes the same grammars
+//! ([`grammar_for_ext`], [`markdown_inline_grammar`]), the same size cutoff
+//! ([`MAX_HIGHLIGHT_BYTES`]) and the same overlap resolution
+//! ([`resolve_runs`]) instead of holding a second copy of the grammar table.
+//! Those five items are `pub(crate)` for that reason alone - the parse driven
+//! here is still the diff's own, and the editor never calls [`highlight_lines`]
+//! outside its parity test. Nothing in this module's behavior may change to
+//! suit the editor: a divergence between the two surfaces is the one failure
+//! US-004 does not tolerate.
 
 use std::ops::Range;
 use std::sync::OnceLock;
@@ -29,18 +41,18 @@ use super::syntax::DiffSyntax;
 
 /// Full-file tree-sitter parsing above this size is more likely to hurt Review
 /// responsiveness than help readability. The diff still renders normally.
-const MAX_HIGHLIGHT_BYTES: usize = 300_000;
+pub(crate) const MAX_HIGHLIGHT_BYTES: usize = 300_000;
 
 /// A resolved grammar: its `Language` + parsed highlights `Query`, interned
 /// once per process (`Query::new` is not cheap).
-struct Grammar {
-    language: Language,
-    query: Query,
+pub(crate) struct Grammar {
+    pub(crate) language: Language,
+    pub(crate) query: Query,
 }
 
 /// Resolve + intern the grammar for a file extension; `None` for unknown
 /// extensions (→ monochrome fallback).
-fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
+pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
     macro_rules! grammar {
         ($cell:ident, $lang:expr, $query:expr) => {{
             static $cell: OnceLock<Option<Grammar>> = OnceLock::new();
@@ -150,7 +162,7 @@ fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
 /// that colors emphasis / links / inline code the block grammar leaves grey.
 /// Interned once; `None` if its query fails to compile (→ block-only fallback,
 /// still graceful).
-fn markdown_inline_grammar() -> Option<&'static Grammar> {
+pub(crate) fn markdown_inline_grammar() -> Option<&'static Grammar> {
     static MD_INLINE: OnceLock<Option<Grammar>> = OnceLock::new();
     MD_INLINE
         .get_or_init(|| {
@@ -275,7 +287,7 @@ fn bucket_capture(
 /// `element.rs::text_runs` expects. Smaller ranges are treated as more specific:
 /// they keep their bytes, and wider overlapping captures keep only uncovered
 /// fragments. This is also what merges the Markdown block + inline passes.
-fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
+pub(crate) fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
     if runs.len() < 2 {
         return;
     }

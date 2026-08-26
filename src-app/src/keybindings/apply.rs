@@ -178,6 +178,11 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
     // clipboard).
     crate::widgets::text_input::register_keybindings(cx);
     crate::widgets::text_area::register_keybindings(cx);
+    // Same reasoning for the code editor's navigation bindings (EP-003
+    // US-011): they are scoped to the `CodeEditor` key context, so they never
+    // shadow a global shortcut, but the clear above takes them out with
+    // everything else.
+    crate::app::agents_diff::code::view::register_keybindings(cx);
 }
 
 #[cfg(test)]
@@ -304,6 +309,56 @@ mod tests {
             make_binding(user_key, Box::new(SplitHorizontally), None).is_some(),
             "the user override must produce a valid binding"
         );
+    }
+
+    /// EP-005 US-018 (prd-file-editor-2026-Q3): the two diff-dock chords are
+    /// bindable, claimed by exactly one default each, and free of any conflict
+    /// with the rest of the action table. Written with `secondary-`, so the
+    /// same assertion covers Ctrl on Linux/Windows and Cmd on macOS.
+    #[test]
+    fn diff_dock_tab_chords_are_bindable_and_do_not_collide() {
+        use super::super::defaults::DEFAULTS;
+
+        for (key, action_name) in [
+            ("secondary-g", "diff_new_file_tab"),
+            ("secondary-j", "diff_new_terminal_tab"),
+        ] {
+            let context = context_for_action(action_name);
+            let action = action_from_name(action_name).expect("registered action");
+            assert!(
+                make_binding(key, action, context).is_some(),
+                "{key} must parse into a valid KeyBinding with context {context:?}"
+            );
+
+            let claimants: Vec<&str> = DEFAULTS
+                .iter()
+                .chain(MACOS_ONLY_DEFAULTS.iter())
+                .filter(|d| keystrokes_conflict(d.key, key))
+                .map(|d| d.action_name)
+                .collect();
+            assert_eq!(
+                claimants,
+                vec![action_name],
+                "{key} must be claimed by exactly one default on this platform"
+            );
+
+            // The chord must not reach a shell: Ctrl+G is BEL and Ctrl+J is LF,
+            // and both stay the terminal's on every platform. Same for the text
+            // widgets, where they are ordinary input, and for the code editor
+            // the file chord itself opens.
+            let context = context.expect("the dock chords must be context-scoped");
+            for excluded in [
+                "Terminal",
+                "TextInput",
+                "PaneflowTextArea",
+                crate::app::agents_diff::code::view::CODE_KEY_CONTEXT,
+            ] {
+                assert!(
+                    context.contains(&format!("!{excluded}")),
+                    "{key} must be scoped away from {excluded}, got `{context}`"
+                );
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]

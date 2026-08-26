@@ -31,6 +31,19 @@ impl PaneFlowApp {
         }
     }
 
+    /// Whether the dock is actually on screen.
+    ///
+    /// `agents_diff_open` alone is not enough: the flag survives a mode switch
+    /// and a trip through Settings, both of which unmount the dock in
+    /// [`Self::wrap_cli_diff_dock`]. Anything that acts *on* the dock without
+    /// putting it back on screen has to ask this instead, or it mutates a strip
+    /// nobody can see.
+    pub(crate) fn diff_dock_visible(&self) -> bool {
+        self.agents_view.agents_diff_open
+            && self.settings_section.is_none()
+            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+    }
+
     /// Dock the diff panel to the right of the CLI pane grid when it is open.
     /// The resize / horizontal-scrollbar drags are captured on this wrapper (a
     /// full-height surface) so a drag keeps tracking once the cursor outruns its
@@ -40,10 +53,7 @@ impl PaneFlowApp {
         body: AnyElement,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        if !self.agents_view.agents_diff_open
-            || self.settings_section.is_some()
-            || !matches!(self.mode, paneflow_config::schema::AppMode::Cli)
-        {
+        if !self.diff_dock_visible() {
             return body;
         }
         let ui = crate::theme::ui_colors();

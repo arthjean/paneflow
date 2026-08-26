@@ -21,6 +21,9 @@
 //! open/refresh/collapse lifecycle, the panel + body render, and the body click.
 
 mod branch;
+// prd-file-editor-2026-Q3, EP-001: the editable-document layer behind the
+// dock's `File` tabs (US-017).
+pub(crate) mod code;
 mod git;
 mod model;
 mod new_tab_menu;
@@ -43,8 +46,8 @@ use self::branch::render_diff_branch_chip;
 use self::git::build_agents_diff;
 use self::model::{AGENTS_DIFF_PANEL_MAX_WIDTH, AGENTS_DIFF_PANEL_MIN_WIDTH, DiffChrome};
 use self::render::{
-    diff_panel_centered, render_diff_files_toolbar, render_diff_resize_handle,
-    render_diff_tab_strip,
+    diff_file_header_path, diff_panel_centered, render_diff_file_header, render_diff_files_toolbar,
+    render_diff_resize_handle, render_diff_tab_strip,
 };
 use crate::PaneFlowApp;
 use crate::diff::{
@@ -311,6 +314,7 @@ impl PaneFlowApp {
         let header = render_diff_tab_strip(
             &tabs,
             active,
+            self.agents_view.diff_tab_close_armed,
             self.agents_view.diff_new_tab_menu_open,
             ui,
             cx,
@@ -320,6 +324,30 @@ impl PaneFlowApp {
         // about a shell.
         let (toolbar, body) = match tabs.get(active) {
             Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
+            // A file tab swaps the diff's files toolbar for its own header
+            // (US-018): same 36 px band, describing the open document instead
+            // of the working tree.
+            Some(DiffDockTab::File(view)) => {
+                let (icon, path, line, column) = {
+                    let view = view.read(cx);
+                    let path = view.path().to_path_buf();
+                    let (line, column) = view.cursor_line_column();
+                    let name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    (
+                        render::file_tab_icon(&name),
+                        diff_file_header_path(&cwd, &path),
+                        line,
+                        column,
+                    )
+                };
+                (
+                    Some(render_diff_file_header(icon, path, line, column, ui)),
+                    view.clone().into_any_element(),
+                )
+            }
             _ => (
                 Some(self.render_diff_toolbar(&cwd, &data, ui, cx)),
                 self.render_agents_diff_body(&data, ui, cx),

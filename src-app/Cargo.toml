@@ -275,6 +275,21 @@ notify-rust = "4"
 # targets. The matching signing side runs in CI (US-002, `minisign`/`rsign2`).
 minisign-verify = "0.2.5"
 
+# US-001 (prd-file-editor-2026-Q3): the rope backing `CodeDocument`
+# (`app/agents_diff/code/document.rs`). An edit in the middle of a large file
+# is O(log n) instead of the O(n) memmove a flat `String` would pay, and the
+# rope maintains its own line counters so byte <-> line conversions never
+# rescan. `chunks_at_byte` feeds tree-sitter's `Parser::parse_with` callback
+# directly (US-004), so no full-text copy is materialized per reparse.
+#
+# `default-features = false` deliberately drops `unicode_lines` and `cr_lines`:
+# with neither, ropey counts ONLY `\n` as a line break, which is exactly how
+# `str::lines()` (and therefore `diff/highlighter.rs`) segments text. Keeping
+# the defaults would make a lone `\r`, `\u{2028}` or `\u{0085}` split a line
+# in the editor but not in the diff - the one divergence US-004 forbids. `simd`
+# is re-enabled explicitly because it is a default we do want.
+ropey = { version = "1.6", default-features = false, features = ["simd"] }
+
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_platform = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db", features = ["wayland", "x11"] }

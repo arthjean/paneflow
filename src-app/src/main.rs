@@ -880,6 +880,10 @@ struct AgentsViewState {
     pub(crate) diff_tabs: Vec<crate::app::agents_diff::DiffDockTab>,
     /// Index into `diff_tabs` of the tab whose body the dock renders.
     pub(crate) diff_active_tab: usize,
+    /// Index of the modified file tab whose close button is armed, i.e. waiting
+    /// for the confirming second press (US-017). Cleared by any tab selection,
+    /// open or close, so the confirmation never outlives its gesture.
+    pub(crate) diff_tab_close_armed: Option<usize>,
     /// Open branch picker anchored to the diff dock's toolbar chip; `None` when
     /// closed. Holds the branch list, the search field and the focus to restore.
     pub(crate) diff_branch_menu: Option<crate::app::agents_diff::DiffBranchMenuState>,
@@ -1871,6 +1875,8 @@ impl Render for PaneFlowApp {
             // EP-002 (cli-cockpit): Attention Queue + Launch Pad.
             .on_action(cx.listener(Self::handle_open_attention_queue))
             .on_action(cx.listener(Self::handle_open_launch_pad))
+            .on_action(cx.listener(Self::handle_diff_new_file_tab))
+            .on_action(cx.listener(Self::handle_diff_new_terminal_tab))
             // EP-001 US-003: Escape cancels an in-flight tab drag. Capture
             // phase runs ancestor-before-descendant, so this pre-empts the
             // focused terminal's own Escape->PTY forwarding - but only while a
