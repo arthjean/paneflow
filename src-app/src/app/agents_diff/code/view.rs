@@ -67,6 +67,7 @@ use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
@@ -80,6 +81,12 @@ use gpui::{
     UTF16Selection, WeakEntity, Window, actions, div, px, size,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+
+/// The one link between the notify backend thread and the reload task.
+///
+/// See [`CodeView::_watch_bridge`] for why the sender lives behind a lock
+/// rather than inside the watcher callback.
+type WatchBridge = Arc<Mutex<Option<mpsc::UnboundedSender<notify::Result<notify::Event>>>>>;
 
 use super::cursor::{self, CodeSelection};
 use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
@@ -378,6 +385,25 @@ pub(crate) struct CodeView {
     /// Parent-directory watcher (US-016). Held only to keep it alive: dropping
     /// it unregisters the watch.
     _watcher: Option<RecommendedWatcher>,
+    /// The sender the watcher callback writes into, owned here rather than by
+    /// the callback (US-016).
+    ///
+    /// Every wake of the reload task has to happen on the thread that owns
+    /// this view, or GPUI's test scheduler rightly calls the test
+    /// non-deterministic. The callback owning the sender breaks that twice:
+    /// `INotifyWatcher::drop` only posts a shutdown message, so the backend
+    /// thread drops the callback - and with it the last sender, closing the
+    /// channel - after the drop has already returned, and until it gets there
+    /// it can still deliver one last event. Both wakes land on the notify
+    /// thread.
+    ///
+    /// Holding the sender behind a lock fixes both: dropping the watcher
+    /// closes nothing, and clearing the option severs the callback before the
+    /// watcher goes away, from whichever thread does the clearing.
+    ///
+    /// Declared after `_watcher` on purpose: fields drop in declaration order,
+    /// so the watch is unregistered first and the channel closes second.
+    _watch_bridge: Option<WatchBridge>,
 }
 
 impl CodeView {
@@ -413,6 +439,7 @@ impl CodeView {
             save_error: None,
             saving: false,
             _watcher: None,
+            _watch_bridge: None,
         };
         view.observe_blink(cx);
         view.start_load(cx);
@@ -466,6 +493,7 @@ impl CodeView {
         self.save_error = None;
         self.saving = false;
         self._watcher = None;
+        self._watch_bridge = None;
         self.start_load(cx);
         cx.notify();
     }
@@ -1611,6 +1639,7 @@ impl CodeView {
     /// `reference_gpui_recursive_watcher_main_thread_hang`.
     fn start_watcher(&mut self, cx: &mut Context<Self>) {
         self._watcher = None;
+        self._watch_bridge = None;
         let Some(parent) = self.path.parent().map(Path::to_path_buf) else {
             return;
         };
@@ -1623,9 +1652,15 @@ impl CodeView {
         // Unbounded on purpose: events fired between registration and the first
         // poll below have to queue, not be dropped.
         let (tx, mut rx) = mpsc::unbounded::<notify::Result<notify::Event>>();
+        let bridge: WatchBridge = Arc::new(Mutex::new(Some(tx)));
+        let notify_side = Arc::clone(&bridge);
         let watcher = RecommendedWatcher::new(
             move |res| {
-                let _ = tx.unbounded_send(res);
+                if let Ok(guard) = notify_side.lock()
+                    && let Some(tx) = guard.as_ref()
+                {
+                    let _ = tx.unbounded_send(res);
+                }
             },
             notify::Config::default(),
         );
@@ -1641,6 +1676,7 @@ impl CodeView {
             return;
         }
         self._watcher = Some(watcher);
+        self._watch_bridge = Some(bridge);
 
         let path = self.path.clone();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -2368,6 +2404,7 @@ mod tests {
             save_error: None,
             saving: false,
             _watcher: None,
+            _watch_bridge: None,
         })
     }
 
@@ -2651,6 +2688,7 @@ mod tests {
                     save_error: None,
                     saving: false,
                     _watcher: None,
+                    _watch_bridge: None,
                 };
                 if watch {
                     view.start_watcher(cx);
@@ -2771,6 +2809,7 @@ mod tests {
             save_error: None,
             saving: false,
             _watcher: None,
+            _watch_bridge: None,
         });
 
         view.update_in(cx, |view, window, cx| {
@@ -3160,9 +3199,15 @@ mod tests {
         let (_dir, view, cx) = file_view(cx, "one\n", true);
         view.update(cx, |view, _cx| {
             assert!(view._watcher.is_some(), "the parent directory is watched");
-            // Stop watching before the temp dir is removed: its deletion would
-            // otherwise wake the reload task from the notify thread once the
-            // test scheduler has finished, which reads as non-determinism.
+            let bridge = view
+                ._watch_bridge
+                .take()
+                .expect("the reload task is bridged to the watcher");
+            // Sever the bridge from this thread, then stop watching, both
+            // before the temp dir is removed. Either order of the last two
+            // would otherwise let the notify thread wake the reload task,
+            // which the test scheduler reads as non-determinism.
+            *bridge.lock().expect("bridge lock") = None;
             view._watcher = None;
         });
     }
