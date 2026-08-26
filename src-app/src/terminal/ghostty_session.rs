@@ -4250,7 +4250,7 @@ mod tests {
     #[test]
     fn live_runtime_runs_platform_shell_and_reports_one_exit() {
         let cwd = std::env::current_dir().unwrap();
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         let (shell, shell_quoting, extra_args) = (
             "/bin/sh".into(),
             super::super::types::ShellQuoting::Posix,
@@ -4283,7 +4283,7 @@ mod tests {
             .start(pending, params, None, 1_000)
             .expect("Ghostty runtime must spawn a portable PTY shell");
         assert!(spawned.child_pid > 0);
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         let child_pid = spawned.child_pid;
         session.promote();
         #[cfg(target_os = "windows")]
@@ -4312,7 +4312,7 @@ mod tests {
             );
         }
         session.resize(TerminalWindowSize::new(100, 30, 8, 16));
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         let command =
             b"printf 'PANEFLOW_GHOSTTY_RUNTIME_OK:%s\\n' \"$TERM_PROGRAM\"; stty size; exit\n"
                 .to_vec();
@@ -4356,7 +4356,7 @@ mod tests {
             rendered.contains("PANEFLOW_GHOSTTY_RUNTIME_OK:ghostty"),
             "Ghostty runtime must identify itself to terminal applications; rendered={rendered:?}; runtime_failures={runtime_failures:?}"
         );
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         assert!(
             rendered.contains("30 100"),
             "resize must reach the child PTY; rendered={rendered:?}; runtime_failures={runtime_failures:?}"
@@ -4367,7 +4367,7 @@ mod tests {
             "resize must reach ConPTY; rendered={rendered:?}; runtime_failures={runtime_failures:?}"
         );
         assert_eq!(exits, 1, "child exit must be published exactly once");
-        #[cfg(target_os = "linux")]
+        #[cfg(unix)]
         {
             assert_eq!(unsafe { libc::kill(child_pid as i32, 0) }, -1);
             assert_eq!(
@@ -4537,5 +4537,150 @@ mod tests {
         assert_eq!(lifecycle.take_ready_exit(now, 0), None);
         lifecycle.record_eof();
         assert!(lifecycle.take_ready_exit(now, 0).is_some());
+    }
+
+    /// Spawn `/bin/sh -c <script>` on its own PTY, the same shape
+    /// `run_runtime` uses, and hand back the pieces the POSIX lifecycle
+    /// helpers operate on. Every assertion below therefore exercises the
+    /// production helper against a real Darwin/Linux process, not a model.
+    #[cfg(unix)]
+    fn spawn_posix_lifecycle_probe(
+        script: &str,
+    ) -> (
+        Box<dyn portable_pty::MasterPty + Send>,
+        Box<dyn portable_pty::Child + Send + Sync>,
+        u32,
+    ) {
+        let pair = native_pty_system()
+            .openpty(pty_size(TerminalWindowSize::new(80, 24, 8, 16)))
+            .expect("POSIX lifecycle probe must open a PTY");
+        let mut command = CommandBuilder::new("/bin/sh");
+        command.arg("-c");
+        command.arg(script);
+        command.cwd(std::env::current_dir().expect("probe cwd must resolve"));
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .expect("POSIX lifecycle probe must spawn /bin/sh");
+        drop(pair.slave);
+        let pid = child
+            .process_id()
+            .expect("POSIX lifecycle probe must report a child PID");
+        (pair.master, child, pid)
+    }
+
+    #[cfg(unix)]
+    fn probe_pid(pid: u32) -> i32 {
+        i32::try_from(pid).expect("a probe PID must fit in pid_t")
+    }
+
+    /// Wait for `observe_child_exit` to report the probe's exit without ever
+    /// reaping it, so the caller can re-observe the same status afterwards.
+    #[cfg(unix)]
+    fn observe_probe_exit(
+        child: &mut (dyn portable_pty::Child + Send + Sync),
+        pid: u32,
+    ) -> portable_pty::ExitStatus {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            match observe_child_exit(child, pid) {
+                Ok(Some(status)) => return status,
+                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
+                Err(error) => panic!("waitid failed for probe {pid}: {error}"),
+            }
+        }
+        panic!("probe {pid} never reported an exit status");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn posix_process_group_helper_authenticates_the_session_leader() {
+        let (_master, mut child, pid) = spawn_posix_lifecycle_probe("exec sleep 30");
+        let expected = probe_pid(pid);
+        assert_eq!(
+            verified_process_group(pid),
+            Some(expected),
+            "portable-pty must spawn the child as its own process-group leader"
+        );
+        assert_eq!(child_termination_target(pid), Some(expected));
+        terminate_child(child.as_mut(), Some(expected));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn waitid_probe_is_non_blocking_and_leaves_the_exit_status_unconsumed() {
+        let (_master, mut child, pid) = spawn_posix_lifecycle_probe("sleep 0.3; exit 7");
+        let started = Instant::now();
+        let pending =
+            observe_child_exit(child.as_mut(), pid).expect("waitid must succeed for a live child");
+        assert!(
+            pending.is_none(),
+            "a still-running child must not report an exit status"
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(200),
+            "WNOHANG must return immediately instead of waiting for the child"
+        );
+
+        let exit = observe_probe_exit(child.as_mut(), pid);
+        assert_eq!(exit.exit_code(), 7, "CLD_EXITED must carry the exit code");
+        assert!(exit.signal().is_none());
+
+        // WNOWAIT left the zombie in place, so the leader PID is still
+        // reserved and a second observation sees the same status.
+        let again = observe_probe_exit(child.as_mut(), pid);
+        assert_eq!(
+            again.exit_code(),
+            7,
+            "WNOWAIT must not consume the exit status"
+        );
+        let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn waitid_probe_maps_a_killed_child_to_a_named_signal() {
+        let (_master, mut child, pid) = spawn_posix_lifecycle_probe("kill -KILL $$; sleep 30");
+        let exit = observe_probe_exit(child.as_mut(), pid);
+        let signal = exit
+            .signal()
+            .expect("CLD_KILLED must be reported as a signal, not an exit code");
+        assert!(!signal.is_empty());
+        assert!(
+            !signal.starts_with("Signal "),
+            "strsignal must name the signal; {signal:?} is the null-pointer fallback"
+        );
+        let _ = child.wait();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_escalates_to_sigkill_for_a_child_that_ignores_sigterm() {
+        let (_master, mut child, pid) =
+            spawn_posix_lifecycle_probe("trap '' TERM; while :; do sleep 0.05; done");
+        let group = verified_process_group(pid).expect("probe must lead its own process group");
+        let started = Instant::now();
+        terminate_child(child.as_mut(), Some(group));
+        assert!(
+            started.elapsed() <= SHUTDOWN_GRACE + Duration::from_secs(1),
+            "SIGKILL must land within SHUTDOWN_GRACE plus one second"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut group_error = None;
+        while Instant::now() < deadline {
+            // SAFETY: signal 0 performs no delivery; it only probes whether
+            // any member of the process group still exists.
+            if unsafe { libc::kill(-group, 0) } == -1 {
+                group_error = std::io::Error::last_os_error().raw_os_error();
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(
+            group_error,
+            Some(libc::ESRCH),
+            "the whole process group must be gone after the SIGKILL escalation"
+        );
     }
 }

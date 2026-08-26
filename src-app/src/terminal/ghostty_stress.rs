@@ -274,7 +274,7 @@ impl Drop for StressPane {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn cycle_spec() -> SpawnSpec {
     SpawnSpec {
         shell: "/bin/sh",
@@ -416,7 +416,7 @@ fn process_active(pid: u32) -> bool {
     wait != WAIT_OBJECT_0
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn process_active(pid: u32) -> bool {
     let Ok(pid) = i32::try_from(pid) else {
         return false;
@@ -496,7 +496,7 @@ fn descendant_pids(root_pid: u32) -> Vec<u32> {
     output
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn descendant_pids(_root_pid: u32) -> Vec<u32> {
     Vec::new()
 }
@@ -730,6 +730,23 @@ fn resource_snapshot() -> ResourceSnapshot {
         handles: std::fs::read_dir("/proc/self/fd")
             .map(|entries| entries.count() as u64)
             .unwrap_or(0),
+        rss: super::backend_corpus::resident_set_bytes(),
+    }
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
+fn resource_snapshot() -> ResourceSnapshot {
+    // Darwin and the other BSDs expose no `/proc/self/fd`, so probe the
+    // descriptor table directly. `F_GETFD` is a pure query on `fd`.
+    // SAFETY: `sysconf` reads a process limit and returns -1 when unavailable.
+    let limit = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+    let max_fd = i32::try_from(limit.clamp(0, 4096)).unwrap_or(4096);
+    let handles = (0..max_fd)
+        // SAFETY: `F_GETFD` only reads the descriptor flags of `fd`.
+        .filter(|fd| unsafe { libc::fcntl(*fd, libc::F_GETFD) } != -1)
+        .count() as u64;
+    ResourceSnapshot {
+        handles,
         rss: super::backend_corpus::resident_set_bytes(),
     }
 }
