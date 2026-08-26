@@ -1,10 +1,12 @@
 //! Right-docked git diff for the CLI cockpit.
 //!
-//! The trailing `git-pull-request` button of a pane header toggles the diff
-//! dock ([`crate::app::agents_diff`]) on that pane's *workspace folder*: the
-//! working-tree diff against `HEAD`, docked beside the pane grid. This module
-//! owns the CLI plumbing only - the toggle and the dock host; the panel itself
-//! is the Agents dock, rendered once.
+//! The trailing `layout-sidebar-right` button of a pane header toggles the side
+//! dock ([`crate::app::agents_diff`]) on that pane's *workspace folder*. The
+//! dock hosts three surfaces - the working-tree diff against `HEAD`, a shell,
+//! and open files - and asks which one the first time it is opened
+//! (`agents_diff::surface_picker`). This module owns the CLI plumbing only - the
+//! toggle and the dock host; the panel itself is rendered once by
+//! [`crate::app::agents_diff`].
 
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled, div,
@@ -27,6 +29,10 @@ impl PaneFlowApp {
         if showing {
             self.close_agents_diff_panel(cx);
         } else {
+            // The button opens the dock, not the diff: until this workspace has
+            // said once what it wants in it, the dock comes up on its surface
+            // picker. Afterwards it restores whatever tab was last active there.
+            self.agents_view.diff_dock_picker = !self.agents_view.diff_dock_picked;
             self.open_agents_diff_panel(cwd, cx);
         }
     }

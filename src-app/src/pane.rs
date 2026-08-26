@@ -1760,11 +1760,12 @@ impl Pane {
                     cx,
                 ))
             })
-            // Right-docked git diff for this pane's workspace folder. Trails
+            // Right side dock for this pane's workspace folder: the git diff, a
+            // shell, or an open file, picked on the dock's first open. Trails
             // the cluster so the two splits keep their leading slots.
             .child(self.action_button(
                 "pane-btn-diff-dock",
-                "icons/git-pull-request.svg",
+                "icons/layout-sidebar-right.svg",
                 cx.listener(|_this, _e: &ClickEvent, _window, cx| {
                     cx.emit(PaneEvent::ToggleDiffDock);
                     cx.stop_propagation();

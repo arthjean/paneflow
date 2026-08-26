@@ -29,6 +29,7 @@ mod model;
 mod new_tab_menu;
 mod options_menu;
 mod render;
+mod surface_picker;
 mod tabs;
 
 pub(crate) use branch::DiffBranchMenuState;
@@ -49,6 +50,7 @@ use self::render::{
     diff_file_header_path, diff_panel_centered, render_diff_file_header, render_diff_files_toolbar,
     render_diff_resize_handle, render_diff_tab_strip,
 };
+use self::surface_picker::{render_diff_picker_header, render_diff_surface_picker};
 use crate::PaneFlowApp;
 use crate::diff::{
     DiffBody, DiffElement, H_SCROLLBAR_TRACK_HEIGHT, HScrollbarSegment, RowKind, SplitRow,
@@ -303,6 +305,15 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        // First open of the session: the dock asks what to show instead of
+        // dropping into the diff. Gated on `Cli` because the flag is set by the
+        // pane-header toggle - the Agents dock is opened from its own chrome,
+        // already on a chosen surface, and must never inherit the question.
+        if self.agents_view.diff_dock_picker
+            && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
+        {
+            return self.render_diff_dock_picker(ui, cx);
+        }
         self.refresh_agents_diff_if_theme_changed(cx);
         let data = self.agents_view.agents_diff.clone();
         let cwd = data.as_ref().map(|d| d.cwd.clone()).unwrap_or_default();
@@ -372,6 +383,31 @@ impl PaneFlowApp {
             .child(header)
             .children(toolbar)
             .child(body)
+            .child(squircle_border(radius, px(1.), ui.border))
+            .into_any_element()
+    }
+
+    /// The dock drawn on its surface picker: same card silhouette, same resize
+    /// handle, but the tab strip and the body are replaced by the question. The
+    /// panel is rebuilt here rather than branched inside the main renderer so
+    /// the picker never pays for the diff snapshot it is not showing.
+    fn render_diff_dock_picker(
+        &mut self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let radius = crate::app::constants::PANE_CARD_RADIUS;
+        div()
+            .relative()
+            .w(px(self.agents_view.agents_diff_width))
+            .h_full()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(squircle_fill(radius, ui.base))
+            .child(render_diff_resize_handle(ui, cx))
+            .child(render_diff_picker_header(ui, cx))
+            .child(render_diff_surface_picker(ui, cx))
             .child(squircle_border(radius, px(1.), ui.border))
             .into_any_element()
     }

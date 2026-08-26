@@ -264,6 +264,11 @@ impl PaneFlowApp {
             let cwd = self.files_tree.root.to_string_lossy().into_owned();
             self.open_agents_diff_panel(cwd, cx);
         }
+        // Opening a document *is* an answer to the dock's surface picker: the
+        // dock must come up on the file, both now and the next time this
+        // workspace toggles it from a pane header.
+        self.agents_view.diff_dock_picker = false;
+        self.agents_view.diff_dock_picked = true;
         self.open_diff_file_tab(path, window, cx);
     }
 

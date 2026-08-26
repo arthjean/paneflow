@@ -875,6 +875,13 @@ struct AgentsViewState {
     pub(crate) diff_layout_submenu_open: bool,
     /// Whether the tab strip's `+` menu (which surface a new tab opens) is up.
     pub(crate) diff_new_tab_menu_open: bool,
+    /// Whether the dock is currently showing its surface picker instead of a
+    /// tab (see `agents_diff::surface_picker`). Set by the pane-header toggle on
+    /// the workspace's first open of the dock.
+    pub(crate) diff_dock_picker: bool,
+    /// Whether the picker has been answered at least once. Once it has,
+    /// opening the dock restores the last active tab rather than asking again.
+    pub(crate) diff_dock_picked: bool,
     /// The dock's tabs. Index 0 is always the permanent `Changes` diff; the
     /// rest are terminals opened from the `+` menu, closable from their tab.
     pub(crate) diff_tabs: Vec<crate::app::agents_diff::DiffDockTab>,

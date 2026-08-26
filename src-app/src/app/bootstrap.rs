@@ -1055,6 +1055,8 @@ impl PaneFlowApp {
                 diff_options_menu_open: false,
                 diff_layout_submenu_open: false,
                 diff_new_tab_menu_open: false,
+                diff_dock_picker: false,
+                diff_dock_picked: false,
                 diff_tabs: vec![crate::app::agents_diff::DiffDockTab::Changes],
                 diff_active_tab: 0,
                 diff_tab_close_armed: None,

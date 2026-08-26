@@ -441,7 +441,7 @@ pub(super) fn render_diff_file_header(
 /// `squircle`, not a circular `rounded()`), and the same hover tint. The dock
 /// chrome and the workspace rail are the same control family, so they share one
 /// silhouette instead of drifting into two.
-fn render_diff_header_icon_button(
+pub(super) fn render_diff_header_icon_button(
     id: &'static str,
     icon: &'static str,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
