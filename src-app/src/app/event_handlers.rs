@@ -521,18 +521,6 @@ impl PaneFlowApp {
                 // exact same path.
                 self.open_sessions_sidebar_for_pane(&pane, None, cx);
             }
-            pane::PaneEvent::ToggleFilesSidebar => {
-                // Open/close the docked Files tree for the active workspace's
-                // folder. Mutual exclusion with the sessions sidebar is handled
-                // inside `toggle_files_sidebar`.
-                if !self.files_sidebar_open {
-                    self.files_surface_id = pane
-                        .read(cx)
-                        .active_terminal_opt()
-                        .map(|terminal| terminal.entity_id().as_u64());
-                }
-                self.toggle_files_sidebar(cx);
-            }
             pane::PaneEvent::ToggleDiffDock => {
                 // The dock diffs the pane's *workspace folder*, not the shell's
                 // current directory: the folder is the unit the git pipeline

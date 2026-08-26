@@ -1,9 +1,10 @@
 //! Docked Files right sidebar (PRD `prd-files-tree-sidebar-2026-Q3`, EP-001).
 //!
 //! Mirrors the agent-sessions sidebar (`sessions_sidebar.rs`): a
-//! `flex_shrink_0` child of the root `flex_row`, toggled by the tab-bar Files
-//! button via `PaneEvent::ToggleFilesSidebar`, mutually exclusive with the
-//! sessions sidebar (one right column). Renders a lazily-expanded,
+//! `flex_shrink_0` child of the root `flex_row`, toggled by the
+//! `toggle_files_sidebar` action (`secondary-alt-f`), mutually exclusive with
+//! the sessions sidebar (one right column). The pane header carries no Files
+//! button: the tree is keyboard/command-driven only. Renders a lazily-expanded,
 //! folders-first tree of the active workspace's `cwd`. Markdown rows open into
 //! the active pane (the WCAG 2.5.7 single-pointer alternative to the EP-003
 //! drag); since US-019 of `prd-file-editor-2026-Q3` every other file opens in
