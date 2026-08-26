@@ -1,5 +1,5 @@
 use std::fs::{File, OpenOptions, TryLockError};
-use std::io::{Error, ErrorKind, Read, Result, Seek, SeekFrom, Write};
+use std::io::{Error, ErrorKind, Result};
 use std::path::{Path, PathBuf};
 
 /// Crash-safe lifetime lease for an agent configuration resource.
@@ -7,17 +7,26 @@ use std::path::{Path, PathBuf};
 /// Each live session holds a shared OS lock. Cleanup upgrades to an exclusive
 /// lock only after the final shared holder exits. The kernel releases locks on
 /// process termination, so a killed shim cannot strand a stale lease marker.
+///
+/// The lock file carries no payload. Windows shared locks forbid writes to the
+/// locked range for *every* process, the lock holder included, so writing the
+/// ownership bit into the locked file fails with `ERROR_LOCK_VIOLATION` there.
+/// The bit is therefore a sibling file whose presence is the whole state.
 pub struct ConfigLease {
     file: Option<File>,
+    marker: PathBuf,
 }
 
 pub struct LastConfigLease {
-    file: File,
+    /// Held for its exclusive lock, never read: dropping it releases the lock.
+    _file: File,
+    marker: PathBuf,
 }
 
 impl ConfigLease {
     pub fn acquire(resource: &Path) -> Result<Self> {
         let path = lease_path(resource)?;
+        let marker = path.with_extension("created");
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -25,7 +34,10 @@ impl ConfigLease {
             .truncate(false)
             .open(path)?;
         file.lock_shared()?;
-        Ok(Self { file: Some(file) })
+        Ok(Self {
+            file: Some(file),
+            marker,
+        })
     }
 
     /// Release this session's shared lock and become the exclusive last owner.
@@ -36,7 +48,10 @@ impl ConfigLease {
         };
         file.unlock()?;
         match file.try_lock() {
-            Ok(()) => Ok(Some(LastConfigLease { file })),
+            Ok(()) => Ok(Some(LastConfigLease {
+                _file: file,
+                marker: self.marker.clone(),
+            })),
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(error)) => Err(error),
         }
@@ -47,16 +62,18 @@ impl ConfigLease {
     /// Callers serialize this update with their configuration lock. The bit
     /// survives process crashes and is consumed by the eventual last owner.
     pub fn mark_created(&mut self) -> Result<()> {
-        let file = self.file.as_mut().ok_or_else(|| {
-            Error::new(
+        if self.file.is_none() {
+            return Err(Error::new(
                 ErrorKind::BrokenPipe,
                 "configuration lease was already released",
-            )
-        })?;
-        file.seek(SeekFrom::Start(0))?;
-        file.write_all(&[1])?;
-        file.set_len(1)?;
-        file.sync_data()
+            ));
+        }
+        let marker = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&self.marker)?;
+        marker.sync_all()
     }
 }
 
@@ -66,12 +83,11 @@ impl LastConfigLease {
     /// Clearing before cleanup makes a crash conservative: it may leave a
     /// managed file behind, but it cannot later delete a user-created file.
     pub fn take_created(&mut self) -> Result<bool> {
-        self.file.seek(SeekFrom::Start(0))?;
-        let mut marker = [0];
-        let created = self.file.read(&mut marker)? == 1 && marker[0] == 1;
-        self.file.set_len(0)?;
-        self.file.sync_data()?;
-        Ok(created)
+        match std::fs::remove_file(&self.marker) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 }
 
