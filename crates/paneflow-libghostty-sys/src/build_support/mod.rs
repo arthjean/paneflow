@@ -13,6 +13,7 @@ pub type BuildResult<T> = Result<T, Box<dyn Error>>;
 
 pub fn run() -> BuildResult<()> {
     println!("cargo:rerun-if-env-changed=PANEFLOW_LIBGHOSTTY_DIR");
+    emit_ghostty_native_cfg();
 
     let crate_dir = PathBuf::from(required_env("CARGO_MANIFEST_DIR")?);
     let workspace = crate_dir
@@ -81,6 +82,49 @@ pub fn run() -> BuildResult<()> {
         println!("cargo:rustc-link-lib=dylib={library}");
     }
     Ok(())
+}
+
+/// Emit the `ghostty_native` cfg alias for this crate.
+///
+/// `ghostty_native` is the single spelling of "the native Ghostty FFI layer
+/// is linked into this build". It replaces the platform-and-feature predicate
+/// that used to be copy-pasted across every gate site, so adding a target is
+/// a change to [`ghostty_native_target`] and the manifest rather than a
+/// textual sweep over nine files.
+///
+/// The `rustc-check-cfg` directive is printed unconditionally so that a build
+/// where the alias is *not* set still declares it as a known cfg name and the
+/// `unexpected_cfgs` lint stays quiet.
+///
+/// The predicate is evaluated from the `CARGO_CFG_TARGET_*` and
+/// `CARGO_FEATURE_*` variables Cargo sets for the *target* being built, never
+/// from `cfg!()` on the build-script host, which would describe the host.
+fn emit_ghostty_native_cfg() {
+    println!("cargo::rustc-check-cfg=cfg(ghostty_native)");
+    // The `-sys` crate only compiles and links the FFI layer under the `link`
+    // feature; `paneflow-terminal-ghostty/native` is what turns it on.
+    if std::env::var_os("CARGO_FEATURE_LINK").is_some() && ghostty_native_target() {
+        println!("cargo::rustc-cfg=ghostty_native");
+    }
+}
+
+/// Whether the target triple being built has a declared libghostty archive.
+///
+/// Kept in sync with the `[[target]]` entries of
+/// `native/libghostty/manifest.toml`. A target absent from this list resolves
+/// to the Alacritty-only stub path with no `ghostty_native` cfg emitted.
+fn ghostty_native_target() -> bool {
+    let cfg = |key: &str| std::env::var(key).unwrap_or_default();
+    match cfg("CARGO_CFG_TARGET_OS").as_str() {
+        "linux" => true,
+        // Only Apple Silicon has a declared archive; x86_64-apple-darwin is a
+        // closed release target and resolves to the Alacritty-only stub path.
+        "macos" => cfg("CARGO_CFG_TARGET_ARCH") == "aarch64",
+        "windows" => {
+            cfg("CARGO_CFG_TARGET_ARCH") == "x86_64" && cfg("CARGO_CFG_TARGET_ENV") == "msvc"
+        }
+        _ => false,
+    }
 }
 
 fn verify_platform_workspace_inputs(
