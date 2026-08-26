@@ -224,8 +224,9 @@ impl CodeHighlighter {
     }
 
     /// [`Self::edit`] with an explicit budget. Exists so a test can pin the
-    /// budget to zero and exercise the off-thread path deterministically,
-    /// instead of racing a 1 ms timer.
+    /// budget instead of racing the 1 ms timer: zero to exercise the
+    /// off-thread path, or a wall-clock eternity when the subject is what the
+    /// parse produces rather than how long it may take.
     pub(crate) fn edit_with_budget(
         &mut self,
         doc: &CodeDocument,
@@ -699,7 +700,10 @@ mod tests {
             // a bad `InputEdit` shows up immediately.
             let at = d.line_to_byte(1);
             let edit = d.insert(at, "\n ").expect("insert");
-            let outcome = h.edit(&d, &edit);
+            // A wall-clock eternity rather than the production budget: the
+            // subject is the runs the reparse produces, and a loaded runner
+            // can blow past 1 ms on any grammar here.
+            let outcome = h.edit_with_budget(&d, &edit, Duration::from_secs(5));
             assert!(
                 matches!(outcome, HighlightOutcome::Synced),
                 "{name} deferred"
@@ -858,7 +862,12 @@ mod tests {
         let start = d.line_to_byte(1);
         let end = d.line_to_byte(2);
         let edit = d.remove(start..end).expect("remove");
-        assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
+        // Budget pinned for the same reason as the parity tests: the subject
+        // is the row map, not the 1 ms timer.
+        assert!(matches!(
+            h.edit_with_budget(&d, &edit, Duration::from_secs(5)),
+            HighlightOutcome::Synced
+        ));
 
         let after = d.to_disk_string();
         assert_eq!(after, "fn a() {}\nfn c() {}\n");

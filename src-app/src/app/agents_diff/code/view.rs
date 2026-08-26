@@ -2881,6 +2881,10 @@ mod tests {
             view.replace_text_in_range(None, "xyz", window, cx);
             view.undo(&CeUndo, window, cx);
         });
+        // An edit whose reparse overran the 1 ms budget finishes off-thread,
+        // and on a loaded runner even three lines of Rust can. Park first so
+        // the comparison below reads a settled highlighter either way.
+        cx.run_until_parked();
 
         view.update(cx, |view, _cx| {
             let doc = view.document().expect("document");
@@ -3108,16 +3112,20 @@ mod tests {
     fn an_external_write_reloads_a_clean_document(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
         let path = dir.path().join("main.rs");
-        std::fs::write(&path, "ONE\nTWO\n").expect("agent write");
+        // The replacement changes the length on purpose. Windows stamps a
+        // file's last-write time on the system timer tick (~15 ms), so a
+        // same-length rewrite this soon after the load can carry a stamp
+        // identical to the one the load recorded and read as "no change".
+        std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
         let stamp = FileStamp::read(&path);
 
         view.update(cx, |view, cx| {
             view.selection = CodeSelection::at(4);
-            view.disk_changed(stamp, Some("ONE\nTWO\n".to_string()), cx);
+            view.disk_changed(stamp, Some("ONE!\nTWO!\n".to_string()), cx);
         });
 
         view.update_in(cx, |view, window, cx| {
-            assert_eq!(text_of(view), "ONE\nTWO\n");
+            assert_eq!(text_of(view), "ONE!\nTWO!\n");
             assert!(!view.has_conflict(), "a clean document reloads silently");
             assert!(!view.is_dirty(), "the reload is the new saved state");
             assert_eq!(
