@@ -1,73 +1,26 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 mod encode;
-#[cfg(all(
-    test,
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(all(test, ghostty_native))]
 mod encode_tests;
 mod error;
 mod input;
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 mod input_map;
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 mod limits;
 mod model;
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 mod osc;
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 mod osc7;
 mod search;
 
 macro_rules! native_modules {
     ($($module:ident),+ $(,)?) => {
         $(
-            #[cfg(all(
-                feature = "native",
-                any(
-                    target_os = "linux",
-                    all(
-                        target_os = "windows",
-                        target_arch = "x86_64",
-                        target_env = "msvc"
-                    )
-                )
-            ))]
+            #[cfg(ghostty_native)]
             mod $module;
         )+
     };
@@ -90,13 +43,7 @@ native_modules!(
     snapshot_state,
 );
 
-#[cfg(not(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-)))]
+#[cfg(not(ghostty_native))]
 mod stub;
 
 pub use error::{GhosttyError, Result};
@@ -111,22 +58,10 @@ pub use model::{
 pub use search::{
     MAX_QUERY_LEN, MAX_SEARCH_CELLS, SEARCH_CHUNK_CELLS, SearchChunk, SearchEngine, SearchLine,
 };
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 pub const GHOSTTY_APP_VERSION: &str = paneflow_libghostty_sys::GHOSTTY_APP_VERSION;
 
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BuildIdentity {
     pub source_sha: &'static str,
@@ -136,13 +71,7 @@ pub struct BuildIdentity {
     pub simd: &'static str,
 }
 
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 pub fn build_identity() -> BuildIdentity {
     const MANIFEST: &str = include_str!("../../../native/libghostty/manifest.toml");
 
@@ -162,31 +91,12 @@ pub fn build_identity() -> BuildIdentity {
     }
 }
 
-#[cfg(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(ghostty_native)]
 pub use engine::DisplayTerminal;
-#[cfg(not(all(
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-)))]
+#[cfg(not(ghostty_native))]
 pub use stub::DisplayTerminal;
 
-#[cfg(all(
-    test,
-    feature = "native",
-    any(
-        target_os = "linux",
-        all(target_os = "windows", target_arch = "x86_64", target_env = "msvc")
-    )
-))]
+#[cfg(all(test, ghostty_native))]
 mod identity_tests {
     #[test]
     fn build_identity_is_derived_from_the_pinned_manifest() {
