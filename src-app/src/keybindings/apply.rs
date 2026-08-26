@@ -139,20 +139,6 @@ pub fn apply_keybindings(cx: &mut App, user_shortcuts: &HashMap<String, String>)
         .collect();
     cx.bind_keys(default_bindings);
 
-    // Wire copy actions for the markdown widget (Zed crate): selecting
-    // text inside a rendered chat message + pressing the platform copy
-    // shortcut now writes it to the clipboard. Mirrors Zed's default
-    // bindings at `zed/assets/keymaps/default-{macos,linux,windows}.json`.
-    // `secondary` resolves to Cmd on macOS and Ctrl elsewhere.
-    cx.bind_keys([
-        KeyBinding::new("secondary-c", markdown::Copy, Some("Markdown")),
-        KeyBinding::new(
-            "secondary-shift-c",
-            markdown::CopyAsMarkdown,
-            Some("Markdown"),
-        ),
-    ]);
-
     // Layer user overrides
     for (key, action_name) in user_shortcuts {
         if action_name == "none" {
