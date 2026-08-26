@@ -8,8 +8,17 @@
 //! - **Shell in the integrated terminal** (`default_shell`) - a curated set of
 //!   platform shells. Empty = fall back to `$SHELL` / the platform default.
 //!
-//! Both persist through [`PaneFlowApp::persist_setting`] (cache-mutate, repaint,
-//! off-thread write). Only one select is open at a time, tracked by
+//! Above them sit the two agent-trust sections moved off the AI Agent page,
+//! because they gate what an agent may do to the machine and to its peer panes
+//! rather than which launcher buttons show up:
+//! - **Permissions** - the Claude Code full-access guard.
+//! - **AI access** - free-access mode plus its injection fence (EP-003 US-009).
+//!
+//! **Notifications** closes the page. It had a section of its own until it was
+//! down to a single toggle, which is not a page.
+//!
+//! Both selects persist through [`PaneFlowApp::persist_setting`] (cache-mutate,
+//! repaint, off-thread write). Only one select is open at a time, tracked by
 //! [`crate::GeneralDropdown`]; the menu closes on select, on click-outside, on
 //! the trigger, on Escape, and on a tab change.
 
@@ -17,13 +26,14 @@ use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, IntoElement, MouseButton, ParentElement,
     SharedString, Styled, div, prelude::*, px,
 };
+use paneflow_config::schema::NotifyWhenAgentWaiting;
 use serde_json::Value;
 
 use crate::GeneralDropdown;
 use crate::PaneFlowApp;
 use crate::settings::components::{
-    Logo, deferred_select_menu, hairline, render_logo, select_chevron, select_item, select_menu,
-    select_trigger, setting_card, setting_text,
+    Logo, deferred_select_menu, hairline, render_logo, section_header, select_chevron, select_item,
+    select_menu, select_trigger, setting_card, setting_text, toggle_row, toggle_row_with,
 };
 
 /// One select option: display label, optional leading logo, the JSON value
@@ -130,12 +140,164 @@ impl PaneFlowApp {
             cx,
         );
 
-        let card = setting_card(ui)
-            .child(editor_row)
-            .child(hairline(ui))
-            .child(shell_row);
+        let defaults_section = div()
+            .flex()
+            .flex_col()
+            .child(section_header(ui, "Defaults"))
+            .child(
+                setting_card(ui)
+                    .child(editor_row)
+                    .child(hairline(ui))
+                    .child(shell_row),
+            );
 
-        div().flex().flex_col().gap(px(20.)).child(card)
+        div()
+            .flex()
+            .flex_col()
+            .child(self.render_permissions_section(ui, cx))
+            .child(self.render_ai_access_section(ui, cx))
+            .child(div().mt(px(24.)).child(defaults_section))
+            .child(self.render_notifications_section(ui, cx))
+    }
+
+    /// Notifications: OS-native agent alerts. One toggle, flattened off its own
+    /// page - the config value is an enum (`NotifyWhenAgentWaiting`) nested
+    /// under `agent_panel`, so the row drives it through `toggle_row_with`
+    /// rather than the plain-bool `toggle_row`.
+    fn render_notifications_section(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let enabled = self.cached_config.agent_panel.as_ref().is_some_and(|p| {
+            p.resolved_notify_when_agent_waiting() != NotifyWhenAgentWaiting::Never
+        });
+        // "Never" is the off state; "PrimaryScreen" is the only on state the
+        // toggle offers. A user who wants another screen edits paneflow.json.
+        let target = if enabled {
+            Value::String("Never".to_string())
+        } else {
+            Value::String("PrimaryScreen".to_string())
+        };
+
+        div()
+            .mt(px(24.))
+            .flex()
+            .flex_col()
+            .child(section_header(ui, "Notifications"))
+            .child(setting_card(ui).child(toggle_row_with(
+                "Native OS notifications",
+                "Alert you when an agent needs attention or finishes while Paneflow is unfocused.",
+                None,
+                ui,
+                div()
+                    .id("row-native-notifications")
+                    .flex_shrink_0()
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.persist_agent_panel_setting(
+                            "notify_when_agent_waiting",
+                            target.clone(),
+                            cx,
+                        );
+                    }))
+                    .child(crate::settings::components::toggle_pill(enabled, ui)),
+            )))
+            .into_any_element()
+    }
+
+    /// Permissions: the Claude Code full-access guard. Worded like Codex's own
+    /// Permissions section - state the default first, then what the mode gives
+    /// up - because the row is a one-click way to hand an agent the machine.
+    ///
+    /// One row, not Codex's two: Paneflow has no config key behind "default
+    /// permissions", and a toggle that writes nothing would read as a setting.
+    fn render_permissions_section(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let bypass = self
+            .cached_config
+            .claude_code_bypass_permissions
+            .unwrap_or(false);
+
+        div()
+            .flex()
+            .flex_col()
+            .child(section_header(ui, "Permissions"))
+            .child(setting_card(ui).child(toggle_row(
+                "row-claude-bypass",
+                "Full access",
+                "Claude Code edits any file and runs networked commands without \
+                 asking. No protection against prompt injection.",
+                None,
+                bypass,
+                "claude_code_bypass_permissions",
+                ui,
+                cx,
+            )))
+            .into_any_element()
+    }
+
+    /// EP-003 US-009: AI access (free-access mode + injection fence). The fence
+    /// sub-toggle only appears once free-access is on: with the mode off,
+    /// `surface.read` is always fenced and there is nothing to relax.
+    fn render_ai_access_section(
+        &self,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // Defaults: unrestricted OFF, fence ON.
+        let unrestricted = self.cached_config.ai_unrestricted_enabled();
+        let fence = self.cached_config.ai_injection_fence_enabled();
+
+        let mut access_card = setting_card(ui).child(toggle_row(
+            "row-ai-unrestricted",
+            "AI free access",
+            "Lets an agent auto-submit prompts to your other panes, without the \
+             PANEFLOW_IPC_SCRIPTING gate. Every write is logged.",
+            None,
+            unrestricted,
+            "ai_unrestricted",
+            ui,
+            cx,
+        ));
+        if unrestricted {
+            access_card = access_card.child(hairline(ui)).child(toggle_row(
+                "row-ai-injection-fence",
+                "Injection fence",
+                "Marks peer-pane output as untrusted when an agent reads it, so a \
+                 malicious repo cannot hijack it.",
+                None,
+                fence,
+                "ai_injection_fence",
+                ui,
+                cx,
+            ));
+            // AC #3: once the fence is OFF, surface the active risk in red so
+            // the trade-off is explicit and impossible to miss.
+            if !fence {
+                access_card = access_card.child(hairline(ui)).child(
+                    div()
+                        .px(px(12.))
+                        .py(px(8.))
+                        .text_size(px(12.))
+                        .text_color(gpui::rgb(0xE0_6C_75))
+                        .child(
+                            "Fence off: a malicious pane can silently redirect \
+                             your agent.",
+                        ),
+                );
+            }
+        }
+
+        div()
+            .mt(px(24.))
+            .flex()
+            .flex_col()
+            .child(section_header(ui, "AI access"))
+            .child(access_card)
+            .into_any_element()
     }
 
     /// One General-page setting row: label/description on the left, a Codex-style

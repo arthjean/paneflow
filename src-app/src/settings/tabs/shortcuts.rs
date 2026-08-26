@@ -3,7 +3,9 @@
 //!
 //! Layout: a "Bindings" eyebrow with an inline "Reset to defaults" button on
 //! the right, then a single `setting_card` containing one row per shortcut,
-//! separated by 1px hairlines. Click capture is driven by
+//! separated by 1px hairlines. The card carries 4px of padding so a hovered row
+//! reads as its own squircle inside it, the way a menu row does on the rail -
+//! a full-bleed hover fill would square the card's own corners instead. Click capture is driven by
 //! `PaneFlowApp::handle_shortcut_recording` (in `app::settings`).
 
 use gpui::{
@@ -15,7 +17,7 @@ use crate::settings::components::{
     SETTINGS_CONTROL_CORNER_RADIUS, hairline, secondary_button, section_header_with_action,
     setting_card,
 };
-use crate::ui_primitives::AnimatedHoverExt;
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
 impl PaneFlowApp {
@@ -39,7 +41,7 @@ impl PaneFlowApp {
 
         let header = section_header_with_action(ui, "Bindings", reset_btn);
 
-        let mut list = setting_card(ui);
+        let mut list = setting_card(ui).p(px(4.));
 
         let total = self.effective_shortcuts.len();
         for (i, entry) in self.effective_shortcuts.iter().enumerate() {
@@ -68,31 +70,36 @@ impl PaneFlowApp {
                     .child(entry.key.clone())
             };
 
-            let row = div()
-                .id(("shortcut", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
-                .px(px(12.))
-                .py(px(10.))
-                .animated_hover_bg(ui.subtle.opacity(0.0), ui.subtle)
-                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.recording_shortcut_idx = Some(i);
-                    this.settings_focus.focus(window, cx);
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_size(px(13.))
-                        .text_color(ui.text)
-                        .truncate()
-                        .child(entry.description.clone()),
-                )
-                .child(key_badge);
+            let row = squircle_skin(
+                div()
+                    .id(("shortcut", i))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(12.))
+                    .px(px(8.))
+                    .py(px(10.)),
+                format!("shortcut-squircle-{i}"),
+                ROW_RADIUS,
+                None,
+                Some(ui.subtle),
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                this.recording_shortcut_idx = Some(i);
+                this.settings_focus.focus(window, cx);
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(13.))
+                    .text_color(ui.text)
+                    .truncate()
+                    .child(entry.description.clone()),
+            )
+            .child(key_badge);
 
             list = list.child(row);
             if !is_last {

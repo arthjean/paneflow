@@ -28,7 +28,7 @@ use parking_lot::Mutex;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
-use super::builtin::{one_dark, theme_by_name};
+use super::builtin::{paneflow_dark, theme_by_name};
 use super::model::{TerminalTheme, apply_surface_overrides};
 
 /// Polling fallback throttle - only consulted when [`WATCHER_ACTIVE`] is
@@ -71,7 +71,7 @@ fn resolve_theme() -> TerminalTheme {
         }
         log::warn!("Unknown theme '{}', using default", name);
     }
-    apply_surface_overrides(one_dark())
+    apply_surface_overrides(paneflow_dark())
 }
 
 /// Invalidate the theme cache so the next `active_theme()` call re-reads from disk.

@@ -891,6 +891,7 @@ impl PaneFlowApp {
             settings_focus: cx.focus_handle(),
             mono_font_names: Vec::new(),
             font_dropdown_open: false,
+            theme_dropdown_open: false,
             font_search: String::new(),
             theme_mode,
             workspace_menu_open: None,

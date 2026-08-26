@@ -4,13 +4,105 @@ use super::model::{SyntaxPalette, TerminalTheme, UiColors, h, ha};
 
 pub type ThemeEntry = (&'static str, fn() -> TerminalTheme);
 
+/// Every bundled theme, flat. Two entries per [`ThemePreset`] (its light and
+/// its dark variant); `theme` in `paneflow.json` names one of these.
 pub static THEMES: &[ThemeEntry] = &[
-    ("One Dark", one_dark),
-    ("PaneFlow Light", paneflow_light),
-    ("Vercel", vercel),
-    ("Claude", claude),
-    ("Cursor", cursor),
+    ("Paneflow Dark", paneflow_dark),
+    ("Paneflow Light", paneflow_light),
+    ("Vercel Dark", vercel_dark),
+    ("Vercel Light", vercel_light),
+    ("Claude Dark", claude_dark),
+    ("Claude Light", claude_light),
+    ("Cursor Dark", cursor_dark),
+    ("Cursor Light", cursor_light),
 ];
+
+/// The theme applied when config names none (or names an unknown one).
+pub const DEFAULT_THEME: &str = "Paneflow Dark";
+
+/// One visual identity in two variants. The Themes page splits the choice into
+/// two orthogonal axes, the way Codex and VS Code do: the preset select picks
+/// the identity, the Light/Dark/System tiles pick which variant of it runs.
+/// `theme` in config always stores the resolved variant name, never the preset.
+pub struct ThemePreset {
+    pub name: &'static str,
+    pub light: &'static str,
+    pub dark: &'static str,
+}
+
+impl ThemePreset {
+    pub fn variant(&self, is_light: bool) -> &'static str {
+        if is_light { self.light } else { self.dark }
+    }
+}
+
+pub static PRESETS: &[ThemePreset] = &[
+    ThemePreset {
+        name: "Paneflow",
+        light: "Paneflow Light",
+        dark: "Paneflow Dark",
+    },
+    ThemePreset {
+        name: "Vercel",
+        light: "Vercel Light",
+        dark: "Vercel Dark",
+    },
+    ThemePreset {
+        name: "Claude",
+        light: "Claude Light",
+        dark: "Claude Dark",
+    },
+    ThemePreset {
+        name: "Cursor",
+        light: "Cursor Light",
+        dark: "Cursor Dark",
+    },
+];
+
+/// Theme names shipped before presets existed, mapped onto their variant. Kept
+/// so a `paneflow.json` written by an older build keeps resolving - and keeps
+/// resolving to the *same pixels*, since only the names changed.
+static LEGACY_THEME_ALIASES: &[(&str, &str)] = &[
+    ("One Dark", "Paneflow Dark"),
+    ("PaneFlow Light", "Paneflow Light"),
+    ("Vercel", "Vercel Dark"),
+    ("Claude", "Claude Dark"),
+    ("Cursor", "Cursor Dark"),
+];
+
+/// Resolve a config-supplied theme name to a bundled one, translating legacy
+/// names. Returns `None` for a name that matches nothing.
+pub fn canonical_theme_name(name: &str) -> Option<&'static str> {
+    THEMES
+        .iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(n, _)| *n)
+        .or_else(|| {
+            LEGACY_THEME_ALIASES
+                .iter()
+                .find(|(legacy, _)| legacy.eq_ignore_ascii_case(name))
+                .map(|(_, canonical)| *canonical)
+        })
+}
+
+/// The preset owning `theme_name`, falling back to the default preset.
+pub fn preset_for_theme(theme_name: &str) -> &'static ThemePreset {
+    let name = canonical_theme_name(theme_name).unwrap_or(DEFAULT_THEME);
+    PRESETS
+        .iter()
+        .find(|p| p.light == name || p.dark == name)
+        .unwrap_or(&PRESETS[0])
+}
+
+pub fn preset_by_name(name: &str) -> Option<&'static ThemePreset> {
+    PRESETS.iter().find(|p| p.name.eq_ignore_ascii_case(name))
+}
+
+/// Whether `theme_name` is the light variant of its preset. Unknown names read
+/// as dark, matching [`DEFAULT_THEME`].
+pub fn theme_name_is_light(theme_name: &str) -> bool {
+    canonical_theme_name(theme_name).is_some_and(|name| PRESETS.iter().any(|p| p.light == name))
+}
 
 pub fn paneflow_light() -> TerminalTheme {
     let mut theme = TerminalTheme {
@@ -61,7 +153,7 @@ pub fn paneflow_light() -> TerminalTheme {
     theme
 }
 
-pub fn one_dark() -> TerminalTheme {
+pub fn paneflow_dark() -> TerminalTheme {
     let mut theme = TerminalTheme {
         ui: None,
         background: h(0x282c34),
@@ -109,9 +201,9 @@ pub fn one_dark() -> TerminalTheme {
     theme
 }
 
-pub fn vercel() -> TerminalTheme {
+pub fn vercel_dark() -> TerminalTheme {
     let mut theme = TerminalTheme {
-        ui: Some(vercel_ui()),
+        ui: Some(vercel_dark_ui()),
         background: h(0x000000),
         foreground: h(0xededed),
         bright_foreground: h(0xffffff),
@@ -155,7 +247,7 @@ pub fn vercel() -> TerminalTheme {
     theme
 }
 
-fn vercel_ui() -> UiColors {
+fn vercel_dark_ui() -> UiColors {
     UiColors {
         use_theme_diff_washes: true,
         base: h(0x000000),
@@ -191,9 +283,93 @@ fn vercel_ui() -> UiColors {
     }
 }
 
-pub fn claude() -> TerminalTheme {
+pub fn vercel_light() -> TerminalTheme {
     let mut theme = TerminalTheme {
-        ui: Some(claude_ui()),
+        ui: Some(vercel_light_ui()),
+        background: h(0xffffff),
+        foreground: h(0x171717),
+        bright_foreground: h(0x000000),
+        dim_foreground: h(0x666666),
+        ansi_background: h(0xffffff),
+        cursor: h(0x000000),
+        selection: ha(0x0068d6, 0.16),
+        // Filled below before returning the public theme value.
+        selection_foreground: gpui::Hsla::default(),
+        scrollbar_thumb: ha(0x171717, 0.24),
+        link_text: h(0x0068d6),
+        title_bar_background: h(0xfafafa),
+        title_bar_inactive_background: h(0xf5f5f5),
+        black: h(0x000000),
+        red: h(0xcd2b31),
+        green: h(0x0f7b0f),
+        yellow: h(0xa35200),
+        blue: h(0x0068d6),
+        magenta: h(0x7820bc),
+        cyan: h(0x067f6f),
+        white: h(0x666666),
+        // On a light surface the "bright" rank reads as *more* ink, not less,
+        // so the bright ANSI slots darken instead of lightening.
+        bright_black: h(0x4d4d4d),
+        bright_red: h(0xb3242a),
+        bright_green: h(0x0b660b),
+        bright_yellow: h(0x8a4500),
+        bright_blue: h(0x0058b3),
+        bright_magenta: h(0x651a9e),
+        bright_cyan: h(0x056b5e),
+        bright_white: h(0x171717),
+        dim_black: h(0xb3b3b3),
+        dim_red: h(0xdc8285),
+        dim_green: h(0x6fae6f),
+        dim_yellow: h(0xc4996b),
+        dim_blue: h(0x6fa5e0),
+        dim_magenta: h(0xa87bcc),
+        dim_cyan: h(0x66b3a8),
+        dim_white: h(0x8a8a8a),
+        syntax: SyntaxPalette::vercel_light(),
+    };
+    theme.recompute_selection_foreground();
+    theme
+}
+
+fn vercel_light_ui() -> UiColors {
+    UiColors {
+        use_theme_diff_washes: true,
+        base: h(0xffffff),
+        surface: h(0xfafafa),
+        overlay: h(0xffffff),
+        border: h(0xeaeaea),
+        subtle: h(0xf2f2f2),
+        muted: h(0x666666),
+        text: h(0x171717),
+        accent: h(0x000000),
+        tool_card_header_bg: h(0xf0f0f0),
+        vc_added: h(0x0f7b0f),
+        vc_modified: h(0xa35200),
+        vc_deleted: h(0xcd2b31),
+        vc_conflict: h(0xbd4b00),
+        vc_added_background: ha(0x0f7b0f, 0.16),
+        vc_deleted_background: ha(0xcd2b31, 0.16),
+        vc_modified_background: ha(0xa35200, 0.16),
+        vc_word_added: ha(0x0f7b0f, 0.42),
+        vc_word_deleted: ha(0xcd2b31, 0.42),
+        group_1: h(0x000000),
+        group_2: h(0x0068d6),
+        group_3: h(0x0f7b0f),
+        group_4: h(0xa35200),
+        group_5: h(0x7820bc),
+        group_6: h(0x067f6f),
+        group_7: h(0xcd2b31),
+        group_8: h(0x666666),
+        agent_error: h(0xcd2b31),
+        agent_stalled: h(0x666666),
+        agent_claude: h(0xbd4b00),
+        agent_codex: h(0x0068d6),
+    }
+}
+
+pub fn claude_dark() -> TerminalTheme {
+    let mut theme = TerminalTheme {
+        ui: Some(claude_dark_ui()),
         background: h(0x1f1f1e),
         foreground: h(0xf0f3f7),
         bright_foreground: h(0xffffff),
@@ -237,7 +413,7 @@ pub fn claude() -> TerminalTheme {
     theme
 }
 
-fn claude_ui() -> UiColors {
+fn claude_dark_ui() -> UiColors {
     UiColors {
         use_theme_diff_washes: false,
         base: h(0x1f1f1e),
@@ -276,9 +452,94 @@ fn claude_ui() -> UiColors {
     }
 }
 
-pub fn cursor() -> TerminalTheme {
+pub fn claude_light() -> TerminalTheme {
     let mut theme = TerminalTheme {
-        ui: Some(cursor_ui()),
+        ui: Some(claude_light_ui()),
+        background: h(0xfaf9f5),
+        foreground: h(0x3d3929),
+        bright_foreground: h(0x1f1e1a),
+        dim_foreground: h(0x83827d),
+        ansi_background: h(0xfaf9f5),
+        cursor: h(0xd97757),
+        selection: ha(0xd97757, 0.20),
+        // Filled below before returning the public theme value.
+        selection_foreground: gpui::Hsla::default(),
+        scrollbar_thumb: ha(0x3d3929, 0.24),
+        link_text: h(0xc2552f),
+        title_bar_background: h(0xf5f4ee),
+        title_bar_inactive_background: h(0xf2f1ea),
+        black: h(0x3d3929),
+        red: h(0xc2552f),
+        green: h(0x4f7a3f),
+        yellow: h(0x9a6b1f),
+        blue: h(0x4a6fa5),
+        magenta: h(0x7a5ea8),
+        cyan: h(0x2f7d72),
+        white: h(0x83827d),
+        bright_black: h(0x5c5949),
+        bright_red: h(0xd9663c),
+        bright_green: h(0x5f8f4c),
+        bright_yellow: h(0xb07f28),
+        bright_blue: h(0x5a82bb),
+        bright_magenta: h(0x8f70bf),
+        bright_cyan: h(0x389184),
+        bright_white: h(0x1f1e1a),
+        dim_black: h(0xbdbbb0),
+        dim_red: h(0xdda28a),
+        dim_green: h(0x9bb894),
+        dim_yellow: h(0xc7ab7e),
+        dim_blue: h(0x9fb2ce),
+        dim_magenta: h(0xb7a8d1),
+        dim_cyan: h(0x93bcb5),
+        dim_white: h(0xa9a89f),
+        syntax: SyntaxPalette::claude_light(),
+    };
+    theme.recompute_selection_foreground();
+    theme
+}
+
+fn claude_light_ui() -> UiColors {
+    UiColors {
+        use_theme_diff_washes: false,
+        base: h(0xfaf9f5),
+        surface: h(0xffffff),
+        overlay: h(0xffffff),
+        border: h(0xe5e2d9),
+        subtle: h(0xf0eee6),
+        muted: h(0x83827d),
+        text: h(0x3d3929),
+        accent: h(0xd97757),
+        tool_card_header_bg: h(0xf3f0e7),
+        // Keep Paneflow's canonical light diff/status hues (Latte family).
+        // Claude only changes the surrounding surfaces; Review/sidebar red,
+        // green and yellow must remain stable across light themes.
+        vc_added: h(0x40a02b),
+        vc_modified: h(0xdf8e1d),
+        vc_deleted: h(0xd20f39),
+        vc_conflict: h(0xfe640b),
+        vc_added_background: ha(0x40a02b, 0.16),
+        vc_deleted_background: ha(0xd20f39, 0.16),
+        vc_modified_background: ha(0xdf8e1d, 0.16),
+        vc_word_added: ha(0x40a02b, 0.40),
+        vc_word_deleted: ha(0xd20f39, 0.40),
+        group_1: h(0xd97757),
+        group_2: h(0x4a6fa5),
+        group_3: h(0x4f7a3f),
+        group_4: h(0x9a6b1f),
+        group_5: h(0x7a5ea8),
+        group_6: h(0x2f7d72),
+        group_7: h(0xc2552f),
+        group_8: h(0x83827d),
+        agent_error: h(0xd20f39),
+        agent_stalled: h(0x83827d),
+        agent_claude: h(0xd97757),
+        agent_codex: h(0x4a6fa5),
+    }
+}
+
+pub fn cursor_dark() -> TerminalTheme {
+    let mut theme = TerminalTheme {
+        ui: Some(cursor_dark_ui()),
         background: h(0x141414),
         // Match the softer "Northern Forest" Windows Terminal text palette.
         // Cursor surfaces and backgrounds stay unchanged; only terminal
@@ -325,7 +586,7 @@ pub fn cursor() -> TerminalTheme {
     theme
 }
 
-fn cursor_ui() -> UiColors {
+fn cursor_dark_ui() -> UiColors {
     UiColors {
         use_theme_diff_washes: false,
         base: h(0x141414),
@@ -364,6 +625,91 @@ fn cursor_ui() -> UiColors {
     }
 }
 
+pub fn cursor_light() -> TerminalTheme {
+    let mut theme = TerminalTheme {
+        ui: Some(cursor_light_ui()),
+        background: h(0xffffff),
+        foreground: h(0x1e1e1e),
+        bright_foreground: h(0x000000),
+        dim_foreground: h(0x767676),
+        ansi_background: h(0xffffff),
+        cursor: h(0x0f6fc5),
+        selection: ha(0x0f6fc5, 0.18),
+        // Filled below before returning the public theme value.
+        selection_foreground: gpui::Hsla::default(),
+        scrollbar_thumb: ha(0x1e1e1e, 0.24),
+        link_text: h(0x0f6fc5),
+        title_bar_background: h(0xf5f5f5),
+        title_bar_inactive_background: h(0xf0f0f0),
+        // VS Code Light+ ANSI table, which Cursor inherits unchanged.
+        black: h(0x000000),
+        red: h(0xcd3131),
+        green: h(0x107c10),
+        yellow: h(0x949800),
+        blue: h(0x0451a5),
+        magenta: h(0xbc05bc),
+        cyan: h(0x0598bc),
+        white: h(0x555555),
+        bright_black: h(0x666666),
+        bright_red: h(0xa81b1b),
+        bright_green: h(0x0d640d),
+        bright_yellow: h(0x7a7d00),
+        bright_blue: h(0x033b78),
+        bright_magenta: h(0x8f048f),
+        bright_cyan: h(0x047394),
+        bright_white: h(0x1e1e1e),
+        dim_black: h(0xb0b0b0),
+        dim_red: h(0xe08c8c),
+        dim_green: h(0x76b876),
+        dim_yellow: h(0xc2c47a),
+        dim_blue: h(0x7f9fc4),
+        dim_magenta: h(0xd67fd6),
+        dim_cyan: h(0x7fc4d9),
+        dim_white: h(0x767676),
+        syntax: SyntaxPalette::cursor_light(),
+    };
+    theme.recompute_selection_foreground();
+    theme
+}
+
+fn cursor_light_ui() -> UiColors {
+    UiColors {
+        use_theme_diff_washes: false,
+        base: h(0xffffff),
+        surface: h(0xf5f5f5),
+        overlay: h(0xffffff),
+        border: h(0xe0e0e0),
+        subtle: h(0xececec),
+        muted: h(0x767676),
+        text: h(0x1e1e1e),
+        accent: h(0x0f6fc5),
+        tool_card_header_bg: h(0xeaeaea),
+        // Keep Paneflow's canonical light diff/status hues (Latte family).
+        // Cursor only changes the surrounding IDE surfaces.
+        vc_added: h(0x40a02b),
+        vc_modified: h(0xdf8e1d),
+        vc_deleted: h(0xd20f39),
+        vc_conflict: h(0xfe640b),
+        vc_added_background: ha(0x40a02b, 0.16),
+        vc_deleted_background: ha(0xd20f39, 0.16),
+        vc_modified_background: ha(0xdf8e1d, 0.16),
+        vc_word_added: ha(0x40a02b, 0.40),
+        vc_word_deleted: ha(0xd20f39, 0.40),
+        group_1: h(0x0f6fc5),
+        group_2: h(0x0451a5),
+        group_3: h(0x40a02b),
+        group_4: h(0xdf8e1d),
+        group_5: h(0x8839ef),
+        group_6: h(0x0598bc),
+        group_7: h(0xd20f39),
+        group_8: h(0x555555),
+        agent_error: h(0xd20f39),
+        agent_stalled: h(0x767676),
+        agent_claude: h(0xfe640b),
+        agent_codex: h(0x0f6fc5),
+    }
+}
+
 /// Look up a bundled theme by name (case-insensitive).
 ///
 /// Returns a finalized theme: `selection_foreground` is computed via APCA
@@ -372,13 +718,10 @@ fn cursor_ui() -> UiColors {
 /// so the invariant `apca_contrast(selection_foreground, selection) ≥ 45.0`
 /// holds at every observation point.
 pub fn theme_by_name(name: &str) -> Option<TerminalTheme> {
-    let name_lower = name.to_lowercase();
-    THEMES
-        .iter()
-        .find(|(n, _)| n.to_lowercase() == name_lower)
-        .map(|(_, f)| {
-            let mut theme = f();
-            theme.recompute_selection_foreground();
-            theme
-        })
+    let canonical = canonical_theme_name(name)?;
+    THEMES.iter().find(|(n, _)| *n == canonical).map(|(_, f)| {
+        let mut theme = f();
+        theme.recompute_selection_foreground();
+        theme
+    })
 }

@@ -187,11 +187,11 @@ impl DiffSyntax {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::one_dark;
+    use crate::theme::paneflow_dark;
 
     #[test]
     fn keyword_and_string_map_to_distinct_palette_hues() {
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let kw = syn.color_for_capture("keyword.control").unwrap();
         let st = syn.color_for_capture("string").unwrap();
         assert_ne!(kw, st);
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn dotted_capture_falls_back_to_longest_prefix() {
         // US-002 AC #2: `function.method.call` → the `function` slot.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let func = syn.color_for_capture("function").unwrap();
         assert_eq!(syn.color_for_capture("function.method"), Some(func));
         assert_eq!(syn.color_for_capture("function.method.call"), Some(func));
@@ -211,7 +211,7 @@ mod tests {
     #[test]
     fn operators_punctuation_variables_now_colored() {
         // US-002 AC #3: previously these returned `None`; now each is a slot.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         assert!(syn.color_for_capture("operator").is_some());
         assert!(syn.color_for_capture("punctuation").is_some());
         assert!(syn.color_for_capture("punctuation.bracket").is_some());
@@ -222,7 +222,7 @@ mod tests {
     fn exact_builtin_arms_win_over_their_prefix() {
         // US-002 AC #2: `variable.builtin` / `constant.builtin` / `comment.doc`
         // resolve to their dedicated slot, distinct from the prefix slot.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let var = syn.color_for_capture("variable").unwrap();
         let var_builtin = syn.color_for_capture("variable.builtin").unwrap();
         assert_ne!(var, var_builtin);
@@ -240,7 +240,7 @@ mod tests {
     fn variable_member_resolves_to_property_not_variable() {
         // The modern struct-field capture must not be swallowed by the
         // `variable` prefix arm.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let property = syn.color_for_capture("property").unwrap();
         let variable = syn.color_for_capture("variable").unwrap();
         assert_eq!(syn.color_for_capture("variable.member"), Some(property));
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn legacy_markdown_captures_map_to_palette_slots() {
         // US-004 AC #1: tree-sitter-md's legacy capture names each resolve.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         for name in [
             "text.title",
             "text.literal",
@@ -269,7 +269,7 @@ mod tests {
     fn unknown_capture_inherits_default_without_panic() {
         // US-002 AC #5 (unhappy path): a capture matched by no arm returns
         // `None` (inherits row fg) rather than panicking or mis-coloring.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         assert_eq!(syn.color_for_capture("none"), None);
         assert_eq!(syn.color_for_capture("embedded"), None);
         assert_eq!(syn.color_for_capture("hint"), None);

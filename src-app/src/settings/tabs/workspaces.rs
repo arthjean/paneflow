@@ -23,7 +23,7 @@ use crate::app::ipc_handler::{
 };
 use crate::layout::MAX_PANES;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, card_colors, deferred_select_menu, hairline,
+    SETTINGS_CONTROL_CORNER_RADIUS, card_color, card_tint, deferred_select_menu, hairline,
     section_header_with_action, select_chevron, select_item, select_menu, select_trigger,
     setting_card, with_alpha,
 };
@@ -248,7 +248,11 @@ impl PaneFlowApp {
         let summary = template_summary(workspace);
 
         setting_card(ui)
-            .when(selected, |d| d.bg(with_alpha(switch_blue(), 0.08)))
+            // A tint child, not `.bg()`: a plain background would square the
+            // card's squircle corners right back off (see `card_tint`).
+            .when(selected, |d| {
+                d.child(card_tint(with_alpha(switch_blue(), 0.08)))
+            })
             .id(("workspace-template-card", idx))
             .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
                 this.select_workspace_template(idx, cx);
@@ -1727,7 +1731,7 @@ fn apple_red() -> Hsla {
 }
 
 fn quiet_card() -> gpui::Div {
-    let (bg, _) = card_colors();
+    let bg = card_color();
     div()
         .flex()
         .flex_col()

@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn foreground_intensity_uses_distinct_theme_slots() {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
 
         assert_eq!(
             convert_color(Color::Named(NamedColor::Foreground), &theme),

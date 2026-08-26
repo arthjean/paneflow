@@ -2225,7 +2225,7 @@ mod golden_frame_tests {
             col,
             shape,
             color: white(),
-            cell_bg: crate::theme::one_dark().ansi_background,
+            cell_bg: crate::theme::paneflow_dark().ansi_background,
             wide: false,
             text,
             bold: false,
@@ -2263,7 +2263,7 @@ mod golden_frame_tests {
         selection: Option<SelectionRange>,
         integrated_glyphs_enabled: bool,
     ) -> LayoutState {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         layout_from_snapshot(LayoutInputs {
             cells: cells.into(),
             cursor,
@@ -2291,7 +2291,7 @@ mod golden_frame_tests {
         first_visible_row: i32,
         last_visible_row: i32,
     ) -> LayoutState {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         layout_from_snapshot(LayoutInputs {
             cells: Vec::new().into(),
             cursor: None,
@@ -2615,7 +2615,7 @@ mod golden_frame_tests {
 
     #[test]
     fn shell_cursor_is_hidden_when_scrolled_away_from_live_edge() {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         let state = layout_from_snapshot(LayoutInputs {
             cells: text_row(0, "history", default_fg(), CellFlags::empty()).into(),
             cursor: Some(cursor_at_line(3, 0, CursorShape::Block, None)),
@@ -2650,7 +2650,7 @@ mod golden_frame_tests {
     #[test]
     fn unfocused_terminal_hides_live_cursor() {
         let cursor = renderable_cursor_at(0, CursorShape::Block, 'a');
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
 
         assert!(
             cursor_from_content(cursor, true, true, white(), CursorShape::Block, &theme,).is_some(),
@@ -2666,7 +2666,7 @@ mod golden_frame_tests {
     #[test]
     fn configured_custom_cursor_shapes_override_native_fallbacks() {
         let block_cursor = renderable_cursor_at(0, CursorShape::Block, 'a');
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         let vintage = cursor_from_content(
             block_cursor,
             true,
@@ -2697,7 +2697,7 @@ mod golden_frame_tests {
 
     #[test]
     fn block_cursor_carries_cell_background_for_inverse_text() {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         let explicit_bg = Color::Spec(Rgb {
             r: 12,
             g: 34,
@@ -2804,7 +2804,7 @@ mod golden_frame_tests {
     /// `build_layout`). Window-free - the cull range is just two integers.
     #[test]
     fn viewport_cull_drops_offscreen_rows() {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         let cells = vec![
             cell(0, 0, 'a', default_fg(), default_bg(), CellFlags::empty()),
             cell(2, 0, 'b', default_fg(), default_bg(), CellFlags::empty()),
@@ -2868,7 +2868,7 @@ mod golden_frame_tests {
 
     #[test]
     fn terminal_material_makes_default_backgrounds_transparent_only() {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         let cells = vec![
             cell(0, 0, 'a', default_fg(), default_bg(), CellFlags::empty()),
             cell(
@@ -2914,7 +2914,7 @@ mod golden_frame_tests {
 
     #[test]
     fn terminal_panel_grays_match_sidebar_card_surface() {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
         let card_bg = codex_panel_background_for_terminal(&theme);
         assert_ne!(
             card_bg,

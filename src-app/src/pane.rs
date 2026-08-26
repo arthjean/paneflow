@@ -2132,7 +2132,7 @@ mod tests {
 
     #[test]
     fn terminal_material_scopes_the_card_to_windows_terminal_surfaces() {
-        let theme = crate::theme::one_dark();
+        let theme = crate::theme::paneflow_dark();
 
         assert_eq!(pane_card_background(&theme, true, false), theme.background);
         assert_eq!(pane_card_background(&theme, false, true), theme.background);

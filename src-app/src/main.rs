@@ -123,7 +123,6 @@ pub(crate) enum SettingsSection {
     Appearance,
     Shortcuts,
     Terminal,
-    Notifications,
     AiAgent,
     McpServers,
     Workspaces,
@@ -143,12 +142,12 @@ impl ThemeMode {
             Some("light") => Self::Light,
             Some("dark") => Self::Dark,
             Some("system") => Self::System,
-            _ => Self::from_theme_name(theme_name.unwrap_or("One Dark")),
+            _ => Self::from_theme_name(theme_name.unwrap_or(crate::theme::DEFAULT_THEME)),
         }
     }
 
     pub(crate) fn from_theme_name(name: &str) -> Self {
-        if name.eq_ignore_ascii_case("PaneFlow Light") {
+        if crate::theme::theme_name_is_light(name) {
             Self::Light
         } else {
             Self::Dark
@@ -163,17 +162,22 @@ impl ThemeMode {
         }
     }
 
-    pub(crate) fn resolved_theme_name(self, appearance: gpui::WindowAppearance) -> &'static str {
+    /// The bundled theme this mode resolves to *within* `preset`. Mode and
+    /// preset are orthogonal: the preset owns the identity, the mode picks
+    /// which of its two variants runs.
+    pub(crate) fn resolved_theme_name(
+        self,
+        preset: &crate::theme::ThemePreset,
+        appearance: gpui::WindowAppearance,
+    ) -> &'static str {
+        preset.variant(self.is_light(appearance))
+    }
+
+    fn is_light(self, appearance: gpui::WindowAppearance) -> bool {
         match self {
-            Self::Light => "PaneFlow Light",
-            Self::Dark => "One Dark",
-            Self::System => {
-                if Self::appearance_is_light(appearance) {
-                    "PaneFlow Light"
-                } else {
-                    "One Dark"
-                }
-            }
+            Self::Light => true,
+            Self::Dark => false,
+            Self::System => Self::appearance_is_light(appearance),
         }
     }
 
@@ -1046,6 +1050,8 @@ struct PaneFlowApp {
     font_dropdown_open: bool,
     /// Filter text for the font dropdown.
     font_search: String,
+    /// Whether the Themes page's bundled-theme select is open.
+    theme_dropdown_open: bool,
     /// Selected segment on the Themes page (Light/Dark/System). UI state for
     /// now - highlights the active segment, ready to drive theme resolution
     /// once the light theme lands.

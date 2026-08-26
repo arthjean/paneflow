@@ -6,7 +6,9 @@ mod model;
 mod watcher;
 
 pub use builtin::{
-    THEMES, ThemeEntry, claude, cursor, one_dark, paneflow_light, theme_by_name, vercel,
+    DEFAULT_THEME, PRESETS, THEMES, ThemeEntry, ThemePreset, canonical_theme_name, claude_dark,
+    claude_light, cursor_dark, cursor_light, paneflow_dark, paneflow_light, preset_by_name,
+    preset_for_theme, theme_by_name, theme_name_is_light, vercel_dark, vercel_light,
 };
 pub use model::{DiffColors, SyntaxPalette, TerminalTheme, UiColors, ui_colors, ui_colors_with};
 pub use watcher::{

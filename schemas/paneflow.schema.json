@@ -21,12 +21,27 @@
     },
     "theme": {
       "type": ["string", "null"],
-      "description": "Bundled theme name.",
-      "enum": ["One Dark", "PaneFlow Light", "Vercel", "Claude", "Cursor", null]
+      "description": "Bundled theme name: the light or dark variant of one preset (Paneflow, Vercel, Claude, Cursor). Pre-preset names (One Dark, Vercel, Claude, Cursor) still resolve to their variant.",
+      "enum": [
+        "Paneflow Dark",
+        "Paneflow Light",
+        "Vercel Dark",
+        "Vercel Light",
+        "Claude Dark",
+        "Claude Light",
+        "Cursor Dark",
+        "Cursor Light",
+        "One Dark",
+        "PaneFlow Light",
+        "Vercel",
+        "Claude",
+        "Cursor",
+        null
+      ]
     },
     "theme_mode": {
       "type": ["string", "null"],
-      "description": "Theme selection mode. 'light' and 'dark' force the matching bundled theme. 'system' follows the current OS window appearance while keeping theme as the resolved concrete theme for older Paneflow versions.",
+      "description": "Theme selection mode. 'light' and 'dark' force the matching variant of the current preset. 'system' follows the current OS window appearance while keeping theme as the resolved concrete theme for older Paneflow versions.",
       "enum": ["light", "dark", "system", null],
       "default": "dark"
     },

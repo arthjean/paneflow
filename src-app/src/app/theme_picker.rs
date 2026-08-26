@@ -12,18 +12,24 @@ use crate::settings::components::{menu_divider_color, menu_surface, select_item}
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, ThemeMode, config_writer};
 
-pub(crate) fn is_default_theme_name(name: &str) -> bool {
-    name.eq_ignore_ascii_case("One Dark") || name.eq_ignore_ascii_case("PaneFlow Light")
-}
-
 impl PaneFlowApp {
     /// Resolve the theme currently persisted in config (or the built-in
-    /// default). US-014: reads the cached config, not a per-call `load_config()`.
+    /// default), canonicalized: a `paneflow.json` written before presets
+    /// existed still names `One Dark`, which is now `Paneflow Dark`.
+    /// US-014: reads the cached config, not a per-call `load_config()`.
     pub(crate) fn current_theme_name(&self) -> String {
         self.cached_config
             .theme
-            .clone()
-            .unwrap_or_else(|| "One Dark".to_string())
+            .as_deref()
+            .and_then(crate::theme::canonical_theme_name)
+            .unwrap_or(crate::theme::DEFAULT_THEME)
+            .to_string()
+    }
+
+    /// The preset owning the active theme. The Light/Dark/System tiles switch
+    /// variants *inside* this preset.
+    pub(crate) fn current_theme_preset(&self) -> &'static crate::theme::ThemePreset {
+        crate::theme::preset_for_theme(&self.current_theme_name())
     }
 
     fn current_theme_index(&self) -> usize {
@@ -90,29 +96,25 @@ impl PaneFlowApp {
         true
     }
 
-    fn persist_theme_preset_selection(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
-        let ok = config_writer::save_config_values_checked([
-            ("theme_mode", serde_json::Value::Null),
-            ("theme", serde_json::Value::String(name.to_string())),
-        ]);
-        if !ok {
-            self.show_toast("Could not save theme", cx);
-            return false;
-        }
-        self.theme_mode = ThemeMode::Dark;
-        self.cached_config.theme_mode = None;
-        self.cached_config.theme = Some(name.to_string());
-        crate::theme::invalidate_theme_cache();
-        crate::theme::sync_markdown_global_theme(cx);
-        cx.notify();
-        true
+    /// Apply a concrete bundled theme. `theme_mode` follows the variant that
+    /// was picked, so the Themes page's Light/Dark tiles stay in sync with
+    /// whatever the palette or the picker applied.
+    pub(crate) fn apply_theme_by_name(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+        self.persist_theme_selection(ThemeMode::from_theme_name(name), name, cx)
     }
 
-    pub(crate) fn apply_theme_by_name(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
-        if !is_default_theme_name(name) {
-            return self.persist_theme_preset_selection(name, cx);
-        }
-        self.persist_theme_selection(ThemeMode::from_theme_name(name), name, cx)
+    /// Apply a *preset* while keeping the current Light/Dark/System mode: the
+    /// two axes are independent, so switching identity must not flip the
+    /// light/dark choice.
+    pub(crate) fn apply_theme_preset(
+        &mut self,
+        preset: &crate::theme::ThemePreset,
+        window: &gpui::Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let mode = self.theme_mode;
+        let name = mode.resolved_theme_name(preset, window.appearance());
+        self.persist_theme_selection(mode, name, cx)
     }
 
     pub(crate) fn reset_theme_selection(&mut self, cx: &mut Context<Self>) {
@@ -245,7 +247,7 @@ impl PaneFlowApp {
                 // neutral trailing check - no accent-blue focus text.
                 let is_selected = idx == self.theme_picker_selected_idx;
                 let is_current = *name == current_name.as_str();
-                let label = if *name == "One Dark" {
+                let label = if *name == crate::theme::DEFAULT_THEME {
                     format!("{} (Default)", name)
                 } else {
                     (*name).to_string()

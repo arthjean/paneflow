@@ -333,11 +333,11 @@ fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::one_dark;
+    use crate::theme::paneflow_dark;
 
     #[test]
     fn highlights_rust_keyword() {
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let lines = highlight_lines("fn main() {}", "rs", &syn);
         assert_eq!(lines.len(), 1, "one run-list per input line");
         assert!(
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn line_count_matches_input() {
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let lines = highlight_lines("let a = 1;\nlet b = 2;\n", "rs", &syn);
         assert_eq!(lines.len(), 2);
     }
@@ -360,7 +360,7 @@ mod tests {
     #[test]
     fn unknown_extension_returns_empty_runs_without_panic() {
         // US-006 AC #1: unknown ext → one empty run-list per line (monochrome).
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let lines = highlight_lines("plain text line\nsecond", "xyz", &syn);
         assert_eq!(lines.len(), 2);
         assert!(lines.iter().all(|r| r.is_empty()));
@@ -388,7 +388,7 @@ mod tests {
     #[test]
     fn new_p1_grammars_produce_colored_runs() {
         // US-003 AC #2: Go / YAML / CSS / HTML each color their core families.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let cases: &[(&str, &str)] = &[
             (
                 "go",
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn new_p2_grammars_produce_colored_runs() {
         // US-005 AC #2: C / C++ / Java / Ruby each color keyword/type/fn/string.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let cases: &[(&str, &str)] = &[
             (
                 "c",
@@ -434,7 +434,7 @@ mod tests {
         // US-004 AC #2/#4: heading + fenced code + inline link + list marker
         // each colored; the inline pass adds emphasis/link color the block
         // grammar leaves grey, so the doc shows several distinct colors.
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let doc = "# Heading\n\nSome **bold** text and a [link](https://paneflow.dev).\n\n- first item\n- second item\n\n```rust\nfn x() {}\n```\n";
         let lines = highlight_lines(doc, "md", &syn);
         assert!(has_color(&lines), "expected colored markdown runs");
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn resolve_runs_preserves_nested_specific_captures() {
-        let palette = one_dark().syntax;
+        let palette = paneflow_dark().syntax;
         let mut runs = vec![
             (0..10, palette.text_literal),
             (2..5, palette.emphasis_strong),
@@ -476,7 +476,7 @@ mod tests {
     fn malformed_and_empty_inputs_never_panic() {
         // US-003 AC #4 / US-006: empty + garbage input of every supported new
         // type yields no panic (and 0 or N empty run-lists).
-        let syn = DiffSyntax::from_theme(&one_dark());
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
         let exts = [
             "go", "yaml", "yml", "css", "html", "c", "cpp", "java", "rb", "md",
         ];

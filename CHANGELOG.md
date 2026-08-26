@@ -7,14 +7,19 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Settings, Themes now leads with three full-bleed window mockups for Light,
+  Dark and System (the System tile splits light against dark down the middle),
+  followed by a live terminal sample painted from the active theme: prompt,
+  build output, the ANSI swatch row, a selection run and the cursor. Switching a
+  mode or a preset repaints the sample in place.
 - New `reduce_motion` config key (Settings, Themes, Preferences). When enabled,
   hover transitions settle instantly and the primary sidebar toggles without the
   slide.
 - Panes that do not hold focus now fade to 70% opacity when a workspace holds
   more than one pane, so the focused pane reads at a glance without a colored
   border. Tune or disable it with `unfocused_pane_opacity` (`0.15` to `1.0`,
-  `1.0` disables) in `paneflow.json` or under Settings, Appearance, Panes. The
-  tab bar, attention glow, broadcast stripe and Composer stay at full contrast.
+  `1.0` disables) in `paneflow.json`. The tab bar, attention glow, broadcast
+  stripe and Composer stay at full contrast.
 
 ## [0.8.1] - 2026-07-21
 

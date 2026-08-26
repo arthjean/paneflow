@@ -15,7 +15,9 @@ pub struct PaneFlowConfig {
     /// Default shell binary path. `None` uses the system default.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub default_shell: Option<String>,
-    /// Terminal color theme name (e.g. "One Dark", "PaneFlow Light", "Vercel", "Claude", "Cursor").
+    /// Terminal color theme name: one preset's light or dark variant (e.g.
+    /// "Paneflow Dark", "Paneflow Light", "Vercel Light", "Cursor Dark").
+    /// Pre-preset names ("One Dark", "Vercel", ...) still resolve.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub theme: Option<String>,
     /// Theme selection mode: `"light"`, `"dark"`, or `"system"`. `theme`

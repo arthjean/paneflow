@@ -29,7 +29,7 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `$schema` | string | none | Editor-only pointer to the public schema. Ignored at runtime. |
 | `$schemaVersion` | string | `1.0.0` | Logs a warning when unknown, but never blocks loading. |
 | `default_shell` | string or null | platform default | Unix: configured -> `$SHELL` -> `/bin/sh`. Windows: configured -> `pwsh.exe` -> `powershell.exe` -> `%ComSpec%` -> `C:\Windows\System32\cmd.exe` -> `cmd.exe`. |
-| `theme` | string or null | `One Dark` | Bundled theme name. Current values: `One Dark`, `PaneFlow Light`, `Vercel`, `Claude`, `Cursor`. |
+| `theme` | string or null | `Paneflow Dark` | Bundled theme name, one preset's light or dark variant. Current values: `Paneflow Dark`, `Paneflow Light`, `Vercel Dark`, `Vercel Light`, `Claude Dark`, `Claude Light`, `Cursor Dark`, `Cursor Light`. Pre-preset names (`One Dark`, `Vercel`, `Claude`, `Cursor`) still resolve. |
 | `theme_mode` | string or null | `dark` | `light`, `dark`, or `system`. |
 | `font_family` | string or null | bundled JetBrainsMono NFM | Accepts `.PaneflowMono`, `JetBrainsMono NFM`, `.PaneflowSans`, embedded family names, or installed monospace families. |
 | `font_fallbacks` | array of strings or null | none | Ordered glyph fallback families for symbols, Powerline, CJK, emoji, or Nerd Font glyphs. |
@@ -251,7 +251,7 @@ unconditionally.
   "$schema": "https://github.com/arthjean/paneflow/raw/main/schemas/paneflow.schema.json",
   "$schemaVersion": "1.0.0",
   "default_shell": null,
-  "theme": "One Dark",
+  "theme": "Paneflow Dark",
   "theme_mode": "dark",
   "font_family": null,
   "font_fallbacks": [],
