@@ -4,6 +4,7 @@ version.workspace = true
 edition = "2024"
 rust-version.workspace = true
 license.workspace = true
+build = "build.rs"
 publish = false
 
 [features]
