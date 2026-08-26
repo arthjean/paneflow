@@ -66,21 +66,55 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The placeholder tab is the question this click answers: retire it
+        // first, so the document lands in its slot instead of stacking beside a
+        // tab still asking for one.
+        let pending = self.pending_file_tab();
+        if let Some(index) = pending {
+            self.agents_view.diff_tabs.remove(index);
+        }
+
         if let Some(index) = file_tab_index(&self.diff_tab_facts(cx), &path) {
-            self.select_diff_tab(index, cx);
+            self.agents_view.diff_active_tab = index;
+            self.agents_view.diff_tab_close_armed = None;
             self.focus_diff_tab(index, window, cx);
+            cx.notify();
             return;
         }
 
         self.evict_oldest_diff_file_tab(cx);
 
         let view = cx.new(|cx| CodeView::new(path, cx));
-        self.agents_view.diff_tabs.push(DiffDockTab::File(view));
-        self.agents_view.diff_active_tab = self.agents_view.diff_tabs.len() - 1;
+        // Eviction may have shortened the strip under the placeholder's index,
+        // so the slot is only honored while it still exists; otherwise the tab
+        // appends, exactly as it did before the placeholder existed.
+        let index = pending
+            .filter(|index| *index <= self.agents_view.diff_tabs.len())
+            .unwrap_or(self.agents_view.diff_tabs.len());
+        self.agents_view
+            .diff_tabs
+            .insert(index, DiffDockTab::File(view));
+        self.agents_view.diff_active_tab = index;
         self.agents_view.diff_tab_close_armed = None;
-        let index = self.agents_view.diff_active_tab;
         self.focus_diff_tab(index, window, cx);
         cx.notify();
+    }
+
+    /// Where the dock's placeholder `File` tab sits, if it has one.
+    fn pending_file_tab(&self) -> Option<usize> {
+        self.agents_view
+            .diff_tabs
+            .iter()
+            .position(|tab| matches!(tab, DiffDockTab::PendingFile))
+    }
+
+    /// Retire the placeholder without putting a document in its slot: the Files
+    /// tree answered somewhere else (a markdown row opens as a workspace tab,
+    /// not a dock tab), so the invitation has been served.
+    pub(crate) fn discard_pending_file_tab(&mut self, cx: &mut Context<Self>) {
+        if let Some(index) = self.pending_file_tab() {
+            self.close_diff_tab(index, cx);
+        }
     }
 
     /// Project the strip into the facts the lifecycle rules read.
@@ -155,10 +189,23 @@ impl PaneFlowApp {
         self.open_diff_terminal_tab(window, cx);
     }
 
-    /// Bring up the Files sidebar as the dock's file picker (US-018). Already
-    /// open is a no-op beyond re-focusing it: toggling would close the very
-    /// picker the gesture asked for.
+    /// Open the dock's placeholder tab and bring up the Files sidebar as its
+    /// picker (US-018). A sidebar that is already open is a no-op beyond
+    /// re-focusing it: toggling would close the very picker the gesture asked
+    /// for.
     pub(crate) fn open_diff_file_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The dock takes its waiting room straight away rather than staying on
+        // `Changes`: "File" is an answer about what the dock is for, and the
+        // tree that follows only supplies the path.
+        match self.pending_file_tab() {
+            Some(index) => self.select_diff_tab(index, cx),
+            None => {
+                self.agents_view.diff_tabs.push(DiffDockTab::PendingFile);
+                self.agents_view.diff_active_tab = self.agents_view.diff_tabs.len() - 1;
+                self.agents_view.diff_tab_close_armed = None;
+                cx.notify();
+            }
+        }
         if !self.files_sidebar_open {
             self.toggle_files_sidebar(cx);
         }

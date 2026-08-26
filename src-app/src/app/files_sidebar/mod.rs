@@ -287,6 +287,10 @@ impl PaneFlowApp {
         let Some(ws_id) = self.workspaces.get(ws_idx).map(|ws| ws.id) else {
             return;
         };
+        // The tree answered the dock's "Open a file" invitation - just not in
+        // the dock. Leaving the placeholder up would keep asking for a click
+        // the user has already made.
+        self.discard_pending_file_tab(cx);
         let markdown = cx.new(|cx| crate::markdown::MarkdownView::open(path, cx));
         let pane = self.create_pane_with_existing_surface(
             crate::pane::PaneSurface::Markdown(markdown),

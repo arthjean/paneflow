@@ -42,6 +42,12 @@ pub(crate) enum DiffDockTab {
     /// Constructed only by `PaneFlowApp::open_diff_file_tab`, reached from the
     /// Files sidebar and from the strip's `+` menu (US-017 / US-018).
     File(gpui::Entity<super::code::view::CodeView>),
+    /// A `File` tab with no document yet: what "File" opens, alongside the Files
+    /// tree that supplies the path. Without it the dock would answer "File" by
+    /// showing `Changes` - the answer to a different question - while the tree
+    /// waits for a click. At most one exists at a time, and the next document
+    /// opened takes its slot.
+    PendingFile,
 }
 
 /// The chrome's read-only view of the dock state, bundled so the header and its

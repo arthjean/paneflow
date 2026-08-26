@@ -339,6 +339,9 @@ impl PaneFlowApp {
         // about a shell.
         let (toolbar, body) = match tabs.get(active) {
             Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
+            // No toolbar either: the file header describes an open document,
+            // and this tab is the one that has none yet.
+            Some(DiffDockTab::PendingFile) => (None, render::render_pending_file_body(ui)),
             // A file tab swaps the diff's files toolbar for its own header
             // (US-018): same 36 px band, describing the open document instead
             // of the working tree.

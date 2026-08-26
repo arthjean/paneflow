@@ -162,6 +162,7 @@ fn render_diff_tab(
     let (icon, label) = match (tab, &file) {
         (DiffDockTab::Changes, _) => ("icons/plus-minus.svg", "Changes".to_string()),
         (DiffDockTab::Terminal(_), _) => ("icons/terminal.svg", "Terminal".to_string()),
+        (DiffDockTab::PendingFile, _) => ("icons/file-text.svg", "Open a file".to_string()),
         (_, Some((icon, label, _))) => (*icon, label.clone()),
         // Unreachable: `File` is the only remaining variant and it always
         // resolves `file` above. Kept total rather than panicking in a paint.
@@ -216,7 +217,10 @@ fn render_diff_tab(
             .child(label),
     );
 
-    if matches!(tab, DiffDockTab::Terminal(_) | DiffDockTab::File(_)) {
+    if matches!(
+        tab,
+        DiffDockTab::Terminal(_) | DiffDockTab::File(_) | DiffDockTab::PendingFile
+    ) {
         // Cursor's grammar: a modified document trades the close glyph for a
         // dot at rest, the dot yields the slot back to the glyph while the
         // pointer is on the chip, and the control keeps its hit target through
@@ -532,6 +536,20 @@ pub(super) fn render_diff_files_toolbar(
     row.child(div().flex_1().min_w_0())
         .child(render_diff_options_button(chrome, ui, cx))
         .into_any_element()
+}
+
+/// The body of the placeholder `File` tab: what the dock is now for, while the
+/// Files sidebar beside it supplies the document. Titled (unlike the diff's own
+/// empty states) because it is an instruction, not a report on a folder.
+pub(super) fn render_pending_file_body(ui: crate::theme::UiColors) -> AnyElement {
+    crate::ui_primitives::panel_empty_state(
+        ui,
+        Some("icons/folder-open.svg"),
+        Some("Open a file".into()),
+        "Select a file in the workspace tree",
+        false,
+    )
+    .into_any_element()
 }
 
 pub(super) fn diff_panel_centered(
