@@ -37,7 +37,7 @@ pub(crate) const SETTINGS_NAV_WIDTH: f32 = 260.;
 /// tint over the panel's square corner) actually read as rounded - a content
 /// fill equal to the mask color would show no rounding at all. The nav rail
 /// stays transparent over the shared inset-card layer, using the same
-/// platform-aware material treatment as CLI / Review / Agents.
+/// platform-aware material treatment as Agents / Review.
 pub(crate) fn settings_chrome_bg() -> gpui::Hsla {
     crate::theme::ui_colors().base
 }
@@ -298,7 +298,7 @@ impl PaneFlowApp {
             .flex_shrink_0()
             .flex()
             .flex_col()
-            // Same platform-aware rail treatment as the CLI / Review / Agents
+            // Same platform-aware rail treatment as the Agents / Review
             // sidebars: optional native material on Windows, platform default
             // on macOS, and a blur veil on Linux when the compositor advertises
             // it. Keeps the settings rail visually identical to the other rails.
@@ -314,7 +314,7 @@ impl PaneFlowApp {
 
     /// The nav search field - a real single-line `TextInput` (cursor, arrow
     /// keys, clipboard, mouse selection), read from `value()` at render to
-    /// filter the section list. Mirrors the agents-sidebar filter recipe.
+    /// filter the section list. Mirrors the cockpit-sidebar filter recipe.
     fn render_settings_search(
         &self,
         ui: crate::theme::UiColors,

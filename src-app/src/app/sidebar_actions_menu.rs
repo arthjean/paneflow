@@ -1,8 +1,9 @@
-//! Bottom-of-sidebar mode tabs + Settings button. The CLI and Review
+//! Bottom-of-sidebar mode tabs + Settings button. The Agents and Review
 //! sidebars share one persistent mode switch, with Settings kept as
 //! a compact utility button at the end of the row that opens the settings
 //! surface directly - no intermediate menu.
 
+use crate::app::sidebar::SIDEBAR_ROW_LINE_HEIGHT;
 use crate::ui_primitives::{ROW_RADIUS, TooltipDelayExt, squircle_skin};
 use std::time::Duration;
 
@@ -250,55 +251,53 @@ impl PaneFlowApp {
         );
 
         type Activate = Box<dyn Fn(&mut PaneFlowApp, &mut gpui::Window, &mut Context<PaneFlowApp>)>;
-        let mode_button = |id: &'static str,
-                           label: &'static str,
-                           icon: &'static str,
-                           is_active: bool,
-                           activate: Activate| {
-            // Equal-width compact segments keep both primary surfaces visible
-            // without letting the Settings utility reclaim the row.
-            let fg = if is_active { ui.text } else { ui.muted };
-            // Same grammar as a workspace card: exactly one segment rests
-            // filled - the current mode - and the others are pure hover
-            // affordances one tint step below it.
-            let button = squircle_skin(
-                div()
-                    .id(id)
-                    .flex_1()
-                    .h(px(30.))
-                    .min_w_0()
-                    .px(px(2.))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(3.)),
-                format!("{id}-group"),
-                ROW_RADIUS,
-                is_active.then_some(active_bg),
-                (!is_active).then_some(hover_bg),
-            )
-            .child(svg().size(px(13.)).flex_none().path(icon).text_color(fg))
-            .child(
-                div()
-                    .min_w_0()
-                    .text_size(px(11.))
-                    .font_weight(FontWeight::NORMAL)
-                    .text_color(fg)
-                    .truncate()
-                    .child(label),
-            );
-            if is_active {
-                button.into_any_element()
-            } else {
-                button
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        activate(this, window, cx);
-                        cx.notify();
-                    }))
-                    .into_any_element()
-            }
-        };
+        let mode_button =
+            |id: &'static str, label: &'static str, is_active: bool, activate: Activate| {
+                // Equal-width compact segments keep both primary surfaces visible
+                // without letting the Settings utility reclaim the row.
+                //
+                // Same grammar as a workspace card, down to the typography: one
+                // text size, one weight, one color in every state. Exactly one
+                // segment rests filled - the current mode - and the others are
+                // pure hover affordances one tint step below it, so the fill
+                // carries the selection and the label never has to.
+                let button = squircle_skin(
+                    div()
+                        .id(id)
+                        .flex_1()
+                        .h(px(30.))
+                        .min_w_0()
+                        .px(px(2.))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .justify_center(),
+                    format!("{id}-group"),
+                    ROW_RADIUS,
+                    is_active.then_some(active_bg),
+                    (!is_active).then_some(hover_bg),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_sm()
+                        .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(ui.text)
+                        .truncate()
+                        .child(label),
+                );
+                if is_active {
+                    button.into_any_element()
+                } else {
+                    button
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                            activate(this, window, cx);
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                }
+            };
 
         let footer_row: AnyElement = div()
             .id("sidebar-mode-tabs")
@@ -309,15 +308,13 @@ impl PaneFlowApp {
             .gap(px(3.))
             .child(mode_button(
                 "sidebar-mode-cli",
-                "CLI",
-                "icons/terminal.svg",
+                "Agents",
                 matches!(mode, AppMode::Cli),
                 Box::new(|this, window, cx| this.enter_cli_mode(window, cx)),
             ))
             .child(mode_button(
                 "sidebar-mode-diff",
                 "Review",
-                "icons/git-pull-request.svg",
                 matches!(mode, AppMode::Diff),
                 Box::new(|this, _window, cx| this.enter_diff_mode(cx)),
             ))
@@ -326,7 +323,7 @@ impl PaneFlowApp {
 
         let mut footer = div().relative().flex_none().pt(px(6.)).pb(px(8.));
         // Cockpit homes of the old title-bar pills, right above the Settings
-        // trigger, shared by Cli + Agents: the "IPC offline" notice first,
+        // trigger, shared by both modes: the "IPC offline" notice first,
         // then the update CTA banner.
         if let Some(banner) = self.render_sidebar_ipc_banner(cx) {
             footer = footer.child(banner);
