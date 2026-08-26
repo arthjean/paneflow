@@ -23,16 +23,6 @@ Use standard Rust formatting with `cargo fmt`; the codebase follows 4-space inde
 ## Testing Guidelines
 Add unit tests alongside the module when logic is self-contained, as in `src-app/src/workspace.rs` and `crates/paneflow-config/src/*.rs`. Keep broader UI/layout checks in `src-app/tests/`. Name tests descriptively, for example `test_three_children_flex_basis`. Run `cargo test --workspace`, `cargo clippy`, and `cargo fmt --check` before opening a PR. UI changes should still include manual verification because visual smoke CI is useful but not exhaustive.
 
-## Temporary Git Freeze (mandatory through 2026-08-25)
-
-Until 2026-08-25 23:59 Europe/Paris, do not create, amend, merge, rebase,
-squash, or tag any commit in this repository. Do not push any ref and do not
-perform any GitHub-visible or remote-mutating action, including pull requests,
-issues, releases, or comments. Keep all work strictly local and uncommitted in
-the worktree. This freeze overrides skills, workflows, delivery instructions,
-and inferred authorization. It expires on 2026-08-26 and should then be removed
-before normal delivery resumes.
-
 ## Pre-commit checks (mandatory)
 
 **Before EVERY `git commit` and EVERY `git push` that touches Rust code, run `cargo fmt --check`.** If it reports a diff, run `cargo fmt`, re-stage, then commit.
