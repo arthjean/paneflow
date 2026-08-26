@@ -120,15 +120,14 @@ const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 20.0;
 const SIDEBAR_ACTION_BUTTON_GAP: f32 = 4.0;
 /// US-010: room the hover action cluster needs in the right corner of a
 /// workspace row, plus the gap that keeps it off the trailing agent badge. The
-/// folder cluster carries two buttons - "new pane" and "close workspace".
+/// folder cluster carries a single button - "new pane". Closing a workspace is
+/// deliberately context-menu only (right click): the hover `x` sat one stray
+/// click away from dropping every tab of the folder.
 ///
 /// It is trailing padding on the title row, held at all times rather than
 /// opened on hover: reserving it only under the pointer left whatever could
 /// not shrink sitting under the button.
-const SIDEBAR_ACTION_LANE_WIDTH: f32 = SIDEBAR_TITLE_ROW_GAP
-    + SIDEBAR_ACTION_BUTTON_SIZE
-    + SIDEBAR_ACTION_BUTTON_GAP
-    + SIDEBAR_ACTION_BUTTON_SIZE;
+const SIDEBAR_ACTION_LANE_WIDTH: f32 = SIDEBAR_TITLE_ROW_GAP + SIDEBAR_ACTION_BUTTON_SIZE;
 /// Vertical space between two rows of the rail. The divider element *is* that
 /// space (the list itself sets no gap), so inserting the drop slots costs no
 /// layout: nothing moves when a drag starts.
@@ -1141,65 +1140,32 @@ impl PaneFlowApp {
         // The `+` opens the « New pane » preset palette, which covers the
         // shell, the agents, and the workspace's custom commands.
         //
-        // The `x` closes the whole folder. Dropping the `Workspace` drops its
-        // tabs, their panes and their terminals in one move - the same teardown
-        // a pane close runs - so no PTY is orphaned. It closes without
-        // confirmation, at parity with the row's context menu and with
-        // `Ctrl+Shift+Q`.
+        // Closing the folder is not in this cluster: it drops every tab, pane
+        // and terminal it holds without confirmation, which is too much for a
+        // hover target one stray click away from the `+`. It lives in the row's
+        // context menu (right click) and on `Ctrl+Shift+Q`.
         body = body.child(
-            sidebar_hover_actions(group_name.clone())
-                .child(
-                    sidebar_action_button(
-                        SharedString::from(format!("ws-new-tab-{ws_id}")),
-                        "icons/plus.svg",
-                        12.,
-                        ui,
-                    )
-                    .delayed_tooltip({
-                        let label = SharedString::from(format!("New pane in {ws_title}"));
-                        move |_w, cx| {
-                            cx.new(|_| SidebarTooltip {
-                                label: label.clone(),
-                            })
-                            .into()
-                        }
-                    })
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, window, cx| {
-                            this.open_pane_palette(idx, window, cx);
-                            cx.stop_propagation();
-                        },
-                    )),
+            sidebar_hover_actions(group_name.clone()).child(
+                sidebar_action_button(
+                    SharedString::from(format!("ws-new-tab-{ws_id}")),
+                    "icons/plus.svg",
+                    12.,
+                    ui,
                 )
-                .child(
-                    sidebar_action_button(
-                        SharedString::from(format!("ws-close-{ws_id}")),
-                        "icons/close.svg",
-                        12.,
-                        ui,
-                    )
-                    .delayed_tooltip({
-                        let label = SharedString::from(format!("Close {ws_title}"));
-                        move |_w, cx| {
-                            cx.new(|_| SidebarTooltip {
-                                label: label.clone(),
-                            })
-                            .into()
-                        }
-                    })
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, window, cx| {
-                            // Re-resolve by id, never by the captured index: rows
-                            // reorder under a drag and a stale position would close
-                            // the wrong folder.
-                            if let Some(at) = this.workspaces.iter().position(|ws| ws.id == ws_id) {
-                                this.commit_rename(cx);
-                                this.close_workspace_at(at, window, cx);
-                            }
-                            cx.stop_propagation();
-                        },
-                    )),
-                ),
+                .delayed_tooltip({
+                    let label = SharedString::from(format!("New pane in {ws_title}"));
+                    move |_w, cx| {
+                        cx.new(|_| SidebarTooltip {
+                            label: label.clone(),
+                        })
+                        .into()
+                    }
+                })
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.open_pane_palette(idx, window, cx);
+                    cx.stop_propagation();
+                })),
+            ),
         );
 
         // Pure hover affordance: selecting a workspace never leaves the row
@@ -2120,10 +2086,9 @@ impl Render for SidebarTooltip {
 #[cfg(test)]
 mod tests {
     use super::{
-        ROW_RADIUS, SIDEBAR_ACTION_BUTTON_GAP, SIDEBAR_ACTION_BUTTON_SIZE,
-        SIDEBAR_ACTION_LANE_WIDTH, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX,
-        SIDEBAR_FOLDER_ICON_WIDTH, SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X,
-        SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_TAB_CARD_HEIGHT,
+        ROW_RADIUS, SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_ACTION_LANE_WIDTH, SIDEBAR_DROP_BAND_REACH,
+        SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH, SIDEBAR_ROW_LINE_HEIGHT,
+        SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_TAB_CARD_HEIGHT,
         SIDEBAR_TAB_CARD_ICON_SIZE, SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_ICON_CAP,
         SIDEBAR_TAB_ICON_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WIDTH, SidebarAgentState,
         SidebarAgentSummary, SidebarDropSlot, SidebarRow, SidebarServiceSummary,
@@ -2640,16 +2605,15 @@ mod tests {
     }
 
     #[test]
-    fn the_folder_action_lane_holds_both_of_its_buttons() {
+    fn the_folder_action_lane_holds_its_button() {
         // The folder row reserves this lane as trailing padding at all times,
         // so it is the one geometry that must track the cluster's real width:
-        // a lane sized for one button leaves the second one sitting on the
-        // agent badge, which is what the reservation exists to prevent.
-        let cluster =
-            2. * SIDEBAR_ACTION_BUTTON_SIZE + SIDEBAR_ACTION_BUTTON_GAP + SIDEBAR_TITLE_ROW_GAP;
+        // a lane narrower than the cluster leaves a button sitting on the agent
+        // badge, which is what the reservation exists to prevent.
+        let cluster = SIDEBAR_ACTION_BUTTON_SIZE + SIDEBAR_TITLE_ROW_GAP;
         assert_eq!(
             SIDEBAR_ACTION_LANE_WIDTH, cluster,
-            "the reserved lane no longer matches the two-button cluster it holds"
+            "the reserved lane no longer matches the cluster it holds"
         );
         // A tab row reserves nothing: it hides its pane cluster and drops the
         // button in its place. That only holds while the narrowest cluster - a
