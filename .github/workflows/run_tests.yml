@@ -635,6 +635,13 @@ jobs:
       - name: cargo check (aarch64-apple-darwin)
         run: cargo check --workspace --locked --target aarch64-apple-darwin
 
+      # The `--no-default-features` recovery build drops `libghostty-macos`
+      # and leaves Alacritty as the only terminal backend. It is the rollback
+      # a user falls back to if libghostty misbehaves on Darwin, so it has to
+      # keep building on the same runner that builds the default one.
+      - name: cargo build --no-default-features (aarch64-apple-darwin)
+        run: cargo build --no-default-features -p paneflow-app --locked --target aarch64-apple-darwin
+
       # AC2 - release build produces the expected binary path.
       - name: cargo build --release (aarch64-apple-darwin)
         run: cargo build --release -p paneflow-app --locked --target aarch64-apple-darwin
