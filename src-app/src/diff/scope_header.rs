@@ -348,23 +348,33 @@ impl PaneFlowApp {
                         );
 
                     let popover: Option<AnyElement> = if branches_open {
-                        let mut menu = menu_surface(div().id("diff-branches-popover"), ui)
+                        // Shell paints and clamps, an inner host scrolls: GPUI
+                        // pushes a scroll container's offset onto every child,
+                        // absolute ones included, so the surface path would
+                        // otherwise slide out from under its own rows.
+                        let shell = menu_surface(div().id("diff-branches-popover"), ui)
                             .occlude()
                             .absolute()
                             .left(px(0.))
                             .top(px(28.))
                             .flex()
                             .flex_col()
-                            .gap(px(1.))
-                            .p(px(4.))
                             .max_h(px(320.))
-                            .overflow_y_scroll()
                             .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                                 if this.diff_mode.diff_worktree_picker_open {
                                     this.diff_mode.diff_worktree_picker_open = false;
                                     cx.notify();
                                 }
                             }));
+                        let mut menu = div()
+                            .id("diff-branches-popover-list")
+                            .flex()
+                            .flex_col()
+                            .gap(px(1.))
+                            .p(px(4.))
+                            .w_full()
+                            .min_h_0()
+                            .overflow_y_scroll();
                         if self.diff_mode.diff_available_worktrees.is_empty() {
                             menu = menu.child(
                                 div()
@@ -426,7 +436,11 @@ impl PaneFlowApp {
                                 );
                             }
                         }
-                        Some(deferred(menu).with_priority(4).into_any_element())
+                        Some(
+                            deferred(shell.child(menu))
+                                .with_priority(4)
+                                .into_any_element(),
+                        )
                     } else {
                         None
                     };
