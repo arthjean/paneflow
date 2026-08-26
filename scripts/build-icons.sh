@@ -2,8 +2,9 @@
 # Generate every Paneflow icon asset from platform-specific master PNGs.
 #
 # Inputs (in assets/icons/master/):
-#   paneflow-icon-1024.png              required transparent master for Linux + Windows
+#   paneflow-icon-1024.png              required transparent master for Windows (and Linux when no Linux master exists)
 #   paneflow-icon-macos-1024.png        required plated macOS artwork
+#   paneflow-icon-linux-1024.png        optional pre-plated Linux artwork (own tile + margin, emitted 1:1)
 #   paneflow-icon-1024-simplified.png   optional transparent master for sizes <=64
 #   paneflow-icon-template-1024.png     optional macOS menubar Template image (black silhouette + alpha)
 #
@@ -74,6 +75,7 @@ resolve_master() {
 
 MASTER="$(resolve_master "paneflow-icon-1024"             || true)"
 MASTER_MACOS="$(resolve_master "paneflow-icon-macos-1024" || true)"
+MASTER_LINUX="$(resolve_master    "paneflow-icon-linux-1024"      || true)"
 MASTER_SIMPLE="$(resolve_master   "paneflow-icon-1024-simplified" || true)"
 MASTER_TEMPLATE="$(resolve_master "paneflow-icon-template-1024"   || true)"
 
@@ -115,11 +117,23 @@ fi
 #     grid reserves 4 px per side, so an 83.33% body is a neutral hicolor
 #     fallback that also lands inside GNOME's 128 px app-icon canvas.
 #
+#   Linux, when paneflow-icon-linux-1024.png is present
+#     That master is full-bleed: the rounded tile fills the whole 1024 canvas
+#     with no margin of its own, the way Obsidian and most GNOME app icons
+#     ship their artwork. The keyline is applied here instead, at
+#     LINUX_BODY_PCT -- 87.5% is GNOME's own 112/128 square keyline, and it
+#     matches the 86.4% Obsidian renders at in a 64 px icon theme. It reads
+#     deliberately larger than the 80.5% ChatGPT uses.
+#
+#     Keep this master full-bleed. A pre-plated one would compound its own
+#     margin with the keyline and shrink the tile to roughly 70% of the canvas.
+#
 #   macOS
 #     Legacy .icns bundles still need a plated fallback. Keep the traditional
 #     824/1024 body and rounded mask isolated to that output. Current Apple
 #     system masking is not applied to the Windows or Linux assets.
 PORTABLE_BODY_PCT=8333
+LINUX_BODY_PCT=8750
 MACOS_BODY_PCT=8047
 MACOS_MASK_RADIUS_PCT=2237
 
@@ -214,16 +228,32 @@ src_for_size() {
 # --- Linux hicolor PNGs + rust-embed runtime icon ------------------------
 mkdir -p "$OUT_ICONS_DIR"
 for size in 16 24 32 48 64 128 256 512; do
-    src="$(src_for_size "$size")"
     dst="$OUT_ICONS_DIR/paneflow-${size}.png"
-    log "  $dst  <- $(basename "$src")"
-    resize_with_inset_png "$src" "$dst" "$size" "$PORTABLE_BODY_PCT"
+    if [ -n "$MASTER_LINUX" ]; then
+        log "  $dst  <- $(basename "$MASTER_LINUX")  (full-bleed, keyline applied)"
+        resize_with_inset_png "$MASTER_LINUX" "$dst" "$size" "$LINUX_BODY_PCT"
+    else
+        src="$(src_for_size "$size")"
+        log "  $dst  <- $(basename "$src")"
+        resize_with_inset_png "$src" "$dst" "$size" "$PORTABLE_BODY_PCT"
+    fi
 done
 
 # Runtime-embedded GPUI window icon -- rust-embed picks this up at compile
 # time for the title-bar / about pane uses. 128px is enough today.
+#
+# This asset is compiled into the binary on all three platforms (about dialog,
+# Windows toast notifications), so it must never inherit the Linux-only
+# artwork. Derive it from the portable master with the portable geometry
+# whenever a Linux master is in play; without one the hicolor 128 already IS
+# that image, so the plain copy stays byte-identical.
 mkdir -p "$(dirname "$OUT_RUNTIME_ICON")"
-cp "$OUT_ICONS_DIR/paneflow-128.png" "$OUT_RUNTIME_ICON"
+if [ -n "$MASTER_LINUX" ]; then
+    log "  $OUT_RUNTIME_ICON  <- $(basename "$(src_for_size 128)")  (portable, not the Linux master)"
+    resize_with_inset_png "$(src_for_size 128)" "$OUT_RUNTIME_ICON" 128 "$PORTABLE_BODY_PCT"
+else
+    cp "$OUT_ICONS_DIR/paneflow-128.png" "$OUT_RUNTIME_ICON"
+fi
 
 # One shared temporary root keeps native ImageMagick paths valid under Git
 # Bash and gives the EXIT trap a single target for both platform pipelines.
@@ -296,5 +326,10 @@ fi
 log ""
 log "portable icons regenerated from $(basename "$MASTER")"
 log "macOS icon source: $(basename "$MASTER_MACOS")"
+if [ -n "$MASTER_LINUX" ]; then
+    log "Linux hicolor source: $(basename "$MASTER_LINUX") (full-bleed + keyline, Linux only -- .ico/.icns/runtime icon untouched)"
+else
+    log "no Linux master  -- hicolor sizes use the transparent portable master"
+fi
 [ -f "$MASTER_SIMPLE" ]   || log  "no simplified master -- sizes <=64 use the transparent portable master"
 [ -f "$MASTER_TEMPLATE" ] || log  "no template master  -- skipping menubar Template PNGs"
