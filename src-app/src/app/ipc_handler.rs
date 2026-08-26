@@ -3121,17 +3121,17 @@ impl PaneFlowApp {
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
 
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
-                    let key = upsert_session_state(
+                    let Some(key) = upsert_session_state(
                         &mut ws.agent_sessions,
                         pid,
                         tool,
-                        ai_types::AgentState::Thinking,
-                        None,
-                    );
-                    // US-016: a new prompt invalidates the previous question.
-                    if let Some(s) = ws.agent_sessions.get_mut(&key) {
-                        s.message = None;
-                    }
+                        ai_types::reduce_lifecycle_event(
+                            ai_types::AgentLifecycleEvent::PromptSubmit,
+                        ),
+                        read_emitted_at(params),
+                    ) else {
+                        return stale_frame_response();
+                    };
                     cx.notify();
                     self.bind_or_resolve_session_surface(
                         workspace_id,
@@ -3168,16 +3168,17 @@ impl PaneFlowApp {
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
 
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
-                    // tool_use implies the session is actively thinking -
-                    // promote it (or keep it) even if the prior state was
-                    // Finished from a stale prompt-end.
-                    let key = upsert_session_state(
+                    let Some(key) = upsert_session_state(
                         &mut ws.agent_sessions,
                         pid,
                         tool,
-                        ai_types::AgentState::Thinking,
-                        active_tool_name,
-                    );
+                        ai_types::reduce_lifecycle_event(ai_types::AgentLifecycleEvent::ToolUse {
+                            tool_name: active_tool_name,
+                        }),
+                        read_emitted_at(params),
+                    ) else {
+                        return stale_frame_response();
+                    };
                     cx.notify();
                     self.bind_or_resolve_session_surface(
                         workspace_id,
@@ -3208,19 +3209,19 @@ impl PaneFlowApp {
                 let message = read_notification_message(params);
                 let notify_config = self.cached_config.clone();
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
-                    let key = upsert_session_state(
+                    let Some(key) = upsert_session_state(
                         &mut ws.agent_sessions,
                         pid,
                         tool,
-                        ai_types::AgentState::WaitingForInput,
-                        None,
-                    );
-                    // US-016: keep the agent's question - the peek overlay
-                    // and the desktop notification surface it. Untrusted
-                    // text: stored and displayed verbatim, never interpreted.
-                    if let Some(s) = ws.agent_sessions.get_mut(&key) {
-                        s.message = message.clone();
-                    }
+                        ai_types::reduce_lifecycle_event(
+                            ai_types::AgentLifecycleEvent::Notification {
+                                message: message.clone(),
+                            },
+                        ),
+                        read_emitted_at(params),
+                    ) else {
+                        return stale_frame_response();
+                    };
                     let ws_title = ws.title.clone();
                     cx.notify();
                     fire_attention_notification(
@@ -3268,37 +3269,37 @@ impl PaneFlowApp {
                     && desktop_notifications::window_active();
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     let interrupt_stop = is_interrupt_lifecycle_event(params);
-                    if !interrupt_stop {
-                        ws.agent_completion_notification
-                            .record_finished(workspace_visible);
-                    }
+                    // EP-004 US-015: a best-effort summary of the just-finished
+                    // turn when the stop hook carried one, so a conductor reads
+                    // it via fleet.list / surface.status. None when the hook
+                    // provides nothing (the common case).
+                    let (session_summary, transcript_to_read) = if interrupt_stop {
+                        (None, None)
+                    } else {
+                        read_stop_summary(params)
+                    };
                     // U-014: key the auto-clear on the RESOLVED session key, not
                     // the raw `pid`. A legacy no-pid frame is stored under a
                     // fallback/synthetic key by `upsert_session_state`; the old
                     // code captured `pid` (None) and the `let Some(pid_key)`
                     // guard short-circuited, so that session's Finished state
                     // never auto-cleared and leaked into the sidebar forever.
-                    let session_key = upsert_session_state(
+                    let Some(session_key) = upsert_session_state(
                         &mut ws.agent_sessions,
                         pid,
                         tool,
-                        ai_types::AgentState::Finished,
-                        None,
-                    );
-                    // US-016: the turn ended - the question is answered, no
-                    // ghost message may survive into the next state.
-                    let (session_summary, transcript_to_read) = if interrupt_stop {
-                        (None, None)
-                    } else {
-                        read_stop_summary(params)
+                        ai_types::reduce_lifecycle_event(ai_types::AgentLifecycleEvent::Stop {
+                            summary: session_summary.clone(),
+                        }),
+                        read_emitted_at(params),
+                    ) else {
+                        return stale_frame_response();
                     };
-                    if let Some(s) = ws.agent_sessions.get_mut(&session_key) {
-                        s.message = None;
-                        // EP-004 US-015: capture a best-effort summary of the
-                        // just-finished turn when the stop hook carried one, so
-                        // a conductor reads it via fleet.list / surface.status.
-                        // None when the hook provides nothing (the common case).
-                        s.last_result = session_summary.clone();
+                    // Counted only for a stop that actually applied, so a
+                    // reordered frame can't inflate the completion tally.
+                    if !interrupt_stop {
+                        ws.agent_completion_notification
+                            .record_finished(workspace_visible);
                     }
                     // EP-004 US-020: natural turn ends notify when the user is
                     // looking elsewhere. Ctrl+C stops only clear local state.
@@ -3399,14 +3400,20 @@ impl PaneFlowApp {
                     // 0 / SIGINT-and-friends → Finished (a human interrupt is
                     // NOT an error, FR-06); everything else → Errored. The
                     // classifier is pure and unit-tested in `ai_types`.
-                    let state = ai_types::state_for_exit(exit_code);
-                    let errored = state == ai_types::AgentState::Errored;
-                    let key = upsert_session_state(&mut ws.agent_sessions, pid, tool, state, None);
-                    // The binary is gone - whatever question it was asking is
-                    // moot (same ghost-message rationale as `ai.stop`).
-                    if let Some(s) = ws.agent_sessions.get_mut(&key) {
-                        s.message = None;
-                    }
+                    let transition =
+                        ai_types::reduce_lifecycle_event(ai_types::AgentLifecycleEvent::Exit {
+                            exit_code,
+                        });
+                    let errored = transition.state == ai_types::AgentState::Errored;
+                    let Some(key) = upsert_session_state(
+                        &mut ws.agent_sessions,
+                        pid,
+                        tool,
+                        transition,
+                        read_emitted_at(params),
+                    ) else {
+                        return stale_frame_response();
+                    };
                     let ws_title = ws.title.clone();
                     cx.notify();
                     if errored {
@@ -3604,9 +3611,9 @@ fn upsert_session_state(
     sessions: &mut std::collections::HashMap<u32, AgentSession>,
     pid: Option<u32>,
     tool: crate::agent_launcher::TerminalAgent,
-    state: ai_types::AgentState,
-    active_tool_name: Option<String>,
-) -> u32 {
+    transition: ai_types::SessionTransition,
+    emitted_at_ms: Option<u64>,
+) -> Option<u32> {
     let key = match pid {
         Some(p) => p,
         None => {
@@ -3630,6 +3637,16 @@ fn upsert_session_state(
         }
     };
 
+    // Ordering belt: a frame stamped before the session's watermark lost its
+    // race with a later one and describes a state the session already left.
+    // Dropping it here, at the choke point, keeps every caller's side effects
+    // (notifications, prefill flush, auto-clear timer) off a stale frame too.
+    if let Some(existing) = sessions.get(&key)
+        && !ai_types::accepts_event(existing.last_event_at_ms, emitted_at_ms)
+    {
+        return None;
+    }
+
     // EP-002 US-004 (cli-cockpit): this is the single choke point for every
     // state write, so the Attention Queue's wait stamp lives here - stamped
     // on entering WaitingForInput, preserved across re-notifications,
@@ -3652,30 +3669,59 @@ fn upsert_session_state(
             None
         }
     };
-    sessions
-        .entry(key)
-        .and_modify(|s| {
-            s.waiting_since =
-                ai_types::next_waiting_since(Some((&s.state, s.waiting_since)), &state, now);
+    match sessions.get_mut(&key) {
+        Some(s) => {
+            s.waiting_since = ai_types::next_waiting_since(
+                Some((&s.state, s.waiting_since)),
+                &transition.state,
+                now,
+            );
             s.tool = tool;
-            s.state = state.clone();
-            s.active_tool_name = active_tool_name.clone();
+            s.state = transition.state;
+            s.active_tool_name = transition.active_tool_name;
+            apply_field_update(&mut s.message, transition.message);
+            apply_field_update(&mut s.last_result, transition.last_result);
             s.last_activity = now;
+            // A legacy unstamped frame must not erase the watermark a stamped
+            // one already established.
+            s.last_event_at_ms = emitted_at_ms.or(s.last_event_at_ms);
             if s.proc_start.is_none() {
                 s.proc_start = probe_start(key);
             }
-        })
-        .or_insert_with(|| {
-            let mut session = ai_types::AgentSession::new(tool, state);
+        }
+        None => {
+            let mut session = ai_types::AgentSession::new(tool, transition.state);
             session.waiting_since = ai_types::next_waiting_since(None, &session.state, now);
-            session.active_tool_name = active_tool_name;
-            // Same `now` as the and_modify arm - `AgentSession::new` stamps
-            // its own Instant, which would skew (sub-µs) from the wait stamp.
+            session.active_tool_name = transition.active_tool_name;
+            apply_field_update(&mut session.message, transition.message);
+            apply_field_update(&mut session.last_result, transition.last_result);
+            // Same `now` as the update arm - `AgentSession::new` stamps its
+            // own Instant, which would skew (sub-µs) from the wait stamp.
             session.last_activity = now;
+            session.last_event_at_ms = emitted_at_ms;
             session.proc_start = probe_start(key);
-            session
-        });
-    key
+            sessions.insert(key, session);
+        }
+    }
+    Some(key)
+}
+
+/// Source stamp of a lifecycle frame, when the producing hook set one.
+fn read_emitted_at(params: &serde_json::Value) -> Option<u64> {
+    paneflow_ipc_client::ai_hook::emitted_at_ms_from_wire_params(params)
+}
+
+fn apply_field_update<T>(slot: &mut T, update: ai_types::FieldUpdate<T>) {
+    if let ai_types::FieldUpdate::Set(value) = update {
+        *slot = value;
+    }
+}
+
+/// Response for a lifecycle frame the choke point rejected as out of order.
+/// No producer reads these bodies today (the hook transport is fire and
+/// forget); it exists so a frame is never silently reported as applied.
+fn stale_frame_response() -> serde_json::Value {
+    serde_json::json!({"status": "stale"})
 }
 
 // ---------------------------------------------------------------------------
@@ -4778,7 +4824,9 @@ mod tests {
     #[test]
     fn upsert_session_state_transitions_keys_and_stamps() {
         use crate::agent_launcher::TerminalAgent;
-        use crate::ai_types::{AgentSession, AgentState};
+        use crate::ai_types::{
+            AgentLifecycleEvent, AgentSession, AgentState, reduce_lifecycle_event,
+        };
         let mut sessions: std::collections::HashMap<u32, AgentSession> =
             std::collections::HashMap::new();
 
@@ -4787,23 +4835,29 @@ mod tests {
             &mut sessions,
             Some(4242),
             TerminalAgent::ClaudeCode,
-            AgentState::Thinking,
-            Some("Edit".into()),
-        );
+            reduce_lifecycle_event(AgentLifecycleEvent::ToolUse {
+                tool_name: Some("Edit".into()),
+            }),
+            Some(1_000),
+        )
+        .expect("a first frame is never stale");
         assert_eq!(key, 4242);
         assert_eq!(sessions[&4242].state, AgentState::Thinking);
         assert_eq!(sessions[&4242].active_tool_name.as_deref(), Some("Edit"));
 
         // AC3: an ai.notification-style transition flips Thinking ->
-        // WaitingForInput in place, clears the active tool, and stamps the wait
-        // clock; the handler then stores the question on the same entry.
+        // WaitingForInput in place, clears the active tool, stamps the wait
+        // clock, and stores the agent's question on the same entry.
         let key = super::upsert_session_state(
             &mut sessions,
             Some(4242),
             TerminalAgent::ClaudeCode,
-            AgentState::WaitingForInput,
-            None,
-        );
+            reduce_lifecycle_event(AgentLifecycleEvent::Notification {
+                message: Some("Approve edit?".into()),
+            }),
+            Some(1_100),
+        )
+        .expect("a forward frame applies");
         assert_eq!(key, 4242, "same PID updates in place");
         assert_eq!(sessions.len(), 1, "no duplicate session for the same PID");
         assert_eq!(sessions[&4242].state, AgentState::WaitingForInput);
@@ -4812,23 +4866,44 @@ mod tests {
             sessions[&4242].waiting_since.is_some(),
             "wait stamp set on entering WaitingForInput"
         );
-        sessions.get_mut(&4242).unwrap().message = Some("Approve edit?".into());
         assert_eq!(sessions[&4242].message.as_deref(), Some("Approve edit?"));
 
-        // A no-PID frame for the SAME tool updates the existing session.
+        // A frame stamped BEHIND the watermark lost its delivery race: it is
+        // dropped whole, leaving state and message untouched.
+        assert_eq!(
+            super::upsert_session_state(
+                &mut sessions,
+                Some(4242),
+                TerminalAgent::ClaudeCode,
+                reduce_lifecycle_event(AgentLifecycleEvent::Stop { summary: None }),
+                Some(1_050),
+            ),
+            None
+        );
+        assert_eq!(sessions[&4242].state, AgentState::WaitingForInput);
+        assert_eq!(sessions[&4242].message.as_deref(), Some("Approve edit?"));
+
+        // A no-PID frame for the SAME tool updates the existing session. It
+        // carries no stamp, which must not erase the watermark.
         let key = super::upsert_session_state(
             &mut sessions,
             None,
             TerminalAgent::ClaudeCode,
-            AgentState::Finished,
+            reduce_lifecycle_event(AgentLifecycleEvent::Stop {
+                summary: Some("done".into()),
+            }),
             None,
-        );
+        )
+        .expect("an unstamped frame is accepted");
         assert_eq!(
             key, 4242,
             "a no-pid frame matches the existing tool session"
         );
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[&4242].state, AgentState::Finished);
+        assert_eq!(sessions[&4242].last_result.as_deref(), Some("done"));
+        assert!(sessions[&4242].message.is_none());
+        assert_eq!(sessions[&4242].last_event_at_ms, Some(1_100));
 
         // A no-PID frame for a NEW tool with no match allocates a synthetic key
         // in the reserved high band, disjoint from real OS PIDs.
@@ -4838,9 +4913,10 @@ mod tests {
             &mut fresh,
             None,
             TerminalAgent::Codex,
-            AgentState::Thinking,
+            reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit),
             None,
-        );
+        )
+        .expect("a first frame is never stale");
         assert!(
             key >= super::SYNTHETIC_SESSION_PID_BASE,
             "synthetic key lands in the reserved band"

@@ -22,6 +22,7 @@
 //! first PID in a `HashMap<String, u32>`).
 
 use crate::agent_launcher::TerminalAgent;
+use paneflow_ipc_client::ai_hook::EVENT_REORDER_TOLERANCE_MS;
 use std::collections::{HashMap, HashSet};
 
 /// Lifecycle state for one agent session (one PID).
@@ -156,6 +157,11 @@ pub struct AgentSession {
     /// carries a summary; `None` (the common case today) when the hook provides
     /// none. UNTRUSTED, display-only (same provenance as `message`).
     pub last_result: Option<String>,
+    /// Source stamp (epoch ms) of the last lifecycle frame this session
+    /// accepted - the per-session watermark [`accepts_event`] compares
+    /// against. `None` until a stamped frame lands (frames from a hook
+    /// predating the field carry none and are always accepted).
+    pub last_event_at_ms: Option<u64>,
 }
 
 impl AgentSession {
@@ -170,7 +176,118 @@ impl AgentSession {
             last_activity: std::time::Instant::now(),
             proc_start: None,
             last_result: None,
+            last_event_at_ms: None,
         }
+    }
+}
+
+/// Whether a lifecycle frame stamped `incoming` may still be applied to a
+/// session whose last accepted frame was stamped `last`.
+///
+/// Frames are produced by short-lived processes over independent socket
+/// connections, so arrival order is not causal order: the shim's `ai.exit`
+/// can land before the `ai.stop` that preceded it and last-write-wins then
+/// replaces `Errored` with `Finished`. Comparing SOURCE stamps fixes that;
+/// an ordinal handed out on arrival could not, since it would only restate
+/// the arrival order.
+///
+/// A frame more than [`EVENT_REORDER_TOLERANCE_MS`] behind the watermark is
+/// read as a wall-clock jump rather than a reordering and is accepted, so an
+/// NTP step backwards cannot freeze a session for good. A missing stamp on
+/// either side is accepted for the same fail-open reason.
+pub fn accepts_event(last: Option<u64>, incoming: Option<u64>) -> bool {
+    match (last, incoming) {
+        (Some(last), Some(incoming)) if incoming < last => {
+            last - incoming > EVENT_REORDER_TOLERANCE_MS
+        }
+        _ => true,
+    }
+}
+
+/// How a transition treats a field the event does not necessarily own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FieldUpdate<T> {
+    /// Leave whatever the session already holds.
+    Keep,
+    Set(T),
+}
+
+/// The lifecycle vocabulary the `ai.*` hooks speak, decoupled from the wire
+/// shape. Hooks report WHAT happened; the state a session lands in is decided
+/// once, by [`reduce_lifecycle_event`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentLifecycleEvent {
+    /// `ai.prompt_submit` - a new turn started.
+    PromptSubmit,
+    /// `ai.tool_use` - the agent is running a sub-tool.
+    ToolUse { tool_name: Option<String> },
+    /// `ai.notification` - the agent is blocked on the user.
+    Notification { message: Option<String> },
+    /// `ai.stop` - the turn ended. `summary` is the best-effort recap the
+    /// stop hook carried, already `None` for an interrupt-sourced stop.
+    Stop { summary: Option<String> },
+    /// `ai.exit` - the agent binary itself exited, with its real status.
+    Exit { exit_code: i32 },
+}
+
+/// The state write a lifecycle event implies. Every field the event owns is
+/// spelled out, so the single write choke point applies a transition without
+/// per-event special cases downstream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionTransition {
+    pub state: AgentState,
+    pub active_tool_name: Option<String>,
+    pub message: FieldUpdate<Option<String>>,
+    pub last_result: FieldUpdate<Option<String>>,
+}
+
+/// The whole `ai.*` state machine, in one pure function.
+///
+/// Adding an agent or a hook kind means adding an arm here, not another
+/// branch in the IPC dispatcher: the transport parses the frame, this decides
+/// the state, and `upsert_session_state` writes it.
+pub fn reduce_lifecycle_event(event: AgentLifecycleEvent) -> SessionTransition {
+    match event {
+        // A new turn invalidates the previous question (US-016).
+        AgentLifecycleEvent::PromptSubmit => SessionTransition {
+            state: AgentState::Thinking,
+            active_tool_name: None,
+            message: FieldUpdate::Set(None),
+            last_result: FieldUpdate::Keep,
+        },
+        // tool_use implies the session is actively thinking - it promotes a
+        // session back out of a stale `Finished` from an earlier prompt-end.
+        // It says nothing about a pending question, so the message stands.
+        AgentLifecycleEvent::ToolUse { tool_name } => SessionTransition {
+            state: AgentState::Thinking,
+            active_tool_name: tool_name,
+            message: FieldUpdate::Keep,
+            last_result: FieldUpdate::Keep,
+        },
+        // The question itself is stored: the peek overlay and the desktop
+        // notification surface it. UNTRUSTED text, display only.
+        AgentLifecycleEvent::Notification { message } => SessionTransition {
+            state: AgentState::WaitingForInput,
+            active_tool_name: None,
+            message: FieldUpdate::Set(message),
+            last_result: FieldUpdate::Keep,
+        },
+        // The turn ended: the question is answered, and the recap (if any)
+        // replaces the previous turn's.
+        AgentLifecycleEvent::Stop { summary } => SessionTransition {
+            state: AgentState::Finished,
+            active_tool_name: None,
+            message: FieldUpdate::Set(None),
+            last_result: FieldUpdate::Set(summary),
+        },
+        // The binary is gone - whatever it was asking is moot. 0 and the
+        // human-interruption codes are not failures (FR-06).
+        AgentLifecycleEvent::Exit { exit_code } => SessionTransition {
+            state: state_for_exit(exit_code),
+            active_tool_name: None,
+            message: FieldUpdate::Set(None),
+            last_result: FieldUpdate::Keep,
+        },
     }
 }
 
@@ -331,6 +448,81 @@ mod tests {
 
     fn s(tool: TerminalAgent, state: AgentState) -> AgentSession {
         AgentSession::new(tool, state)
+    }
+
+    #[test]
+    fn out_of_order_frames_are_rejected_but_a_clock_jump_is_not() {
+        // Fresh session, or a producer that never stamps: always accepted.
+        assert!(accepts_event(None, Some(1_000)));
+        assert!(accepts_event(Some(1_000), None));
+        assert!(accepts_event(None, None));
+        // Forward and same-millisecond frames apply.
+        assert!(accepts_event(Some(1_000), Some(1_001)));
+        assert!(accepts_event(Some(1_000), Some(1_000)));
+        // The case this exists for: an `ai.stop` emitted before the shim's
+        // `ai.exit` but delivered after it must not overwrite Errored.
+        assert!(!accepts_event(Some(1_000), Some(999)));
+        assert!(!accepts_event(
+            Some(1_000_000),
+            Some(1_000_000 - EVENT_REORDER_TOLERANCE_MS)
+        ));
+        // Beyond the tolerance it is a wall-clock step, not a reordering:
+        // accept, or the session would freeze until the clock caught up.
+        assert!(accepts_event(
+            Some(1_000_000),
+            Some(1_000_000 - EVENT_REORDER_TOLERANCE_MS - 1)
+        ));
+    }
+
+    #[test]
+    fn lifecycle_events_reduce_to_their_session_state() {
+        let prompt = reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit);
+        assert_eq!(prompt.state, AgentState::Thinking);
+        // US-016: a new turn invalidates the previous question.
+        assert_eq!(prompt.message, FieldUpdate::Set(None));
+        // ... without discarding the previous turn's recap.
+        assert_eq!(prompt.last_result, FieldUpdate::Keep);
+
+        let tool_use = reduce_lifecycle_event(AgentLifecycleEvent::ToolUse {
+            tool_name: Some("Edit".into()),
+        });
+        assert_eq!(tool_use.state, AgentState::Thinking);
+        assert_eq!(tool_use.active_tool_name.as_deref(), Some("Edit"));
+        // A sub-tool says nothing about a pending question.
+        assert_eq!(tool_use.message, FieldUpdate::Keep);
+
+        let notification = reduce_lifecycle_event(AgentLifecycleEvent::Notification {
+            message: Some("Approve edit?".into()),
+        });
+        assert_eq!(notification.state, AgentState::WaitingForInput);
+        assert_eq!(
+            notification.message,
+            FieldUpdate::Set(Some("Approve edit?".into()))
+        );
+        assert!(notification.active_tool_name.is_none());
+
+        let stop = reduce_lifecycle_event(AgentLifecycleEvent::Stop {
+            summary: Some("3 files changed".into()),
+        });
+        assert_eq!(stop.state, AgentState::Finished);
+        assert_eq!(stop.message, FieldUpdate::Set(None));
+        assert_eq!(
+            stop.last_result,
+            FieldUpdate::Set(Some("3 files changed".into()))
+        );
+
+        // FR-06: a human interruption is not an agent failure.
+        for code in [0, 130, 129, 143] {
+            let exit = reduce_lifecycle_event(AgentLifecycleEvent::Exit { exit_code: code });
+            assert_eq!(exit.state, AgentState::Finished, "exit code {code}");
+            assert_eq!(exit.message, FieldUpdate::Set(None));
+            // The exit code says nothing about the last turn's recap.
+            assert_eq!(exit.last_result, FieldUpdate::Keep);
+        }
+        assert_eq!(
+            reduce_lifecycle_event(AgentLifecycleEvent::Exit { exit_code: 139 }).state,
+            AgentState::Errored
+        );
     }
 
     #[test]

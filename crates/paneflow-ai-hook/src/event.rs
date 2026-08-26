@@ -169,6 +169,10 @@ pub(crate) fn build_frame(
     let compact_payload = compact_hook_payload(event, &hook_payload);
     let mut params = AiHookParams::new(context.workspace_id, context.tool, compact_payload);
     params.pid = session_pid;
+    // Stamped here, in the producing process, not on arrival: the server keeps
+    // a per-session watermark and drops a frame that lost its race with a
+    // later one (an `ai.stop` overtaken by the shim's `ai.exit`, say).
+    params.emitted_at_ms = paneflow_ipc_client::ai_hook::epoch_millis();
     params.surface_id = context.surface_id;
 
     if matches!(event, HookEvent::PreToolUse | HookEvent::PostToolUse) {

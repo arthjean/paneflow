@@ -25,6 +25,13 @@ pub const METHODS: &[&str] = &[
 ];
 
 pub const DEFAULT_TOOL: &str = "claude";
+/// How far a frame may be stamped BEHIND a session's last accepted frame and
+/// still be treated as a reordered delivery rather than a wall-clock jump.
+///
+/// The producer side can only delay a frame by its own retry budget (two
+/// connect backoffs plus one write timeout, under a second today), so a
+/// second-scale window separates reordering from a clock that moved.
+pub const EVENT_REORDER_TOLERANCE_MS: u64 = 5_000;
 pub const MAX_TOOL_NAME_BYTES: usize = 64;
 pub const MAX_SESSION_PID: u32 = i32::MAX as u32;
 pub const EVENT_SOURCE_INTERRUPT: &str = "interrupt";
@@ -148,6 +155,26 @@ impl SurfaceId {
     }
 }
 
+/// Wall-clock stamp, in epoch milliseconds, taken by the producing hook
+/// process at the moment it builds the frame.
+///
+/// Delivery order is not causal order: every frame travels through its own
+/// short-lived process and its own socket connection, so a frame emitted first
+/// can land second. The stamp is what lets the server keep a per-session
+/// watermark and drop a frame that describes a state the session already left.
+/// It is a source stamp on purpose - an ordinal assigned on arrival would just
+/// re-encode the arrival order, which is the problem itself.
+pub fn epoch_millis() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+}
+
+pub fn emitted_at_ms_from_wire_params(params: &Value) -> Option<u64> {
+    params.get("emitted_at_ms").and_then(Value::as_u64)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LifecycleEventSource {
     Interrupt,
@@ -183,6 +210,9 @@ pub struct AiHookParams {
     pub tool_name: Option<String>,
     pub exit_code: Option<i32>,
     pub event_source: Option<LifecycleEventSource>,
+    /// See [`epoch_millis`]. `None` on frames from a hook older than this
+    /// field, which the server accepts unconditionally.
+    pub emitted_at_ms: Option<u64>,
     pub hook_payload: Value,
 }
 
@@ -196,6 +226,7 @@ impl AiHookParams {
             tool_name: None,
             exit_code: None,
             event_source: None,
+            emitted_at_ms: None,
             hook_payload,
         }
     }
@@ -221,6 +252,9 @@ impl AiHookParams {
                 "event_source".into(),
                 Value::String(event_source.as_str().to_owned()),
             );
+        }
+        if let Some(emitted_at_ms) = self.emitted_at_ms {
+            value.insert("emitted_at_ms".into(), Value::from(emitted_at_ms));
         }
         value.insert("hook_payload".into(), self.hook_payload.clone());
         Value::Object(value)
