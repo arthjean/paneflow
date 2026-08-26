@@ -208,9 +208,7 @@ impl Harness {
         let cursor_column = content.cursor.point.column.0;
         let mut events = Vec::new();
         while let Ok(event) = self.events.try_recv() {
-            if let Some(normalized) = normalize_alacritty_event(event) {
-                events.push(normalized);
-            }
+            events.extend(normalize_alacritty_event(event));
         }
         NormalizedSnapshot {
             content: normalize_content(content),
@@ -251,25 +249,103 @@ fn normalize_alacritty_grid(term: &Term<ZedListener>) -> String {
     lines.join("\n")
 }
 
-fn normalize_alacritty_event(event: AlacEvent) -> Option<String> {
+fn normalize_alacritty_event(event: AlacEvent) -> Vec<String> {
     match event {
-        AlacEvent::Wakeup | AlacEvent::MouseCursorDirty | AlacEvent::CursorBlinkingChange => None,
-        AlacEvent::PtyWrite(text) => Some(normalize_pty_write(&text)),
-        AlacEvent::ClipboardStore(_, text) => Some(format!("ClipboardStore({text:?})")),
-        AlacEvent::Bell => Some("Bell".to_owned()),
-        AlacEvent::Title(title) => Some(format!("Title({title:?})")),
-        other => Some(format!("{other:?}")),
+        AlacEvent::Wakeup | AlacEvent::MouseCursorDirty | AlacEvent::CursorBlinkingChange => {
+            Vec::new()
+        }
+        AlacEvent::PtyWrite(text) => normalize_pty_write(&text),
+        AlacEvent::ClipboardStore(_, text) => vec![format!("ClipboardStore({text:?})")],
+        AlacEvent::Bell => vec!["Bell".to_owned()],
+        AlacEvent::Title(title) => vec![format!("Title({title:?})")],
+        other => vec![format!("{other:?}")],
     }
 }
 
-fn normalize_pty_write(text: &str) -> String {
-    if text.starts_with("\x1b[?") && text.ends_with('c') {
+/// C0 escape, and the two string terminators the reply grammar below needs.
+const ESC: u8 = 0x1b;
+const BEL: u8 = 0x07;
+
+/// Normalize one PTY write into one entry per reply it carries.
+///
+/// The backends batch their answers differently, and the batching is not part
+/// of the contract: Alacritty emits one `PtyWrite` per reply, while the Ghostty
+/// effects buffer folds adjacent writes into a single buffer so a burst of
+/// queries costs the PTY one syscall instead of four (see
+/// `paneflow_terminal_ghostty::callbacks`). Only the byte stream is
+/// observable, so the corpus compares the replies in order and lets the two
+/// engines group them however they like. A reply whose bytes actually differ
+/// still fails, because each reply is normalized on its own.
+fn normalize_pty_write(text: &str) -> Vec<String> {
+    split_pty_replies(text)
+        .iter()
+        .map(|reply| normalize_pty_reply(reply))
+        .collect()
+}
+
+/// Device attributes are an emulator's own identity, so the two engines answer
+/// with legitimately different parameters. Every other reply is compared
+/// byte-for-byte.
+fn normalize_pty_reply(reply: &str) -> String {
+    if reply.starts_with("\x1b[?") && reply.ends_with('c') {
         "PtyWrite(PrimaryDeviceAttributes)".to_owned()
-    } else if text.starts_with("\x1b[>") && text.ends_with('c') {
+    } else if reply.starts_with("\x1b[>") && reply.ends_with('c') {
         "PtyWrite(SecondaryDeviceAttributes)".to_owned()
     } else {
-        format!("PtyWrite({text:?})")
+        format!("PtyWrite({reply:?})")
     }
+}
+
+/// Cut a PTY write payload into the individual replies it carries.
+///
+/// The grammar is only as wide as a terminal reply needs: a CSI runs to its
+/// final byte (`0x40..=0x7e`), the string families (OSC, DCS, SOS, PM, APC)
+/// run to BEL or ST, any other escape is two bytes, and a run of plain bytes
+/// ends at the next escape. Every boundary falls on an ASCII byte, so the
+/// slices are always on a character boundary.
+fn split_pty_replies(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut replies = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        let start = index;
+        if bytes[index] == ESC {
+            index += 1;
+            match bytes.get(index) {
+                Some(b'[') => {
+                    index += 1;
+                    while index < bytes.len() && !(0x40..=0x7e).contains(&bytes[index]) {
+                        index += 1;
+                    }
+                    // The final byte belongs to the sequence, unless the write
+                    // was truncated before one arrived.
+                    index = index.saturating_add(1).min(bytes.len());
+                }
+                Some(b']' | b'P' | b'X' | b'^' | b'_') => {
+                    index += 1;
+                    while index < bytes.len() {
+                        if bytes[index] == BEL {
+                            index += 1;
+                            break;
+                        }
+                        if bytes[index] == ESC && bytes.get(index + 1) == Some(&b'\\') {
+                            index += 2;
+                            break;
+                        }
+                        index += 1;
+                    }
+                }
+                Some(_) => index += 1,
+                None => {}
+            }
+        } else {
+            while index < bytes.len() && bytes[index] != ESC {
+                index += 1;
+            }
+        }
+        replies.push(String::from_utf8_lossy(&bytes[start..index]).into_owned());
+    }
+    replies
 }
 
 fn normalize_alacritty_search(result: crate::search::SearchResult) -> SearchObservation {
@@ -404,7 +480,7 @@ impl GhosttyHarness {
             .terminal
             .drain_events()
             .into_iter()
-            .filter_map(normalize_ghostty_event)
+            .flat_map(normalize_ghostty_event)
             .collect();
         NormalizedSnapshot {
             content: normalize_content(content),
@@ -471,27 +547,29 @@ fn normalize_ghostty_grid(scrollback: &str, content: &Content) -> String {
         feature = "libghostty-windows"
     )
 ))]
-fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Option<String> {
+fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Vec<String> {
     match event {
         paneflow_terminal_ghostty::BackendEvent::WritePty(bytes) => {
-            Some(normalize_pty_write(&String::from_utf8_lossy(&bytes)))
+            normalize_pty_write(&String::from_utf8_lossy(&bytes))
         }
         paneflow_terminal_ghostty::BackendEvent::ClipboardStore(text) => {
-            Some(format!("ClipboardStore({text:?})"))
+            vec![format!("ClipboardStore({text:?})")]
         }
-        paneflow_terminal_ghostty::BackendEvent::Bell => Some("Bell".to_owned()),
-        paneflow_terminal_ghostty::BackendEvent::Title(title) => Some(format!("Title({title:?})")),
+        paneflow_terminal_ghostty::BackendEvent::Bell => vec!["Bell".to_owned()],
+        paneflow_terminal_ghostty::BackendEvent::Title(title) => {
+            vec![format!("Title({title:?})")]
+        }
         paneflow_terminal_ghostty::BackendEvent::WorkingDirectory(cwd) => {
-            Some(format!("WorkingDirectory({cwd:?})"))
+            vec![format!("WorkingDirectory({cwd:?})")]
         }
         paneflow_terminal_ghostty::BackendEvent::CallbackPanicked
-        | paneflow_terminal_ghostty::BackendEvent::InputDropped { .. } => None,
+        | paneflow_terminal_ghostty::BackendEvent::InputDropped { .. } => Vec::new(),
         paneflow_terminal_ghostty::BackendEvent::EffectsOverflow {
             dropped_events,
             dropped_bytes,
-        } => Some(format!(
+        } => vec![format!(
             "EffectsOverflow(events={dropped_events},bytes={dropped_bytes})"
-        )),
+        )],
     }
 }
 
@@ -669,6 +747,85 @@ fn alacritty_corpus_is_chunk_invariant() {
             );
         }
     }
+}
+
+/// The corpus compares reply streams, so the splitter is what makes the
+/// comparison meaningful: a splitter that mangled its input symmetrically would
+/// keep `ghostty_corpus_matches_alacritty` green while hiding a real byte
+/// difference. Pin the grammar directly.
+#[test]
+fn a_coalesced_pty_write_splits_back_into_its_replies() {
+    // The Ghostty effects buffer answers a burst of queries with one write;
+    // Alacritty answers with one write per query. Both must normalize to the
+    // same sequence.
+    let coalesced = "\x1b[0n\x1b[1;8R\x1b[?62;22;52c\x1b[>1;10;0c";
+    assert_eq!(
+        normalize_pty_write(coalesced),
+        vec![
+            "PtyWrite(\"\\u{1b}[0n\")".to_owned(),
+            "PtyWrite(\"\\u{1b}[1;8R\")".to_owned(),
+            "PtyWrite(PrimaryDeviceAttributes)".to_owned(),
+            "PtyWrite(SecondaryDeviceAttributes)".to_owned(),
+        ]
+    );
+
+    // Split one reply at a time and the result is the same list, which is the
+    // whole point: batching is not observable, bytes are.
+    let separate: Vec<String> = ["\x1b[0n", "\x1b[1;8R", "\x1b[?62;22;52c", "\x1b[>1;10;0c"]
+        .into_iter()
+        .flat_map(normalize_pty_write)
+        .collect();
+    assert_eq!(normalize_pty_write(coalesced), separate);
+
+    // Device attributes are the only payload the corpus lets diverge. A reply
+    // whose bytes really differ still compares unequal.
+    assert_ne!(
+        normalize_pty_write("\x1b[0n"),
+        normalize_pty_write("\x1b[3n")
+    );
+}
+
+/// Every byte of the write must land in exactly one reply, whatever grammar the
+/// payload uses, or the comparison silently drops part of the stream.
+#[test]
+fn splitting_a_pty_write_never_loses_a_byte() {
+    for payload in [
+        "",
+        "\x1b[0n",
+        // Truncated: no final byte ever arrives.
+        "\x1b[38;2;1;2",
+        // OSC terminated by BEL, then by ST.
+        "\x1b]11;rgb:1111/2222/3333\x07",
+        "\x1b]10;rgb:4444/5555/6666\x1b\\",
+        // DCS carries an ST that is itself an escape; it must not split there.
+        "\x1bP1$r0m\x1b\\\x1b[0n",
+        // A two-byte escape, and plain text on both sides of one.
+        "\x1bMtext\x1b[6n",
+        "plain",
+        // Non-ASCII text must not be cut mid-character.
+        "café 🦀\x1b[0n",
+    ] {
+        let replies = split_pty_replies(payload);
+        assert_eq!(
+            replies.concat(),
+            payload,
+            "splitting {payload:?} changed the stream"
+        );
+        assert!(
+            replies.iter().all(|reply| !reply.is_empty()),
+            "empty reply in {payload:?}"
+        );
+    }
+
+    // Spot-check the boundaries the concat property alone cannot pin.
+    assert_eq!(
+        split_pty_replies("\x1bP1$r0m\x1b\\\x1b[0n"),
+        vec!["\x1bP1$r0m\x1b\\".to_owned(), "\x1b[0n".to_owned()]
+    );
+    assert_eq!(
+        split_pty_replies("\x1bMtext\x1b[6n"),
+        vec!["\x1bM".to_owned(), "text".to_owned(), "\x1b[6n".to_owned()]
+    );
 }
 
 #[cfg(any(
