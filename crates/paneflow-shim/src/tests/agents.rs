@@ -13,9 +13,13 @@ use crate::hooks::{
 use serde_json::json;
 
 fn command_preserves_event_arg(command: &str, event: &str) -> bool {
-    command.ends_with(&format!(" {event}"))
-        || command.ends_with(&format!(" {event}\\\""))
-        || command.contains(&format!(" {event} "))
+    // The event is the last argument, but what surrounds it depends on the
+    // platform: Unix passes it bare, Windows wraps the whole invocation in a
+    // PowerShell `-Command "..."` string, so the token can carry a trailing
+    // quote (escaped or not) once it has been through JSON.
+    command
+        .split_whitespace()
+        .any(|token| token.trim_matches(['"', '\\', '\'']) == event)
 }
 
 // ---------- Multi-agent: clones + JSON/TS/YAML guards ----------
