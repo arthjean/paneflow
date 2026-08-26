@@ -31,7 +31,7 @@ Everywhere else, take the build for your machine from the [latest release](https
 
 [Install docs →](https://paneflow.dev/docs/installation)
 
-<img alt="Two coding agents running in parallel panes, with the review dock open on a source file and the files sidebar alongside" src="./assets/images/demo.png" width="100%">
+<img alt="Two coding agents running in parallel panes, with the review dock open on a source file and the files sidebar alongside" src="./assets/images/demo-0.9.png" width="100%">
 
 ### 2. Install for agents
 
