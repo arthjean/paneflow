@@ -37,16 +37,19 @@ name = "paneflow"
 path = "src/main.rs"
 
 [dependencies]
-# GPUI framework pinned to a minimal Paneflow fork of Zed. The pinned commit
-# is based on zed-industries/zed@afc13dc8 and carries one additive performance
-# patch: `Markdown::append` accumulates streamed chunks in a private String
-# buffer while preserving Zed's `source() -> &SharedString` contract. The fork
-# also keeps the append-throughput Criterion benchmark.
+# GPUI framework, pinned to an exact upstream Zed revision. Paneflow used to
+# build against a fork of Zed carrying one additive `Markdown::append` patch,
+# needed by the in-app chat that streamed agent output through Zed's `markdown`
+# widget. That chat is gone and the Markdown viewer is now a self-contained
+# `pulldown_cmark` pipeline (`src/markdown/`), so the patch had no consumer
+# left and the fork was dropped along with the `markdown`, `theme`, `ui` and
+# `collections` Zed crates it forced into the graph.
 #
-# Switchover: when the append optimization lands in zed-industries/zed, point
-# the eight entries back to upstream and keep an exact tested revision. Until
-# then, create each bump from the chosen upstream revision, reapply the patch,
-# publish the fork commit, update every `rev` below, then run `cargo update`.
+# Bumping is now a four-value `rev` change plus `cargo update`, then the
+# workspace test, Clippy, format and `cargo deny check` gates. Keep an exact
+# revision - never a branch - so builds stay reproducible. Run the *test*
+# build too: `cargo build` skips test targets, so GPUI API breaks in
+# `#[cfg(test)]` code stay hidden until `cargo test` compiles them.
 #
 # `gpui_platform` MUST carry the `font-kit` feature on macOS - without it,
 # `gpui_macos` compiles cleanly but the optional `zed-font-kit` dep + Core
@@ -59,27 +62,8 @@ path = "src/main.rs"
 # The feature is a no-op on Linux/Windows (where `gpui_macos` isn't
 # compiled in), so it's safe in the cross-platform default declaration
 # below - the Linux-only override on line ~97 adds wayland/x11 on top.
-gpui = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
-gpui_platform = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db", features = ["font-kit"] }
-collections = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
-
-# Zed markdown rendering pipeline + design-system primitives. Pinned at the
-# same rev as gpui so the workspace graph resolves consistently. Pulls ~51
-# Zed workspace crates transitively (language/theme/ui/lsp/...) - accepted
-# trade-off for visual parity with Zed's agent panel.
-markdown = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
-# Bootstraps Zed's `GlobalTheme` at startup. `MarkdownElement::paint` reads
-# `cx.theme().colors()` unconditionally for secondary chrome (borders, panel
-# backgrounds, etc.) regardless of the `MarkdownStyle` we pass in, so the
-# global must exist. `theme::init(LoadThemes::JustBase, cx)` is the minimal
-# bootstrap - no JSON theme bundles, no `theme_settings` integration.
-theme = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
-# Zed's design-system primitives (Icon + IconName, Disclosure, Label, ...).
-# Pinned at the same rev as gpui/markdown/theme. Required so the agent-panel
-# thinking + tool-call rows match Zed's exact rendering (`Icon::new(IconName::
-# ToolSearch).size(IconSize::Small).color(Color::Muted)` etc.) instead of
-# hand-rolled svg() paths.
-ui = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db" }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["font-kit"] }
 
 # Alacritty terminal emulation (upstream crates.io - migrated from Zed fork in US-005)
 alacritty_terminal = "0.26"
@@ -291,7 +275,7 @@ ropey = { version = "1.6", default-features = false, features = ["simd"] }
 
 # Linux: enable Wayland + X11 display backends for gpui_platform
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db", features = ["wayland", "x11"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["wayland", "x11"] }
 # Native compositor blur for PaneFlow's sidebar + title bar. Wayland prefers
 # ext-background-effect-v1 and falls back to GPUI's KDE protocol; X11 uses
 # KWin's _KDE_NET_WM_BLUR_BEHIND_REGION hint when the effect is advertised.
@@ -422,7 +406,11 @@ windows-registry = "0.5"
 winresource = "0.1.31"
 
 [dev-dependencies]
-gpui = { git = "https://github.com/arthjean/zed", rev = "3aaba57b95c22f4d21bbbf9f4b10b513173209db", features = ["test-support"] }
+# `profiler` gates `gpui::profiler::FrameTimingCollector`, which the
+# `layout::render` frame-pacing benchmark reads to measure dirty-to-draw
+# latency. Test-only: `cargo build` does not resolve dev-dependencies, so the
+# shipped binary never carries it (nor its `hdrhistogram` dependency).
+gpui = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["test-support", "profiler"] }
 # US-001: the sign-capable counterpart to `minisign-verify`. Test-only - used
 # to generate ephemeral keypairs and sign fixtures so `update/signature.rs`
 # exercises a real verify round-trip (happy path + tampered/wrong-key/no-key

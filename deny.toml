@@ -44,71 +44,22 @@ unused-ignored-advisory = "warn"
 #   2. what triggers re-evaluation (upstream patch, code-path change)
 # Reviewed 2026-07-03.
 ignore = [
-    # RUSTSEC-2023-0071 - Marvin Attack on the `rsa` crate
-    # (timing side-channel during RSA private-key decryption).
-    #
-    # Why ignored:
-    #   * `rsa v0.9.x` is a transitive dep via
-    #     zed/markdown → zed/language → zed/rpc → rsa.
-    #     PaneFlow uses Zed's `markdown` crate purely for AST +
-    #     rendering - we never instantiate the `language` server
-    #     wiring, never connect to rpc.zed.dev, and the linker
-    #     keeps the RSA code only because cargo cannot prove it's
-    #     dead at link-time. `grep -rn 'rsa::' src-app/ crates/`
-    #     returns zero hits.
-    #   * The attack requires the victim to decrypt
-    #     attacker-controlled ciphertext and leak timing
-    #     differences. PaneFlow's binary never decrypts anything
-    #     from a network surface - there is no exploitable code
-    #     path.
-    #   * Upstream RustCrypto position (per the advisory itself):
-    #     "No safe upgrade is available!" - no fixed rsa version
-    #     exists as of 2026-05. The recommended migration is to a
-    #     different crate, which has to happen on the Zed side
-    #     (zed/rpc/Cargo.toml), not ours.
-    #
-    # Re-evaluation triggers:
-    #   * rsa publishes a 0.10+ with timing-safe RSA decryption,
-    #   * OR Zed migrates rpc off rsa (drops it from the dep tree),
-    #   * OR PaneFlow starts using zed/rpc directly (any
-    #     `use rpc::` in src-app/** would invalidate this ignore).
-    "RUSTSEC-2023-0071",
-
-    # RUSTSEC-2026-0194 / RUSTSEC-2026-0195 - quick-xml CPU and memory
-    # denial-of-service issues in duplicate-attribute and namespace handling.
-    #
-    # Why ignored:
-    #   * The only remaining vulnerable quick-xml instances after the
-    #     notify-rust refresh are transitive:
-    #       - quick-xml 0.38.4 via arthjean/zed mermaid_render,
-    #       - quick-xml 0.39.2 via syntect/plist and Linux Wayland/zbus tooling.
-    #   * Paneflow has no direct quick_xml usage (`rg 'quick_xml|quick-xml'
-    #     src-app crates -g '*.rs'` returns no Rust call sites), so the app
-    #     cannot apply the upstream workaround (`attributes().with_checks(false)`)
-    #     locally.
-    #   * Cargo cannot move these to quick-xml >= 0.41.0 without parent crate
-    #     releases: mermaid_render requires ^0.38, plist/wayland/zbus paths
-    #     require ^0.39.2. A forced lockfile update fails dependency selection.
-    #
-    # Re-evaluation triggers:
-    #   * Zed's mermaid_render moves to quick-xml >= 0.41.0 or the fork drops
-    #     mermaid rendering from Paneflow's markdown path,
-    #   * OR syntect/plist, wayland-scanner, and zbus_xml publish compatible
-    #     releases using quick-xml >= 0.41.0,
-    #   * OR Paneflow adds direct XML parsing, untrusted Mermaid XML ingestion,
-    #     or any `use quick_xml::` call site.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
-
-    # NOTE (2026-05-28, prd-cli-hardening-followup-2026-Q3 US-027):
-    # a preemptive ignore for RUSTSEC-2025-0052 (async-std
-    # discontinued) was removed -- `async-std` is NOT in the current
-    # Cargo.lock (the arthjean/zed fork pin does not pull
-    # zed/http_client → async-tar → async-std). cargo-deny rejects
-    # an `ignore` entry that matches no crate (`unmatched-skip`), so
-    # the dead entry was failing the `security_audit` PR gate AND the
-    # release build. Re-add it ONLY if a future GPUI-pin bump
-    # reintroduces async-std into the tree.
+    # Empty since 2026-08-26: dropping the Zed fork (and with it the
+    # `markdown` / `theme` / `ui` / `collections` crates) removed 278
+    # packages from the lockfile, including every crate the previous
+    # entries covered:
+    #   * RUSTSEC-2023-0071 (`rsa` Marvin attack) arrived via
+    #     zed/markdown -> zed/language -> zed/rpc -> rsa. `rsa` is no
+    #     longer in Cargo.lock.
+    #   * RUSTSEC-2026-0194 / RUSTSEC-2026-0195 (quick-xml DoS) covered
+    #     quick-xml 0.38.4 via Zed's mermaid_render and 0.39.2 via
+    #     syntect/plist + Wayland/zbus tooling. The tree now resolves a
+    #     single quick-xml 0.41.0, which is past both advisories.
+    # cargo-deny warns on ignores that match nothing
+    # (`unused-ignored-advisory` above), so stale entries are removed
+    # rather than kept "just in case". Re-add with the same two-part
+    # rationale (why it does not apply + what triggers re-evaluation)
+    # if a GPUI bump reintroduces a vulnerable crate.
 ]
 
 [licenses]
@@ -120,19 +71,25 @@ ignore = [
 # font-kit dep tree: 0BSD, MPL-2.0, CC0-1.0, CDLA-Permissive-2.0,
 # bzip2-1.0.6, NCSA - all OSI-approved or public-domain-equivalent).
 #
-# GPL-3.0 / GPL-3.0-or-later - accepted globally (2026-05-27).
-# The Zed monorepo we pin GPUI from contains 33+ crates licensed
-# `GPL-3.0` that land in our dep tree as transitive deps of `gpui` /
-# `gpui_platform` / `collections` (askpass, clock, component, fs,
-# fuzzy, git, icons, language, lsp, markdown, menu, migrator, net,
-# paths, proto, release_channel, rope, rpc, settings*, syntax_theme,
-# task, telemetry*, text, theme*, ui*, zed_actions, ...). The
-# previous per-crate `[[licenses.exceptions]]` for zlog / ztracing
-# was unsustainable - every GPUI pin bump shifted the list and the
-# CI gate fell out of sync. PaneFlow already statically links these,
-# so cargo-deny's noise-vs-block dilemma was the wrong frame: the
-# right question is whether PaneFlow's binary distribution license
-# is GPL-3-compatible. It is (same posture Zed itself ships under).
+# GPL-3.0 / GPL-3.0-or-later - accepted globally (2026-05-27),
+# re-scoped 2026-08-26. `GPL-3.0-or-later` now matches only Paneflow's
+# own workspace crates; `GPL-3.0` matches nothing.
+#
+# Until 2026-08-26 the Zed monorepo contributed 33+ `GPL-3.0` crates
+# transitively through the `markdown` / `theme` / `ui` dependencies
+# (askpass, clock, component, fs, fuzzy, git, icons, language, lsp,
+# menu, migrator, net, paths, proto, release_channel, rope, rpc,
+# settings*, syntax_theme, task, telemetry*, text, zed_actions, ...).
+# Dropping the Zed fork dropped all of them: every Zed crate left in
+# the tree (gpui*, collections, sum_tree, util_macros, http_client,
+# media, scheduler, perf, refineable, zlog, ztracing*) is Apache-2.0.
+#
+# Both entries stay in the allow list anyway. A GPUI bump can pull a
+# GPL crate back in through a new `gpui` dependency, and a hard
+# licenses failure on a tag cut costs far more than the
+# `license-not-encountered` warning cargo-deny emits meanwhile. The
+# per-crate `[[licenses.exceptions]]` approach this replaced was
+# unsustainable - every pin bump shifted the list out of sync.
 allow = [
     "MIT",
     "Apache-2.0",
@@ -161,25 +118,33 @@ exceptions = [
 ]
 
 [sources]
-# Block unknown crate registries or git sources. Require tags or immutable
-# revisions: the sole reviewed tag is locked to its resolved commit by the
-# workspace dependency_source_policy test.
+# Block unknown crate registries or git sources. Require immutable revisions:
+# every git source must be a full 40-char sha, enforced a second time by the
+# workspace dependency_source_policy test (which also checks the sha matches
+# the commit Cargo resolved). Tightened from "tag" to "rev" on 2026-08-26 -
+# `merman` was the only tag-spec'd source and it left the tree with the Zed
+# fork.
 unknown-registry = "deny"
 unknown-git      = "deny"
-required-git-spec = "tag"
+required-git-spec = "rev"
 # Pin the crates.io registry explicitly; anything else is "unknown".
 allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
 # Keep repository authorization exact. Organization-wide grants would let a
 # transitive update introduce an unrelated repository without review.
+# `scap` and `wasm_thread` arrived with the 2026-08-26 GPUI bump. Neither is
+# built for Linux, macOS or Windows: `wasm_thread` is reached only through
+# `gpui_web`/`scheduler` under a wasm32 target gate, and `scap` is an
+# unactivated optional feature. They are locked because Cargo resolves every
+# target, and they are listed here so a future bump that starts compiling them
+# still lands on a reviewed repository.
 allow-git = [
-    "https://github.com/arthjean/zed",
     "https://github.com/proptest-rs/proptest",
     "https://github.com/smol-rs/async-task.git",
     "https://github.com/zed-industries/async-process.git",
     "https://github.com/zed-industries/calloop",
     "https://github.com/zed-industries/font-kit",
-    "https://github.com/zed-industries/lsp-types",
-    "https://github.com/zed-industries/merman",
-    "https://github.com/zed-industries/trash-rs",
+    "https://github.com/zed-industries/scap",
+    "https://github.com/zed-industries/wasm_thread",
     "https://github.com/zed-industries/xim-rs.git",
+    "https://github.com/zed-industries/zed",
 ]

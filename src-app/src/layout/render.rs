@@ -310,7 +310,7 @@ mod tests {
 
     use gpui::{
         AppContext, Entity, Render, TestAppContext,
-        profiler::{self, FrameTimingCollector},
+        profiler::{self, FrameEvent, FrameTimingCollector},
         px, size,
     };
 
@@ -335,7 +335,7 @@ mod tests {
     impl FrameTraceGuard {
         fn enable() -> Self {
             Self {
-                enabled_by_test: profiler::set_frame_trace_enabled(true),
+                enabled_by_test: profiler::set_trace_enabled(true),
             }
         }
     }
@@ -343,7 +343,7 @@ mod tests {
     impl Drop for FrameTraceGuard {
         fn drop(&mut self) {
             if self.enabled_by_test {
-                profiler::set_frame_trace_enabled(false);
+                profiler::set_trace_enabled(false);
             }
         }
     }
@@ -527,7 +527,16 @@ mod tests {
         let wall = wall_start.elapsed();
         let cpu = process_cpu_time().saturating_sub(cpu_start);
         let rss_end = resident_set_bytes();
-        let frame_timings = frame_collector.collect_unseen();
+        // `collect_unseen` yields both draw and present events; the benchmark
+        // measures draw pacing, so present submissions are dropped here.
+        let frame_timings = frame_collector
+            .collect_unseen()
+            .into_iter()
+            .filter_map(|event| match event {
+                FrameEvent::Draw(timing) => Some(timing),
+                FrameEvent::Present(_) => None,
+            })
+            .collect::<Vec<_>>();
         drop(frame_trace);
         let traced_frame_samples = frame_timings.len();
         let mut target_frames = frame_timings

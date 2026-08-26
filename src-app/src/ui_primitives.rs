@@ -854,7 +854,7 @@ mod tests {
         cx.simulate_resize(size(px(100.), px(100.)));
 
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
             window.dispatch_event(
                 MouseMoveEvent {
                     position: point(px(25.), px(25.)),
@@ -864,12 +864,12 @@ mod tests {
                 .to_platform_input(),
                 cx,
             );
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         thread::sleep(Duration::from_millis(10));
         cx.update(|window, cx| {
-            window.draw(cx).clear();
+            window.draw(cx).clear(cx);
         });
 
         assert!(

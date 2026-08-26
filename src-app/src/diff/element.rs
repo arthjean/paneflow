@@ -1436,6 +1436,7 @@ impl Element for DiffElement {
             for image in &layout.images {
                 let _ = window.paint_image(
                     image.bounds,
+                    image.bounds,
                     Corners::default(),
                     image.image.clone(),
                     0,
@@ -1465,6 +1466,7 @@ impl Element for DiffElement {
             }
             for image in &layout.sticky_images {
                 let _ = window.paint_image(
+                    image.bounds,
                     image.bounds,
                     Corners::default(),
                     image.image.clone(),

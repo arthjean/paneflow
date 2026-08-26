@@ -6,8 +6,6 @@
 use std::path::Path;
 use std::process::Command;
 
-const MERMAN_SOURCE: &str = "source = \"git+https://github.com/zed-industries/merman?tag=v0.6.2-with-patches#9acc3960f04a7deeb08079d60fa8183f15e8bde1\"";
-
 #[test]
 fn cargo_lock_git_sources_are_immutable() {
     let lock_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.lock");
@@ -20,16 +18,10 @@ fn cargo_lock_git_sources_are_immutable() {
     );
     let lock = lock.unwrap_or_default();
 
-    let mut saw_merman = false;
     for source_line in lock
         .lines()
         .filter(|line| line.starts_with("source = \"git+"))
     {
-        if source_line == MERMAN_SOURCE {
-            saw_merman = true;
-            continue;
-        }
-
         let source = source_line
             .strip_prefix("source = \"git+")
             .and_then(|source| source.strip_suffix('"'))
@@ -48,11 +40,6 @@ fn cargo_lock_git_sources_are_immutable() {
             "git source revision and resolved commit differ: {source_line}"
         );
     }
-
-    assert!(
-        saw_merman,
-        "the reviewed Merman tag disappeared; tighten cargo-deny back to revision-only sources"
-    );
 }
 
 #[test]
