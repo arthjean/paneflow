@@ -40,14 +40,29 @@ pub type SharedMarkRing = Arc<Mutex<MarkRing>>;
 #[derive(Default)]
 pub struct MarkRing {
     marks: VecDeque<CommandMark>,
+    prompt_starts: u64,
 }
 
 impl MarkRing {
     pub fn push(&mut self, mark: CommandMark) {
+        if mark.kind == MarkKind::PromptStart {
+            self.prompt_starts = self.prompt_starts.wrapping_add(1);
+        }
         if self.marks.len() == MAX_MARKS {
             self.marks.pop_front();
         }
         self.marks.push_back(mark);
+    }
+
+    /// Monotone count of OSC 133 prompt starts seen on this surface.
+    ///
+    /// It is a sequence, not a population: ring eviction and
+    /// [`Self::retain_at_or_below`] never move it back. A consumer keeps its
+    /// own watermark and treats any change as "the shell is back at its
+    /// prompt", which is proof that no foreground command - agent CLI
+    /// included - still owns the terminal.
+    pub fn prompt_start_seq(&self) -> u64 {
+        self.prompt_starts
     }
 
     pub fn retain_at_or_below(&mut self, max_abs_line: i64) {

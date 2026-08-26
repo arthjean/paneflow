@@ -818,7 +818,8 @@ impl Pane {
                 | TerminalEvent::OpenMarkdownPath(_)
                 | TerminalEvent::OpenCodePath { .. }
                 | TerminalEvent::FontZoomChanged
-                | TerminalEvent::FleetSearchRequested { .. } => {}
+                | TerminalEvent::FleetSearchRequested { .. }
+                | TerminalEvent::ShellPromptReady => {}
             }
         })
         .detach();

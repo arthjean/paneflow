@@ -1510,6 +1510,9 @@ pub struct TerminalState {
     cwd_rx: Option<UnboundedReceiver<String>>,
     marks_rx: Option<std::sync::mpsc::Receiver<RawMark>>,
     pub(crate) marks: SharedMarkRing,
+    /// Watermark over [`super::marks::MarkRing::prompt_start_seq`], read by
+    /// [`Self::take_shell_prompt_ready`].
+    last_prompt_seq: u64,
     pub exited: Option<i32>,
     /// US-002: set true once any user input (keystroke, paste, mouse report,
     /// IME commit, user scroll) has been written via `write_to_pty`.
@@ -2902,6 +2905,7 @@ impl TerminalState {
             cwd_rx: None,
             marks_rx: None,
             marks: Arc::new(std::sync::Mutex::new(Default::default())),
+            last_prompt_seq: 0,
             exited: None,
             keyboard_input_sent: std::sync::atomic::AtomicBool::new(false),
             exit_signal: None,
@@ -3016,6 +3020,27 @@ impl TerminalState {
             self.current_cwd = Some(cwd.to_string_lossy().into_owned());
         }
         self.drain_marks();
+    }
+
+    /// Whether the shell returned to its prompt since the last call.
+    ///
+    /// Reads the OSC 133 `PromptStart` sequence the PTY scanner already
+    /// maintains, so it costs one mutex read per sync tick and works on both
+    /// backends (the VTE scanner and libghostty push into the same ring).
+    ///
+    /// A prompt is proof that no foreground command owns the terminal any
+    /// more, which is how the app reaps a finished agent's session without
+    /// waiting for the periodic PID sweep. The first prompt of a fresh shell
+    /// fires it too; the consumer is a no-op when the surface owns no session.
+    pub(crate) fn take_shell_prompt_ready(&mut self) -> bool {
+        let seq = self
+            .marks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .prompt_start_seq();
+        let fired = seq != self.last_prompt_seq;
+        self.last_prompt_seq = seq;
+        fired
     }
 
     fn drain_marks(&mut self) {

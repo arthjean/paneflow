@@ -1046,6 +1046,9 @@ impl TerminalView {
                             {
                                 cx.emit(TerminalEvent::CwdChanged(cwd.clone()));
                             }
+                            if view.terminal.take_shell_prompt_ready() {
+                                cx.emit(TerminalEvent::ShellPromptReady);
+                            }
 
                             view.process_dirty_terminal(cx);
                         })
@@ -1501,6 +1504,12 @@ pub enum TerminalEvent {
     TitleChanged,
     /// The shell's working directory changed (detected via OSC 7 escape sequence).
     CwdChanged(String),
+    /// The shell printed a new prompt (OSC 133 `PromptStart`). Nothing runs in
+    /// the foreground at that instant, so `PaneFlowApp` reaps the agent
+    /// sessions this surface still carries instead of waiting for the periodic
+    /// PID sweep. Covers agents whose hooks never reported an exit, and agents
+    /// launched with no hook integration at all.
+    ShellPromptReady,
     /// Terminal output activity detected - triggers an OS port scan
     /// (`workspace::ports`; Linux `/proc/net/tcp`, macOS libproc, Windows IP Helper).
     /// Emitted alongside `ServiceDetected` during output scan ticks.

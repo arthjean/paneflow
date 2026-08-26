@@ -190,6 +190,33 @@ fn keep_session_after_surface_purge(
     session.surface_id.is_some() || pid > i32::MAX as u32 || pid_matches(pid, session.proc_start)
 }
 
+/// Retention rule when a surface's shell comes back to its prompt.
+///
+/// The prompt proves nothing runs in that pane's foreground any more, so a
+/// session still bound to it is finished whether or not its hooks said so.
+/// Two exceptions keep the existing contracts intact:
+///
+/// - an `Errored` row stays sticky until its pane closes (same rule as
+///   [`stale_sweep_keeps_without_pid_probe`]) - the shell reaches its prompt
+///   the instant the agent crashes, and reaping here would wipe the crash
+///   signal before the user could see it;
+/// - a real PID that is still alive with its pinned start time keeps its row,
+///   which is the conservative answer for an agent that backgrounded itself.
+///
+/// Synthetic keys (legacy no-pid frames) cannot be probed, so the prompt is
+/// the only evidence available and they are reaped.
+fn keep_session_at_shell_prompt(
+    prompt_surface_id: u64,
+    pid: u32,
+    session: &ai_types::AgentSession,
+) -> bool {
+    if session.surface_id != Some(prompt_surface_id) {
+        return true;
+    }
+    session.state == ai_types::AgentState::Errored
+        || (pid <= i32::MAX as u32 && pid_matches(pid, session.proc_start))
+}
+
 fn stale_sweep_keeps_without_pid_probe(
     pid: u32,
     session: &ai_types::AgentSession,
@@ -952,6 +979,14 @@ impl PaneFlowApp {
                     })
                     .detach();
             }
+            terminal::TerminalEvent::ShellPromptReady => {
+                // The shell is back at its prompt: whatever agent this pane
+                // was running has released the foreground. Reap now instead
+                // of waiting <=30 s for the PID sweep, and cover the agents
+                // the hooks never report on (shim SIGKILLed, CLI launched
+                // without hook integration at all).
+                self.reap_sessions_at_shell_prompt(terminal.entity_id().as_u64(), cx);
+            }
             terminal::TerminalEvent::ChildExited => {
                 // The Pane's own subscription closes the tab; here we drop
                 // the dying surface's agent sessions NOW instead of waiting
@@ -1022,6 +1057,34 @@ impl PaneFlowApp {
     /// zero latency instead of ≤30s, no Stalled logic. An `Errored` session
     /// on the dying surface is dropped too - that matches the sweep's
     /// "sticky until its pane closes" contract, just without the wait.
+    /// Reap the agent sessions a surface still carries once its shell prints
+    /// a fresh prompt. Event-driven complement to [`Self::sweep_stale_pids`]:
+    /// same post-mutation trio, no timer, retention decided by the pure
+    /// [`keep_session_at_shell_prompt`].
+    pub(crate) fn reap_sessions_at_shell_prompt(
+        &mut self,
+        surface_id: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        for ws in &mut self.workspaces {
+            if ws.agent_sessions.is_empty() {
+                continue;
+            }
+            let before = ws.agent_sessions.len();
+            ws.agent_sessions
+                .retain(|&pid, session| keep_session_at_shell_prompt(surface_id, pid, session));
+            if ws.agent_sessions.len() < before {
+                changed = true;
+            }
+        }
+        if changed {
+            self.sync_attention(cx);
+            self.agent_sessions_changed(cx);
+            cx.notify();
+        }
+    }
+
     pub(crate) fn purge_sessions_for_surface(&mut self, surface_id: u64, cx: &mut Context<Self>) {
         let mut changed = false;
         for ws in &mut self.workspaces {
@@ -1635,8 +1698,8 @@ impl PaneFlowApp {
 mod tests {
     use super::{
         announced_port_conflicts, declaration_survives_scan, keep_session_after_surface_purge,
-        merge_scan_workspace_state, merge_service_label, parse_proc_stat_starttime, port_ownership,
-        stale_sweep_keeps_without_pid_probe,
+        keep_session_at_shell_prompt, merge_scan_workspace_state, merge_service_label,
+        parse_proc_stat_starttime, port_ownership, stale_sweep_keeps_without_pid_probe,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
@@ -1664,6 +1727,31 @@ mod tests {
 
         assert!(!keep_session_after_surface_purge(7, u32::MAX, &session));
         assert!(keep_session_after_surface_purge(8, u32::MAX, &session));
+    }
+
+    #[test]
+    fn shell_prompt_reaps_the_surface_it_fired_on() {
+        // A synthetic key can't be probed, so the prompt is the only evidence
+        // available and the row goes.
+        let mut thinking = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Thinking);
+        thinking.surface_id = Some(7);
+        assert!(!keep_session_at_shell_prompt(7, u32::MAX, &thinking));
+        // Another pane's prompt says nothing about this session.
+        assert!(keep_session_at_shell_prompt(8, u32::MAX, &thinking));
+
+        // An Errored row stays sticky until its pane closes: the shell prints
+        // its prompt the instant the agent crashes.
+        let mut errored = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Errored);
+        errored.surface_id = Some(7);
+        assert!(keep_session_at_shell_prompt(7, u32::MAX, &errored));
+
+        // A live real PID with a matching start time survives - the current
+        // process is our own, so the probe is guaranteed to answer "alive".
+        let mut backgrounded = AgentSession::new(TerminalAgent::Codex, AgentState::Thinking);
+        backgrounded.surface_id = Some(7);
+        let own_pid = std::process::id();
+        backgrounded.proc_start = super::pid_start_time(own_pid);
+        assert!(keep_session_at_shell_prompt(7, own_pid, &backgrounded));
     }
 
     #[test]
