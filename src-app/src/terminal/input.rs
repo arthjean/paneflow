@@ -14,15 +14,7 @@ use gpui::{
     Window,
 };
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 use paneflow_terminal_ghostty as ghostty;
 
 use crate::keys::TerminalKeySequence;
@@ -33,15 +25,7 @@ use crate::terminal::types::{
 
 #[cfg(debug_assertions)]
 use super::probe_enabled;
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 use super::pty_session::BackendInputResult;
 use super::{TerminalEvent, TerminalView};
 
@@ -72,15 +56,7 @@ fn key_escape_sequence(
     Some(sequence)
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn legacy_key_bytes(sequence: Cow<'static, str>) -> Cow<'static, [u8]> {
     match sequence {
         Cow::Borrowed(value) => Cow::Borrowed(value.as_bytes()),
@@ -109,15 +85,7 @@ pub(super) fn wrap_bracketed_paste(text: &str) -> String {
     format!("\x1b[200~{}\x1b[201~", sanitize_bracketed_paste(text))
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
     let mut result = ghostty::Modifiers::empty();
     if modifiers.shift {
@@ -135,15 +103,7 @@ fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
     result
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn ghostty_key(key: &str, key_char: Option<&str>) -> Option<ghostty::Key> {
     let named = match key {
         "enter" => Some(ghostty::Key::Enter),
@@ -181,15 +141,7 @@ fn ghostty_key(key: &str, key_char: Option<&str>) -> Option<ghostty::Key> {
         .map(ghostty::Key::Character)
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn ghostty_key_input(
     keystroke: &gpui::Keystroke,
     action: ghostty::KeyAction,
@@ -211,15 +163,7 @@ fn ghostty_key_input(
     })
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 pub(super) fn ghostty_text_key_input(
     keystroke: &gpui::Keystroke,
     action: ghostty::KeyAction,
@@ -247,15 +191,7 @@ pub(super) fn ghostty_text_key_input(
     input
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn ghostty_release_id(keystroke: &gpui::Keystroke) -> String {
     keystroke.key.clone()
 }
@@ -477,15 +413,7 @@ impl TerminalView {
         // Get current TermMode for key mapping (APP_CURSOR, etc.)
         let mode = self.terminal.session_backend().modes();
 
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         {
             self.ghostty_pending_text_key = None;
         }
@@ -516,15 +444,7 @@ impl TerminalView {
                     self.scroll_remainder = 0.0;
                 }
             }
-            #[cfg(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            ))]
+            #[cfg(ghostty_native)]
             let ghostty_encoded = _encode_with_backend
                 && ghostty_key_input(
                     keystroke,
@@ -549,15 +469,7 @@ impl TerminalView {
                     result.is_handled()
                 })
                 .unwrap_or(false);
-            #[cfg(not(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            )))]
+            #[cfg(not(ghostty_native))]
             let ghostty_encoded = false;
             if !ghostty_encoded {
                 match seq {
@@ -570,15 +482,7 @@ impl TerminalView {
                 }
             }
         } else {
-            #[cfg(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            ))]
+            #[cfg(ghostty_native)]
             if ghostty_key(&keystroke.key, keystroke.key_char.as_deref()).is_some() {
                 self.ghostty_pending_text_key = Some((
                     keystroke.clone(),
@@ -615,25 +519,9 @@ impl TerminalView {
         if self.search_active || self.copy_mode_active {
             return;
         }
-        #[cfg(not(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        )))]
+        #[cfg(not(ghostty_native))]
         let _ = event;
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         {
             let release_id = ghostty_release_id(&event.keystroke);
             if let Some(input) = self.ghostty_pressed_keys.remove(&release_id) {
@@ -648,15 +536,7 @@ impl TerminalView {
         }
     }
 
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     pub(super) fn release_ghostty_pressed_keys(&mut self) {
         self.ghostty_pending_text_key = None;
         for (_, input) in std::mem::take(&mut self.ghostty_pressed_keys) {
@@ -744,15 +624,7 @@ impl TerminalView {
                 mouse::normal_mouse_report(point, btn, utf8)
             }
         };
-        #[cfg(not(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        )))]
+        #[cfg(not(ghostty_native))]
         let _ = (
             position,
             action,
@@ -760,15 +632,7 @@ impl TerminalView {
             modifiers,
             any_button_pressed,
         );
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         {
             let origin = *self
                 .element_origin
@@ -1355,15 +1219,7 @@ impl TerminalView {
             let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
             (normalized.clone(), normalized)
         };
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         if self
             .terminal
             .write_ghostty_paste(paste_payload, mode.contains(Modes::BRACKETED_PASTE))
@@ -1371,15 +1227,7 @@ impl TerminalView {
         {
             return;
         }
-        #[cfg(not(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        )))]
+        #[cfg(not(ghostty_native))]
         let _ = paste_payload;
         self.terminal.write_to_pty(paste_text.into_bytes());
     }
@@ -1598,15 +1446,7 @@ mod tests {
     use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
 
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     #[test]
     fn printable_altgr_commit_preserves_key_metadata_and_consumes_ctrl_alt() {
         let keystroke = gpui::Keystroke::parse("ctrl-alt-0").unwrap();

@@ -18,25 +18,9 @@ pub(crate) const CORPUS_SEED: u64 = 0x5041_4e45_464c_4f57;
 const CORPUS_FAMILIES: usize = 27;
 const CORPUS_VARIANTS: usize = 5;
 const CORPUS_SIZE: usize = CORPUS_FAMILIES * CORPUS_VARIANTS;
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 const PERFORMANCE_WARMUP_ROUNDS: usize = 2;
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 const PERFORMANCE_ROUNDS: usize = 20;
 
 struct CorpusCase {
@@ -45,27 +29,11 @@ struct CorpusCase {
     resize_after_feed: Option<(usize, usize)>,
     selection_after_feed: Option<SelectionRange>,
     search_after_feed: Option<&'static str>,
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     comparison: SnapshotComparison,
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 #[derive(Clone, Copy)]
 enum SnapshotComparison {
     Exact,
@@ -366,28 +334,12 @@ fn normalize_alacritty_search(result: crate::search::SearchResult) -> SearchObse
     }
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 struct GhosttyHarness {
     terminal: paneflow_terminal_ghostty::DisplayTerminal,
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 impl GhosttyHarness {
     fn new() -> Self {
         let size = paneflow_terminal_ghostty::WindowSize::new(80, 24, 0, 0)
@@ -497,15 +449,7 @@ impl GhosttyHarness {
     }
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn normalize_ghostty_grid(scrollback: &str, content: &Content) -> String {
     let mut lines = if scrollback.is_empty() {
         Vec::new()
@@ -538,15 +482,7 @@ fn normalize_ghostty_grid(scrollback: &str, content: &Content) -> String {
     lines.join("\n")
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Vec<String> {
     match event {
         paneflow_terminal_ghostty::BackendEvent::WritePty(bytes) => {
@@ -573,15 +509,7 @@ fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Ve
     }
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn normalize_ghostty_search(result: paneflow_terminal_ghostty::SearchResult) -> SearchObservation {
     SearchObservation {
         matches: result
@@ -698,15 +626,7 @@ fn corpus() -> Vec<CorpusCase> {
                 is_block: false,
             }),
             search_after_feed: (family == 26).then_some("target"),
-            #[cfg(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            ))]
+            #[cfg(ghostty_native)]
             comparison: match family {
                 8 => SnapshotComparison::ReflowViewportAnchor,
                 16 => SnapshotComparison::EraseDisplayScrollback,
@@ -828,15 +748,7 @@ fn splitting_a_pty_write_never_loses_a_byte() {
     );
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 #[test]
 fn ghostty_corpus_matches_alacritty() {
     for (index, case) in corpus().iter().enumerate() {
@@ -1016,15 +928,7 @@ fn ghostty_corpus_matches_alacritty() {
     }
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 #[test]
 fn corpus_observes_search_and_resize_damage() {
     let cases = corpus();
@@ -1103,15 +1007,7 @@ fn malformed_and_oversized_streams_are_deterministic() {
         resize_after_feed: None,
         selection_after_feed: None,
         search_after_feed: None,
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         comparison: SnapshotComparison::Exact,
     };
     let first = Harness::new().replay(&case, &fixed_chunks(case.bytes.len(), 4096));
@@ -1122,15 +1018,7 @@ fn malformed_and_oversized_streams_are_deterministic() {
         first.cell_count <= 80 * 24,
         "snapshot escaped the viewport bound"
     );
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     {
         let ghostty_first =
             GhosttyHarness::new().replay(&case, &seeded_chunks(case.bytes.len(), CORPUS_SEED));
@@ -1207,15 +1095,7 @@ fn alacritty_eight_pane_baseline() {
     );
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 #[derive(Debug, Default)]
 struct BackendPerformance {
     wall: Duration,
@@ -1226,15 +1106,7 @@ struct BackendPerformance {
     snapshot_durations: Vec<Duration>,
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 impl BackendPerformance {
     fn absorb(&mut self, mut sample: Self) {
         self.wall = self.wall.saturating_add(sample.wall);
@@ -1247,15 +1119,7 @@ impl BackendPerformance {
     }
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn absorb_performance_round(
     aggregate: &mut BackendPerformance,
     round_feed_durations: &mut Vec<Duration>,
@@ -1265,15 +1129,7 @@ fn absorb_performance_round(
     aggregate.absorb(sample);
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn measure_alacritty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     let mut panes = (0..8).map(|_| Harness::new()).collect::<Vec<_>>();
     let rss_start = resident_set_bytes();
@@ -1323,15 +1179,7 @@ fn measure_alacritty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     }
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn measure_ghostty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     let mut panes = (0..8).map(|_| GhosttyHarness::new()).collect::<Vec<_>>();
     let rss_start = resident_set_bytes();
@@ -1385,15 +1233,7 @@ fn measure_ghostty_performance(cases: &[CorpusCase]) -> BackendPerformance {
     }
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 #[test]
 #[ignore = "EP-004 promotion gate: release-only relative parser and snapshot benchmark"]
 #[allow(
@@ -1532,15 +1372,7 @@ pub(crate) fn percentile_duration(values: &[Duration], percentile: usize) -> Dur
     values.get(index).copied().unwrap_or_default()
 }
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 fn duration_us(value: Duration) -> f64 {
     value.as_secs_f64() * 1_000_000.0
 }

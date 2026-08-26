@@ -30,27 +30,10 @@ use super::types::{
 use crate::limits::MAX_OSC52_BYTES;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 use super::ghostty_session::{GhosttySession, GhosttyStartError, SpawnedGhostty};
 
-#[cfg(any(
-    test,
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(any(test, ghostty_native))]
 fn should_start_ghostty_for_policy(
     requested: TerminalBackendConfig,
     available: bool,
@@ -78,91 +61,42 @@ fn auto_selects_ghostty_for_target() -> bool {
     ))
 }
 
-#[cfg(any(
-    test,
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(any(test, ghostty_native))]
 fn should_start_ghostty(requested: TerminalBackendConfig) -> bool {
     should_start_ghostty_for_policy(
         requested,
-        cfg!(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        )),
+        cfg!(ghostty_native),
         auto_selects_ghostty_for_target(),
     )
 }
 
 enum BackgroundSpawnOutcome {
     Alacritty(anyhow::Result<super::pty_session::SpawnedPty>),
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     Ghostty(SpawnedGhostty),
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     GhosttyFallback {
         spawned: anyhow::Result<super::pty_session::SpawnedPty>,
         failure: TerminalBackendFailureDiagnostics,
     },
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     GhosttyPostSpawnFailed {
         child_pid: u32,
         failure: TerminalBackendFailureDiagnostics,
     },
 }
 
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
+#[cfg(all(target_os = "linux", ghostty_native))]
 fn should_render_ghostty_wakeup_immediately(event: &TerminalBackendEvent) -> bool {
     matches!(event, TerminalBackendEvent::Ghostty(_))
 }
 
-#[cfg(not(all(target_os = "linux", feature = "libghostty-linux")))]
+#[cfg(not(all(target_os = "linux", ghostty_native)))]
 fn should_render_ghostty_wakeup_immediately(_event: &TerminalBackendEvent) -> bool {
     false
 }
 
-#[cfg(not(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-)))]
+#[cfg(not(ghostty_native))]
 fn warn_ghostty_unavailable_once() {
     static WARNED: std::sync::Once = std::sync::Once::new();
     WARNED.call_once(|| {
@@ -362,29 +296,13 @@ pub struct TerminalView {
     focus_subscriptions: Option<(gpui::Subscription, gpui::Subscription)>,
     /// Key presses accepted by Ghostty and therefore eligible for a matching
     /// release event. Prevents app-consumed shortcuts from leaking key-up data.
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     pub(super) ghostty_pressed_keys:
         std::collections::HashMap<String, paneflow_terminal_ghostty::KeyInput>,
     /// Printable key metadata held until GPUI commits the final text. This
     /// keeps IME as the single text source while still giving Kitty encoding
     /// the logical key, modifiers, repeat action, and matching release.
-    #[cfg(any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    ))]
+    #[cfg(ghostty_native)]
     pub(super) ghostty_pending_text_key:
         Option<(gpui::Keystroke, paneflow_terminal_ghostty::KeyAction, bool)>,
     /// Last hovered cell position for URL regex detection (US-015).
@@ -576,15 +494,7 @@ impl TerminalView {
             .backend;
         terminal.set_backend_request(requested_backend);
 
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         let ghostty_spawn = if should_start_ghostty(requested_backend) {
             let initial_window_size = TerminalWindowSize::new(params.cols, params.rows, 0, 0);
             let (ghostty, runtime_pending, events_rx) = GhosttySession::pending_with_clipboard_gate(
@@ -597,15 +507,7 @@ impl TerminalView {
             None
         };
 
-        #[cfg(not(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        )))]
+        #[cfg(not(ghostty_native))]
         if policy_requests_ghostty(requested_backend, auto_selects_ghostty_for_target()) {
             warn_ghostty_unavailable_once();
             terminal.record_backend_failure(TerminalBackendFailureDiagnostics::new(
@@ -633,15 +535,7 @@ impl TerminalView {
                 // Blocking PTY open (`tty::new` forks) runs off the render thread.
                 let outcome = executor
                     .spawn(async move {
-                        #[cfg(any(
-                            all(target_os = "linux", feature = "libghostty-linux"),
-                            all(
-                                target_os = "windows",
-                                target_arch = "x86_64",
-                                target_env = "msvc",
-                                feature = "libghostty-windows"
-                            )
-                        ))]
+                        #[cfg(ghostty_native)]
                         if let Some((ghostty, runtime_pending)) = ghostty_spawn {
                             let max_scrollback = paneflow_config::loader::load_config()
                                 .terminal
@@ -722,15 +616,7 @@ impl TerminalView {
                                 ),
                             )
                         }
-                        #[cfg(not(any(
-                            all(target_os = "linux", feature = "libghostty-linux"),
-                            all(
-                                target_os = "windows",
-                                target_arch = "x86_64",
-                                target_env = "msvc",
-                                feature = "libghostty-windows"
-                            )
-                        )))]
+                        #[cfg(not(ghostty_native))]
                         {
                             BackgroundSpawnOutcome::Alacritty(
                                 TerminalState::open_pty_and_eventloop(
@@ -764,30 +650,14 @@ impl TerminalView {
                             view.terminal
                                 .write_output(spawn_error_message(&error).as_bytes());
                         }
-                        #[cfg(any(
-                            all(target_os = "linux", feature = "libghostty-linux"),
-                            all(
-                                target_os = "windows",
-                                target_arch = "x86_64",
-                                target_env = "msvc",
-                                feature = "libghostty-windows"
-                            )
-                        ))]
+                        #[cfg(ghostty_native)]
                         BackgroundSpawnOutcome::Ghostty(spawned) => {
                             view.terminal.promote_ghostty(spawned);
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
                         }
-                        #[cfg(any(
-                            all(target_os = "linux", feature = "libghostty-linux"),
-                            all(
-                                target_os = "windows",
-                                target_arch = "x86_64",
-                                target_env = "msvc",
-                                feature = "libghostty-windows"
-                            )
-                        ))]
+                        #[cfg(ghostty_native)]
                         BackgroundSpawnOutcome::GhosttyFallback { spawned, failure } => {
                             log::warn!(
                                 target: "paneflow::terminal::backend",
@@ -819,15 +689,7 @@ impl TerminalView {
                                 }
                             }
                         }
-                        #[cfg(any(
-                            all(target_os = "linux", feature = "libghostty-linux"),
-                            all(
-                                target_os = "windows",
-                                target_arch = "x86_64",
-                                target_env = "msvc",
-                                feature = "libghostty-windows"
-                            )
-                        ))]
+                        #[cfg(ghostty_native)]
                         BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
                             child_pid,
                             failure,
@@ -1148,25 +1010,9 @@ impl TerminalView {
             copy_mode_frozen_offset: 0,
             was_focused: false,
             focus_subscriptions: None,
-            #[cfg(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            ))]
+            #[cfg(ghostty_native)]
             ghostty_pressed_keys: std::collections::HashMap::new(),
-            #[cfg(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            ))]
+            #[cfg(ghostty_native)]
             ghostty_pending_text_key: None,
             hovered_cell: None,
             ctrl_hovered_link: None,
@@ -1193,15 +1039,7 @@ impl TerminalView {
     /// Set preedit text during IME composition.
     pub fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
         self.ime_marked_text = text;
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         {
             self.ghostty_pending_text_key = None;
         }
@@ -1216,26 +1054,10 @@ impl TerminalView {
 
     /// Commit composed text to the PTY.
     pub fn commit_text(&mut self, text: &str, _cx: &mut Context<Self>) {
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         let was_composing = !self.ime_marked_text.is_empty();
         self.ime_marked_text.clear();
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         {
             let pending = if was_composing {
                 self.ghostty_pending_text_key.take();
@@ -1818,15 +1640,7 @@ impl TerminalView {
         }
 
         self.terminal.set_terminal_focused(focused);
-        #[cfg(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ))]
+        #[cfg(ghostty_native)]
         if !focused {
             self.release_ghostty_pressed_keys();
         }
@@ -1838,15 +1652,7 @@ impl TerminalView {
         if reports_focus {
             // This protocol write is not user input. It must not mark a failed
             // spawn as interactive merely because its pane received focus.
-            #[cfg(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            ))]
+            #[cfg(ghostty_native)]
             let ghostty_encoded = self
                 .terminal
                 .write_ghostty_focus(if focused {
@@ -1855,15 +1661,7 @@ impl TerminalView {
                     paneflow_terminal_ghostty::FocusEvent::Lost
                 })
                 .is_handled();
-            #[cfg(not(any(
-                all(target_os = "linux", feature = "libghostty-linux"),
-                all(
-                    target_os = "windows",
-                    target_arch = "x86_64",
-                    target_env = "msvc",
-                    feature = "libghostty-windows"
-                )
-            )))]
+            #[cfg(not(ghostty_native))]
             let ghostty_encoded = false;
             if !ghostty_encoded {
                 let report = if focused { b"\x1b[I" } else { b"\x1b[O" };
@@ -2150,15 +1948,7 @@ mod tests {
 
     #[test]
     fn terminal_backend_policy_keeps_alacritty_as_explicit_rollback() {
-        let ghostty_available = cfg!(any(
-            all(target_os = "linux", feature = "libghostty-linux"),
-            all(
-                target_os = "windows",
-                target_arch = "x86_64",
-                target_env = "msvc",
-                feature = "libghostty-windows"
-            )
-        ));
+        let ghostty_available = cfg!(ghostty_native);
 
         assert_eq!(
             should_start_ghostty(TerminalBackendConfig::Auto),

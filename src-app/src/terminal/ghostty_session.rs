@@ -13,14 +13,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
-#[cfg(all(target_os = "linux", feature = "libghostty-linux"))]
-use paneflow_terminal_ghostty as ghostty;
-#[cfg(all(
-    target_os = "windows",
-    target_arch = "x86_64",
-    target_env = "msvc",
-    feature = "libghostty-windows"
-))]
+// This module is only reached under `cfg(ghostty_native)` - see the `mod
+// ghostty_session` gate in `terminal/mod.rs` - so the import needs no gate of
+// its own. It used to be spelled twice, once per supported platform.
 use paneflow_terminal_ghostty as ghostty;
 use parking_lot::RwLock;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};

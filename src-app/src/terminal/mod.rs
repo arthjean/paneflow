@@ -8,28 +8,9 @@
 pub(crate) mod backend_corpus;
 pub mod blink;
 pub mod element;
-#[cfg(any(
-    all(target_os = "linux", feature = "libghostty-linux"),
-    all(
-        target_os = "windows",
-        target_arch = "x86_64",
-        target_env = "msvc",
-        feature = "libghostty-windows"
-    )
-))]
+#[cfg(ghostty_native)]
 mod ghostty_session;
-#[cfg(all(
-    test,
-    any(
-        all(target_os = "linux", feature = "libghostty-linux"),
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc",
-            feature = "libghostty-windows"
-        )
-    )
-))]
+#[cfg(all(test, ghostty_native))]
 mod ghostty_stress;
 mod input;
 mod listener;
