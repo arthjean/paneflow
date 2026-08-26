@@ -39,6 +39,7 @@ mod config_writer;
 mod diff;
 mod editor;
 mod external_open;
+mod file_icons;
 mod fonts;
 mod ipc;
 mod ipc_events;
