@@ -13,7 +13,7 @@ categories.workspace = true
 readme = "../README.md"
 
 [features]
-default = ["libghostty-linux", "libghostty-windows"]
+default = ["libghostty-linux", "libghostty-windows", "libghostty-macos"]
 # Linux-only backend backed by the pinned libghostty-vt archive. It is the
 # standard backend for cargo run, development builds, and official releases.
 # The target-specific dependencies keep it inert on macOS/Windows.
@@ -28,6 +28,15 @@ libghostty-linux = [
 # inert on Linux/macOS, and `--no-default-features` preserves an Alacritty-only
 # recovery build.
 libghostty-windows = [
+    "dep:portable-pty",
+    "paneflow-terminal-ghostty/native",
+]
+# macOS backend backed by the pinned aarch64-apple-darwin archive. Only
+# Apple Silicon has a declared archive - x86_64-apple-darwin is a closed
+# release target - so the target-specific dependencies and the build-script
+# predicate keep it inert on Intel Macs, on Linux, and on Windows.
+# `--no-default-features` preserves the Alacritty-only recovery build.
+libghostty-macos = [
     "dep:portable-pty",
     "paneflow-terminal-ghostty/native",
 ]
@@ -297,6 +306,10 @@ portable-pty = { version = "0.9.0", optional = true }
 # zed-font-kit, so declaring it direct here adds zero compile units; the
 # explicit entry just makes the direct use discoverable.
 [target.'cfg(target_os = "macos")'.dependencies]
+# Native host for the macOS Ghostty session backend, mirroring the Linux and
+# Windows entries. It stays absent from Linux, Windows, and macOS builds using
+# --no-default-features.
+portable-pty = { version = "0.9.0", optional = true }
 libproc = "0.14"
 core-text = "21"
 # core-foundation 0.10 matches the version core-text 21 already pulls (so the
