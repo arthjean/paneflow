@@ -629,7 +629,7 @@ impl UiColors {
             };
         }
         DiffColors {
-            // Codex-inspired dark diff panel, softened for the blue-black shell.
+            // Codex-inspired dark diff panel, softened for the neutral shell.
             added: h(0x57d992),
             deleted: h(0xff6f6a),
             added_background: h(0x1d3a2b),
@@ -683,20 +683,20 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
         UiColors {
             use_theme_diff_washes: false,
             // Codex-style light shell: the right-hand work area is pure white,
-            // while controls use cool, near-white layers for hierarchy.
+            // while controls use neutral, near-white layers for hierarchy. Every
+            // grey here is hue-free by design (see the dark arm below).
             base: h(0xffffff),
-            surface: h(0xf7f7f9),
+            surface: h(0xf7f7f7),
             overlay: h(0xffffff),
-            border: h(0xe5e5ed),
-            subtle: h(0xedeef2),
-            muted: h(0x686a73),
-            text: h(0x25262b),
+            border: h(0xe6e6e6),
+            subtle: h(0xeeeeee),
+            muted: h(0x6a6a6a),
+            text: h(0x262626),
             accent: h(0x4c6fff),
-            // Light theme: a slightly warmer surface with a faint
-            // accent tint so the awaiting-confirmation row stands
-            // out from neutral card surfaces without overwhelming
-            // the chat stream.
-            tool_card_header_bg: h(0xeff1f8),
+            // Light theme: a surface one step darker than the card so the
+            // awaiting-confirmation row stands out without overwhelming the
+            // chat stream.
+            tool_card_header_bg: h(0xf1f1f1),
             // Curated diff palette (Catppuccin Latte family) - darker,
             // saturated hues that read on a light surface.
             vc_added: h(0x40a02b),
@@ -723,27 +723,31 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             // Agent state (Latte family): saturated red for a crash, the
             // neutral overlay grey for a silent session.
             agent_error: h(0xd20f39),
-            agent_stalled: h(0x7c7f93),
+            agent_stalled: h(0x808080),
             agent_claude: h(0xe89271),
             agent_codex: h(0x5b6cff),
         }
     } else {
         UiColors {
             use_theme_diff_washes: false,
+            // Every neutral in the shell is hue-free: greys carry no blue
+            // cast, so color in the UI only ever means status (`vc_*`),
+            // identity (`group_*`) or the accent. The greys below hold the
+            // luminance the blue-tinted ones had, so contrast is unchanged -
+            // only the hue is gone.
             base: h(TERMINAL_BACKGROUND_HEX),
             surface: h(0x212121),
             overlay: h(CHROME_BACKGROUND_HEX),
             border: h(BORDER_HEX),
             subtle: h(0x2a2a2a),
-            muted: h(0x96a2b3),
-            text: h(0xd5deea),
+            muted: h(0xa0a0a0),
+            text: h(0xdddddd),
             accent: h(0x57d5c4),
-            // Dark theme: a touch lighter and bluer than the card
-            // surface so the accent character of the
+            // Dark theme: a touch lighter than the card surface so the
             // awaiting row reads even at a glance.
-            tool_card_header_bg: h(0x2a2e3a),
+            tool_card_header_bg: h(0x2e2e2e),
             // Premium dark diff palette: Codex-like red/green intent,
-            // softened to sit inside the blue-black terminal surface.
+            // softened to sit inside the neutral terminal surface.
             vc_added: h(0x57d992),
             vc_modified: h(0xffd166),
             vc_deleted: h(0xff6f6a),
@@ -756,7 +760,7 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             vc_word_added: ha(0x57d992, 0.40),
             vc_word_deleted: ha(0xff6f6a, 0.40),
             // Broadcast stripes: high-luminance accents that keep their
-            // identity against the new blue-black pane edge.
+            // identity against the neutral pane edge.
             group_1: h(0x7eb6ff),
             group_2: h(0x57d992),
             group_3: h(0xffd166),
@@ -767,7 +771,7 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_8: h(0x9ea7ff),
             // Agent state: clear, bright marks on the muted cockpit shell.
             agent_error: h(0xff6f6a),
-            agent_stalled: h(0x96a2b3),
+            agent_stalled: h(0xa0a0a0),
             agent_claude: h(0xffa657),
             agent_codex: h(0x7eb6ff),
         }
@@ -799,7 +803,7 @@ mod tests {
 
         assert_eq!(ui.base, h(0xffffff));
         assert_eq!(ui.overlay, h(0xffffff));
-        assert_eq!(ui.border, h(0xe5e5ed));
+        assert_eq!(ui.border, h(0xe6e6e6));
         assert_ne!(ui.surface, ui.base);
         assert_ne!(ui.border, ui.base);
         assert_ne!(ui.text, ui.base);

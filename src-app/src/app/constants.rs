@@ -55,7 +55,7 @@ pub(crate) const PANE_CONTENT_INSET_Y: f32 = 6.;
 /// remains legible without a separate indicator. Linux precomposes these tints
 /// over the opaque chrome color; macOS and Windows keep their native material.
 const DARK_SIDEBAR_TAB_TINT: u32 = 0xffffff;
-const LIGHT_SIDEBAR_TAB_TINT: u32 = 0x25262b;
+const LIGHT_SIDEBAR_TAB_TINT: u32 = 0x262626;
 const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.11;
 const DARK_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.07;
 const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.08;
