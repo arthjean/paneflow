@@ -95,6 +95,27 @@ pub(crate) fn lerp_color(from: Hsla, to: Hsla, delta: f32) -> Hsla {
     })
 }
 
+/// Process-wide "minimize non-essential motion" switch, mirroring the
+/// `reduce_motion` config key. Read on the render thread by every animated
+/// primitive and written from the settings page, the config hot-reload, and
+/// startup. An atomic (not a `Cell`) because the config watcher thread is the
+/// one that observes an external `paneflow.json` edit.
+///
+/// The pinned GPUI fork predates upstream's `App::set_reduce_motion`, so
+/// Paneflow owns the flag; switch to the GPUI accessor when the pin moves past
+/// that commit.
+static REDUCE_MOTION: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set the process-wide reduce-motion switch.
+pub(crate) fn set_reduce_motion(enabled: bool) {
+    REDUCE_MOTION.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Read the process-wide reduce-motion switch.
+pub(crate) fn reduce_motion() -> bool {
+    REDUCE_MOTION.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A reversible hover transition that keeps the wrapped GPUI hitbox as the
 /// interactive root. State follows the element ID across consecutive frames
 /// and disappears automatically when a transient control is unmounted.
@@ -259,6 +280,11 @@ impl Element for AnimatedHover {
             return self.element.request_layout(None, inspector_id, window, cx);
         };
         let now = Instant::now();
+        // `reduce_motion` (config key, hot-reloaded) collapses the transition: the hover style
+        // snaps to its endpoint and no animation frame is requested. The state
+        // machine still runs so flipping the switch back resumes mid-hover
+        // without a stale target.
+        let reduce_motion = reduce_motion();
         let (progress, is_animating) =
             window.with_element_state(global_id, |state: Option<HoverAnimationState>, window| {
                 let mut state = state.unwrap_or_else(HoverAnimationState::new);
@@ -268,8 +294,11 @@ impl Element for AnimatedHover {
                         .as_ref()
                         .is_some_and(|hitbox| hitbox.is_hovered(window));
                 state.retarget(hovered, now);
-                let progress = state.progress_at(now);
-                let is_animating = state.is_animating(now);
+                let (progress, is_animating) = if reduce_motion {
+                    (if hovered { 1.0 } else { 0.0 }, false)
+                } else {
+                    (state.progress_at(now), state.is_animating(now))
+                };
                 ((progress, is_animating), state)
             });
 

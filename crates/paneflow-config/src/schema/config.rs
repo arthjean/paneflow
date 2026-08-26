@@ -51,6 +51,12 @@ pub struct PaneFlowConfig {
     /// it never touches the terminal renderer.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub unfocused_pane_opacity: Option<f32>,
+    /// Minimize non-essential interface motion: hover transitions settle
+    /// instantly and GPUI's decorative animations (spinners, animated images)
+    /// render a static frame. `None`/`false` keeps the full motion. Applied
+    /// through `App::set_reduce_motion`, so it hot-reloads.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub reduce_motion: Option<bool>,
     /// Terminal line height multiplier (default: 1.2, valid range: 1.0-2.5).
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
@@ -380,6 +386,11 @@ impl PaneFlowConfig {
         } else {
             true
         }
+    }
+
+    /// Resolve the reduce-motion switch. Absent means full motion.
+    pub fn reduce_motion_enabled(&self) -> bool {
+        self.reduce_motion.unwrap_or(false)
     }
 
     /// Resolve `agent_stall_threshold_secs`: default 60, clamped to

@@ -1152,6 +1152,10 @@ impl PaneFlowApp {
         )
         .detach();
 
+        // Hydrate the motion switch from the config: it gates the
+        // `AnimatedHover` transitions and the primary sidebar slide.
+        crate::ui_primitives::set_reduce_motion(app.cached_config.reduce_motion_enabled());
+
         app
     }
 }

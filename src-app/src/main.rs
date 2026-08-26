@@ -1322,16 +1322,17 @@ impl PaneFlowApp {
             0.
         };
 
-        self.primary_sidebar_animation =
-            if (from_width - to_width).abs() > PRIMARY_SIDEBAR_MIN_ANIMATION_DELTA {
-                Some(SidebarWidthAnimation {
-                    from_width,
-                    to_width,
-                    started_at: now,
-                })
-            } else {
-                None
-            };
+        self.primary_sidebar_animation = if !crate::ui_primitives::reduce_motion()
+            && (from_width - to_width).abs() > PRIMARY_SIDEBAR_MIN_ANIMATION_DELTA
+        {
+            Some(SidebarWidthAnimation {
+                from_width,
+                to_width,
+                started_at: now,
+            })
+        } else {
+            None
+        };
         cx.notify();
     }
 

@@ -7,6 +7,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- New `reduce_motion` config key (Settings, Themes, Preferences). When enabled,
+  hover transitions settle instantly and the primary sidebar toggles without the
+  slide.
 - Panes that do not hold focus now fade to 70% opacity when a workspace holds
   more than one pane, so the focused pane reads at a glance without a colored
   border. Tune or disable it with `unfocused_pane_opacity` (`0.15` to `1.0`,

@@ -75,6 +75,11 @@
       "maximum": 1.0,
       "default": 0.7
     },
+    "reduce_motion": {
+      "type": ["boolean", "null"],
+      "description": "Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. Default false.",
+      "default": false
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",

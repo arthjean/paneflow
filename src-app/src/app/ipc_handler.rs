@@ -1500,6 +1500,9 @@ impl PaneFlowApp {
             // of `config` - move it in.
             self.cached_config = config;
             self.theme_mode = theme_mode;
+            // Hot-reload the motion switch (GPUI refreshes the windows itself
+            // when the value actually changes).
+            crate::ui_primitives::set_reduce_motion(self.cached_config.reduce_motion_enabled());
             if default_shell_changed {
                 self.handle_default_shell_changed(cx);
             }

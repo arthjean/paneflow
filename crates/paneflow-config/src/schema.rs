@@ -81,6 +81,7 @@ mod tests {
             windows_chrome_material: Some(true),
             macos_chrome_material: Some(true),
             unfocused_pane_opacity: Some(0.7),
+            reduce_motion: Some(false),
             line_height: Some(1.2),
             cell_width: Some(0.6),
             font_family: Some("Geist Mono".to_string()),
