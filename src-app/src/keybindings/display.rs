@@ -253,7 +253,15 @@ mod tests {
             .iter()
             .find(|e| e.action_name == "next_tab")
             .expect("next_tab stays listed once overridden");
-        assert_eq!(next_tab.key, "Ctrl+Alt+N");
+        // The expected chord is platform-dependent for the same reason
+        // `format_keystroke` is: macOS renders HIG glyphs, the other two
+        // platforms render plus-separated names.
+        let expected = if cfg!(target_os = "macos") {
+            "\u{2303}\u{2325}N"
+        } else {
+            "Ctrl+Alt+N"
+        };
+        assert_eq!(next_tab.key, expected);
     }
 
     #[test]
