@@ -99,22 +99,64 @@ pub fn begin_drag(handle: &ScrollHandle, mouse_y: Pixels) -> ScrollDragState {
     }
 }
 
+/// Resolved thumb geometry for one scroll position.
+///
+/// Every consumer - the painted thumb, a track click, a thumb drag - derives
+/// its numbers from here, so the thumb the user sees and the thumb the user
+/// grabs can never disagree. Previously the `thumb_h` formula was written out
+/// three times in this file.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollbarMetrics {
+    /// Height of the scrollable viewport, which is also the track height.
+    pub viewport_h: f32,
+    /// Non-negative scrollable range (see the sign convention above).
+    pub max_off_y: f32,
+    /// Thumb height, floored at [`SCROLLBAR_MIN_THUMB`].
+    pub thumb_h: f32,
+    /// Thumb top, relative to the track top.
+    pub thumb_top: f32,
+}
+
+/// Resolve the metrics from raw numbers. `None` when there is no laid-out
+/// viewport or the content fits.
+fn metrics_from(viewport_h: f32, max_off_y: f32, off_y: f32) -> Option<ScrollbarMetrics> {
+    if viewport_h <= 0.0 || max_off_y < NO_OVERFLOW_EPSILON {
+        return None;
+    }
+    let content_h = viewport_h + max_off_y;
+    let thumb_h = (viewport_h * viewport_h / content_h)
+        .max(SCROLLBAR_MIN_THUMB)
+        .min(viewport_h);
+    let progress = (-off_y / max_off_y).clamp(0.0, 1.0);
+    Some(ScrollbarMetrics {
+        viewport_h,
+        max_off_y,
+        thumb_h,
+        thumb_top: progress * (viewport_h - thumb_h),
+    })
+}
+
+/// Thumb geometry for a live scroll handle, or `None` when the content fits or
+/// the host has not been laid out yet.
+pub fn metrics(handle: &ScrollHandle) -> Option<ScrollbarMetrics> {
+    metrics_from(
+        f32::from(handle.bounds().size.height),
+        f32::from(handle.max_offset().y),
+        f32::from(handle.offset().y),
+    )
+}
+
 /// Compute the new offset.y when the user clicks anywhere on the track.
 /// Returns the target offset (negative or zero) or `None` if there's no
 /// overflow / no laid-out viewport yet. Centres the thumb on the click.
 pub fn track_click_offset(handle: &ScrollHandle, mouse_y: Pixels) -> Option<f32> {
-    let bounds = handle.bounds();
-    let track_top = f32::from(bounds.origin.y);
-    let track_h = f32::from(bounds.size.height);
-    let max_off_y = f32::from(handle.max_offset().y);
-    if track_h <= 0.0 || max_off_y < NO_OVERFLOW_EPSILON {
-        return None;
-    }
-
-    let content_h = track_h + max_off_y;
-    let thumb_h = (track_h * track_h / content_h)
-        .max(SCROLLBAR_MIN_THUMB)
-        .min(track_h);
+    let track_top = f32::from(handle.bounds().origin.y);
+    let ScrollbarMetrics {
+        viewport_h: track_h,
+        max_off_y,
+        thumb_h,
+        ..
+    } = metrics(handle)?;
     let click_y = (f32::from(mouse_y) - track_top).clamp(0.0, track_h);
     let target_thumb_top = (click_y - thumb_h / 2.0).clamp(0.0, track_h - thumb_h);
     let progress = if track_h - thumb_h > 0.0 {
@@ -128,15 +170,12 @@ pub fn track_click_offset(handle: &ScrollHandle, mouse_y: Pixels) -> Option<f32>
 /// Compute the new offset.y while the user drags the thumb. Returns the
 /// target offset or `None` if there's nothing to scroll.
 pub fn drag_offset(handle: &ScrollHandle, drag: &ScrollDragState, mouse_y: Pixels) -> Option<f32> {
-    let max_off_y = f32::from(handle.max_offset().y);
-    let viewport_h = f32::from(handle.bounds().size.height);
-    if max_off_y < NO_OVERFLOW_EPSILON || viewport_h <= 0.0 {
-        return None;
-    }
-    let content_h = viewport_h + max_off_y;
-    let thumb_h = (viewport_h * viewport_h / content_h)
-        .max(SCROLLBAR_MIN_THUMB)
-        .min(viewport_h);
+    let ScrollbarMetrics {
+        viewport_h,
+        max_off_y,
+        thumb_h,
+        ..
+    } = metrics(handle)?;
     let track_range = (viewport_h - thumb_h).max(1.0);
     let delta_mouse = f32::from(mouse_y - drag.start_mouse_y);
     // Dragging the thumb DOWN (positive delta_mouse) makes the offset
@@ -178,16 +217,12 @@ pub fn render(
         return None;
     };
 
-    if viewport_h <= 0.0 || max_off_y < NO_OVERFLOW_EPSILON {
-        return None;
-    }
-
-    let content_h = viewport_h + max_off_y;
-    let progress = (-off_y / max_off_y).clamp(0.0, 1.0);
-    let thumb_h = (viewport_h * viewport_h / content_h)
-        .max(SCROLLBAR_MIN_THUMB)
-        .min(viewport_h);
-    let thumb_top = progress * (viewport_h - thumb_h);
+    let ScrollbarMetrics {
+        viewport_h,
+        thumb_h,
+        thumb_top,
+        ..
+    } = metrics_from(viewport_h, max_off_y, off_y)?;
 
     let thumb_bg = ui.muted;
     let thumb_hover_bg = ui.text;
@@ -240,6 +275,37 @@ mod tests {
         let handle = ScrollHandle::new();
         // Fresh handle: bounds and max_offset are zero - no overflow.
         assert!(track_click_offset(&handle, px(50.)).is_none());
+    }
+
+    /// The three consumers (paint, track click, thumb drag) now read one
+    /// formula. Pin the shape so a future edit cannot silently reintroduce a
+    /// second one.
+    #[test]
+    fn metrics_are_proportional_and_clamped() {
+        // 400px viewport over 1600px of content: 1200px of scrollable range.
+        let top = metrics_from(400.0, 1200.0, 0.0).expect("overflow");
+        assert_eq!(top.thumb_h, 400.0 * 400.0 / 1600.0);
+        assert_eq!(top.thumb_top, 0.0);
+
+        let bottom = metrics_from(400.0, 1200.0, -1200.0).expect("overflow");
+        assert_eq!(bottom.thumb_h, top.thumb_h);
+        assert_eq!(bottom.thumb_top, 400.0 - top.thumb_h);
+
+        // Overscroll in either direction stays on the track.
+        let over = metrics_from(400.0, 1200.0, -5000.0).expect("overflow");
+        assert_eq!(over.thumb_top, bottom.thumb_top);
+
+        // A huge document still leaves a grabbable thumb.
+        let tiny = metrics_from(400.0, 4_000_000.0, 0.0).expect("overflow");
+        assert_eq!(tiny.thumb_h, SCROLLBAR_MIN_THUMB);
+    }
+
+    #[test]
+    fn metrics_none_without_overflow_or_layout() {
+        assert!(metrics_from(400.0, 0.0, 0.0).is_none());
+        assert!(metrics_from(400.0, NO_OVERFLOW_EPSILON / 2.0, 0.0).is_none());
+        assert!(metrics_from(0.0, 1200.0, 0.0).is_none());
+        assert!(metrics(&ScrollHandle::new()).is_none());
     }
 
     #[test]
