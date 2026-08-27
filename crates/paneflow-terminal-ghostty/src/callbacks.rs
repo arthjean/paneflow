@@ -11,6 +11,8 @@ use crate::{BackendEvent, ColorScheme, Result, WindowSize};
 const MAX_PENDING_WRITE_PTY_BYTES: usize = 1024 * 1024;
 const MAX_PENDING_CLIPBOARD_EVENTS: usize = 32;
 const MAX_PENDING_BELL_EVENTS: usize = 256;
+const MAX_PENDING_NOTIFICATION_EVENTS: usize = 16;
+const MAX_PENDING_UNKNOWN_SEQUENCE_EVENTS: usize = 32;
 
 const _: sys::GhosttyTerminalWritePtyFn = Some(crate::callback_ffi::write_pty);
 const _: sys::GhosttyTerminalBellFn = Some(crate::callback_ffi::bell);
@@ -23,12 +25,20 @@ const _: sys::GhosttyTerminalProgressReportFn = Some(crate::callback_ffi::progre
 const _: sys::GhosttyTerminalSizeFn = Some(crate::callback_ffi::size);
 const _: sys::GhosttyTerminalColorSchemeFn = Some(crate::callback_ffi::color_scheme);
 const _: sys::GhosttyTerminalDeviceAttributesFn = Some(crate::callback_ffi::device_attributes);
+const _: sys::GhosttyTerminalDesktopNotificationFn = Some(crate::callback_ffi::desktop_notification);
+const _: sys::GhosttyTerminalUnknownSequenceFn = Some(crate::callback_ffi::unknown_sequence);
+const _: sys::GhosttyTerminalClipboardReadFn = Some(crate::callback_ffi::clipboard_read);
 
 pub(crate) struct CallbackState {
     events: RefCell<VecDeque<BackendEvent>>,
     pending_write_pty_bytes: Cell<usize>,
     pending_clipboard_events: Cell<usize>,
     pending_bell_events: Cell<usize>,
+    pending_notification_events: Cell<usize>,
+    pending_unknown_sequence_events: Cell<usize>,
+    /// What a clipboard read is answered with. `None`, the default, denies
+    /// every read. See [`crate::DisplayTerminal::set_clipboard_readable`].
+    readable_clipboard: RefCell<Option<String>>,
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
     last_working_directory: RefCell<Option<String>>,
@@ -43,12 +53,25 @@ impl CallbackState {
             pending_write_pty_bytes: Cell::new(0),
             pending_clipboard_events: Cell::new(0),
             pending_bell_events: Cell::new(0),
+            pending_notification_events: Cell::new(0),
+            pending_unknown_sequence_events: Cell::new(0),
+            readable_clipboard: RefCell::new(None),
             size: Cell::new(size),
             color_scheme: Cell::new(color_scheme),
             last_working_directory: RefCell::new(None),
             #[cfg(test)]
             panic_next: Cell::new(false),
         }
+    }
+
+    pub(crate) fn set_readable_clipboard(&self, text: Option<String>) {
+        *self.readable_clipboard.borrow_mut() = text;
+    }
+
+    /// The text a clipboard read is answered with, if the embedder allowed
+    /// one at all.
+    pub(crate) fn readable_clipboard(&self) -> Option<String> {
+        self.readable_clipboard.borrow().clone()
     }
 
     pub(crate) fn set_size(&self, size: WindowSize) {
@@ -139,6 +162,24 @@ impl CallbackState {
                     events.push_back(BackendEvent::Bell);
                 }
             }
+            BackendEvent::DesktopNotification { title, body } => {
+                let pending = self.pending_notification_events.get();
+                if pending >= MAX_PENDING_NOTIFICATION_EVENTS {
+                    push_overflow(&mut events, 1, title.len() + body.len());
+                } else {
+                    self.pending_notification_events.set(pending + 1);
+                    events.push_back(BackendEvent::DesktopNotification { title, body });
+                }
+            }
+            BackendEvent::UnknownSequence { content, truncated } => {
+                let pending = self.pending_unknown_sequence_events.get();
+                if pending >= MAX_PENDING_UNKNOWN_SEQUENCE_EVENTS {
+                    push_overflow(&mut events, 1, content.len());
+                } else {
+                    self.pending_unknown_sequence_events.set(pending + 1);
+                    events.push_back(BackendEvent::UnknownSequence { content, truncated });
+                }
+            }
             BackendEvent::CallbackPanicked => {
                 if !events
                     .iter()
@@ -168,6 +209,8 @@ impl CallbackState {
         self.pending_write_pty_bytes.set(0);
         self.pending_clipboard_events.set(0);
         self.pending_bell_events.set(0);
+        self.pending_notification_events.set(0);
+        self.pending_unknown_sequence_events.set(0);
         self.events.borrow_mut().drain(..).collect()
     }
 }
@@ -238,6 +281,21 @@ pub(crate) fn install(terminal: sys::GhosttyTerminal, state: *mut CallbackState)
         terminal,
         sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
         (&raw const clipboard_max_bytes).cast(),
+    )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ,
+        crate::callback_ffi::clipboard_read as *const (),
+    )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION,
+        crate::callback_ffi::desktop_notification as *const (),
+    )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE,
+        crate::callback_ffi::unknown_sequence as *const (),
     )?;
     set_callback(
         terminal,

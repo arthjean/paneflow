@@ -42,6 +42,7 @@ native_modules!(
     kitty,
     modes,
     navigation,
+    options,
     osc,
     persistence,
     render,

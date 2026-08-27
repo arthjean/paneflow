@@ -292,6 +292,23 @@ pub enum BackendEvent {
     Title(String),
     WorkingDirectory(String),
     Progress(ProgressReport),
+    /// A desktop notification asked for with OSC 9 or OSC 777.
+    ///
+    /// OSC 9 carries only a body, so `title` is empty for it.
+    DesktopNotification {
+        title: String,
+        body: String,
+    },
+    /// A sequence libghostty parsed but does not implement.
+    ///
+    /// Diagnostics only: reported only once capture is enabled with
+    /// [`crate::DisplayTerminal::capture_unknown_sequences`], and never acted
+    /// on. `content` is the sequence payload with its non-printable bytes
+    /// escaped, and `truncated` says the capture limit cut it short.
+    UnknownSequence {
+        content: String,
+        truncated: bool,
+    },
     CallbackPanicked,
     InputDropped {
         bytes: usize,

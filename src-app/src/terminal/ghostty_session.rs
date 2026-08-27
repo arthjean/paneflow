@@ -53,6 +53,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
 #[cfg(target_os = "windows")]
 const WINDOWS_CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_CLIPBOARD_EVENTS: usize = 8;
+const MAX_NOTIFICATION_EVENTS: usize = 8;
 
 const _: () = assert!(OUTPUT_POOL_BYTES <= NFR_005_MAX_PENDING_OUTPUT_BYTES);
 const _: () = assert!(MAX_QUEUED_INPUT_BYTES <= NFR_005_MAX_QUEUED_INPUT_BYTES);
@@ -63,6 +64,7 @@ pub(crate) enum GhosttyUiEvent {
     Title(Arc<UiEventState>),
     WorkingDirectory(Arc<UiEventState>),
     Progress(Arc<UiEventState>),
+    Notification(Arc<UiEventState>),
     Clipboard(Arc<UiEventState>),
     ServiceOutputReady(Arc<UiEventState>),
     ChildExited { code: i32, signal: Option<String> },
@@ -102,6 +104,22 @@ struct ClipboardSlot {
     queued: bool,
 }
 
+/// A desktop notification the running program asked for with OSC 9 or
+/// OSC 777.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProgramNotification {
+    pub(crate) title: String,
+    pub(crate) body: String,
+}
+
+/// Notifications are queued rather than coalesced: unlike a title or a
+/// progress bar, each one is a separate thing the program wanted to say.
+#[derive(Debug, Default)]
+struct NotificationSlot {
+    pending: VecDeque<ProgramNotification>,
+    queued: bool,
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct UiEventState {
     wakeup_queued: AtomicBool,
@@ -109,6 +127,7 @@ pub(crate) struct UiEventState {
     title: Mutex<CoalescedSlot<String>>,
     working_directory: Mutex<CoalescedSlot<String>>,
     progress: Mutex<CoalescedSlot<ghostty::ProgressReport>>,
+    notifications: Mutex<NotificationSlot>,
     clipboard: Mutex<ClipboardSlot>,
 }
 
@@ -144,6 +163,15 @@ impl UiEventState {
 
     pub(super) fn take_progress(&self) -> Option<ghostty::ProgressReport> {
         Self::take(&self.progress)
+    }
+
+    pub(super) fn take_notifications(&self) -> Vec<ProgramNotification> {
+        let mut slot = self
+            .notifications
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        slot.queued = false;
+        slot.pending.drain(..).collect()
     }
 
     pub(super) fn take_clipboard(&self) -> Vec<String> {
@@ -282,6 +310,12 @@ enum RuntimeMessage {
     ClearSelection,
     ClearScrollback,
     UpdateAppearance(ghostty::TerminalAppearance),
+    /// The cursor `CSI 0 q` resets to, which is a Paneflow setting rather
+    /// than something the program picks.
+    SetDefaultCursor {
+        shape: ghostty::CursorShape,
+        blink: bool,
+    },
     SearchChunk {
         start_row: usize,
         max_cells: usize,
@@ -1543,6 +1577,18 @@ impl GhosttySession {
         self.inner.state.read().content.selection
     }
 
+    /// Tell the engine which cursor a `CSI 0 q` reset lands on.
+    ///
+    /// The renderer already falls back to the configured shape when a program
+    /// never picks one; this is the other half, so a program that explicitly
+    /// resets the cursor gets Paneflow's default rather than libghostty's.
+    pub(super) fn set_default_cursor(&self, shape: ghostty::CursorShape, blink: bool) -> bool {
+        self.inner
+            .mailbox
+            .try_send_control(RuntimeMessage::SetDefaultCursor { shape, blink })
+            .is_ok()
+    }
+
     pub(super) fn refresh_appearance(&self) -> bool {
         self.inner
             .mailbox
@@ -1867,6 +1913,7 @@ fn run_runtime(
             return;
         }
     };
+    configure_embedder_options(&mut terminal, max_scrollback);
     if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
         let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(error)));
         return;
@@ -2595,7 +2642,21 @@ fn handle_terminal_command(
             }
             let _ = refresh_shared_state(inner, terminal);
         }
+        RuntimeMessage::SetDefaultCursor { shape, blink } => {
+            if let Err(error) = terminal.set_default_cursor(shape, blink) {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty default cursor could not be configured: {error}"
+                );
+            }
+        }
         RuntimeMessage::UpdateAppearance(appearance) => {
+            if let Err(error) = terminal.set_palette(&current_ghostty_palette()) {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty color palette could not be updated: {error}"
+                );
+            }
             if let Err(error) = terminal.set_appearance(appearance) {
                 let _ = inner
                     .events_tx
@@ -2692,6 +2753,7 @@ fn run_display_runtime(
             return;
         }
     };
+    configure_embedder_options(&mut terminal, max_scrollback);
     if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
         let _ = startup_tx.send(Err(error));
         return;
@@ -2982,6 +3044,35 @@ fn queue_progress(inner: &SessionInner, report: ghostty::ProgressReport) {
     }
 }
 
+/// A program controls both strings, so they go through the same bidi and
+/// zero-width strip an agent question does before reaching a notification.
+fn sanitized_notification(title: String, body: String) -> ProgramNotification {
+    ProgramNotification {
+        title: crate::agents::notifications::sanitize_notification_message(&title),
+        body: crate::agents::notifications::sanitize_notification_message(&body),
+    }
+}
+
+fn queue_notification(inner: &SessionInner, notification: ProgramNotification) {
+    let mut slot = inner
+        .ui_events
+        .notifications
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if slot.pending.len() == MAX_NOTIFICATION_EVENTS {
+        slot.pending.pop_front();
+    }
+    slot.pending.push_back(notification);
+    if slot.queued {
+        return;
+    }
+    slot.queued = true;
+    drop(slot);
+    let _ = inner
+        .events_tx
+        .unbounded_send(GhosttyUiEvent::Notification(inner.ui_events.clone()));
+}
+
 fn queue_clipboard(inner: &SessionInner, text: String) {
     if !inner.clipboard_gate.allows_store() {
         return;
@@ -3057,6 +3148,16 @@ fn handle_engine_events(
                 queue_working_directory(inner, cwd);
             }
             ghostty::BackendEvent::Progress(report) => queue_progress(inner, report),
+            ghostty::BackendEvent::DesktopNotification { title, body } => {
+                queue_notification(inner, sanitized_notification(title, body));
+            }
+            ghostty::BackendEvent::UnknownSequence { content, truncated } => {
+                log::debug!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty ignored an unsupported sequence{}: {content}",
+                    if truncated { " (truncated)" } else { "" }
+                );
+            }
             ghostty::BackendEvent::Bell => {}
             ghostty::BackendEvent::CallbackPanicked => {
                 return Err("Ghostty callback panicked at the FFI boundary".into());
@@ -3123,6 +3224,99 @@ fn ghostty_rgb(color: gpui::Hsla) -> ghostty::Rgb {
         g: (rgba.g.clamp(0.0, 1.0) * 255.0) as u8,
         b: (rgba.b.clamp(0.0, 1.0) * 255.0) as u8,
     }
+}
+
+/// The 256-color palette libghostty resolves a program's indexed colors
+/// against.
+///
+/// A theme defines sixteen colors; libghostty derives the 216-color cube and
+/// the grayscale ramp from them. Without this the renderer paints the theme
+/// while libghostty answers `OSC 4` queries from its own built-in palette, so
+/// a program that asks what color 1 is gets an answer the screen contradicts.
+/// Terminfo entry Paneflow advertises, matching the `TERM` it exports.
+const TERMINFO_NAME: &str = "xterm-256color";
+
+/// Memory a retained scrollback line is budgeted at.
+///
+/// libghostty's own default byte budget prunes an 80-column terminal at
+/// roughly a thousand rows, so a configured 10,000-line history silently
+/// became a tenth of that. The config's line count is the intent; this
+/// converts it to the byte budget libghostty actually prunes on, which is
+/// what `TerminalConfig::scrollback_lines` always said happened at spawn.
+const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
+
+/// Ceiling on the derived byte budget, so a 100,000-line configuration
+/// cannot ask for an unbounded allocation.
+const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
+
+/// Push the settings that belong to Paneflow rather than to the program.
+///
+/// Failures here are logged, never fatal: a terminal with libghostty's own
+/// defaults is degraded, not broken, and losing the pane would be worse.
+fn configure_embedder_options(terminal: &mut ghostty::DisplayTerminal, max_scrollback: usize) {
+    let apply = |what: &str, result: ghostty::Result<()>| {
+        if let Err(error) = result {
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "Ghostty {what} could not be configured: {error}"
+            );
+        }
+    };
+    apply(
+        "color palette",
+        terminal.set_palette(&current_ghostty_palette()),
+    );
+    apply("terminfo name", terminal.set_terminfo_name(TERMINFO_NAME));
+    apply(
+        "scrollback byte budget",
+        terminal.set_scrollback_max_bytes(Some(
+            max_scrollback
+                .saturating_mul(SCROLLBACK_BYTES_PER_LINE)
+                .min(MAX_SCROLLBACK_BYTES),
+        )),
+    );
+    // Diagnostics only, and only when someone is reading the log for them.
+    if log::log_enabled!(target: "paneflow::terminal::ghostty", log::Level::Debug) {
+        apply(
+            "unsupported sequence capture",
+            terminal.capture_unknown_sequences(true),
+        );
+    }
+}
+
+fn current_ghostty_palette() -> [ghostty::Rgb; ghostty::PALETTE_LEN] {
+    let theme = crate::theme::active_theme();
+    let mut base = ghostty::default_palette();
+    for (slot, color) in [
+        theme.black,
+        theme.red,
+        theme.green,
+        theme.yellow,
+        theme.blue,
+        theme.magenta,
+        theme.cyan,
+        theme.white,
+        theme.bright_black,
+        theme.bright_red,
+        theme.bright_green,
+        theme.bright_yellow,
+        theme.bright_blue,
+        theme.bright_magenta,
+        theme.bright_cyan,
+        theme.bright_white,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        base[slot] = ghostty_rgb(color);
+    }
+    ghostty::generate_palette(
+        Some(&base),
+        &ghostty::PaletteMask::default(),
+        ghostty_rgb(theme.ansi_background),
+        ghostty_rgb(theme.foreground),
+        false,
+    )
 }
 
 fn current_ghostty_appearance() -> ghostty::TerminalAppearance {
