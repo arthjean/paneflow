@@ -85,26 +85,13 @@ xattr -dr com.apple.quarantine /Applications/PaneFlow.app
 
 ## Which terminal engine does the macOS build use? [#which-terminal-engine-does-the-macos-build-use]
 
-Alacritty by default. The Apple Silicon build also ships the statically linked
-Ghostty terminal engine, the same `libghostty-vt` archive Linux and Windows x64
-use, as an explicit opt-in. `terminal.backend` set to `auto` or omitted still
-resolves to Alacritty on macOS, so switch engines by naming Ghostty:
-
-```json
-{
-  "terminal": {
-    "backend": "ghostty"
-  }
-}
-```
-
-The setting applies only to new sessions. A Ghostty startup failure may fall
-back to Alacritty once, before a shell child exists. Paneflow never switches a
-live session after spawning its child. Intel Macs have no declared Ghostty
-archive and stay on Alacritty whatever the setting says.
+The statically linked Ghostty engine, the same `libghostty-vt` archive Linux
+and Windows x64 use. It is the only engine: there is no setting to change and
+no fallback.
 
 ## What about Intel Macs? [#what-about-intel-macs]
 
-Paneflow does not ship an Intel macOS DMG today. Use an Apple Silicon
-Mac, the Linux builds, or the Windows x64 build until the
-`x86_64-apple-darwin` release leg reopens.
+Paneflow does not ship an Intel macOS DMG. There is no declared
+`x86_64-apple-darwin` Ghostty archive, and Ghostty is the only terminal
+engine, so an Intel build would have no terminal to run. Use an Apple Silicon
+Mac, the Linux builds, or the Windows x64 build.

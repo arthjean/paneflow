@@ -90,7 +90,6 @@ CLI binary.
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `terminal.backend` | string | `auto` | `auto`, `ghostty`, or `alacritty`. Standard Linux builds and supported Windows x64 MSVC builds select Ghostty for `auto`; `ghostty` requests it explicitly and `alacritty` is the rollback. On macOS (Apple Silicon) Ghostty is an explicit opt-in: `auto` still selects Alacritty, so set `ghostty` to switch engines. Builds without the target's native Ghostty feature always use Alacritty. Unknown runtime values fail safe to Alacritty. Applies only to new sessions. |
 | `terminal.ligatures` | boolean or null | `false` | Enables programming ligatures for fonts that ship them. |
 | `terminal.integrated_glyphs` | boolean or null | `true` | Draws built-in block-element glyphs as filled quads. |
 | `terminal.color_emoji` | boolean or null | `true` | Uses the platform color-emoji path. |

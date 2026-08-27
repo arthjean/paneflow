@@ -39,7 +39,7 @@ exceptions.
 ## What runs on the inside [#what-runs-on-the-inside]
 
 * **Pure Rust** + [GPUI](https://www.gpui.rs/) - the same framework Zed runs on.
-* **Native VT emulation** via `alacritty_terminal` (crates.io 0.26).
+* **Native VT emulation** via a statically linked `libghostty-vt` engine.
 * **Native PTY** via `portable-pty` - same code path on Linux, macOS, and Windows.
 * **JSON-RPC IPC** over a local socket: Unix socket on Linux/macOS, named pipe on Windows.
 * **Latency probes** for cold start and keystroke-to-pixel timing.

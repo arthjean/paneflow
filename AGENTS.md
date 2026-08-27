@@ -84,17 +84,18 @@ the two you did.
 
 ## Boundaries the code does not reveal
 
-- **Two terminal backends, one boundary.** libghostty is the default on Linux
-  and Windows x64 MSVC, and ships on macOS Apple Silicon as an explicit
-  `terminal.backend = "ghostty"` opt-in, where `auto` still resolves to
-  Alacritty. Upstream `alacritty_terminal` 0.26 backs that macOS default and
-  the `--no-default-features` recovery build on every platform. Both sit behind
-  `TerminalSessionBackend` (`src-app/src/terminal/mod.rs:28`). Do not leak a
-  backend-specific type past that boundary. `src-app/src/terminal/types.rs`
-  holds the neutral mirrors, and only six files in `src-app/src/` may name
-  `alacritty_terminal` at all: `search.rs`, `terminal/backend_corpus.rs`,
-  `terminal/listener.rs`, `terminal/mod.rs`, `terminal/pty_session.rs`, and
-  `terminal/types.rs`. Adding a seventh means the boundary leaked.
+- **One terminal engine, one boundary.** libghostty is the only terminal
+  engine, statically linked on every shipping target: `x86_64-unknown-linux-gnu`,
+  `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
+  `x86_64-pc-windows-msvc`. There is no second parser and no runtime fallback,
+  so a target with no pinned archive in `native/libghostty/manifest.toml` is
+  not a shipping target and `src-app/build.rs` fails the build outright.
+  The engine still sits behind `TerminalSessionBackend`
+  (`src-app/src/terminal/pty_session.rs`) and `src-app/src/terminal/types.rs`
+  holds the neutral mirrors: keep engine types out of the rest of the app so
+  the renderer keeps a single, stable grid vocabulary. A guard test
+  (`terminal/types.rs::alacritty_is_absent_from_the_app_crate`) fails if a
+  second engine reappears.
 - **The render thread never blocks.** No synchronous file I/O, git subprocess,
   or recursive directory walk on the GPUI main thread. Push that work through
   `smol::unblock` or the bootstrap path.

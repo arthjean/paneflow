@@ -44,26 +44,12 @@ Both. The native build targets Windows 10 version 1809 and later, and
 Windows 11. The title bar renders native Windows 11 caption buttons on
 11; on 10 it uses the standard window controls.
 
-### Which terminal backend does the native Windows build use? [#which-terminal-backend-does-the-native-windows-build-use]
+### Which terminal engine does the native Windows build use? [#which-terminal-engine-does-the-native-windows-build-use]
 
 The official Windows x64 MSI uses the statically linked Ghostty terminal
-engine for new sessions when `terminal.backend` is omitted or set to `auto`.
-You can request it explicitly with `ghostty`, or force the historical
-Alacritty backend as an immediate rollback:
-
-```json
-{
-  "terminal": {
-    "backend": "alacritty"
-  }
-}
-```
-
-The setting applies only to new sessions. A Ghostty startup failure may fall
-back to Alacritty once, before a shell child exists. Paneflow never switches a
-live session after spawning its child. Builds without the verified Windows
-Ghostty feature and unsupported targets stay on Alacritty. Windows ARM64 is
-not part of this release; Windows 10 1809+ and Windows 11 x64 are supported.
+engine. It is the only engine: there is no setting to change and no fallback.
+Windows ARM64 is not part of this release; Windows 10 1809+ and Windows 11 x64
+are supported.
 
 ### Can I still run Paneflow under WSL2? [#can-i-still-run-paneflow-under-wsl2]
 

@@ -1,11 +1,10 @@
-# Linux libghostty backend
+# Linux libghostty engine
 
-Ghostty is the default terminal backend in standard Linux builds. This includes
-bare `cargo run`, normal development builds, tests, and official x86_64 and
-ARM64 packages. `terminal.backend = auto` selects Ghostty for every new Linux
-terminal. Supported Windows x64 MSVC builds use their separately qualified
-native Ghostty backend. macOS Apple Silicon ships the engine as an explicit
-opt-in and keeps `auto` on Alacritty; see
+Ghostty is the only terminal engine, and Linux builds link it unconditionally:
+bare `cargo run`, normal development builds, tests, and the official x86_64 and
+ARM64 packages. Windows x64 MSVC and macOS Apple Silicon consume their own
+separately qualified archives; see
+[windows-libghostty.md](windows-libghostty.md) and
 [macos-libghostty.md](macos-libghostty.md).
 
 ## Development build
@@ -29,12 +28,6 @@ The native sys crate resolves its input in this order:
 and never invokes Zig or an external checksum or symbol-inspection command. The
 manifest pins the reviewed archive hash for each target.
 
-To build the Linux Alacritty-only configuration explicitly:
-
-```bash
-cargo run -p paneflow-app --no-default-features
-```
-
 ## CI and release
 
 The libghostty Linux workflow regenerates the static archive from the pinned
@@ -46,12 +39,9 @@ The notice check compares the packaged third-party notice with the manifest's
 reviewed SHA-256 and requires every statically bundled component marker.
 
 The release workflow follows the same rule for Linux x86_64 and ARM64: it
-generates the pinned archive, selects it explicitly, builds Paneflow with the
-default features, verifies static linkage, then packages it. macOS builds with
-`--no-default-features` and stays on Alacritty. Windows starts from
-`--no-default-features`, explicitly enables `libghostty-windows`, and consumes
-the separately verified x64 MSVC archive without requiring a local Ghostty
-checkout.
+generates the pinned archive, selects it explicitly, builds Paneflow, verifies
+static linkage, then packages it. macOS and Windows do the same with their own
+verified archives, without requiring a local Ghostty checkout.
 
 ## Updating the pinned native input
 
@@ -76,7 +66,7 @@ checkout fallback.
 When a change touches rendering, input, IME, clipboard, or PTY behavior, run a
 release build under native Wayland and under X11 or XWayland. Exercise one shell
 pane, one agent pane, and one alt-screen TUI. Confirm diagnostics report
-`requested=Auto resolved=ghostty`.
+`backend=ghostty failure_phase=none`.
 
 Check Unicode rendering, keyboard and IME input, bracketed paste, mouse
 reporting, clipboard copy, search, OSC 8 links, OSC 133 prompt marks, resize,
@@ -84,8 +74,9 @@ final output, exit overlays, session restore, and child teardown. Do not record
 terminal bytes, commands, cwd, clipboard text, agent identifiers, or session
 text.
 
-## Rollback
+## When the engine fails to start
 
-Set `terminal.backend = alacritty`, then create a new terminal. Existing
-sessions keep their current backend. A Ghostty failure before PTY spawn may
-fallback once; a failure after PTY spawn never starts a second child.
+There is no rollback: Ghostty is the only engine. A startup failure is reported
+in the pane with its `failure_phase`, `reason_code`, and OS error, and a failure
+after PTY spawn never starts a second child. Report the diagnostic line rather
+than switching backends.

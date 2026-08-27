@@ -52,13 +52,8 @@ is intentionally not in the primary Settings UI.
 Common examples:
 
 * `terminal.scrollback_lines` for per-terminal scrollback history.
-* `terminal.backend`, `terminal.ligatures`, `terminal.cursor_blink`, `terminal.env`, and
-  `terminal.scroll_multiplier` for advanced terminal behavior. Standard Linux builds
-  and supported Windows x64 MSVC builds select Ghostty for `auto`; set
-  `terminal.backend` to `alacritty` for rollback. On macOS (Apple Silicon)
-  Ghostty is an explicit opt-in: `auto` still selects Alacritty, so set
-  `terminal.backend` to `ghostty` to switch engines. Builds without the
-  target's native Ghostty feature always use Alacritty.
+* `terminal.ligatures`, `terminal.cursor_blink`, `terminal.env`, and
+  `terminal.scroll_multiplier` for advanced terminal behavior.
 * `commands[]` entries that are not workspace templates.
 * Profiles, telemetry, window-decoration, and agent-panel options.
 

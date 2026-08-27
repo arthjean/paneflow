@@ -1,14 +1,12 @@
-# macOS libghostty backend
+# macOS libghostty engine
 
 Status: the `aarch64-apple-darwin` archive is produced, reproducible, committed
 under `native/libghostty/prebuilt/aarch64-apple-darwin/`, and declared in
-`native/libghostty/manifest.toml` as a `platform = "macos"` target. The runtime
-is wired behind the default `libghostty-macos` feature, so an
-`aarch64-apple-darwin` build emits `ghostty_native` and can run the Ghostty
-backend when the user selects it explicitly; automatic backend selection still
-resolves to Alacritty on macOS. This document records the cross-build spike so
-the decision is auditable without re-running it, and documents the build
-recipe.
+`native/libghostty/manifest.toml` as a `platform = "macos"` target. Ghostty is
+the only terminal engine, so an `aarch64-apple-darwin` build links it
+unconditionally. `x86_64-apple-darwin` has no declared archive and is therefore
+not a shipping target. This document records the cross-build spike so the
+decision is auditable without re-running it, and documents the build recipe.
 
 ## Cross-build spike
 
@@ -328,25 +326,14 @@ three cases:
 `THIRD_PARTY_NOTICES.md` carries the archive fingerprint, so a re-pin also
 moves `notice_sha256`.
 
-## Selecting the backend on macOS
+## Observing the engine on macOS
 
-The engine ships as an explicit opt-in. In
-`~/Library/Application Support/paneflow/paneflow.json`:
-
-```json
-{
-  "terminal": { "backend": "ghostty" }
-}
-```
-
-`auto` still resolves to Alacritty on macOS, and `alacritty` is the explicit
-rollback. The setting applies to newly created terminals; existing sessions
-keep the backend they started with. `RUST_LOG=info` prints one
-`Terminal backend selected:` line per pane naming the requested backend, the
-effective backend, the target triple, and the pinned Ghostty build identity, so
-a bug report can state which engine produced the behavior. If the Ghostty
-engine cannot start, the pane falls back to Alacritty and stays usable, and the
-degradation is warned once per process.
+There is nothing to select: every Apple Silicon build links the pinned archive
+and uses it. `RUST_LOG=info` prints one `Terminal backend selected:` line per
+pane naming the failure phase, the target triple, and the pinned Ghostty build
+identity, so a bug report can state exactly which archive produced the
+behavior. A startup failure is reported in the pane with its phase and OS
+error; no second engine takes over.
 
 ## Emitted build-info.txt
 

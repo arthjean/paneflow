@@ -115,7 +115,7 @@ upstream risks in §4 below.
 ## 4. Known upstream risks
 
 The five risks below are defects in PaneFlow's upstream dependencies
-(GPUI, alacritty_terminal, Windows ConPTY). PaneFlow does not own
+(GPUI, portable-pty, Windows ConPTY). PaneFlow does not own
 the fix; we monitor each issue and ship v1 with documented mitigation
 so users know what to expect.
 
@@ -135,7 +135,9 @@ so users know what to expect.
 
 ### ConPTY Ctrl+C signal propagation
 
-- **Upstream:** [`alacritty/alacritty#3075`](https://github.com/alacritty/alacritty/issues/3075)
+- **Upstream:** the Windows ConPTY API itself, documented from a
+  terminal-emulator perspective in
+  [`alacritty/alacritty#3075`](https://github.com/alacritty/alacritty/issues/3075)
 - **Severity:** functional (may propagate unexpectedly)
 - **Description:** The Windows ConPTY API does not cleanly
   distinguish "user pressed Ctrl+C in this terminal" from "send
@@ -144,8 +146,8 @@ so users know what to expect.
   way POSIX users don't expect.
 - **v1 workaround:** For cases where Ctrl+C misbehaves,
   use the shell's built-in abort verb (`pwsh`'s `break` from inside
-  a loop; `cmd.exe`'s `Break` menu). Fix depends on upstream
-  alacritty ConPTY driver work.
+  a loop; `cmd.exe`'s `Break` menu). A real fix depends on ConPTY
+  itself, not on Paneflow.
 
 ### RDP initialization broken
 
@@ -211,8 +213,8 @@ get the runtime context they need without a back-and-forth:
   crashes immediately on launch, re-run with `$env:RUST_BACKTRACE=1`
   and attach the backtrace.
 - **Triage routing.** Reports land in the general triage queue and
-  are labelled `windows`. Upstream-risk-class bugs (§4) are relabelled
-  `upstream/<zed|alacritty>` and cross-referenced to the tracking
+  are labeled `windows`. Upstream-risk-class bugs (§4) are relabeled
+  `upstream/<zed|conpty>` and cross-referenced to the tracking
   issue; fixes ride along with the relevant dependency bump.
 
 For the smoke-test checklist run on every release, see

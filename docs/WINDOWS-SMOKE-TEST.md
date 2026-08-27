@@ -244,8 +244,8 @@ path works. Red dialog = FAIL.
   `ClosePseudoConsole` / `ResizePseudoConsole` errors.
 
 **Known limitation pointer:** This scenario catches the class of
-bugs documented in zed#12563 (GPUI IME panic) and in the alacritty
-ConPTY driver. Crash → FAIL; harmless render glitch → PASS with note.
+bugs documented in zed#12563 (GPUI IME panic) and in the ConPTY
+API itself. Crash → FAIL; harmless render glitch → PASS with note.
 
 ---
 
@@ -266,8 +266,9 @@ ConPTY driver. Crash → FAIL; harmless render glitch → PASS with note.
 - The shell prompt returns within 1 second.
 - No PaneFlow application crash.
 
-**Known limitation (AC-8):** Per [alacritty#3075](https://github.com/alacritty/alacritty/issues/3075),
-ConPTY `Ctrl+C` signal propagation is known-imperfect. In some shell
+**Known limitation (AC-8):** ConPTY `Ctrl+C` signal propagation is
+known-imperfect, as documented in
+[alacritty#3075](https://github.com/alacritty/alacritty/issues/3075). In some shell
 configurations the signal can propagate to parent processes
 unexpectedly. The scenario is still testable: as long as the running
 command stops and the prompt returns, the scenario PASSES. Mark
@@ -359,7 +360,7 @@ Validates `crates/paneflow-shim/src/exec.rs:404` (the ConPTY `Ctrl+C` ->
 - No PaneFlow crash.
 
 **Known limitation pointer:** ConPTY `Ctrl+C` propagation is imperfect
-(alacritty#3075, see Scenario 8). PASS as long as the turn stops and `ai.stop`
+(see Scenario 8). PASS as long as the turn stops and `ai.stop`
 fires; otherwise "PASS with upstream caveat".
 
 ### CP-2 - Bracketed paste survives ConPTY (US-001)
@@ -561,5 +562,5 @@ as the permanent record.
   - the pipeline that emits the MSI under test
 - [`packaging/wix/main.wxs`](../packaging/wix/main.wxs) - WiX source
   under test (ProductCode, UpgradeCode, install path)
-- alacritty#3075 - upstream ConPTY Ctrl-C limitation referenced by
-  scenario 8
+- alacritty#3075 - a public write-up of the ConPTY Ctrl-C limitation,
+  referenced by scenario 8

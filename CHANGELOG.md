@@ -7,25 +7,30 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
-- macOS Apple Silicon builds now ship the statically linked Ghostty terminal
-  engine, the same pinned `libghostty-vt` archive Linux and Windows x64 use, as
-  an explicit opt-in. Set `terminal.backend` to `ghostty` to select it; `auto`
-  still resolves to Alacritty on macOS. A Ghostty startup failure can fall back
-  once before child spawn; live sessions never switch backend. Intel Macs have
-  no declared archive and stay on Alacritty.
-
-- Panes running on the Ghostty backend show a progress chip in their header
-  when the running program reports OSC 9;4 progress: a percentage, `working`,
-  `paused`, or `error`. The chip clears when the program removes the indicator
-  or the child exits. Alacritty does not report progress, so its panes never
-  show the chip.
+- Panes show a progress chip in their header when the running program reports
+  OSC 9;4 progress: a percentage, `working`, `paused`, or `error`. The chip
+  clears when the program removes the indicator or the child exits.
 
 ### Changed
+
+- The statically linked Ghostty terminal engine is now the only terminal
+  engine, on every platform including macOS Apple Silicon. It is always linked
+  and always used.
 
 - The pinned `libghostty-vt` archive moves to Ghostty `f2d5758f` built with Zig
   0.16.0 on all three platforms. OSC 7 and the clipboard protocols are now
   decoded by libghostty itself instead of a Paneflow-side router; clipboard
   writes keep the same 100 KiB budget.
+
+### Removed
+
+- The Alacritty terminal backend and the `terminal.backend` setting are gone.
+  There is no second parser and no runtime fallback: a `"backend"` key left in
+  `paneflow.json` is ignored, and a Ghostty startup failure is now reported in
+  the pane instead of silently switching engines. The `--no-default-features`
+  recovery build no longer exists either, so Intel Macs (`x86_64-apple-darwin`)
+  and Windows ARM64 (`aarch64-pc-windows-msvc`), which have no pinned Ghostty
+  archive, can no longer be built.
 
 ### Fixed
 
