@@ -188,6 +188,45 @@ LLVM tarball. The tradeoff is that a Rust toolchain bump moves
 `macos_llvm_version` and forces one archive re-normalization plus a new
 `archive_sha256`, the same way a Zig bump does.
 
+## Pinned inputs and required tools
+
+Every value below lives in `native/libghostty/manifest.toml` and is restated
+here so a rebuild needs no reading of `scripts/build-libghostty-macos.sh`. The
+manifest stays authoritative: if the two disagree, the manifest wins and this
+table is stale.
+
+| Input | Manifest key | Value |
+|---|---|---|
+| Ghostty source revision | `source_sha` | `ae52f97dcac558735cfa916ea3965f247e5c6e9e` |
+| Zig | `zig_version` | `0.15.2` |
+| LLVM binutils | `macos_llvm_version` | `22.1.2-rust-1.96.1-stable` |
+| Rust target | `[targets."aarch64-apple-darwin"]` | `aarch64-apple-darwin` |
+| Zig target | `zig_target` | `aarch64-macos` |
+| Optimize mode | build flag | `ReleaseFast` |
+| Build seed | `macos_build_seed` | `0` |
+| Build jobs | `macos_build_jobs` | `1` |
+| Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-ae52f97d` |
+| Canonical Zig path | `macos_canonical_zig_path` | `/tmp/paneflow-libghostty-zig-0.15.2` |
+| Archive path in the bundle | `archive_path` | `lib/libghostty-vt.a` |
+| Archive digest | `archive_sha256` | `8ac17c5391b42f33b83e81200122aaf93e080ecb917dd78a4d2dbe8f90cd5ec8` |
+| Header digest | `header_sha256` | `4967e3edfc5802648c280246e7aac66f36a28d7c3739727c0d2e2cd85c9f4eee` |
+| Bindings digest | `bindings_sha256` | `a1f0876e144e69889ed1d9a5501ee7e254afe674985c93c703d61cee49da81d0` |
+| Link name | `link_name` | `ghostty-vt` |
+| System libraries | `system_libraries` | none |
+| Build-info symbol | `build_info_symbol` | `ghostty_build_info` |
+
+Required on the build host, all checked by preflight:
+
+| Tool | Required version | Source |
+|---|---|---|
+| `zig` | exactly `0.15.2` | ziglang.org release tarball, or any pinned install on `PATH` |
+| `llvm-strip`, `llvm-ar`, `llvm-nm`, `llvm-objdump` | exactly `22.1.2-rust-1.96.1-stable` | `rustup component add llvm-tools`, or `PANEFLOW_LLVM_BIN` |
+| `git` | any | the Ghostty checkout must be a clean tree at `source_sha` |
+| `sha256sum`, `file`, `tar` | any | coreutils, file, tar |
+
+No Xcode, no Apple `libtool`, and no macOS host are required: the archive
+cross-builds from Linux, which is the whole point of the spike above.
+
 ## Building the archive
 
 ```bash
@@ -256,6 +295,58 @@ the build itself must always run from the canonical prefix. On a mismatch it
 exits non-zero, prints the first differing byte offset, and dumps
 `llvm-objdump --macho --all-headers` for both copies of every member that
 differs.
+
+## Re-pinning the recipe
+
+A Ghostty bump, a Zig bump, or a Rust toolchain bump that moves
+`llvm-tools` all invalidate `archive_sha256`. The procedure is the same in all
+three cases:
+
+1. Update the moved key in `native/libghostty/manifest.toml`: `source_sha`,
+   `zig_version`, or `macos_llvm_version`. A `source_sha` bump also moves
+   `macos_canonical_source_path`, and a `zig_version` bump moves
+   `macos_canonical_zig_path`, because both embed the pin.
+2. Rebuild with `--allow-hash-drift` so the expected-hash check warns instead
+   of aborting:
+
+   ```bash
+   scripts/build-libghostty-macos.sh --allow-hash-drift --verify-reproducible
+   ```
+
+3. Copy the new `archive_sha256` from the emitted `build-info.txt` into the
+   `[targets."aarch64-apple-darwin"]` block, along with `header_sha256` and
+   `bindings_sha256` if the header or the bindings moved. Those two are global
+   keys shared with the Linux trees, so a change there means every tree is
+   re-pinned in the same commit.
+4. Copy the four reviewed files into
+   `native/libghostty/prebuilt/aarch64-apple-darwin/` and rerun
+   `scripts/verify-libghostty-macos.sh` plus
+   `cargo test -p paneflow-libghostty-sys`.
+5. Rerun the build once more without `--allow-hash-drift`. It must now pass the
+   expected-hash check against the manifest value you just wrote.
+
+`THIRD_PARTY_NOTICES.md` carries the archive fingerprint, so a re-pin also
+moves `notice_sha256`.
+
+## Selecting the backend on macOS
+
+The engine ships as an explicit opt-in. In
+`~/Library/Application Support/paneflow/paneflow.json`:
+
+```json
+{
+  "terminal": { "backend": "ghostty" }
+}
+```
+
+`auto` still resolves to Alacritty on macOS, and `alacritty` is the explicit
+rollback. The setting applies to newly created terminals; existing sessions
+keep the backend they started with. `RUST_LOG=info` prints one
+`Terminal backend selected:` line per pane naming the requested backend, the
+effective backend, the target triple, and the pinned Ghostty build identity, so
+a bug report can state which engine produced the behavior. If the Ghostty
+engine cannot start, the pane falls back to Alacritty and stays usable, and the
+degradation is warned once per process.
 
 ## Emitted build-info.txt
 

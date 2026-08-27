@@ -3,8 +3,10 @@
 Ghostty is the default terminal backend in standard Linux builds. This includes
 bare `cargo run`, normal development builds, tests, and official x86_64 and
 ARM64 packages. `terminal.backend = auto` selects Ghostty for every new Linux
-terminal. macOS remains Alacritty-only; supported Windows x64 MSVC builds use
-their separately qualified native Ghostty backend.
+terminal. Supported Windows x64 MSVC builds use their separately qualified
+native Ghostty backend. macOS Apple Silicon ships the engine as an explicit
+opt-in and keeps `auto` on Alacritty; see
+[macos-libghostty.md](macos-libghostty.md).
 
 ## Development build
 

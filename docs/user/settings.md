@@ -55,8 +55,10 @@ Common examples:
 * `terminal.backend`, `terminal.ligatures`, `terminal.cursor_blink`, `terminal.env`, and
   `terminal.scroll_multiplier` for advanced terminal behavior. Standard Linux builds
   and supported Windows x64 MSVC builds select Ghostty for `auto`; set
-  `terminal.backend` to `alacritty` for rollback. macOS and builds without the
-  target's native Ghostty feature use Alacritty.
+  `terminal.backend` to `alacritty` for rollback. On macOS (Apple Silicon)
+  Ghostty is an explicit opt-in: `auto` still selects Alacritty, so set
+  `terminal.backend` to `ghostty` to switch engines. Builds without the
+  target's native Ghostty feature always use Alacritty.
 * `commands[]` entries that are not workspace templates.
 * Profiles, telemetry, window-decoration, and agent-panel options.
 

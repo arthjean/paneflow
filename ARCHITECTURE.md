@@ -5,9 +5,10 @@ agents in parallel. One user-facing Rust binary, no web runtime: the UI is
 built on a pinned Paneflow branch of
 [Zed's GPUI](https://github.com/zed-industries/zed/tree/main/crates/gpui),
 terminal emulation is provided by a pinned, statically linked
-`libghostty-vt` backend by default on Linux and Windows x64 MSVC. Upstream
+`libghostty-vt` backend by default on Linux and Windows x64 MSVC, and by
+explicit opt-in on macOS Apple Silicon. Upstream
 [`alacritty_terminal`](https://crates.io/crates/alacritty_terminal) remains the
-macOS backend and the explicit cross-platform rollback. Paneflow owns backend
+macOS default and the explicit cross-platform rollback. Paneflow owns backend
 selection, PTY lifecycle orchestration, rendering, and integration with agent
 tracking, IPC, the MCP bridge, and self-update.
 
@@ -113,9 +114,11 @@ keystroke at ingress and reports time-to-pixel.
 
 `TerminalSessionBackend` is the renderer-facing facade for both engines.
 Standard Linux builds and supported Windows x64 MSVC builds resolve
-`terminal.backend = auto` to Ghostty. macOS, builds without a verified native
-Ghostty feature, and explicit rollback sessions use upstream
-`alacritty_terminal`. The choice applies to new sessions only.
+`terminal.backend = auto` to Ghostty. macOS Apple Silicon builds resolve `auto`
+to Alacritty and switch engines only on an explicit
+`terminal.backend = ghostty`; promoting that default is a separate decision.
+Builds without a verified native Ghostty feature and explicit rollback sessions
+use upstream `alacritty_terminal`. The choice applies to new sessions only.
 
 Ghostty's raw ABI and static archive linking live in
 `paneflow-libghostty-sys`; `paneflow-terminal-ghostty` exposes the safe Rust
@@ -209,8 +212,8 @@ other two platforms:
 |---|---|---|---|
 | GPU | Vulkan | Metal | DirectX |
 | Windowing | Wayland + X11 | AppKit | Win32 |
-| Terminal engine | `libghostty-vt` by default, Alacritty rollback | Alacritty | `libghostty-vt` by default on x64 MSVC, Alacritty rollback |
-| PTY | `portable-pty` for Ghostty, `alacritty_terminal::tty` for rollback | `alacritty_terminal::tty` | ConPTY via `portable-pty` for Ghostty, `alacritty_terminal::tty` for rollback |
+| Terminal engine | `libghostty-vt` by default, Alacritty rollback | Alacritty by default, `libghostty-vt` as an opt-in on Apple Silicon | `libghostty-vt` by default on x64 MSVC, Alacritty rollback |
+| PTY | `portable-pty` for Ghostty, `alacritty_terminal::tty` for rollback | `portable-pty` for Ghostty, `alacritty_terminal::tty` otherwise | ConPTY via `portable-pty` for Ghostty, `alacritty_terminal::tty` for rollback |
 | IPC | Unix socket | Unix socket | Named pipe |
 | Packaging | `.deb` / `.rpm` / AppImage / tarball | signed + notarized `.dmg` | signed `.msi` |
 

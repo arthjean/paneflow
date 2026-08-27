@@ -65,8 +65,10 @@ pub enum CursorBlinkConfig {
 }
 
 /// Terminal engine requested for newly-created sessions. `Auto` selects
-/// Ghostty in standard Linux and supported Windows x64 MSVC builds. macOS and
-/// builds without the target's native Ghostty feature use Alacritty.
+/// Ghostty in standard Linux and supported Windows x64 MSVC builds. On macOS
+/// (Apple Silicon) Ghostty is an explicit opt-in: `Auto` still selects
+/// Alacritty, and only `Ghostty` switches the engine. Builds without the
+/// target's native Ghostty feature always use Alacritty.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalBackendConfig {
@@ -194,9 +196,10 @@ impl TerminalSurfaceProfile {
 #[serde(default)]
 pub struct TerminalConfig {
     /// Backend requested for new sessions. `auto` resolves to Ghostty in
-    /// standard Linux and supported Windows x64 MSVC builds. macOS and builds
-    /// without the target's native Ghostty feature use Alacritty.
-    /// `alacritty` is the explicit cross-platform rollback.
+    /// standard Linux and supported Windows x64 MSVC builds, and to Alacritty
+    /// on macOS, where `ghostty` is the explicit opt-in. Builds without the
+    /// target's native Ghostty feature always use Alacritty. `alacritty` is
+    /// the explicit cross-platform rollback.
     #[serde(default)]
     pub backend: TerminalBackendConfig,
     /// Render programming-font ligatures (FiraCode `=>`, `!=`, …) when

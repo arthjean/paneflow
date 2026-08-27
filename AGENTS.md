@@ -85,8 +85,10 @@ the two you did.
 ## Boundaries the code does not reveal
 
 - **Two terminal backends, one boundary.** libghostty is the default on Linux
-  and Windows x64 MSVC; upstream `alacritty_terminal` 0.26 backs macOS and the
-  `--no-default-features` recovery build. Both sit behind
+  and Windows x64 MSVC, and ships on macOS Apple Silicon as an explicit
+  `terminal.backend = "ghostty"` opt-in, where `auto` still resolves to
+  Alacritty. Upstream `alacritty_terminal` 0.26 backs that macOS default and
+  the `--no-default-features` recovery build on every platform. Both sit behind
   `TerminalSessionBackend` (`src-app/src/terminal/mod.rs:28`). Do not leak a
   backend-specific type past that boundary. `src-app/src/terminal/types.rs`
   holds the neutral mirrors, and only six files in `src-app/src/` may name
