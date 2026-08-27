@@ -5,8 +5,6 @@
 //! whitespace trimmed, and, in VT mode, enough state to replay the screen
 //! into another terminal.
 
-use std::ffi::c_void;
-
 use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
@@ -163,27 +161,6 @@ impl Drop for Formatter<'_> {
     }
 }
 
-/// Bridge a Rust sink into a `GhosttyWriter`.
-///
-/// The callback is invoked synchronously during the format call, so the
-/// userdata pointer only has to outlive that call.
-unsafe extern "C" fn write_trampoline<F: FnMut(&[u8]) -> bool>(
-    userdata: *mut c_void,
-    data: *const u8,
-    len: usize,
-) -> bool {
-    if userdata.is_null() || data.is_null() {
-        return false;
-    }
-    // SAFETY: `userdata` is the `&mut F` handed to `ghostty_formatter_format`
-    // below, and libghostty calls this synchronously while that borrow lives.
-    let sink = unsafe { &mut *userdata.cast::<F>() };
-    // SAFETY: libghostty documents `data`/`len` as a borrowed slice valid for
-    // the duration of the callback.
-    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(bytes))).unwrap_or(false)
-}
-
 impl DisplayTerminal {
     fn formatter(&self, options: FormatterOptions) -> Result<Formatter<'_>> {
         let options = sys::GhosttyFormatterTerminalOptions {
@@ -302,10 +279,7 @@ impl DisplayTerminal {
         mut sink: F,
     ) -> Result<()> {
         let formatter = self.formatter(options)?;
-        let writer = sys::GhosttyWriter {
-            write: Some(write_trampoline::<F>),
-            userdata: (&raw mut sink).cast::<c_void>(),
-        };
+        let writer = crate::io::writer(&mut sink);
         // SAFETY: the formatter is live and `writer` borrows `sink` for the
         // duration of this synchronous call.
         let result = unsafe { sys::ghostty_formatter_format(formatter.raw, writer) };

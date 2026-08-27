@@ -228,6 +228,26 @@ impl DisplayTerminal {
         })
     }
 
+    /// Retain up to `bytes` of unfinished VT or UTF-8 input.
+    ///
+    /// Off by default, which is why [`Self::continuation`] normally reports
+    /// nothing. It has to be enabled *before* the input that leaves the parser
+    /// mid-sequence arrives, so a snapshot taken later can carry that state:
+    /// `ghostty_snapshot_encode` rejects a terminal whose parser is unfinished
+    /// and whose tracking was off. Zero disables tracking again.
+    pub fn set_continuation_max_bytes(&mut self, bytes: usize) -> Result<()> {
+        // SAFETY: the terminal handle is live and the option's documented
+        // input type is `size_t *`.
+        let result = unsafe {
+            sys::ghostty_terminal_set(
+                self.terminal.raw(),
+                sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES,
+                (&raw const bytes).cast::<c_void>(),
+            )
+        };
+        check("terminal_set_continuation_max_bytes", result)
+    }
+
     /// The escape sequence the parser is in the middle of, if any.
     ///
     /// Returns `None` when the parser is in the ground state. Requires the
@@ -304,10 +324,7 @@ impl DisplayTerminal {
     /// Stream the pending continuation to `sink`, which returns `false` to
     /// abort.
     pub fn continuation_to<F: FnMut(&[u8]) -> bool>(&self, mut sink: F) -> Result<bool> {
-        let writer = sys::GhosttyWriter {
-            write: Some(continuation_write_trampoline::<F>),
-            userdata: (&raw mut sink).cast::<c_void>(),
-        };
+        let writer = crate::io::writer(&mut sink);
         // SAFETY: the terminal handle is live and `writer` borrows `sink` for
         // this synchronous call.
         let result = unsafe { sys::ghostty_terminal_continuation_write(self.terminal.raw(), writer) };
@@ -451,22 +468,6 @@ unsafe extern "C" fn mime_read_trampoline(
             representation.data.len(),
         )
     }
-}
-
-unsafe extern "C" fn continuation_write_trampoline<F: FnMut(&[u8]) -> bool>(
-    userdata: *mut c_void,
-    data: *const u8,
-    len: usize,
-) -> bool {
-    if userdata.is_null() || data.is_null() {
-        return false;
-    }
-    // SAFETY: `userdata` is the `&mut F` handed to the continuation writer,
-    // which libghostty calls synchronously.
-    let sink = unsafe { &mut *userdata.cast::<F>() };
-    // SAFETY: libghostty documents `data`/`len` as borrowed for the call.
-    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sink(bytes))).unwrap_or(false)
 }
 
 #[cfg(test)]

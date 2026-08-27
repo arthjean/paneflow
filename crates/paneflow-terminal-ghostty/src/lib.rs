@@ -38,6 +38,7 @@ native_modules!(
     grid_ref,
     handles,
     input_options,
+    io,
     modes,
     navigation,
     osc,
@@ -48,6 +49,7 @@ native_modules!(
     sgr,
     snapshot,
     snapshot_cell,
+    snapshot_codec,
     snapshot_ffi,
     snapshot_state,
     style,
@@ -94,6 +96,8 @@ pub use selection_gesture::{
     GestureState, PressOptions,
 };
 pub use sgr::{SgrAttribute, SgrParser, SgrSeparator};
+#[cfg(ghostty_native)]
+pub use snapshot_codec::{HistoryProgress, SnapshotDecoder, SnapshotRestore, TerminalScreen};
 #[cfg(ghostty_native)]
 pub use style::Style;
 #[cfg(ghostty_native)]
