@@ -126,6 +126,12 @@ interface. Alacritty imports remain confined to an explicit allowlist. Neither
 engine leaks borrowed terminal state into GPUI: the rest of the app consumes
 Paneflow-owned points, mode flags, cells, events, and `Content` snapshots.
 
+The two engines are interchangeable for everything the renderer draws, but
+Ghostty decodes a few sequences Alacritty does not. OSC 9;4 progress reporting
+is one: on a Ghostty session the pane header shows the running program's
+progress chip, and on an Alacritty session the pane simply never reports
+progress. Any such extra must degrade to silence, never to a broken pane.
+
 A Ghostty startup failure may fall back to Alacritty only before the shell
 child exists. Once a child has been spawned, Paneflow never starts a second
 child or switches the live session to another engine.

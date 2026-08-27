@@ -4,7 +4,7 @@ use paneflow_libghostty_sys as sys;
 
 use crate::callbacks::with_state;
 use crate::osc7::working_directory_from_ghostty;
-use crate::{BackendEvent, ColorScheme};
+use crate::{BackendEvent, ColorScheme, ProgressReport, ProgressState};
 
 const MAX_CALLBACK_BYTES: usize = 64 * 1024;
 const MAX_METADATA_BYTES: usize = 4096;
@@ -291,6 +291,57 @@ pub(crate) unsafe extern "C" fn device_attributes(
         });
     }
     filled
+}
+
+pub(crate) unsafe extern "C" fn progress_report(
+    _: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    report: *const sys::GhosttyTerminalProgressReport,
+) {
+    // SAFETY: libghostty supplies the userdata pointer registered by
+    // `callbacks::install`; the boxed state outlives the terminal callback.
+    unsafe {
+        with_state(userdata, |state| {
+            let Some(report) = report.as_ref() else {
+                return;
+            };
+            if report.size < size_of::<sys::GhosttyTerminalProgressReport>() {
+                return;
+            }
+            let Some(state_kind) = progress_state(report.state) else {
+                return;
+            };
+            state.push(BackendEvent::Progress(ProgressReport {
+                state: state_kind,
+                percent: u8::try_from(report.progress).ok().filter(|&p| p <= 100),
+            }));
+        });
+    }
+}
+
+/// Map a libghostty progress state onto the neutral mirror.
+///
+/// An unrecognized state means the pinned library grew a variant Paneflow does
+/// not model yet, so the report is dropped rather than guessed at.
+fn progress_state(state: sys::GhosttyTerminalProgressState) -> Option<ProgressState> {
+    match state {
+        sys::GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE => {
+            Some(ProgressState::Remove)
+        }
+        sys::GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_SET => {
+            Some(ProgressState::Set)
+        }
+        sys::GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR => {
+            Some(ProgressState::Error)
+        }
+        sys::GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE => {
+            Some(ProgressState::Indeterminate)
+        }
+        sys::GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE => {
+            Some(ProgressState::Pause)
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]

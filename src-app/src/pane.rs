@@ -1416,11 +1416,43 @@ impl Pane {
                 .into_any_element()
         });
 
+        // OSC 9;4 progress published by the program running in this pane,
+        // ranked between the queued chip and the match badge: a build that
+        // states how far along it is outranks a search-hit count, and stays
+        // below the two states the user has to act on. Only the Ghostty
+        // backend decodes OSC 9;4; on the Alacritty backend `progress` stays
+        // `None` and the chip never appears.
+        let leading_slots: u8 = u8::from(has_errored || has_attention) + u8::from(has_pending);
+        let progress = self
+            .surface
+            .as_terminal()
+            .and_then(|terminal| terminal.read(cx).terminal.progress)
+            .filter(|_| leading_slots < 2)
+            .and_then(|report| progress_chip_label(report).map(|label| (report.state, label)));
+        let progress_chip = progress.as_ref().map(|(state, label)| {
+            div()
+                .flex_none()
+                .px(px(4.))
+                .rounded(px(3.))
+                .bg(ui.subtle)
+                .text_size(px(9.))
+                .text_color(
+                    if matches!(state, paneflow_terminal_ghostty::ProgressState::Error) {
+                        ui.agent_error
+                    } else {
+                        ui.muted
+                    },
+                )
+                .child(label.clone())
+                .into_any_element()
+        });
+
         // EP-006 US-018 - transient fleet-match badge, governed by the FR-11
         // anatomy: at most 2 adornments, in priority order state dot > queued
-        // chip > match badge (lowest priority, "s'efface en premier").
+        // chip > progress chip > match badge (lowest priority, "s'efface en
+        // premier").
         let match_badge = {
-            let slots_used: u8 = u8::from(has_errored || has_attention) + u8::from(has_pending);
+            let slots_used: u8 = leading_slots + u8::from(progress.is_some());
             self.surface
                 .as_terminal()
                 .and(self.search_hits)
@@ -1466,6 +1498,7 @@ impl Pane {
             .child(self.render_surface_title(cx))
             .children(status_dot)
             .children(pending_chip)
+            .children(progress_chip)
             .children(match_badge);
 
         // Close the pane. It lives in the header's leading corner, alone and
@@ -2018,11 +2051,61 @@ impl Render for Pane {
     }
 }
 
+/// Header-chip label for one OSC 9;4 progress report, or `None` when the
+/// report carries nothing to show.
+///
+/// The ConEmu protocol only guarantees a percentage for the `Set` state, so
+/// every other state names itself instead of inventing a number. `Remove` is
+/// what clears the pane's report, so it never reaches the header and maps to
+/// no label.
+fn progress_chip_label(report: paneflow_terminal_ghostty::ProgressReport) -> Option<SharedString> {
+    use paneflow_terminal_ghostty::ProgressState;
+
+    match report.state {
+        ProgressState::Set | ProgressState::Error => Some(match report.percent {
+            Some(percent) => SharedString::from(format!("{percent}%")),
+            None if matches!(report.state, ProgressState::Error) => {
+                SharedString::new_static("error")
+            }
+            None => SharedString::new_static("working"),
+        }),
+        ProgressState::Indeterminate => Some(SharedString::new_static("working")),
+        ProgressState::Pause => Some(SharedString::new_static("paused")),
+        ProgressState::Remove => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use paneflow_terminal_ghostty::{ProgressReport, ProgressState};
+
     use super::{
-        MAX_SURFACE_TITLE_LEN, pane_card_background, peek_badge_line, truncate_surface_title,
+        MAX_SURFACE_TITLE_LEN, pane_card_background, peek_badge_line, progress_chip_label,
+        truncate_surface_title,
     };
+
+    #[test]
+    fn progress_chip_label_prefers_the_percentage_and_names_every_other_state() {
+        let label = |state, percent| progress_chip_label(ProgressReport { state, percent });
+
+        assert_eq!(label(ProgressState::Set, Some(42)).as_deref(), Some("42%"));
+        assert_eq!(
+            label(ProgressState::Error, Some(80)).as_deref(),
+            Some("80%")
+        );
+        assert_eq!(label(ProgressState::Set, None).as_deref(), Some("working"));
+        assert_eq!(label(ProgressState::Error, None).as_deref(), Some("error"));
+        assert_eq!(
+            label(ProgressState::Indeterminate, Some(10)).as_deref(),
+            Some("working")
+        );
+        assert_eq!(
+            label(ProgressState::Pause, Some(10)).as_deref(),
+            Some("paused")
+        );
+        // `Remove` clears the pane's report rather than describing one.
+        assert_eq!(label(ProgressState::Remove, None), None);
+    }
 
     #[test]
     fn terminal_material_scopes_the_card_to_windows_terminal_surfaces() {

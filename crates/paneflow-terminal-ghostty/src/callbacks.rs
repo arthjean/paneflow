@@ -19,6 +19,7 @@ const _: sys::GhosttyTerminalXtversionFn = Some(crate::callback_ffi::xtversion);
 const _: sys::GhosttyTerminalTitleChangedFn = Some(crate::callback_ffi::title_changed);
 const _: sys::GhosttyTerminalPwdChangedFn = Some(crate::callback_ffi::pwd_changed);
 const _: sys::GhosttyTerminalClipboardWriteFn = Some(crate::callback_ffi::clipboard_write);
+const _: sys::GhosttyTerminalProgressReportFn = Some(crate::callback_ffi::progress_report);
 const _: sys::GhosttyTerminalSizeFn = Some(crate::callback_ffi::size);
 const _: sys::GhosttyTerminalColorSchemeFn = Some(crate::callback_ffi::color_scheme);
 const _: sys::GhosttyTerminalDeviceAttributesFn = Some(crate::callback_ffi::device_attributes);
@@ -124,6 +125,10 @@ impl CallbackState {
             BackendEvent::WorkingDirectory(cwd) => {
                 events.retain(|event| !matches!(event, BackendEvent::WorkingDirectory(_)));
                 events.push_back(BackendEvent::WorkingDirectory(cwd));
+            }
+            BackendEvent::Progress(report) => {
+                events.retain(|event| !matches!(event, BackendEvent::Progress(_)));
+                events.push_back(BackendEvent::Progress(report));
             }
             BackendEvent::Bell => {
                 let pending = self.pending_bell_events.get();
@@ -233,6 +238,11 @@ pub(crate) fn install(terminal: sys::GhosttyTerminal, state: *mut CallbackState)
         terminal,
         sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
         (&raw const clipboard_max_bytes).cast(),
+    )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT,
+        crate::callback_ffi::progress_report as *const (),
     )?;
     set_callback(
         terminal,

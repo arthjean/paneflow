@@ -260,6 +260,30 @@ pub enum Scroll {
     Delta(i32),
 }
 
+/// Progress state a running program reported through OSC 9;4.
+///
+/// The variants mirror the ConEmu protocol libghostty decodes: a program
+/// either asks for the indicator to be removed or describes the shape it
+/// wants shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgressState {
+    Remove,
+    Set,
+    Error,
+    Indeterminate,
+    Pause,
+}
+
+/// One OSC 9;4 progress report.
+///
+/// `percent` is `None` when the program omitted a percentage, which the
+/// protocol allows for every state except `Set`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProgressReport {
+    pub state: ProgressState,
+    pub percent: Option<u8>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BackendEvent {
     WritePty(Vec<u8>),
@@ -267,6 +291,7 @@ pub enum BackendEvent {
     Bell,
     Title(String),
     WorkingDirectory(String),
+    Progress(ProgressReport),
     CallbackPanicked,
     InputDropped {
         bytes: usize,

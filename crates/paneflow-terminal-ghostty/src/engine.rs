@@ -240,6 +240,51 @@ mod tests {
     }
 
     #[test]
+    fn osc9_4_progress_reports_are_decoded_and_coalesced() {
+        let size = WindowSize::new(80, 24, 8, 16).expect("valid terminal size");
+        let mut terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())
+            .expect("terminal must initialize");
+
+        // A determinate report followed by an error report in the same drain
+        // window: only the newest survives, the way a title report does.
+        terminal.feed(b"\x1b]9;4;1;42\x07").expect("determinate report");
+        terminal.feed(b"\x1b]9;4;2;80\x07").expect("error report");
+
+        let reports = terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                BackendEvent::Progress(report) => Some(report),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reports,
+            vec![crate::ProgressReport {
+                state: crate::ProgressState::Error,
+                percent: Some(80),
+            }]
+        );
+
+        terminal.feed(b"\x1b]9;4;0\x07").expect("remove report");
+        let reports = terminal
+            .drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                BackendEvent::Progress(report) => Some(report),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            reports,
+            vec![crate::ProgressReport {
+                state: crate::ProgressState::Remove,
+                percent: None,
+            }]
+        );
+    }
+
+    #[test]
     fn osc7_working_directory_is_decoded_once() {
         let size = WindowSize::new(80, 24, 8, 16).expect("valid terminal size");
         let mut terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())

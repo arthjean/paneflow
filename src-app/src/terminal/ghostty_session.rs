@@ -68,6 +68,7 @@ pub(crate) enum GhosttyUiEvent {
     Wakeup(Arc<UiEventState>),
     Title(Arc<UiEventState>),
     WorkingDirectory(Arc<UiEventState>),
+    Progress(Arc<UiEventState>),
     Clipboard(Arc<UiEventState>),
     ServiceOutputReady(Arc<UiEventState>),
     ChildExited { code: i32, signal: Option<String> },
@@ -86,10 +87,19 @@ impl GhosttyUiEvent {
     }
 }
 
-#[derive(Debug, Default)]
-struct CoalescedSlot {
-    latest: Option<String>,
+#[derive(Debug)]
+struct CoalescedSlot<T> {
+    latest: Option<T>,
     queued: bool,
+}
+
+impl<T> Default for CoalescedSlot<T> {
+    fn default() -> Self {
+        Self {
+            latest: None,
+            queued: false,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -102,13 +112,14 @@ struct ClipboardSlot {
 pub(crate) struct UiEventState {
     wakeup_queued: AtomicBool,
     service_output_queued: AtomicBool,
-    title: Mutex<CoalescedSlot>,
-    working_directory: Mutex<CoalescedSlot>,
+    title: Mutex<CoalescedSlot<String>>,
+    working_directory: Mutex<CoalescedSlot<String>>,
+    progress: Mutex<CoalescedSlot<ghostty::ProgressReport>>,
     clipboard: Mutex<ClipboardSlot>,
 }
 
 impl UiEventState {
-    fn store(slot: &Mutex<CoalescedSlot>, value: String) -> bool {
+    fn store<T>(slot: &Mutex<CoalescedSlot<T>>, value: T) -> bool {
         let mut slot = slot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -121,7 +132,7 @@ impl UiEventState {
         }
     }
 
-    fn take(slot: &Mutex<CoalescedSlot>) -> Option<String> {
+    fn take<T>(slot: &Mutex<CoalescedSlot<T>>) -> Option<T> {
         let mut slot = slot
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -135,6 +146,10 @@ impl UiEventState {
 
     pub(super) fn take_working_directory(&self) -> Option<String> {
         Self::take(&self.working_directory)
+    }
+
+    pub(super) fn take_progress(&self) -> Option<ghostty::ProgressReport> {
+        Self::take(&self.progress)
     }
 
     pub(super) fn take_clipboard(&self) -> Vec<String> {
@@ -2739,6 +2754,14 @@ fn queue_working_directory(inner: &SessionInner, cwd: String) {
     }
 }
 
+fn queue_progress(inner: &SessionInner, report: ghostty::ProgressReport) {
+    if UiEventState::store(&inner.ui_events.progress, report) {
+        let _ = inner
+            .events_tx
+            .unbounded_send(GhosttyUiEvent::Progress(inner.ui_events.clone()));
+    }
+}
+
 fn queue_clipboard(inner: &SessionInner, text: String) {
     if !inner.clipboard_gate.allows_store() {
         return;
@@ -2813,6 +2836,7 @@ fn handle_engine_events(
             ghostty::BackendEvent::WorkingDirectory(cwd) => {
                 queue_working_directory(inner, cwd);
             }
+            ghostty::BackendEvent::Progress(report) => queue_progress(inner, report),
             ghostty::BackendEvent::Bell => {}
             ghostty::BackendEvent::CallbackPanicked => {
                 return Err("Ghostty callback panicked at the FFI boundary".into());

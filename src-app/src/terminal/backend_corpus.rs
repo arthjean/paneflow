@@ -498,7 +498,11 @@ fn normalize_ghostty_event(event: paneflow_terminal_ghostty::BackendEvent) -> Ve
         paneflow_terminal_ghostty::BackendEvent::WorkingDirectory(cwd) => {
             vec![format!("WorkingDirectory({cwd:?})")]
         }
-        paneflow_terminal_ghostty::BackendEvent::CallbackPanicked
+        // OSC 9;4 has no Alacritty counterpart, so a progress report has
+        // nothing to compare against and is left out of the corpus rather
+        // than recorded as a backend divergence.
+        paneflow_terminal_ghostty::BackendEvent::Progress(_)
+        | paneflow_terminal_ghostty::BackendEvent::CallbackPanicked
         | paneflow_terminal_ghostty::BackendEvent::InputDropped { .. } => Vec::new(),
         paneflow_terminal_ghostty::BackendEvent::EffectsOverflow {
             dropped_events,

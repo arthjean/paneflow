@@ -1127,6 +1127,11 @@ pub struct TerminalState {
     /// updates are captured by the PTY byte tap before Alacritty consumes the
     /// sequence; Unix/macOS also refresh from the process table via `cwd_now()`.
     pub current_cwd: Option<String>,
+    /// Latest OSC 9;4 progress report the running program published, when the
+    /// Ghostty backend decoded one. Stays `None` on the Alacritty backend,
+    /// which does not report progress, and returns to `None` as soon as the
+    /// program asks for the indicator to be removed or the child exits.
+    pub progress: Option<paneflow_terminal_ghostty::ProgressReport>,
     /// User-assigned custom name (US-013). When `Some`, it overrides the
     /// auto-derived surface name in `surface.list` / MCP / the sidebar, and is
     /// persisted to `session.json`. `None` falls back to derivation.
@@ -2369,6 +2374,7 @@ impl TerminalState {
             #[cfg(target_os = "macos")]
             pty_master_fd: None,
             current_cwd: None,
+            progress: None,
             custom_name: None,
             detected_agent: None,
             agent_confirmed: false,
@@ -2700,6 +2706,14 @@ impl TerminalState {
                     self.current_cwd = Some(cwd);
                 }
             }
+            GhosttyUiEvent::Progress(events) => {
+                if let Some(report) = events.take_progress() {
+                    self.progress = match report.state {
+                        paneflow_terminal_ghostty::ProgressState::Remove => None,
+                        _ => Some(report),
+                    };
+                }
+            }
             GhosttyUiEvent::Clipboard(events) => {
                 for text in events.take_clipboard() {
                     if self.terminal_focused
@@ -2721,6 +2735,7 @@ impl TerminalState {
                     self.exit_signal = signal;
                 }
                 self.dirty = true;
+                self.progress = None;
                 self.cached_foreground_command = None;
                 self.reported_ports.clear();
                 #[cfg(all(unix, not(test)))]
