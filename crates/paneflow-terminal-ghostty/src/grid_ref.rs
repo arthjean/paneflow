@@ -116,7 +116,7 @@ impl DisplayTerminal {
                 "row_get_multi",
                 row,
                 sys::ghostty_row_get_multi,
-                &[
+                [
                     Slot::new(s::GhosttyRowData_GHOSTTY_ROW_DATA_WRAP, &mut info.wrap),
                     Slot::new(
                         s::GhosttyRowData_GHOSTTY_ROW_DATA_WRAP_CONTINUATION,
@@ -194,7 +194,7 @@ impl DisplayTerminal {
                 "cell_get_multi",
                 cell,
                 sys::ghostty_cell_get_multi,
-                &[
+                [
                     Slot::new(
                         s::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
                         &mut content_tag,

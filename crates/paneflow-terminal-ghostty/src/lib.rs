@@ -41,6 +41,7 @@ native_modules!(
     navigation,
     osc,
     persistence,
+    render,
     selection,
     selection_gesture,
     sgr,
