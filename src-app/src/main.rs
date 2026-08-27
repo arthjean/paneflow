@@ -250,7 +250,11 @@ pub(crate) struct FilesContextMenu {
 pub(crate) enum ClosedSurfaceRecord {
     Terminal {
         cwd: Option<std::path::PathBuf>,
-        scrollback: Option<String>,
+        /// The closed screen and its recent history, as the VT sequences that
+        /// replay it. Styling, modes, and the cursor survive, which plain
+        /// text loses. In-process only: these bytes never reach disk, and
+        /// never come from it.
+        replay: Option<Vec<u8>>,
         custom_name: Option<String>,
         font_size: Option<f32>,
     },

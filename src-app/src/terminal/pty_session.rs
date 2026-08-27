@@ -1609,6 +1609,16 @@ impl TerminalState {
         self.ghostty.extract_scrollback()
     }
 
+    /// Capture the screen and its recent history as VT sequences.
+    ///
+    /// Unlike [`Self::extract_scrollback`] this keeps the styling, the modes,
+    /// and the cursor, so a restored pane looks like the one that was closed
+    /// rather than like a transcript of it. The bytes are produced by
+    /// libghostty's own formatter over this process's terminal.
+    pub fn capture_replay(&self) -> Option<Vec<u8>> {
+        self.ghostty.capture_replay()
+    }
+
     /// Best-effort foreground command of this surface, cached by the off-thread
     /// pane process scanner. Returns the shell command while idle or the current
     /// child approximation while busy. `None` means callers fall back to the OSC
@@ -1666,6 +1676,17 @@ impl TerminalState {
     /// title-spoof / OSC 8 clickable-link injection into the restored grid.
     pub fn restore_scrollback(&self, text: &str) {
         self.ghostty.restore_scrollback(text);
+    }
+
+    /// Replay bytes produced by [`Self::capture_replay`] in this process.
+    ///
+    /// These go into the grid verbatim, escapes included, which is the whole
+    /// point: the styling has to survive. That makes this the wrong entry
+    /// point for anything read from disk or from a config file, where
+    /// [`Self::restore_scrollback`] and its ANSI stripping is the only safe
+    /// path. Only pass bytes this process captured from its own terminal.
+    pub fn restore_replay(&self, bytes: &[u8]) {
+        self.ghostty.write_output(bytes);
     }
 }
 
