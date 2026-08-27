@@ -3,10 +3,7 @@ use paneflow_libghostty_sys as sys;
 use crate::engine::DisplayTerminal;
 use crate::handles::check;
 use crate::limits::{MAX_GRID_CELLS, MAX_GRID_ROWS, MAX_SCROLLBACK_ROWS};
-use crate::snapshot_ffi::{
-    TerminalCols, TerminalScrollbackRows, TerminalTotalRows, ghostty_point, raw_cell_wide,
-    terminal_get,
-};
+use crate::snapshot_ffi::{TerminalScrollbackRows, ghostty_point, raw_cell_wide, terminal_get};
 use crate::{GhosttyError, Point, Result};
 
 const MAX_GRAPHEME_CODEPOINTS: usize = 1024;
@@ -115,12 +112,29 @@ impl DisplayTerminal {
         // One batched read rather than three round trips: this runs per
         // search chunk and per scrollback extraction.
         let (cols, total_rows, scrollback) = self.geometry_batch()?;
+        if cols == 0 {
+            return Err(GhosttyError::AbiMismatch(
+                "terminal reported zero columns".into(),
+            ));
+        }
+        if total_rows > MAX_GRID_ROWS {
+            return Err(GhosttyError::LimitExceeded {
+                resource: "total grid rows",
+                limit: MAX_GRID_ROWS,
+            });
+        }
+        if scrollback > MAX_SCROLLBACK_ROWS {
+            return Err(GhosttyError::LimitExceeded {
+                resource: "scrollback rows",
+                limit: MAX_SCROLLBACK_ROWS,
+            });
+        }
         let scrollback = i32::try_from(scrollback)
             .map_err(|_| GhosttyError::AbiMismatch("scrollback does not fit i32".into()))?;
         Ok(GridGeometry {
             total_rows,
             scrollback,
-            cols,
+            cols: usize::from(cols),
         })
     }
 
@@ -171,16 +185,6 @@ impl DisplayTerminal {
         Ok(())
     }
 
-    pub(crate) fn total_rows(&self) -> Result<usize> {
-        let value = terminal_get::<TerminalTotalRows>(self.terminal.raw())?;
-        if value > MAX_GRID_ROWS {
-            return Err(GhosttyError::LimitExceeded {
-                resource: "total grid rows",
-                limit: MAX_GRID_ROWS,
-            });
-        }
-        Ok(value)
-    }
 
     pub(crate) fn scrollback_rows(&self) -> Result<usize> {
         let value = terminal_get::<TerminalScrollbackRows>(self.terminal.raw())?;
@@ -193,15 +197,6 @@ impl DisplayTerminal {
         Ok(value)
     }
 
-    fn cols(&self) -> Result<usize> {
-        let value = terminal_get::<TerminalCols>(self.terminal.raw())?;
-        if value == 0 {
-            return Err(GhosttyError::AbiMismatch(
-                "terminal reported zero columns".into(),
-            ));
-        }
-        Ok(usize::from(value))
-    }
 }
 
 fn check_grid_cell_count(rows: usize, cols: usize) -> Result<()> {
