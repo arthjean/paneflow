@@ -172,6 +172,21 @@ jobs:
             --features paneflow-app/libghostty-macos \
             -p paneflow-app --target "$TARGET"
 
+      # Every other gate on this runner links the archive and calls into it
+      # in-process. This one is the only end-to-end proof: it opens a real
+      # Darwin PTY, spawns `/bin/sh`, drives a resize through both the PTY and
+      # the engine, reads the shell's `stty size` answer back, asserts the
+      # marker reached the libghostty snapshot, and checks the child was
+      # reaped. It is the same binary and the same assertions the Linux leg
+      # runs, so the two platforms cannot drift.
+      - name: End-to-end PTY smoke against the repository artifact
+        run: |
+          cargo build --release --locked \
+            -p paneflow-ghostty-smoke \
+            --features native \
+            --target "$TARGET"
+          "target/$TARGET/release/paneflow-ghostty-smoke"
+
       # US-016 AC5: the shipped macOS binary is built `--no-default-features`
       # today, so the Alacritty baseline built above *is* the previous
       # release's content and the delta measured here is the growth that

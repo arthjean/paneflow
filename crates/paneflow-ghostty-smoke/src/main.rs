@@ -1,5 +1,8 @@
-#[cfg(target_os = "linux")]
-mod linux {
+// The PTY smoke runs on every POSIX shipping target. Linux and macOS drive
+// the same `/bin/sh`, the same `stty size` resize probe, and the same
+// `libc::kill` reaping check, so keeping two copies would only let them drift.
+#[cfg(unix)]
+mod posix {
     use std::io::{Read, Write};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
@@ -194,9 +197,9 @@ mod windows {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn main() {
-    if let Err(error) = linux::run() {
+    if let Err(error) = posix::run() {
         eprintln!("libghostty package smoke failed: {error:#}");
         std::process::exit(1);
     }
@@ -212,8 +215,8 @@ fn main() {
     println!("libghostty Windows headless smoke passed");
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(not(any(unix, windows)))]
 fn main() {
-    eprintln!("libghostty package smoke is available only on Linux or Windows");
+    eprintln!("libghostty package smoke is available only on POSIX or Windows");
     std::process::exit(2);
 }
