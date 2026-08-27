@@ -67,7 +67,27 @@ impl DisplayTerminal {
         configure_scrollback(terminal.raw(), max_scrollback)?;
         configure_safety_limits(terminal.raw())?;
         configure_appearance(terminal.raw(), appearance)?;
+        // SAFETY: the caller's allocator contract carries through to every
+        // auxiliary handle `assemble` creates.
+        unsafe { Self::assemble(terminal, callbacks, allocator) }
+    }
 
+    /// Build the render, key, and mouse handles around an already configured
+    /// terminal.
+    ///
+    /// Shared with the snapshot decoder, which produces its terminal instead
+    /// of creating an empty one.
+    ///
+    /// # Safety
+    ///
+    /// `allocator` must be null or point to an allocator that outlives every
+    /// handle created here, and `terminal` must already have its callbacks
+    /// installed.
+    pub(crate) unsafe fn assemble(
+        terminal: OwnedHandle<sys::GhosttyTerminal>,
+        callbacks: Box<CallbackState>,
+        allocator: *const sys::GhosttyAllocator,
+    ) -> Result<Self> {
         // SAFETY: each constructor writes the named handle type using the
         // selected allocator, and each paired function is that type's exact
         // libghostty destructor. No raw handle escapes these owners.
@@ -160,7 +180,7 @@ impl DisplayTerminal {
     }
 }
 
-fn configure_appearance(
+pub(crate) fn configure_appearance(
     terminal: sys::GhosttyTerminal,
     appearance: TerminalAppearance,
 ) -> Result<()> {
@@ -195,7 +215,7 @@ fn configure_appearance(
     Ok(())
 }
 
-fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<()> {
+pub(crate) fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<()> {
     let zero = 0u64;
     let disabled = false;
     let apc_limit = MAX_APC_BYTES;
@@ -243,7 +263,7 @@ fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<()> {
 /// `ghostty_terminal_new` no longer takes a scrollback limit, so the line
 /// budget has to be set explicitly right after construction. libghostty keeps
 /// its own byte budget alongside it and prunes on whichever limit is hit first.
-fn configure_scrollback(terminal: sys::GhosttyTerminal, max_scrollback: usize) -> Result<()> {
+pub(crate) fn configure_scrollback(terminal: sys::GhosttyTerminal, max_scrollback: usize) -> Result<()> {
     let result = unsafe {
         sys::ghostty_terminal_set(
             terminal,

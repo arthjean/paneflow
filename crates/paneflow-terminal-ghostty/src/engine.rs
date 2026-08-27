@@ -187,7 +187,7 @@ impl DisplayTerminal {
     }
 }
 
-fn resize_terminal(terminal: sys::GhosttyTerminal, size: WindowSize) -> Result<()> {
+pub(crate) fn resize_terminal(terminal: sys::GhosttyTerminal, size: WindowSize) -> Result<()> {
     let result = unsafe {
         sys::ghostty_terminal_resize(
             terminal,
