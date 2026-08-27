@@ -727,9 +727,12 @@ mod tests {
         terminal.feed(b"alpha beta").expect("output must parse");
 
         for (index, time) in [0, SECOND / 4, SECOND / 2].into_iter().enumerate() {
-            terminal
-                .gesture_press(Point::new(0, 2), &timed_press(time))
-                .unwrap_or_else(|error| panic!("press {index} failed: {error}"));
+            assert!(
+                terminal
+                    .gesture_press(Point::new(0, 2), &timed_press(time))
+                    .is_ok(),
+                "press {index} must succeed"
+            );
             terminal
                 .gesture_release(Some(Point::new(0, 2)))
                 .expect("release");

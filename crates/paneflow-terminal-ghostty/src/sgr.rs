@@ -402,9 +402,13 @@ mod tests {
     #[test]
     fn an_unparseable_run_reports_its_parameters() {
         let attributes = parse("38;2");
-        let SgrAttribute::Unknown { full, partial } = &attributes[0] else {
-            panic!("expected an unknown attribute, got {attributes:?}");
-        };
+        let unknown = attributes.iter().find_map(|attribute| match attribute {
+            SgrAttribute::Unknown { full, partial } => Some((full, partial)),
+            _ => None,
+        });
+        let (full, partial) = unknown.unwrap_or_else(|| {
+            unreachable!("an incomplete direct color must parse as unknown: {attributes:?}")
+        });
         assert_eq!(full, &[38, 2]);
         assert!(!partial.is_empty());
     }
