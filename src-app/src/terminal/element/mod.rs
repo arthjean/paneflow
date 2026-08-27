@@ -6,9 +6,9 @@
 use std::sync::{Arc, Mutex};
 
 use gpui::{
-    App, Bounds, ContentMask, Element, ElementId, Font, FontStyle, FontWeight, GlobalElementId,
-    Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, SharedString,
-    StrikethroughStyle, Style, UnderlineStyle, Window, px, relative,
+    App, Bounds, ContentMask, DispatchPhase, Element, ElementId, Font, FontStyle, FontWeight,
+    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseMoveEvent,
+    Pixels, Point, SharedString, StrikethroughStyle, Style, UnderlineStyle, Window, px, relative,
 };
 
 use crate::terminal::TerminalSessionBackend;
@@ -1474,6 +1474,47 @@ impl BatchAccumulator {
 // Element trait implementation
 // ---------------------------------------------------------------------------
 
+impl TerminalElement {
+    /// Keep a selection drag alive once the pointer leaves the pane.
+    ///
+    /// GPUI delivers `on_mouse_move` only while the pointer is over the
+    /// hitbox, so the view's handler goes quiet exactly when the engine most
+    /// needs the position: a pointer held past the edge is what tells it to
+    /// scroll the viewport and keep extending. Positions inside the element
+    /// are left to the view, which already sees them.
+    fn track_drag_beyond_the_pane(
+        &self,
+        bounds: Bounds<Pixels>,
+        origin: Point<Pixels>,
+        cell_width: Pixels,
+        line_height: Pixels,
+        window: &mut Window,
+    ) {
+        let backend = self.backend.clone();
+        window.on_mouse_event(move |event: &MouseMoveEvent, phase, _window, _cx| {
+            if phase != DispatchPhase::Bubble
+                || event.pressed_button != Some(MouseButton::Left)
+                || bounds.contains(&event.position)
+            {
+                return;
+            }
+            // A no-op unless a press is open, so a drag started anywhere else
+            // in the window cannot select in this pane.
+            let geometry = backend.selection_geometry(cell_width.into(), line_height.into());
+            let position = (
+                f32::from(event.position.x - origin.x),
+                f32::from(event.position.y - origin.y),
+            );
+            backend.drag_selection(
+                geometry.cell_at(position),
+                position,
+                geometry,
+                event.modifiers.alt,
+            );
+        });
+    }
+}
+
 impl Element for TerminalElement {
     type RequestLayoutState = ();
     type PrepaintState = Option<LayoutState>;
@@ -1569,6 +1610,8 @@ impl Element for TerminalElement {
             cell_width,
             line_height,
         };
+
+        self.track_drag_beyond_the_pane(bounds, origin, cell_width, line_height, window);
 
         // Resolved and uploaded on the session runtime thread; this is a
         // refcount bump, not a walk of the placement iterator.

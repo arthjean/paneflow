@@ -11,6 +11,19 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   OSC 9;4 progress: a percentage, `working`, `paused`, or `error`. The chip
   clears when the program removes the indicator or the child exits.
 
+- Images render in the terminal. A program that transmits through the Kitty
+  graphics protocol gets its placements painted in the grid, cropped and
+  scaled as it asked, under or over the text according to their z-index.
+  Image storage is capped at 32 MiB per pane.
+
+- A program can raise a desktop notification with OSC 9 or OSC 777. It is
+  suppressed while the window has focus, and the title and body go through the
+  same bidi and zero-width strip an agent question does.
+
+- A pointer drag held past the edge of a pane now scrolls the viewport and
+  keeps extending the selection, instead of stopping at the last visible row.
+  Hold `Alt` while dragging for a rectangular (block) selection.
+
 ### Changed
 
 - The statically linked Ghostty terminal engine is now the only terminal
@@ -33,6 +46,29 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   archive, can no longer be built.
 
 ### Fixed
+
+- A configured `scrollback_lines` is honored. The line budget was passed to the
+  terminal engine but its byte budget was not, so an 80-column pane pruned at
+  roughly a thousand rows whatever the setting said.
+
+- `OSC 4` color queries answer with the active theme. The renderer painted the
+  theme while the engine answered from its own built-in palette, so a program
+  asking what color 1 is got an answer the screen contradicted. Indexed colors
+  written by a program now resolve against the theme too, and follow a theme
+  change.
+
+- An `XTGETTCAP` query for the terminal name answers `xterm-256color` instead
+  of failing, which is what the PTY exports as `TERM`.
+
+- `CSI 0 q` resets the cursor to the configured shape and blink rather than the
+  engine's built-in default.
+
+- Reopening a closed pane restores its scrollback with colors, styling and
+  hyperlinks intact, instead of replaying it as plain text.
+
+- Double-click and triple-click selection, and the cell a drag lands on, are
+  now resolved by the terminal engine: a drag ending past the middle of a cell
+  includes it, as it does in every other terminal.
 
 - The sidebar inline rename accepts keystrokes again, on every platform. Both
   the workspace row and the tab row now host a real text field with a caret,

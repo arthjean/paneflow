@@ -23,8 +23,8 @@ use super::pty_session::{ForegroundSignalMask, SpawnParams};
 use super::service_detector::ServiceOutputTail;
 use super::types::{
     Cell, CellFlags, Color, Content, CursorShape, GridLineText, GridMetrics, HyperlinkSource,
-    HyperlinkZone, Line, Modes, NamedColor, Point, RenderableCursor, Rgb, SelectionKind,
-    SelectionRange, SelectionSide, TerminalWindowSize,
+    HyperlinkZone, Line, Modes, NamedColor, Point, RenderableCursor, Rgb, SelectionGeometry,
+    SelectionKind, SelectionRange, TerminalWindowSize,
 };
 
 // The session is written against exactly two process models: the POSIX one
@@ -47,6 +47,10 @@ const MAX_QUEUED_INPUT_BYTES: usize = NFR_005_MAX_QUEUED_INPUT_BYTES;
 const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
+/// How fast a drag held outside the viewport scrolls it. One line per tick at
+/// this rate is close to what Ghostty itself does, and slow enough that a
+/// pointer parked just past the edge stays readable.
+const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(30);
 const FINAL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(unix)]
 const SHUTDOWN_GRACE: Duration = Duration::from_millis(100);
@@ -248,12 +252,32 @@ struct ResizeCommand {
     clear_initial: bool,
 }
 
+/// One pointer drag, in the terms libghostty extends a selection with: the
+/// cell under the pointer, the exact pixel position inside that cell (which
+/// decides whether the pointer is past the cell's midpoint), and the geometry
+/// that tells a drag it has left the viewport.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DragTarget {
+    point: ghostty::Point,
+    position: (f64, f64),
+    geometry: ghostty::GestureGeometry,
+    rectangle: bool,
+}
+
+/// The pointer gesture in flight.
+///
+/// libghostty owns the anchor, the click granularity and the extension rules;
+/// this only holds what the UI thread cannot hand over synchronously. Drags
+/// are coalesced by generation so a 60 fps pointer cannot flood the control
+/// mailbox.
 #[derive(Default)]
-struct SelectionUpdateState {
+struct GestureUpdateState {
+    /// Granularity the press asked for, kept for the copy filter.
+    kind: Option<SelectionKind>,
     generation: u64,
-    requested: Option<ghostty::SelectionRange>,
-    in_flight: Option<(u64, ghostty::SelectionRange)>,
-    applied: Option<ghostty::SelectionRange>,
+    requested: Option<DragTarget>,
+    in_flight: Option<(u64, DragTarget)>,
+    applied: Option<DragTarget>,
     queued_generation: Option<u64>,
 }
 
@@ -279,8 +303,7 @@ struct SessionInner {
     #[cfg(test)]
     worker_crash_injected: AtomicBool,
     resize: Mutex<ResizeState>,
-    selection_anchor: Mutex<Option<(SelectionKind, Point)>>,
-    selection_update: Mutex<SelectionUpdateState>,
+    gesture: Mutex<GestureUpdateState>,
     marks: SharedMarkRing,
 }
 
@@ -312,9 +335,19 @@ enum RuntimeMessage {
     Resize(ResizeCommand),
     Scroll(ghostty::Scroll),
     ScrollToViewportRow(usize),
-    ApplySelection(u64),
-    SelectWord(ghostty::Point),
-    SelectLine(ghostty::Point),
+    /// Open a pointer selection. The behavior table carries the granularity
+    /// GPUI's click count resolved to.
+    PressSelection {
+        point: ghostty::Point,
+        behavior: ghostty::GestureBehavior,
+        position: (f64, f64),
+    },
+    /// Apply the coalesced drag stored under this generation. The payload
+    /// lives in `gesture` so a stale message can be dropped on arrival.
+    DragSelection(u64),
+    ReleaseSelection {
+        point: Option<ghostty::Point>,
+    },
     ClearSelection,
     ClearScrollback,
     UpdateAppearance(ghostty::TerminalAppearance),
@@ -1074,8 +1107,7 @@ impl GhosttySession {
                     applied: Some(size),
                     clear_initial_requested: false,
                 }),
-                selection_anchor: Mutex::new(None),
-                selection_update: Mutex::new(SelectionUpdateState::default()),
+                gesture: Mutex::new(GestureUpdateState::default()),
                 marks: Arc::new(Mutex::new(Default::default())),
             }),
         };
@@ -1321,12 +1353,8 @@ impl GhosttySession {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.submit_requested_resize(&mut resize);
         }
-        let mut selection = self
-            .inner
-            .selection_update
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.submit_requested_selection(&mut selection);
+        let mut gesture = self.lock_gesture();
+        self.submit_requested_drag(&mut gesture);
     }
 
     fn submit_requested_resize(&self, resize: &mut ResizeState) {
@@ -1362,76 +1390,42 @@ impl GhosttySession {
         }
     }
 
-    fn begin_selection(&self, range: ghostty::SelectionRange) {
-        let mut selection = self
-            .inner
-            .selection_update
+    fn lock_gesture(&self) -> std::sync::MutexGuard<'_, GestureUpdateState> {
+        self.inner
+            .gesture
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        selection.generation = selection.generation.wrapping_add(1);
-        selection.requested = Some(range);
-        selection.in_flight = None;
-        selection.applied = None;
-        selection.queued_generation = None;
-        self.submit_requested_selection(&mut selection);
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    fn queue_selection(&self, range: ghostty::SelectionRange) {
-        let mut selection = self
-            .inner
-            .selection_update
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if selection.requested.as_ref() == Some(&range)
-            || (selection.requested.is_none()
-                && selection
-                    .in_flight
-                    .as_ref()
-                    .is_some_and(|(generation, pending)| {
-                        *generation == selection.generation && pending == &range
-                    }))
-            || (selection.requested.is_none()
-                && selection.in_flight.is_none()
-                && selection.applied.as_ref() == Some(&range))
-        {
+    /// Hand the pending drag to the runtime thread, unless one is already
+    /// queued for this generation.
+    fn submit_requested_drag(&self, gesture: &mut GestureUpdateState) {
+        if gesture.queued_generation == Some(gesture.generation) || gesture.requested.is_none() {
             return;
         }
-        selection.requested = Some(range);
-        self.submit_requested_selection(&mut selection);
-    }
-
-    fn submit_requested_selection(&self, selection: &mut SelectionUpdateState) {
-        if selection.queued_generation == Some(selection.generation)
-            || selection.requested.is_none()
-        {
-            return;
-        }
-        let generation = selection.generation;
+        let generation = gesture.generation;
         match self
             .inner
             .mailbox
-            .try_send_control(RuntimeMessage::ApplySelection(generation))
+            .try_send_control(RuntimeMessage::DragSelection(generation))
         {
-            Ok(()) => selection.queued_generation = Some(generation),
+            Ok(()) => gesture.queued_generation = Some(generation),
             Err(TrySendError::Full(_)) => self
                 .inner
                 .command_backpressure
                 .store(true, Ordering::Release),
-            Err(TrySendError::Disconnected(_)) => selection.requested = None,
+            Err(TrySendError::Disconnected(_)) => gesture.requested = None,
         }
     }
 
-    fn invalidate_selection_updates(&self) {
-        let mut selection = self
-            .inner
-            .selection_update
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        selection.generation = selection.generation.wrapping_add(1);
-        selection.requested = None;
-        selection.in_flight = None;
-        selection.applied = None;
-        selection.queued_generation = None;
+    /// Drop every drag in flight and start a new generation, so a stale
+    /// `DragSelection` cannot land on top of what comes next.
+    fn invalidate_gesture(&self, gesture: &mut GestureUpdateState) {
+        gesture.generation = gesture.generation.wrapping_add(1);
+        gesture.requested = None;
+        gesture.in_flight = None;
+        gesture.applied = None;
+        gesture.queued_generation = None;
     }
 
     pub(super) fn render_content(
@@ -1505,55 +1499,88 @@ impl GhosttySession {
             .is_ok()
     }
 
-    pub(super) fn start_selection(&self, kind: SelectionKind, point: Point) {
-        *self
-            .inner
-            .selection_anchor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((kind, point));
-        let point = ghostty_point(point);
-        match kind {
-            SelectionKind::Simple => self.begin_selection(ghostty::SelectionRange {
-                start: point,
-                end: point,
-                rectangle: false,
-            }),
-            SelectionKind::Semantic => {
-                self.invalidate_selection_updates();
-                let _ = self
-                    .inner
-                    .mailbox
-                    .try_send_control(RuntimeMessage::SelectWord(point));
-            }
-            SelectionKind::Lines => {
-                self.invalidate_selection_updates();
-                let _ = self
-                    .inner
-                    .mailbox
-                    .try_send_control(RuntimeMessage::SelectLine(point));
-            }
+    /// Press at `point`, opening a pointer selection at `kind` granularity.
+    ///
+    /// libghostty can derive the click count itself from event times, but
+    /// Paneflow copies and clears on every mouse-up, so no click sequence ever
+    /// survives long enough for it to. GPUI has already applied the platform's
+    /// double-click settings, so the count it resolved is handed over as a
+    /// one-shot behavior table instead.
+    ///
+    /// `position` is the pointer in pane-relative pixels: it is what lets the
+    /// engine decide which half of the cell was hit.
+    pub(super) fn press_selection(&self, kind: SelectionKind, point: Point, position: (f32, f32)) {
+        {
+            let mut gesture = self.lock_gesture();
+            self.invalidate_gesture(&mut gesture);
+            gesture.kind = Some(kind);
         }
+        let _ = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::PressSelection {
+                point: ghostty_point(point),
+                behavior: gesture_behavior(kind),
+                position: pixel_position(position),
+            });
     }
 
-    pub(super) fn update_selection(&self, point: Point, _side: SelectionSide) -> Option<String> {
-        let anchor = *self
-            .inner
-            .selection_anchor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let (kind, start) = anchor?;
-        let range = ghostty::SelectionRange {
-            start: ghostty_point(start),
-            end: ghostty_point(point),
-            rectangle: false,
+    /// Extend the pressed selection to `point`.
+    ///
+    /// Nothing is computed here: the anchor, the granularity and the extension
+    /// rules all live in libghostty. The drag is only coalesced, because the
+    /// pointer produces one of these per frame and the runtime thread is the
+    /// one that has to apply them.
+    pub(super) fn drag_selection(
+        &self,
+        point: Point,
+        position: (f32, f32),
+        geometry: SelectionGeometry,
+        rectangle: bool,
+    ) {
+        let Some(geometry) = gesture_geometry(geometry) else {
+            return;
         };
-        if matches!(kind, SelectionKind::Simple) {
-            self.queue_selection(range);
+        let target = DragTarget {
+            point: ghostty_point(point),
+            position: pixel_position(position),
+            geometry,
+            rectangle,
+        };
+        let mut gesture = self.lock_gesture();
+        if gesture.kind.is_none() {
+            // No press is open: a bare hover is not a drag.
+            return;
         }
-        // Formatting the selection here would block GPUI on the runtime thread
-        // for every pointer event. Ghostty updates PRIMARY when the gesture is
-        // committed, which Paneflow already does in `finish_selection`.
-        None
+        if gesture.requested == Some(target)
+            || (gesture.requested.is_none()
+                && gesture.in_flight.is_some_and(|(generation, pending)| {
+                    generation == gesture.generation && pending == target
+                }))
+            || (gesture.requested.is_none()
+                && gesture.in_flight.is_none()
+                && gesture.applied == Some(target))
+        {
+            return;
+        }
+        gesture.requested = Some(target);
+        self.submit_requested_drag(&mut gesture);
+    }
+
+    /// Report the pointer coming back up, closing the drag.
+    ///
+    /// `point` is `None` when the release landed outside any cell, which is
+    /// what libghostty wants to hear rather than a clamped guess.
+    pub(super) fn release_selection(&self, point: Option<Point>) {
+        if self.lock_gesture().kind.is_none() {
+            return;
+        }
+        let _ = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::ReleaseSelection {
+                point: point.map(ghostty_point),
+            });
     }
 
     pub(super) fn selection_text(&self) -> Option<String> {
@@ -1561,13 +1588,7 @@ impl GhosttySession {
             .request(RuntimeMessage::SelectionText)
             .and_then(Result::ok)
             .flatten();
-        let kind = self
-            .inner
-            .selection_anchor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .map(|(kind, _)| *kind);
+        let kind = self.lock_gesture().kind;
         filter_copyable_selection_text(kind, self.selection_range(), text)
     }
 
@@ -1581,12 +1602,11 @@ impl GhosttySession {
     }
 
     pub(super) fn clear_selection(&self) {
-        *self
-            .inner
-            .selection_anchor
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        self.invalidate_selection_updates();
+        {
+            let mut gesture = self.lock_gesture();
+            self.invalidate_gesture(&mut gesture);
+            gesture.kind = None;
+        }
         let _ = self
             .inner
             .mailbox
@@ -2112,8 +2132,10 @@ fn run_runtime(
     #[cfg(target_os = "windows")]
     let mut child_wait_failure_reported = false;
     let mut runtime_failed = false;
+    let mut last_autoscroll = Instant::now();
 
     loop {
+        advance_selection_autoscroll(&inner, &mut terminal, &mut last_autoscroll);
         if inner.shutdown_sent.load(Ordering::Acquire) {
             #[cfg(unix)]
             {
@@ -2569,106 +2591,107 @@ fn handle_terminal_command(
                 );
             }
         }
-        RuntimeMessage::ApplySelection(generation) => {
-            let range = {
-                let mut selection = inner
-                    .selection_update
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if selection.queued_generation == Some(generation) {
-                    selection.queued_generation = None;
+        RuntimeMessage::PressSelection {
+            point,
+            behavior,
+            position,
+        } => {
+            let options = ghostty::PressOptions {
+                position: Some(position),
+                behaviors: Some(ghostty::GestureBehaviors {
+                    single_click: behavior,
+                    ..ghostty::GestureBehaviors::default()
+                }),
+                ..ghostty::PressOptions::default()
+            };
+            match terminal.gesture_press(point, &options) {
+                Ok(range) => publish_gesture_selection(inner, range),
+                Err(error) => log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty selection press failed: {error}"
+                ),
+            }
+        }
+        RuntimeMessage::DragSelection(generation) => {
+            let target = {
+                let mut gesture = lock_gesture(inner);
+                if gesture.queued_generation == Some(generation) {
+                    gesture.queued_generation = None;
                 }
-                if selection.generation != generation {
+                if gesture.generation != generation {
                     None
                 } else {
-                    let range = selection.requested.take();
-                    selection.in_flight = range.as_ref().map(|range| (generation, range.clone()));
-                    range
+                    let target = gesture.requested.take();
+                    gesture.in_flight = target.map(|target| (generation, target));
+                    target
                 }
             };
-            if let Some(range) = range {
-                let shared_range = selection_range_from_ghostty(range.clone());
-                match terminal.set_selection(range.clone()) {
-                    Ok(()) => {
-                        let mut selection = inner
-                            .selection_update
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if selection.in_flight.as_ref().is_some_and(
-                            |(pending_generation, pending)| {
-                                *pending_generation == generation && pending == &range
-                            },
-                        ) {
-                            selection.in_flight = None;
-                        }
-                        let publish = selection.generation == generation;
+            if let Some(target) = target {
+                let options = ghostty::DragOptions {
+                    position: Some(target.position),
+                    rectangle: target.rectangle,
+                    word_boundaries: Vec::new(),
+                };
+                let result = terminal.gesture_drag(target.point, target.geometry, &options);
+                let mut gesture = lock_gesture(inner);
+                if gesture
+                    .in_flight
+                    .is_some_and(|(pending, applied)| pending == generation && applied == target)
+                {
+                    gesture.in_flight = None;
+                }
+                let publish = gesture.generation == generation;
+                if publish && result.is_ok() {
+                    gesture.applied = Some(target);
+                }
+                drop(gesture);
+                match result {
+                    Ok(range) => {
                         if publish {
-                            selection.applied = Some(range);
-                        }
-                        drop(selection);
-                        if publish {
-                            update_shared_selection(inner, Some(shared_range));
+                            publish_gesture_selection(inner, range);
                         }
                     }
-                    Err(error) => {
-                        let mut selection = inner
-                            .selection_update
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        if selection.in_flight.as_ref().is_some_and(
-                            |(pending_generation, pending)| {
-                                *pending_generation == generation && pending == &range
-                            },
-                        ) {
-                            selection.in_flight = None;
-                        }
-                        drop(selection);
-                        log::warn!(
-                            target: "paneflow::terminal::ghostty",
-                            "Ghostty selection update failed: {error}"
-                        );
-                    }
+                    Err(error) => log::warn!(
+                        target: "paneflow::terminal::ghostty",
+                        "Ghostty selection drag failed: {error}"
+                    ),
                 }
             }
         }
-        RuntimeMessage::SelectWord(point) => {
-            let _ = terminal.select_word(point);
-            let mut selection = inner
-                .selection_update
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            selection.in_flight = None;
-            selection.applied = None;
-            drop(selection);
-            let _ = refresh_shared_state(inner, terminal);
-        }
-        RuntimeMessage::SelectLine(point) => {
-            let _ = terminal.select_line(point);
-            let mut selection = inner
-                .selection_update
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            selection.in_flight = None;
-            selection.applied = None;
-            drop(selection);
-            let _ = refresh_shared_state(inner, terminal);
-        }
-        RuntimeMessage::ClearSelection => match terminal.clear_selection() {
-            Ok(()) => {
-                let mut selection = inner
-                    .selection_update
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                selection.in_flight = None;
-                selection.applied = None;
-                drop(selection);
-                update_shared_selection(inner, None);
+        RuntimeMessage::ReleaseSelection { point } => {
+            // A release never yields a selection, so nothing is published: it
+            // only closes the drag so the next tick stops autoscrolling.
+            if let Err(error) = terminal.gesture_release(point) {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty selection release failed: {error}"
+                );
             }
-            Err(error) => log::warn!(
-                target: "paneflow::terminal::ghostty",
-                "Ghostty selection clear failed: {error}"
-            ),
-        },
+            let mut gesture = lock_gesture(inner);
+            gesture.in_flight = None;
+            gesture.applied = None;
+        }
+        RuntimeMessage::ClearSelection => {
+            if let Err(error) = terminal.gesture_reset() {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty selection gesture reset failed: {error}"
+                );
+            }
+            match terminal.clear_selection() {
+                Ok(()) => {
+                    let mut gesture = lock_gesture(inner);
+                    gesture.in_flight = None;
+                    gesture.applied = None;
+                    drop(gesture);
+                    update_shared_selection(inner, None);
+                }
+                Err(error) => log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty selection clear failed: {error}"
+                ),
+            }
+        }
         RuntimeMessage::ClearScrollback => {
             if let Err(error) = terminal.clear_screen_and_scrollback() {
                 log::warn!(
@@ -3675,6 +3698,122 @@ fn window_size(size: TerminalWindowSize) -> ghostty::Result<ghostty::WindowSize>
     )
 }
 
+/// Scroll the viewport while a drag is held outside it, and extend the
+/// selection to match.
+///
+/// libghostty decides whether a drag wants an autoscroll and which way, from
+/// the pointer position and grid geometry the last drag carried. Acting on it
+/// needs the terminal, so it happens here: the runtime loop already wakes
+/// every 10 ms, which saves a timer of its own.
+fn advance_selection_autoscroll(
+    inner: &Arc<SessionInner>,
+    terminal: &mut ghostty::DisplayTerminal,
+    last_tick: &mut Instant,
+) {
+    // `applied` is only set while a drag is live, so this costs one atomic
+    // load per idle tick.
+    let Some(target) = lock_gesture(inner).applied else {
+        return;
+    };
+    if last_tick.elapsed() < SELECTION_AUTOSCROLL_INTERVAL {
+        return;
+    }
+    // Stamped before the direction is known, so a drag held inside the
+    // viewport costs one state read per interval rather than one per wake.
+    *last_tick = Instant::now();
+    let state = match terminal.gesture_state() {
+        Ok(state) => state,
+        Err(error) => {
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "Ghostty gesture state read failed: {error}"
+            );
+            return;
+        }
+    };
+    let (delta, viewport_row) = match state.autoscroll {
+        ghostty::GestureAutoscroll::None => return,
+        // `Scroll::Delta` counts up into history, and the pointer lands on the
+        // row that just came into view.
+        ghostty::GestureAutoscroll::Up => (1, 0),
+        ghostty::GestureAutoscroll::Down => (
+            -1,
+            i32::try_from(inner.state.read().metrics.screen_lines.saturating_sub(1))
+                .unwrap_or(i32::MAX),
+        ),
+    };
+    terminal.scroll(ghostty::Scroll::Delta(delta));
+    let options = ghostty::DragOptions {
+        position: Some(target.position),
+        rectangle: target.rectangle,
+        word_boundaries: Vec::new(),
+    };
+    let viewport = ghostty::Point::new(viewport_row, target.point.column);
+    match terminal.gesture_autoscroll_tick(viewport, target.geometry, &options) {
+        // The viewport moved, so the whole grid has to be republished, not
+        // just the selection.
+        Ok(_) => {
+            if let Err(error) = refresh_shared_state(inner, terminal) {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty selection autoscroll refresh failed: {error}"
+                );
+            }
+        }
+        Err(error) => log::warn!(
+            target: "paneflow::terminal::ghostty",
+            "Ghostty selection autoscroll failed: {error}"
+        ),
+    }
+}
+
+fn lock_gesture(inner: &SessionInner) -> std::sync::MutexGuard<'_, GestureUpdateState> {
+    inner
+        .gesture
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Mirror what a gesture just selected into the shared state the renderer
+/// reads. `None` is a gesture that produced no selection, which clears it.
+fn publish_gesture_selection(inner: &SessionInner, range: Option<ghostty::SelectionRange>) {
+    update_shared_selection(inner, range.map(selection_range_from_ghostty));
+}
+
+fn gesture_behavior(kind: SelectionKind) -> ghostty::GestureBehavior {
+    match kind {
+        SelectionKind::Simple => ghostty::GestureBehavior::Cell,
+        SelectionKind::Semantic => ghostty::GestureBehavior::Word,
+        SelectionKind::Lines => ghostty::GestureBehavior::Line,
+    }
+}
+
+/// Convert the pane geometry into the shape libghostty reads drags against.
+///
+/// Returns `None` for a pane that has not been laid out yet: libghostty
+/// requires non-zero columns, cell width and height, and a drag on a
+/// zero-sized grid has nothing to select anyway.
+fn gesture_geometry(geometry: SelectionGeometry) -> Option<ghostty::GestureGeometry> {
+    let columns = u32::try_from(geometry.columns).ok()?;
+    let cell_width = geometry.cell_width.max(0.0).round() as u32;
+    let height = geometry.height().max(0.0).round() as u32;
+    if columns == 0 || cell_width == 0 || height == 0 {
+        return None;
+    }
+    Some(ghostty::GestureGeometry {
+        columns,
+        cell_width,
+        // Paneflow measures pointer positions from the grid's own top-left
+        // corner, so the padding libghostty would subtract is already gone.
+        padding_left: 0,
+        screen_height: height,
+    })
+}
+
+fn pixel_position(position: (f32, f32)) -> (f64, f64) {
+    (f64::from(position.0), f64::from(position.1))
+}
+
 fn ghostty_point(point: Point) -> ghostty::Point {
     ghostty::Point::new(point.line.0, point.column.0)
 }
@@ -4399,39 +4538,89 @@ mod tests {
     fn selection_drag_updates_are_coalesced_without_text_requests() {
         let (session, pending, _events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
-        session.start_selection(SelectionKind::Simple, Point::new(2, 3));
+        let geometry = SelectionGeometry {
+            columns: 80,
+            screen_lines: 24,
+            display_offset: 0,
+            cell_width: 8.0,
+            line_height: 16.0,
+        };
+        session.press_selection(SelectionKind::Simple, Point::new(2, 3), (24.0, 32.0));
         for column in 4..80 {
-            assert_eq!(
-                session.update_selection(Point::new(2, column), SelectionSide::Right),
-                None
+            session.drag_selection(
+                Point::new(2, column),
+                (column as f32 * 8.0, 32.0),
+                geometry,
+                false,
             );
         }
 
+        // One press and one drag: 76 pointer frames collapse into a single
+        // queued drag because the runtime thread has not consumed it yet.
         let queued = pending.mailbox.drain();
-        assert_eq!(queued.len(), 1);
-        assert!(matches!(queued[0], RuntimeMessage::ApplySelection(_)));
-        let selection = session
-            .inner
-            .selection_update
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        assert_eq!(selection.queued_generation, Some(selection.generation));
-        assert_eq!(
-            selection.requested,
-            Some(ghostty::SelectionRange {
-                start: ghostty::Point::new(2, 3),
-                end: ghostty::Point::new(2, 79),
-                rectangle: false,
-            })
-        );
-        drop(selection);
+        assert_eq!(queued.len(), 2);
+        assert!(matches!(queued[0], RuntimeMessage::PressSelection { .. }));
+        assert!(matches!(queued[1], RuntimeMessage::DragSelection(_)));
+        let gesture = session.lock_gesture();
+        assert_eq!(gesture.queued_generation, Some(gesture.generation));
+        assert_eq!(gesture.kind, Some(SelectionKind::Simple));
+        let requested = gesture.requested.expect("the last drag is pending");
+        assert_eq!(requested.point, ghostty::Point::new(2, 79));
+        assert_eq!(requested.position, (79.0 * 8.0, 32.0));
+        assert!(!requested.rectangle);
+        drop(gesture);
 
         session.clear_selection();
-        session.start_selection(SelectionKind::Simple, Point::new(2, 3));
+        session.press_selection(SelectionKind::Simple, Point::new(2, 3), (24.0, 32.0));
         let queued = pending.mailbox.drain();
         assert_eq!(queued.len(), 2);
         assert!(matches!(queued[0], RuntimeMessage::ClearSelection));
-        assert!(matches!(queued[1], RuntimeMessage::ApplySelection(_)));
+        assert!(matches!(queued[1], RuntimeMessage::PressSelection { .. }));
+    }
+
+    #[test]
+    fn a_drag_without_a_press_is_not_a_selection() {
+        let (session, pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        session.drag_selection(
+            Point::new(2, 4),
+            (32.0, 32.0),
+            SelectionGeometry {
+                columns: 80,
+                screen_lines: 24,
+                display_offset: 0,
+                cell_width: 8.0,
+                line_height: 16.0,
+            },
+            false,
+        );
+        session.release_selection(Some(Point::new(2, 4)));
+        assert!(pending.mailbox.drain().is_empty());
+    }
+
+    #[test]
+    fn a_pane_with_no_layout_yet_has_no_drag_geometry() {
+        assert!(
+            gesture_geometry(SelectionGeometry {
+                columns: 80,
+                screen_lines: 24,
+                display_offset: 0,
+                cell_width: 0.0,
+                line_height: 16.0,
+            })
+            .is_none()
+        );
+        let geometry = gesture_geometry(SelectionGeometry {
+            columns: 80,
+            screen_lines: 24,
+            display_offset: 0,
+            cell_width: 8.4,
+            line_height: 15.98,
+        })
+        .expect("a laid-out pane has geometry");
+        assert_eq!(geometry.cell_width, 8);
+        assert_eq!(geometry.screen_height, 384);
+        assert_eq!(geometry.padding_left, 0);
     }
 
     #[test]
