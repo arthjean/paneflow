@@ -867,10 +867,19 @@ struct PaneFlowApp {
     active_idx: usize,
     renaming_idx: Option<usize>,
     /// US-010: sidebar tab being renamed inline, as `(workspace_idx, tab_idx)`.
-    /// Shares `rename_text` with the workspace rename - only one inline rename
+    /// Shares `rename_input` with the workspace rename - only one inline rename
     /// can be live at a time, and `commit_rename` settles whichever is.
     renaming_tab: Option<(usize, usize)>,
-    rename_text: String,
+    /// Issue #32: the inline rename box is a real `TextInput`, not a text
+    /// mirror fed by the row's `on_key_down`. GPUI dispatches key events along
+    /// the focus path only, and a sidebar row owns no focus handle, so the old
+    /// mirror never saw a keystroke on any platform.
+    rename_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    /// Whether `rename_input` held the focus as of the last frame. `render`
+    /// compares it against the live rename state to focus the field when an
+    /// edit opens, commit when focus leaves it, and hand focus back to the
+    /// active pane when the edit ends.
+    rename_focus_live: bool,
     /// Shared slot for config changes from the background `ConfigWatcher` thread.
     /// The watcher writes `Some(config)` on every successful reload; the main
     /// thread `take()`s it in the 50ms poll loop to apply keybindings + theme.
@@ -1476,6 +1485,28 @@ impl Render for PaneFlowApp {
         // and drop one whose slot left the screen since the last frame.
         if std::mem::take(&mut self.pending_palette_focus) {
             window.focus(&self.pane_palette_focus, cx);
+        }
+        // Issue #32: focus routing for the sidebar inline rename. The field
+        // only receives keys while it holds the focus, and the pane only gets
+        // its keys back once the edit is over, so both transitions are driven
+        // here rather than from the row listeners (which have no `Window`).
+        let rename_focus = self.rename_input.read(cx).focus_handle.clone();
+        let rename_live = self.renaming_idx.is_some() || self.renaming_tab.is_some();
+        if rename_live != self.rename_focus_live {
+            self.rename_focus_live = rename_live;
+            if rename_live {
+                window.focus(&rename_focus, cx);
+            } else if rename_focus.is_focused(window)
+                && let Some(ws) = self.workspaces.get(self.active_idx)
+            {
+                ws.focus_first(window, cx);
+            }
+        } else if rename_live && !rename_focus.is_focused(window) {
+            // Focus moved elsewhere while an edit was live: commit it instead
+            // of leaving an orphan box behind, and leave the focus where the
+            // click put it.
+            self.commit_rename(cx);
+            self.rename_focus_live = false;
         }
         self.prune_stale_split_palette(cx);
         let main_content = if self.settings_section.is_some() {

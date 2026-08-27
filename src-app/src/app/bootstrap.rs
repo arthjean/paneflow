@@ -752,6 +752,12 @@ impl PaneFlowApp {
         cx.observe(&workspace_pane_prompt_input, |_, _, cx| cx.notify())
             .detach();
 
+        // Issue #32: the sidebar inline rename shares one field between the
+        // workspace rows and the tab rows, mirroring the single `renaming_idx`
+        // / `renaming_tab` pair - only one rename can be live at a time.
+        let rename_input = cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Name", cx));
+        cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
+
         let cached_config = paneflow_config::loader::load_config();
         let effective_shortcuts = keybindings::effective_shortcuts(&cached_config.shortcuts);
         let theme_mode = crate::ThemeMode::from_config(
@@ -764,7 +770,8 @@ impl PaneFlowApp {
             active_idx,
             renaming_idx: None,
             renaming_tab: None,
-            rename_text: String::new(),
+            rename_input,
+            rename_focus_live: false,
             pending_config,
             save_seq: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
             // US-014: hydrate the render-path config cache once at startup.

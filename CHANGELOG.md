@@ -27,6 +27,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   decoded by libghostty itself instead of a Paneflow-side router; clipboard
   writes keep the same 100 KiB budget.
 
+### Fixed
+
+- The sidebar inline rename accepts keystrokes again, on every platform. Both
+  the workspace row and the tab row now host a real text field with a caret,
+  selection, IME and clipboard, focused when the rename opens: it commits on
+  `Enter` or when the focus leaves it, cancels on `Escape`, and hands the focus
+  back to the active pane. Refs #32.
+
 ## [0.9.0] - 2026-08-26
 
 ### Added
