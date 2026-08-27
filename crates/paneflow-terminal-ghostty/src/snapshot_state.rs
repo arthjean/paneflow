@@ -1,16 +1,38 @@
+use paneflow_libghostty_sys as sys;
+
+use crate::batch::{Slot, get_multi};
 use crate::engine::DisplayTerminal;
 use crate::snapshot_ffi::{
-    RenderCols, RenderCursorBlinking, RenderCursorViewportHasValue, RenderCursorViewportWideTail,
+    RenderCursorBlinking, RenderCursorViewportHasValue, RenderCursorViewportWideTail,
     RenderCursorViewportX, RenderCursorViewportY, RenderCursorVisible, RenderCursorVisualStyle,
-    RenderRows, TerminalCursorX, TerminalCursorY, cursor_shape, render_get, terminal_get,
+    TerminalCursorX, TerminalCursorY, cursor_shape, render_get, terminal_get,
     terminal_selection_rectangle,
 };
 use crate::{Cursor, GhosttyError, Point, Result};
 
 impl DisplayTerminal {
     pub(crate) fn render_dimensions(&self) -> Result<(usize, usize)> {
-        let cols = render_get::<RenderCols>(self.render_state.raw())?;
-        let rows = render_get::<RenderRows>(self.render_state.raw())?;
+        let mut cols = 0u16;
+        let mut rows = 0u16;
+        // SAFETY: both destinations are the `uint16_t` render.h documents for
+        // these keys, and both outlive the call.
+        unsafe {
+            get_multi(
+                "render_state_get_multi",
+                self.render_state.raw(),
+                sys::ghostty_render_state_get_multi,
+                [
+                    Slot::new(
+                        sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_COLS,
+                        &mut cols,
+                    ),
+                    Slot::new(
+                        sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_ROWS,
+                        &mut rows,
+                    ),
+                ],
+            )?;
+        }
         if cols == 0 || rows == 0 {
             return Err(GhosttyError::AbiMismatch(format!(
                 "render state reported invalid dimensions {cols}x{rows}"

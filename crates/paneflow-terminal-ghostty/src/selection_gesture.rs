@@ -565,7 +565,7 @@ impl DisplayTerminal {
             get_multi_gesture(
                 gesture,
                 self.terminal.raw(),
-                &[
+                [
                     Slot::new(
                         s::GhosttySelectionGestureData_GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT,
                         &mut click_count,
@@ -623,10 +623,10 @@ impl DisplayTerminal {
 ///
 /// Both handles must be live and every slot must satisfy [`Slot::new`]'s
 /// contract.
-unsafe fn get_multi_gesture(
+unsafe fn get_multi_gesture<const N: usize>(
     gesture: sys::GhosttySelectionGesture,
     terminal: sys::GhosttyTerminal,
-    slots: &[Slot<sys::GhosttySelectionGestureData>],
+    slots: [Slot<sys::GhosttySelectionGestureData>; N],
 ) -> Result<()> {
     // Thread-local rather than a parameter: the shim below is a plain `fn`
     // pointer, so the terminal has to reach it out of band. Gestures are

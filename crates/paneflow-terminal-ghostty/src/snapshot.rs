@@ -31,10 +31,19 @@ impl SnapshotCache {
 
 impl DisplayTerminal {
     pub fn snapshot(&mut self) -> Result<Content> {
+        // Split into its two phases rather than calling
+        // `ghostty_render_state_update`: only the begin phase touches the
+        // terminal, so a future caller that shares the terminal with an IO
+        // thread can hold its lock across that call alone.
+        // SAFETY: both handles are owned by `self`.
         let result = unsafe {
-            sys::ghostty_render_state_update(self.render_state.raw(), self.terminal.raw())
+            sys::ghostty_render_state_begin_update(self.render_state.raw(), self.terminal.raw())
         };
-        check("render_state_update", result)?;
+        check("render_state_begin_update", result)?;
+        // SAFETY: the render state is owned by `self` and a begin phase just
+        // completed.
+        let result = unsafe { sys::ghostty_render_state_end_update(self.render_state.raw()) };
+        check("render_state_end_update", result)?;
         let (history_size, display_offset) = self.scrollbar_position()?;
         let display_offset_i32 = i32::try_from(display_offset)
             .map_err(|_| crate::GhosttyError::AbiMismatch("display offset overflow".into()))?;
@@ -71,7 +80,16 @@ impl DisplayTerminal {
                 "render state was clean before the snapshot cache was initialized".into(),
             ));
         }
-        self.clear_render_dirty()?;
+        if full_refresh {
+            // The whole frame was rebuilt, so consume every dirty bit at
+            // once. A partial pass cleared its rows as it went and only the
+            // global flag is left.
+            // SAFETY: the render state is owned by `self`.
+            let result = unsafe { sys::ghostty_render_state_clean(self.render_state.raw()) };
+            check("render_state_clean", result)?;
+        } else {
+            self.clear_render_dirty()?;
+        }
 
         let cells = self.snapshot_cache.cells.clone();
         let selection = self
@@ -200,13 +218,18 @@ impl DisplayTerminal {
                 }
             }
 
-            if full_refresh || row.dirty {
+            // A full refresh clears everything in one call after the loop
+            // through `ghostty_render_state_clean`; a partial pass has to
+            // clear the rows it actually consumed, one at a time.
+            if !full_refresh && row.dirty {
                 let clean = false;
+                // SAFETY: the option takes a `bool*` that outlives the call
+                // and `iterator` is positioned on a live row.
                 let result = unsafe {
                     sys::ghostty_render_state_row_set(
                         iterator,
                         sys::GhosttyRenderStateRowOption_GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY,
-                        (&clean as *const bool).cast(),
+                        (&raw const clean).cast(),
                     )
                 };
                 check("render_state_row_set", result)?;

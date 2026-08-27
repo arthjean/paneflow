@@ -1,5 +1,6 @@
 use paneflow_libghostty_sys as sys;
 
+use crate::batch::{Slot, get_multi};
 use crate::handles::check;
 use crate::{GhosttyError, Result, Rgb, UnderlineStyle, WideCell};
 
@@ -54,8 +55,6 @@ terminal_fields! {
 }
 
 render_fields! {
-    RenderCols: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_COLS,
-    RenderRows: u16 = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_ROWS,
     RenderDirty: sys::GhosttyRenderStateDirty = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_DIRTY,
     RenderCursorVisible: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
     RenderCursorBlinking: bool = sys::GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
@@ -262,24 +261,29 @@ pub(crate) fn render_row_data(
     cells: sys::GhosttyRenderStateRowCells,
 ) -> Result<RenderRowData> {
     let mut dirty = false;
-    let result = unsafe {
-        sys::ghostty_render_state_row_get(
-            iterator,
-            sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
-            (&mut dirty as *mut bool).cast(),
-        )
-    };
-    check("render_state_row_get_dirty", result)?;
-
     let mut cells = cells;
-    let result = unsafe {
-        sys::ghostty_render_state_row_get(
+    // One call for the two fields every row needs. The selection is read
+    // separately below because it reports `NO_VALUE` on an unselected row,
+    // which would abort the whole batch.
+    // SAFETY: both destinations match the output types render.h documents
+    // for their keys, and both outlive the call.
+    unsafe {
+        get_multi(
+            "render_state_row_get_multi",
             iterator,
-            sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
-            (&mut cells as *mut sys::GhosttyRenderStateRowCells).cast(),
-        )
-    };
-    check("render_state_row_get_cells", result)?;
+            sys::ghostty_render_state_row_get_multi,
+            [
+                Slot::new(
+                    sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
+                    &mut dirty,
+                ),
+                Slot::new(
+                    sys::GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS,
+                    &mut cells,
+                ),
+            ],
+        )?;
+    }
 
     let mut selection: sys::GhosttyRenderStateRowSelection = unsafe { std::mem::zeroed() };
     selection.size = std::mem::size_of::<sys::GhosttyRenderStateRowSelection>();
@@ -304,59 +308,65 @@ pub(crate) fn render_row_data(
 }
 
 pub(crate) fn render_cell_data(cells: sys::GhosttyRenderStateRowCells) -> Result<RenderCellData> {
+    // SAFETY: `GhosttyStyle` is plain-old-data whose zeroed form is valid;
+    // `size` is set immediately after.
     let mut style: sys::GhosttyStyle = unsafe { std::mem::zeroed() };
     style.size = std::mem::size_of::<sys::GhosttyStyle>();
-    let mut raw = 0u64;
-    let result = unsafe {
-        sys::ghostty_render_state_row_cells_get(
+    let mut raw: sys::GhosttyCell = 0;
+    // This runs once per cell per frame, so the two reads are batched into
+    // one crossing.
+    // SAFETY: both destinations match the output types render.h documents
+    // for their keys, and both outlive the call.
+    unsafe {
+        get_multi(
+            "render_state_row_cells_get_multi",
             cells,
-            sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
-            (&mut raw as *mut sys::GhosttyCell).cast(),
-        )
-    };
-    check("render_state_row_cells_get_raw", result)?;
-    let result = unsafe {
-        sys::ghostty_render_state_row_cells_get(
-            cells,
-            sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
-            (&mut style as *mut sys::GhosttyStyle).cast(),
-        )
-    };
-    check("render_state_row_cells_get_style", result)?;
+            sys::ghostty_render_state_row_cells_get_multi,
+            [
+                Slot::new(
+                    sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
+                    &mut raw,
+                ),
+                Slot::new(
+                    sys::GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
+                    &mut style,
+                ),
+            ],
+        )?;
+    }
     Ok(RenderCellData { raw, style })
 }
 
 pub(crate) fn raw_cell_data(cell: sys::GhosttyCell) -> Result<RawCellData> {
     let mut codepoint = 0u32;
-    let result = unsafe {
-        sys::ghostty_cell_get(
-            cell,
-            sys::GhosttyCellData_GHOSTTY_CELL_DATA_CODEPOINT,
-            (&mut codepoint as *mut u32).cast(),
-        )
-    };
-    check("cell_get_codepoint", result)?;
-
-    let wide = raw_cell_wide(cell)?;
+    let mut wide = sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW;
     let mut has_hyperlink = false;
-    let result = unsafe {
-        sys::ghostty_cell_get(
-            cell,
-            sys::GhosttyCellData_GHOSTTY_CELL_DATA_HAS_HYPERLINK,
-            (&mut has_hyperlink as *mut bool).cast(),
-        )
-    };
-    check("cell_get_has_hyperlink", result)?;
-
     let mut content_tag = sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT;
-    let result = unsafe {
-        sys::ghostty_cell_get(
+    // Four fields, one crossing: this is the innermost loop of a frame.
+    // SAFETY: every destination matches the output type screen.h documents
+    // for its key, and all of them outlive the call.
+    unsafe {
+        get_multi(
+            "cell_get_multi",
             cell,
-            sys::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
-            (&mut content_tag as *mut sys::GhosttyCellContentTag).cast(),
-        )
-    };
-    check("cell_get_content_tag", result)?;
+            sys::ghostty_cell_get_multi,
+            [
+                Slot::new(
+                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_CODEPOINT,
+                    &mut codepoint,
+                ),
+                Slot::new(sys::GhosttyCellData_GHOSTTY_CELL_DATA_WIDE, &mut wide),
+                Slot::new(
+                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_HAS_HYPERLINK,
+                    &mut has_hyperlink,
+                ),
+                Slot::new(
+                    sys::GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG,
+                    &mut content_tag,
+                ),
+            ],
+        )?;
+    }
     Ok(RawCellData {
         codepoint,
         wide,

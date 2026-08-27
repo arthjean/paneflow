@@ -391,7 +391,7 @@ impl DisplayTerminal {
                 "terminal_get_multi",
                 self.terminal.raw(),
                 sys::ghostty_terminal_get_multi,
-                &[
+                [
                     Slot::new(s::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLS, &mut cols),
                     Slot::new(
                         s::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
