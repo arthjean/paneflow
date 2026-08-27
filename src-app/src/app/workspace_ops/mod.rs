@@ -918,7 +918,7 @@ impl PaneFlowApp {
 
     pub(crate) fn commit_rename(&mut self, cx: &App) {
         if let Some(idx) = self.renaming_idx.take() {
-            let text = std::mem::take(&mut self.rename_text);
+            let text = self.rename_input.read(cx).value().trim().to_string();
             if !text.is_empty()
                 && let Some(ws) = self.workspaces.get_mut(idx)
             {
@@ -926,10 +926,10 @@ impl PaneFlowApp {
                 self.save_session(cx);
             }
         }
-        // US-010: the sidebar tab rows share `rename_text` with the workspace
+        // US-010: the sidebar tab rows share `rename_input` with the workspace
         // rename, so one commit settles whichever inline rename was live.
         if let Some((ws_idx, tab_idx)) = self.renaming_tab.take() {
-            let text = std::mem::take(&mut self.rename_text);
+            let text = self.rename_input.read(cx).value().trim().to_string();
             if !text.is_empty()
                 && let Some(tab) = self
                     .workspaces

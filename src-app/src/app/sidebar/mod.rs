@@ -12,8 +12,8 @@ pub(crate) mod context_menu;
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled,
-    Window, div, prelude::*, px, rgb, svg,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
+    SharedString, Styled, Window, div, prelude::*, px, rgb, svg,
 };
 
 use crate::{
@@ -558,16 +558,37 @@ fn sidebar_drop_slots(rows: &[SidebarRow], workspace_count: usize) -> Vec<Sideba
 }
 
 impl PaneFlowApp {
-    fn begin_workspace_rename(&mut self, index: usize, cx: &gpui::App) {
+    fn begin_workspace_rename(&mut self, index: usize, cx: &mut Context<Self>) {
         self.commit_rename(cx);
         if let Some(title) = self
             .workspaces
             .get(index)
             .map(|workspace| workspace.title.clone())
         {
-            self.rename_text = title;
+            self.rename_input
+                .update(cx, |input, cx| input.set_value(title, cx));
             self.renaming_idx = Some(index);
         }
+    }
+
+    /// Issue #32: the inline rename box hosts the shared `rename_input`
+    /// widget. The row above it owns the enter/escape handling, and the mouse
+    /// guards keep a click inside the field from reaching the row's click,
+    /// drag, and context-menu listeners.
+    fn inline_rename_field(&self, ui: crate::theme::UiColors) -> gpui::Div {
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .text_color(ui.text)
+            .text_sm()
+            .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+            .bg(ui.overlay)
+            .px_1()
+            .rounded_sm()
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+            .child(self.rename_input.clone())
     }
 
     fn sidebar_order_signature(workspaces: &[Workspace]) -> u64 {
@@ -994,40 +1015,26 @@ impl PaneFlowApp {
                     cx.notify();
                 }
             }))
+            // Issue #32: the row only sits on the focus path while its own
+            // rename field is focused, so this handler is exactly the
+            // enter/escape pair. Everything else - text entry, caret, IME,
+            // clipboard - belongs to the `TextInput` below it.
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
-                let key = e.keystroke.key.as_str();
                 if this.renaming_idx != Some(idx) {
-                    if key == "f2" {
-                        this.begin_workspace_rename(idx, cx);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
                     return;
                 }
-                match key {
+                match e.keystroke.key.as_str() {
                     "enter" => {
                         this.commit_rename(cx);
+                        cx.stop_propagation();
                         cx.notify();
                     }
                     "escape" => {
                         this.renaming_idx = None;
-                        this.rename_text.clear();
+                        cx.stop_propagation();
                         cx.notify();
                     }
-                    "backspace" => {
-                        this.rename_text.pop();
-                        cx.notify();
-                    }
-                    _ => {
-                        if let Some(ch) = &e.keystroke.key_char
-                            && !ch.is_empty()
-                            && !e.keystroke.modifiers.control
-                            && !e.keystroke.modifiers.platform
-                        {
-                            this.rename_text.push_str(ch);
-                            cx.notify();
-                        }
-                    }
+                    _ => {}
                 }
             }));
 
@@ -1044,18 +1051,7 @@ impl PaneFlowApp {
             ws.agent_completion_notification.is_unread(),
         );
         let title_el = if self.renaming_idx == Some(i) {
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .text_color(ui.text)
-                .text_sm()
-                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .font_weight(FontWeight::MEDIUM)
-                .bg(ui.overlay)
-                .px_1()
-                .rounded_sm()
-                .child(format!("{}|", self.rename_text))
+            self.inline_rename_field(ui).font_weight(FontWeight::MEDIUM)
         } else {
             div()
                 .flex_1()
@@ -1269,17 +1265,7 @@ impl PaneFlowApp {
         let text_color = ui.text;
 
         let title_el = if is_renaming {
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .text_color(ui.text)
-                .text_sm()
-                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .bg(ui.overlay)
-                .px_1()
-                .rounded_sm()
-                .child(format!("{}|", self.rename_text))
+            self.inline_rename_field(ui)
         } else {
             div()
                 .flex_1()
@@ -1450,40 +1436,23 @@ impl PaneFlowApp {
                     cx.notify();
                 }
             }))
+            // Issue #32: enter/escape only - see the workspace row above.
             .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
-                let key = e.keystroke.key.as_str();
                 if this.renaming_tab != Some((ws_idx, tab_idx)) {
-                    if key == "f2" {
-                        this.begin_tab_rename(ws_idx, tab_idx, cx);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
                     return;
                 }
-                match key {
+                match e.keystroke.key.as_str() {
                     "enter" => {
                         this.commit_rename(cx);
+                        cx.stop_propagation();
                         cx.notify();
                     }
                     "escape" => {
                         this.renaming_tab = None;
-                        this.rename_text.clear();
+                        cx.stop_propagation();
                         cx.notify();
                     }
-                    "backspace" => {
-                        this.rename_text.pop();
-                        cx.notify();
-                    }
-                    _ => {
-                        if let Some(ch) = &e.keystroke.key_char
-                            && !ch.is_empty()
-                            && !e.keystroke.modifiers.control
-                            && !e.keystroke.modifiers.platform
-                        {
-                            this.rename_text.push_str(ch);
-                            cx.notify();
-                        }
-                    }
+                    _ => {}
                 }
             }));
 

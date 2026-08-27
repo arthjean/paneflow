@@ -228,7 +228,6 @@ impl PaneFlowApp {
         }
         if self.renaming_tab.is_some_and(|(w, _)| w == ws_idx) {
             self.renaming_tab = None;
-            self.rename_text.clear();
         }
         self.dismiss_transient_surfaces();
         if ws_idx == self.active_idx {
@@ -275,7 +274,8 @@ impl PaneFlowApp {
         else {
             return;
         };
-        self.rename_text = title;
+        self.rename_input
+            .update(cx, |input, cx| input.set_value(title, cx));
         self.renaming_tab = Some((ws_idx, tab_idx));
         cx.notify();
     }
@@ -377,7 +377,6 @@ impl PaneFlowApp {
         let last = self.workspaces[dest_ws_idx].tab_count().saturating_sub(1);
         self.workspaces[dest_ws_idx].reorder_tab(last, insert_idx.min(last));
         self.renaming_tab = None;
-        self.rename_text.clear();
         self.workspaces[dest_ws_idx].sidebar_expanded = true;
         let dest_tab_idx = self.workspaces[dest_ws_idx].active_tab_idx();
         self.focus_workspace_tab(dest_ws_idx, dest_tab_idx, window, cx);
