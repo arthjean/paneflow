@@ -856,6 +856,69 @@ mod tests {
     }
 
     #[test]
+    fn a_drag_held_below_the_grid_autoscrolls_and_keeps_extending() {
+        // Ten rows through a three-row screen: seven land in history, so a
+        // viewport parked at the top has somewhere to scroll down to.
+        let mut terminal = terminal(20, 3);
+        terminal
+            .feed(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh\r\ni\r\nj")
+            .expect("output must parse");
+        terminal.scroll(crate::Scroll::Top);
+
+        // The grid is three 16-pixel rows, so y = 60 is a pointer held below
+        // it. Points stay screen-absolute: with seven rows of history above
+        // the viewport, its first row is line -7.
+        let geometry = GestureGeometry {
+            columns: 20,
+            cell_width: 8,
+            padding_left: 0,
+            screen_height: 48,
+        };
+        let held_below = DragOptions {
+            position: Some((8.0, 60.0)),
+            ..DragOptions::default()
+        };
+        terminal
+            .gesture_press(Point::new(-7, 0), &PressOptions::default())
+            .expect("press");
+        terminal
+            .gesture_drag(Point::new(-5, 1), geometry, &held_below)
+            .expect("drag");
+
+        assert_eq!(
+            terminal.gesture_state().expect("state").autoscroll,
+            GestureAutoscroll::Down
+        );
+        assert_eq!(
+            terminal
+                .selection_text()
+                .expect("selection text")
+                .expect("a selection exists"),
+            "a\nb\nc"
+        );
+
+        // What the embedder does on each tick: scroll one line, then tell the
+        // gesture which viewport cell the unmoved pointer now covers. How far
+        // past the last row the pointer is held is read from the position, so
+        // the selection runs slightly ahead of the viewport rather than
+        // stopping at its bottom edge.
+        terminal.scroll(crate::Scroll::Delta(-1));
+        terminal
+            .gesture_autoscroll_tick(Point::new(2, 1), geometry, &held_below)
+            .expect("autoscroll tick")
+            .expect("the tick extends the selection");
+        let extended = terminal
+            .selection_text()
+            .expect("selection text")
+            .expect("a selection exists");
+
+        assert!(
+            extended.starts_with("a\nb\nc\nd"),
+            "the tick must hold the anchor and reach further down: {extended:?}"
+        );
+    }
+
+    #[test]
     fn a_rectangular_drag_is_not_the_same_as_a_linear_one() {
         let mut terminal = terminal(20, 4);
         terminal

@@ -302,11 +302,54 @@ pub struct SelectionRange {
     pub is_block: bool,
 }
 
-/// Endpoint affinity for a selection update.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SelectionSide {
-    Left,
-    Right,
+/// Where the rendered grid sits inside the pane, so a pointer drag can be
+/// mapped back onto cells and can tell when it has left the viewport.
+///
+/// Coordinates are pane-relative: every pointer position paired with this is
+/// measured from the grid's own top-left corner, not the window's. One
+/// snapshot serves a whole pointer event, so the cell it resolves and the
+/// geometry the engine reads cannot disagree.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SelectionGeometry {
+    /// Columns in the rendered grid.
+    pub columns: usize,
+    /// Rows in the viewport.
+    pub screen_lines: usize,
+    /// Rows of scrollback above the viewport.
+    pub display_offset: usize,
+    /// Width of one cell in pixels.
+    pub cell_width: f32,
+    /// Height of one row in pixels.
+    pub line_height: f32,
+}
+
+impl SelectionGeometry {
+    /// Height of the rendered grid in pixels.
+    pub fn height(&self) -> f32 {
+        self.line_height * self.screen_lines as f32
+    }
+
+    /// The cell under a pane-relative pointer, clamped to the grid.
+    ///
+    /// A pointer outside the pane still resolves to an edge cell: the position
+    /// itself is what carries the overshoot, and the selection engine reads it
+    /// to decide the viewport should scroll.
+    pub fn cell_at(&self, position: (f32, f32)) -> Point {
+        let column = if self.cell_width > 0.0 {
+            (position.0.max(0.0) / self.cell_width) as usize
+        } else {
+            0
+        };
+        let row = if self.line_height > 0.0 {
+            (position.1.max(0.0) / self.line_height) as i32
+        } else {
+            0
+        };
+        Point::new(
+            row.min(self.screen_lines.saturating_sub(1) as i32) - self.display_offset as i32,
+            column.min(self.columns.saturating_sub(1)),
+        )
+    }
 }
 
 /// Selection expansion policy requested by the input layer.

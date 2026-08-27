@@ -18,7 +18,7 @@ use paneflow_terminal_ghostty as ghostty;
 
 use crate::keys::TerminalKeySequence;
 use crate::terminal::types::{
-    HyperlinkSource, HyperlinkZone, Modes, Point, SelectionKind, SelectionSide, ShellQuoting,
+    HyperlinkSource, HyperlinkZone, Modes, Point, SelectionGeometry, SelectionKind, ShellQuoting,
 };
 
 #[cfg(debug_assertions)]
@@ -518,33 +518,43 @@ impl TerminalView {
 
     // --- Pixel → grid coordinate conversion ---
 
-    pub(super) fn pixel_to_grid(&self, pos: gpui::Point<gpui::Pixels>) -> (Point, SelectionSide) {
+    pub(super) fn pixel_to_grid(&self, pos: gpui::Point<gpui::Pixels>) -> Point {
+        self.selection_geometry().cell_at(self.pane_relative(pos))
+    }
+
+    /// The pointer measured from the grid's own top-left corner.
+    ///
+    /// Negative values, and values past the grid, are the pointer having left
+    /// the pane. That is exactly what the selection engine reads to decide it
+    /// should autoscroll, so they are handed over unclamped.
+    fn pane_relative(&self, pos: gpui::Point<gpui::Pixels>) -> (f32, f32) {
         // Poison-safe: if a panic happened inside paint() while holding the
         // lock, the inner Point is still a valid value - recover and continue.
         let origin = *self
             .element_origin
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        let relative_x = (pos.x - origin.x).max(gpui::px(0.0));
-        let relative_y = (pos.y - origin.y).max(gpui::px(0.0));
+        (f32::from(pos.x - origin.x), f32::from(pos.y - origin.y))
+    }
 
-        let col_f = relative_x / self.cell_width;
-        let half_cell = self.cell_width / 2.0;
-        let cell_x = relative_x % self.cell_width;
-        let side = if cell_x > half_cell {
-            SelectionSide::Right
-        } else {
-            SelectionSide::Left
-        };
+    /// The cell under the pointer, or `None` when the pointer is not over the
+    /// grid at all. A release wants that distinction: the selection engine
+    /// records "no cell" rather than the edge cell a clamp would invent.
+    fn grid_cell_at(&self, pos: gpui::Point<gpui::Pixels>) -> Option<Point> {
+        let geometry = self.selection_geometry();
+        let position = self.pane_relative(pos);
+        let inside = position.0 >= 0.0
+            && position.1 >= 0.0
+            && position.0 < geometry.cell_width * geometry.columns as f32
+            && position.1 < geometry.height();
+        inside.then(|| geometry.cell_at(position))
+    }
 
-        let metrics = self.terminal.session_backend().grid_metrics();
-        let max_col = metrics.columns.saturating_sub(1);
-        let max_line = metrics.screen_lines.saturating_sub(1) as i32;
-
-        let col = (col_f as usize).min(max_col);
-        let line = ((relative_y / self.line_height) as i32).min(max_line);
-
-        (Point::new(line - metrics.display_offset as i32, col), side)
+    /// Where the grid sits, as one snapshot for the pointer event in hand.
+    fn selection_geometry(&self) -> SelectionGeometry {
+        self.terminal
+            .session_backend()
+            .selection_geometry(f32::from(self.cell_width), f32::from(self.line_height))
     }
 
     /// Hand a mouse event to the engine, which owns the report encoding
@@ -703,10 +713,11 @@ impl TerminalView {
             && self.ctrl_hovered_link.is_some()
         {
             self.mouse_down_link = self.ctrl_hovered_link.clone();
-            let (point, side) = self.pixel_to_grid(event.position);
-            self.terminal
-                .session_backend()
-                .start_selection(SelectionKind::Simple, point, side);
+            self.terminal.session_backend().press_selection(
+                SelectionKind::Simple,
+                self.pixel_to_grid(event.position),
+                self.pane_relative(event.position),
+            );
             self.selecting = true;
             cx.notify();
             return;
@@ -737,8 +748,6 @@ impl TerminalView {
             return;
         }
 
-        let (point, side) = self.pixel_to_grid(event.position);
-
         let selection_type = match event.click_count {
             1 => SelectionKind::Simple,
             2 => SelectionKind::Semantic,
@@ -746,9 +755,11 @@ impl TerminalView {
             _ => return,
         };
 
-        self.terminal
-            .session_backend()
-            .start_selection(selection_type, point, side);
+        self.terminal.session_backend().press_selection(
+            selection_type,
+            self.pixel_to_grid(event.position),
+            self.pane_relative(event.position),
+        );
 
         self.selecting = true;
         cx.notify();
@@ -813,7 +824,7 @@ impl TerminalView {
 
         // Track hovered cell for URL regex detection (US-015).
         // Save the prior cell so we can throttle the per-frame rescan below.
-        let (hover_point, _) = self.pixel_to_grid(event.position);
+        let hover_point = self.pixel_to_grid(event.position);
         let prev_hovered_cell = self.hovered_cell;
         self.hovered_cell = Some(hover_point);
 
@@ -845,24 +856,19 @@ impl TerminalView {
             return;
         }
 
-        let (point, side) = self.pixel_to_grid(event.position);
-
-        let primary_text = self
-            .terminal
-            .session_backend()
-            .update_selection(point, side);
-        // On Linux/freebsd, mirror backends that can format the in-progress
-        // selection without blocking into the X11/Wayland PRIMARY buffer.
-        // Ghostty defers formatting until mouse-up to keep this UI hot path
-        // asynchronous; `finish_selection` writes the committed value below.
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        if let Some(text) = primary_text
-            && !text.is_empty()
-        {
-            cx.write_to_primary(ClipboardItem::new_string(text));
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
-        drop(primary_text);
+        // Alt is the block-selection modifier every terminal uses, and the
+        // engine draws the rectangle: the renderer already paints a block
+        // range. Formatting the in-progress text would mean blocking GPUI on
+        // the runtime thread for every pointer event, so PRIMARY is written
+        // once on mouse-up instead.
+        let geometry = self.selection_geometry();
+        let position = self.pane_relative(event.position);
+        self.terminal.session_backend().drag_selection(
+            geometry.cell_at(position),
+            position,
+            geometry,
+            event.modifiers.alt,
+        );
 
         cx.notify();
     }
@@ -1013,6 +1019,9 @@ impl TerminalView {
         // Clear empty selections, or auto-copy non-empty selections (tmux-style):
         // write to both PRIMARY (middle-click paste) and CLIPBOARD (Ctrl+V),
         // then clear the selection so the disappearing highlight signals the copy.
+        self.terminal
+            .session_backend()
+            .release_selection(self.grid_cell_at(event.position));
         let (selection_empty, copied) = self.terminal.session_backend().finish_selection();
 
         // US-012: open on a genuine click (empty selection = no drag).

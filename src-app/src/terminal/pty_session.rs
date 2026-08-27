@@ -24,8 +24,8 @@ use super::marks::SharedMarkRing;
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
 use super::shell::{resolve_default_shell, setup_shell_integration};
 use super::types::{
-    Content, GridLineText, GridMetrics, HyperlinkZone, Line, Modes, Point, SelectionKind,
-    SelectionRange, SelectionSide, ShellQuoting, TerminalWindowSize,
+    Content, GridLineText, GridMetrics, HyperlinkZone, Line, Modes, Point, SelectionGeometry,
+    SelectionKind, SelectionRange, ShellQuoting, TerminalWindowSize,
 };
 use crate::limits::MAX_OSC52_BYTES;
 use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
@@ -235,13 +235,39 @@ impl TerminalSessionBackend {
         self.ghostty.scroll_to_viewport_row(row)
     }
 
-    pub(crate) fn start_selection(&self, kind: SelectionKind, point: Point, side: SelectionSide) {
-        let _ = side;
-        self.ghostty.start_selection(kind, point);
+    /// Where the grid sits right now, as one snapshot for a pointer event.
+    pub(crate) fn selection_geometry(
+        &self,
+        cell_width: f32,
+        line_height: f32,
+    ) -> SelectionGeometry {
+        let metrics = self.ghostty.grid_metrics();
+        SelectionGeometry {
+            columns: metrics.columns,
+            screen_lines: metrics.screen_lines,
+            display_offset: metrics.display_offset,
+            cell_width,
+            line_height,
+        }
     }
 
-    pub(crate) fn update_selection(&self, point: Point, side: SelectionSide) -> Option<String> {
-        self.ghostty.update_selection(point, side)
+    pub(crate) fn press_selection(&self, kind: SelectionKind, point: Point, position: (f32, f32)) {
+        self.ghostty.press_selection(kind, point, position);
+    }
+
+    pub(crate) fn drag_selection(
+        &self,
+        point: Point,
+        position: (f32, f32),
+        geometry: SelectionGeometry,
+        rectangle: bool,
+    ) {
+        self.ghostty
+            .drag_selection(point, position, geometry, rectangle);
+    }
+
+    pub(crate) fn release_selection(&self, point: Option<Point>) {
+        self.ghostty.release_selection(point);
     }
 
     pub(crate) fn selection_text(&self) -> Option<String> {
@@ -274,10 +300,17 @@ impl TerminalSessionBackend {
         let line = (current.line.0 + dy).clamp(metrics.topmost_line.0, metrics.bottommost_line.0);
         let next = Point::new(line, column);
         if extend {
+            // The keyboard has no pointer geometry, so the cursor drives the
+            // gesture through a synthetic one-pixel-per-cell grid: geometry is
+            // only ever read to arbitrate half-cells and viewport exits, and a
+            // keyboard extend does neither.
+            let geometry = self.selection_geometry(1.0, 1.0);
             if self.ghostty.selection_range().is_none() {
-                self.ghostty.start_selection(SelectionKind::Simple, current);
+                self.ghostty
+                    .press_selection(SelectionKind::Simple, current, (0.0, 0.0));
             }
-            self.ghostty.update_selection(next, SelectionSide::Right);
+            self.ghostty
+                .drag_selection(next, (0.0, 0.0), geometry, false);
         } else {
             self.ghostty.clear_selection();
         }
