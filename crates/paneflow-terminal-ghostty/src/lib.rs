@@ -41,6 +41,8 @@ native_modules!(
     navigation,
     osc,
     persistence,
+    selection,
+    selection_gesture,
     sgr,
     snapshot,
     snapshot_cell,
@@ -78,6 +80,12 @@ pub use modes::{Mode, ModeReportState, encode_mode_report};
 pub use osc::{OSC_TERMINATOR_BEL, OSC_TERMINATOR_ST, OscCommand, OscCommandType, OscParser};
 pub use search::{
     MAX_QUERY_LEN, MAX_SEARCH_CELLS, SEARCH_CHUNK_CELLS, SearchChunk, SearchEngine, SearchLine,
+};
+pub use selection::{SelectionAdjust, SelectionOrder};
+#[cfg(ghostty_native)]
+pub use selection_gesture::{
+    DragOptions, GestureAutoscroll, GestureBehavior, GestureBehaviors, GestureGeometry,
+    GestureState, PressOptions,
 };
 pub use sgr::{SgrAttribute, SgrParser, SgrSeparator};
 #[cfg(ghostty_native)]
