@@ -50,6 +50,8 @@ native_modules!(
     snapshot_state,
     style,
     sys,
+    terminal_ops,
+    tracked,
     unicode,
 );
 
@@ -95,6 +97,13 @@ pub use sys::{
     DecodedImage, LogLevel, LogSink, PngDecoder, SecureRandom, alloc, free, set_log_sink,
     set_log_to_stderr, set_png_decoder, set_secure_random,
 };
+#[cfg(ghostty_native)]
+pub use terminal_ops::{
+    ClipboardLocation, CompressionMode, CompressionOutcome, GroundWrite, PasteRepresentation,
+    PasteSource, SizeReportStyle,
+};
+#[cfg(ghostty_native)]
+pub use tracked::TrackedRef;
 #[cfg(ghostty_native)]
 pub use unicode::{GraphemeCluster, codepoint_width, grapheme_width, text_width};
 

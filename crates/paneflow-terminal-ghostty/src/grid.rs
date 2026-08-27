@@ -112,12 +112,15 @@ impl DisplayTerminal {
     }
 
     pub(crate) fn grid_geometry(&self) -> Result<GridGeometry> {
-        let scrollback = i32::try_from(self.scrollback_rows()?)
+        // One batched read rather than three round trips: this runs per
+        // search chunk and per scrollback extraction.
+        let (cols, total_rows, scrollback) = self.geometry_batch()?;
+        let scrollback = i32::try_from(scrollback)
             .map_err(|_| GhosttyError::AbiMismatch("scrollback does not fit i32".into()))?;
         Ok(GridGeometry {
-            total_rows: self.total_rows()?,
+            total_rows,
             scrollback,
-            cols: self.cols()?,
+            cols,
         })
     }
 
