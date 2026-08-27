@@ -33,11 +33,13 @@ native_modules!(
     color,
     constructor,
     engine,
+    formatter,
     grid,
     grid_ref,
     handles,
     modes,
     navigation,
+    osc,
     persistence,
     sgr,
     snapshot,
@@ -45,6 +47,7 @@ native_modules!(
     snapshot_ffi,
     snapshot_state,
     style,
+    sys,
     unicode,
 );
 
@@ -59,6 +62,8 @@ pub use color::{
 };
 pub use error::{GhosttyError, Result};
 #[cfg(ghostty_native)]
+pub use formatter::{FormatterFormat, FormatterOptions, ScreenExtra, TerminalExtra};
+#[cfg(ghostty_native)]
 pub use grid_ref::{CellContent, CellInfo, RowInfo, SemanticContent, SemanticPrompt};
 pub use input::{
     FocusEvent, Key, KeyAction, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput,
@@ -70,12 +75,18 @@ pub use model::{
 };
 #[cfg(ghostty_native)]
 pub use modes::{Mode, ModeReportState, encode_mode_report};
+pub use osc::{OSC_TERMINATOR_BEL, OSC_TERMINATOR_ST, OscCommand, OscCommandType, OscParser};
 pub use search::{
     MAX_QUERY_LEN, MAX_SEARCH_CELLS, SEARCH_CHUNK_CELLS, SearchChunk, SearchEngine, SearchLine,
 };
 pub use sgr::{SgrAttribute, SgrParser, SgrSeparator};
 #[cfg(ghostty_native)]
 pub use style::Style;
+#[cfg(ghostty_native)]
+pub use sys::{
+    DecodedImage, LogLevel, LogSink, PngDecoder, SecureRandom, alloc, free, set_log_sink,
+    set_log_to_stderr, set_png_decoder, set_secure_random,
+};
 #[cfg(ghostty_native)]
 pub use unicode::{GraphemeCluster, codepoint_width, grapheme_width, text_width};
 
