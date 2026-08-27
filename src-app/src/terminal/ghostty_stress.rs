@@ -368,9 +368,16 @@ fn run_cycle(surface_id: u64) -> (Duration, usize) {
         "scenario=cycle surface={surface_id} pid={} phase=output bytes_before={output_before} bytes_after={output_after}",
         pane.pid,
     );
+    // `wait_for_exit` already waited out the shell's own PID, but nothing
+    // waited out its descendants. On Windows the ConPTY host outlives the
+    // shell by an unbounded moment, so an instantaneous check here fails
+    // whenever a loaded runner schedules that teardown late. One deadline is
+    // shared across the whole set: every descendant must be gone within the
+    // same cleanup window, not granted a fresh one each.
+    let cleanup_deadline = Instant::now() + CLEANUP_TIMEOUT;
     for descendant in &descendants {
         assert!(
-            !process_active(*descendant),
+            wait_process_inactive(*descendant, cleanup_deadline),
             "scenario=cycle surface={surface_id} pid={} descendant={} phase=cleanup",
             pane.pid,
             descendant,
