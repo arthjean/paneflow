@@ -2508,7 +2508,8 @@ impl PaneFlowApp {
                 })
             }
             "surface.read" => {
-                // US-003: read a surface's scrollback as plain text. Read-only;
+                // US-003: read a surface as plain text: its retained history
+                // followed by the screen it is currently painting. Read-only;
                 // no scripting gate (the send_* gate guards writes, not reads).
                 let terminal = match self.resolve_readable_surface(params, cx) {
                     Ok(t) => t,
@@ -2533,11 +2534,20 @@ impl PaneFlowApp {
                 let output_generation = terminal.read(cx).terminal.output_generation;
                 let sid = terminal.entity_id().as_u64();
                 let read_started = std::time::Instant::now();
-                let full = terminal
-                    .read(cx)
-                    .terminal
-                    .extract_scrollback()
-                    .unwrap_or_default();
+                // History alone is blind to a full-screen TUI, which is
+                // where every agent CLI lives: the alternate screen has no
+                // scrollback. Reading the active screen after it is what
+                // makes `surface.read` see what the pane is showing.
+                let state = terminal.read(cx);
+                let full = match (
+                    state.terminal.extract_scrollback(),
+                    state.terminal.screen_text(),
+                ) {
+                    (Some(history), Some(screen)) => format!("{history}\n{screen}"),
+                    (Some(history), None) => history,
+                    (None, Some(screen)) => screen,
+                    (None, None) => String::new(),
+                };
                 let extract_elapsed = read_started.elapsed();
                 let (text, returned, total, eof) = paginate_scrollback(&full, lines, offset);
                 let total_elapsed = read_started.elapsed();

@@ -1609,6 +1609,17 @@ impl TerminalState {
         self.ghostty.extract_scrollback()
     }
 
+    /// The active screen as plain text, trailing blank lines trimmed.
+    ///
+    /// [`Self::extract_scrollback`] deliberately stops at the viewport, so it
+    /// returns nothing at all for a full-screen TUI, which is where the agent
+    /// CLIs live. This is the other half of reading a pane.
+    pub fn screen_text(&self) -> Option<String> {
+        let text = self.ghostty.screen_text()?;
+        let trimmed = text.trim_end_matches(['\n', ' ']);
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    }
+
     /// Capture the screen and its recent history as VT sequences.
     ///
     /// Unlike [`Self::extract_scrollback`] this keeps the styling, the modes,
