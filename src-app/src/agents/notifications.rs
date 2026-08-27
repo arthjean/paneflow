@@ -95,6 +95,53 @@ impl DesktopNotification {
     }
 }
 
+/// Build a notification a terminal program asked for with OSC 9 or OSC 777.
+///
+/// The program supplies both strings and OSC 9 supplies no title, so an
+/// empty summary falls back to the pane's own title rather than showing a
+/// notification with no heading.
+pub(crate) fn program_notification(
+    title: String,
+    body: String,
+    pane_title: &str,
+) -> DesktopNotification {
+    let summary = if title.trim().is_empty() {
+        sanitize_notification_message(pane_title)
+    } else {
+        title
+    };
+    DesktopNotification {
+        summary: if summary.trim().is_empty() {
+            "Terminal".to_owned()
+        } else {
+            summary
+        },
+        body,
+        urgency: DesktopNotificationUrgency::Normal,
+    }
+}
+
+/// Fire a notification the running program asked for.
+///
+/// Unlike the agent notifications this gates only on window focus. The
+/// `notify_when_agent_waiting` setting is about Paneflow deciding to
+/// interrupt on an agent's behalf; a program that emitted OSC 9 asked for
+/// this itself, and silently dropping it would break every `notify-send`
+/// style workflow.
+pub(crate) fn fire_program_notification(
+    notification: DesktopNotification,
+    executor: BackgroundExecutor,
+) {
+    if window_active() {
+        return;
+    }
+    executor
+        .spawn(async move {
+            let _ = smol::unblock(move || show_desktop_notification(notification)).await;
+        })
+        .detach();
+}
+
 /// Fire a best-effort desktop notification without blocking the GPUI thread.
 pub(crate) fn fire_desktop_notification(
     notification: DesktopNotification,

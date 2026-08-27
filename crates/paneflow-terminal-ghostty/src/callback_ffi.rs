@@ -197,6 +197,179 @@ unsafe fn is_text_mime(mime: sys::GhosttyString) -> bool {
     bytes.starts_with(b"text/")
 }
 
+pub(crate) unsafe extern "C" fn desktop_notification(
+    _: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    notification: *const sys::GhosttyTerminalDesktopNotification,
+) {
+    // SAFETY: libghostty supplies the userdata pointer registered by
+    // `callbacks::install`; the boxed state outlives the terminal callback.
+    unsafe {
+        with_state(userdata, |state| {
+            let Some(request) = notification.as_ref() else {
+                return;
+            };
+            if request.size < size_of::<sys::GhosttyTerminalDesktopNotification>() {
+                return;
+            }
+            // OSC 9 carries a body and no title, so an empty title is normal
+            // rather than a malformed request.
+            let (Some(title), Some(body)) = (
+                borrowed_text(request.title, MAX_METADATA_BYTES),
+                borrowed_text(request.body, MAX_METADATA_BYTES),
+            ) else {
+                return;
+            };
+            if body.is_empty() {
+                return;
+            }
+            state.push(BackendEvent::DesktopNotification { title, body });
+        });
+    }
+}
+
+pub(crate) unsafe extern "C" fn unknown_sequence(
+    _: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    sequence: *const sys::GhosttyTerminalUnknownSequence,
+) {
+    // SAFETY: libghostty supplies the userdata pointer registered by
+    // `callbacks::install`; the boxed state outlives the terminal callback.
+    unsafe {
+        with_state(userdata, |state| {
+            let Some(report) = sequence.as_ref() else {
+                return;
+            };
+            // APC is the only tag libghostty reports today, and the value is a
+            // union: reading the wrong arm for a tag added later would be
+            // reading the wrong type.
+            if report.tag != sys::GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC
+            {
+                return;
+            }
+            let apc = report.value.apc;
+            let Some(raw) = borrowed_bytes(apc.content, MAX_CALLBACK_BYTES) else {
+                return;
+            };
+            state.push(BackendEvent::UnknownSequence {
+                content: escape_content(raw),
+                truncated: apc.truncated,
+            });
+        });
+    }
+}
+
+pub(crate) unsafe extern "C" fn clipboard_read(
+    _: sys::GhosttyTerminal,
+    userdata: *mut c_void,
+    read: *const sys::GhosttyClipboardRead,
+) {
+    // SAFETY: libghostty supplies the userdata pointer registered by
+    // `callbacks::install`; the boxed state outlives the terminal callback.
+    unsafe {
+        with_state(userdata, |state| {
+            let Some(request) = read.as_ref() else {
+                return;
+            };
+            if request.size < size_of::<sys::GhosttyClipboardRead>() {
+                return;
+            }
+            let Some(answer) = request.reply else {
+                return;
+            };
+            // Denied is the default: a program that can read the clipboard can
+            // exfiltrate whatever the user last copied anywhere on the system.
+            let Some(text) = state.readable_clipboard() else {
+                answer(read, &denied_read());
+                return;
+            };
+            let content = sys::GhosttyClipboardContent {
+                mime: string_of(TEXT_MIME),
+                data: string_of(text.as_bytes()),
+            };
+            let available = string_of(TEXT_MIME);
+            let reply = sys::GhosttyClipboardReadReply {
+                size: size_of::<sys::GhosttyClipboardReadReply>(),
+                result: sys::GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS,
+                contents: &content,
+                contents_len: 1,
+                available: &available,
+                available_len: 1,
+                // Remembering would let one grant answer every later read from
+                // the same program, which is the opposite of a per-read gate.
+                remember: false,
+            };
+            answer(read, &reply);
+        });
+    }
+}
+
+/// The single representation Paneflow answers a clipboard read with.
+const TEXT_MIME: &[u8] = b"text/plain;charset=utf-8";
+
+fn denied_read() -> sys::GhosttyClipboardReadReply {
+    sys::GhosttyClipboardReadReply {
+        size: size_of::<sys::GhosttyClipboardReadReply>(),
+        result: sys::GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_DENIED,
+        contents: std::ptr::null(),
+        contents_len: 0,
+        available: std::ptr::null(),
+        available_len: 0,
+        remember: false,
+    }
+}
+
+fn string_of(bytes: &[u8]) -> sys::GhosttyString {
+    sys::GhosttyString {
+        ptr: bytes.as_ptr(),
+        len: bytes.len(),
+    }
+}
+
+/// Borrow a libghostty string as bytes, rejecting anything over `limit`.
+///
+/// # Safety
+///
+/// `text` must be borrowed for at least the duration of the callback.
+unsafe fn borrowed_bytes(text: sys::GhosttyString, limit: usize) -> Option<&'static [u8]> {
+    if text.len == 0 {
+        return Some(&[]);
+    }
+    if text.ptr.is_null() || text.len > limit {
+        return None;
+    }
+    // SAFETY: the caller guarantees the borrow, and the returned slice is
+    // consumed before the callback returns.
+    Some(unsafe { std::slice::from_raw_parts(text.ptr, text.len) })
+}
+
+/// # Safety
+///
+/// `text` must be borrowed for at least the duration of the callback.
+unsafe fn borrowed_text(text: sys::GhosttyString, limit: usize) -> Option<String> {
+    // SAFETY: forwarded from this function's own contract.
+    let bytes = unsafe { borrowed_bytes(text, limit) }?;
+    std::str::from_utf8(bytes).ok().map(str::to_owned)
+}
+
+/// Render a captured sequence for a log line.
+///
+/// The payload is attacker-controlled, so control characters are escaped
+/// rather than passed through to a terminal or a log viewer, and invalid
+/// UTF-8 becomes the replacement character instead of being dropped.
+fn escape_content(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .chars()
+        .flat_map(|character| {
+            if character.is_control() {
+                format!("\\x{:02x}", character as u32).chars().collect::<Vec<_>>()
+            } else {
+                vec![character]
+            }
+        })
+        .collect()
+}
+
 pub(crate) unsafe extern "C" fn enquiry(
     _: sys::GhosttyTerminal,
     _: *mut c_void,

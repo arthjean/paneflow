@@ -149,6 +149,22 @@ fn spawn_error_message(failure: &TerminalBackendFailureDiagnostics) -> String {
     )
 }
 
+/// Map a renderer cursor shape onto the four libghostty knows.
+///
+/// Paneflow draws two shapes libghostty has no name for, so each falls back
+/// to the engine shape it is a variation of.
+fn engine_cursor_shape(shape: CursorShape) -> paneflow_terminal_ghostty::CursorShape {
+    use paneflow_terminal_ghostty::CursorShape as Engine;
+    match shape {
+        // Hidden is a renderer state, not a shape libghostty resets to, so it
+        // falls back to the block it would otherwise draw.
+        CursorShape::Block | CursorShape::Vintage | CursorShape::Hidden => Engine::Block,
+        CursorShape::Beam => Engine::Bar,
+        CursorShape::Underline | CursorShape::DoubleUnderline => Engine::Underline,
+        CursorShape::HollowBlock => Engine::HollowBlock,
+    }
+}
+
 fn renderer_cursor_shape_from_config(
     shape: paneflow_config::schema::CursorShapeConfig,
 ) -> CursorShape {
@@ -653,6 +669,24 @@ impl TerminalView {
                                 )));
                             }
 
+                            // Desktop notifications the program asked for
+                            // with OSC 9 or OSC 777.
+                            let notifications =
+                                std::mem::take(&mut view.terminal.pending_notifications);
+                            if !notifications.is_empty() {
+                                let pane_title = view.terminal.title.clone();
+                                for notification in notifications {
+                                    crate::agents::notifications::fire_program_notification(
+                                        crate::agents::notifications::program_notification(
+                                            notification.title,
+                                            notification.body,
+                                            &pane_title,
+                                        ),
+                                        cx.background_executor().clone(),
+                                    );
+                                }
+                            }
+
                             // OSC 10/11/12 color queries are now handled
                             // synchronously inside `process_event` (matches
                             // Zed's pattern at crates/terminal/src/terminal.rs:997).
@@ -742,6 +776,15 @@ impl TerminalView {
         let default_cursor_shape =
             renderer_cursor_shape_from_config(terminal_config.cursor_shape.unwrap_or_default());
         let cursor_color_override = cursor_color_override_from_config(&terminal_config);
+        // The renderer's fallback covers a program that never picks a cursor;
+        // this covers the one that explicitly resets it with `CSI 0 q`.
+        terminal.session_backend().set_default_cursor(
+            engine_cursor_shape(default_cursor_shape),
+            matches!(
+                cursor_blink_mode,
+                paneflow_config::schema::CursorBlinkConfig::On
+            ),
+        );
         let integrated_glyphs_enabled = terminal_config.resolved_integrated_glyphs();
         let color_emoji_enabled = terminal_config.resolved_color_emoji();
 

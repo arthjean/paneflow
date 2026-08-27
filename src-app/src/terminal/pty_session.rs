@@ -17,7 +17,8 @@ use futures::channel::mpsc::UnboundedReceiver;
 
 use super::clipboard_gate::ClipboardGate;
 use super::ghostty_session::{
-    GhosttyInputSendResult, GhosttyRuntimePending, GhosttySession, GhosttyUiEvent, SpawnedGhostty,
+    GhosttyInputSendResult, GhosttyRuntimePending, GhosttySession, GhosttyUiEvent,
+    ProgramNotification, SpawnedGhostty,
 };
 use super::marks::SharedMarkRing;
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
@@ -64,6 +65,7 @@ const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
 const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
+const MAX_PENDING_NOTIFICATIONS: usize = 8;
 
 /// Read the user's configured scrollback length, clamped to the
 /// [`paneflow_config::TerminalConfig`] allowed range. Falls back to
@@ -301,6 +303,14 @@ impl TerminalSessionBackend {
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> crate::search::SearchResult {
         self.ghostty.search_with_cancel(query, regex, cancelled)
+    }
+
+    pub(crate) fn set_default_cursor(
+        &self,
+        shape: paneflow_terminal_ghostty::CursorShape,
+        blink: bool,
+    ) -> bool {
+        self.ghostty.set_default_cursor(shape, blink)
     }
 
     pub(crate) fn refresh_appearance(&self) -> bool {
@@ -622,6 +632,10 @@ pub struct TerminalState {
     /// Clipboard payloads deferred from sync() - drained in the poll loop
     /// where cx is available for the clipboard write.
     pub(super) pending_clipboard_ops: Vec<String>,
+    /// Desktop notifications the running program asked for with OSC 9 or
+    /// OSC 777, drained by the view, which is where the config gate and the
+    /// background executor live.
+    pub(super) pending_notifications: Vec<ProgramNotification>,
     /// Foreground command cached by the off-thread pane process scanner.
     /// `surface.list` reads this synchronously, so it must never perform
     /// process-table I/O on the GPUI thread.
@@ -1143,6 +1157,7 @@ impl TerminalState {
             clipboard_gate,
             shell_quoting,
             pending_clipboard_ops: Vec::new(),
+            pending_notifications: Vec::new(),
             cached_foreground_command: None,
             #[cfg(all(unix, not(test)))]
             pty_guard: None,
@@ -1260,6 +1275,14 @@ impl TerminalState {
                         paneflow_terminal_ghostty::ProgressState::Remove => None,
                         _ => Some(report),
                     };
+                }
+            }
+            GhosttyUiEvent::Notification(events) => {
+                for notification in events.take_notifications() {
+                    if self.pending_notifications.len() >= MAX_PENDING_NOTIFICATIONS {
+                        self.pending_notifications.remove(0);
+                    }
+                    self.pending_notifications.push(notification);
                 }
             }
             GhosttyUiEvent::Clipboard(events) => {
