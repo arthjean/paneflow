@@ -27,24 +27,39 @@ macro_rules! native_modules {
 native_modules!(
     abi,
     abi_layout,
+    batch,
     callback_ffi,
     callbacks,
+    color,
     constructor,
     engine,
     grid,
+    grid_ref,
     handles,
+    modes,
     navigation,
     persistence,
+    sgr,
     snapshot,
     snapshot_cell,
     snapshot_ffi,
     snapshot_state,
+    style,
+    unicode,
 );
 
 #[cfg(not(ghostty_native))]
 mod stub;
 
+#[cfg(ghostty_native)]
+pub use color::{
+    PALETTE_LEN, PaletteMask, contrast, default_palette, encode_color_scheme_report,
+    generate_palette, luminance, parse as parse_color, parse_palette_entry, parse_x11,
+    perceived_luminance, x11_names,
+};
 pub use error::{GhosttyError, Result};
+#[cfg(ghostty_native)]
+pub use grid_ref::{CellContent, CellInfo, RowInfo, SemanticContent, SemanticPrompt};
 pub use input::{
     FocusEvent, Key, KeyAction, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput,
 };
@@ -53,9 +68,17 @@ pub use model::{
     Modes, Point, ProgressReport, ProgressState, Rgb, Scroll, SearchMatch, SearchResult,
     SelectionRange, TerminalAppearance, UnderlineStyle, WideCell, WindowSize,
 };
+#[cfg(ghostty_native)]
+pub use modes::{Mode, ModeReportState, encode_mode_report};
 pub use search::{
     MAX_QUERY_LEN, MAX_SEARCH_CELLS, SEARCH_CHUNK_CELLS, SearchChunk, SearchEngine, SearchLine,
 };
+pub use sgr::{SgrAttribute, SgrParser, SgrSeparator};
+#[cfg(ghostty_native)]
+pub use style::Style;
+#[cfg(ghostty_native)]
+pub use unicode::{GraphemeCluster, codepoint_width, grapheme_width, text_width};
+
 #[cfg(ghostty_native)]
 pub const GHOSTTY_APP_VERSION: &str = paneflow_libghostty_sys::GHOSTTY_APP_VERSION;
 

@@ -207,7 +207,7 @@ impl DisplayTerminal {
     }
 }
 
-fn encode_with_buffer(
+pub(crate) fn encode_with_buffer(
     operation: &'static str,
     max_output_bytes: usize,
     mut encode: impl FnMut(*mut c_char, usize, *mut usize) -> sys::GhosttyResult,

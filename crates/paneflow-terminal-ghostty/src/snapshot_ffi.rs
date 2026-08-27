@@ -408,11 +408,13 @@ pub(crate) fn raw_cell_rgb(cell: sys::GhosttyCell) -> Result<sys::GhosttyColorRg
 
 impl From<sys::GhosttyColorRgb> for Rgb {
     fn from(value: sys::GhosttyColorRgb) -> Self {
-        Self {
-            r: value.r,
-            g: value.g,
-            b: value.b,
-        }
+        // Read the channels back through libghostty's accessor so a future
+        // layout change stays its problem rather than a silent field swap.
+        let (mut r, mut g, mut b) = (0u8, 0u8, 0u8);
+        // SAFETY: `value` is a live struct and the three out-parameters are
+        // valid writable storage.
+        unsafe { sys::ghostty_color_rgb_get(&raw const value, &mut r, &mut g, &mut b) };
+        Self { r, g, b }
     }
 }
 
