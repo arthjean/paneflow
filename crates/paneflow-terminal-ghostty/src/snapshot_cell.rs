@@ -5,6 +5,7 @@ use crate::snapshot_ffi::{
     cell_grapheme, cell_grapheme_len, raw_cell_data, raw_cell_palette, raw_cell_rgb,
     render_cell_data, underline, wide_cell,
 };
+use crate::style::style_color;
 use crate::{Cell, CellFlags, Color, GhosttyError, Point, Result};
 
 impl DisplayTerminal {
@@ -87,17 +88,3 @@ fn cell_background(
     }
 }
 
-fn style_color(color: sys::GhosttyStyleColor) -> Result<Color> {
-    match color.tag {
-        sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_NONE => Ok(Color::Default),
-        sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_PALETTE => {
-            Ok(Color::Palette(unsafe { color.value.palette }))
-        }
-        sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_RGB => {
-            Ok(Color::Rgb(unsafe { color.value.rgb }.into()))
-        }
-        _ => Err(GhosttyError::AbiMismatch(
-            "unknown Ghostty style color tag".into(),
-        )),
-    }
-}
