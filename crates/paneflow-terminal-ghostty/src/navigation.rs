@@ -142,7 +142,7 @@ impl DisplayTerminal {
             .transpose()
     }
 
-    fn install_optional_selection(
+    pub(crate) fn install_optional_selection(
         &mut self,
         result: sys::GhosttyResult,
         selection: &sys::GhosttySelection,
@@ -156,7 +156,7 @@ impl DisplayTerminal {
         }
     }
 
-    fn install_selection(&mut self, selection: &sys::GhosttySelection) -> Result<()> {
+    pub(crate) fn install_selection(&mut self, selection: &sys::GhosttySelection) -> Result<()> {
         let result = unsafe {
             sys::ghostty_terminal_set(
                 self.terminal.raw(),

@@ -19,6 +19,9 @@ pub struct DisplayTerminal {
     pub(crate) row_cells: OwnedHandle<sys::GhosttyRenderStateRowCells>,
     pub(crate) row_iterator: OwnedHandle<sys::GhosttyRenderStateRowIterator>,
     pub(crate) render_state: OwnedHandle<sys::GhosttyRenderState>,
+    /// Created on first use. Declared before `terminal` so it is dropped
+    /// first: `ghostty_selection_gesture_free` needs a live terminal.
+    pub(crate) gesture: Option<crate::selection_gesture::GestureHandle>,
     pub(crate) terminal: OwnedHandle<sys::GhosttyTerminal>,
     pub(crate) snapshot_cache: SnapshotCache,
     pub(crate) callbacks: Box<CallbackState>,

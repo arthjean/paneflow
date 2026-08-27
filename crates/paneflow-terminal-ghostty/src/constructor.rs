@@ -148,6 +148,7 @@ impl DisplayTerminal {
             row_cells,
             row_iterator,
             render_state,
+            gesture: None,
             terminal,
             snapshot_cache: Default::default(),
             callbacks,
