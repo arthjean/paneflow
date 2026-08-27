@@ -4352,6 +4352,32 @@ mod tests {
         );
     }
 
+    #[cfg(ghostty_native)]
+    #[test]
+    fn ghostty_post_spawn_failure_records_once_and_keeps_the_ghostty_attribution() {
+        // US-018 AC3: the child already exists, so no Alacritty session is
+        // created; the failure is recorded exactly once and the diagnostics
+        // keep naming the engine that produced the behavior.
+        let mut state = TerminalState::new_display_only(24, 80);
+        state.set_backend_request(TerminalBackendConfig::Ghostty);
+        state.effective_backend = "ghostty";
+
+        let failure = TerminalBackendFailureDiagnostics::new(
+            TerminalBackendFailurePhase::PostSpawn,
+            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
+            Some(5),
+        );
+        state.fail_ghostty_after_spawn(failure.clone());
+
+        let diagnostics = state.backend_diagnostics();
+        assert_eq!(diagnostics.requested, TerminalBackendConfig::Ghostty);
+        assert_eq!(diagnostics.effective, "ghostty");
+        assert_eq!(diagnostics.failure, Some(failure));
+        let formatted = diagnostics.to_string();
+        assert_eq!(formatted.matches("reason_code=").count(), 1);
+        assert!(formatted.contains("failure_phase=post_spawn"));
+    }
+
     #[test]
     fn backend_diagnostics_extract_os_codes_without_sensitive_error_text() {
         const CANARY: &str =
@@ -4409,6 +4435,9 @@ mod tests {
         assert_eq!(diagnostics.target_triple, env!("PANEFLOW_TARGET_TRIPLE"));
         #[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
         assert_eq!(diagnostics.target_triple, "x86_64-pc-windows-msvc");
+        // US-018 AC1: a macOS bug report must state the triple it came from.
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        assert_eq!(diagnostics.target_triple, "aarch64-apple-darwin");
     }
 
     #[cfg(ghostty_native)]

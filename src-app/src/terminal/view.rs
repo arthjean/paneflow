@@ -102,6 +102,60 @@ enum BackgroundSpawnOutcome {
     },
 }
 
+/// Where a [`GhosttyStartError`] sends the pane.
+///
+/// `Fallback` failures happened before a child existed, so the pane is
+/// re-spawned on Alacritty and stays usable. `PostSpawn` failures already
+/// created a child, so spawning a second one would orphan the first; the pane
+/// reports the failure instead.
+#[cfg(ghostty_native)]
+enum GhosttyFailureRoute {
+    Fallback(TerminalBackendFailureDiagnostics),
+    PostSpawn {
+        child_pid: u32,
+        failure: TerminalBackendFailureDiagnostics,
+    },
+}
+
+/// Map a Ghostty startup failure to its route and its structured diagnostics.
+/// Pure, so US-018's macOS claims are asserted by `macos_check` rather than
+/// inferred from the Linux behavior of the same code.
+#[cfg(ghostty_native)]
+fn classify_ghostty_start_error(error: GhosttyStartError) -> GhosttyFailureRoute {
+    let (phase, reason_code, source) = match error {
+        GhosttyStartError::Initialization(error) => (
+            TerminalBackendFailurePhase::Initialization,
+            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+            error,
+        ),
+        GhosttyStartError::OpenPty(error) => (
+            TerminalBackendFailurePhase::OpenPty,
+            TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
+            error,
+        ),
+        GhosttyStartError::Spawn(error) => (
+            TerminalBackendFailurePhase::Spawn,
+            TerminalBackendFailureDiagnostics::GHOSTTY_SPAWN_FAILED,
+            error,
+        ),
+        GhosttyStartError::PostSpawn { child_pid, error } => {
+            return GhosttyFailureRoute::PostSpawn {
+                child_pid,
+                failure: TerminalBackendFailureDiagnostics::new(
+                    TerminalBackendFailurePhase::PostSpawn,
+                    TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
+                    raw_os_error_from_anyhow(&error),
+                ),
+            };
+        }
+    };
+    GhosttyFailureRoute::Fallback(TerminalBackendFailureDiagnostics::new(
+        phase,
+        reason_code,
+        raw_os_error_from_anyhow(&source),
+    ))
+}
+
 #[cfg(all(target_os = "linux", ghostty_native))]
 fn should_render_ghostty_wakeup_immediately(event: &TerminalBackendEvent) -> bool {
     matches!(event, TerminalBackendEvent::Ghostty(_))
@@ -112,15 +166,54 @@ fn should_render_ghostty_wakeup_immediately(_event: &TerminalBackendEvent) -> bo
     false
 }
 
+/// Set by the first pane that reports a Ghostty degradation, so a broken
+/// artifact or an unavailable backend costs one warning line per process
+/// rather than one per pane (FR-05).
+static BACKEND_DEGRADED_WARNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// The post-spawn counterpart of [`BACKEND_DEGRADED_WARNED`]. Kept separate so
+/// a dead pane still reports at error level once per process even after a
+/// working fallback pane has already warned.
+#[cfg(ghostty_native)]
+static BACKEND_POST_SPAWN_FAILED_LOGGED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Claim the single process-lifetime warning slot. Returns `true` exactly once
+/// per `warned` flag; later callers log the same failure at debug level, so no
+/// per-pane detail is lost while the warning count stays at one.
+fn claim_backend_degradation_warning(warned: &std::sync::atomic::AtomicBool) -> bool {
+    !warned.swap(true, std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The level a degradation is logged at: `first` for the first occurrence in
+/// the process, debug for every later one. Parameterized because a pane that
+/// fell back to Alacritty still works and warrants a warning, while a pane
+/// killed by a post-spawn failure is an error and must not be filtered out of
+/// a default-level log just because an unrelated fallback already claimed the
+/// warning slot.
+fn backend_degradation_level_at(
+    warned: &std::sync::atomic::AtomicBool,
+    first: log::Level,
+) -> log::Level {
+    if claim_backend_degradation_warning(warned) {
+        first
+    } else {
+        log::Level::Debug
+    }
+}
+
+fn backend_degradation_level(warned: &std::sync::atomic::AtomicBool) -> log::Level {
+    backend_degradation_level_at(warned, log::Level::Warn)
+}
+
 #[cfg(not(ghostty_native))]
 fn warn_ghostty_unavailable_once() {
-    static WARNED: std::sync::Once = std::sync::Once::new();
-    WARNED.call_once(|| {
-        log::warn!(
-            target: "paneflow::terminal::backend",
-            "Ghostty backend requested but unavailable on this platform/build; using Alacritty"
-        );
-    });
+    log::log!(
+        target: "paneflow::terminal::backend",
+        backend_degradation_level(&BACKEND_DEGRADED_WARNED),
+        "Ghostty backend requested but unavailable on this platform/build; using Alacritty"
+    );
 }
 
 fn log_backend_diagnostics(terminal: &TerminalState) {
@@ -564,64 +657,25 @@ impl TerminalView {
                                 max_scrollback,
                             ) {
                                 Ok(spawned) => BackgroundSpawnOutcome::Ghostty(spawned),
-                                Err(GhosttyStartError::Initialization(error)) => {
-                                    let failure = TerminalBackendFailureDiagnostics::new(
-                                        TerminalBackendFailurePhase::Initialization,
-                                        TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
-                                        raw_os_error_from_anyhow(&error),
-                                    );
-                                    let spawned = TerminalState::open_pty_and_eventloop(
-                                        params,
-                                        pending,
-                                        signal_mask,
-                                    );
-                                    BackgroundSpawnOutcome::GhosttyFallback {
-                                        spawned,
-                                        failure,
+                                Err(error) => match classify_ghostty_start_error(error) {
+                                    GhosttyFailureRoute::Fallback(failure) => {
+                                        BackgroundSpawnOutcome::GhosttyFallback {
+                                            spawned: TerminalState::open_pty_and_eventloop(
+                                                params,
+                                                pending,
+                                                signal_mask,
+                                            ),
+                                            failure,
+                                        }
                                     }
-                                }
-                                Err(GhosttyStartError::OpenPty(error)) => {
-                                    let failure = TerminalBackendFailureDiagnostics::new(
-                                        TerminalBackendFailurePhase::OpenPty,
-                                        TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
-                                        raw_os_error_from_anyhow(&error),
-                                    );
-                                    let spawned = TerminalState::open_pty_and_eventloop(
-                                        params,
-                                        pending,
-                                        signal_mask,
-                                    );
-                                    BackgroundSpawnOutcome::GhosttyFallback {
-                                        spawned,
-                                        failure,
-                                    }
-                                }
-                                Err(GhosttyStartError::Spawn(error)) => {
-                                    let failure = TerminalBackendFailureDiagnostics::new(
-                                        TerminalBackendFailurePhase::Spawn,
-                                        TerminalBackendFailureDiagnostics::GHOSTTY_SPAWN_FAILED,
-                                        raw_os_error_from_anyhow(&error),
-                                    );
-                                    let spawned = TerminalState::open_pty_and_eventloop(
-                                        params,
-                                        pending,
-                                        signal_mask,
-                                    );
-                                    BackgroundSpawnOutcome::GhosttyFallback {
-                                        spawned,
-                                        failure,
-                                    }
-                                }
-                                Err(GhosttyStartError::PostSpawn { child_pid, error }) => {
-                                    BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
+                                    GhosttyFailureRoute::PostSpawn {
                                         child_pid,
-                                        failure: TerminalBackendFailureDiagnostics::new(
-                                            TerminalBackendFailurePhase::PostSpawn,
-                                            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
-                                            raw_os_error_from_anyhow(&error),
-                                        ),
-                                    }
-                                }
+                                        failure,
+                                    } => BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
+                                        child_pid,
+                                        failure,
+                                    },
+                                },
                             }
                         } else {
                             BackgroundSpawnOutcome::Alacritty(
@@ -675,8 +729,9 @@ impl TerminalView {
                         }
                         #[cfg(ghostty_native)]
                         BackgroundSpawnOutcome::GhosttyFallback { spawned, failure } => {
-                            log::warn!(
+                            log::log!(
                                 target: "paneflow::terminal::backend",
+                                backend_degradation_level(&BACKEND_DEGRADED_WARNED),
                                 "Ghostty startup failed before child creation; using Alacritty: failure_phase={} reason_code={} os_error={:?}",
                                 failure.phase.as_str(),
                                 failure.reason_code,
@@ -710,8 +765,12 @@ impl TerminalView {
                             child_pid,
                             failure,
                         } => {
-                            log::error!(
+                            log::log!(
                                 target: "paneflow::terminal::backend",
+                                backend_degradation_level_at(
+                                    &BACKEND_POST_SPAWN_FAILED_LOGGED,
+                                    log::Level::Error,
+                                ),
                                 "Ghostty startup failed after child creation (pid={child_pid}); refusing Alacritty child fallback: failure_phase={} reason_code={} os_error={:?}",
                                 failure.phase.as_str(),
                                 failure.reason_code,
@@ -2049,6 +2108,88 @@ mod tests {
         );
         assert!(!should_start_ghostty(TerminalBackendConfig::Auto));
         assert!(!should_start_ghostty(TerminalBackendConfig::Alacritty));
+    }
+
+    #[test]
+    fn backend_degradation_warns_once_per_process() {
+        // US-017 AC5 and US-018 AC4: N failing panes cost one warning line,
+        // with the per-pane detail preserved at debug level.
+        let warned = std::sync::atomic::AtomicBool::new(false);
+        assert!(claim_backend_degradation_warning(&warned));
+        assert!(!claim_backend_degradation_warning(&warned));
+        assert!(!claim_backend_degradation_warning(&warned));
+
+        let fresh = std::sync::atomic::AtomicBool::new(false);
+        assert_eq!(backend_degradation_level(&fresh), log::Level::Warn);
+        assert_eq!(backend_degradation_level(&fresh), log::Level::Debug);
+        assert_eq!(backend_degradation_level(&fresh), log::Level::Debug);
+
+        // A post-spawn failure kills the pane, so its first occurrence stays
+        // at error level and keeps its own slot: a working fallback pane must
+        // not push a dead pane below the default log level.
+        let post_spawn = std::sync::atomic::AtomicBool::new(false);
+        assert_eq!(
+            backend_degradation_level_at(&post_spawn, log::Level::Error),
+            log::Level::Error
+        );
+        assert_eq!(
+            backend_degradation_level_at(&post_spawn, log::Level::Error),
+            log::Level::Debug
+        );
+    }
+
+    #[cfg(ghostty_native)]
+    #[test]
+    fn ghostty_start_errors_fall_back_except_after_the_child_exists() {
+        // US-018 AC2 and AC3. Every pre-child failure routes to the Alacritty
+        // fallback so the pane survives; a post-child failure must not spawn a
+        // second child, so it routes to the reporting path instead.
+        for (error, phase, reason_code) in [
+            (
+                GhosttyStartError::Initialization(anyhow::anyhow!("engine")),
+                TerminalBackendFailurePhase::Initialization,
+                TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
+            ),
+            (
+                GhosttyStartError::OpenPty(anyhow::anyhow!("pty")),
+                TerminalBackendFailurePhase::OpenPty,
+                TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
+            ),
+            (
+                GhosttyStartError::Spawn(anyhow::anyhow!("spawn")),
+                TerminalBackendFailurePhase::Spawn,
+                TerminalBackendFailureDiagnostics::GHOSTTY_SPAWN_FAILED,
+            ),
+        ] {
+            match classify_ghostty_start_error(error) {
+                GhosttyFailureRoute::Fallback(failure) => {
+                    assert_eq!(failure.phase, phase);
+                    assert_eq!(failure.reason_code, reason_code);
+                }
+                GhosttyFailureRoute::PostSpawn { .. } => {
+                    panic!("{reason_code} must keep the pane on the Alacritty fallback")
+                }
+            }
+        }
+
+        let os_error = anyhow::Error::new(std::io::Error::from_raw_os_error(5));
+        match classify_ghostty_start_error(GhosttyStartError::PostSpawn {
+            child_pid: 4321,
+            error: os_error,
+        }) {
+            GhosttyFailureRoute::PostSpawn { child_pid, failure } => {
+                assert_eq!(child_pid, 4321);
+                assert_eq!(failure.phase, TerminalBackendFailurePhase::PostSpawn);
+                assert_eq!(
+                    failure.reason_code,
+                    TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED
+                );
+                assert_eq!(failure.os_error, Some(5));
+            }
+            GhosttyFailureRoute::Fallback(_) => {
+                panic!("a post-spawn failure must not spawn a second child")
+            }
+        }
     }
 
     // --- send_keystroke submission guard (US-005, orchestration-v2) ---
