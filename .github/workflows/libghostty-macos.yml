@@ -1,0 +1,227 @@
+name: libghostty macOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/libghostty-macos.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/run_tests.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/paneflow-ghostty-smoke/**"
+      - "crates/paneflow-libghostty-sys/**"
+      - "crates/paneflow-terminal-ghostty/**"
+      - "native/libghostty/**"
+      - "scripts/*libghostty*"
+      - "src-app/Cargo.toml"
+      - "src-app/src/terminal/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/libghostty-macos.yml"
+      - ".github/workflows/release.yml"
+      - ".github/workflows/run_tests.yml"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/paneflow-ghostty-smoke/**"
+      - "crates/paneflow-libghostty-sys/**"
+      - "crates/paneflow-terminal-ghostty/**"
+      - "native/libghostty/**"
+      - "scripts/*libghostty*"
+      - "src-app/Cargo.toml"
+      - "src-app/src/terminal/**"
+  schedule:
+    - cron: "7 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  GHOSTTY_SHA: ae52f97dcac558735cfa916ea3965f247e5c6e9e
+  ZIG_VERSION: 0.15.2
+  TARGET: aarch64-apple-darwin
+
+jobs:
+  # US-015 AC5: the US-004 spike selected the Linux-host cross-build, so the
+  # archive is produced on `ubuntu-22.04`. Ghostty's CombineArchivesStep only
+  # takes the Apple `libtool` path when the build host is Darwin; a Linux host
+  # keeps the `zig ar -M` combine that `scripts/build-libghostty-macos.sh`
+  # normalizes with `llvm-ar --format=darwin`. The `macos-14` fallback recipe
+  # stays documented in the manifest, but nothing here needs it.
+  native-rebuild:
+    name: Rebuild pinned macOS archive (Linux host)
+    runs-on: ubuntu-22.04
+    # Two clean ReleaseFast builds at -j1, which is what the reproducibility
+    # contract requires; the seed and job count are manifest-pinned.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - name: Checkout pinned Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ env.GHOSTTY_SHA }}
+          path: .ghostty-source
+          fetch-depth: 1
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      # `llvm-tools` carries llvm-strip / llvm-ar / llvm-nm / llvm-objdump at
+      # exactly `macos_llvm_version` in the manifest. The build script refuses
+      # any other LLVM, because the normalization recipe is version-sensitive.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.96.1"
+          components: llvm-tools
+
+      # No native object cache: the canonical source and cache prefixes are
+      # part of the reproducibility contract, and the script performs two
+      # independent clean builds before comparing them.
+      - name: Rebuild and compare canonical archive
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+        run: |
+          scripts/build-libghostty-macos.sh \
+            --target "$TARGET" \
+            --verify-reproducible
+
+      # The script already fails when the produced archive diverges from the
+      # manifest's `archive_sha256`. This step closes the remaining gap: it
+      # proves the *committed* archive is the one the recipe produces, so a
+      # tampered prebuilt tree cannot pass by matching a tampered manifest.
+      - name: Compare against the committed prebuilt archive
+        run: |
+          set -euo pipefail
+          rebuilt="target/libghostty/$TARGET/lib/libghostty-vt.a"
+          committed="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
+          for path in "$rebuilt" "$committed"; do
+            [ -f "$path" ] || { echo "::error::missing archive $path"; exit 1; }
+          done
+          if ! cmp "$rebuilt" "$committed"; then
+            echo "::error::the committed macOS archive is not the one scripts/build-libghostty-macos.sh produces"
+            sha256sum "$rebuilt" "$committed"
+            exit 1
+          fi
+          sha256sum "$committed"
+
+      - name: Upload rebuilt native input
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-macos-native-${{ github.sha }}
+          path: target/libghostty/aarch64-apple-darwin
+          if-no-files-found: error
+          retention-days: 14
+
+  consumer-qualification:
+    name: Repository consumer and release budget
+    runs-on: macos-14
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.96.1"
+          components: clippy
+          targets: aarch64-apple-darwin
+
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: v1-libghostty-macos-consumer
+          key: ${{ env.TARGET }}-${{ env.GHOSTTY_SHA }}
+
+      # `PANEFLOW_LIBGHOSTTY_DIR` is deliberately left unset for every cargo
+      # step below, so `ArtifactBundle::resolve` falls back to
+      # `native/libghostty/prebuilt/<target>`: the archive a release actually
+      # links. Never export it as an empty string here; the build script reads
+      # it with `env::var_os`, so `Some("")` would resolve the artifact root to
+      # the empty path and fail on `symlink_metadata`.
+      - name: Lint against the repository artifact
+        run: >-
+          cargo clippy --workspace --locked
+          --features paneflow-app/libghostty-macos
+          --target "$TARGET" -- -D warnings
+
+      - name: Test against the repository artifact
+        run: >-
+          cargo test --workspace --locked
+          --features paneflow-app/libghostty-macos
+          --target "$TARGET"
+
+      - name: Build Alacritty release baseline
+        run: |
+          cargo build --release --locked --no-default-features \
+            -p paneflow-app --target "$TARGET"
+          cp "target/$TARGET/release/paneflow" \
+             "target/$TARGET/release/paneflow-alacritty-baseline"
+
+      - name: Build the Ghostty release candidate
+        run: |
+          cargo build --release --locked \
+            --features paneflow-app/libghostty-macos \
+            -p paneflow-app --target "$TARGET"
+
+      # US-016 AC5: the shipped macOS binary is built `--no-default-features`
+      # today, so the Alacritty baseline built above *is* the previous
+      # release's content and the delta measured here is the growth that
+      # release would carry. 2.5 MB is the budget; exceeding it fails the pull
+      # request rather than showing up in a published .dmg.
+      - name: Enforce static link and 2.5 MB binary delta
+        run: |
+          set -euo pipefail
+          baseline="target/$TARGET/release/paneflow-alacritty-baseline"
+          candidate="target/$TARGET/release/paneflow"
+          measurement_dir="$(mktemp -d)"
+          trap 'rm -rf "$measurement_dir"' EXIT
+          cp "$baseline" "$measurement_dir/baseline"
+          cp "$candidate" "$measurement_dir/candidate"
+          strip -S -x "$measurement_dir/baseline" "$measurement_dir/candidate"
+          baseline_size="$(stat -f%z "$measurement_dir/baseline")"
+          candidate_size="$(stat -f%z "$measurement_dir/candidate")"
+          delta=$((candidate_size - baseline_size))
+          echo "alacritty baseline = ${baseline_size} B"
+          echo "ghostty candidate  = ${candidate_size} B"
+          echo "delta              = ${delta} B (budget 2621440 B)"
+          if ((delta > 2621440)); then
+            echo "::error::libghostty grows the stripped macOS binary by ${delta} bytes, over the 2.5 MB budget"
+            exit 1
+          fi
+          scripts/verify-libghostty-macos.sh \
+            --binary "$candidate" \
+            --notice native/libghostty/THIRD_PARTY_NOTICES.md
+
+      - name: Upload qualified binary
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-macos-candidate-${{ github.sha }}
+          path: target/aarch64-apple-darwin/release/paneflow
+          if-no-files-found: error
+          retention-days: 14
+
+  validation-summary:
+    name: libghostty macOS validation
+    if: always()
+    needs: [native-rebuild, consumer-qualification]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Require native and consumer lanes
+        env:
+          NATIVE: ${{ needs.native-rebuild.result }}
+          CONSUMER: ${{ needs.consumer-qualification.result }}
+        run: |
+          for result in "$NATIVE" "$CONSUMER"; do
+            [ "$result" = success ] || exit 1
+          done
+          echo "All automated libghostty macOS checks passed."
