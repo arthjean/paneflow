@@ -334,6 +334,8 @@ enum RuntimeMessage {
     /// Capture the screen and its recent history as VT sequences, which keep
     /// the styling, modes, and cursor that plain text drops.
     CaptureReplay(SyncSender<Result<Vec<u8>, String>>),
+    /// The active screen as plain text, alternate screen included.
+    ScreenText(SyncSender<Result<String, String>>),
     /// Restore of saved scrollback. `reply` fires once the grid reflects the
     /// text, so a caller can read the snapshot right after.
     RestoreScrollback {
@@ -1765,6 +1767,16 @@ impl GhosttySession {
             .flatten()
     }
 
+    /// The active screen as plain text.
+    ///
+    /// Unlike [`Self::extract_scrollback`] this reads the screen the program
+    /// is actually painting, which is the only way to see an alternate-screen
+    /// TUI: that screen has no scrollback at all.
+    pub(super) fn screen_text(&self) -> Option<String> {
+        self.request(RuntimeMessage::ScreenText)
+            .and_then(Result::ok)
+    }
+
     pub(super) fn capture_replay(&self) -> Option<Vec<u8>> {
         self.request(RuntimeMessage::CaptureReplay)
             .and_then(Result::ok)
@@ -2706,6 +2718,13 @@ fn handle_terminal_command(
             let _ = reply.send(
                 terminal
                     .extract_scrollback()
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        RuntimeMessage::ScreenText(reply) => {
+            let _ = reply.send(
+                terminal
+                    .format(ghostty::FormatterOptions::plain_text())
                     .map_err(|error| error.to_string()),
             );
         }

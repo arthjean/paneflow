@@ -23,7 +23,7 @@ intentional.
 | Tool | Arguments | Returns |
 |------|-----------|---------|
 | `list_panes` | - | Scoped surfaces: `surface_id`, `name`, `title`, `cwd`, `cmd`, `workspace`, plus `tab_id` / `tab_title` for the workspace tab holding the surface. Call this first to discover what to read. The result is wrapped as untrusted terminal metadata. |
-| `read_pane` | `target` (name or `surface_id`), `lines?` (default 200, max 4000), `offset?` | The surface's scrollback as text, paginated. |
+| `read_pane` | `target` (name or `surface_id`), `lines?` (default 200, max 4000), `offset?` | The surface as text, paginated: its retained history followed by the screen it is currently painting. A full-screen TUI has no scrollback, so the screen is all there is to read. |
 | `search_pane` | `target`, `pattern`, `max_matches?` (default 50, max 1000) | Matching lines with their line numbers. |
 
 `target` resolves by exact name → case-insensitive → unique prefix, or a numeric
