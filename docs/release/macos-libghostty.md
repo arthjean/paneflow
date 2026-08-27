@@ -140,7 +140,7 @@ canonical root, produce the same archive, header, `bindings.rs`, and
 `build-info.txt`.
 
 ```
-archive_sha256  56fbefeefd7ae4cacc4a2cb30b717d7131e0c4169fd605551639fcc2c5b396ce
+archive_sha256  8ac17c5391b42f33b83e81200122aaf93e080ecb917dd78a4d2dbe8f90cd5ec8
 ```
 
 That value is pinned as `archive_sha256` on the
