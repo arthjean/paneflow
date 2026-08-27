@@ -605,9 +605,11 @@ mod tests {
         let source = replace_manifest_value(&source, "header_sha256", &header_sha256);
         let source = replace_manifest_value(&source, "bindings_sha256", &bindings_sha256);
 
+        let source_sha = manifest_value(MANIFEST, "source_sha");
+        let zig_version = manifest_value(MANIFEST, "zig_version");
         let build_info = [
-            ("source_sha", "ae52f97dcac558735cfa916ea3965f247e5c6e9e"),
-            ("zig_version", "0.15.2"),
+            ("source_sha", source_sha.as_str()),
+            ("zig_version", zig_version.as_str()),
             ("header_sha256", header_sha256.as_str()),
             ("bindings_sha256", bindings_sha256.as_str()),
             ("rust_target", MACOS_TARGET),
@@ -631,6 +633,21 @@ mod tests {
             .collect::<String>();
         fs::write(root.join("build-info.txt"), body)?;
         Ok(())
+    }
+
+    /// Read a top-level string value out of the reviewed manifest.
+    ///
+    /// The build-info fixture has to agree with the pinned manifest, so reading
+    /// the pin instead of restating it keeps the fixture correct across a pin
+    /// bump.
+    fn manifest_value(source: &str, key: &str) -> String {
+        let prefix = format!("{key} = \"");
+        source
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .and_then(|value| value.strip_suffix('"'))
+            .expect("the reviewed manifest declares the requested pin key")
+            .to_owned()
     }
 
     fn replace_manifest_value(source: &str, key: &str, value: &str) -> String {

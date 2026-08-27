@@ -4635,7 +4635,6 @@ dependencies = [
 name = "paneflow-terminal-ghostty"
 version = "0.9.0"
 dependencies = [
- "base64 0.22.1",
  "paneflow-libghostty-sys",
  "regex",
  "serde_json",

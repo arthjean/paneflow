@@ -27,9 +27,11 @@ pub(crate) fn key_code(key: Key) -> sys::GhosttyKey {
         Key::PageUp => sys::GhosttyKey_GHOSTTY_KEY_PAGE_UP,
         Key::PageDown => sys::GhosttyKey_GHOSTTY_KEY_PAGE_DOWN,
         Key::Insert => sys::GhosttyKey_GHOSTTY_KEY_INSERT,
-        Key::Function(number @ 1..=25) => sys::GhosttyKey_GHOSTTY_KEY_F1 + u32::from(number - 1),
+        Key::Function(number @ 1..=25) => {
+            sys::GhosttyKey_GHOSTTY_KEY_F1 + sys::GhosttyKey::from(number - 1)
+        }
         Key::NumpadDigit(number @ 0..=9) => {
-            sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_0 + u32::from(number)
+            sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_0 + sys::GhosttyKey::from(number)
         }
         Key::NumpadAdd => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_ADD,
         Key::NumpadSubtract => sys::GhosttyKey_GHOSTTY_KEY_NUMPAD_SUBTRACT,
@@ -47,10 +49,9 @@ pub(crate) fn key_code(key: Key) -> sys::GhosttyKey {
 fn character_key(character: char) -> sys::GhosttyKey {
     match character.to_ascii_lowercase() {
         'a'..='z' => {
-            sys::GhosttyKey_GHOSTTY_KEY_A + u32::from(character.to_ascii_lowercase())
-                - u32::from('a')
+            sys::GhosttyKey_GHOSTTY_KEY_A + ascii_offset(character.to_ascii_lowercase(), 'a')
         }
-        '0'..='9' => sys::GhosttyKey_GHOSTTY_KEY_DIGIT_0 + u32::from(character) - u32::from('0'),
+        '0'..='9' => sys::GhosttyKey_GHOSTTY_KEY_DIGIT_0 + ascii_offset(character, '0'),
         ' ' => sys::GhosttyKey_GHOSTTY_KEY_SPACE,
         '-' => sys::GhosttyKey_GHOSTTY_KEY_MINUS,
         '=' => sys::GhosttyKey_GHOSTTY_KEY_EQUAL,
@@ -67,6 +68,16 @@ fn character_key(character: char) -> sys::GhosttyKey {
     }
 }
 
+/// Distance from the first character of a contiguous ASCII key range.
+///
+/// Callers reach this through an ASCII range pattern, so the difference always
+/// fits; an out-of-range character falls back to the unidentified key, whose
+/// discriminant is zero.
+fn ascii_offset(character: char, first: char) -> sys::GhosttyKey {
+    sys::GhosttyKey::try_from(u32::from(character).saturating_sub(u32::from(first)))
+        .unwrap_or(sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED)
+}
+
 pub(crate) fn mouse_action(action: MouseAction) -> sys::GhosttyMouseAction {
     match action {
         MouseAction::Press => sys::GhosttyMouseAction_GHOSTTY_MOUSE_ACTION_PRESS,
@@ -76,5 +87,5 @@ pub(crate) fn mouse_action(action: MouseAction) -> sys::GhosttyMouseAction {
 }
 
 pub(crate) fn mouse_button(button: MouseButton) -> sys::GhosttyMouseButton {
-    sys::GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_LEFT + button as u32
+    sys::GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_LEFT + sys::GhosttyMouseButton::from(button as u8)
 }

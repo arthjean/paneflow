@@ -7,7 +7,6 @@ use crate::callbacks::{self, CallbackState};
 use crate::engine::DisplayTerminal;
 use crate::handles::{OwnedHandle, check, create};
 use crate::limits::MAX_SCROLLBACK_ROWS;
-use crate::osc::OscRouter;
 use crate::{GhosttyError, Result, TerminalAppearance, WindowSize};
 
 const MAX_APC_BYTES: usize = 1024 * 1024;
@@ -26,7 +25,6 @@ impl DisplayTerminal {
     pub fn set_appearance(&mut self, appearance: TerminalAppearance) -> Result<()> {
         configure_appearance(self.terminal.raw(), appearance)?;
         self.callbacks.set_color_scheme(appearance.color_scheme);
-        self.osc.set_appearance(appearance);
         self.snapshot_cache.invalidate();
         Ok(())
     }
@@ -52,13 +50,9 @@ impl DisplayTerminal {
         }
         crate::abi::validate()?;
         let mut callbacks = Box::new(CallbackState::new(size, appearance.color_scheme));
-        let options = sys::GhosttyTerminalOptions {
-            cols: size.cols,
-            rows: size.rows,
-            max_scrollback,
-        };
         let mut raw_terminal = std::ptr::null_mut();
-        let result = unsafe { sys::ghostty_terminal_new(allocator, &mut raw_terminal, options) };
+        let result =
+            unsafe { sys::ghostty_terminal_new(allocator, &mut raw_terminal, size.cols, size.rows) };
         check("terminal_new", result)?;
         if raw_terminal.is_null() {
             return Err(GhosttyError::AbiMismatch(
@@ -70,6 +64,7 @@ impl DisplayTerminal {
         // matching destructor.
         let terminal = unsafe { OwnedHandle::from_raw(raw_terminal, sys::ghostty_terminal_free) };
         callbacks::install(terminal.raw(), (&mut *callbacks) as *mut CallbackState)?;
+        configure_scrollback(terminal.raw(), max_scrollback)?;
         configure_safety_limits(terminal.raw())?;
         configure_appearance(terminal.raw(), appearance)?;
 
@@ -156,7 +151,6 @@ impl DisplayTerminal {
             terminal,
             snapshot_cache: Default::default(),
             callbacks,
-            osc: OscRouter::new(appearance),
             _not_send_or_sync: PhantomData,
         })
     }
@@ -232,6 +226,22 @@ fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<()> {
         check("terminal_set_safety_limit", result)?;
     }
     Ok(())
+}
+
+/// Pin the scrollback line budget the caller asked for.
+///
+/// `ghostty_terminal_new` no longer takes a scrollback limit, so the line
+/// budget has to be set explicitly right after construction. libghostty keeps
+/// its own byte budget alongside it and prunes on whichever limit is hit first.
+fn configure_scrollback(terminal: sys::GhosttyTerminal, max_scrollback: usize) -> Result<()> {
+    let result = unsafe {
+        sys::ghostty_terminal_set(
+            terminal,
+            sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+            (&raw const max_scrollback).cast::<c_void>(),
+        )
+    };
+    check("terminal_set_scrollback_max_lines", result)
 }
 
 #[cfg(test)]

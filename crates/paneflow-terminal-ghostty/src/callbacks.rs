@@ -17,6 +17,8 @@ const _: sys::GhosttyTerminalBellFn = Some(crate::callback_ffi::bell);
 const _: sys::GhosttyTerminalEnquiryFn = Some(crate::callback_ffi::enquiry);
 const _: sys::GhosttyTerminalXtversionFn = Some(crate::callback_ffi::xtversion);
 const _: sys::GhosttyTerminalTitleChangedFn = Some(crate::callback_ffi::title_changed);
+const _: sys::GhosttyTerminalPwdChangedFn = Some(crate::callback_ffi::pwd_changed);
+const _: sys::GhosttyTerminalClipboardWriteFn = Some(crate::callback_ffi::clipboard_write);
 const _: sys::GhosttyTerminalSizeFn = Some(crate::callback_ffi::size);
 const _: sys::GhosttyTerminalColorSchemeFn = Some(crate::callback_ffi::color_scheme);
 const _: sys::GhosttyTerminalDeviceAttributesFn = Some(crate::callback_ffi::device_attributes);
@@ -28,6 +30,7 @@ pub(crate) struct CallbackState {
     pending_bell_events: Cell<usize>,
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
+    last_working_directory: RefCell<Option<String>>,
     #[cfg(test)]
     pub(crate) panic_next: Cell<bool>,
 }
@@ -41,6 +44,7 @@ impl CallbackState {
             pending_bell_events: Cell::new(0),
             size: Cell::new(size),
             color_scheme: Cell::new(color_scheme),
+            last_working_directory: RefCell::new(None),
             #[cfg(test)]
             panic_next: Cell::new(false),
         }
@@ -60,6 +64,28 @@ impl CallbackState {
 
     pub(crate) fn set_color_scheme(&self, color_scheme: ColorScheme) {
         self.color_scheme.set(color_scheme);
+    }
+
+    /// Report a working directory, dropping a repeat of the last one.
+    ///
+    /// Shells emit OSC 7 on every prompt, so most reports restate the
+    /// directory Paneflow already knows.
+    pub(crate) fn push_working_directory(&self, cwd: String) {
+        let mut last = self.last_working_directory.borrow_mut();
+        if last.as_deref() == Some(cwd.as_str()) {
+            return;
+        }
+        *last = Some(cwd.clone());
+        drop(last);
+        self.push(BackendEvent::WorkingDirectory(cwd));
+    }
+
+    /// Forget the last reported working directory.
+    ///
+    /// A terminal reset drops the shell state that produced it, so the next
+    /// report must reach Paneflow even when it restates the same path.
+    pub(crate) fn reset_working_directory(&self) {
+        *self.last_working_directory.borrow_mut() = None;
     }
 
     pub(crate) fn push(&self, event: BackendEvent) {
@@ -189,6 +215,24 @@ pub(crate) fn install(terminal: sys::GhosttyTerminal, state: *mut CallbackState)
         terminal,
         sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_TITLE_CHANGED,
         crate::callback_ffi::title_changed as *const (),
+    )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PWD_CHANGED,
+        crate::callback_ffi::pwd_changed as *const (),
+    )?;
+    set_callback(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
+        crate::callback_ffi::clipboard_write as *const (),
+    )?;
+    // Bound the Kitty clipboard protocol to the same budget the OSC 52 path
+    // has always had; libghostty otherwise buffers up to 64 MiB per write.
+    let clipboard_max_bytes = crate::callback_ffi::MAX_CLIPBOARD_BYTES;
+    set(
+        terminal,
+        sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES,
+        (&raw const clipboard_max_bytes).cast(),
     )?;
     set_callback(
         terminal,

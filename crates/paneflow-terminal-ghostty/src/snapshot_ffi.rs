@@ -470,8 +470,8 @@ mod discriminant_tests {
 
     #[test]
     fn unknown_native_discriminants_are_rejected() {
-        assert!(wide_cell(u32::MAX).is_err());
+        assert!(wide_cell(i32::MAX).is_err());
         assert!(underline(i32::MAX).is_err());
-        assert!(cursor_shape(u32::MAX).is_err());
+        assert!(cursor_shape(i32::MAX).is_err());
     }
 }

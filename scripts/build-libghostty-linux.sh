@@ -75,6 +75,8 @@ HEADER_SHA256="$(manifest_string header_sha256)"
 BINDINGS_PATH="$(manifest_string bindings_path)"
 BINDINGS_SHA256="$(manifest_string bindings_sha256)"
 BUILD_MODE="$(manifest_string build_mode)"
+BUILD_SEED="$(manifest_string linux_build_seed)"
+BUILD_JOBS="$(manifest_string linux_build_jobs)"
 
 [[ -n "$SOURCE_DIR" ]] || {
   echo "PANEFLOW_GHOSTTY_SOURCE_DIR must point to Ghostty $SOURCE_SHA" >&2
@@ -114,6 +116,13 @@ ACTUAL_HEADER_SHA256="$(sha256sum "$SOURCE_DIR/$HEADER_PATH" | awk '{print $1}')
   echo "Ghostty header checksum mismatch: expected $HEADER_SHA256, got $ACTUAL_HEADER_SHA256" >&2
   exit 1
 }
+for key in linux_build_seed linux_build_jobs; do
+  [[ -n "$(manifest_string "$key")" ]] || {
+    echo "manifest is missing $key" >&2
+    exit 1
+  }
+done
+
 ACTUAL_BINDINGS_SHA256="$(sha256sum "$ROOT/$BINDINGS_PATH" | awk '{print $1}')"
 [[ "$ACTUAL_BINDINGS_SHA256" == "$BINDINGS_SHA256" ]] || {
   echo "Paneflow bindings checksum mismatch: expected $BINDINGS_SHA256, got $ACTUAL_BINDINGS_SHA256" >&2
@@ -182,6 +191,8 @@ build_one() {
   (
     cd "$SOURCE_DIR"
     ZIG_GLOBAL_CACHE_DIR="$cache/global" ZIG_LOCAL_CACHE_DIR="$cache/local" zig build \
+      --seed "$BUILD_SEED" \
+      -j"$BUILD_JOBS" \
       -Demit-lib-vt=true \
       -Dtarget="$target" \
       -Doptimize="$BUILD_MODE" \
@@ -191,7 +202,7 @@ build_one() {
   [[ -f "$archive" ]] || { echo "missing static archive: $archive" >&2; return 1; }
   [[ -f "$output/$HEADER_PATH" ]] || { echo "missing installed header: $output/$HEADER_PATH" >&2; return 1; }
   case "$archive_normalization" in
-    elfutils-strip-debug+ar-D) normalize_archive "$archive" ;;
+    zig-build-seed0-j1+elfutils-strip-debug+ar-D) normalize_archive "$archive" ;;
     *) echo "unsupported archive normalization: $archive_normalization" >&2; return 1 ;;
   esac
   nm -g --defined-only "$archive" | grep -E "[[:space:]]${build_info_symbol}$" >/dev/null || {

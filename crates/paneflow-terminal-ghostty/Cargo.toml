@@ -12,7 +12,6 @@ default = []
 native = ["dep:paneflow-libghostty-sys", "paneflow-libghostty-sys/link"]
 
 [dependencies]
-base64 = "0.22"
 regex = "1"
 serde_json.workspace = true
 thiserror.workspace = true

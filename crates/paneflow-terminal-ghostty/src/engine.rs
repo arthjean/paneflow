@@ -5,7 +5,6 @@ use paneflow_libghostty_sys as sys;
 
 use crate::callbacks::CallbackState;
 use crate::handles::{OwnedHandle, check};
-use crate::osc::OscRouter;
 use crate::snapshot::SnapshotCache;
 use crate::snapshot_ffi::{TerminalKittyKeyboardFlags, terminal_get};
 use crate::{BackendEvent, Modes, Result, Scroll, WindowSize};
@@ -23,21 +22,14 @@ pub struct DisplayTerminal {
     pub(crate) terminal: OwnedHandle<sys::GhosttyTerminal>,
     pub(crate) snapshot_cache: SnapshotCache,
     pub(crate) callbacks: Box<CallbackState>,
-    pub(crate) osc: OscRouter,
     pub(crate) _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
 impl DisplayTerminal {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        let callbacks = &self.callbacks;
-        let terminal = self.terminal.raw();
-        self.osc.feed(
-            bytes,
-            &mut |input| {
-                unsafe { sys::ghostty_terminal_vt_write(terminal, input.as_ptr(), input.len()) };
-            },
-            &mut |event| callbacks.push(event),
-        );
+        // SAFETY: the terminal handle is owned by `self` and the slice is
+        // borrowed for the duration of the call.
+        unsafe { sys::ghostty_terminal_vt_write(self.terminal.raw(), bytes.as_ptr(), bytes.len()) };
         Ok(())
     }
 
@@ -65,7 +57,7 @@ impl DisplayTerminal {
 
     pub fn reset(&mut self) {
         unsafe { sys::ghostty_terminal_reset(self.terminal.raw()) };
-        self.osc.reset();
+        self.callbacks.reset_working_directory();
         self.snapshot_cache.invalidate();
     }
 
@@ -122,11 +114,21 @@ impl DisplayTerminal {
     }
 
     fn mode(&self, dec_mode: u16) -> Result<bool> {
-        let mut value = false;
-        let result =
-            unsafe { sys::ghostty_terminal_mode_get(self.terminal.raw(), dec_mode, &mut value) };
-        check("terminal_mode_get", result)?;
-        Ok(value)
+        // `GhosttyMode` packs the ANSI flag in bit 15, so a DEC private mode
+        // number is already its own mode identifier.
+        let mut config = sys::GhosttyTerminalModeConfig {
+            mode: dec_mode,
+            value: false,
+        };
+        let result = unsafe {
+            sys::ghostty_terminal_get(
+                self.terminal.raw(),
+                sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MODE,
+                (&raw mut config).cast(),
+            )
+        };
+        check("terminal_get_mode", result)?;
+        Ok(config.value)
     }
 
     fn kitty_keyboard_flags(&self) -> Result<u8> {
@@ -151,6 +153,12 @@ fn resize_terminal(terminal: sys::GhosttyTerminal, size: WindowSize) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An OSC body long enough to exceed libghostty's OSC 52 budget once it is
+    /// base64 decoded. The length stays a multiple of four so the payload is
+    /// still decodable and the test proves the cap, not a decode failure.
+    const OVERSIZED_OSC_BODY_BYTES: usize =
+        crate::callback_ffi::MAX_CLIPBOARD_BYTES.div_ceil(3) * 4;
 
     #[test]
     fn clear_screen_and_scrollback_preserves_terminal_modes() {
@@ -193,12 +201,12 @@ mod tests {
             .expect("terminal must initialize");
         terminal.feed(b"\x1b[\xd1\x9d52;c;").expect("OSC prefix");
         terminal
-            .feed(&vec![b'A'; crate::osc::MAX_OSC_SEQUENCE_BYTES + 1])
+            .feed(&vec![b'A'; OVERSIZED_OSC_BODY_BYTES + 1])
             .expect("oversized OSC body");
         terminal.feed(b"\x9cignored").expect("C1 ST tail");
         terminal.feed(b"\x1b]52;c;").expect("second OSC prefix");
         terminal
-            .feed(&vec![b'B'; crate::osc::MAX_OSC_SEQUENCE_BYTES + 1])
+            .feed(&vec![b'B'; OVERSIZED_OSC_BODY_BYTES + 1])
             .expect("discarded OSC tail");
         terminal.feed(b"\x07SAFE").expect("OSC recovery");
 

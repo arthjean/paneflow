@@ -404,13 +404,6 @@ function Export-ReproducibilityEvidence {
         target = $Target
         source_sha = $SourceSha
         source_date_epoch = $SourceDateEpoch
-        source_patch = [ordered]@{
-            path = $SourcePatchPath
-            sha256 = $SourcePatchSha
-            target = $SourcePatchTarget
-            input_sha256 = $SourcePatchInputSha
-            output_sha256 = $SourcePatchOutputSha
-        }
         toolchain = [ordered]@{
             zig_version = $ZigVersion
             zig_archive_url = $ZigArchiveUrl
@@ -454,11 +447,6 @@ $ZigArchiveSha = Get-ManifestString "windows_zig_archive_sha256"
 $ZigExecutableSha = Get-ManifestString "windows_zig_executable_sha256"
 $ZigImageBase = Get-ManifestString "windows_zig_image_base"
 $ZigDllCharacteristics = Get-ManifestString "windows_zig_dll_characteristics"
-$SourcePatchPath = Get-ManifestString "windows_source_patch_path"
-$SourcePatchSha = Get-ManifestString "windows_source_patch_sha256"
-$SourcePatchTarget = Get-ManifestString "windows_source_patch_target"
-$SourcePatchInputSha = Get-ManifestString "windows_source_patch_input_sha256"
-$SourcePatchOutputSha = Get-ManifestString "windows_source_patch_output_sha256"
 $HeaderPath = Get-ManifestString "header_path"
 $HeaderSha = Get-ManifestString "header_sha256"
 $BindingsPath = Get-ManifestString "bindings_path"
@@ -531,29 +519,6 @@ if ($LASTEXITCODE -ne 0 -or $actualZig -ne $ZigVersion) {
     throw "libghostty requires Zig $ZigVersion, found $actualZig"
 }
 
-$SourcePatch = [IO.Path]::GetFullPath((Join-Path $Root $SourcePatchPath))
-if (-not $SourcePatch.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-    -not (Test-Path -LiteralPath $SourcePatch -PathType Leaf)) {
-    throw "manifest-pinned Ghostty source patch must be a repository file: $SourcePatchPath"
-}
-if ((Get-NormalizedTextSha256 $SourcePatch) -ne $SourcePatchSha) {
-    throw "Ghostty source patch checksum mismatch at $SourcePatch"
-}
-$patchStats = @(& git apply --unidiff-zero --numstat $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
-if ($LASTEXITCODE -ne 0 -or $patchStats.Count -ne 1 -or
-    $patchStats[0] -notmatch '^[0-9-]+\t[0-9-]+\t(.+)$' -or
-    $matches[1].Replace('\', '/') -ne $SourcePatchTarget.Replace('\', '/')) {
-    throw "Ghostty source patch must modify exactly $SourcePatchTarget"
-}
-$sourcePatchTargetPath = [IO.Path]::GetFullPath((Join-Path $SourceDir $SourcePatchTarget))
-if (-not $sourcePatchTargetPath.StartsWith($SourceDir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-    -not (Test-Path -LiteralPath $sourcePatchTargetPath -PathType Leaf)) {
-    throw "manifest-pinned Ghostty source patch target is invalid: $SourcePatchTarget"
-}
-if ((Get-NormalizedTextSha256 $sourcePatchTargetPath) -ne $SourcePatchInputSha) {
-    throw "Ghostty source patch input checksum mismatch at $sourcePatchTargetPath"
-}
-
 $sourceHeader = Join-Path $SourceDir $HeaderPath
 if ((Get-Sha256 $sourceHeader) -ne $HeaderSha) {
     throw "Ghostty header checksum mismatch at $sourceHeader"
@@ -584,7 +549,7 @@ if ($LASTEXITCODE -ne 0 -or -not ($llvmVersionOutput -match "LLVM version $([reg
     throw "libghostty requires LLVM normalization tools $LlvmVersion"
 }
 
-if ($Normalization -ne "pinned-formatter-patch+fixed-source-cache-prefix+zig-build-seed0-j1+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
+if ($Normalization -ne "fixed-source-cache-prefix+zig-build-seed0-j1+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
     throw "unsupported Windows archive normalization: $Normalization"
 }
 
@@ -632,28 +597,6 @@ function Initialize-CanonicalSource {
     }
     if ((Get-Sha256 (Join-Path $canonicalSource $HeaderPath)) -ne $HeaderSha) {
         throw "canonical Ghostty export has an unexpected header checksum"
-    }
-    $canonicalPatchTarget = [IO.Path]::GetFullPath((Join-Path $canonicalSource $SourcePatchTarget))
-    if (-not $canonicalPatchTarget.StartsWith($canonicalSource + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-        (Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchInputSha) {
-        throw "canonical Ghostty export has an unexpected source patch input"
-    }
-    Push-Location $canonicalSource
-    try {
-        $patchCheck = @(& git apply --unidiff-zero --check --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
-        if ($LASTEXITCODE -ne 0) {
-            throw "manifest-pinned Ghostty source patch does not apply cleanly`n$($patchCheck -join "`n")"
-        }
-        $patchOutput = @(& git apply --unidiff-zero --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
-        if ($LASTEXITCODE -ne 0) {
-            throw "cannot apply manifest-pinned Ghostty source patch`n$($patchOutput -join "`n")"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-    if ((Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchOutputSha) {
-        throw "canonical Ghostty source patch output checksum mismatch"
     }
     return $canonicalSource
 }
@@ -792,11 +735,6 @@ function Invoke-NativeBuild {
     Write-Utf8Lines $buildInfo @(
         "source_sha=$SourceSha",
         "source_date_epoch=$SourceDateEpoch",
-        "source_patch_path=$SourcePatchPath",
-        "source_patch_sha256=$SourcePatchSha",
-        "source_patch_target=$SourcePatchTarget",
-        "source_patch_input_sha256=$SourcePatchInputSha",
-        "source_patch_output_sha256=$SourcePatchOutputSha",
         "zig_version=$ZigVersion",
         "zig_archive_url=$ZigArchiveUrl",
         "zig_archive_sha256=$ZigArchiveSha",

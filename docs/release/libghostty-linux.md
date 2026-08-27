@@ -38,7 +38,7 @@ cargo run -p paneflow-app --no-default-features
 ## CI and release
 
 The libghostty Linux workflow regenerates the static archive from the pinned
-Ghostty SHA with Zig 0.15.2, exports its directory through
+Ghostty SHA with Zig 0.16.0, exports its directory through
 `PANEFLOW_LIBGHOSTTY_DIR`, and runs the native ABI, test, corpus, fuzz, stress,
 package, notice, size, and static-link checks. These are normal regression and
 supply-chain checks, not a separate product approval process.

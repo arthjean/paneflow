@@ -3,7 +3,7 @@ mod checksum;
 mod manifest;
 
 use artifact::ArtifactBundle;
-use manifest::{Manifest, TargetContract};
+use manifest::Manifest;
 use std::error::Error;
 use std::fs;
 use std::io;
@@ -58,7 +58,6 @@ pub fn run() -> BuildResult<()> {
     let target = required_env("TARGET")?;
     let contract = manifest.target_contract(&target)?;
     let action = contract.corrective_action();
-    verify_platform_workspace_inputs(workspace, &contract, &action)?;
 
     let bundle = ArtifactBundle::resolve(
         workspace,
@@ -125,23 +124,6 @@ fn ghostty_native_target() -> bool {
         }
         _ => false,
     }
-}
-
-fn verify_platform_workspace_inputs(
-    workspace: &Path,
-    contract: &TargetContract,
-    action: &str,
-) -> BuildResult<()> {
-    let Some((relative, expected_hash)) = contract.source_patch() else {
-        return Ok(());
-    };
-    let path = workspace.join(relative);
-    artifact::validate_regular_file_beneath(workspace, &path)
-        .map_err(|detail| artifact_error(contract.target(), &path, detail, action))?;
-    checksum::verify_text_hash(&path, expected_hash)
-        .map_err(|detail| artifact_error(contract.target(), &path, detail, action))?;
-    println!("cargo:rerun-if-changed={}", path.display());
-    Ok(())
 }
 
 fn verify_workspace_text(

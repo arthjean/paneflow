@@ -24,11 +24,6 @@ pub(crate) struct Manifest {
     windows_zig_executable_sha256: Option<String>,
     windows_zig_image_base: Option<String>,
     windows_zig_dll_characteristics: Option<String>,
-    windows_source_patch_path: Option<PathBuf>,
-    windows_source_patch_sha256: Option<String>,
-    windows_source_patch_target: Option<String>,
-    windows_source_patch_input_sha256: Option<String>,
-    windows_source_patch_output_sha256: Option<String>,
     windows_source_date_epoch: Option<String>,
     windows_canonical_source_path: Option<String>,
     windows_build_seed: Option<String>,
@@ -92,8 +87,6 @@ pub(crate) enum PlatformContract {
 
 #[derive(Debug)]
 pub(crate) struct WindowsContract {
-    pub(crate) source_patch_path: PathBuf,
-    pub(crate) source_patch_sha256: String,
     pub(crate) build_info_sha256: String,
     pub(crate) headers_index_sha256: String,
     pub(crate) symbols_sha256: String,
@@ -101,9 +94,6 @@ pub(crate) struct WindowsContract {
     zig_archive_url: String,
     zig_archive_sha256: String,
     zig_executable_sha256: String,
-    source_patch_target: String,
-    source_patch_input_sha256: String,
-    source_patch_output_sha256: String,
     zig_image_base: String,
     zig_dll_characteristics: String,
     simd: bool,
@@ -288,14 +278,6 @@ impl Manifest {
         symbols_sha256: &str,
     ) -> BuildResult<WindowsContract> {
         Ok(WindowsContract {
-            source_patch_path: required_path(
-                &self.windows_source_patch_path,
-                "windows_source_patch_path",
-            )?,
-            source_patch_sha256: required_digest(
-                self.windows_source_patch_sha256.as_deref(),
-                "windows_source_patch_sha256",
-            )?,
             build_info_sha256: validated_digest(build_info_sha256, "build_info_sha256")?,
             headers_index_sha256: validated_digest(headers_index_sha256, "headers_index_sha256")?,
             symbols_sha256: validated_digest(symbols_sha256, "symbols_sha256")?,
@@ -314,18 +296,6 @@ impl Manifest {
             zig_executable_sha256: required_digest(
                 self.windows_zig_executable_sha256.as_deref(),
                 "windows_zig_executable_sha256",
-            )?,
-            source_patch_target: required_string(
-                self.windows_source_patch_target.as_deref(),
-                "windows_source_patch_target",
-            )?,
-            source_patch_input_sha256: required_digest(
-                self.windows_source_patch_input_sha256.as_deref(),
-                "windows_source_patch_input_sha256",
-            )?,
-            source_patch_output_sha256: required_digest(
-                self.windows_source_patch_output_sha256.as_deref(),
-                "windows_source_patch_output_sha256",
             )?,
             zig_image_base: required_string(
                 self.windows_zig_image_base.as_deref(),
@@ -388,15 +358,6 @@ impl TargetContract {
         }
     }
 
-    pub(crate) fn source_patch(&self) -> Option<(&Path, &str)> {
-        self.windows().map(|contract| {
-            (
-                contract.source_patch_path.as_path(),
-                contract.source_patch_sha256.as_str(),
-            )
-        })
-    }
-
     pub(crate) fn corrective_action(&self) -> String {
         match self.platform {
             NativePlatform::Linux => format!(
@@ -448,20 +409,6 @@ impl TargetContract {
                     (
                         "zig_executable_sha256",
                         contract.zig_executable_sha256.clone(),
-                    ),
-                    (
-                        "source_patch_path",
-                        contract.source_patch_path.display().to_string(),
-                    ),
-                    ("source_patch_sha256", contract.source_patch_sha256.clone()),
-                    ("source_patch_target", contract.source_patch_target.clone()),
-                    (
-                        "source_patch_input_sha256",
-                        contract.source_patch_input_sha256.clone(),
-                    ),
-                    (
-                        "source_patch_output_sha256",
-                        contract.source_patch_output_sha256.clone(),
                     ),
                     ("zig_image_base", contract.zig_image_base.clone()),
                     (
@@ -597,14 +544,6 @@ fn validate_token(value: &str, key: &str) -> BuildResult<()> {
         )));
     }
     Ok(())
-}
-
-fn required_path(value: &Option<PathBuf>, key: &str) -> BuildResult<PathBuf> {
-    let path = value
-        .clone()
-        .ok_or_else(|| build_error(format!("libghostty manifest is missing `{key}`")))?;
-    validate_safe_relative_path(&path, key)?;
-    Ok(path)
 }
 
 fn required_string(value: Option<&str>, key: &str) -> BuildResult<String> {

@@ -58,8 +58,8 @@ defaults:
 
 env:
   CARGO_TERM_COLOR: always
-  GHOSTTY_SHA: ae52f97dcac558735cfa916ea3965f247e5c6e9e
-  ZIG_VERSION: 0.15.2
+  GHOSTTY_SHA: f2d5758f6305867dc36b36293c6165d8152b853e
+  ZIG_VERSION: 0.16.0
   # US-003: synthesize the canonical TAG every downstream packaging
   # step already uses as its version source (every `cp`, sha256, .deb,
   # .rpm, .dmg, .msi name resolves through `${TAG#v}`). In tag-push

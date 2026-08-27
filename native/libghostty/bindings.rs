@@ -83,6 +83,9 @@ pub const GhosttyResult_GHOSTTY_OUT_OF_MEMORY: GhosttyResult = -1;
 pub const GhosttyResult_GHOSTTY_INVALID_VALUE: GhosttyResult = -2;
 pub const GhosttyResult_GHOSTTY_OUT_OF_SPACE: GhosttyResult = -3;
 pub const GhosttyResult_GHOSTTY_NO_VALUE: GhosttyResult = -4;
+pub const GhosttyResult_GHOSTTY_IO_ERROR: GhosttyResult = -5;
+pub const GhosttyResult_GHOSTTY_LIMIT_EXCEEDED: GhosttyResult = -6;
+pub const GhosttyResult_GHOSTTY_REJECTED: GhosttyResult = -7;
 pub const GhosttyResult_GHOSTTY_RESULT_MAX_VALUE: GhosttyResult = 2147483647;
 pub type GhosttyResult = core::ffi::c_int;
 #[repr(C)]
@@ -91,6 +94,12 @@ pub struct GhosttyTerminalImpl {
     _unused: [u8; 0],
 }
 pub type GhosttyTerminal = *mut GhosttyTerminalImpl;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySnapshotDecoderImpl {
+    _unused: [u8; 0],
+}
+pub type GhosttySnapshotDecoder = *mut GhosttySnapshotDecoderImpl;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyTrackedGridRefImpl {
@@ -162,7 +171,7 @@ pub const GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_VT: GhosttyFormatterFo
 pub const GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_HTML: GhosttyFormatterFormat = 2;
 pub const GhosttyFormatterFormat_GHOSTTY_FORMATTER_FORMAT_MAX_VALUE: GhosttyFormatterFormat =
     2147483647;
-pub type GhosttyFormatterFormat = core::ffi::c_uint;
+pub type GhosttyFormatterFormat = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyString {
@@ -175,6 +184,52 @@ const _: () = {
     ["Alignment of GhosttyString"][::core::mem::align_of::<GhosttyString>() - 8usize];
     ["Offset of field: GhosttyString::ptr"][::core::mem::offset_of!(GhosttyString, ptr) - 0usize];
     ["Offset of field: GhosttyString::len"][::core::mem::offset_of!(GhosttyString, len) - 8usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyBuffer {
+    pub ptr: *mut u8,
+    pub cap: usize,
+    pub len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyBuffer"][::core::mem::size_of::<GhosttyBuffer>() - 24usize];
+    ["Alignment of GhosttyBuffer"][::core::mem::align_of::<GhosttyBuffer>() - 8usize];
+    ["Offset of field: GhosttyBuffer::ptr"][::core::mem::offset_of!(GhosttyBuffer, ptr) - 0usize];
+    ["Offset of field: GhosttyBuffer::cap"][::core::mem::offset_of!(GhosttyBuffer, cap) - 8usize];
+    ["Offset of field: GhosttyBuffer::len"][::core::mem::offset_of!(GhosttyBuffer, len) - 16usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySurfacePosition {
+    pub x: f64,
+    pub y: f64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttySurfacePosition"][::core::mem::size_of::<GhosttySurfacePosition>() - 16usize];
+    ["Alignment of GhosttySurfacePosition"]
+        [::core::mem::align_of::<GhosttySurfacePosition>() - 8usize];
+    ["Offset of field: GhosttySurfacePosition::x"]
+        [::core::mem::offset_of!(GhosttySurfacePosition, x) - 0usize];
+    ["Offset of field: GhosttySurfacePosition::y"]
+        [::core::mem::offset_of!(GhosttySurfacePosition, y) - 8usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyCodepoints {
+    pub ptr: *const u32,
+    pub len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyCodepoints"][::core::mem::size_of::<GhosttyCodepoints>() - 16usize];
+    ["Alignment of GhosttyCodepoints"][::core::mem::align_of::<GhosttyCodepoints>() - 8usize];
+    ["Offset of field: GhosttyCodepoints::ptr"]
+        [::core::mem::offset_of!(GhosttyCodepoints, ptr) - 0usize];
+    ["Offset of field: GhosttyCodepoints::len"]
+        [::core::mem::offset_of!(GhosttyCodepoints, len) - 8usize];
 };
 unsafe extern "C" {
     pub fn ghostty_type_json() -> *const core::ffi::c_char;
@@ -260,7 +315,7 @@ pub const GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_SAFE: GhosttyOptimizeMode
 pub const GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_SMALL: GhosttyOptimizeMode = 2;
 pub const GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_RELEASE_FAST: GhosttyOptimizeMode = 3;
 pub const GhosttyOptimizeMode_GHOSTTY_OPTIMIZE_MODE_MAX_VALUE: GhosttyOptimizeMode = 2147483647;
-pub type GhosttyOptimizeMode = core::ffi::c_uint;
+pub type GhosttyOptimizeMode = core::ffi::c_int;
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_INVALID: GhosttyBuildInfo = 0;
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_SIMD: GhosttyBuildInfo = 1;
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_KITTY_GRAPHICS: GhosttyBuildInfo = 2;
@@ -273,7 +328,7 @@ pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_PATCH: GhosttyBuildInfo = 
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_PRE: GhosttyBuildInfo = 9;
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_VERSION_BUILD: GhosttyBuildInfo = 10;
 pub const GhosttyBuildInfo_GHOSTTY_BUILD_INFO_MAX_VALUE: GhosttyBuildInfo = 2147483647;
-pub type GhosttyBuildInfo = core::ffi::c_uint;
+pub type GhosttyBuildInfo = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_build_info(data: GhosttyBuildInfo, out: *mut core::ffi::c_void)
     -> GhosttyResult;
@@ -294,13 +349,92 @@ const _: () = {
     ["Offset of field: GhosttyColorRgb::b"][::core::mem::offset_of!(GhosttyColorRgb, b) - 2usize];
 };
 pub type GhosttyColorPaletteIndex = u8;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyColorPaletteMask {
+    pub bits: [u64; 4usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyColorPaletteMask"]
+        [::core::mem::size_of::<GhosttyColorPaletteMask>() - 32usize];
+    ["Alignment of GhosttyColorPaletteMask"]
+        [::core::mem::align_of::<GhosttyColorPaletteMask>() - 8usize];
+    ["Offset of field: GhosttyColorPaletteMask::bits"]
+        [::core::mem::offset_of!(GhosttyColorPaletteMask, bits) - 0usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyColorX11Entry {
+    pub name: *const core::ffi::c_char,
+    pub color: GhosttyColorRgb,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyColorX11Entry"][::core::mem::size_of::<GhosttyColorX11Entry>() - 16usize];
+    ["Alignment of GhosttyColorX11Entry"][::core::mem::align_of::<GhosttyColorX11Entry>() - 8usize];
+    ["Offset of field: GhosttyColorX11Entry::name"]
+        [::core::mem::offset_of!(GhosttyColorX11Entry, name) - 0usize];
+    ["Offset of field: GhosttyColorX11Entry::color"]
+        [::core::mem::offset_of!(GhosttyColorX11Entry, color) - 8usize];
+};
 unsafe extern "C" {
-    pub fn ghostty_color_rgb_get(color: GhosttyColorRgb, r: *mut u8, g: *mut u8, b: *mut u8);
+    pub fn ghostty_color_rgb_get(color: *const GhosttyColorRgb, r: *mut u8, g: *mut u8, b: *mut u8);
+}
+unsafe extern "C" {
+    pub fn ghostty_color_parse_x11(
+        name: *const core::ffi::c_char,
+        len: usize,
+        out: *mut GhosttyColorRgb,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_color_parse(
+        value: *const core::ffi::c_char,
+        len: usize,
+        out: *mut GhosttyColorRgb,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_color_parse_palette_entry(
+        value: *const core::ffi::c_char,
+        len: usize,
+        out_index: *mut u8,
+        out_rgb: *mut GhosttyColorRgb,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_color_palette_default(out: *mut GhosttyColorRgb);
+}
+unsafe extern "C" {
+    pub fn ghostty_color_palette_generate(
+        base: *const GhosttyColorRgb,
+        skip: *const GhosttyColorPaletteMask,
+        bg: *const GhosttyColorRgb,
+        fg: *const GhosttyColorRgb,
+        harmonious: bool,
+        out: *mut GhosttyColorRgb,
+    );
+}
+unsafe extern "C" {
+    pub fn ghostty_color_luminance(color: *const GhosttyColorRgb) -> f64;
+}
+unsafe extern "C" {
+    pub fn ghostty_color_perceived_luminance(color: *const GhosttyColorRgb) -> f64;
+}
+unsafe extern "C" {
+    pub fn ghostty_color_contrast(a: *const GhosttyColorRgb, b: *const GhosttyColorRgb) -> f64;
+}
+unsafe extern "C" {
+    pub fn ghostty_color_x11_names() -> *const GhosttyColorX11Entry;
+}
+unsafe extern "C" {
+    pub fn ghostty_color_x11_name_count() -> usize;
 }
 pub const GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_LIGHT: GhosttyColorScheme = 0;
 pub const GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_DARK: GhosttyColorScheme = 1;
 pub const GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_MAX_VALUE: GhosttyColorScheme = 2147483647;
-pub type GhosttyColorScheme = core::ffi::c_uint;
+pub type GhosttyColorScheme = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyDeviceAttributesPrimary {
@@ -375,10 +509,18 @@ const _: () = {
     ["Offset of field: GhosttyDeviceAttributes::tertiary"]
         [::core::mem::offset_of!(GhosttyDeviceAttributes, tertiary) - 152usize];
 };
+unsafe extern "C" {
+    pub fn ghostty_color_scheme_report_encode(
+        scheme: GhosttyColorScheme,
+        buf: *mut core::ffi::c_char,
+        buf_len: usize,
+        out_written: *mut usize,
+    ) -> GhosttyResult;
+}
 pub const GhosttyFocusEvent_GHOSTTY_FOCUS_GAINED: GhosttyFocusEvent = 0;
 pub const GhosttyFocusEvent_GHOSTTY_FOCUS_LOST: GhosttyFocusEvent = 1;
 pub const GhosttyFocusEvent_GHOSTTY_FOCUS_MAX_VALUE: GhosttyFocusEvent = 2147483647;
-pub type GhosttyFocusEvent = core::ffi::c_uint;
+pub type GhosttyFocusEvent = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_focus_encode(
         event: GhosttyFocusEvent,
@@ -387,27 +529,104 @@ unsafe extern "C" {
         out_written: *mut usize,
     ) -> GhosttyResult;
 }
+pub type GhosttyReaderFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        userdata: *mut core::ffi::c_void,
+        buffer: *mut u8,
+        capacity: usize,
+        out_read: *mut usize,
+    ) -> bool,
+>;
+pub type GhosttyWriterFn = ::core::option::Option<
+    unsafe extern "C" fn(userdata: *mut core::ffi::c_void, data: *const u8, len: usize) -> bool,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyReader {
+    pub read: GhosttyReaderFn,
+    pub userdata: *mut core::ffi::c_void,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyReader"][::core::mem::size_of::<GhosttyReader>() - 16usize];
+    ["Alignment of GhosttyReader"][::core::mem::align_of::<GhosttyReader>() - 8usize];
+    ["Offset of field: GhosttyReader::read"][::core::mem::offset_of!(GhosttyReader, read) - 0usize];
+    ["Offset of field: GhosttyReader::userdata"]
+        [::core::mem::offset_of!(GhosttyReader, userdata) - 8usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyWriter {
+    pub write: GhosttyWriterFn,
+    pub userdata: *mut core::ffi::c_void,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyWriter"][::core::mem::size_of::<GhosttyWriter>() - 16usize];
+    ["Alignment of GhosttyWriter"][::core::mem::align_of::<GhosttyWriter>() - 8usize];
+    ["Offset of field: GhosttyWriter::write"]
+        [::core::mem::offset_of!(GhosttyWriter, write) - 0usize];
+    ["Offset of field: GhosttyWriter::userdata"]
+        [::core::mem::offset_of!(GhosttyWriter, userdata) - 8usize];
+};
+pub type GhosttyMimeReaderFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        userdata: *mut core::ffi::c_void,
+        mime: GhosttyString,
+        writer: GhosttyWriter,
+    ) -> bool,
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyMimeReader {
+    pub read: GhosttyMimeReaderFn,
+    pub userdata: *mut core::ffi::c_void,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyMimeReader"][::core::mem::size_of::<GhosttyMimeReader>() - 16usize];
+    ["Alignment of GhosttyMimeReader"][::core::mem::align_of::<GhosttyMimeReader>() - 8usize];
+    ["Offset of field: GhosttyMimeReader::read"]
+        [::core::mem::offset_of!(GhosttyMimeReader, read) - 0usize];
+    ["Offset of field: GhosttyMimeReader::userdata"]
+        [::core::mem::offset_of!(GhosttyMimeReader, userdata) - 8usize];
+};
 pub type GhosttyCell = u64;
 pub type GhosttyRow = u64;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyCellsView {
+    pub ptr: *const GhosttyCell,
+    pub len: usize,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyCellsView"][::core::mem::size_of::<GhosttyCellsView>() - 16usize];
+    ["Alignment of GhosttyCellsView"][::core::mem::align_of::<GhosttyCellsView>() - 8usize];
+    ["Offset of field: GhosttyCellsView::ptr"]
+        [::core::mem::offset_of!(GhosttyCellsView, ptr) - 0usize];
+    ["Offset of field: GhosttyCellsView::len"]
+        [::core::mem::offset_of!(GhosttyCellsView, len) - 8usize];
+};
 pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT: GhosttyCellContentTag = 0;
 pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT_GRAPHEME: GhosttyCellContentTag = 1;
 pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_PALETTE: GhosttyCellContentTag = 2;
 pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_BG_COLOR_RGB: GhosttyCellContentTag = 3;
 pub const GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_TAG_MAX_VALUE: GhosttyCellContentTag =
     2147483647;
-pub type GhosttyCellContentTag = core::ffi::c_uint;
+pub type GhosttyCellContentTag = core::ffi::c_int;
 pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW: GhosttyCellWide = 0;
 pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_WIDE: GhosttyCellWide = 1;
 pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_TAIL: GhosttyCellWide = 2;
 pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_SPACER_HEAD: GhosttyCellWide = 3;
 pub const GhosttyCellWide_GHOSTTY_CELL_WIDE_MAX_VALUE: GhosttyCellWide = 2147483647;
-pub type GhosttyCellWide = core::ffi::c_uint;
+pub type GhosttyCellWide = core::ffi::c_int;
 pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_OUTPUT: GhosttyCellSemanticContent = 0;
 pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_INPUT: GhosttyCellSemanticContent = 1;
 pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_PROMPT: GhosttyCellSemanticContent = 2;
 pub const GhosttyCellSemanticContent_GHOSTTY_CELL_SEMANTIC_MAX_VALUE: GhosttyCellSemanticContent =
     2147483647;
-pub type GhosttyCellSemanticContent = core::ffi::c_uint;
+pub type GhosttyCellSemanticContent = core::ffi::c_int;
 pub const GhosttyCellData_GHOSTTY_CELL_DATA_INVALID: GhosttyCellData = 0;
 pub const GhosttyCellData_GHOSTTY_CELL_DATA_CODEPOINT: GhosttyCellData = 1;
 pub const GhosttyCellData_GHOSTTY_CELL_DATA_CONTENT_TAG: GhosttyCellData = 2;
@@ -421,14 +640,14 @@ pub const GhosttyCellData_GHOSTTY_CELL_DATA_SEMANTIC_CONTENT: GhosttyCellData = 
 pub const GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_PALETTE: GhosttyCellData = 10;
 pub const GhosttyCellData_GHOSTTY_CELL_DATA_COLOR_RGB: GhosttyCellData = 11;
 pub const GhosttyCellData_GHOSTTY_CELL_DATA_MAX_VALUE: GhosttyCellData = 2147483647;
-pub type GhosttyCellData = core::ffi::c_uint;
+pub type GhosttyCellData = core::ffi::c_int;
 pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_NONE: GhosttyRowSemanticPrompt = 0;
 pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT: GhosttyRowSemanticPrompt = 1;
 pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_PROMPT_CONTINUATION:
     GhosttyRowSemanticPrompt = 2;
 pub const GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_MAX_VALUE: GhosttyRowSemanticPrompt =
     2147483647;
-pub type GhosttyRowSemanticPrompt = core::ffi::c_uint;
+pub type GhosttyRowSemanticPrompt = core::ffi::c_int;
 pub const GhosttyRowData_GHOSTTY_ROW_DATA_INVALID: GhosttyRowData = 0;
 pub const GhosttyRowData_GHOSTTY_ROW_DATA_WRAP: GhosttyRowData = 1;
 pub const GhosttyRowData_GHOSTTY_ROW_DATA_WRAP_CONTINUATION: GhosttyRowData = 2;
@@ -439,7 +658,7 @@ pub const GhosttyRowData_GHOSTTY_ROW_DATA_SEMANTIC_PROMPT: GhosttyRowData = 6;
 pub const GhosttyRowData_GHOSTTY_ROW_DATA_KITTY_VIRTUAL_PLACEHOLDER: GhosttyRowData = 7;
 pub const GhosttyRowData_GHOSTTY_ROW_DATA_DIRTY: GhosttyRowData = 8;
 pub const GhosttyRowData_GHOSTTY_ROW_DATA_MAX_VALUE: GhosttyRowData = 2147483647;
-pub type GhosttyRowData = core::ffi::c_uint;
+pub type GhosttyRowData = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_cell_get(
         cell: GhosttyCell,
@@ -477,7 +696,7 @@ pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_NONE: GhosttyStyleColorTag = 
 pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_PALETTE: GhosttyStyleColorTag = 1;
 pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_RGB: GhosttyStyleColorTag = 2;
 pub const GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_TAG_MAX_VALUE: GhosttyStyleColorTag = 2147483647;
-pub type GhosttyStyleColorTag = core::ffi::c_uint;
+pub type GhosttyStyleColorTag = core::ffi::c_int;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union GhosttyStyleColorValue {
@@ -638,7 +857,7 @@ pub const GhosttyPointTag_GHOSTTY_POINT_TAG_VIEWPORT: GhosttyPointTag = 1;
 pub const GhosttyPointTag_GHOSTTY_POINT_TAG_SCREEN: GhosttyPointTag = 2;
 pub const GhosttyPointTag_GHOSTTY_POINT_TAG_HISTORY: GhosttyPointTag = 3;
 pub const GhosttyPointTag_GHOSTTY_POINT_TAG_MAX_VALUE: GhosttyPointTag = 2147483647;
-pub type GhosttyPointTag = core::ffi::c_uint;
+pub type GhosttyPointTag = core::ffi::c_int;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union GhosttyPointValue {
@@ -667,6 +886,18 @@ const _: () = {
     ["Offset of field: GhosttyPoint::tag"][::core::mem::offset_of!(GhosttyPoint, tag) - 0usize];
     ["Offset of field: GhosttyPoint::value"][::core::mem::offset_of!(GhosttyPoint, value) - 8usize];
 };
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySelectionGestureImpl {
+    _unused: [u8; 0],
+}
+pub type GhosttySelectionGesture = *mut GhosttySelectionGestureImpl;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySelectionGestureEventImpl {
+    _unused: [u8; 0],
+}
+pub type GhosttySelectionGestureEvent = *mut GhosttySelectionGestureEventImpl;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttySelection {
@@ -804,7 +1035,7 @@ pub const GhosttySelectionOrder_GHOSTTY_SELECTION_ORDER_MIRRORED_FORWARD: Ghostt
 pub const GhosttySelectionOrder_GHOSTTY_SELECTION_ORDER_MIRRORED_REVERSE: GhosttySelectionOrder = 3;
 pub const GhosttySelectionOrder_GHOSTTY_SELECTION_ORDER_MAX_VALUE: GhosttySelectionOrder =
     2147483647;
-pub type GhosttySelectionOrder = core::ffi::c_uint;
+pub type GhosttySelectionOrder = core::ffi::c_int;
 pub const GhosttySelectionAdjust_GHOSTTY_SELECTION_ADJUST_LEFT: GhosttySelectionAdjust = 0;
 pub const GhosttySelectionAdjust_GHOSTTY_SELECTION_ADJUST_RIGHT: GhosttySelectionAdjust = 1;
 pub const GhosttySelectionAdjust_GHOSTTY_SELECTION_ADJUST_UP: GhosttySelectionAdjust = 2;
@@ -818,7 +1049,178 @@ pub const GhosttySelectionAdjust_GHOSTTY_SELECTION_ADJUST_BEGINNING_OF_LINE:
 pub const GhosttySelectionAdjust_GHOSTTY_SELECTION_ADJUST_END_OF_LINE: GhosttySelectionAdjust = 9;
 pub const GhosttySelectionAdjust_GHOSTTY_SELECTION_ADJUST_MAX_VALUE: GhosttySelectionAdjust =
     2147483647;
-pub type GhosttySelectionAdjust = core::ffi::c_uint;
+pub type GhosttySelectionAdjust = core::ffi::c_int;
+pub const GhosttySelectionGestureBehavior_GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL:
+    GhosttySelectionGestureBehavior = 0;
+pub const GhosttySelectionGestureBehavior_GHOSTTY_SELECTION_GESTURE_BEHAVIOR_WORD:
+    GhosttySelectionGestureBehavior = 1;
+pub const GhosttySelectionGestureBehavior_GHOSTTY_SELECTION_GESTURE_BEHAVIOR_LINE:
+    GhosttySelectionGestureBehavior = 2;
+pub const GhosttySelectionGestureBehavior_GHOSTTY_SELECTION_GESTURE_BEHAVIOR_OUTPUT:
+    GhosttySelectionGestureBehavior = 3;
+pub const GhosttySelectionGestureBehavior_GHOSTTY_SELECTION_GESTURE_BEHAVIOR_MAX_VALUE:
+    GhosttySelectionGestureBehavior = 2147483647;
+pub type GhosttySelectionGestureBehavior = core::ffi::c_int;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySelectionGestureBehaviors {
+    pub single_click: GhosttySelectionGestureBehavior,
+    pub double_click: GhosttySelectionGestureBehavior,
+    pub triple_click: GhosttySelectionGestureBehavior,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttySelectionGestureBehaviors"]
+        [::core::mem::size_of::<GhosttySelectionGestureBehaviors>() - 12usize];
+    ["Alignment of GhosttySelectionGestureBehaviors"]
+        [::core::mem::align_of::<GhosttySelectionGestureBehaviors>() - 4usize];
+    ["Offset of field: GhosttySelectionGestureBehaviors::single_click"]
+        [::core::mem::offset_of!(GhosttySelectionGestureBehaviors, single_click) - 0usize];
+    ["Offset of field: GhosttySelectionGestureBehaviors::double_click"]
+        [::core::mem::offset_of!(GhosttySelectionGestureBehaviors, double_click) - 4usize];
+    ["Offset of field: GhosttySelectionGestureBehaviors::triple_click"]
+        [::core::mem::offset_of!(GhosttySelectionGestureBehaviors, triple_click) - 8usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttySelectionGestureGeometry {
+    pub columns: u32,
+    pub cell_width: u32,
+    pub padding_left: u32,
+    pub screen_height: u32,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttySelectionGestureGeometry"]
+        [::core::mem::size_of::<GhosttySelectionGestureGeometry>() - 16usize];
+    ["Alignment of GhosttySelectionGestureGeometry"]
+        [::core::mem::align_of::<GhosttySelectionGestureGeometry>() - 4usize];
+    ["Offset of field: GhosttySelectionGestureGeometry::columns"]
+        [::core::mem::offset_of!(GhosttySelectionGestureGeometry, columns) - 0usize];
+    ["Offset of field: GhosttySelectionGestureGeometry::cell_width"]
+        [::core::mem::offset_of!(GhosttySelectionGestureGeometry, cell_width) - 4usize];
+    ["Offset of field: GhosttySelectionGestureGeometry::padding_left"]
+        [::core::mem::offset_of!(GhosttySelectionGestureGeometry, padding_left) - 8usize];
+    ["Offset of field: GhosttySelectionGestureGeometry::screen_height"]
+        [::core::mem::offset_of!(GhosttySelectionGestureGeometry, screen_height) - 12usize];
+};
+pub const GhosttySelectionGestureAutoscroll_GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_NONE:
+    GhosttySelectionGestureAutoscroll = 0;
+pub const GhosttySelectionGestureAutoscroll_GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_UP:
+    GhosttySelectionGestureAutoscroll = 1;
+pub const GhosttySelectionGestureAutoscroll_GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_DOWN:
+    GhosttySelectionGestureAutoscroll = 2;
+pub const GhosttySelectionGestureAutoscroll_GHOSTTY_SELECTION_GESTURE_AUTOSCROLL_MAX_VALUE:
+    GhosttySelectionGestureAutoscroll = 2147483647;
+pub type GhosttySelectionGestureAutoscroll = core::ffi::c_int;
+pub const GhosttySelectionGestureData_GHOSTTY_SELECTION_GESTURE_DATA_CLICK_COUNT:
+    GhosttySelectionGestureData = 0;
+pub const GhosttySelectionGestureData_GHOSTTY_SELECTION_GESTURE_DATA_DRAGGED:
+    GhosttySelectionGestureData = 1;
+pub const GhosttySelectionGestureData_GHOSTTY_SELECTION_GESTURE_DATA_AUTOSCROLL:
+    GhosttySelectionGestureData = 2;
+pub const GhosttySelectionGestureData_GHOSTTY_SELECTION_GESTURE_DATA_BEHAVIOR:
+    GhosttySelectionGestureData = 3;
+pub const GhosttySelectionGestureData_GHOSTTY_SELECTION_GESTURE_DATA_ANCHOR:
+    GhosttySelectionGestureData = 4;
+pub const GhosttySelectionGestureData_GHOSTTY_SELECTION_GESTURE_DATA_MAX_VALUE:
+    GhosttySelectionGestureData = 2147483647;
+pub type GhosttySelectionGestureData = core::ffi::c_int;
+pub const GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_PRESS:
+    GhosttySelectionGestureEventType = 0;
+pub const GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE:
+    GhosttySelectionGestureEventType = 1;
+pub const GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DRAG:
+    GhosttySelectionGestureEventType = 2;
+pub const GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_AUTOSCROLL_TICK:
+    GhosttySelectionGestureEventType = 3;
+pub const GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DEEP_PRESS:
+    GhosttySelectionGestureEventType = 4;
+pub const GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_MAX_VALUE:
+    GhosttySelectionGestureEventType = 2147483647;
+pub type GhosttySelectionGestureEventType = core::ffi::c_int;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF:
+    GhosttySelectionGestureEventOption = 0;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION:
+    GhosttySelectionGestureEventOption = 1;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE:
+    GhosttySelectionGestureEventOption = 2;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_TIME_NS:
+    GhosttySelectionGestureEventOption = 3;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS : GhosttySelectionGestureEventOption = 4 ;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_WORD_BOUNDARY_CODEPOINTS : GhosttySelectionGestureEventOption = 5 ;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS:
+    GhosttySelectionGestureEventOption = 6;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_RECTANGLE:
+    GhosttySelectionGestureEventOption = 7;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY:
+    GhosttySelectionGestureEventOption = 8;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_VIEWPORT:
+    GhosttySelectionGestureEventOption = 9;
+pub const GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_MAX_VALUE:
+    GhosttySelectionGestureEventOption = 2147483647;
+pub type GhosttySelectionGestureEventOption = core::ffi::c_int;
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_event_new(
+        allocator: *const GhosttyAllocator,
+        out_event: *mut GhosttySelectionGestureEvent,
+        type_: GhosttySelectionGestureEventType,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_event_free(event: GhosttySelectionGestureEvent);
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_event_set(
+        event: GhosttySelectionGestureEvent,
+        option: GhosttySelectionGestureEventOption,
+        value: *const core::ffi::c_void,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_event(
+        gesture: GhosttySelectionGesture,
+        terminal: GhosttyTerminal,
+        event: GhosttySelectionGestureEvent,
+        out_selection: *mut GhosttySelection,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_new(
+        allocator: *const GhosttyAllocator,
+        out_gesture: *mut GhosttySelectionGesture,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_free(
+        gesture: GhosttySelectionGesture,
+        terminal: GhosttyTerminal,
+    );
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_reset(
+        gesture: GhosttySelectionGesture,
+        terminal: GhosttyTerminal,
+    );
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_get(
+        gesture: GhosttySelectionGesture,
+        terminal: GhosttyTerminal,
+        data: GhosttySelectionGestureData,
+        value: *mut core::ffi::c_void,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_selection_gesture_get_multi(
+        gesture: GhosttySelectionGesture,
+        terminal: GhosttyTerminal,
+        count: usize,
+        keys: *const GhosttySelectionGestureData,
+        values: *mut *mut core::ffi::c_void,
+        out_written: *mut usize,
+    ) -> GhosttyResult;
+}
 unsafe extern "C" {
     pub fn ghostty_terminal_select_word(
         terminal: GhosttyTerminal,
@@ -916,7 +1318,7 @@ pub const GhosttyModeReportState_GHOSTTY_MODE_REPORT_RESET: GhosttyModeReportSta
 pub const GhosttyModeReportState_GHOSTTY_MODE_REPORT_PERMANENTLY_SET: GhosttyModeReportState = 3;
 pub const GhosttyModeReportState_GHOSTTY_MODE_REPORT_PERMANENTLY_RESET: GhosttyModeReportState = 4;
 pub const GhosttyModeReportState_GHOSTTY_MODE_REPORT_MAX_VALUE: GhosttyModeReportState = 2147483647;
-pub type GhosttyModeReportState = core::ffi::c_uint;
+pub type GhosttyModeReportState = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_mode_report_encode(
         mode: GhosttyMode,
@@ -932,7 +1334,7 @@ pub const GhosttySizeReportStyle_GHOSTTY_SIZE_REPORT_CSI_16_T: GhosttySizeReport
 pub const GhosttySizeReportStyle_GHOSTTY_SIZE_REPORT_CSI_18_T: GhosttySizeReportStyle = 3;
 pub const GhosttySizeReportStyle_GHOSTTY_SIZE_REPORT_STYLE_MAX_VALUE: GhosttySizeReportStyle =
     2147483647;
-pub type GhosttySizeReportStyle = core::ffi::c_uint;
+pub type GhosttySizeReportStyle = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttySizeReportSize {
@@ -968,9 +1370,11 @@ pub const GhosttyKittyGraphicsData_GHOSTTY_KITTY_GRAPHICS_DATA_INVALID: GhosttyK
     0;
 pub const GhosttyKittyGraphicsData_GHOSTTY_KITTY_GRAPHICS_DATA_PLACEMENT_ITERATOR:
     GhosttyKittyGraphicsData = 1;
+pub const GhosttyKittyGraphicsData_GHOSTTY_KITTY_GRAPHICS_DATA_GENERATION:
+    GhosttyKittyGraphicsData = 2;
 pub const GhosttyKittyGraphicsData_GHOSTTY_KITTY_GRAPHICS_DATA_MAX_VALUE: GhosttyKittyGraphicsData =
     2147483647;
-pub type GhosttyKittyGraphicsData = core::ffi::c_uint;
+pub type GhosttyKittyGraphicsData = core::ffi::c_int;
 pub const GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_INVALID:
     GhosttyKittyGraphicsPlacementData = 0;
 pub const GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_IMAGE_ID:
@@ -999,7 +1403,7 @@ pub const GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DAT
     GhosttyKittyGraphicsPlacementData = 12;
 pub const GhosttyKittyGraphicsPlacementData_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_DATA_MAX_VALUE:
     GhosttyKittyGraphicsPlacementData = 2147483647;
-pub type GhosttyKittyGraphicsPlacementData = core::ffi::c_uint;
+pub type GhosttyKittyGraphicsPlacementData = core::ffi::c_int;
 pub const GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_ALL: GhosttyKittyPlacementLayer =
     0;
 pub const GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG:
@@ -1010,10 +1414,10 @@ pub const GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT:
     GhosttyKittyPlacementLayer = 3;
 pub const GhosttyKittyPlacementLayer_GHOSTTY_KITTY_PLACEMENT_LAYER_MAX_VALUE:
     GhosttyKittyPlacementLayer = 2147483647;
-pub type GhosttyKittyPlacementLayer = core::ffi::c_uint;
+pub type GhosttyKittyPlacementLayer = core::ffi::c_int;
 pub const GhosttyKittyGraphicsPlacementIteratorOption_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_LAYER : GhosttyKittyGraphicsPlacementIteratorOption = 0 ;
 pub const GhosttyKittyGraphicsPlacementIteratorOption_GHOSTTY_KITTY_GRAPHICS_PLACEMENT_ITERATOR_OPTION_MAX_VALUE : GhosttyKittyGraphicsPlacementIteratorOption = 2147483647 ;
-pub type GhosttyKittyGraphicsPlacementIteratorOption = core::ffi::c_uint;
+pub type GhosttyKittyGraphicsPlacementIteratorOption = core::ffi::c_int;
 pub const GhosttyKittyImageFormat_GHOSTTY_KITTY_IMAGE_FORMAT_RGB: GhosttyKittyImageFormat = 0;
 pub const GhosttyKittyImageFormat_GHOSTTY_KITTY_IMAGE_FORMAT_RGBA: GhosttyKittyImageFormat = 1;
 pub const GhosttyKittyImageFormat_GHOSTTY_KITTY_IMAGE_FORMAT_PNG: GhosttyKittyImageFormat = 2;
@@ -1022,14 +1426,14 @@ pub const GhosttyKittyImageFormat_GHOSTTY_KITTY_IMAGE_FORMAT_GRAY_ALPHA: Ghostty
 pub const GhosttyKittyImageFormat_GHOSTTY_KITTY_IMAGE_FORMAT_GRAY: GhosttyKittyImageFormat = 4;
 pub const GhosttyKittyImageFormat_GHOSTTY_KITTY_IMAGE_FORMAT_MAX_VALUE: GhosttyKittyImageFormat =
     2147483647;
-pub type GhosttyKittyImageFormat = core::ffi::c_uint;
+pub type GhosttyKittyImageFormat = core::ffi::c_int;
 pub const GhosttyKittyImageCompression_GHOSTTY_KITTY_IMAGE_COMPRESSION_NONE:
     GhosttyKittyImageCompression = 0;
 pub const GhosttyKittyImageCompression_GHOSTTY_KITTY_IMAGE_COMPRESSION_ZLIB_DEFLATE:
     GhosttyKittyImageCompression = 1;
 pub const GhosttyKittyImageCompression_GHOSTTY_KITTY_IMAGE_COMPRESSION_MAX_VALUE:
     GhosttyKittyImageCompression = 2147483647;
-pub type GhosttyKittyImageCompression = core::ffi::c_uint;
+pub type GhosttyKittyImageCompression = core::ffi::c_int;
 pub const GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_INVALID:
     GhosttyKittyGraphicsImageData = 0;
 pub const GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_ID: GhosttyKittyGraphicsImageData =
@@ -1048,9 +1452,11 @@ pub const GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_DATA_PTR:
     GhosttyKittyGraphicsImageData = 7;
 pub const GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_DATA_LEN:
     GhosttyKittyGraphicsImageData = 8;
+pub const GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_GENERATION:
+    GhosttyKittyGraphicsImageData = 9;
 pub const GhosttyKittyGraphicsImageData_GHOSTTY_KITTY_IMAGE_DATA_MAX_VALUE:
     GhosttyKittyGraphicsImageData = 2147483647;
-pub type GhosttyKittyGraphicsImageData = core::ffi::c_uint;
+pub type GhosttyKittyGraphicsImageData = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyKittyGraphicsPlacementRenderInfo {
@@ -1221,38 +1627,38 @@ unsafe extern "C" {
         out_info: *mut GhosttyKittyGraphicsPlacementRenderInfo,
     ) -> GhosttyResult;
 }
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct GhosttyTerminalOptions {
-    pub cols: u16,
-    pub rows: u16,
-    pub max_scrollback: usize,
-}
-#[allow(clippy::unnecessary_operation, clippy::identity_op)]
-const _: () = {
-    ["Size of GhosttyTerminalOptions"][::core::mem::size_of::<GhosttyTerminalOptions>() - 16usize];
-    ["Alignment of GhosttyTerminalOptions"]
-        [::core::mem::align_of::<GhosttyTerminalOptions>() - 8usize];
-    ["Offset of field: GhosttyTerminalOptions::cols"]
-        [::core::mem::offset_of!(GhosttyTerminalOptions, cols) - 0usize];
-    ["Offset of field: GhosttyTerminalOptions::rows"]
-        [::core::mem::offset_of!(GhosttyTerminalOptions, rows) - 2usize];
-    ["Offset of field: GhosttyTerminalOptions::max_scrollback"]
-        [::core::mem::offset_of!(GhosttyTerminalOptions, max_scrollback) - 8usize];
-};
+pub const GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_INCREMENTAL:
+    GhosttyTerminalCompressionMode = 0;
+pub const GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_FULL:
+    GhosttyTerminalCompressionMode = 1;
+pub const GhosttyTerminalCompressionMode_GHOSTTY_TERMINAL_COMPRESSION_MODE_MAX_VALUE:
+    GhosttyTerminalCompressionMode = 2147483647;
+pub type GhosttyTerminalCompressionMode = core::ffi::c_int;
+pub const GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_UNSUPPORTED:
+    GhosttyTerminalCompressionResult = 0;
+pub const GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_PENDING:
+    GhosttyTerminalCompressionResult = 1;
+pub const GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE:
+    GhosttyTerminalCompressionResult = 2;
+pub const GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_MAX_VALUE:
+    GhosttyTerminalCompressionResult = 2147483647;
+pub type GhosttyTerminalCompressionResult = core::ffi::c_int;
 pub const GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_TOP:
     GhosttyTerminalScrollViewportTag = 0;
 pub const GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_BOTTOM:
     GhosttyTerminalScrollViewportTag = 1;
 pub const GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_DELTA:
     GhosttyTerminalScrollViewportTag = 2;
+pub const GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_ROW:
+    GhosttyTerminalScrollViewportTag = 3;
 pub const GhosttyTerminalScrollViewportTag_GHOSTTY_SCROLL_VIEWPORT_MAX_VALUE:
     GhosttyTerminalScrollViewportTag = 2147483647;
-pub type GhosttyTerminalScrollViewportTag = core::ffi::c_uint;
+pub type GhosttyTerminalScrollViewportTag = core::ffi::c_int;
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union GhosttyTerminalScrollViewportValue {
     pub delta: isize,
+    pub row: usize,
     pub _padding: [u64; 2usize],
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
@@ -1263,6 +1669,8 @@ const _: () = {
         [::core::mem::align_of::<GhosttyTerminalScrollViewportValue>() - 8usize];
     ["Offset of field: GhosttyTerminalScrollViewportValue::delta"]
         [::core::mem::offset_of!(GhosttyTerminalScrollViewportValue, delta) - 0usize];
+    ["Offset of field: GhosttyTerminalScrollViewportValue::row"]
+        [::core::mem::offset_of!(GhosttyTerminalScrollViewportValue, row) - 0usize];
     ["Offset of field: GhosttyTerminalScrollViewportValue::_padding"]
         [::core::mem::offset_of!(GhosttyTerminalScrollViewportValue, _padding) - 0usize];
 };
@@ -1287,7 +1695,18 @@ pub const GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_PRIMARY: GhosttyTerminal
 pub const GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_ALTERNATE: GhosttyTerminalScreen = 1;
 pub const GhosttyTerminalScreen_GHOSTTY_TERMINAL_SCREEN_MAX_VALUE: GhosttyTerminalScreen =
     2147483647;
-pub type GhosttyTerminalScreen = core::ffi::c_uint;
+pub type GhosttyTerminalScreen = core::ffi::c_int;
+pub const GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_BAR: GhosttyTerminalCursorStyle =
+    0;
+pub const GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK:
+    GhosttyTerminalCursorStyle = 1;
+pub const GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_UNDERLINE:
+    GhosttyTerminalCursorStyle = 2;
+pub const GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_BLOCK_HOLLOW:
+    GhosttyTerminalCursorStyle = 3;
+pub const GhosttyTerminalCursorStyle_GHOSTTY_TERMINAL_CURSOR_STYLE_MAX_VALUE:
+    GhosttyTerminalCursorStyle = 2147483647;
+pub type GhosttyTerminalCursorStyle = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyTerminalScrollbar {
@@ -1310,6 +1729,343 @@ const _: () = {
 };
 pub type GhosttyTerminalBellFn = ::core::option::Option<
     unsafe extern "C" fn(terminal: GhosttyTerminal, userdata: *mut core::ffi::c_void),
+>;
+pub const GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC:
+    GhosttyTerminalUnknownSequenceTag = 0;
+pub const GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_MAX_VALUE:
+    GhosttyTerminalUnknownSequenceTag = 2147483647;
+pub type GhosttyTerminalUnknownSequenceTag = core::ffi::c_int;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyTerminalUnknownStringSequence {
+    pub truncated: bool,
+    pub content: GhosttyString,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyTerminalUnknownStringSequence"]
+        [::core::mem::size_of::<GhosttyTerminalUnknownStringSequence>() - 24usize];
+    ["Alignment of GhosttyTerminalUnknownStringSequence"]
+        [::core::mem::align_of::<GhosttyTerminalUnknownStringSequence>() - 8usize];
+    ["Offset of field: GhosttyTerminalUnknownStringSequence::truncated"]
+        [::core::mem::offset_of!(GhosttyTerminalUnknownStringSequence, truncated) - 0usize];
+    ["Offset of field: GhosttyTerminalUnknownStringSequence::content"]
+        [::core::mem::offset_of!(GhosttyTerminalUnknownStringSequence, content) - 8usize];
+};
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union GhosttyTerminalUnknownSequenceValue {
+    pub apc: GhosttyTerminalUnknownStringSequence,
+    pub _padding: [u64; 16usize],
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyTerminalUnknownSequenceValue"]
+        [::core::mem::size_of::<GhosttyTerminalUnknownSequenceValue>() - 128usize];
+    ["Alignment of GhosttyTerminalUnknownSequenceValue"]
+        [::core::mem::align_of::<GhosttyTerminalUnknownSequenceValue>() - 8usize];
+    ["Offset of field: GhosttyTerminalUnknownSequenceValue::apc"]
+        [::core::mem::offset_of!(GhosttyTerminalUnknownSequenceValue, apc) - 0usize];
+    ["Offset of field: GhosttyTerminalUnknownSequenceValue::_padding"]
+        [::core::mem::offset_of!(GhosttyTerminalUnknownSequenceValue, _padding) - 0usize];
+};
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct GhosttyTerminalUnknownSequence {
+    pub tag: GhosttyTerminalUnknownSequenceTag,
+    pub value: GhosttyTerminalUnknownSequenceValue,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyTerminalUnknownSequence"]
+        [::core::mem::size_of::<GhosttyTerminalUnknownSequence>() - 136usize];
+    ["Alignment of GhosttyTerminalUnknownSequence"]
+        [::core::mem::align_of::<GhosttyTerminalUnknownSequence>() - 8usize];
+    ["Offset of field: GhosttyTerminalUnknownSequence::tag"]
+        [::core::mem::offset_of!(GhosttyTerminalUnknownSequence, tag) - 0usize];
+    ["Offset of field: GhosttyTerminalUnknownSequence::value"]
+        [::core::mem::offset_of!(GhosttyTerminalUnknownSequence, value) - 8usize];
+};
+pub type GhosttyTerminalUnknownSequenceFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        terminal: GhosttyTerminal,
+        userdata: *mut core::ffi::c_void,
+        sequence: *const GhosttyTerminalUnknownSequence,
+    ),
+>;
+pub const GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_STANDARD: GhosttyClipboardLocation =
+    0;
+pub const GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_SELECTION: GhosttyClipboardLocation =
+    1;
+pub const GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_PRIMARY: GhosttyClipboardLocation = 2;
+pub const GhosttyClipboardLocation_GHOSTTY_CLIPBOARD_LOCATION_MAX_VALUE: GhosttyClipboardLocation =
+    2147483647;
+pub type GhosttyClipboardLocation = core::ffi::c_int;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyClipboardContent {
+    pub mime: GhosttyString,
+    pub data: GhosttyString,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyClipboardContent"]
+        [::core::mem::size_of::<GhosttyClipboardContent>() - 32usize];
+    ["Alignment of GhosttyClipboardContent"]
+        [::core::mem::align_of::<GhosttyClipboardContent>() - 8usize];
+    ["Offset of field: GhosttyClipboardContent::mime"]
+        [::core::mem::offset_of!(GhosttyClipboardContent, mime) - 0usize];
+    ["Offset of field: GhosttyClipboardContent::data"]
+        [::core::mem::offset_of!(GhosttyClipboardContent, data) - 16usize];
+};
+pub const GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS:
+    GhosttyClipboardWriteResult = 0;
+pub const GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_DENIED:
+    GhosttyClipboardWriteResult = 1;
+pub const GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED:
+    GhosttyClipboardWriteResult = 2;
+pub const GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_BUSY:
+    GhosttyClipboardWriteResult = 3;
+pub const GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_INVALID_DATA:
+    GhosttyClipboardWriteResult = 4;
+pub const GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_IO_ERROR:
+    GhosttyClipboardWriteResult = 5;
+pub const GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_MAX_VALUE:
+    GhosttyClipboardWriteResult = 2147483647;
+pub type GhosttyClipboardWriteResult = core::ffi::c_int;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyClipboardWriteReply {
+    pub size: usize,
+    pub result: GhosttyClipboardWriteResult,
+    pub remember: bool,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyClipboardWriteReply"]
+        [::core::mem::size_of::<GhosttyClipboardWriteReply>() - 16usize];
+    ["Alignment of GhosttyClipboardWriteReply"]
+        [::core::mem::align_of::<GhosttyClipboardWriteReply>() - 8usize];
+    ["Offset of field: GhosttyClipboardWriteReply::size"]
+        [::core::mem::offset_of!(GhosttyClipboardWriteReply, size) - 0usize];
+    ["Offset of field: GhosttyClipboardWriteReply::result"]
+        [::core::mem::offset_of!(GhosttyClipboardWriteReply, result) - 8usize];
+    ["Offset of field: GhosttyClipboardWriteReply::remember"]
+        [::core::mem::offset_of!(GhosttyClipboardWriteReply, remember) - 12usize];
+};
+pub type GhosttyClipboardWriteReplyFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        write: *const GhosttyClipboardWrite,
+        reply: *const GhosttyClipboardWriteReply,
+    ),
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyClipboardWrite {
+    pub size: usize,
+    pub location: GhosttyClipboardLocation,
+    pub contents: *const GhosttyClipboardContent,
+    pub contents_len: usize,
+    pub name: GhosttyString,
+    pub granted: bool,
+    pub can_remember: bool,
+    pub ctx: *const core::ffi::c_void,
+    pub reply: GhosttyClipboardWriteReplyFn,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyClipboardWrite"][::core::mem::size_of::<GhosttyClipboardWrite>() - 72usize];
+    ["Alignment of GhosttyClipboardWrite"]
+        [::core::mem::align_of::<GhosttyClipboardWrite>() - 8usize];
+    ["Offset of field: GhosttyClipboardWrite::size"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, size) - 0usize];
+    ["Offset of field: GhosttyClipboardWrite::location"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, location) - 8usize];
+    ["Offset of field: GhosttyClipboardWrite::contents"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, contents) - 16usize];
+    ["Offset of field: GhosttyClipboardWrite::contents_len"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, contents_len) - 24usize];
+    ["Offset of field: GhosttyClipboardWrite::name"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, name) - 32usize];
+    ["Offset of field: GhosttyClipboardWrite::granted"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, granted) - 48usize];
+    ["Offset of field: GhosttyClipboardWrite::can_remember"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, can_remember) - 49usize];
+    ["Offset of field: GhosttyClipboardWrite::ctx"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, ctx) - 56usize];
+    ["Offset of field: GhosttyClipboardWrite::reply"]
+        [::core::mem::offset_of!(GhosttyClipboardWrite, reply) - 64usize];
+};
+pub type GhosttyTerminalClipboardWriteFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        terminal: GhosttyTerminal,
+        userdata: *mut core::ffi::c_void,
+        write: *const GhosttyClipboardWrite,
+    ),
+>;
+pub const GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_SUCCESS:
+    GhosttyClipboardReadResult = 0;
+pub const GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_DENIED:
+    GhosttyClipboardReadResult = 1;
+pub const GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_UNSUPPORTED:
+    GhosttyClipboardReadResult = 2;
+pub const GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_BUSY:
+    GhosttyClipboardReadResult = 3;
+pub const GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_IO_ERROR:
+    GhosttyClipboardReadResult = 4;
+pub const GhosttyClipboardReadResult_GHOSTTY_CLIPBOARD_READ_RESULT_MAX_VALUE:
+    GhosttyClipboardReadResult = 2147483647;
+pub type GhosttyClipboardReadResult = core::ffi::c_int;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyClipboardReadReply {
+    pub size: usize,
+    pub result: GhosttyClipboardReadResult,
+    pub contents: *const GhosttyClipboardContent,
+    pub contents_len: usize,
+    pub available: *const GhosttyString,
+    pub available_len: usize,
+    pub remember: bool,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyClipboardReadReply"]
+        [::core::mem::size_of::<GhosttyClipboardReadReply>() - 56usize];
+    ["Alignment of GhosttyClipboardReadReply"]
+        [::core::mem::align_of::<GhosttyClipboardReadReply>() - 8usize];
+    ["Offset of field: GhosttyClipboardReadReply::size"]
+        [::core::mem::offset_of!(GhosttyClipboardReadReply, size) - 0usize];
+    ["Offset of field: GhosttyClipboardReadReply::result"]
+        [::core::mem::offset_of!(GhosttyClipboardReadReply, result) - 8usize];
+    ["Offset of field: GhosttyClipboardReadReply::contents"]
+        [::core::mem::offset_of!(GhosttyClipboardReadReply, contents) - 16usize];
+    ["Offset of field: GhosttyClipboardReadReply::contents_len"]
+        [::core::mem::offset_of!(GhosttyClipboardReadReply, contents_len) - 24usize];
+    ["Offset of field: GhosttyClipboardReadReply::available"]
+        [::core::mem::offset_of!(GhosttyClipboardReadReply, available) - 32usize];
+    ["Offset of field: GhosttyClipboardReadReply::available_len"]
+        [::core::mem::offset_of!(GhosttyClipboardReadReply, available_len) - 40usize];
+    ["Offset of field: GhosttyClipboardReadReply::remember"]
+        [::core::mem::offset_of!(GhosttyClipboardReadReply, remember) - 48usize];
+};
+pub type GhosttyClipboardReadReplyFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        read: *const GhosttyClipboardRead,
+        reply: *const GhosttyClipboardReadReply,
+    ),
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyClipboardRead {
+    pub size: usize,
+    pub location: GhosttyClipboardLocation,
+    pub mimes: *const GhosttyString,
+    pub mimes_len: usize,
+    pub list: bool,
+    pub name: GhosttyString,
+    pub granted: bool,
+    pub can_remember: bool,
+    pub ctx: *const core::ffi::c_void,
+    pub reply: GhosttyClipboardReadReplyFn,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyClipboardRead"][::core::mem::size_of::<GhosttyClipboardRead>() - 80usize];
+    ["Alignment of GhosttyClipboardRead"][::core::mem::align_of::<GhosttyClipboardRead>() - 8usize];
+    ["Offset of field: GhosttyClipboardRead::size"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, size) - 0usize];
+    ["Offset of field: GhosttyClipboardRead::location"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, location) - 8usize];
+    ["Offset of field: GhosttyClipboardRead::mimes"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, mimes) - 16usize];
+    ["Offset of field: GhosttyClipboardRead::mimes_len"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, mimes_len) - 24usize];
+    ["Offset of field: GhosttyClipboardRead::list"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, list) - 32usize];
+    ["Offset of field: GhosttyClipboardRead::name"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, name) - 40usize];
+    ["Offset of field: GhosttyClipboardRead::granted"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, granted) - 56usize];
+    ["Offset of field: GhosttyClipboardRead::can_remember"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, can_remember) - 57usize];
+    ["Offset of field: GhosttyClipboardRead::ctx"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, ctx) - 64usize];
+    ["Offset of field: GhosttyClipboardRead::reply"]
+        [::core::mem::offset_of!(GhosttyClipboardRead, reply) - 72usize];
+};
+pub type GhosttyTerminalClipboardReadFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        terminal: GhosttyTerminal,
+        userdata: *mut core::ffi::c_void,
+        read: *const GhosttyClipboardRead,
+    ),
+>;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyTerminalDesktopNotification {
+    pub size: usize,
+    pub title: GhosttyString,
+    pub body: GhosttyString,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyTerminalDesktopNotification"]
+        [::core::mem::size_of::<GhosttyTerminalDesktopNotification>() - 40usize];
+    ["Alignment of GhosttyTerminalDesktopNotification"]
+        [::core::mem::align_of::<GhosttyTerminalDesktopNotification>() - 8usize];
+    ["Offset of field: GhosttyTerminalDesktopNotification::size"]
+        [::core::mem::offset_of!(GhosttyTerminalDesktopNotification, size) - 0usize];
+    ["Offset of field: GhosttyTerminalDesktopNotification::title"]
+        [::core::mem::offset_of!(GhosttyTerminalDesktopNotification, title) - 8usize];
+    ["Offset of field: GhosttyTerminalDesktopNotification::body"]
+        [::core::mem::offset_of!(GhosttyTerminalDesktopNotification, body) - 24usize];
+};
+pub type GhosttyTerminalDesktopNotificationFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        terminal: GhosttyTerminal,
+        userdata: *mut core::ffi::c_void,
+        notification: *const GhosttyTerminalDesktopNotification,
+    ),
+>;
+pub const GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE:
+    GhosttyTerminalProgressState = 0;
+pub const GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_SET:
+    GhosttyTerminalProgressState = 1;
+pub const GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_ERROR:
+    GhosttyTerminalProgressState = 2;
+pub const GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_INDETERMINATE:
+    GhosttyTerminalProgressState = 3;
+pub const GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_PAUSE:
+    GhosttyTerminalProgressState = 4;
+pub const GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_MAX_VALUE:
+    GhosttyTerminalProgressState = 2147483647;
+pub type GhosttyTerminalProgressState = core::ffi::c_int;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyTerminalProgressReport {
+    pub size: usize,
+    pub state: GhosttyTerminalProgressState,
+    pub progress: i8,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyTerminalProgressReport"]
+        [::core::mem::size_of::<GhosttyTerminalProgressReport>() - 16usize];
+    ["Alignment of GhosttyTerminalProgressReport"]
+        [::core::mem::align_of::<GhosttyTerminalProgressReport>() - 8usize];
+    ["Offset of field: GhosttyTerminalProgressReport::size"]
+        [::core::mem::offset_of!(GhosttyTerminalProgressReport, size) - 0usize];
+    ["Offset of field: GhosttyTerminalProgressReport::state"]
+        [::core::mem::offset_of!(GhosttyTerminalProgressReport, state) - 8usize];
+    ["Offset of field: GhosttyTerminalProgressReport::progress"]
+        [::core::mem::offset_of!(GhosttyTerminalProgressReport, progress) - 12usize];
+};
+pub type GhosttyTerminalProgressReportFn = ::core::option::Option<
+    unsafe extern "C" fn(
+        terminal: GhosttyTerminal,
+        userdata: *mut core::ffi::c_void,
+        report: *const GhosttyTerminalProgressReport,
+    ),
 >;
 pub type GhosttyTerminalColorSchemeFn = ::core::option::Option<
     unsafe extern "C" fn(
@@ -1341,6 +2097,9 @@ pub type GhosttyTerminalSizeFn = ::core::option::Option<
 pub type GhosttyTerminalTitleChangedFn = ::core::option::Option<
     unsafe extern "C" fn(terminal: GhosttyTerminal, userdata: *mut core::ffi::c_void),
 >;
+pub type GhosttyTerminalPwdChangedFn = ::core::option::Option<
+    unsafe extern "C" fn(terminal: GhosttyTerminal, userdata: *mut core::ffi::c_void),
+>;
 pub type GhosttyTerminalWritePtyFn = ::core::option::Option<
     unsafe extern "C" fn(
         terminal: GhosttyTerminal,
@@ -1355,6 +2114,23 @@ pub type GhosttyTerminalXtversionFn = ::core::option::Option<
         userdata: *mut core::ffi::c_void,
     ) -> GhosttyString,
 >;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyTerminalModeConfig {
+    pub mode: GhosttyMode,
+    pub value: bool,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyTerminalModeConfig"]
+        [::core::mem::size_of::<GhosttyTerminalModeConfig>() - 4usize];
+    ["Alignment of GhosttyTerminalModeConfig"]
+        [::core::mem::align_of::<GhosttyTerminalModeConfig>() - 2usize];
+    ["Offset of field: GhosttyTerminalModeConfig::mode"]
+        [::core::mem::offset_of!(GhosttyTerminalModeConfig, mode) - 0usize];
+    ["Offset of field: GhosttyTerminalModeConfig::value"]
+        [::core::mem::offset_of!(GhosttyTerminalModeConfig, value) - 2usize];
+};
 pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_USERDATA: GhosttyTerminalOption = 0;
 pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_WRITE_PTY: GhosttyTerminalOption = 1;
 pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_BELL: GhosttyTerminalOption = 2;
@@ -1382,8 +2158,33 @@ pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES: GhosttyTermi
 pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_APC_MAX_BYTES_KITTY: GhosttyTerminalOption =
     20;
 pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SELECTION: GhosttyTerminalOption = 21;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_STYLE: GhosttyTerminalOption =
+    22;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_DEFAULT_CURSOR_BLINK: GhosttyTerminalOption =
+    23;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL: GhosttyTerminalOption = 24;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PWD_CHANGED: GhosttyTerminalOption = 25;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE: GhosttyTerminalOption = 26;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES: GhosttyTerminalOption =
+    27;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES: GhosttyTerminalOption =
+    28;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_DESKTOP_NOTIFICATION: GhosttyTerminalOption =
+    29;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PROGRESS_REPORT: GhosttyTerminalOption = 30;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES: GhosttyTerminalOption =
+    31;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_TITLE_REPORT: GhosttyTerminalOption = 32;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE_DEFAULT: GhosttyTerminalOption = 33;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE: GhosttyTerminalOption = 34;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_UNKNOWN_SEQUENCE: GhosttyTerminalOption = 35;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_UNKNOWN_MAX_BYTES: GhosttyTerminalOption = 36;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_TERMINFO_NAME: GhosttyTerminalOption = 37;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_READ: GhosttyTerminalOption = 38;
+pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE_MAX_BYTES:
+    GhosttyTerminalOption = 39;
 pub const GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MAX_VALUE: GhosttyTerminalOption = 2147483647;
-pub type GhosttyTerminalOption = core::ffi::c_uint;
+pub type GhosttyTerminalOption = core::ffi::c_int;
 pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_INVALID: GhosttyTerminalData = 0;
 pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLS: GhosttyTerminalData = 1;
 pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_ROWS: GhosttyTerminalData = 2;
@@ -1422,13 +2223,25 @@ pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_MEDIUM_SHARED_ME
     GhosttyTerminalData = 29;
 pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS: GhosttyTerminalData = 30;
 pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SELECTION: GhosttyTerminalData = 31;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_VIEWPORT_ACTIVE: GhosttyTerminalData = 32;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_VT_PROCESSING_ERROR: GhosttyTerminalData = 33;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_BYTES: GhosttyTerminalData = 34;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBACK_MAX_LINES: GhosttyTerminalData = 35;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CONTINUATION_MAX_BYTES: GhosttyTerminalData =
+    36;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MODE: GhosttyTerminalData = 37;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_VT_GROUND: GhosttyTerminalData = 38;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_AT_PROMPT: GhosttyTerminalData = 39;
+pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CLIPBOARD_WRITE_MAX_BYTES: GhosttyTerminalData =
+    40;
 pub const GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_MAX_VALUE: GhosttyTerminalData = 2147483647;
-pub type GhosttyTerminalData = core::ffi::c_uint;
+pub type GhosttyTerminalData = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_terminal_new(
         allocator: *const GhosttyAllocator,
         terminal: *mut GhosttyTerminal,
-        options: GhosttyTerminalOptions,
+        cols: u16,
+        rows: u16,
     ) -> GhosttyResult;
 }
 unsafe extern "C" {
@@ -1457,23 +2270,52 @@ unsafe extern "C" {
     pub fn ghostty_terminal_vt_write(terminal: GhosttyTerminal, data: *const u8, len: usize);
 }
 unsafe extern "C" {
+    pub fn ghostty_terminal_vt_write_until_ground(
+        terminal: GhosttyTerminal,
+        data: *const u8,
+        len: usize,
+        out_consumed: *mut usize,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_terminal_continuation_write(
+        terminal: GhosttyTerminal,
+        writer: GhosttyWriter,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_terminal_continuation_buf(
+        terminal: GhosttyTerminal,
+        buf: *mut u8,
+        buf_len: usize,
+        out_written: *mut usize,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_terminal_continuation_alloc(
+        terminal: GhosttyTerminal,
+        allocator: *const GhosttyAllocator,
+        out_ptr: *mut *mut u8,
+        out_len: *mut usize,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
     pub fn ghostty_terminal_scroll_viewport(
         terminal: GhosttyTerminal,
         behavior: GhosttyTerminalScrollViewport,
     );
 }
 unsafe extern "C" {
-    pub fn ghostty_terminal_mode_get(
+    pub fn ghostty_terminal_compression_activity(
         terminal: GhosttyTerminal,
-        mode: GhosttyMode,
-        out_value: *mut bool,
+        out_activity: *mut u64,
     ) -> GhosttyResult;
 }
 unsafe extern "C" {
-    pub fn ghostty_terminal_mode_set(
+    pub fn ghostty_terminal_compress(
         terminal: GhosttyTerminal,
-        mode: GhosttyMode,
-        value: bool,
+        mode: GhosttyTerminalCompressionMode,
+        out_result: *mut GhosttyTerminalCompressionResult,
     ) -> GhosttyResult;
 }
 unsafe extern "C" {
@@ -1619,6 +2461,12 @@ unsafe extern "C" {
     ) -> GhosttyResult;
 }
 unsafe extern "C" {
+    pub fn ghostty_formatter_format(
+        formatter: GhosttyFormatter,
+        writer: GhosttyWriter,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
     pub fn ghostty_formatter_format_buf(
         formatter: GhosttyFormatter,
         buf: *mut u8,
@@ -1642,7 +2490,7 @@ pub const GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_PARTIAL: GhosttyRen
 pub const GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_FULL: GhosttyRenderStateDirty = 2;
 pub const GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_MAX_VALUE: GhosttyRenderStateDirty =
     2147483647;
-pub type GhosttyRenderStateDirty = core::ffi::c_uint;
+pub type GhosttyRenderStateDirty = core::ffi::c_int;
 pub const GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR:
     GhosttyRenderStateCursorVisualStyle = 0;
 pub const GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK:
@@ -1652,7 +2500,7 @@ pub const GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL
 pub const GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BLOCK_HOLLOW : GhosttyRenderStateCursorVisualStyle = 3 ;
 pub const GhosttyRenderStateCursorVisualStyle_GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_MAX_VALUE:
     GhosttyRenderStateCursorVisualStyle = 2147483647;
-pub type GhosttyRenderStateCursorVisualStyle = core::ffi::c_uint;
+pub type GhosttyRenderStateCursorVisualStyle = core::ffi::c_int;
 pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_INVALID: GhosttyRenderStateData = 0;
 pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_COLS: GhosttyRenderStateData = 1;
 pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_ROWS: GhosttyRenderStateData = 2;
@@ -1683,13 +2531,15 @@ pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y:
     GhosttyRenderStateData = 16;
 pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL:
     GhosttyRenderStateData = 17;
+pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_CURSOR: GhosttyRenderStateData = 18;
+pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_COLORS: GhosttyRenderStateData = 19;
 pub const GhosttyRenderStateData_GHOSTTY_RENDER_STATE_DATA_MAX_VALUE: GhosttyRenderStateData =
     2147483647;
-pub type GhosttyRenderStateData = core::ffi::c_uint;
+pub type GhosttyRenderStateData = core::ffi::c_int;
 pub const GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_DIRTY: GhosttyRenderStateOption = 0;
 pub const GhosttyRenderStateOption_GHOSTTY_RENDER_STATE_OPTION_MAX_VALUE: GhosttyRenderStateOption =
     2147483647;
-pub type GhosttyRenderStateOption = core::ffi::c_uint;
+pub type GhosttyRenderStateOption = core::ffi::c_int;
 pub const GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_INVALID:
     GhosttyRenderStateRowData = 0;
 pub const GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY: GhosttyRenderStateRowData =
@@ -1700,14 +2550,16 @@ pub const GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS: Ghostty
     3;
 pub const GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_SELECTION:
     GhosttyRenderStateRowData = 4;
+pub const GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_CELLS_RAW:
+    GhosttyRenderStateRowData = 5;
 pub const GhosttyRenderStateRowData_GHOSTTY_RENDER_STATE_ROW_DATA_MAX_VALUE:
     GhosttyRenderStateRowData = 2147483647;
-pub type GhosttyRenderStateRowData = core::ffi::c_uint;
+pub type GhosttyRenderStateRowData = core::ffi::c_int;
 pub const GhosttyRenderStateRowOption_GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY:
     GhosttyRenderStateRowOption = 0;
 pub const GhosttyRenderStateRowOption_GHOSTTY_RENDER_STATE_ROW_OPTION_MAX_VALUE:
     GhosttyRenderStateRowOption = 2147483647;
-pub type GhosttyRenderStateRowOption = core::ffi::c_uint;
+pub type GhosttyRenderStateRowOption = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyRenderStateRowSelection {
@@ -1727,6 +2579,44 @@ const _: () = {
         [::core::mem::offset_of!(GhosttyRenderStateRowSelection, start_x) - 8usize];
     ["Offset of field: GhosttyRenderStateRowSelection::end_x"]
         [::core::mem::offset_of!(GhosttyRenderStateRowSelection, end_x) - 10usize];
+};
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyRenderStateCursor {
+    pub size: usize,
+    pub viewport_has_value: bool,
+    pub viewport_x: u16,
+    pub viewport_y: u16,
+    pub wide_tail: bool,
+    pub visible: bool,
+    pub blinking: bool,
+    pub password_input: bool,
+    pub visual_style: GhosttyRenderStateCursorVisualStyle,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyRenderStateCursor"]
+        [::core::mem::size_of::<GhosttyRenderStateCursor>() - 24usize];
+    ["Alignment of GhosttyRenderStateCursor"]
+        [::core::mem::align_of::<GhosttyRenderStateCursor>() - 8usize];
+    ["Offset of field: GhosttyRenderStateCursor::size"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, size) - 0usize];
+    ["Offset of field: GhosttyRenderStateCursor::viewport_has_value"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, viewport_has_value) - 8usize];
+    ["Offset of field: GhosttyRenderStateCursor::viewport_x"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, viewport_x) - 10usize];
+    ["Offset of field: GhosttyRenderStateCursor::viewport_y"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, viewport_y) - 12usize];
+    ["Offset of field: GhosttyRenderStateCursor::wide_tail"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, wide_tail) - 14usize];
+    ["Offset of field: GhosttyRenderStateCursor::visible"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, visible) - 15usize];
+    ["Offset of field: GhosttyRenderStateCursor::blinking"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, blinking) - 16usize];
+    ["Offset of field: GhosttyRenderStateCursor::password_input"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, password_input) - 17usize];
+    ["Offset of field: GhosttyRenderStateCursor::visual_style"]
+        [::core::mem::offset_of!(GhosttyRenderStateCursor, visual_style) - 20usize];
 };
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -1773,6 +2663,18 @@ unsafe extern "C" {
     ) -> GhosttyResult;
 }
 unsafe extern "C" {
+    pub fn ghostty_render_state_begin_update(
+        state: GhosttyRenderState,
+        terminal: GhosttyTerminal,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_render_state_end_update(state: GhosttyRenderState) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_render_state_clean(state: GhosttyRenderState) -> GhosttyResult;
+}
+unsafe extern "C" {
     pub fn ghostty_render_state_get(
         state: GhosttyRenderState,
         data: GhosttyRenderStateData,
@@ -1796,12 +2698,6 @@ unsafe extern "C" {
     ) -> GhosttyResult;
 }
 unsafe extern "C" {
-    pub fn ghostty_render_state_colors_get(
-        state: GhosttyRenderState,
-        out_colors: *mut GhosttyRenderStateColors,
-    ) -> GhosttyResult;
-}
-unsafe extern "C" {
     pub fn ghostty_render_state_row_iterator_new(
         allocator: *const GhosttyAllocator,
         out_iterator: *mut GhosttyRenderStateRowIterator,
@@ -1812,6 +2708,12 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn ghostty_render_state_row_iterator_next(iterator: GhosttyRenderStateRowIterator) -> bool;
+}
+unsafe extern "C" {
+    pub fn ghostty_render_state_row_iterator_next_dirty(
+        iterator: GhosttyRenderStateRowIterator,
+        out_y: *mut u16,
+    ) -> bool;
 }
 unsafe extern "C" {
     pub fn ghostty_render_state_row_get(
@@ -1858,9 +2760,13 @@ pub const GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_
     GhosttyRenderStateRowCellsData = 6;
 pub const GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_SELECTED:
     GhosttyRenderStateRowCellsData = 7;
+pub const GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_HAS_STYLING:
+    GhosttyRenderStateRowCellsData = 8;
+pub const GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_UTF8:
+    GhosttyRenderStateRowCellsData = 9;
 pub const GhosttyRenderStateRowCellsData_GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_MAX_VALUE:
     GhosttyRenderStateRowCellsData = 2147483647;
-pub type GhosttyRenderStateRowCellsData = core::ffi::c_uint;
+pub type GhosttyRenderStateRowCellsData = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_render_state_row_cells_next(cells: GhosttyRenderStateRowCells) -> bool;
 }
@@ -1944,13 +2850,19 @@ pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_CONEMU_XTERM_EMULATION: Ghos
     20;
 pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_CONEMU_COMMENT: GhosttyOscCommandType = 21;
 pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_KITTY_TEXT_SIZING: GhosttyOscCommandType = 22;
+pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_KITTY_CLIPBOARD_PROTOCOL:
+    GhosttyOscCommandType = 23;
+pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_KITTY_DND_PROTOCOL: GhosttyOscCommandType = 24;
+pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_CONTEXT_SIGNAL: GhosttyOscCommandType = 25;
+pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_KITTY_DESKTOP_NOTIFICATION:
+    GhosttyOscCommandType = 26;
 pub const GhosttyOscCommandType_GHOSTTY_OSC_COMMAND_TYPE_MAX_VALUE: GhosttyOscCommandType =
     2147483647;
-pub type GhosttyOscCommandType = core::ffi::c_uint;
+pub type GhosttyOscCommandType = core::ffi::c_int;
 pub const GhosttyOscCommandData_GHOSTTY_OSC_DATA_INVALID: GhosttyOscCommandData = 0;
 pub const GhosttyOscCommandData_GHOSTTY_OSC_DATA_CHANGE_WINDOW_TITLE_STR: GhosttyOscCommandData = 1;
 pub const GhosttyOscCommandData_GHOSTTY_OSC_DATA_MAX_VALUE: GhosttyOscCommandData = 2147483647;
-pub type GhosttyOscCommandData = core::ffi::c_uint;
+pub type GhosttyOscCommandData = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_osc_new(
         allocator: *const GhosttyAllocator,
@@ -2012,7 +2924,7 @@ pub const GhosttySgrAttributeTag_GHOSTTY_SGR_ATTR_BRIGHT_FG_8: GhosttySgrAttribu
 pub const GhosttySgrAttributeTag_GHOSTTY_SGR_ATTR_BG_256: GhosttySgrAttributeTag = 29;
 pub const GhosttySgrAttributeTag_GHOSTTY_SGR_ATTR_FG_256: GhosttySgrAttributeTag = 30;
 pub const GhosttySgrAttributeTag_GHOSTTY_SGR_ATTR_MAX_VALUE: GhosttySgrAttributeTag = 2147483647;
-pub type GhosttySgrAttributeTag = core::ffi::c_uint;
+pub type GhosttySgrAttributeTag = core::ffi::c_int;
 pub const GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_NONE: GhosttySgrUnderline = 0;
 pub const GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_SINGLE: GhosttySgrUnderline = 1;
 pub const GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DOUBLE: GhosttySgrUnderline = 2;
@@ -2020,7 +2932,7 @@ pub const GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_CURLY: GhosttySgrUnderline =
 pub const GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DOTTED: GhosttySgrUnderline = 4;
 pub const GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_DASHED: GhosttySgrUnderline = 5;
 pub const GhosttySgrUnderline_GHOSTTY_SGR_UNDERLINE_MAX_VALUE: GhosttySgrUnderline = 2147483647;
-pub type GhosttySgrUnderline = core::ffi::c_uint;
+pub type GhosttySgrUnderline = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttySgrUnknown {
@@ -2170,7 +3082,7 @@ pub const GhosttySysLogLevel_GHOSTTY_SYS_LOG_LEVEL_WARNING: GhosttySysLogLevel =
 pub const GhosttySysLogLevel_GHOSTTY_SYS_LOG_LEVEL_INFO: GhosttySysLogLevel = 2;
 pub const GhosttySysLogLevel_GHOSTTY_SYS_LOG_LEVEL_DEBUG: GhosttySysLogLevel = 3;
 pub const GhosttySysLogLevel_GHOSTTY_SYS_LOG_LEVEL_MAX_VALUE: GhosttySysLogLevel = 2147483647;
-pub type GhosttySysLogLevel = core::ffi::c_uint;
+pub type GhosttySysLogLevel = core::ffi::c_int;
 pub type GhosttySysLogFn = ::core::option::Option<
     unsafe extern "C" fn(
         userdata: *mut core::ffi::c_void,
@@ -2190,11 +3102,15 @@ pub type GhosttySysDecodePngFn = ::core::option::Option<
         out: *mut GhosttySysImage,
     ) -> bool,
 >;
+pub type GhosttySysRandomSecureFn = ::core::option::Option<
+    unsafe extern "C" fn(userdata: *mut core::ffi::c_void, buf: *mut u8, len: usize) -> bool,
+>;
 pub const GhosttySysOption_GHOSTTY_SYS_OPT_USERDATA: GhosttySysOption = 0;
 pub const GhosttySysOption_GHOSTTY_SYS_OPT_DECODE_PNG: GhosttySysOption = 1;
 pub const GhosttySysOption_GHOSTTY_SYS_OPT_LOG: GhosttySysOption = 2;
+pub const GhosttySysOption_GHOSTTY_SYS_OPT_RANDOM_SECURE: GhosttySysOption = 3;
 pub const GhosttySysOption_GHOSTTY_SYS_OPT_MAX_VALUE: GhosttySysOption = 2147483647;
-pub type GhosttySysOption = core::ffi::c_uint;
+pub type GhosttySysOption = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_sys_set(
         option: GhosttySysOption,
@@ -2221,7 +3137,7 @@ pub const GhosttyKeyAction_GHOSTTY_KEY_ACTION_RELEASE: GhosttyKeyAction = 0;
 pub const GhosttyKeyAction_GHOSTTY_KEY_ACTION_PRESS: GhosttyKeyAction = 1;
 pub const GhosttyKeyAction_GHOSTTY_KEY_ACTION_REPEAT: GhosttyKeyAction = 2;
 pub const GhosttyKeyAction_GHOSTTY_KEY_ACTION_MAX_VALUE: GhosttyKeyAction = 2147483647;
-pub type GhosttyKeyAction = core::ffi::c_uint;
+pub type GhosttyKeyAction = core::ffi::c_int;
 pub type GhosttyMods = u16;
 pub const GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED: GhosttyKey = 0;
 pub const GhosttyKey_GHOSTTY_KEY_BACKQUOTE: GhosttyKey = 1;
@@ -2400,7 +3316,7 @@ pub const GhosttyKey_GHOSTTY_KEY_COPY: GhosttyKey = 173;
 pub const GhosttyKey_GHOSTTY_KEY_CUT: GhosttyKey = 174;
 pub const GhosttyKey_GHOSTTY_KEY_PASTE: GhosttyKey = 175;
 pub const GhosttyKey_GHOSTTY_KEY_MAX_VALUE: GhosttyKey = 2147483647;
-pub type GhosttyKey = core::ffi::c_uint;
+pub type GhosttyKey = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_key_event_new(
         allocator: *const GhosttyAllocator,
@@ -2471,7 +3387,7 @@ pub const GhosttyOptionAsAlt_GHOSTTY_OPTION_AS_ALT_TRUE: GhosttyOptionAsAlt = 1;
 pub const GhosttyOptionAsAlt_GHOSTTY_OPTION_AS_ALT_LEFT: GhosttyOptionAsAlt = 2;
 pub const GhosttyOptionAsAlt_GHOSTTY_OPTION_AS_ALT_RIGHT: GhosttyOptionAsAlt = 3;
 pub const GhosttyOptionAsAlt_GHOSTTY_OPTION_AS_ALT_MAX_VALUE: GhosttyOptionAsAlt = 2147483647;
-pub type GhosttyOptionAsAlt = core::ffi::c_uint;
+pub type GhosttyOptionAsAlt = core::ffi::c_int;
 pub const GhosttyKeyEncoderOption_GHOSTTY_KEY_ENCODER_OPT_CURSOR_KEY_APPLICATION:
     GhosttyKeyEncoderOption = 0;
 pub const GhosttyKeyEncoderOption_GHOSTTY_KEY_ENCODER_OPT_KEYPAD_KEY_APPLICATION:
@@ -2489,7 +3405,7 @@ pub const GhosttyKeyEncoderOption_GHOSTTY_KEY_ENCODER_OPT_BACKARROW_KEY_MODE:
     GhosttyKeyEncoderOption = 7;
 pub const GhosttyKeyEncoderOption_GHOSTTY_KEY_ENCODER_OPT_MAX_VALUE: GhosttyKeyEncoderOption =
     2147483647;
-pub type GhosttyKeyEncoderOption = core::ffi::c_uint;
+pub type GhosttyKeyEncoderOption = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_key_encoder_new(
         allocator: *const GhosttyAllocator,
@@ -2531,7 +3447,7 @@ pub const GhosttyMouseAction_GHOSTTY_MOUSE_ACTION_PRESS: GhosttyMouseAction = 0;
 pub const GhosttyMouseAction_GHOSTTY_MOUSE_ACTION_RELEASE: GhosttyMouseAction = 1;
 pub const GhosttyMouseAction_GHOSTTY_MOUSE_ACTION_MOTION: GhosttyMouseAction = 2;
 pub const GhosttyMouseAction_GHOSTTY_MOUSE_ACTION_MAX_VALUE: GhosttyMouseAction = 2147483647;
-pub type GhosttyMouseAction = core::ffi::c_uint;
+pub type GhosttyMouseAction = core::ffi::c_int;
 pub const GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_UNKNOWN: GhosttyMouseButton = 0;
 pub const GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_LEFT: GhosttyMouseButton = 1;
 pub const GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_RIGHT: GhosttyMouseButton = 2;
@@ -2545,7 +3461,7 @@ pub const GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_NINE: GhosttyMouseButton = 9;
 pub const GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_TEN: GhosttyMouseButton = 10;
 pub const GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_ELEVEN: GhosttyMouseButton = 11;
 pub const GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_MAX_VALUE: GhosttyMouseButton = 2147483647;
-pub type GhosttyMouseButton = core::ffi::c_uint;
+pub type GhosttyMouseButton = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyMousePosition {
@@ -2616,14 +3532,14 @@ pub const GhosttyMouseTrackingMode_GHOSTTY_MOUSE_TRACKING_BUTTON: GhosttyMouseTr
 pub const GhosttyMouseTrackingMode_GHOSTTY_MOUSE_TRACKING_ANY: GhosttyMouseTrackingMode = 4;
 pub const GhosttyMouseTrackingMode_GHOSTTY_MOUSE_TRACKING_MAX_VALUE: GhosttyMouseTrackingMode =
     2147483647;
-pub type GhosttyMouseTrackingMode = core::ffi::c_uint;
+pub type GhosttyMouseTrackingMode = core::ffi::c_int;
 pub const GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_X10: GhosttyMouseFormat = 0;
 pub const GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_UTF8: GhosttyMouseFormat = 1;
 pub const GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_SGR: GhosttyMouseFormat = 2;
 pub const GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_URXVT: GhosttyMouseFormat = 3;
 pub const GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_SGR_PIXELS: GhosttyMouseFormat = 4;
 pub const GhosttyMouseFormat_GHOSTTY_MOUSE_FORMAT_MAX_VALUE: GhosttyMouseFormat = 2147483647;
-pub type GhosttyMouseFormat = core::ffi::c_uint;
+pub type GhosttyMouseFormat = core::ffi::c_int;
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct GhosttyMouseEncoderSize {
@@ -2671,7 +3587,7 @@ pub const GhosttyMouseEncoderOption_GHOSTTY_MOUSE_ENCODER_OPT_TRACK_LAST_CELL:
     GhosttyMouseEncoderOption = 4;
 pub const GhosttyMouseEncoderOption_GHOSTTY_MOUSE_ENCODER_OPT_MAX_VALUE: GhosttyMouseEncoderOption =
     2147483647;
-pub type GhosttyMouseEncoderOption = core::ffi::c_uint;
+pub type GhosttyMouseEncoderOption = core::ffi::c_int;
 unsafe extern "C" {
     pub fn ghostty_mouse_encoder_new(
         allocator: *const GhosttyAllocator,
@@ -2706,6 +3622,46 @@ unsafe extern "C" {
         out_len: *mut usize,
     ) -> GhosttyResult;
 }
+pub const GhosttyPasteSource_GHOSTTY_PASTE_SOURCE_CLIPBOARD: GhosttyPasteSource = 0;
+pub const GhosttyPasteSource_GHOSTTY_PASTE_SOURCE_TEXT: GhosttyPasteSource = 1;
+pub const GhosttyPasteSource_GHOSTTY_PASTE_SOURCE_MAX_VALUE: GhosttyPasteSource = 2147483647;
+pub type GhosttyPasteSource = core::ffi::c_int;
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct GhosttyPaste {
+    pub size: usize,
+    pub location: GhosttyClipboardLocation,
+    pub source: GhosttyPasteSource,
+    pub mimes: *const GhosttyString,
+    pub mimes_len: usize,
+    pub reader: GhosttyMimeReader,
+    pub allow_unsafe: bool,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of GhosttyPaste"][::core::mem::size_of::<GhosttyPaste>() - 56usize];
+    ["Alignment of GhosttyPaste"][::core::mem::align_of::<GhosttyPaste>() - 8usize];
+    ["Offset of field: GhosttyPaste::size"][::core::mem::offset_of!(GhosttyPaste, size) - 0usize];
+    ["Offset of field: GhosttyPaste::location"]
+        [::core::mem::offset_of!(GhosttyPaste, location) - 8usize];
+    ["Offset of field: GhosttyPaste::source"]
+        [::core::mem::offset_of!(GhosttyPaste, source) - 12usize];
+    ["Offset of field: GhosttyPaste::mimes"]
+        [::core::mem::offset_of!(GhosttyPaste, mimes) - 16usize];
+    ["Offset of field: GhosttyPaste::mimes_len"]
+        [::core::mem::offset_of!(GhosttyPaste, mimes_len) - 24usize];
+    ["Offset of field: GhosttyPaste::reader"]
+        [::core::mem::offset_of!(GhosttyPaste, reader) - 32usize];
+    ["Offset of field: GhosttyPaste::allow_unsafe"]
+        [::core::mem::offset_of!(GhosttyPaste, allow_unsafe) - 48usize];
+};
+unsafe extern "C" {
+    pub fn ghostty_terminal_paste(
+        terminal: GhosttyTerminal,
+        paste: *const GhosttyPaste,
+        out_written: *mut bool,
+    ) -> GhosttyResult;
+}
 unsafe extern "C" {
     pub fn ghostty_paste_is_safe(data: *const core::ffi::c_char, len: usize) -> bool;
 }
@@ -2718,4 +3674,116 @@ unsafe extern "C" {
         buf_len: usize,
         out_written: *mut usize,
     ) -> GhosttyResult;
+}
+pub const GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES:
+    GhosttySnapshotDecoderOption = 0;
+pub const GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION:
+    GhosttySnapshotDecoderOption = 1;
+pub const GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_VALUE:
+    GhosttySnapshotDecoderOption = 2147483647;
+pub type GhosttySnapshotDecoderOption = core::ffi::c_int;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_INVALID:
+    GhosttySnapshotDecoderData = 0;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_CONTINUATION_BYTES:
+    GhosttySnapshotDecoderData = 1;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_SOURCE_OFFSET:
+    GhosttySnapshotDecoderData = 2;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_PRIMARY:
+    GhosttySnapshotDecoderData = 3;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_HISTORY_ROWS_ALTERNATE:
+    GhosttySnapshotDecoderData = 4;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_SCREEN:
+    GhosttySnapshotDecoderData = 5;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_ROWS:
+    GhosttySnapshotDecoderData = 6;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_PROGRESS_REMAINING:
+    GhosttySnapshotDecoderData = 7;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_RETAIN_CONTINUATION:
+    GhosttySnapshotDecoderData = 8;
+pub const GhosttySnapshotDecoderData_GHOSTTY_SNAPSHOT_DECODER_DATA_MAX_VALUE:
+    GhosttySnapshotDecoderData = 2147483647;
+pub type GhosttySnapshotDecoderData = core::ffi::c_int;
+unsafe extern "C" {
+    pub fn ghostty_snapshot_encode(
+        terminal: GhosttyTerminal,
+        writer: GhosttyWriter,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_encode_buf(
+        terminal: GhosttyTerminal,
+        buf: *mut u8,
+        buf_len: usize,
+        out_written: *mut usize,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_encode_alloc(
+        terminal: GhosttyTerminal,
+        allocator: *const GhosttyAllocator,
+        out_ptr: *mut *mut u8,
+        out_len: *mut usize,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_new(
+        allocator: *const GhosttyAllocator,
+        decoder: *mut GhosttySnapshotDecoder,
+        reader: GhosttyReader,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_new_buf(
+        allocator: *const GhosttyAllocator,
+        decoder: *mut GhosttySnapshotDecoder,
+        ptr: *const u8,
+        len: usize,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_free(decoder: GhosttySnapshotDecoder);
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_set(
+        decoder: GhosttySnapshotDecoder,
+        option: GhosttySnapshotDecoderOption,
+        value: *const core::ffi::c_void,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_ready(
+        decoder: GhosttySnapshotDecoder,
+        terminal: *mut GhosttyTerminal,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_next(decoder: GhosttySnapshotDecoder) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_decode(
+        decoder: GhosttySnapshotDecoder,
+        terminal: *mut GhosttyTerminal,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_get(
+        decoder: GhosttySnapshotDecoder,
+        data: GhosttySnapshotDecoderData,
+        out: *mut core::ffi::c_void,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_snapshot_decoder_get_multi(
+        decoder: GhosttySnapshotDecoder,
+        count: usize,
+        keys: *const GhosttySnapshotDecoderData,
+        values: *mut *mut core::ffi::c_void,
+        out_written: *mut usize,
+    ) -> GhosttyResult;
+}
+unsafe extern "C" {
+    pub fn ghostty_unicode_codepoint_width(cp: u32) -> u8;
+}
+unsafe extern "C" {
+    pub fn ghostty_unicode_grapheme_width(cps: *const u32, len: usize, width: *mut u8) -> usize;
 }

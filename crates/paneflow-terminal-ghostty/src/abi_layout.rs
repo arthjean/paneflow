@@ -25,9 +25,6 @@ pub(crate) fn validate(layouts: &serde_json::Value) -> Result<()> {
     check!(layouts, sys::GhosttyString, "GhosttyString", {
         ptr: *const u8, len: usize
     });
-    check!(layouts, sys::GhosttyTerminalOptions, "GhosttyTerminalOptions", {
-        cols: u16, rows: u16, max_scrollback: usize
-    });
     check!(layouts, sys::GhosttyGridRef, "GhosttyGridRef", {
         size: usize, node: *mut std::ffi::c_void, x: u16, y: u16
     });

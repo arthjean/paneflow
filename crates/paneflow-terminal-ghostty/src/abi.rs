@@ -8,7 +8,8 @@ use crate::{GhosttyError, Result};
 type TerminalNewFn = unsafe extern "C" fn(
     *const sys::GhosttyAllocator,
     *mut sys::GhosttyTerminal,
-    sys::GhosttyTerminalOptions,
+    u16,
+    u16,
 ) -> sys::GhosttyResult;
 type TerminalResizeFn =
     unsafe extern "C" fn(sys::GhosttyTerminal, u16, u16, u32, u32) -> sys::GhosttyResult;
@@ -56,9 +57,29 @@ pub(crate) fn validate() -> Result<()> {
             .to_str()
             .map_err(|_| GhosttyError::AbiMismatch("layout JSON is not UTF-8".into()))?
     };
-    let layouts: serde_json::Value = serde_json::from_str(json)
+    let document: serde_json::Value = serde_json::from_str(json)
         .map_err(|error| GhosttyError::AbiMismatch(format!("invalid layout JSON: {error}")))?;
-    crate::abi_layout::validate(&layouts)
+    crate::abi_layout::validate(layout_types(&document)?)
+}
+
+/// Unwrap the type map from the ABI manifest returned by `ghostty_type_json`.
+///
+/// The manifest wraps the per-type descriptors in an envelope whose shape is
+/// pinned by its `schema` number. Refusing an unknown number keeps a future
+/// reshuffle a loud startup failure instead of a silent layout check that
+/// matches nothing.
+fn layout_types(document: &serde_json::Value) -> Result<&serde_json::Value> {
+    const EXPECTED_SCHEMA: u64 = 1;
+
+    let schema = document.get("schema").and_then(serde_json::Value::as_u64);
+    if schema != Some(EXPECTED_SCHEMA) {
+        return Err(GhosttyError::AbiMismatch(format!(
+            "layout JSON schema expected {EXPECTED_SCHEMA}, got {schema:?}"
+        )));
+    }
+    document
+        .get("types")
+        .ok_or_else(|| GhosttyError::AbiMismatch("layout JSON has no types map".into()))
 }
 
 fn validate_discriminants() -> Result<()> {
