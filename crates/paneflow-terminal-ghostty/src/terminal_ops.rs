@@ -376,9 +376,11 @@ impl DisplayTerminal {
     /// rows.
     ///
     /// The individual getters each cross the FFI boundary; batching them is
-    /// what `ghostty_terminal_get_multi` exists for.
-    pub(crate) fn geometry_batch(&self) -> Result<(usize, usize, usize)> {
-        let mut cols = 0usize;
+    /// what `ghostty_terminal_get_multi` exists for. The destination types
+    /// are the ones terminal.h documents per key, which differ between them:
+    /// columns are `uint16_t`, row counts are `size_t`.
+    pub(crate) fn geometry_batch(&self) -> Result<(u16, usize, usize)> {
+        let mut cols = 0u16;
         let mut total_rows = 0usize;
         let mut scrollback = 0usize;
         use sys as s;
@@ -593,7 +595,11 @@ mod tests {
             .expect("output must parse");
         let (cols, total_rows, scrollback) = terminal.geometry_batch().expect("batched read");
         assert_eq!(cols, 40);
-        assert_eq!(total_rows, terminal.total_rows().expect("total rows"));
+        assert_eq!(
+            total_rows,
+            terminal.scrollback_rows().expect("scrollback") + 8,
+            "total rows count the scrollback plus the screen"
+        );
         assert_eq!(scrollback, terminal.scrollback_rows().expect("scrollback"));
         assert!(total_rows > 8, "the scrollback must count toward total rows");
     }

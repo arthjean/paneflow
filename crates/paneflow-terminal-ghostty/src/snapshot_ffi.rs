@@ -50,9 +50,7 @@ terminal_fields! {
     TerminalKittyKeyboardFlags: u8 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_KITTY_KEYBOARD_FLAGS,
     TerminalCursorX: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_X,
     TerminalCursorY: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_CURSOR_Y,
-    TerminalTotalRows: usize = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
     TerminalScrollbackRows: usize = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
-    TerminalCols: u16 = sys::GhosttyTerminalData_GHOSTTY_TERMINAL_DATA_COLS,
 }
 
 render_fields! {
