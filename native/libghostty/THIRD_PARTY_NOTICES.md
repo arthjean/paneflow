@@ -13,7 +13,7 @@ Reviewed archive fingerprints:
 
 - `x86_64-unknown-linux-gnu`: `0d3e8fad7503658cb1fca3f1d78f2dc725dd3650264cebaa4ee30af9be619916`
 - `aarch64-unknown-linux-gnu`: `183c81ca54681587e79bceb4cee7751df35db7a0c3e55dd95a608d14b981fc87`
-- `aarch64-apple-darwin`: `56fbefeefd7ae4cacc4a2cb30b717d7131e0c4169fd605551639fcc2c5b396ce`
+- `aarch64-apple-darwin`: `8ac17c5391b42f33b83e81200122aaf93e080ecb917dd78a4d2dbe8f90cd5ec8`
 - `x86_64-pc-windows-msvc`: `69d3676b4dce995c72b60c9a5b1b0a260e2c1778f623dab82835aa484dd04ac3`
 
 ## Artifact member inventory
