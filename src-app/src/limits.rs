@@ -31,12 +31,6 @@
 /// Deduplicated from two identical `const`s (US-013).
 pub(crate) const MAX_LINE_BYTES: u64 = 64 * 1024;
 
-/// Scrollback character cap applied by the WRITE side
-/// (`TerminalState::extract_scrollback_from` → `cap_scrollback_at_char_boundary`,
-/// US-001) when persisting a pane. Its READ-side counterpart is
-/// [`MAX_SESSION_SIZE_BYTES`], which is sized from this × panes × workspaces.
-pub(crate) const MAX_CHARS: usize = 400_000;
-
 /// Cap on an OSC52 clipboard payload, applied on BOTH the Store (write) and
 /// Load (read) paths in the terminal. Deduplicated from two identical `const`s
 /// (US-013); keeping one source is what guarantees Store and Load stay
@@ -53,8 +47,9 @@ pub(crate) const MAX_REQUEST_LEN: u64 = paneflow_ipc_client::MAX_FRAME_BYTES as 
 /// legitimate read response cannot exceed the client-side 256 KiB frame cap.
 pub(crate) const MAX_IPC_TEXT_BYTES: usize = 240 * 1024;
 
-/// Read cap on `session.json` (U-008/U-016). Sized from the write side:
-/// [`MAX_CHARS`] per pane × `MAX_PANES` × `MAX_WORKSPACES` is a few hundred MB
+/// Read cap on `session.json` (U-008/U-016). Sized from the write side: the
+/// engine's own 4000-line scrollback cap per pane × `MAX_PANES` ×
+/// `MAX_WORKSPACES` is a few hundred MB
 /// worst-case, but a realistic maxed session is a few MB - 64 MiB sits far
 /// above any legitimate session while bounding a multi-hundred-MB tampered file
 /// before it is read whole into RAM. Mirrors `MAX_CONFIG_SIZE_BYTES` for

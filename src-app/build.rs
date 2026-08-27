@@ -82,8 +82,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=POSTHOG_HOST");
     println!("cargo:rerun-if-env-changed=PANEFLOW_SKIP_EMBED_BUILD");
 
-    // 1b. The `ghostty_native` cfg alias. See `emit_ghostty_native_cfg`.
-    emit_ghostty_native_cfg();
+    // 1b. Ghostty is the only terminal backend. See `assert_ghostty_target_is_supported`.
+    assert_ghostty_target_is_supported();
 
     // 2. US-008 - stage the AI-hook binaries into a dir that
     //    `assets::Bins` (rust-embed) will ingest.
@@ -301,57 +301,38 @@ fn enforce_embed_size_budget(embed_dir: &Path) {
     }
 }
 
-/// Emit the `ghostty_native` cfg alias for `paneflow-app`.
+/// Fail the build when the target has no pinned libghostty archive.
 ///
-/// `ghostty_native` is the single spelling of "the native Ghostty backend is
-/// compiled into this build". It used to be a two-platform predicate copy
-/// pasted across `terminal/pty_session.rs`, `view.rs`, `input.rs`,
-/// `service_detector.rs`, `backend_corpus.rs` and `terminal/mod.rs`; the
-/// alias collapses those to one condition so adding a target changes
-/// [`ghostty_native_target`] and the manifest rather than every gate site.
+/// Paneflow ships a single terminal engine. There is no second emulator to
+/// fall back to, so a target without a declared archive cannot produce a
+/// working binary and must fail here, loudly, rather than link into a build
+/// whose panes would never start.
 ///
-/// The `rustc-check-cfg` directive is printed unconditionally so a build
-/// where the alias is *not* set - `--no-default-features`, or an unsupported
-/// target - still declares it as a known cfg name and `unexpected_cfgs`
-/// stays quiet.
-///
-/// The predicate is read from the `CARGO_CFG_TARGET_*` and `CARGO_FEATURE_*`
-/// variables Cargo sets for the *target* being built, never from `cfg!()`,
-/// which would describe the build host and would be wrong under
-/// cross-compilation.
-fn emit_ghostty_native_cfg() {
-    println!("cargo::rustc-check-cfg=cfg(ghostty_native)");
-    if ghostty_native_target() {
-        println!("cargo::rustc-cfg=ghostty_native");
-    }
-}
-
-/// Whether the target being built both has a declared libghostty archive and
-/// has the matching backend feature enabled.
-///
-/// Each platform carries its own feature so `--no-default-features` yields an
-/// Alacritty-only recovery build and a single platform can be switched off
-/// without touching the others. Kept in sync with the `[[target]]` entries of
-/// `native/libghostty/manifest.toml` and with the matching predicates in
-/// `paneflow-libghostty-sys/src/build_support/mod.rs` and
-/// `crates/paneflow-terminal-ghostty/build.rs`.
-fn ghostty_native_target() -> bool {
+/// The predicate is read from the `CARGO_CFG_TARGET_*` variables Cargo sets
+/// for the *target* being built, never from `cfg!()`, which would describe the
+/// build host and would be wrong under cross-compilation. Kept in sync with
+/// the `[[target]]` entries of `native/libghostty/manifest.toml` and with the
+/// matching predicates in `paneflow-libghostty-sys/src/build_support/mod.rs`
+/// and `crates/paneflow-terminal-ghostty/build.rs`.
+fn assert_ghostty_target_is_supported() {
     let cfg = |key: &str| std::env::var(key).unwrap_or_default();
-    let feature = |key: &str| std::env::var_os(key).is_some();
-    match cfg("CARGO_CFG_TARGET_OS").as_str() {
-        "linux" => feature("CARGO_FEATURE_LIBGHOSTTY_LINUX"),
+    let arch = cfg("CARGO_CFG_TARGET_ARCH");
+    let supported = match cfg("CARGO_CFG_TARGET_OS").as_str() {
+        "linux" => arch == "x86_64" || arch == "aarch64",
         // Only Apple Silicon has a declared archive; x86_64-apple-darwin is a
-        // closed release target, so Intel Macs keep the Alacritty path.
-        "macos" => {
-            cfg("CARGO_CFG_TARGET_ARCH") == "aarch64" && feature("CARGO_FEATURE_LIBGHOSTTY_MACOS")
-        }
-        "windows" => {
-            cfg("CARGO_CFG_TARGET_ARCH") == "x86_64"
-                && cfg("CARGO_CFG_TARGET_ENV") == "msvc"
-                && feature("CARGO_FEATURE_LIBGHOSTTY_WINDOWS")
-        }
+        // closed release target.
+        "macos" => arch == "aarch64",
+        "windows" => arch == "x86_64" && cfg("CARGO_CFG_TARGET_ENV") == "msvc",
         _ => false,
-    }
+    };
+    assert!(
+        supported,
+        "paneflow-app has no libghostty archive for target {}. Ghostty is the only terminal \
+         backend, so this target cannot be built. Declare it in \
+         native/libghostty/manifest.toml and produce its archive with the matching \
+         scripts/build-libghostty-* recipe first.",
+        std::env::var("TARGET").unwrap_or_else(|_| "<unknown>".to_owned())
+    );
 }
 
 /// Embed the multi-resolution application icon into `paneflow.exe` via the

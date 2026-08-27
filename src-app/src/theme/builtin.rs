@@ -139,14 +139,6 @@ pub fn paneflow_light() -> TerminalTheme {
         bright_magenta: h(0x8b1b8b),
         bright_cyan: h(0x016e9e),
         bright_white: h(0x383a42),
-        dim_black: h(0xb0b1b5),
-        dim_red: h(0xc9887f),
-        dim_green: h(0x8ab88a),
-        dim_yellow: h(0xb5a06a),
-        dim_blue: h(0x7da0d6),
-        dim_magenta: h(0xb881b8),
-        dim_cyan: h(0x6aa9c0),
-        dim_white: h(0x777984),
         syntax: SyntaxPalette::catppuccin_latte(),
     };
     theme.recompute_selection_foreground();
@@ -187,14 +179,6 @@ pub fn paneflow_dark() -> TerminalTheme {
         bright_magenta: h(0xd09acf),
         bright_cyan: h(0x72dbc9),
         bright_white: h(0xe0ece6),
-        dim_black: h(0x2c313a),
-        dim_red: h(0xb85659),
-        dim_green: h(0x3f9d74),
-        dim_yellow: h(0xb4934b),
-        dim_blue: h(0x5a82b8),
-        dim_magenta: h(0x906cb8),
-        dim_cyan: h(0x3d9b91),
-        dim_white: h(0x93938b),
         syntax: SyntaxPalette::catppuccin_mocha(),
     };
     theme.recompute_selection_foreground();
@@ -233,14 +217,6 @@ pub fn vercel_dark() -> TerminalTheme {
         bright_magenta: h(0xd78cff),
         bright_cyan: h(0x7ff0d8),
         bright_white: h(0xffffff),
-        dim_black: h(0x111111),
-        dim_red: h(0xa84145),
-        dim_green: h(0x16855f),
-        dim_yellow: h(0xa89619),
-        dim_blue: h(0x2166ad),
-        dim_magenta: h(0x7f3aa6),
-        dim_cyan: h(0x358f7c),
-        dim_white: h(0x8a8a8a),
         syntax: SyntaxPalette::vercel_dark(),
     };
     theme.recompute_selection_foreground();
@@ -317,14 +293,6 @@ pub fn vercel_light() -> TerminalTheme {
         bright_magenta: h(0x651a9e),
         bright_cyan: h(0x056b5e),
         bright_white: h(0x171717),
-        dim_black: h(0xb3b3b3),
-        dim_red: h(0xdc8285),
-        dim_green: h(0x6fae6f),
-        dim_yellow: h(0xc4996b),
-        dim_blue: h(0x6fa5e0),
-        dim_magenta: h(0xa87bcc),
-        dim_cyan: h(0x66b3a8),
-        dim_white: h(0x8a8a8a),
         syntax: SyntaxPalette::vercel_light(),
     };
     theme.recompute_selection_foreground();
@@ -399,14 +367,6 @@ pub fn claude_dark() -> TerminalTheme {
         bright_magenta: h(0xcab7d7),
         bright_cyan: h(0xabcac4),
         bright_white: h(0xffffff),
-        dim_black: h(0x1e1e1d),
-        dim_red: h(0x985d49),
-        dim_green: h(0x6f8066),
-        dim_yellow: h(0x8f794d),
-        dim_blue: h(0x687887),
-        dim_magenta: h(0x7f708c),
-        dim_cyan: h(0x6d8581),
-        dim_white: h(0x9ca7b5),
         syntax: SyntaxPalette::claude_dark(),
     };
     theme.recompute_selection_foreground();
@@ -484,14 +444,6 @@ pub fn claude_light() -> TerminalTheme {
         bright_magenta: h(0x8f70bf),
         bright_cyan: h(0x389184),
         bright_white: h(0x1f1e1a),
-        dim_black: h(0xbdbbb0),
-        dim_red: h(0xdda28a),
-        dim_green: h(0x9bb894),
-        dim_yellow: h(0xc7ab7e),
-        dim_blue: h(0x9fb2ce),
-        dim_magenta: h(0xb7a8d1),
-        dim_cyan: h(0x93bcb5),
-        dim_white: h(0xa9a89f),
         syntax: SyntaxPalette::claude_light(),
     };
     theme.recompute_selection_foreground();
@@ -572,14 +524,6 @@ pub fn cursor_dark() -> TerminalTheme {
         bright_magenta: h(0xd09acf),
         bright_cyan: h(0x72dbc9),
         bright_white: h(0xe0ece6),
-        dim_black: h(0x101010),
-        dim_red: h(0xb85659),
-        dim_green: h(0x3f9d74),
-        dim_yellow: h(0xb4934b),
-        dim_blue: h(0x648098),
-        dim_magenta: h(0x906cb8),
-        dim_cyan: h(0x507490),
-        dim_white: h(0x989898),
         syntax: SyntaxPalette::cursor_dark(),
     };
     theme.recompute_selection_foreground();
@@ -658,14 +602,6 @@ pub fn cursor_light() -> TerminalTheme {
         bright_magenta: h(0x8f048f),
         bright_cyan: h(0x047394),
         bright_white: h(0x1e1e1e),
-        dim_black: h(0xb0b0b0),
-        dim_red: h(0xe08c8c),
-        dim_green: h(0x76b876),
-        dim_yellow: h(0xc2c47a),
-        dim_blue: h(0x7f9fc4),
-        dim_magenta: h(0xd67fd6),
-        dim_cyan: h(0x7fc4d9),
-        dim_white: h(0x767676),
         syntax: SyntaxPalette::cursor_light(),
     };
     theme.recompute_selection_foreground();

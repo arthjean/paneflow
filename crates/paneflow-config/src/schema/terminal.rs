@@ -64,27 +64,12 @@ pub enum CursorBlinkConfig {
     TerminalControlled,
 }
 
-/// Terminal engine requested for newly-created sessions. `Auto` selects
-/// Ghostty in standard Linux and supported Windows x64 MSVC builds. On macOS
-/// (Apple Silicon) Ghostty is an explicit opt-in: `Auto` still selects
-/// Alacritty, and only `Ghostty` switches the engine. Builds without the
-/// target's native Ghostty feature always use Alacritty.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TerminalBackendConfig {
-    #[default]
-    Auto,
-    Ghostty,
-    Alacritty,
-}
-
 // Manual `Deserialize` for the terminal enums. A derived `Deserialize` hard-
 // errors on an unrecognised variant; that error propagates up to
 // `parse_and_validate` (loader.rs), which discards the ENTIRE user config and
 // returns defaults. A typo (`"cursor_shape": "squiggle"`) would silently wipe
 // the theme, shell, shortcuts, and agent settings. Instead fall back with a
-// logged warning. Terminal backend typos fail safe to the explicit Alacritty
-// rollback rather than inheriting a future `auto` promotion.
+// logged warning.
 // `Serialize` stays derived (snake_case), so round-tripping a valid value is
 // unchanged.
 impl<'de> Deserialize<'de> for CursorShapeConfig {
@@ -137,30 +122,6 @@ impl<'de> Deserialize<'de> for CursorBlinkConfig {
     }
 }
 
-impl<'de> Deserialize<'de> for TerminalBackendConfig {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let raw = String::deserialize(deserializer)?;
-        Ok(match raw.as_str() {
-            "auto" => Self::Auto,
-            "ghostty" => Self::Ghostty,
-            "alacritty" => Self::Alacritty,
-            other => {
-                tracing::warn!(
-                    target: "paneflow_config::terminal",
-                    value = other,
-                    reason_code = "unknown_terminal_backend",
-                    fallback = "alacritty",
-                    "terminal.backend value not recognized, using the safe rollback backend",
-                );
-                Self::Alacritty
-            }
-        })
-    }
-}
-
 /// Memory budget profile for a terminal surface.
 ///
 /// Normal and Agent terminals keep the standard interactive scrollback default so
@@ -195,13 +156,6 @@ impl TerminalSurfaceProfile {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct TerminalConfig {
-    /// Backend requested for new sessions. `auto` resolves to Ghostty in
-    /// standard Linux and supported Windows x64 MSVC builds, and to Alacritty
-    /// on macOS, where `ghostty` is the explicit opt-in. Builds without the
-    /// target's native Ghostty feature always use Alacritty. `alacritty` is
-    /// the explicit cross-platform rollback.
-    #[serde(default)]
-    pub backend: TerminalBackendConfig,
     /// Render programming-font ligatures (FiraCode `=>`, `!=`, …) when
     /// `Some(true)`. `None` and `Some(false)` both keep the historical
     /// behavior of disabling ligatures via GPUI's `FontFeatures`.
@@ -223,9 +177,9 @@ pub struct TerminalConfig {
     /// Maximum scrollback history in lines (`max_scroll_history_lines`).
     /// `None` resolves to
     /// [`TerminalConfig::DEFAULT_SCROLLBACK_LINES`]; values are clamped
-    /// to `[100, 100_000]`. Alacritty exposes a line-count limit rather
-    /// than Ghostty's byte-count `scrollback-limit`, so the default stays
-    /// conservative while advanced users can opt into a larger line budget.
+    /// to `[100, 100_000]`. Ghostty's own knob is a byte-count
+    /// `scrollback-limit`, so Paneflow keeps a line-count budget in the
+    /// config and converts it at spawn time.
     /// Read once at PTY spawn time; changing this value takes effect on
     /// the next new terminal.
     #[serde(default, deserialize_with = "lenient_opt_usize")]

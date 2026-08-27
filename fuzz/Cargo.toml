@@ -12,7 +12,6 @@ default = ["native"]
 native = ["paneflow-terminal-ghostty/native"]
 
 [dependencies]
-alacritty_terminal = "=0.26.0"
 libfuzzer-sys = "=0.4.12"
 paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty" }
 

@@ -43,7 +43,7 @@ fn cargo_lock_git_sources_are_immutable() {
 }
 
 #[test]
-fn paneflow_default_features_select_the_linux_ghostty_backend() {
+fn paneflow_links_the_native_ghostty_engine_unconditionally() {
     let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
     let output = Command::new(env!("CARGO"))
         .args([
@@ -72,12 +72,31 @@ fn paneflow_default_features_select_the_linux_ghostty_backend() {
                 .find(|package| package["name"] == "paneflow-app")
         })
         .unwrap_or_else(|| panic!("cargo metadata omitted paneflow-app"));
-    let defaults = package["features"]["default"]
+    let engine = package["dependencies"]
         .as_array()
-        .unwrap_or_else(|| panic!("paneflow-app default features are not an array"));
+        .and_then(|dependencies| {
+            dependencies
+                .iter()
+                .find(|dependency| dependency["name"] == "paneflow-terminal-ghostty")
+        })
+        .unwrap_or_else(|| panic!("paneflow-app no longer depends on the Ghostty engine"));
 
+    // Ghostty is the only terminal engine, so nothing may make it optional or
+    // leave it on the stub: a build that resolves without `native` would link a
+    // terminal that cannot run a shell.
+    assert_eq!(
+        engine["optional"],
+        serde_json::Value::Bool(false),
+        "the Ghostty engine must not be an optional dependency"
+    );
     assert!(
-        defaults.iter().any(|feature| feature == "libghostty-linux"),
-        "cargo run must activate libghostty-linux by default"
+        engine["target"].is_null(),
+        "the Ghostty engine must not be target-gated"
+    );
+    assert!(
+        engine["features"]
+            .as_array()
+            .is_some_and(|features| features.iter().any(|feature| feature == "native")),
+        "the Ghostty engine must be linked with the native feature"
     );
 }

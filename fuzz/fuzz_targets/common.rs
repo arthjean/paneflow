@@ -1,53 +1,28 @@
-use alacritty_terminal::Term;
-use alacritty_terminal::event::VoidListener;
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line, Point};
-use alacritty_terminal::term::Config;
-use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
 use paneflow_terminal_ghostty::{
     Content, DisplayTerminal, TerminalAppearance, WideCell, WindowSize,
 };
 
 const MAX_FUZZ_BYTES: usize = 4_096;
 
-struct TerminalDimensions {
-    cols: usize,
-    rows: usize,
-}
-
-impl Dimensions for TerminalDimensions {
-    fn total_lines(&self) -> usize {
-        self.rows
-    }
-
-    fn screen_lines(&self) -> usize {
-        self.rows
-    }
-
-    fn columns(&self) -> usize {
-        self.cols
-    }
-}
-
-pub fn differential_replay(data: &[u8], cols: usize, rows: usize, snapshot_each_chunk: bool) {
-    let dimensions = TerminalDimensions { cols, rows };
-    let mut alacritty = Term::new(Config::default(), &dimensions, VoidListener);
-    let mut processor = Processor::<StdSyncHandler>::new();
+/// Feed bounded VT input to libghostty and assert the snapshot invariants the
+/// renderer relies on. The engine is the only implementation now, so there is
+/// no second parser to diff against: the oracle is the contract the terminal
+/// element assumes when it paints a `Content`.
+pub fn replay(data: &[u8], cols: usize, rows: usize, snapshot_each_chunk: bool) {
     let size = WindowSize::new(cols, rows, 8, 16).expect("bounded fuzz dimensions are valid");
     let mut ghostty = DisplayTerminal::new(size, 1_000, TerminalAppearance::default())
         .expect("libghostty initializes");
     let input = bounded_vt_input(data, cols, rows);
 
     for chunk in input.chunks(64) {
-        processor.advance(&mut alacritty, chunk);
         ghostty
             .feed(chunk)
             .expect("libghostty accepts bounded input");
         if snapshot_each_chunk {
-            assert_shared_invariants(&alacritty, &mut ghostty, cols, rows);
+            assert_snapshot_invariants(&mut ghostty, cols, rows);
         }
     }
-    assert_shared_invariants(&alacritty, &mut ghostty, cols, rows);
+    assert_snapshot_invariants(&mut ghostty, cols, rows);
 }
 
 fn bounded_vt_input(data: &[u8], cols: usize, rows: usize) -> Vec<u8> {
@@ -65,20 +40,15 @@ fn bounded_vt_input(data: &[u8], cols: usize, rows: usize) -> Vec<u8> {
     input
 }
 
-fn assert_shared_invariants(
-    alacritty: &Term<VoidListener>,
-    ghostty: &mut DisplayTerminal,
-    cols: usize,
-    rows: usize,
-) {
+fn assert_snapshot_invariants(ghostty: &mut DisplayTerminal, cols: usize, rows: usize) {
     let content = ghostty.snapshot().expect("libghostty snapshot succeeds");
     assert_eq!(content.cols, cols);
     assert_eq!(content.rows, rows);
     assert_cursor_in_bounds(&content);
-    assert_eq!(
-        normalized_alacritty_text(alacritty),
-        normalized_ghostty_text(&content)
-    );
+    assert_cells_in_bounds(&content);
+    // Rebuilding the visible text must not panic on any cell the engine emits:
+    // this is the exact walk the renderer and `extract_scrollback` perform.
+    let _ = visible_text(&content);
 }
 
 fn assert_cursor_in_bounds(content: &Content) {
@@ -87,19 +57,15 @@ fn assert_cursor_in_bounds(content: &Content) {
     assert!((content.cursor.point.line as usize) < content.rows);
 }
 
-fn normalized_alacritty_text(term: &Term<VoidListener>) -> String {
-    let mut lines = Vec::with_capacity(term.screen_lines());
-    for row in 0..term.screen_lines() {
-        let line = Line(row as i32);
-        lines.push(term.bounds_to_string(
-            Point::new(line, Column(0)),
-            Point::new(line, term.last_column()),
-        ));
+fn assert_cells_in_bounds(content: &Content) {
+    for cell in content.cells.iter() {
+        assert!(cell.point.column < content.cols);
+        let line = usize::try_from(cell.point.line).expect("viewport lines are non-negative");
+        assert!(line < content.rows);
     }
-    normalize_text(lines.join("\n"))
 }
 
-fn normalized_ghostty_text(content: &Content) -> String {
+fn visible_text(content: &Content) -> String {
     let mut lines = vec![String::new(); content.rows];
     for cell in content.cells.iter() {
         let Ok(line) = usize::try_from(cell.point.line) else {

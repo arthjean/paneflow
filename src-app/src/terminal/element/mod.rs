@@ -529,7 +529,7 @@ fn focused_copy_mode_cursor(
 /// neutral [`Content`] snapshot ([`content_from_term`]) plus the content mask;
 /// the golden-frame net fills it from a fixed fixture so the entire layout is
 /// reproducible with no display. The cells are the backend-neutral
-/// [`crate::terminal::types::Cell`] (EP-003) - no alacritty types reach here.
+/// [`crate::terminal::types::Cell`] (EP-003) - no engine types reach here.
 pub(crate) struct LayoutInputs<'a> {
     pub cells: Arc<[Cell]>,
     /// Cursor as snapshotted from the grid (before the copy-mode / selection
@@ -769,12 +769,11 @@ impl TerminalElement {
             .ceil()
             .max(0.0) as i32;
 
-        // Snapshot the grid into neutral owned data. Alacritty resizes under
-        // the same lock and therefore returns the requested dimensions here.
-        // Ghostty applies the resize on its runtime thread, so it can return the
-        // previous complete grid for one frame before its wakeup publishes the
-        // resized snapshot. The layout below must use the snapshot dimensions,
-        // never combine old cells with the newly requested GPUI dimensions.
+        // Snapshot the grid into neutral owned data. Ghostty applies a resize
+        // on its runtime thread, so it can return the previous complete grid
+        // for one frame before its wakeup publishes the resized snapshot. The
+        // layout below must use the snapshot dimensions, never combine old
+        // cells with the newly requested GPUI dimensions.
         let cursor_color = self.cursor_color_override.unwrap_or(theme.cursor);
         let window_size = TerminalWindowSize::new(
             desired_cols,
@@ -1127,8 +1126,8 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         // Build cell style for batching comparison
         let mut font = base_font.clone();
         // OSC 8 hyperlinks must render with an underline even when the cell
-        // flags don't carry `UNDERLINE` - alacritty 0.26 does not auto-set
-        // the flag on OSC 8 cells, so without this we'd lose the visual
+        // flags don't carry `UNDERLINE` - the engine does not auto-set the
+        // flag on OSC 8 cells, so without this we'd lose the visual
         // affordance until Ctrl/Cmd is held. Matches Zed
         // `terminal_element.rs:580`.
         let is_underline = flags.contains(CellFlags::UNDERLINE)
@@ -1191,7 +1190,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     let rects = merge_background_regions(rects);
 
     // Build selection highlight rects from the SelectionRange.
-    // SelectionRange carries alacritty grid-line coords (scrollback = negative);
+    // SelectionRange carries absolute grid-line coords (scrollback = negative);
     // convert to viewport-line coords to match the cell coordinate system.
     let mut selection_rects = Vec::new();
     if let Some(sel) = &selection_range {
@@ -1400,7 +1399,7 @@ impl BatchAccumulator {
     }
 
     fn append_zerowidth(&mut self, chars: &[char]) {
-        // If alacritty hands us combining marks before any base char has been
+        // If the engine hands us combining marks before any base char has been
         // appended (rare, but the grid layout could change in future versions),
         // silently drop them rather than panicking in debug. The previous
         // `debug_assert!` could trip during legitimate render flows that the

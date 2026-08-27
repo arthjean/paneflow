@@ -40,7 +40,7 @@ fn ghostty_native_target() -> bool {
     match cfg("CARGO_CFG_TARGET_OS").as_str() {
         "linux" => true,
         // Only Apple Silicon has a declared archive; x86_64-apple-darwin is a
-        // closed release target and resolves to the Alacritty-only stub path.
+        // closed release target and resolves to the stub path.
         "macos" => cfg("CARGO_CFG_TARGET_ARCH") == "aarch64",
         "windows" => {
             cfg("CARGO_CFG_TARGET_ARCH") == "x86_64" && cfg("CARGO_CFG_TARGET_ENV") == "msvc"

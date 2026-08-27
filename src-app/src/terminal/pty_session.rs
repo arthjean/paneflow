@@ -10,41 +10,25 @@
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::io::{self, Read, Write};
+use std::io;
 use std::sync::Arc;
 
-use alacritty_terminal::Term;
-use alacritty_terminal::event::{Event as AlacEvent, Notify, WindowSize as AlacWindowSize};
-use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
-use alacritty_terminal::grid::{Dimensions, Scroll as AlacScroll};
-use alacritty_terminal::index::{
-    Column as GridCol, Line as GridLine, Point as AlacPoint, Side as AlacSide,
-};
-use alacritty_terminal::selection::{Selection, SelectionType};
-use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::Config as TermConfig;
-use alacritty_terminal::term::TermMode;
-use alacritty_terminal::tty;
-use alacritty_terminal::vte::ansi::Rgb as AlacRgb;
-use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
+use futures::channel::mpsc::UnboundedReceiver;
 
-use super::element::color::palette_color_at;
-use super::listener::{ClipboardGate, SpikeTermSize, ZedListener};
-use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
+use super::clipboard_gate::ClipboardGate;
+use super::ghostty_session::{
+    GhosttyInputSendResult, GhosttyRuntimePending, GhosttySession, GhosttyUiEvent, SpawnedGhostty,
+};
+use super::marks::SharedMarkRing;
 use super::service_detector::{ServiceInfo, detect_framework, parse_service_line};
 use super::shell::{resolve_default_shell, setup_shell_integration};
 use super::types::{
-    Content, GridLineText, GridMetrics, HyperlinkSource, HyperlinkZone, Line, Modes, Point,
-    SelectionKind, SelectionRange, SelectionSide, SharedTerm, ShellQuoting, TerminalWindowSize,
-    content_from_term_visible, resize_if_needed,
+    Content, GridLineText, GridMetrics, HyperlinkZone, Line, Modes, Point, SelectionKind,
+    SelectionRange, SelectionSide, ShellQuoting, TerminalWindowSize,
 };
-use crate::limits::{MAX_CHARS, MAX_OSC52_BYTES};
-use paneflow_config::schema::{TerminalBackendConfig, TerminalConfig, TerminalSurfaceProfile};
-
-#[cfg(ghostty_native)]
-use super::ghostty_session::{
-    GhosttyInputSendResult, GhosttySession, GhosttyUiEvent, SpawnedGhostty,
-};
+use crate::limits::MAX_OSC52_BYTES;
+use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
+use paneflow_terminal_ghostty::Scroll as GhosttyScroll;
 
 /// Default scrollback history length, in lines. Paneflow keeps this standard
 /// for predictable terminal memory use. `TermConfig::default()` is `0`, which
@@ -52,7 +36,6 @@ use super::ghostty_session::{
 /// `terminal.scrollback_lines` in `paneflow.json` - see
 /// [`paneflow_config::TerminalConfig::resolved_scrollback_lines`].
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
-const PTY_DRAIN_ON_EXIT: bool = true;
 /// Identity and credential markers Claude Code exports into the processes it
 /// spawns. A pane that inherits them makes the agent running inside it believe
 /// it is a *nested child* of the Claude Code session that launched Paneflow.
@@ -95,200 +78,25 @@ fn resolved_scrollback_lines(profile: TerminalSurfaceProfile) -> usize {
         .resolved_scrollback_lines_for_profile(profile)
 }
 
-/// US-007: map the pure config cursor shape to the backend's nearest native
-/// shape. Paneflow paints `Vintage` and `DoubleUnderline` itself on top of
-/// these fallback shapes.
-fn map_cursor_shape(
-    c: paneflow_config::schema::CursorShapeConfig,
-) -> alacritty_terminal::vte::ansi::CursorShape {
-    use alacritty_terminal::vte::ansi::CursorShape;
-    use paneflow_config::schema::CursorShapeConfig as C;
-    match c {
-        C::Vintage => CursorShape::Block,
-        C::Block => CursorShape::Block,
-        C::Beam => CursorShape::Beam,
-        C::Underline => CursorShape::Underline,
-        C::DoubleUnderline => CursorShape::Underline,
-        C::Hollow => CursorShape::HollowBlock,
-    }
-}
-
-/// US-007: resolve the configured default cursor shape into an alacritty
-/// `CursorStyle`, applied as `TermConfig.default_cursor_style` so it is the
-/// fallback before any app-driven DECSCUSR escape. Blinking stays at the
-/// alacritty default; cursor blink is overridden at the view layer (US-008).
-fn resolved_cursor_style() -> alacritty_terminal::vte::ansi::CursorStyle {
-    use alacritty_terminal::vte::ansi::{CursorShape, CursorStyle};
-    let shape = paneflow_config::loader::load_config()
-        .terminal
-        .as_ref()
-        .and_then(|t| t.cursor_shape)
-        .map(map_cursor_shape)
-        .unwrap_or(CursorShape::Block);
-    CursorStyle {
-        shape,
-        ..CursorStyle::default()
-    }
-}
-
-fn resolved_cursor_color_override() -> Option<gpui::Hsla> {
-    paneflow_config::loader::load_config()
-        .terminal
-        .and_then(|t| t.normalized_cursor_color())
-        .and_then(|hex| u32::from_str_radix(&hex[1..], 16).ok())
-        .map(|rgb| gpui::Hsla::from(gpui::rgb(rgb)))
-}
-
-// ---------------------------------------------------------------------------
-// PTY notifier - replaces alacritty's Notifier (US-007, portable-pty)
-// ---------------------------------------------------------------------------
-
-/// Whether a terminal is backed by a real PTY (driven by an alacritty
-/// `EventLoop`) or is display-only (VTE-rendered content, no PTY, no input).
-/// Mirrors Zed's `TerminalType` (`crates/terminal/src/terminal.rs:1281-1287`):
-/// the `Pty` variant owns the `EventLoop` write channel; `DisplayOnly` drops
-/// every write. Held inside [`PtySender`] so the Pty-vs-display-only state is
-/// one named enum instead of an anonymous `Option`, and so US-012 can *promote*
-/// a `DisplayOnly` terminal to `Pty` once a background spawn resolves.
-#[derive(Clone)]
-pub enum TerminalType {
-    /// A live PTY: writes go to the alacritty `EventLoop` channel.
-    Pty(EventLoopSender),
-    /// No PTY: input / resize / shutdown are dropped.
-    DisplayOnly,
-}
-
-/// The write side of a terminal - routes input / resize / shutdown to the PTY
-/// `EventLoop` (or drops them for a display-only terminal). Mirrors Zed's
-/// `PtySender` (`crates/terminal/src/alacritty.rs:84-108`), which exposes only
-/// notify / resize / shutdown - never the raw `Msg` channel.
-#[derive(Clone)]
-pub struct PtySender(TerminalType);
-
-impl PtySender {
-    fn new(kind: TerminalType) -> Self {
-        Self(kind)
-    }
-
-    /// Real sender wired to a live `EventLoop` channel.
-    pub(super) fn pty(sender: EventLoopSender) -> Self {
-        Self::new(TerminalType::Pty(sender))
-    }
-
-    /// Display-only sender: every write is dropped (no PTY, no `EventLoop`).
-    pub(super) fn display_only() -> Self {
-        Self::new(TerminalType::DisplayOnly)
-    }
-
-    /// Whether this is a live PTY (vs display-only / not-yet-promoted). A
-    /// display-only sender already drops every write, so this is an explicit
-    /// readiness query for callers/tests rather than a guard the write path
-    /// needs.
-    #[allow(dead_code)]
-    pub fn is_pty(&self) -> bool {
-        matches!(self.0, TerminalType::Pty(_))
-    }
-
-    /// Internal: drop the message for a display-only terminal, otherwise hand it
-    /// to the `EventLoop`. The send error is ignored - a closed channel means
-    /// the child already exited, which the exit path handles.
-    fn send(&self, msg: Msg) {
-        if let TerminalType::Pty(sender) = &self.0 {
-            let _ = sender.send(msg);
-        }
-    }
-
-    /// Forward input bytes to the child (the [`Notify`] path).
-    pub fn write(&self, bytes: Cow<'static, [u8]>) {
-        // alacritty: the terminal hangs if 0 bytes are sent through.
-        if bytes.is_empty() {
-            return;
-        }
-        self.send(Msg::Input(bytes));
-    }
-
-    /// Resize the PTY grid (drives SIGWINCH to the child).
-    pub fn resize(&self, size: AlacWindowSize) {
-        self.send(Msg::Resize(size));
-    }
-
-    /// Ask the `EventLoop` to shut down (sent from `Drop` before the teardown
-    /// ladder).
-    pub fn shutdown(&self) {
-        self.send(Msg::Shutdown);
-    }
-}
-
-/// Wrapper for the PTY write channel. Implements `Notify` for input and exposes
-/// the resize convenience - same usage pattern as alacritty's `Notifier` (which
-/// [`PtySender`] now wraps).
-#[derive(Clone)]
-pub struct PtyNotifier(pub PtySender);
-
-impl Notify for PtyNotifier {
-    fn notify<B: Into<Cow<'static, [u8]>>>(&self, bytes: B) {
-        self.0.write(bytes.into());
-    }
-}
-
-#[inline]
-fn saturating_u16(value: usize) -> u16 {
-    u16::try_from(value).unwrap_or(u16::MAX)
-}
-
-pub(crate) fn alacritty_window_size(size: TerminalWindowSize) -> AlacWindowSize {
-    AlacWindowSize {
-        num_cols: saturating_u16(size.cols),
-        num_lines: saturating_u16(size.rows),
-        cell_width: size.cell_width,
-        cell_height: size.cell_height,
-    }
-}
-
-impl PtyNotifier {
-    /// Resize the PTY using the full cached terminal window size. This includes
-    /// metrics-only changes, such as font zoom, that do not alter grid columns
-    /// or rows but still affect size query replies and platform PTY pixel fields.
-    pub fn notify_window_size(&self, size: TerminalWindowSize) {
-        self.0.resize(alacritty_window_size(size));
-    }
-}
-
-/// Cloneable renderer-facing session facade. The concrete Alacritty handles
-/// stay private to this backend module; GPUI receives only Paneflow-owned
-/// commands and snapshots. EP-002 can add a Ghostty implementation behind the
-/// same facade without changing `TerminalElement`.
+/// Cloneable renderer-facing session facade. The concrete Ghostty handles stay
+/// private to this backend module; GPUI receives only Paneflow-owned commands
+/// and snapshots.
 #[derive(Clone)]
 pub(crate) struct TerminalSessionBackend {
-    term: SharedTerm,
-    notifier: PtyNotifier,
-    #[cfg(ghostty_native)]
-    ghostty: Option<GhosttySession>,
+    ghostty: GhosttySession,
 }
 
-/// Opaque event emitted by the concrete backend. The view can coalesce wakeups
-/// without importing or pattern-matching Alacritty's event enum.
-pub(crate) enum TerminalBackendEvent {
-    Alacritty(AlacEvent),
-    #[cfg(ghostty_native)]
-    Ghostty(GhosttyUiEvent),
-}
+/// A UI-facing event published by the terminal engine.
+pub(crate) struct TerminalBackendEvent(GhosttyUiEvent);
 
 impl TerminalBackendEvent {
     pub(crate) fn is_wakeup(&self) -> bool {
-        match self {
-            Self::Alacritty(event) => matches!(event, AlacEvent::Wakeup),
-            #[cfg(ghostty_native)]
-            Self::Ghostty(event) => event.is_wakeup(),
-        }
+        self.0.is_wakeup()
     }
 }
 
-pub(crate) struct TerminalBackendEvents {
-    alacritty: Option<UnboundedReceiver<AlacEvent>>,
-    #[cfg(ghostty_native)]
-    ghostty: Option<UnboundedReceiver<GhosttyUiEvent>>,
-}
+/// The event stream a view polls, taken once from [`TerminalState`].
+pub(crate) struct TerminalBackendEvents(Option<UnboundedReceiver<GhosttyUiEvent>>);
 
 impl futures::Stream for TerminalBackendEvents {
     type Item = TerminalBackendEvent;
@@ -297,54 +105,30 @@ impl futures::Stream for TerminalBackendEvents {
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
-        #[cfg(ghostty_native)]
-        if let Some(receiver) = self.ghostty.as_mut() {
-            match futures::Stream::poll_next(std::pin::Pin::new(receiver), cx) {
-                std::task::Poll::Ready(Some(event)) => {
-                    return std::task::Poll::Ready(Some(TerminalBackendEvent::Ghostty(event)));
-                }
-                std::task::Poll::Ready(None) => self.ghostty = None,
-                std::task::Poll::Pending => {}
+        let Some(receiver) = self.0.as_mut() else {
+            return std::task::Poll::Pending;
+        };
+        match std::pin::Pin::new(receiver).poll_next(cx) {
+            std::task::Poll::Ready(Some(event)) => {
+                std::task::Poll::Ready(Some(TerminalBackendEvent(event)))
             }
-        }
-        if let Some(receiver) = self.alacritty.as_mut() {
-            match futures::Stream::poll_next(std::pin::Pin::new(receiver), cx) {
-                std::task::Poll::Ready(Some(event)) => {
-                    return std::task::Poll::Ready(Some(TerminalBackendEvent::Alacritty(event)));
-                }
-                std::task::Poll::Ready(None) => self.alacritty = None,
-                std::task::Poll::Pending => {}
-            }
-        }
-        if futures::stream::FusedStream::is_terminated(&*self) {
-            std::task::Poll::Ready(None)
-        } else {
-            std::task::Poll::Pending
+            // A closed engine channel must not end the view's stream: the
+            // surface stays mounted so the exit overlay remains visible.
+            std::task::Poll::Ready(None) | std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
 }
 
 impl futures::stream::FusedStream for TerminalBackendEvents {
     fn is_terminated(&self) -> bool {
-        self.alacritty.is_none() && {
-            #[cfg(ghostty_native)]
-            {
-                self.ghostty.is_none()
-            }
-            #[cfg(not(ghostty_native))]
-            {
-                true
-            }
-        }
+        false
     }
 }
 
-/// Concrete spawn state that can cross the background executor boundary but
-/// cannot be inspected by the view.
+/// The runtime handle produced alongside a not-yet-started terminal, handed to
+/// the background half of a spawn.
 pub(crate) struct PendingTerminalBackend {
-    term: SharedTerm,
-    events_tx: UnboundedSender<AlacEvent>,
-    clipboard_gate: Arc<ClipboardGate>,
+    pub(super) ghostty: GhosttyRuntimePending,
 }
 
 #[cfg(test)]
@@ -373,26 +157,12 @@ pub(crate) fn take_render_content_lock_durations() -> Vec<std::time::Duration> {
 }
 
 impl TerminalSessionBackend {
-    fn alacritty(term: SharedTerm, notifier: PtyNotifier) -> Self {
-        Self {
-            term,
-            notifier,
-            #[cfg(ghostty_native)]
-            ghostty: None,
-        }
+    fn new(ghostty: GhosttySession) -> Self {
+        Self { ghostty }
     }
 
-    #[cfg(ghostty_native)]
-    fn ghostty(term: SharedTerm, notifier: PtyNotifier, ghostty: GhosttySession) -> Self {
-        Self {
-            term,
-            notifier,
-            ghostty: Some(ghostty),
-        }
-    }
-
-    /// Resize and snapshot under one terminal lock, then return owned neutral
-    /// content. No Alacritty handle or borrowed grid data crosses this call.
+    /// Resize and snapshot in one runtime round-trip, then return owned neutral
+    /// content. No engine handle or borrowed grid data crosses this call.
     pub(crate) fn render_content(
         &self,
         window_size: TerminalWindowSize,
@@ -400,348 +170,124 @@ impl TerminalSessionBackend {
         last_visible_row: i32,
         clear_on_resize: bool,
     ) -> (Content, bool) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.render_content(
-                window_size,
-                first_visible_row,
-                last_visible_row,
-                clear_on_resize,
-            );
-        }
-        #[cfg(test)]
-        let measure_lock_duration =
-            RENDER_CONTENT_TIMING_ENABLED.load(std::sync::atomic::Ordering::Acquire);
-        let mut term = self.term.lock();
-        #[cfg(test)]
-        let lock_acquired_at = measure_lock_duration.then(std::time::Instant::now);
-        let resized = resize_if_needed(&mut term, window_size.cols, window_size.rows);
-        let initial_clear_consumed = clear_on_resize && resized;
-        if initial_clear_consumed {
-            term.grid_mut().reset();
-        }
-        let content = content_from_term_visible(&term, first_visible_row, last_visible_row);
-        drop(term);
-        #[cfg(test)]
-        if let Some(lock_acquired_at) = lock_acquired_at {
-            RENDER_CONTENT_LOCK_DURATIONS
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .push(lock_acquired_at.elapsed());
-        }
-        (content, initial_clear_consumed)
+        self.ghostty.render_content(
+            window_size,
+            first_visible_row,
+            last_visible_row,
+            clear_on_resize,
+        )
     }
 
     pub(crate) fn notify_window_size(&self, size: TerminalWindowSize) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            ghostty.resize(size);
-            return;
-        }
-        self.notifier.notify_window_size(size);
+        self.ghostty.resize(size);
     }
 
     pub(crate) fn modes(&self) -> Modes {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.modes();
-        }
-        Modes::from(*self.term.lock_unfair().mode())
+        self.ghostty.modes()
     }
 
     pub(crate) fn grid_metrics(&self) -> GridMetrics {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.grid_metrics();
-        }
-        let term = self.term.lock_unfair();
-        GridMetrics {
-            columns: term.columns(),
-            screen_lines: term.screen_lines(),
-            display_offset: term.grid().display_offset(),
-            topmost_line: Line(term.topmost_line().0),
-            bottommost_line: Line(term.bottommost_line().0),
-            cursor: term.renderable_content().cursor.point.into(),
-        }
-    }
-
-    pub(crate) fn grid_size(&self) -> (usize, usize) {
-        let metrics = self.grid_metrics();
-        (metrics.columns, metrics.screen_lines)
+        self.ghostty.grid_metrics()
     }
 
     pub(crate) fn clear_history(&self) {
-        #[cfg(ghostty_native)]
-        if self.ghostty.is_some() {
-            return;
-        }
-        self.term.lock().grid_mut().clear_history();
+        self.ghostty.clear_history();
     }
 
     pub(crate) fn scroll_to_bottom(&self) -> bool {
-        self.scroll(AlacScroll::Bottom)
+        self.scroll(GhosttyScroll::Bottom)
     }
 
     pub(crate) fn scroll_delta(&self, delta: i32) -> bool {
-        self.scroll(AlacScroll::Delta(delta))
+        self.scroll(GhosttyScroll::Delta(delta))
     }
 
     pub(crate) fn scroll_page_up(&self) -> bool {
-        self.scroll(AlacScroll::PageUp)
+        let lines = i32::try_from(self.grid_metrics().screen_lines).unwrap_or(i32::MAX);
+        self.scroll(GhosttyScroll::Delta(lines))
     }
 
     pub(crate) fn scroll_page_down(&self) -> bool {
-        self.scroll(AlacScroll::PageDown)
+        let lines = i32::try_from(self.grid_metrics().screen_lines).unwrap_or(i32::MAX);
+        self.scroll(GhosttyScroll::Delta(-lines))
     }
 
-    fn scroll(&self, scroll: AlacScroll) -> bool {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            let metrics = ghostty.grid_metrics();
-            let scroll = match scroll {
-                AlacScroll::Top => paneflow_terminal_ghostty::Scroll::Top,
-                AlacScroll::Bottom => paneflow_terminal_ghostty::Scroll::Bottom,
-                AlacScroll::Delta(delta) => paneflow_terminal_ghostty::Scroll::Delta(delta),
-                AlacScroll::PageUp => paneflow_terminal_ghostty::Scroll::Delta(
-                    i32::try_from(metrics.screen_lines).unwrap_or(i32::MAX),
-                ),
-                AlacScroll::PageDown => paneflow_terminal_ghostty::Scroll::Delta(
-                    -i32::try_from(metrics.screen_lines).unwrap_or(i32::MAX),
-                ),
-            };
-            // Shared metrics can lag commands already accepted by the worker.
-            // Queue every non-zero gesture and let Ghostty's live viewport
-            // perform the authoritative boundary clamp in FIFO order.
-            if matches!(scroll, paneflow_terminal_ghostty::Scroll::Delta(0)) {
-                return false;
-            }
-            return ghostty.scroll(scroll);
+    fn scroll(&self, scroll: GhosttyScroll) -> bool {
+        // Shared metrics can lag commands already accepted by the worker.
+        // Queue every non-zero gesture and let Ghostty's live viewport perform
+        // the authoritative boundary clamp in FIFO order.
+        if matches!(scroll, GhosttyScroll::Delta(0)) {
+            return false;
         }
-        let mut term = self.term.lock();
-        let before = term.grid().display_offset();
-        term.scroll_display(scroll);
-        term.grid().display_offset() != before
+        self.ghostty.scroll(scroll)
     }
 
     pub(crate) fn restore_display_offset(&self, target: usize) -> bool {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            let metrics = ghostty.grid_metrics();
-            let history_size = usize::try_from(-i64::from(metrics.topmost_line.0)).unwrap_or(0);
-            let row = history_size.saturating_sub(target.min(history_size));
-            return ghostty.scroll_to_viewport_row(row);
-        }
-        let current = self.grid_metrics().display_offset;
-        let delta = target as i64 - current as i64;
-        delta != 0 && self.scroll_delta(delta.clamp(i32::MIN as i64, i32::MAX as i64) as i32)
+        let metrics = self.ghostty.grid_metrics();
+        let history_size = usize::try_from(-i64::from(metrics.topmost_line.0)).unwrap_or(0);
+        let row = history_size.saturating_sub(target.min(history_size));
+        self.ghostty.scroll_to_viewport_row(row)
     }
 
     pub(crate) fn scroll_to_viewport_row(&self, row: usize) -> bool {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.scroll_to_viewport_row(row);
-        }
-        let mut term = self.term.lock();
-        let history_size = usize::try_from(-i64::from(term.topmost_line().0)).unwrap_or(0);
-        let target = history_size.saturating_sub(row.min(history_size));
-        let current = term.grid().display_offset();
-        let delta = target as i64 - current as i64;
-        if delta == 0 {
-            return false;
-        }
-        term.scroll_display(AlacScroll::Delta(
-            delta.clamp(i32::MIN as i64, i32::MAX as i64) as i32,
-        ));
-        term.grid().display_offset() != current
+        self.ghostty.scroll_to_viewport_row(row)
     }
 
     pub(crate) fn start_selection(&self, kind: SelectionKind, point: Point, side: SelectionSide) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            let _ = side;
-            ghostty.start_selection(kind, point);
-            return;
-        }
-        let kind = match kind {
-            SelectionKind::Simple => SelectionType::Simple,
-            SelectionKind::Semantic => SelectionType::Semantic,
-            SelectionKind::Lines => SelectionType::Lines,
-        };
-        let side = match side {
-            SelectionSide::Left => AlacSide::Left,
-            SelectionSide::Right => AlacSide::Right,
-        };
-        self.term.lock().selection = Some(Selection::new(kind, point.into(), side));
+        let _ = side;
+        self.ghostty.start_selection(kind, point);
     }
 
     pub(crate) fn update_selection(&self, point: Point, side: SelectionSide) -> Option<String> {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.update_selection(point, side);
-        }
-        let mut term = self.term.lock();
-        let side = match side {
-            SelectionSide::Left => AlacSide::Left,
-            SelectionSide::Right => AlacSide::Right,
-        };
-        if let Some(selection) = &mut term.selection {
-            selection.update(point.into(), side);
-        }
-        term.selection_to_string()
+        self.ghostty.update_selection(point, side)
     }
 
     pub(crate) fn selection_text(&self) -> Option<String> {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.selection_text();
-        }
-        self.term.lock_unfair().selection_to_string()
+        self.ghostty.selection_text()
     }
 
     pub(crate) fn finish_selection(&self) -> (bool, Option<String>) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            let copied = ghostty.selection_text();
-            let is_empty = copied.as_ref().is_none_or(String::is_empty);
-            ghostty.clear_selection();
-            return (is_empty, copied);
-        }
-        let mut term = self.term.lock();
-        let is_empty = term.selection.as_ref().is_none_or(Selection::is_empty);
-        let copied = (!is_empty).then(|| term.selection_to_string()).flatten();
-        term.selection = None;
+        let copied = self.ghostty.selection_text();
+        let is_empty = copied.as_ref().is_none_or(String::is_empty);
+        self.ghostty.clear_selection();
         (is_empty, copied)
     }
 
     pub(crate) fn clear_selection(&self) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            ghostty.clear_selection();
-            return;
-        }
-        self.term.lock().selection = None;
+        self.ghostty.clear_selection();
     }
 
     pub(crate) fn osc8_hyperlink_at(&self, point: Point) -> Option<HyperlinkZone> {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.hyperlink_at(point);
-        }
-        let term = self.term.lock_unfair();
-        let metrics = GridMetrics {
-            columns: term.columns(),
-            screen_lines: term.screen_lines(),
-            display_offset: term.grid().display_offset(),
-            topmost_line: Line(term.topmost_line().0),
-            bottommost_line: Line(term.bottommost_line().0),
-            cursor: term.renderable_content().cursor.point.into(),
-        };
-        if point.line < metrics.topmost_line
-            || point.line > metrics.bottommost_line
-            || point.column.0 >= metrics.columns
-        {
-            return None;
-        }
-        let cell = &term.grid()[AlacPoint::from(point)];
-        cell.hyperlink().map(|hyperlink| HyperlinkZone {
-            uri: hyperlink.uri().to_owned(),
-            id: hyperlink.id().to_owned(),
-            start: point,
-            end: point,
-            is_openable: super::element::is_url_scheme_openable(hyperlink.uri()),
-            source: HyperlinkSource::Osc8,
-            line: None,
-            col: None,
-        })
+        self.ghostty.hyperlink_at(point)
     }
 
     pub(crate) fn line_text_at(&self, point: Point) -> Option<GridLineText> {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.line_text_at(point);
-        }
-        use alacritty_terminal::term::cell::Flags;
-
-        let term = self.term.lock_unfair();
-        if point.line.0 < term.topmost_line().0 || point.line.0 > term.bottommost_line().0 {
-            return None;
-        }
-        let line = GridLine(point.line.0);
-        let mut text = String::with_capacity(term.columns());
-        let mut char_to_column = Vec::with_capacity(term.columns());
-        for column in 0..term.columns() {
-            let cell = &term.grid()[line][GridCol(column)];
-            if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                continue;
-            }
-            char_to_column.push(column);
-            text.push(cell.c);
-        }
-        Some(GridLineText {
-            line: point.line,
-            text,
-            char_to_column,
-        })
+        self.ghostty.line_text_at(point)
     }
 
     pub(crate) fn move_copy_cursor(&self, current: Point, dx: i32, dy: i32, extend: bool) -> Point {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            let metrics = ghostty.grid_metrics();
-            let column = (current.column.0 as i32 + dx)
-                .clamp(0, metrics.columns.saturating_sub(1) as i32)
-                as usize;
-            let line =
-                (current.line.0 + dy).clamp(metrics.topmost_line.0, metrics.bottommost_line.0);
-            let next = Point::new(line, column);
-            if extend {
-                if ghostty.selection_range().is_none() {
-                    ghostty.start_selection(SelectionKind::Simple, current);
-                }
-                ghostty.update_selection(next, SelectionSide::Right);
-            } else {
-                ghostty.clear_selection();
-            }
-            return next;
-        }
-        let mut term = self.term.lock();
-        if extend && term.selection.is_none() {
-            term.selection = Some(Selection::new(
-                SelectionType::Simple,
-                current.into(),
-                AlacSide::Left,
-            ));
-        } else if !extend {
-            term.selection = None;
-        }
+        let metrics = self.ghostty.grid_metrics();
         let column = (current.column.0 as i32 + dx)
-            .clamp(0, term.columns().saturating_sub(1) as i32) as usize;
-        let line = (current.line.0 + dy).clamp(term.topmost_line().0, term.bottommost_line().0);
+            .clamp(0, metrics.columns.saturating_sub(1) as i32) as usize;
+        let line = (current.line.0 + dy).clamp(metrics.topmost_line.0, metrics.bottommost_line.0);
         let next = Point::new(line, column);
-        if extend && let Some(selection) = &mut term.selection {
-            selection.update(next.into(), AlacSide::Right);
+        if extend {
+            if self.ghostty.selection_range().is_none() {
+                self.ghostty.start_selection(SelectionKind::Simple, current);
+            }
+            self.ghostty.update_selection(next, SelectionSide::Right);
+        } else {
+            self.ghostty.clear_selection();
         }
         next
     }
 
     pub(crate) fn selection_range(&self) -> Option<SelectionRange> {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.selection_range();
-        }
-        let term = self.term.lock_unfair();
-        term.selection
-            .as_ref()
-            .and_then(|selection| selection.to_range(&term))
-            .map(SelectionRange::from)
+        self.ghostty.selection_range()
     }
 
     pub(crate) fn bottommost_line(&self) -> Line {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.grid_metrics().bottommost_line;
-        }
-        Line(self.term.lock_unfair().bottommost_line().0)
+        self.ghostty.grid_metrics().bottommost_line
     }
 
     pub(crate) fn search(&self, query: &str, regex: bool) -> crate::search::SearchResult {
@@ -754,30 +300,18 @@ impl TerminalSessionBackend {
         regex: bool,
         cancelled: &std::sync::atomic::AtomicBool,
     ) -> crate::search::SearchResult {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.search_with_cancel(query, regex, cancelled);
-        }
-        crate::search::search_term_with_cancel(&self.term, query, regex, cancelled)
+        self.ghostty.search_with_cancel(query, regex, cancelled)
     }
 
     pub(crate) fn refresh_appearance(&self) -> bool {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.refresh_appearance();
-        }
-        true
+        self.ghostty.refresh_appearance()
     }
 
     pub(crate) fn scroll_to_match(&self, search_match: &crate::search::SearchMatch) -> usize {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            let metrics = ghostty.grid_metrics();
-            let target = (metrics.bottommost_line.0 - search_match.start.line.0).max(0) as usize;
-            let _ = self.restore_display_offset(target);
-            return target;
-        }
-        crate::search::scroll_to_match(&self.term, search_match)
+        let metrics = self.ghostty.grid_metrics();
+        let target = (metrics.bottommost_line.0 - search_match.start.line.0).max(0) as usize;
+        let _ = self.restore_display_offset(target);
+        target
     }
 }
 
@@ -793,23 +327,6 @@ pub enum Osc52Mode {
     CopyOnly,
     CopyPaste,
 }
-
-/// Deferred clipboard operation from sync() - executed in cx.update() closure.
-pub(super) enum ClipboardOp {
-    Store(String),
-    Load(std::sync::Arc<dyn Fn(&str) -> String + Sync + Send + 'static>),
-}
-
-/// Convert GPUI Hsla to alacritty Rgb for color query responses.
-pub(super) fn hsla_to_alac_rgb(hsla: gpui::Hsla) -> AlacRgb {
-    let rgba = gpui::Rgba::from(hsla);
-    AlacRgb {
-        r: (rgba.r.clamp(0.0, 1.0) * 255.0) as u8,
-        g: (rgba.g.clamp(0.0, 1.0) * 255.0) as u8,
-        b: (rgba.b.clamp(0.0, 1.0) * 255.0) as u8,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Terminal state
 // ---------------------------------------------------------------------------
@@ -830,7 +347,6 @@ pub struct GhosttyBuildDiagnostics {
     reason = "native backend failure phases are cfg-dependent across the target matrix"
 )]
 pub enum TerminalBackendFailurePhase {
-    Availability,
     Initialization,
     OpenPty,
     Spawn,
@@ -840,7 +356,6 @@ pub enum TerminalBackendFailurePhase {
 impl TerminalBackendFailurePhase {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Availability => "availability",
             Self::Initialization => "initialization",
             Self::OpenPty => "open_pty",
             Self::Spawn => "spawn",
@@ -861,7 +376,6 @@ pub struct TerminalBackendFailureDiagnostics {
     reason = "native backend reason codes are cfg-dependent across the target matrix"
 )]
 impl TerminalBackendFailureDiagnostics {
-    pub(super) const GHOSTTY_UNAVAILABLE: &'static str = "ghostty_unavailable";
     pub(super) const GHOSTTY_INITIALIZATION_FAILED: &'static str = "ghostty_initialization_failed";
     pub(super) const GHOSTTY_OPEN_PTY_FAILED: &'static str = "ghostty_open_pty_failed";
     pub(super) const GHOSTTY_SPAWN_FAILED: &'static str = "ghostty_spawn_failed";
@@ -882,11 +396,9 @@ impl TerminalBackendFailureDiagnostics {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalBackendDiagnostics {
-    pub requested: TerminalBackendConfig,
-    pub effective: &'static str,
     pub failure: Option<TerminalBackendFailureDiagnostics>,
     pub target_triple: &'static str,
-    pub ghostty: Option<GhosttyBuildDiagnostics>,
+    pub ghostty: GhosttyBuildDiagnostics,
 }
 
 impl std::fmt::Display for TerminalBackendDiagnostics {
@@ -903,26 +415,23 @@ impl std::fmt::Display for TerminalBackendDiagnostics {
                 });
         write!(
             formatter,
-            "requested={:?} effective={} failure_phase={} reason_code={} target={} os_error=",
-            self.requested, self.effective, failure_phase, reason_code, self.target_triple
+            "backend=ghostty failure_phase={failure_phase} reason_code={reason_code} target={} os_error=",
+            self.target_triple
         )?;
         match os_error {
             Some(code) => write!(formatter, "{code}")?,
             None => formatter.write_str("none")?,
         }
-        if let Some(ghostty) = self.ghostty.as_ref() {
-            write!(
-                formatter,
-                " ghostty_version={} ghostty_source_sha={} ghostty_api_version={} zig_version={} optimization={} simd={}",
-                ghostty.version,
-                ghostty.source_sha,
-                ghostty.api_version,
-                ghostty.zig_version,
-                ghostty.optimization,
-                ghostty.simd,
-            )?;
-        }
-        Ok(())
+        write!(
+            formatter,
+            " ghostty_version={} ghostty_source_sha={} ghostty_api_version={} zig_version={} optimization={} simd={}",
+            self.ghostty.version,
+            self.ghostty.source_sha,
+            self.ghostty.api_version,
+            self.ghostty.zig_version,
+            self.ghostty.optimization,
+            self.ghostty.simd,
+        )
     }
 }
 
@@ -937,24 +446,15 @@ pub(super) fn raw_os_error_from_anyhow(error: &anyhow::Error) -> Option<i32> {
 #[derive(Clone)]
 enum PendingTerminalInput {
     Raw(Cow<'static, [u8]>),
-    #[cfg(ghostty_native)]
-    Key {
-        input: paneflow_terminal_ghostty::KeyInput,
-        legacy: Option<Cow<'static, [u8]>>,
-    },
-    #[cfg(ghostty_native)]
+    Key(paneflow_terminal_ghostty::KeyInput),
     Mouse {
         input: paneflow_terminal_ghostty::MouseInput,
         repeat: usize,
-        legacy: Option<Vec<u8>>,
     },
-    #[cfg(ghostty_native)]
     Focus(paneflow_terminal_ghostty::FocusEvent),
-    #[cfg(ghostty_native)]
     Paste {
         text: String,
         allow_unsafe: bool,
-        legacy_bracketed: bool,
     },
 }
 
@@ -962,35 +462,26 @@ impl PendingTerminalInput {
     fn queued_bytes(&self) -> usize {
         match self {
             Self::Raw(bytes) => bytes.len(),
-            #[cfg(ghostty_native)]
-            Self::Key { input, legacy } => {
-                std::mem::size_of::<paneflow_terminal_ghostty::KeyInput>()
-                    .saturating_add(input.text.len())
-                    .saturating_add(legacy.as_ref().map_or(0, |bytes| bytes.len()))
+            Self::Key(input) => std::mem::size_of::<paneflow_terminal_ghostty::KeyInput>()
+                .saturating_add(input.text.len()),
+            Self::Mouse { repeat, .. } => {
+                std::mem::size_of::<paneflow_terminal_ghostty::MouseInput>().saturating_add(*repeat)
             }
-            #[cfg(ghostty_native)]
-            Self::Mouse { repeat, legacy, .. } => {
-                std::mem::size_of::<paneflow_terminal_ghostty::MouseInput>()
-                    .saturating_add(*repeat)
-                    .saturating_add(legacy.as_ref().map_or(0, Vec::len))
-            }
-            #[cfg(ghostty_native)]
             Self::Focus(_) => std::mem::size_of::<paneflow_terminal_ghostty::FocusEvent>(),
-            #[cfg(ghostty_native)]
             Self::Paste { text, .. } => text.len(),
         }
     }
 
-    #[cfg(ghostty_native)]
+    /// Control events (key and mouse *releases*, focus reports) may use the
+    /// whole queue; text-bearing input stops one reserve short. A flood of
+    /// typing or a huge paste therefore can never starve the events that
+    /// unstick a held modifier or end a drag.
     fn queue_limit(&self) -> usize {
         match self {
-            Self::Raw(_) => MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES,
-            #[cfg(ghostty_native)]
-            Self::Paste { .. } => MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES,
-            #[cfg(ghostty_native)]
-            Self::Key { input, .. }
-                if input.action == paneflow_terminal_ghostty::KeyAction::Release =>
-            {
+            Self::Raw(_) | Self::Paste { .. } => {
+                MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES
+            }
+            Self::Key(input) if input.action == paneflow_terminal_ghostty::KeyAction::Release => {
                 MAX_PENDING_INPUT_BYTES
             }
             Self::Mouse { input, .. }
@@ -999,100 +490,46 @@ impl PendingTerminalInput {
                 MAX_PENDING_INPUT_BYTES
             }
             Self::Focus(_) => MAX_PENDING_INPUT_BYTES,
-            Self::Key { .. } | Self::Mouse { .. } => {
+            Self::Key(_) | Self::Mouse { .. } => {
                 MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES
             }
         }
     }
 
-    #[cfg(ghostty_native)]
     fn fits_after(&self, queued_bytes: usize) -> bool {
         queued_bytes.saturating_add(self.queued_bytes()) <= self.queue_limit()
     }
 
-    fn into_legacy_bytes(self) -> Option<Cow<'static, [u8]>> {
-        match self {
-            Self::Raw(bytes) => Some(bytes),
-            #[cfg(ghostty_native)]
-            Self::Key { input, legacy } => legacy
-                .or_else(|| (!input.text.is_empty()).then(|| Cow::Owned(input.text.into_bytes()))),
-            #[cfg(ghostty_native)]
-            Self::Mouse { repeat, legacy, .. } => legacy.map(|bytes| {
-                if repeat == 1 {
-                    return Cow::Owned(bytes);
-                }
-                let mut repeated = Vec::with_capacity(bytes.len().saturating_mul(repeat));
-                for _ in 0..repeat {
-                    repeated.extend_from_slice(&bytes);
-                }
-                Cow::Owned(repeated)
-            }),
-            #[cfg(ghostty_native)]
-            Self::Focus(event) => Some(Cow::Borrowed(match event {
-                paneflow_terminal_ghostty::FocusEvent::Gained => b"\x1b[I",
-                paneflow_terminal_ghostty::FocusEvent::Lost => b"\x1b[O",
-            })),
-            #[cfg(ghostty_native)]
-            Self::Paste {
-                text,
-                legacy_bracketed,
-                ..
-            } => {
-                if legacy_bracketed {
-                    let mut bytes = Vec::with_capacity(text.len().saturating_add(12));
-                    bytes.extend_from_slice(b"\x1b[200~");
-                    bytes.extend_from_slice(text.as_bytes());
-                    bytes.extend_from_slice(b"\x1b[201~");
-                    Some(Cow::Owned(bytes))
-                } else {
-                    Some(Cow::Owned(text.into_bytes()))
-                }
-            }
-        }
-    }
-
-    #[cfg(ghostty_native)]
     fn try_send(&self, ghostty: &GhosttySession) -> GhosttyInputSendResult {
         match self {
             Self::Raw(bytes) => ghostty.write(bytes.clone().into_owned()),
-            Self::Key { input, .. } => ghostty.write_key(input.clone()),
-            Self::Mouse { input, repeat, .. } => ghostty.write_mouse(*input, *repeat),
+            Self::Key(input) => ghostty.write_key(input.clone()),
+            Self::Mouse { input, repeat } => ghostty.write_mouse(*input, *repeat),
             Self::Focus(event) => ghostty.write_focus(*event),
-            Self::Paste {
-                text, allow_unsafe, ..
-            } => ghostty.write_paste(text.clone(), *allow_unsafe),
+            Self::Paste { text, allow_unsafe } => ghostty.write_paste(text.clone(), *allow_unsafe),
         }
     }
 }
 
-#[cfg(ghostty_native)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BackendInputResult {
-    NotHandled,
     Accepted,
     Rejected,
 }
 
-#[cfg(ghostty_native)]
-impl BackendInputResult {
-    pub(super) fn is_handled(self) -> bool {
-        self != Self::NotHandled
-    }
-}
-
 pub struct TerminalState {
-    term: Arc<FairMutex<Term<ZedListener>>>,
-    notifier: PtyNotifier,
-    events_rx: Option<UnboundedReceiver<AlacEvent>>,
-    #[cfg(ghostty_native)]
-    ghostty: Option<GhosttySession>,
-    #[cfg(ghostty_native)]
+    /// The libghostty engine: VT parser, grid, PTY, and child process. Built
+    /// display-only by [`build_display_only`](Self::build_display_only), then
+    /// either started against a real child ([`GhosttySession::start`]) or kept
+    /// as a pure grid ([`GhosttySession::start_display`]) for restored
+    /// scrollback and the spawn-failure pane.
+    ghostty: GhosttySession,
+    /// UI event stream published by the engine, taken once by the view
+    /// through [`take_backend_events`](Self::take_backend_events).
     ghostty_events_rx: Option<UnboundedReceiver<GhosttyUiEvent>>,
-    requested_backend: TerminalBackendConfig,
-    effective_backend: &'static str,
+    /// Set when a spawn failed, so the surface can report *why* the pane holds
+    /// an error instead of a shell.
     backend_failure: Option<TerminalBackendFailureDiagnostics>,
-    cwd_rx: Option<UnboundedReceiver<String>>,
-    marks_rx: Option<std::sync::mpsc::Receiver<RawMark>>,
     pub(crate) marks: SharedMarkRing,
     /// Watermark over [`super::marks::MarkRing::prompt_start_seq`], read by
     /// [`Self::take_shell_prompt_ready`].
@@ -1107,30 +544,21 @@ pub struct TerminalState {
     keyboard_input_sent: std::sync::atomic::AtomicBool,
     /// EP-002 US-005: numeric signal + name if the child was terminated by a
     /// signal (crash), formatted "N (Name)" e.g. "11 (Segmentation fault)".
-    /// `None` for a normal code exit. The numeric signal comes directly from
-    /// alacritty's native `ChildExit(ExitStatus)` via `ExitStatusExt::signal()`
-    /// (no strsignal reversal); the name is `strsignal(n)`. Set in
-    /// `process_event`. Rendered by the exit overlay to flag a crash.
+    /// `None` for a normal code exit. The engine resolves both from the
+    /// child's wait status and publishes them with `ChildExited`. Rendered by
+    /// the exit overlay to flag a crash.
     pub exit_signal: Option<String>,
     /// PID of the shell child process, used for port detection.
     pub child_pid: u32,
-    /// US-019: raw fd of the PTY master, captured at spawn before the master
-    /// moves into the message-loop thread. macOS uses it to call
-    /// `tcgetpgrp(fd)` for live foreground-process naming. `None` on the
-    /// display-only / mock paths (no real PTY). macOS-only - Linux resolves the
-    /// foreground process from `/proc`, Windows from `child_pid`.
-    #[cfg(target_os = "macos")]
-    pty_master_fd: Option<i32>,
     /// Terminal title set via OSC 0/2 escape sequences (e.g. shell prompt, Claude Code).
     pub title: String,
-    /// Current working directory of the shell process. EP-002 US-007: OSC 7
-    /// updates are captured by the PTY byte tap before Alacritty consumes the
-    /// sequence; Unix/macOS also refresh from the process table via `cwd_now()`.
+    /// Current working directory of the shell process. EP-002 US-007: the
+    /// engine decodes OSC 7 and publishes it as a UI event; Unix/macOS also
+    /// refresh from the process table via `cwd_now()`.
     pub current_cwd: Option<String>,
-    /// Latest OSC 9;4 progress report the running program published, when the
-    /// Ghostty backend decoded one. Stays `None` on the Alacritty backend,
-    /// which does not report progress, and returns to `None` as soon as the
-    /// program asks for the indicator to be removed or the child exits.
+    /// Latest OSC 9;4 progress report the running program published. Returns
+    /// to `None` as soon as the program asks for the indicator to be removed
+    /// or the child exits.
     pub progress: Option<paneflow_terminal_ghostty::ProgressReport>,
     /// User-assigned custom name (US-013). When `Some`, it overrides the
     /// auto-derived surface name in `surface.list` / MCP / the sidebar, and is
@@ -1181,49 +609,42 @@ pub struct TerminalState {
     /// [8.0, 32.0] at every write site (zoom actions, session ingress) and
     /// wins over the global. Persisted to `session.json`.
     pub font_size_override: Option<f32>,
-    /// Cursor color override used for OSC 12 color-query replies.
-    pub(super) cursor_color_override: Option<gpui::Hsla>,
     /// OSC 52 clipboard access mode (default: copy-only for security).
     pub osc52_mode: Osc52Mode,
     /// OSC 52 is accepted only while this terminal owns focus. Updated from
     /// the GPUI focus transition before any focus protocol report is queued.
     terminal_focused: bool,
-    /// Shared with both parser backends so focus and policy are checked when
-    /// OSC 52 is emitted, before the asynchronous UI event queue.
+    /// Shared with the engine so focus and policy are checked when OSC 52 is
+    /// emitted, before the asynchronous UI event queue.
     clipboard_gate: Arc<ClipboardGate>,
     /// Shell syntax used when Paneflow inserts OS file paths into the PTY.
     pub(super) shell_quoting: ShellQuoting,
-    /// Deferred clipboard operations from sync() - drained in the poll loop
-    /// where cx is available for clipboard read/write.
-    pub(super) pending_clipboard_ops: Vec<ClipboardOp>,
+    /// Clipboard payloads deferred from sync() - drained in the poll loop
+    /// where cx is available for the clipboard write.
+    pub(super) pending_clipboard_ops: Vec<String>,
     /// Foreground command cached by the off-thread pane process scanner.
     /// `surface.list` reads this synchronously, so it must never perform
     /// process-table I/O on the GPUI thread.
     pub cached_foreground_command: Option<String>,
     #[cfg(all(unix, not(test)))]
     pty_guard: Option<crate::agents::parent_guard::PtyGuardHandle>,
-    /// Deferred text area size request responses from sync().
-    pub(super) pending_size_ops:
-        Vec<std::sync::Arc<dyn Fn(AlacWindowSize) -> String + Sync + Send + 'static>>,
-    /// Whether the terminal wants the cursor to blink (from CursorBlinkingChange).
+    /// Whether the terminal wants the cursor to blink.
     pub cursor_blinking: bool,
     /// Set when PTY output has been processed (Wakeup event received).
     /// Cleared after cx.notify() triggers a repaint.
     pub dirty: bool,
     /// US-010 (cli-agent-orchestration): monotonic count of processed
-    /// PTY-output events (`AlacEvent::Wakeup`). Never reset. `workspace.up`
-    /// polls this as a readiness signal for prompt prefill - it is the only
-    /// screen-agnostic "the agent produced output" signal available: `dirty`
-    /// is cleared on every repaint, and `extract_scrollback` misses content
-    /// painted on the alternate screen (where TUI agents live).
+    /// PTY-output events. Never reset. `workspace.up` polls this as a
+    /// readiness signal for prompt prefill - it is the only screen-agnostic
+    /// "the agent produced output" signal available: `dirty` is cleared on
+    /// every repaint, and `extract_scrollback` misses content painted on the
+    /// alternate screen (where TUI agents live).
     pub output_generation: u64,
-    /// Counter for throttling output scans - scans every 50th dirty tick.
     /// Leading-edge throttle for ActivityBurst/service-scan emission
     /// (view.rs): when the last burst was emitted for this terminal.
     pub(super) last_activity_burst: Option<std::time::Instant>,
     /// EP-002 US-007: throttle counter for the proc-based CWD refresh in
-    /// `sync_channels` (the OSC 7 byte-scanner was removed with the 2-thread
-    /// reader; the EventLoop owns the read path with no pre-parse hook).
+    /// `sync_channels`, the fallback for shells that never emit OSC 7.
     cwd_poll_ticks: u32,
     /// Ports already reported via ServiceDetected (dedup guard).
     /// Cleared on ChildExit so a restarted server is re-detected.
@@ -1236,41 +657,33 @@ pub struct TerminalState {
     /// Note: on rapid keystrokes before a render frame, earlier timestamps are overwritten.
     #[cfg(debug_assertions)]
     pub(crate) last_keystroke_at: Option<std::time::Instant>,
-    /// GPUI background executor used by `Drop` to schedule the
-    /// grace-period force-kill task. Wired by `TerminalView::with_cwd`
-    /// immediately after construction. `None` only on display-only /
-    /// test paths, where `Drop` falls back to a detached OS thread.
-    /// Mirrors Zed `crates/terminal/src/terminal.rs:2451-2457` which
-    /// uses `background_executor.spawn(...).detach()` to keep the
-    /// kill timer under the GPUI scheduler instead of leaking an
-    /// orphan OS thread per closed pane.
-    background_executor: Option<gpui::BackgroundExecutor>,
-    /// US-012: input written through `write_to_pty` while the terminal is
-    /// still display-only (the PTY opens on a background thread and is
-    /// installed later by [`promote`](Self::promote)). The display-only
-    /// notifier silently drops every write, so without this queue an
-    /// auto-launch command issued the instant a terminal mounts (the
-    /// launch pad's agent picker) - or a keystroke typed in the brief
-    /// pre-promotion window - would be lost. [`promote`](Self::promote)
-    /// flushes it in order. `Mutex` (not `RefCell`) keeps `TerminalState`
-    /// `Send` and matches the crate's interior-mutability idiom; the lock is
-    /// uncontended (main thread only).
+    /// US-012: input written while the engine has no child yet (the PTY opens
+    /// on a background thread and the session is promoted later). Without this
+    /// queue an auto-launch command issued the instant a terminal mounts - or
+    /// a keystroke typed in the brief pre-promotion window - would be lost.
+    /// [`promote_ghostty`](Self::promote_ghostty) flushes it in order.
+    /// `Mutex` (not `RefCell`) keeps `TerminalState` `Send` and matches the
+    /// crate's interior-mutability idiom; the lock is uncontended (main thread
+    /// only).
     pending_input: std::sync::Mutex<VecDeque<PendingTerminalInput>>,
 }
 
-/// Cap on input buffered during the pre-promotion window. Generous for a
-/// launch command plus a burst of typing, tight enough that a terminal that
-/// never promotes (spawn failure - `promote` is never called) cannot
-/// accumulate input without bound.
+/// Cap on input buffered before the engine owns a child. Generous for a launch
+/// command plus a burst of typing, tight enough that a terminal that never
+/// promotes (spawn failure) cannot accumulate input without bound.
 const MAX_PENDING_INPUT_BYTES: usize = 1024 * 1024;
-#[cfg(ghostty_native)]
 const INPUT_CONTROL_RESERVE_BYTES: usize = 64 * 1024;
+
+/// Scrollback budget for the display-only grid that renders a spawn failure.
+/// The pane holds one error message, so it never needs history - and reading
+/// the user's configured length here would put file I/O on the render thread.
+const SPAWN_FAILURE_SCROLLBACK_LINES: usize = 256;
 
 /// The cheap, render-thread-safe half of a spawn: resolved shell, assembled
 /// child env, cwd, and grid size. Produced by
 /// [`TerminalState::resolve_spawn_params`] and consumed by
-/// [`TerminalState::open_pty_and_eventloop`] (which may run on a background
-/// thread). All fields are `Send`.
+/// [`GhosttySession::start`], which may run on a background thread. All fields
+/// are `Send`.
 #[derive(Clone)]
 pub(super) struct SpawnParams {
     pub(super) shell: String,
@@ -1281,405 +694,6 @@ pub(super) struct SpawnParams {
     pub(super) cols: usize,
     pub(super) rows: usize,
     pub(super) profile: TerminalSurfaceProfile,
-    pub(super) surface_id: u64,
-}
-
-/// The live PTY handles produced by [`TerminalState::open_pty_and_eventloop`]:
-/// the `EventLoop` write channel, the child PID, the resolved launch cwd, and
-/// (macOS) the master fd. Crosses the background→main boundary to
-/// [`TerminalState::promote`]; all fields are `Send`.
-pub(super) struct SpawnedPty {
-    channel: EventLoopSender,
-    child_pid: u32,
-    /// The directory the shell was spawned in. Seeds [`TerminalState::current_cwd`]
-    /// at promotion so the sessions sidebar can resolve a project before the
-    /// first `cwd_now()` poll - and at all on Windows, where `cwd_now()` is a
-    /// stub.
-    cwd: std::path::PathBuf,
-    cwd_rx: UnboundedReceiver<String>,
-    marks_rx: std::sync::mpsc::Receiver<RawMark>,
-    #[cfg(all(unix, not(test)))]
-    pty_guard: Option<crate::agents::parent_guard::PtyGuardHandle>,
-    #[cfg(target_os = "macos")]
-    pty_master_fd: Option<i32>,
-}
-
-const OSC7_MAX_PAYLOAD: usize = 4096;
-// VTE's std parser uses an unbounded Vec for OSC bytes. Hold each OSC before
-// that parser and drop it once it exceeds the largest valid OSC 52 payload
-// plus protocol overhead. This bounds every OSC family, not only clipboard.
-const MAX_OSC_SEQUENCE_BYTES: usize = MAX_OSC52_BYTES.div_ceil(3) * 4 + 64;
-
-#[derive(Debug, Default)]
-enum BoundedOscState {
-    #[default]
-    Ground,
-    Esc,
-    Collect(Vec<u8>),
-    Drop,
-}
-
-#[derive(Debug, Default)]
-struct BoundedOscFilter {
-    state: BoundedOscState,
-    pending: VecDeque<u8>,
-}
-
-impl BoundedOscFilter {
-    fn advance(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            let state = std::mem::take(&mut self.state);
-            self.state = match state {
-                BoundedOscState::Ground if byte == 0x1b => BoundedOscState::Esc,
-                BoundedOscState::Ground => {
-                    self.pending.push_back(byte);
-                    BoundedOscState::Ground
-                }
-                BoundedOscState::Esc if byte == b']' => BoundedOscState::Collect(vec![0x1b, b']']),
-                BoundedOscState::Esc if byte == 0x1b => {
-                    self.pending.push_back(0x1b);
-                    BoundedOscState::Esc
-                }
-                BoundedOscState::Esc => {
-                    self.pending.extend([0x1b, byte]);
-                    BoundedOscState::Ground
-                }
-                BoundedOscState::Collect(buffer) if byte == 0x1b => {
-                    self.pending.extend(buffer);
-                    BoundedOscState::Esc
-                }
-                BoundedOscState::Collect(mut buffer) => {
-                    buffer.push(byte);
-                    if buffer.len() > MAX_OSC_SEQUENCE_BYTES {
-                        BoundedOscState::Drop
-                    // vte 0.15 treats raw C1 ST (0x9c) as OSC payload.
-                    // Only BEL, CAN/SUB, or the ESC-based ST can end it.
-                    } else if matches!(byte, 0x07 | 0x18 | 0x1a) {
-                        self.pending.extend(buffer);
-                        BoundedOscState::Ground
-                    } else {
-                        BoundedOscState::Collect(buffer)
-                    }
-                }
-                BoundedOscState::Drop if byte == 0x1b => {
-                    self.pending.push_back(0x18);
-                    BoundedOscState::Esc
-                }
-                BoundedOscState::Drop if matches!(byte, 0x07 | 0x18 | 0x1a) => {
-                    self.pending.push_back(0x18);
-                    BoundedOscState::Ground
-                }
-                BoundedOscState::Drop => BoundedOscState::Drop,
-            };
-        }
-    }
-
-    fn drain_into(&mut self, output: &mut [u8]) -> usize {
-        let mut written = 0;
-        while written < output.len() {
-            let Some(byte) = self.pending.pop_front() else {
-                break;
-            };
-            output[written] = byte;
-            written += 1;
-        }
-        written
-    }
-}
-
-#[derive(Debug, Default)]
-enum Osc7ScanState {
-    #[default]
-    Ground,
-    Esc,
-    Osc,
-    OscEsc,
-    Discard,
-    DiscardEscape,
-}
-
-#[derive(Debug, Default)]
-struct Osc7Scanner {
-    state: Osc7ScanState,
-    payload: Vec<u8>,
-}
-
-impl Osc7Scanner {
-    fn advance<F>(&mut self, bytes: &[u8], mut emit: F)
-    where
-        F: FnMut(String),
-    {
-        for &byte in bytes {
-            match self.state {
-                Osc7ScanState::Ground => {
-                    if byte == 0x1b {
-                        self.state = Osc7ScanState::Esc;
-                    }
-                }
-                Osc7ScanState::Esc => {
-                    if byte == b']' {
-                        self.payload.clear();
-                        self.state = Osc7ScanState::Osc;
-                    } else if byte != 0x1b {
-                        self.state = Osc7ScanState::Ground;
-                    }
-                }
-                Osc7ScanState::Osc => match byte {
-                    0x07 => self.finish(&mut emit),
-                    0x18 | 0x1a => self.reset(),
-                    0x1b => self.state = Osc7ScanState::OscEsc,
-                    _ => {
-                        self.push_payload_byte(byte);
-                    }
-                },
-                Osc7ScanState::OscEsc => match byte {
-                    b'\\' => self.finish(&mut emit),
-                    0x18 | 0x1a => self.reset(),
-                    _ => {
-                        if self.push_payload_byte(0x1b) {
-                            if byte == 0x1b {
-                                self.state = Osc7ScanState::OscEsc;
-                            } else if self.push_payload_byte(byte) {
-                                self.state = Osc7ScanState::Osc;
-                            }
-                        }
-                    }
-                },
-                Osc7ScanState::Discard => match byte {
-                    0x07 | 0x18 | 0x1a => self.reset(),
-                    0x1b => self.state = Osc7ScanState::DiscardEscape,
-                    _ => {}
-                },
-                Osc7ScanState::DiscardEscape => match byte {
-                    b'\\' | 0x07 | 0x18 | 0x1a => self.reset(),
-                    0x1b => {}
-                    _ => self.state = Osc7ScanState::Discard,
-                },
-            }
-        }
-    }
-
-    fn push_payload_byte(&mut self, byte: u8) -> bool {
-        if self.payload.len() < OSC7_MAX_PAYLOAD {
-            self.payload.push(byte);
-            true
-        } else {
-            self.payload.clear();
-            self.state = Osc7ScanState::Discard;
-            false
-        }
-    }
-
-    fn finish<F>(&mut self, emit: &mut F)
-    where
-        F: FnMut(String),
-    {
-        if let Ok(payload) = std::str::from_utf8(&self.payload)
-            && let Some(cwd) = cwd_from_osc7_payload(payload)
-        {
-            emit(cwd);
-        }
-        self.reset();
-    }
-
-    fn reset(&mut self) {
-        self.state = Osc7ScanState::Ground;
-        self.payload.clear();
-    }
-}
-
-struct Osc7Pty<T: tty::EventedPty> {
-    inner: T,
-    osc_filter: BoundedOscFilter,
-    scanner: Osc7Scanner,
-    marks_scanner: Osc133Scanner,
-    cwd_tx: UnboundedSender<String>,
-    marks_tx: std::sync::mpsc::SyncSender<RawMark>,
-}
-
-impl<T: tty::EventedPty> Osc7Pty<T> {
-    fn new(
-        inner: T,
-        cwd_tx: UnboundedSender<String>,
-        marks_tx: std::sync::mpsc::SyncSender<RawMark>,
-    ) -> Self {
-        Self {
-            inner,
-            osc_filter: BoundedOscFilter::default(),
-            scanner: Osc7Scanner::default(),
-            marks_scanner: Osc133Scanner::default(),
-            cwd_tx,
-            marks_tx,
-        }
-    }
-}
-
-impl<T: tty::EventedPty> Read for Osc7Pty<T> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let pending = self.osc_filter.drain_into(buf);
-        if pending > 0 || buf.is_empty() {
-            return Ok(pending);
-        }
-
-        loop {
-            let read = self.inner.reader().read(buf)?;
-            if read == 0 {
-                return Ok(0);
-            }
-            let cwd_tx = self.cwd_tx.clone();
-            self.scanner.advance(&buf[..read], |cwd| {
-                let _ = cwd_tx.unbounded_send(cwd);
-            });
-            let marks_tx = &self.marks_tx;
-            self.marks_scanner.feed(&buf[..read], &mut |mark| {
-                let _ = marks_tx.try_send(mark);
-            });
-            self.osc_filter.advance(&buf[..read]);
-            let filtered = self.osc_filter.drain_into(buf);
-            if filtered > 0 {
-                return Ok(filtered);
-            }
-        }
-    }
-}
-
-impl<T: tty::EventedPty> Write for Osc7Pty<T> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.inner.writer().write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.inner.writer().flush()
-    }
-}
-
-impl<T: tty::EventedPty> tty::EventedReadWrite for Osc7Pty<T> {
-    type Reader = Self;
-    type Writer = Self;
-
-    unsafe fn register(
-        &mut self,
-        poller: &Arc<polling::Poller>,
-        event: polling::Event,
-        mode: polling::PollMode,
-    ) -> io::Result<()> {
-        unsafe { self.inner.register(poller, event, mode) }
-    }
-
-    fn reregister(
-        &mut self,
-        poller: &Arc<polling::Poller>,
-        event: polling::Event,
-        mode: polling::PollMode,
-    ) -> io::Result<()> {
-        self.inner.reregister(poller, event, mode)
-    }
-
-    fn deregister(&mut self, poller: &Arc<polling::Poller>) -> io::Result<()> {
-        self.inner.deregister(poller)
-    }
-
-    fn reader(&mut self) -> &mut Self::Reader {
-        self
-    }
-
-    fn writer(&mut self) -> &mut Self::Writer {
-        self
-    }
-}
-
-impl<T: tty::EventedPty> tty::EventedPty for Osc7Pty<T> {
-    fn next_child_event(&mut self) -> Option<tty::ChildEvent> {
-        self.inner.next_child_event()
-    }
-}
-
-impl<T> alacritty_terminal::event::OnResize for Osc7Pty<T>
-where
-    T: tty::EventedPty + alacritty_terminal::event::OnResize,
-{
-    fn on_resize(&mut self, window_size: AlacWindowSize) {
-        self.inner.on_resize(window_size);
-    }
-}
-
-fn cwd_from_osc7_payload(payload: &str) -> Option<String> {
-    let rest = payload.strip_prefix("7;file://")?;
-    let path = if rest.starts_with('/') {
-        Cow::Borrowed(rest)
-    } else {
-        let (_, path) = rest.split_once('/')?;
-        Cow::Owned(format!("/{path}"))
-    };
-    let decoded = percent_decode_uri_path(&path)?;
-    #[cfg(windows)]
-    if let Some(msys_path) = msys_path_to_windows_path(&decoded) {
-        return Some(msys_path);
-    }
-    #[cfg(windows)]
-    if decoded.len() >= 3
-        && decoded.as_bytes()[0] == b'/'
-        && decoded.as_bytes()[1].is_ascii_alphabetic()
-        && decoded.as_bytes()[2] == b':'
-    {
-        return Some(decoded[1..].replace('/', "\\"));
-    }
-    Some(decoded)
-}
-
-#[cfg(windows)]
-fn msys_path_to_windows_path(path: &str) -> Option<String> {
-    let bytes = path.as_bytes();
-    if bytes.len() < 2
-        || bytes[0] != b'/'
-        || !bytes[1].is_ascii_alphabetic()
-        || (bytes.len() > 2 && bytes[2] != b'/')
-    {
-        return None;
-    }
-
-    let drive = (bytes[1] as char).to_ascii_uppercase();
-    if bytes.len() == 2 {
-        Some(format!("{drive}:\\"))
-    } else {
-        Some(format!("{drive}:\\{}", path[3..].replace('/', "\\")))
-    }
-}
-
-fn percent_decode_uri_path(path: &str) -> Option<String> {
-    let bytes = path.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' {
-            match (
-                bytes.get(i + 1).copied().and_then(hex_value),
-                bytes.get(i + 2).copied().and_then(hex_value),
-            ) {
-                (Some(hi), Some(lo)) => {
-                    out.push((hi << 4) | lo);
-                    i += 3;
-                }
-                _ => {
-                    out.push(bytes[i]);
-                    i += 1;
-                }
-            }
-        } else {
-            out.push(bytes[i]);
-            i += 1;
-        }
-    }
-    String::from_utf8(out).ok()
-}
-
-fn hex_value(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
 }
 
 /// Foreground (main-thread) signal mask, captured so an off-thread PTY spawn
@@ -1693,7 +707,7 @@ pub type ForegroundSignalMask = ();
 
 /// Capture the calling thread's signal mask. Call on the main thread before
 /// scheduling an off-thread spawn; thread the result through to
-/// [`TerminalState::open_pty_and_eventloop`].
+/// [`GhosttySession::start`].
 pub(super) fn capture_foreground_signal_mask() -> Option<ForegroundSignalMask> {
     #[cfg(unix)]
     {
@@ -1715,8 +729,8 @@ pub(super) fn capture_foreground_signal_mask() -> Option<ForegroundSignalMask> {
 }
 
 /// Install `mask` on the current thread, returning the previous mask to restore.
-/// Brackets the `tty::new` fork so the child inherits the foreground signal
-/// disposition even when the spawn runs on a background thread (US-012).
+/// Brackets the child fork so it inherits the foreground signal disposition
+/// even when the spawn runs on a background thread (US-012).
 #[cfg(unix)]
 pub(super) fn apply_thread_signal_mask(
     mask: Option<ForegroundSignalMask>,
@@ -1747,75 +761,39 @@ pub(super) fn restore_thread_signal_mask(saved: Option<libc::sigset_t>) {
 
 impl TerminalState {
     pub(crate) fn session_backend(&self) -> TerminalSessionBackend {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return TerminalSessionBackend::ghostty(
-                self.term.clone(),
-                PtyNotifier(self.notifier.0.clone()),
-                ghostty.clone(),
-            );
-        }
-        TerminalSessionBackend::alacritty(self.term.clone(), PtyNotifier(self.notifier.0.clone()))
+        TerminalSessionBackend::new(self.ghostty.clone())
+    }
+
+    /// Clone of the engine handle, for the background half of a spawn.
+    pub(super) fn ghostty_session(&self) -> GhosttySession {
+        self.ghostty.clone()
     }
 
     pub(crate) fn take_backend_events(&mut self) -> TerminalBackendEvents {
-        let alacritty = self.events_rx.take();
-        #[cfg(ghostty_native)]
-        let ghostty = self.ghostty_events_rx.take();
-        TerminalBackendEvents {
-            alacritty,
-            #[cfg(ghostty_native)]
-            ghostty,
-        }
+        TerminalBackendEvents(self.ghostty_events_rx.take())
     }
 
     pub(crate) fn process_backend_event(&mut self, event: TerminalBackendEvent) {
-        match event {
-            TerminalBackendEvent::Alacritty(event) => self.process_event(event),
-            #[cfg(ghostty_native)]
-            TerminalBackendEvent::Ghostty(event) => self.process_ghostty_event(event),
-        }
+        self.process_ghostty_event(event.0);
     }
 
     pub(crate) fn process_backend_wakeup(&mut self) {
         self.dirty = true;
         self.output_generation = self.output_generation.saturating_add(1);
-        #[cfg(ghostty_native)]
-        {
-            self.flush_ghostty_pending_input();
-            if let Some(ghostty) = &self.ghostty {
-                ghostty.retry_backpressured_commands();
-            }
-        }
+        self.flush_ghostty_pending_input();
+        self.ghostty.retry_backpressured_commands();
     }
 
     pub(crate) fn notify_window_size(&self, size: TerminalWindowSize) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            ghostty.resize(size);
-            return;
-        }
-        self.notifier.notify_window_size(size);
+        self.ghostty.resize(size);
     }
 
-    #[cfg(ghostty_native)]
-    pub(super) fn attach_ghostty(
-        &mut self,
-        ghostty: GhosttySession,
-        events_rx: UnboundedReceiver<GhosttyUiEvent>,
-    ) {
-        self.effective_backend = "ghostty";
-        self.marks = ghostty.marks();
-        self.ghostty = Some(ghostty);
-        self.ghostty_events_rx = Some(events_rx);
-    }
-
-    #[cfg(ghostty_native)]
+    /// Install the child produced by [`GhosttySession::start`] and switch the
+    /// surface to interactive defaults. The grid is unchanged - the engine was
+    /// already rendering into it - so this only opens the write side and lets
+    /// `Drop` reach the child.
     pub(super) fn promote_ghostty(&mut self, spawned: SpawnedGhostty) {
-        let Some(ghostty) = self.ghostty.as_ref() else {
-            return;
-        };
-        ghostty.promote();
+        self.ghostty.promote();
         self.child_pid = spawned.child_pid;
         self.current_cwd = Some(spawned.cwd.to_string_lossy().into_owned());
         #[cfg(all(unix, not(test)))]
@@ -1828,20 +806,15 @@ impl TerminalState {
         self.flush_ghostty_pending_input();
     }
 
-    #[cfg(ghostty_native)]
     fn flush_ghostty_pending_input(&self) {
-        let Some(ghostty) = self
-            .ghostty
-            .as_ref()
-            .filter(|session| session.is_promoted())
-        else {
+        if !self.ghostty.is_promoted() {
             return;
-        };
+        }
         let Ok(mut pending) = self.pending_input.lock() else {
             return;
         };
         while let Some(input) = pending.front().cloned() {
-            match input.try_send(ghostty) {
+            match input.try_send(&self.ghostty) {
                 GhosttyInputSendResult::Sent => {
                     pending.pop_front();
                 }
@@ -1859,76 +832,61 @@ impl TerminalState {
         }
     }
 
-    #[cfg(ghostty_native)]
-    pub(super) fn fallback_from_ghostty(&mut self, failure: TerminalBackendFailureDiagnostics) {
-        if let Some(ghostty) = self.ghostty.take() {
-            ghostty.shutdown();
+    /// Turn the surface into a static error pane after a failed spawn.
+    ///
+    /// [`GhosttySession::start`] consumes its runtime handle, and a failure
+    /// leaves the runtime thread returned and the mailbox closed - that session
+    /// can no longer render anything. A fresh display-only session takes its
+    /// place so the message is visible, and the diagnostics explain why the
+    /// pane holds text instead of a shell.
+    pub(super) fn report_spawn_failure(
+        &mut self,
+        failure: TerminalBackendFailureDiagnostics,
+        message: &str,
+    ) {
+        self.backend_failure = Some(failure);
+        self.ghostty.shutdown();
+
+        let size = self.ghostty.requested_window_size();
+        let (session, pending, events_rx) =
+            GhosttySession::pending_with_clipboard_gate(size, self.clipboard_gate.clone());
+        if let Err(error) = session.start_display(pending, SPAWN_FAILURE_SCROLLBACK_LINES) {
+            log::error!(
+                target: "paneflow::terminal::ghostty",
+                "could not open the spawn-failure pane: {error}"
+            );
+            return;
         }
-        self.effective_backend = "alacritty";
-        self.backend_failure = Some(failure);
-    }
 
-    #[cfg(ghostty_native)]
-    pub(super) fn fail_ghostty_after_spawn(&mut self, failure: TerminalBackendFailureDiagnostics) {
-        if let Some(ghostty) = self.ghostty.take() {
-            ghostty.shutdown();
-        }
-        self.backend_failure = Some(failure);
-    }
-
-    pub(super) fn set_backend_request(&mut self, requested: TerminalBackendConfig) {
-        self.requested_backend = requested;
-        self.backend_failure = None;
-    }
-
-    // Used by the cfg branch compiled when no native Ghostty backend is present.
-    #[allow(dead_code)]
-    pub(super) fn record_backend_failure(&mut self, failure: TerminalBackendFailureDiagnostics) {
-        self.backend_failure = Some(failure);
+        self.marks = session.marks();
+        self.ghostty = session;
+        self.ghostty_events_rx = Some(events_rx);
+        self.write_output(message.as_bytes());
+        self.dirty = true;
     }
 
     pub fn backend_diagnostics(&self) -> TerminalBackendDiagnostics {
-        #[cfg(ghostty_native)]
-        let ghostty = {
-            let identity = paneflow_terminal_ghostty::build_identity();
-            Some(GhosttyBuildDiagnostics {
+        let identity = paneflow_terminal_ghostty::build_identity();
+        TerminalBackendDiagnostics {
+            failure: self.backend_failure.clone(),
+            target_triple: env!("PANEFLOW_TARGET_TRIPLE"),
+            ghostty: GhosttyBuildDiagnostics {
                 version: paneflow_terminal_ghostty::GHOSTTY_APP_VERSION,
                 source_sha: identity.source_sha,
                 api_version: identity.api_version,
                 zig_version: identity.zig_version,
                 optimization: identity.optimization,
                 simd: identity.simd,
-            })
-        };
-        #[cfg(not(ghostty_native))]
-        let ghostty = None;
-
-        TerminalBackendDiagnostics {
-            requested: self.requested_backend,
-            effective: self.effective_backend,
-            failure: self.backend_failure.clone(),
-            target_triple: env!("PANEFLOW_TARGET_TRIPLE"),
-            ghostty,
+            },
         }
-    }
-
-    pub(crate) fn drain_size_responses(&mut self, size: TerminalWindowSize) -> Vec<String> {
-        if self.pending_size_ops.len() > 8 {
-            let drop_count = self.pending_size_ops.len() - 8;
-            self.pending_size_ops.drain(..drop_count);
-        }
-        let alacritty_size = alacritty_window_size(size);
-        self.pending_size_ops
-            .drain(..)
-            .map(|format| format(alacritty_size))
-            .collect()
     }
 
     /// Spawn a real PTY-backed terminal synchronously. Resolves the shell + env
-    /// ([`resolve_spawn_params`]), builds a display-only `Term`
-    /// ([`new_pending`]), opens the PTY ([`open_pty_and_eventloop`]), and
-    /// promotes it to a live `Pty` ([`promote`]). The off-thread path
-    /// (`TerminalView::with_cwd_and_env`, US-012) runs the same four steps but
+    /// ([`resolve_spawn_params`]), builds a display-only session
+    /// ([`new_pending`]), starts the engine against a child
+    /// ([`GhosttySession::start`]), and promotes it
+    /// ([`promote_ghostty`](Self::promote_ghostty)). The off-thread path
+    /// (`TerminalView::with_cwd_and_env`, US-012) runs the same steps but
     /// spreads the blocking one across the background executor with a
     /// `signal_mask` so the render thread never blocks on the spawn.
     ///
@@ -1936,11 +894,9 @@ impl TerminalState {
     /// foreground mask is already active); the off-thread path passes the
     /// captured foreground mask so the child still gets correct Ctrl-C.
     ///
-    /// The production GUI path spawns off-thread (`with_cwd_and_env` →
-    /// `new_pending` + `open_pty_and_eventloop` + `promote`); this synchronous
-    /// composition is the reference path, exercised end-to-end by the live
-    /// `eventloop_pty_echoes_input_into_grid` smoke and available to any future
-    /// non-GUI (headless) caller.
+    /// The production GUI path spawns off-thread; this synchronous composition
+    /// is the reference path, exercised end-to-end by the live PTY smoke tests
+    /// and available to any future non-GUI (headless) caller.
     #[allow(dead_code)]
     pub fn new(
         working_directory: Option<std::path::PathBuf>,
@@ -1979,21 +935,25 @@ impl TerminalState {
             user_env,
             profile,
         );
+        let max_scrollback = resolved_scrollback_lines(params.profile);
         let (mut state, pending) = Self::new_pending_with_profile_and_shell_quoting(
             params.cols,
             params.rows,
             params.profile,
             params.shell_quoting,
         );
-        let spawned = Self::open_pty_and_eventloop(params, pending, signal_mask)?;
-        state.promote(spawned);
+        let spawned = state
+            .ghostty_session()
+            .start(pending.ghostty, params, signal_mask, max_scrollback)
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
+        state.promote_ghostty(spawned);
         Ok(state)
     }
 
     /// Resolve the shell, the merged + assembled child env, the cwd, and the
     /// grid size - the cheap, render-thread-safe half of a spawn. Factored out
     /// of `new` so the off-thread path (US-012) runs the *blocking* half
-    /// ([`open_pty_and_eventloop`]) on the background executor.
+    /// ([`GhosttySession::start`]) on the background executor.
     #[allow(dead_code)]
     pub(super) fn resolve_spawn_params(
         working_directory: Option<std::path::PathBuf>,
@@ -2080,14 +1040,13 @@ impl TerminalState {
             cols,
             rows,
             profile,
-            surface_id,
         }
     }
 
-    /// Build a display-only terminal that retains its event-channel *sender* so
-    /// a background spawn can later attach a real `EventLoop` to the same
-    /// channel and [`promote`](Self::promote) it (US-012). The returned
-    /// opaque pending handle is handed to [`open_pty_and_eventloop`].
+    /// Build a terminal whose engine exists but has not been started yet, so a
+    /// background spawn can start the same session against a real child and
+    /// [`promote_ghostty`](Self::promote_ghostty) it (US-012). The returned
+    /// opaque pending handle is what [`GhosttySession::start`] consumes.
     #[allow(dead_code)]
     pub(super) fn new_pending(cols: usize, rows: usize) -> (Self, PendingTerminalBackend) {
         Self::new_pending_with_profile(cols, rows, TerminalSurfaceProfile::Normal)
@@ -2109,198 +1068,16 @@ impl TerminalState {
     pub(super) fn new_pending_with_profile_and_shell_quoting(
         cols: usize,
         rows: usize,
-        profile: TerminalSurfaceProfile,
+        _profile: TerminalSurfaceProfile,
         shell_quoting: ShellQuoting,
     ) -> (Self, PendingTerminalBackend) {
-        Self::build_display_only(cols, rows, profile, shell_quoting)
+        Self::build_display_only(cols, rows, shell_quoting)
     }
 
-    /// Open the PTY and start its `EventLoop` on the given (shared) `term` and
-    /// event channel - the *blocking* half of a spawn (`tty::new` forks). Safe
-    /// to call on a background thread: when `signal_mask` is `Some`, it is
-    /// installed on this thread around the `tty::new` fork so the child inherits
-    /// the foreground (main-thread) signal disposition and Ctrl-C / Ctrl-Z keep
-    /// working, then the thread's mask is restored. Upstream `alacritty_terminal`
-    /// exposes no `child_signal_mask` pty option (Zed's #58004 is a fork
-    /// addition), so bracketing the fork with the thread mask is the
-    /// upstream-only equivalent.
-    pub(super) fn open_pty_and_eventloop(
-        params: SpawnParams,
-        pending: PendingTerminalBackend,
-        signal_mask: Option<ForegroundSignalMask>,
-    ) -> anyhow::Result<SpawnedPty> {
-        let PendingTerminalBackend {
-            term,
-            events_tx,
-            clipboard_gate,
-        } = pending;
-        let listener = ZedListener::with_clipboard_gate(events_tx, clipboard_gate);
-        let (cwd_tx, cwd_rx) = unbounded();
-        let (marks_tx, marks_rx) = std::sync::mpsc::sync_channel(256);
-        // Pixel size unknown at spawn (apps use the char grid); the live size is
-        // pushed via `Msg::Resize` on the first frame.
-        let window_size = AlacWindowSize {
-            num_cols: params.cols as u16,
-            num_lines: params.rows as u16,
-            cell_width: 0,
-            cell_height: 0,
-        };
-        // Keep the resolved launch cwd to seed `current_cwd` at promotion;
-        // `params.cwd` is moved into `working_directory` just below.
-        let launch_cwd = params.cwd.clone();
-        let options = tty::Options {
-            shell: Some(tty::Shell::new(params.shell, params.extra_args)),
-            working_directory: Some(params.cwd),
-            // Keep reading after child exit so a shell's final burst reaches
-            // the grid before the exit overlay lands. Mirrors Zed's terminal
-            // path and must match the EventLoop flag below.
-            drain_on_exit: PTY_DRAIN_ON_EXIT,
-            env: params.env,
-            #[cfg(windows)]
-            escape_args: true,
-        };
-
-        // EP-002 US-004: open the PTY via alacritty's own cross-platform `tty`
-        // (Unix openpty + setsid, Windows ConPTY) and drive it with alacritty's
-        // `EventLoop`. Mirrors Zed `crates/terminal/src/alacritty.rs`.
-        //
-        // US-012: bracket the fork with the captured foreground signal mask so
-        // an off-thread spawn doesn't hand the child the background executor's
-        // signal-blocking mask. No-op on the synchronous path (`signal_mask` is
-        // `None`) and on Windows.
-        #[cfg(unix)]
-        let restore_mask = apply_thread_signal_mask(signal_mask);
-        #[cfg(not(unix))]
-        let _ = signal_mask;
-
-        let pty = tty::new(&options, window_size, params.surface_id);
-
-        #[cfg(unix)]
-        restore_thread_signal_mask(restore_mask);
-
-        let pty = pty.map_err(|e| anyhow::anyhow!("failed to open pty: {e}"))?;
-
-        // Capture the child PID (teardown ladder + port detection) and, on
-        // macOS, the PTY master fd (`tcgetpgrp` foreground naming) BEFORE the
-        // EventLoop consumes the `Pty`. alacritty `pre_exec`s `setsid()`, so the
-        // child is its own session/group leader and `child_pid` is also the PGID
-        // (the `kill(-pid, …)` group teardown in `Drop` stays valid). Mirrors Zed
-        // `ProcessIdGetter::from(&AlacrittyPty)`.
-        #[cfg(unix)]
-        let child_pid = pty.child().id();
-        #[cfg(windows)]
-        let child_pid = pty.child_watcher().pid().map(u32::from).unwrap_or(0);
-        #[cfg(all(unix, not(test)))]
-        let pty_guard = crate::agents::parent_guard::spawn_pty_guard(child_pid);
-        #[cfg(target_os = "macos")]
-        let pty_master_fd = {
-            use std::os::unix::io::AsRawFd;
-            // US-034: `dup()` the master fd so we own a copy whose lifetime we
-            // control (closed in `Drop`). The borrowed `pty.file().as_raw_fd()`
-            // is closed when the EventLoop (which takes ownership of `pty`
-            // below) tears the PTY down on child exit, and the OS may reuse
-            // that fd number - `tcgetpgrp(stale_fd)` would then report an
-            // unrelated process group, defeating the `p > 0` filter.
-            let raw = pty.file().as_raw_fd();
-            // SAFETY: `raw` is a valid open fd for the PTY master; `dup`
-            // returns a fresh owned fd or -1 on error (filtered out).
-            let dup = unsafe { libc::dup(raw) };
-            (dup >= 0).then_some(dup)
-        };
-
-        let pty = Osc7Pty::new(pty, cwd_tx, marks_tx);
-        let event_loop = EventLoop::new(
-            term,
-            listener,
-            pty,
-            PTY_DRAIN_ON_EXIT, // drain_on_exit
-            false,             // ref_test
-        )
-        .map_err(|e| anyhow::anyhow!("failed to start pty event loop: {e}"))?;
-        let channel = event_loop.channel();
-        // The IO thread runs detached; shutdown is driven by `Msg::Shutdown` in
-        // `Drop`. The handle is dropped (the thread joins itself on shutdown).
-        let _io_thread = event_loop.spawn();
-
-        Ok(SpawnedPty {
-            channel,
-            child_pid,
-            cwd: launch_cwd,
-            cwd_rx,
-            marks_rx,
-            #[cfg(all(unix, not(test)))]
-            pty_guard,
-            #[cfg(target_os = "macos")]
-            pty_master_fd,
-        })
-    }
-
-    /// Promote a display-only / pending terminal to a live PTY by installing the
-    /// `EventLoop` write channel, child PID, and interactive defaults produced
-    /// by [`open_pty_and_eventloop`]. The grid `Term` is unchanged - the
-    /// background `EventLoop` was attached to the same shared `term`, so output
-    /// already flows; this just opens the write side and lets `Drop` reach the
-    /// child.
-    pub(super) fn promote(&mut self, spawned: SpawnedPty) {
-        let sender = PtySender::pty(spawned.channel);
-        self.notifier = PtyNotifier(sender);
-        self.cwd_rx = Some(spawned.cwd_rx);
-        self.marks_rx = Some(spawned.marks_rx);
-        self.child_pid = spawned.child_pid;
-        #[cfg(all(unix, not(test)))]
-        {
-            self.pty_guard = spawned.pty_guard;
-        }
-        // Seed the working directory from the launch cwd. On Unix `sync_channels`
-        // refines this to the live shell cwd within a few poll ticks via
-        // `cwd_now()` (/proc, libproc); on Windows `cwd_now()` is a stub, so this
-        // launch-dir seed is the ONLY source of `current_cwd` - without it the
-        // value stayed `None` and the agent-sessions sidebar, which scans the
-        // active terminal's cwd, had nothing to resolve and rendered empty.
-        if self.current_cwd.is_none() {
-            self.current_cwd = Some(spawned.cwd.to_string_lossy().into_owned());
-        }
-        #[cfg(target_os = "macos")]
-        {
-            self.pty_master_fd = spawned.pty_master_fd;
-        }
-        // Interactive defaults (a display-only terminal had these off).
-        self.set_osc52_mode(Osc52Mode::CopyOnly);
-        self.cursor_blinking = true;
-        self.dirty = true;
-        // Flush input queued while display-only (US-012): the launch command
-        // an auto-launched agent issues the instant it mounts, plus any
-        // keystrokes typed before the off-thread fork resolved. Order is
-        // preserved; the now-live `Pty` notifier delivers each to the child.
-        for input in self.drain_pending_legacy_input() {
-            self.notifier.notify(input);
-        }
-    }
-
-    fn drain_pending_legacy_input(&self) -> Vec<Cow<'static, [u8]>> {
-        let Ok(mut pending) = self.pending_input.lock() else {
-            return Vec::new();
-        };
-        pending
-            .drain(..)
-            .filter_map(PendingTerminalInput::into_legacy_bytes)
-            .collect()
-    }
-
-    /// Wire a GPUI background executor for the grace-period force-kill
-    /// task spawned in `Drop`. Without this, the kill timer runs on a
-    /// detached OS thread (works, but leaks one thread per closed pane
-    /// on intensive use). Called by `TerminalView::with_cwd` so the
-    /// production path always goes through GPUI's scheduler.
-    pub fn set_background_executor(&mut self, executor: gpui::BackgroundExecutor) {
-        self.background_executor = Some(executor);
-    }
-
-    /// Create a display-only terminal with no PTY, no reader thread, no message loop.
-    /// Content is rendered via `write_output()` which processes bytes through VTE directly.
-    /// The terminal supports full ANSI rendering but does not accept keyboard input.
-    /// Used by tests (the production spawn-failure fallback keeps the
-    /// already-built pending placeholder and writes the error into it).
+    /// Create a display-only terminal with no PTY and no child process.
+    /// Content is rendered via `write_output()`, which feeds bytes straight
+    /// into the grid. The terminal supports full ANSI rendering but does not
+    /// accept keyboard input. Used by tests and by the spawn-failure pane.
     #[allow(dead_code)]
     pub fn new_display_only(rows: usize, cols: usize) -> Self {
         Self::new_display_only_with_profile(rows, cols, TerminalSurfaceProfile::Normal)
@@ -2312,67 +1089,45 @@ impl TerminalState {
         cols: usize,
         profile: TerminalSurfaceProfile,
     ) -> Self {
-        Self::build_display_only(cols, rows, profile, ShellQuoting::default_for_platform()).0
+        let (state, pending) =
+            Self::build_display_only(cols, rows, ShellQuoting::default_for_platform());
+        if let Err(error) = state
+            .ghostty
+            .start_display(pending.ghostty, resolved_scrollback_lines(profile))
+        {
+            log::error!(
+                target: "paneflow::terminal::ghostty",
+                "could not start the display-only runtime: {error}"
+            );
+        }
+        state
     }
 
-    /// Shared constructor for the display-only / pending state. Returns the
-    /// terminal plus a clone of its event-channel *sender*, so the off-thread
-    /// spawn path ([`new_pending`]) can wire a real `EventLoop` to the same
-    /// channel and [`promote`](Self::promote) it (US-012). `new_display_only`
-    /// discards the sender (its `Term` only emits Wakeups on its own VTE writes).
+    /// Shared constructor for the not-yet-started state. Returns the terminal
+    /// plus the opaque runtime handle its engine still needs, so either
+    /// [`GhosttySession::start`] (real child) or
+    /// [`GhosttySession::start_display`] (grid only) can bring it up.
     fn build_display_only(
         cols: usize,
         rows: usize,
-        profile: TerminalSurfaceProfile,
         shell_quoting: ShellQuoting,
     ) -> (Self, PendingTerminalBackend) {
-        let (events_tx, events_rx) = unbounded();
         let clipboard_gate = Arc::new(ClipboardGate::default());
-        // The Term keeps one clone (emits Wakeup after VTE mutations); the
-        // returned clone is for a later `EventLoop` on promotion.
-        let listener = ZedListener::with_clipboard_gate(events_tx.clone(), clipboard_gate.clone());
-
-        let config = TermConfig {
-            scrolling_history: resolved_scrollback_lines(profile),
-            default_cursor_style: resolved_cursor_style(),
-            ..TermConfig::default()
-        };
-        let dimensions = SpikeTermSize {
-            columns: cols,
-            screen_lines: rows,
-        };
-        let term = Term::new(config, &dimensions, listener);
-        let term = Arc::new(FairMutex::new(term));
-        let notifier_sender = PtySender::display_only();
-
-        let pending = PendingTerminalBackend {
-            term: term.clone(),
-            events_tx,
-            clipboard_gate: clipboard_gate.clone(),
-        };
+        let (ghostty, runtime_pending, events_rx) = GhosttySession::pending_with_clipboard_gate(
+            TerminalWindowSize::new(cols, rows, 0, 0),
+            clipboard_gate.clone(),
+        );
+        let marks = ghostty.marks();
         let state = Self {
-            term,
-            // No PTY / EventLoop yet - notifier sends are silently dropped until
-            // `promote()` installs a `Pty` sender.
-            notifier: PtyNotifier(notifier_sender),
-            events_rx: Some(events_rx),
-            #[cfg(ghostty_native)]
-            ghostty: None,
-            #[cfg(ghostty_native)]
-            ghostty_events_rx: None,
-            requested_backend: TerminalBackendConfig::Auto,
-            effective_backend: "alacritty",
+            ghostty,
+            ghostty_events_rx: Some(events_rx),
             backend_failure: None,
-            cwd_rx: None,
-            marks_rx: None,
-            marks: Arc::new(std::sync::Mutex::new(Default::default())),
+            marks,
             last_prompt_seq: 0,
             exited: None,
             keyboard_input_sent: std::sync::atomic::AtomicBool::new(false),
             exit_signal: None,
             child_pid: 0,
-            #[cfg(target_os = "macos")]
-            pty_master_fd: None,
             current_cwd: None,
             progress: None,
             custom_name: None,
@@ -2383,7 +1138,6 @@ impl TerminalState {
             port_conflicts: Vec::new(),
             announced_ports: Vec::new(),
             font_size_override: None,
-            cursor_color_override: resolved_cursor_color_override(),
             osc52_mode: Osc52Mode::Disabled,
             terminal_focused: false,
             clipboard_gate,
@@ -2392,7 +1146,6 @@ impl TerminalState {
             cached_foreground_command: None,
             #[cfg(all(unix, not(test)))]
             pty_guard: None,
-            pending_size_ops: Vec::new(),
             cursor_blinking: false,
             title: String::from("Terminal"),
             dirty: true,
@@ -2402,15 +1155,18 @@ impl TerminalState {
             reported_ports: std::collections::HashSet::new(),
             #[cfg(debug_assertions)]
             last_keystroke_at: None,
-            background_executor: None,
             pending_input: std::sync::Mutex::new(VecDeque::new()),
         };
-        (state, pending)
+        (
+            state,
+            PendingTerminalBackend {
+                ghostty: runtime_pending,
+            },
+        )
     }
 
     /// Write ANSI-formatted content to a display-only terminal.
     /// Converts bare `\n` to `\r\n` (since there is no PTY to perform CR insertion).
-    /// Processes bytes through VTE for full ANSI color/attribute support.
     /// Note: callers must not split a `\r\n` pair across two calls (the second call
     /// would insert an extra `\r`, producing `\r\r\n`). Prefer complete chunks.
     #[allow(dead_code)]
@@ -2425,26 +1181,14 @@ impl TerminalState {
             converted.push(b);
             prev = b;
         }
-
-        let mut term = self.term.lock();
-        let mut processor = alacritty_terminal::vte::ansi::Processor::<
-            alacritty_terminal::vte::ansi::StdSyncHandler,
-        >::new();
-        processor.advance(&mut *term, &converted);
+        self.ghostty.write_output(&converted);
     }
 
-    /// Drain the CWD channel, then drain any remaining events.
+    /// Drain the CWD fallback, then drain any pending engine events.
     /// Sets `dirty = true` when PTY output was processed.
     #[allow(dead_code)]
     pub fn sync(&mut self) {
         self.sync_channels();
-        if let Some(mut rx) = self.events_rx.take() {
-            while let Ok(event) = rx.try_recv() {
-                self.process_event(event);
-            }
-            self.events_rx = Some(rx);
-        }
-        #[cfg(ghostty_native)]
         if let Some(mut rx) = self.ghostty_events_rx.take() {
             while let Ok(event) = rx.try_recv() {
                 self.process_ghostty_event(event);
@@ -2455,32 +1199,23 @@ impl TerminalState {
 
     /// Refresh the shell CWD from the process table (EP-002 US-007).
     ///
-    /// OSC 7 updates are captured by the `Osc7Pty` read tap before VTE consumes
-    /// the bytes. Unix/macOS also refresh from process-table state via
-    /// `cwd_now()` as a fallback. The fallback is throttled so we don't
-    /// `readlink` on every poll tick.
+    /// The engine decodes OSC 7 itself and publishes it as a UI event.
+    /// Unix/macOS additionally refresh from process-table state via
+    /// `cwd_now()`, for shells that never emit the sequence. The fallback is
+    /// throttled so we don't `readlink` on every poll tick.
     pub fn sync_channels(&mut self) {
-        if let Some(mut rx) = self.cwd_rx.take() {
-            while let Ok(cwd) = rx.try_recv() {
-                self.current_cwd = Some(cwd);
-            }
-            self.cwd_rx = Some(rx);
-        }
-
         self.cwd_poll_ticks = self.cwd_poll_ticks.wrapping_add(1);
         if self.cwd_poll_ticks.is_multiple_of(25)
             && let Some(cwd) = self.cwd_now()
         {
             self.current_cwd = Some(cwd.to_string_lossy().into_owned());
         }
-        self.drain_marks();
     }
 
     /// Whether the shell returned to its prompt since the last call.
     ///
-    /// Reads the OSC 133 `PromptStart` sequence the PTY scanner already
-    /// maintains, so it costs one mutex read per sync tick and works on both
-    /// backends (the VTE scanner and libghostty push into the same ring).
+    /// Reads the OSC 133 `PromptStart` sequence the engine's mark scanner
+    /// already maintains, so it costs one mutex read per sync tick.
     ///
     /// A prompt is proof that no foreground command owns the terminal any
     /// more, which is how the app reaps a finished agent's session without
@@ -2497,201 +1232,14 @@ impl TerminalState {
         fired
     }
 
-    fn drain_marks(&mut self) {
-        let Some(receiver) = self.marks_rx.as_ref() else {
-            return;
-        };
-        let Ok(first) = receiver.try_recv() else {
-            return;
-        };
-        let metrics = self.session_backend().grid_metrics();
-        let history_size = i64::from(metrics.topmost_line.0.saturating_neg());
-        let abs_line = history_size.saturating_add(i64::from(metrics.cursor.line.0));
-        let bottom_abs = history_size.saturating_add(metrics.screen_lines.saturating_sub(1) as i64);
-        let at = std::time::Instant::now();
-        let mut marks = self
-            .marks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for raw in std::iter::once(first).chain(receiver.try_iter()) {
-            marks.push(CommandMark {
-                kind: raw.kind,
-                exit_code: raw.exit_code,
-                abs_line,
-                at,
-            });
-        }
-        marks.retain_at_or_below(bottom_abs);
-    }
-
-    /// Defensively reset terminal modes that could corrupt the outer terminal.
-    /// Called on child exit before marking the terminal as exited.
-    /// Only resets modes that are actually active (clean exits won't trigger).
-    fn reset_active_modes(&mut self) {
-        #[cfg(ghostty_native)]
-        if self.ghostty.is_some() {
-            return;
-        }
-        // Guard against double-reset: if we've already recorded the exit
-        // status, the PTY writer is already closed and the next notify()
-        // would log a swallowed EPIPE.
-        if self.exited.is_some() {
-            return;
-        }
-        let mode = *self.term.lock_unfair().mode();
-        if mode.contains(TermMode::BRACKETED_PASTE) {
-            self.notifier.notify(b"\x1b[?2004l" as &[u8]);
-        }
-        if mode.contains(TermMode::FOCUS_IN_OUT) {
-            self.notifier.notify(b"\x1b[?1004l" as &[u8]);
-        }
-        if mode.intersects(TermMode::MOUSE_MODE) {
-            self.notifier
-                .notify(b"\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l" as &[u8]);
-        }
-        if mode.contains(TermMode::ALT_SCREEN) {
-            self.notifier.notify(b"\x1b[?1049l" as &[u8]);
-        }
-    }
-
-    /// Process a single alacritty event.
-    fn process_event(&mut self, event: AlacEvent) {
-        match event {
-            AlacEvent::Wakeup => {
-                self.dirty = true;
-                // US-010: advance the readiness signal `workspace.up` polls.
-                // Saturating (not wrapping) so the count is monotone for the
-                // lifetime of a pane; u64 never realistically saturates.
-                self.output_generation = self.output_generation.saturating_add(1);
-            }
-            AlacEvent::ChildExit(status) => {
-                self.reset_active_modes();
-                // EP-002 US-005: exit status now comes natively from alacritty's
-                // `ChildExit(ExitStatus)`. On Unix a signal-kill has no `code()`
-                // but carries the numeric signal via `ExitStatusExt::signal()`;
-                // pair it with `strsignal` for the overlay ("11 (Segmentation
-                // fault)"). No `from_raw(code<<8)` reconstruction and no
-                // in-process strsignal reversal - alacritty hands us the number.
-                #[cfg(unix)]
-                if status.code().is_none()
-                    && let Some(sig) = std::os::unix::process::ExitStatusExt::signal(&status)
-                {
-                    self.exit_signal = Some(format_signal(sig));
-                }
-                self.exited = Some(status.code().unwrap_or(-1));
-                self.dirty = true;
-                self.cached_foreground_command = None;
-                #[cfg(all(unix, not(test)))]
-                {
-                    self.pty_guard = None;
-                }
-                self.reported_ports.clear();
-            }
-            AlacEvent::Exit => {
-                self.reset_active_modes();
-                // First-write-wins (US-003 AC): `Exit` is the EOF fallback with no
-                // status. A real `ChildExit` code must never be clobbered by the -1
-                // sentinel if both events fire. Mirrors Zed's register_task_finished
-                // (crates/terminal/src/terminal.rs:2561-2563), where only ChildExit
-                // stores a status and Exit is a status no-op.
-                if self.exited.is_none() {
-                    self.exited = Some(-1);
-                }
-                self.dirty = true;
-                self.cached_foreground_command = None;
-                #[cfg(all(unix, not(test)))]
-                {
-                    self.pty_guard = None;
-                }
-            }
-            AlacEvent::Title(t) if !is_executable_path_title(&t) => {
-                self.title = t;
-            }
-            // Windows consoles (pwsh/powershell/cmd) set their initial window
-            // title to their own executable path before the user's profile runs
-            // - e.g. `C:\Program Files\PowerShell\7\pwsh.exe`. Adopted verbatim
-            // that leaks the shell install dir as the surface label (tab title,
-            // persisted session `name`) and is never a
-            // meaningful name, so a title that is just an absolute path to an
-            // `.exe` is dropped - keep the previous/default name. Real titles
-            // (Claude Code, prompt-driven labels) take the guarded arm above.
-            AlacEvent::Title(_) => {}
-            AlacEvent::ResetTitle => {
-                self.title = String::from("Terminal");
-            }
-            AlacEvent::PtyWrite(text) => {
-                self.notifier.notify(text.into_bytes());
-            }
-            AlacEvent::ClipboardStore(_selection, text) => {
-                // Cap to prevent memory DoS from malicious programs (crate::limits).
-                let within_cap = self.terminal_focused
-                    && self.osc52_mode != Osc52Mode::Disabled
-                    && text.len() <= MAX_OSC52_BYTES;
-                if within_cap {
-                    self.queue_clipboard_op(ClipboardOp::Store(text));
-                }
-            }
-            AlacEvent::ClipboardLoad(_selection, format_fn)
-                if self.terminal_focused && self.osc52_mode == Osc52Mode::CopyPaste =>
-            {
-                self.queue_clipboard_op(ClipboardOp::Load(format_fn));
-            }
-            AlacEvent::ClipboardLoad(..) => {}
-
-            AlacEvent::ColorRequest(index, format_fn) => {
-                // Respond synchronously to preserve PTY-write order - match
-                // Zed (`crates/terminal/src/terminal.rs:997-1009`). Crossterm's
-                // `query_foreground_color` / `query_background_color` (used by
-                // the OpenAI Codex CLI to detect terminal colors and decide
-                // whether to paint its input-bar tint) has a short timeout;
-                // a deferred reply both misses it and scrambles ordering with
-                // a following `\e[c` (DA1) query, after which Codex falls back
-                // to "unknown bg" and silently drops the tint.
-                //
-                // The `index` here is alacritty's internal `NamedColor`
-                // discriminant, NOT the OSC code itself: the VTE parser at
-                // `vte-0.15/src/ansi.rs:1431` translates OSC 10/11/12 to
-                // `NamedColor::Foreground (256) + (osc_code - 10)`. So the
-                // 256/257/258 arms below match OSC 10/11/12; indices 0..=255
-                // cover OSC 4 (`OSC 4 ; n ; ?` color-palette queries) which
-                // some apps (vim, neovim, python-rich) use to detect themes.
-                let theme = crate::theme::active_theme();
-                use alacritty_terminal::vte::ansi::NamedColor;
-                let color = if index == NamedColor::Foreground as usize {
-                    Some(theme.foreground)
-                } else if index == NamedColor::Background as usize {
-                    Some(theme.ansi_background)
-                } else if index == NamedColor::Cursor as usize {
-                    Some(self.cursor_color_override.unwrap_or(theme.cursor))
-                } else if index < 256 {
-                    Some(palette_color_at(index as u8, &theme))
-                } else {
-                    None
-                };
-                if let Some(hsla) = color {
-                    let rgb = hsla_to_alac_rgb(hsla);
-                    let response = format_fn(rgb);
-                    self.notifier.notify(response.into_bytes());
-                }
-            }
-            AlacEvent::Bell => {}
-            AlacEvent::CursorBlinkingChange => {
-                let term = self.term.lock_unfair();
-                self.cursor_blinking = term.cursor_style().blinking;
-            }
-            AlacEvent::TextAreaSizeRequest(format_fn) => {
-                self.pending_size_ops.push(format_fn);
-            }
-            _ => {} // MouseCursorDirty, etc.
-        }
-    }
-
-    #[cfg(ghostty_native)]
     fn process_ghostty_event(&mut self, event: GhosttyUiEvent) {
         match event {
             GhosttyUiEvent::Wakeup(events) => {
                 events.acknowledge_wakeup();
                 self.dirty = true;
+                // US-010: advance the readiness signal `workspace.up` polls.
+                // Saturating (not wrapping) so the count is monotone for the
+                // lifetime of a pane; u64 never realistically saturates.
                 self.output_generation = self.output_generation.saturating_add(1);
             }
             GhosttyUiEvent::Title(events) => {
@@ -2716,12 +1264,7 @@ impl TerminalState {
             }
             GhosttyUiEvent::Clipboard(events) => {
                 for text in events.take_clipboard() {
-                    if self.terminal_focused
-                        && self.osc52_mode != Osc52Mode::Disabled
-                        && text.len() <= MAX_OSC52_BYTES
-                    {
-                        self.queue_clipboard_op(ClipboardOp::Store(text));
-                    }
+                    self.deliver_clipboard_text(text);
                 }
             }
             GhosttyUiEvent::ServiceOutputReady(events) => {
@@ -2756,11 +1299,23 @@ impl TerminalState {
         }
     }
 
-    fn queue_clipboard_op(&mut self, op: ClipboardOp) {
+    /// Gate an OSC 52 store: the pane must own focus, the policy must allow
+    /// writes, and the payload is capped to prevent a memory DoS from a
+    /// malicious program (`crate::limits`).
+    fn deliver_clipboard_text(&mut self, text: String) {
+        if self.terminal_focused
+            && self.osc52_mode != Osc52Mode::Disabled
+            && text.len() <= MAX_OSC52_BYTES
+        {
+            self.queue_clipboard_op(text);
+        }
+    }
+
+    fn queue_clipboard_op(&mut self, text: String) {
         if self.pending_clipboard_ops.len() >= MAX_PENDING_CLIPBOARD_OPS {
             self.pending_clipboard_ops.remove(0);
         }
-        self.pending_clipboard_ops.push(op);
+        self.pending_clipboard_ops.push(text);
     }
 
     /// Read the shell's CWD from the OS on demand.
@@ -2860,40 +1415,12 @@ impl TerminalState {
         None
     }
 
-    /// Scan the last 100 lines of terminal output for server/service patterns.
-    /// Returns newly detected services (deduped against previously reported ports).
-    /// Lock on `self.term` is held only for text extraction, then released before parsing.
+    /// Scan the most recent terminal output for server/service patterns.
+    /// Returns newly detected services (deduped against previously reported
+    /// ports). The engine materializes the lines on its own thread, so the
+    /// render thread never touches the grid here.
     pub fn scan_output(&mut self) -> Vec<ServiceInfo> {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            let lines = ghostty.recent_output_lines();
-            return self.detect_services_in_lines(&lines);
-        }
-        let lines: Vec<String> = {
-            // Read-only grid scan; unfair lock avoids queueing behind the
-            // PTY reader thread on the periodic service-detection sweep.
-            let term = self.term.lock_unfair();
-            let bottom = term.bottommost_line();
-            let top_limit = term.topmost_line();
-            let cols = term.last_column();
-
-            let mut buf = Vec::with_capacity(100);
-            let mut row = bottom.0;
-            while row >= top_limit.0 && buf.len() < 100 {
-                let line = term.bounds_to_string(
-                    AlacPoint::new(GridLine(row), GridCol(0)),
-                    AlacPoint::new(GridLine(row), cols),
-                );
-                let trimmed = line.trim_end().to_string();
-                if !trimmed.is_empty() {
-                    buf.push(trimmed);
-                }
-                row -= 1;
-            }
-            buf
-            // term lock dropped here
-        };
-
+        let lines = self.ghostty.recent_output_lines();
         self.detect_services_in_lines(&lines)
     }
 
@@ -2925,11 +1452,10 @@ impl TerminalState {
         // (keystroke, paste, mouse report, IME commit, user scroll). Mark the
         // session user-initiated so a later exit closes the pane. Automated
         // protocol writes (focus reports, search RIS reset, OSC responses)
-        // deliberately bypass this by calling `self.notifier.notify` directly.
+        // deliberately go through `write_to_pty_silent`.
         self.keyboard_input_sent
             .store(true, std::sync::atomic::Ordering::Relaxed);
-        let input = input.into();
-        self.notify_or_buffer(input);
+        self.notify_or_buffer(input.into());
     }
 
     pub(super) fn set_terminal_focused(&mut self, focused: bool) {
@@ -2943,27 +1469,18 @@ impl TerminalState {
             .set_policy(mode != Osc52Mode::Disabled, mode == Osc52Mode::CopyPaste);
     }
 
-    #[cfg(ghostty_native)]
-    pub(super) fn clipboard_gate(&self) -> Arc<ClipboardGate> {
-        self.clipboard_gate.clone()
-    }
-
-    #[cfg(ghostty_native)]
     fn dispatch_ghostty_input(
         &self,
         input: PendingTerminalInput,
         user_initiated: bool,
     ) -> BackendInputResult {
-        let Some(ghostty) = self.ghostty.as_ref() else {
-            return BackendInputResult::NotHandled;
-        };
         let Ok(mut pending) = self.pending_input.lock() else {
             return BackendInputResult::Rejected;
         };
         let pending_bytes = pending.iter().fold(0usize, |total, item| {
             total.saturating_add(item.queued_bytes())
         });
-        let total = pending_bytes.saturating_add(ghostty.queued_input_bytes());
+        let total = pending_bytes.saturating_add(self.ghostty.queued_input_bytes());
         let queue_limit = input.queue_limit();
         if !input.fits_after(total) {
             log::warn!(
@@ -2974,8 +1491,8 @@ impl TerminalState {
             return BackendInputResult::Rejected;
         }
 
-        if ghostty.is_promoted() && pending.is_empty() {
-            match input.try_send(ghostty) {
+        if self.ghostty.is_promoted() && pending.is_empty() {
+            match input.try_send(&self.ghostty) {
                 GhosttyInputSendResult::Sent => {
                     if user_initiated {
                         self.keyboard_input_sent
@@ -2996,33 +1513,21 @@ impl TerminalState {
         BackendInputResult::Accepted
     }
 
-    #[cfg(ghostty_native)]
     pub(super) fn write_ghostty_key(
         &self,
         input: paneflow_terminal_ghostty::KeyInput,
-        legacy: Option<Cow<'static, [u8]>>,
     ) -> BackendInputResult {
-        self.dispatch_ghostty_input(PendingTerminalInput::Key { input, legacy }, true)
+        self.dispatch_ghostty_input(PendingTerminalInput::Key(input), true)
     }
 
-    #[cfg(ghostty_native)]
     pub(super) fn write_ghostty_mouse(
         &self,
         input: paneflow_terminal_ghostty::MouseInput,
         repeat: usize,
-        legacy: Option<Vec<u8>>,
     ) -> BackendInputResult {
-        self.dispatch_ghostty_input(
-            PendingTerminalInput::Mouse {
-                input,
-                repeat,
-                legacy,
-            },
-            true,
-        )
+        self.dispatch_ghostty_input(PendingTerminalInput::Mouse { input, repeat }, true)
     }
 
-    #[cfg(ghostty_native)]
     pub(super) fn write_ghostty_focus(
         &self,
         event: paneflow_terminal_ghostty::FocusEvent,
@@ -3030,51 +1535,27 @@ impl TerminalState {
         self.dispatch_ghostty_input(PendingTerminalInput::Focus(event), false)
     }
 
-    #[cfg(ghostty_native)]
-    pub(super) fn write_ghostty_paste(
-        &self,
-        text: String,
-        legacy_bracketed: bool,
-    ) -> BackendInputResult {
+    pub(super) fn write_ghostty_paste(&self, text: String) -> BackendInputResult {
         self.dispatch_ghostty_input(
             PendingTerminalInput::Paste {
                 text,
                 allow_unsafe: true,
-                legacy_bracketed,
             },
             true,
         )
     }
 
-    /// Send input to the live PTY, or queue it when the terminal is still
-    /// display-only (US-012 pre-promotion window). The display-only notifier
-    /// drops every write, so an auto-launch command or a
-    /// keystroke typed before the off-thread fork resolved would otherwise be
-    /// lost; [`promote`](Self::promote) flushes the queue in order. Bounded by
-    /// [`MAX_PENDING_INPUT_BYTES`] so a never-promoted terminal can't grow it
-    /// without bound.
+    /// Send input to the engine, or queue it while the engine still has no
+    /// child (US-012 pre-promotion window): the launch command an auto-launched
+    /// agent issues the instant it mounts, plus any keystroke typed before the
+    /// off-thread spawn resolved. [`promote_ghostty`](Self::promote_ghostty)
+    /// flushes the queue in order. Bounded by [`MAX_PENDING_INPUT_BYTES`] so a
+    /// never-promoted terminal can't grow it without bound.
     fn notify_or_buffer(&self, input: Cow<'static, [u8]>) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            if !input.is_empty() {
-                let _ = ghostty;
-                self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false);
-            }
-            return;
-        }
-        if self.notifier.0.is_pty() {
-            self.notifier.notify(input);
-            return;
-        }
         if input.is_empty() {
             return;
         }
-        if let Ok(mut pending) = self.pending_input.lock() {
-            let queued: usize = pending.iter().map(PendingTerminalInput::queued_bytes).sum();
-            if queued + input.len() <= MAX_PENDING_INPUT_BYTES {
-                pending.push_back(PendingTerminalInput::Raw(input));
-            }
-        }
+        self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false);
     }
 
     /// US-002: write to the PTY WITHOUT marking the session user-initiated.
@@ -3096,79 +1577,13 @@ impl TerminalState {
             || self.exited == Some(0)
     }
 
-    /// Extract terminal history as plain text (ANSI stripped) for session persistence.
-    /// The active viewport is deliberately excluded so restoring a session cannot
-    /// replay the previous visible frame ahead of fresh shell output.
-    /// Caps at 4000 lines and 400,000 characters. Returns None if history is empty.
+    /// Extract terminal history as plain text (ANSI stripped) for session
+    /// persistence. The active viewport is deliberately excluded so restoring a
+    /// session cannot replay the previous visible frame ahead of fresh shell
+    /// output. Caps at 4000 lines and 400,000 characters. Returns None if
+    /// history is empty.
     pub fn extract_scrollback(&self) -> Option<String> {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.extract_scrollback();
-        }
-        Self::extract_scrollback_from(&self.term)
-    }
-
-    /// US-011: scrollback drain decoupled from `&self` so `save_session` can
-    /// run it on a background thread against a cloned [`SharedTerm`] handle
-    /// (the term mutex is `Send + Sync` - it is the only cross-thread state in
-    /// the app) instead of holding the GPUI main thread. US-012's windowing
-    /// keeps the lock bounded to the most-recent `MAX_LINES` rows.
-    fn extract_scrollback_from(term: &SharedTerm) -> Option<String> {
-        const MAX_LINES: usize = 4000;
-
-        // Read-only scrollback drain for session persistence.
-        let term = term.lock_unfair();
-        let top = term.topmost_line();
-        let cols = term.last_column();
-
-        // Alacritty addresses real history with negative grid lines. Line zero
-        // starts the active viewport, which must never be persisted as history.
-        if top.0 >= 0 {
-            return None;
-        }
-
-        // US-012: window to the most-recent MAX_LINES *before* the loop so the
-        // lock is never held while materializing the full history (scrollback
-        // can be very large - see DEFAULT_SCROLLBACK_LINES). Walk oldest to
-        // newest from the bounded negative-line window through line -1.
-        let start = (-(MAX_LINES as i32)).max(top.0);
-        let mut lines: Vec<String> = Vec::with_capacity((-start).max(0) as usize);
-        let mut row = start;
-        while row < 0 {
-            let text = term.bounds_to_string(
-                AlacPoint::new(GridLine(row), GridCol(0)),
-                AlacPoint::new(GridLine(row), cols),
-            );
-            lines.push(text.trim_end().to_string());
-            row += 1;
-        }
-
-        // Trim trailing empty lines
-        while lines.last().is_some_and(|l| l.is_empty()) {
-            lines.pop();
-        }
-
-        if lines.is_empty() {
-            return None;
-        }
-
-        // Keep only the most recent MAX_LINES
-        if lines.len() > MAX_LINES {
-            lines.drain(..lines.len() - MAX_LINES);
-        }
-
-        let mut result = lines.join("\n");
-
-        // Cap at MAX_CHARS, then trim to last complete line and strip any
-        // partial ANSI escape at the boundary. Shared by both the background
-        // save path and the synchronous quit path (`save_session_blocking`).
-        cap_scrollback_at_char_boundary(&mut result, MAX_CHARS);
-
-        if result.is_empty() {
-            None
-        } else {
-            Some(result)
-        }
+        self.ghostty.extract_scrollback()
     }
 
     /// Best-effort foreground command of this surface, cached by the off-thread
@@ -3182,9 +1597,9 @@ impl TerminalState {
     /// Search the scrollback for `pattern` (plain-text, case-insensitive) and
     /// return matching lines as `(grid_line, text)` pairs, deduped by line and
     /// capped at `max_matches`. The bool is `true` when the cap truncated the
-    /// result. Backs the `surface.search` IPC method (US-004). Alacritty holds
-    /// its grid lock only for text extraction; Ghostty performs search and
-    /// matched-line extraction atomically on its runtime thread.
+    /// result. Backs the `surface.search` IPC method (US-004). The engine
+    /// performs the search and the matched-line extraction atomically on its
+    /// runtime thread.
     pub fn search_scrollback(
         &self,
         pattern: &str,
@@ -3193,66 +1608,7 @@ impl TerminalState {
         if pattern.is_empty() || max_matches == 0 {
             return (Vec::new(), false);
         }
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            return ghostty.search_scrollback(pattern, max_matches);
-        }
-        let result = crate::search::search_term(&self.term, pattern, false);
-
-        // Collect unique line numbers in order of first appearance.
-        let mut seen = std::collections::HashSet::new();
-        let mut rows: Vec<i32> = Vec::new();
-        let mut hit_cap = false;
-        for m in &result.matches {
-            let row = m.start.line.0;
-            if seen.insert(row) {
-                rows.push(row);
-                if rows.len() >= max_matches {
-                    hit_cap = true;
-                    break;
-                }
-            }
-        }
-
-        let term = self.term.lock_unfair();
-        let cols = term.last_column();
-        let out: Vec<(i32, String)> = rows
-            .into_iter()
-            .map(|row| {
-                let text = term.bounds_to_string(
-                    AlacPoint::new(GridLine(row), GridCol(0)),
-                    AlacPoint::new(GridLine(row), cols),
-                );
-                (row, text.trim_end().to_string())
-            })
-            .collect();
-        (out, hit_cap)
-    }
-
-    /// Strip every byte that could re-introduce a live escape/CSI/OSC/DCS
-    /// sequence (or C1 control) from a single restored-scrollback line, so the
-    /// documented "plain, ANSI stripped" invariant (schema.rs `scrollback`
-    /// field) is *enforced* on the restore path - not merely assumed.
-    ///
-    /// A tampered/imported `session.json` can carry raw VT bytes in
-    /// `surface.scrollback`; feeding them verbatim into the VTE processor
-    /// allows single-line title-spoof / OSC8 clickable-link injection into the
-    /// restored grid (phishing primitive). We drop the ESC introducer
-    /// (`0x1b`), all other C0 control code points (keeping only `\t` - `\n`
-    /// has already been consumed by the line split and `\r\n` is re-added by
-    /// the caller), and the C1 control range (U+0080..=U+009F, which alacritty
-    /// also treats as escape introducers). Pure string op: cross-platform, no
-    /// OS/`libc` calls, no fallible step.
-    fn sanitize_scrollback_line(line: &str) -> String {
-        line.chars()
-            .filter(|&c| {
-                c == '\t'
-                    || (!c.is_control()
-                        // Reject C1 controls (0x80..=0x9f); `is_control`
-                        // already covers them, but spell it out for intent.
-                        && !('\u{80}'..='\u{9f}').contains(&c))
-            })
-            .collect()
+        self.ghostty.search_scrollback(pattern, max_matches)
     }
 
     /// EP-005 US-014: remember a port announced by a service URL in this
@@ -3278,104 +1634,15 @@ impl TerminalState {
         }
     }
 
-    /// Feed saved scrollback text into the terminal grid via VTE processor.
-    /// Called during session restore, before the shell has produced output.
-    /// Prepends `\x1b[0m` (SGR reset) to clear any dangling style state from
-    /// a prior truncated scrollback - ANSI-safe defense-in-depth (US-012).
+    /// Feed saved scrollback text back into the grid. Called during session
+    /// restore, before the shell has produced output.
+    ///
+    /// The engine enforces the "plain, ANSI stripped" invariant on its side: a
+    /// tampered or imported `session.json` can carry raw VT bytes in
+    /// `surface.scrollback`, and feeding them verbatim would allow single-line
+    /// title-spoof / OSC 8 clickable-link injection into the restored grid.
     pub fn restore_scrollback(&self, text: &str) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = &self.ghostty {
-            ghostty.restore_scrollback(text);
-            return;
-        }
-        let mut term = self.term.lock();
-        let mut processor = alacritty_terminal::vte::ansi::Processor::<
-            alacritty_terminal::vte::ansi::StdSyncHandler,
-        >::new();
-        // Reset any dangling style state before feeding restored content
-        processor.advance(&mut *term, b"\x1b[0m");
-        // Feed each line with \r\n to advance the cursor
-        for line in text.split('\n') {
-            // Enforce the "plain, ANSI stripped" invariant: untrusted bytes
-            // from a deserialized session must never reach the VTE parser as
-            // live escape/CSI/OSC sequences (title-spoof / OSC8 link
-            // injection). Sanitize before advancing.
-            let sanitized = Self::sanitize_scrollback_line(line);
-            let bytes = sanitized.as_bytes();
-            if !bytes.is_empty() {
-                processor.advance(&mut *term, bytes);
-            }
-            processor.advance(&mut *term, b"\r\n");
-        }
-    }
-}
-
-/// Cap `result` at `max_chars` bytes, cutting on a UTF-8 char boundary, then
-/// trim to the last complete line and strip any partial ANSI escape at the cut.
-///
-/// U-001: `String::truncate` panics if the byte index is not on a char
-/// boundary. Scrollback is built from real grid cells (CJK, emoji,
-/// box-drawing are routine coding-agent output), so a raw `truncate(max_chars)`
-/// panics whenever `max_chars` lands mid-codepoint. `floor_char_boundary`
-/// rounds the index down to the nearest boundary first (no-op when already
-/// aligned), so the result is always a valid `&str` of length ≤ `max_chars`.
-pub(super) fn cap_scrollback_at_char_boundary(result: &mut String, max_chars: usize) {
-    if result.len() > max_chars {
-        let boundary = result.floor_char_boundary(max_chars);
-        result.truncate(boundary);
-        // `rfind('\n')` always returns a char boundary, so this second
-        // truncate is already safe.
-        if let Some(last_newline) = result.rfind('\n') {
-            result.truncate(last_newline);
-        }
-        strip_partial_ansi_tail(result);
-    }
-}
-
-/// Strip any partial ANSI escape sequence from the end of a truncated string.
-///
-/// Scans backward from the end for an ESC (`\x1b`) that starts a CSI (`\x1b[`),
-/// OSC (`\x1b]`), or DCS (`\x1bP`) sequence. If the sequence is unterminated
-/// (no final byte in the valid range), it is removed. Plain text strings with
-/// no ESC bytes are returned unmodified - truncation is identical to naive splitting.
-pub(super) fn strip_partial_ansi_tail(text: &mut String) {
-    let Some(esc_pos) = text.rfind('\x1b') else {
-        return; // No escape sequences at all
-    };
-
-    let tail = &text[esc_pos..];
-    let bytes = tail.as_bytes();
-
-    if bytes.len() < 2 {
-        text.truncate(esc_pos);
-        return;
-    }
-
-    match bytes[1] {
-        b'[' => {
-            // CSI sequence: \x1b[ ... terminated by byte in 0x40..=0x7E
-            let terminated = bytes[2..].iter().any(|&b| (0x40..=0x7E).contains(&b));
-            if !terminated {
-                text.truncate(esc_pos);
-            }
-        }
-        b']' => {
-            // OSC sequence: \x1b] ... terminated by BEL (0x07) or ST (\x1b\\)
-            let terminated = bytes[2..].contains(&0x07) || tail[2..].contains("\x1b\\");
-            if !terminated {
-                text.truncate(esc_pos);
-            }
-        }
-        b'P' => {
-            // DCS sequence: \x1bP ... terminated by ST (\x1b\\)
-            let terminated = tail[2..].contains("\x1b\\");
-            if !terminated {
-                text.truncate(esc_pos);
-            }
-        }
-        _ => {
-            // Other ESC sequences (SS2, SS3, etc.) are 2 bytes - complete as-is.
-        }
+        self.ghostty.restore_scrollback(text);
     }
 }
 
@@ -3682,12 +1949,12 @@ fn assemble_pty_env(
     );
     env.insert("COLORTERM".into(), "truecolor".into());
 
-    // Reset SHLVL so the child shell starts fresh at 1. alacritty's `tty`
-    // inherits the parent environment (no `env_clear`), so unlike the old
-    // portable-pty `env_remove("SHLVL")` we must actively override the value
-    // PaneFlow itself inherited (typically >= 2 when launched from a terminal),
-    // which otherwise breaks nested-shell prompt detection (oh-my-zsh subshell
-    // banner, fish $SHLVL gating). "0" makes the shell initialize it to 1.
+    // Reset SHLVL so the child shell starts fresh at 1. The child inherits the
+    // parent environment (no `env_clear`), so the value Paneflow itself
+    // inherited (typically >= 2 when launched from a terminal) has to be
+    // actively overridden; otherwise nested-shell prompt detection breaks
+    // (oh-my-zsh subshell banner, fish $SHLVL gating). "0" makes the shell
+    // initialize it to 1.
     env.insert("SHLVL".into(), "0".into());
 
     // Cross-platform AI-hook PATH-prepend: stage the embedded shim binaries and
@@ -3743,190 +2010,14 @@ fn assemble_pty_env(
     env
 }
 
-/// True when `pid` is still the leader of its own process group - i.e. the
-/// session we spawned. alacritty's `tty::new` calls `setsid()` on the child, so
-/// `child_pid` is both the PID and the PGID of the session leader and
-/// `getpgid(pid) == pid` holds for as long as that session lives. After the
-/// child exits the kernel can recycle `pid` onto an unrelated process whose
-/// pgid differs; this identity check closes the PID-reuse window that a bare
-/// `kill(-pid, 0)` existence probe leaves open, so teardown never signals a
-/// stranger's group.
-#[cfg(unix)]
-fn is_own_session_group(pid: i32) -> bool {
-    if pid <= 0 {
-        return false;
-    }
-    // SAFETY: getpgid is a pure query; it returns the pgid, or -1 (ESRCH) when
-    // no such process exists - neither equals our positive `pid` unless `pid`
-    // is genuinely its own group leader.
-    unsafe { libc::getpgid(pid) == pid }
-}
-
-/// Send SIGTERM to the child's process group, guarded by the session-identity
-/// check ([`is_own_session_group`]) so a dead or recycled `pid` is a harmless
-/// no-op. Returns true if SIGTERM was delivered. Factored out of `Drop` so the
-/// graceful-shutdown step is unit-testable (US-001).
-#[cfg(unix)]
-fn terminate_process_group(pid: i32) -> bool {
-    if !is_own_session_group(pid) {
-        return false;
-    }
-    // SAFETY: kill(-pid, SIGTERM) signals every member of the group; FFI-safe
-    // with the positive `pid` we just confirmed is our session leader.
-    unsafe { libc::kill(-pid, libc::SIGTERM) == 0 }
-}
-
-/// EP-002 US-005: format a numeric signal (from alacritty's native
-/// `ExitStatus::signal()`) as "N (Name)" for the exit overlay, e.g.
-/// "11 (Segmentation fault)". The name comes from `strsignal`; the number is
-/// authoritative (no reversal). Falls back to "signal N" when `strsignal` is
-/// null for the signal.
-#[cfg(unix)]
-fn format_signal(sig: i32) -> String {
-    // SAFETY: strsignal is a pure query; the returned C string is copied
-    // immediately via CStr before any further libc call.
-    let name = unsafe {
-        let p = libc::strsignal(sig);
-        if p.is_null() {
-            None
-        } else {
-            Some(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
-        }
-    };
-    match name {
-        Some(n) => format!("{sig} ({n})"),
-        None => format!("signal {sig}"),
-    }
-}
-
 impl Drop for TerminalState {
     fn drop(&mut self) {
-        #[cfg(ghostty_native)]
-        if let Some(ghostty) = self.ghostty.take() {
-            ghostty.shutdown();
-            self.child_pid = 0;
-        }
-        self.notifier.0.shutdown();
-
-        // US-034: close the dup'd PTY master fd we own (macOS). Done exactly
-        // once here - the fd was duplicated at spawn so `tcgetpgrp` stayed
-        // valid for this session's lifetime independent of the EventLoop's
-        // own copy.
-        #[cfg(target_os = "macos")]
-        if let Some(fd) = self.pty_master_fd.take() {
-            // SAFETY: `fd` is our owned dup; close it once.
-            unsafe {
-                libc::close(fd);
-            }
-        }
-
-        // Grace period + force-kill: if the child process ignores the PTY
-        // master close signal (SIGHUP on Unix, ClosePseudoConsole on Windows),
-        // force-kill it after 100ms.
-        //
-        // Scheduling: prefer the GPUI `background_executor` (Zed parity:
-        // `crates/terminal/src/terminal.rs:2451-2457`) so the kill timer
-        // lives under the GPUI runtime and gets cleanly torn down with
-        // the app. Tests / display-only paths have no executor wired and
-        // fall back to a detached OS thread (safe but un-trackable).
-        let executor = self.background_executor.clone();
-
-        #[cfg(unix)]
-        {
-            let pid = self.child_pid as i32;
-            // US-034: skip the kill ladder entirely once the child has exited.
-            // `child_pid` may have been reused by the OS by now, and signaling
-            // a reused PGID would terminate an unrelated process group - the
-            // synchronous SIGTERM below has the same PID-reuse window as the
-            // delayed SIGKILL. An already-exited child has nothing to kill.
-            if pid > 0 && self.exited.is_none() {
-                // US-001: graceful shutdown ladder - send SIGTERM to the group
-                // synchronously FIRST so agents/shells run their TERM handlers
-                // (state checkpoint, HISTFILE flush) before the 100ms-grace
-                // SIGKILL escalation below. Mirrors Zed's
-                // terminate_child_process() -> 100ms -> kill_child_process()
-                // (crates/terminal/src/terminal.rs:2697-2704, pty_info.rs:142-151).
-                terminate_process_group(pid);
-
-                let kill = move || {
-                    // Target the entire process group (`-pid`) so any
-                    // sub-process the shell forked (cargo build, npm dev,
-                    // long-running scripts) dies with the shell instead of
-                    // becoming an orphan reparented to PID 1. alacritty's
-                    // `tty::new` calls `setsid()` on the child, so `child_pid`
-                    // is both the PID and the PGID of the session leader -
-                    // `kill(-pgid, sig)` is the canonical POSIX idiom to signal
-                    // every process in that group.
-                    //
-                    // Re-check identity at fire time: 100ms after the child
-                    // died the kernel may have recycled `pid` onto an unrelated
-                    // group, so confirm `getpgid(pid) == pid` (our setsid
-                    // session leader) before the SIGKILL - a bare `kill(-pid,0)`
-                    // existence probe would not catch the reuse.
-                    if is_own_session_group(pid) {
-                        // SAFETY: kill(-pid, SIGKILL) signals every member of
-                        // the process group; FFI-safe with the positive `pid`
-                        // captured by value and just confirmed to be ours.
-                        unsafe {
-                            libc::kill(-pid, libc::SIGKILL);
-                        }
-                    }
-                };
-                match executor {
-                    Some(bg) => {
-                        bg.spawn(async move {
-                            smol::Timer::after(std::time::Duration::from_millis(100)).await;
-                            kill();
-                        })
-                        .detach();
-                    }
-                    None => {
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            kill();
-                        });
-                    }
-                }
-            }
-        }
-
-        #[cfg(windows)]
-        {
-            let pid = self.child_pid;
-            // US-034 (mirrors the Unix path above): skip the kill ladder entirely
-            // once the child has exited. Without this guard a normal exit (the
-            // user typed `exit`) still ran the deferred `TerminateProcess`, which
-            // fails with `ERROR_ACCESS_DENIED` on an already-dead process and
-            // logged a spurious warning every time a shell closed.
-            if pid != 0 && self.exited.is_none() {
-                // US-001 asymmetry: Windows console processes have no
-                // SIGTERM-equivalent graceful signal. TerminateProcess is a
-                // hard kill and serves as the escalation; there is no Windows
-                // mirror of the Unix synchronous-SIGTERM grace step above.
-                let terminate = move || {
-                    let started_at = std::time::Instant::now();
-                    let deadline = started_at
-                        .checked_add(WINDOWS_PROCESS_TREE_TERMINATION_BUDGET)
-                        .unwrap_or(started_at);
-                    let _ = terminate_windows_process_tree(pid, deadline);
-                };
-                match executor {
-                    Some(bg) => {
-                        bg.spawn(async move {
-                            smol::Timer::after(std::time::Duration::from_millis(100)).await;
-                            terminate();
-                        })
-                        .detach();
-                    }
-                    None => {
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            terminate();
-                        });
-                    }
-                }
-            }
-        }
+        // The engine owns the PTY and the child, so teardown belongs to its
+        // runtime thread: `shutdown` runs the full ladder there (SIGTERM then
+        // SIGKILL on the child's process group on Unix, process-tree
+        // termination on Windows) without blocking the render thread.
+        self.ghostty.shutdown();
+        self.child_pid = 0;
     }
 }
 
@@ -4305,111 +2396,33 @@ mod tests {
     }
 
     #[test]
-    fn display_only_sender_is_inert() {
-        // US-011: the DisplayOnly variant of TerminalType has no EventLoop, so
-        // write/resize/shutdown are dropped (no panic) and `is_pty` is false.
-        // This is the spawn-failure fallback's write side - input must never
-        // reach a child that doesn't exist.
-        let s = PtySender::display_only();
-        assert!(!s.is_pty());
-        s.write(b"echo hi\n".as_slice().into());
-        s.resize(AlacWindowSize {
-            num_cols: 80,
-            num_lines: 24,
-            cell_width: 0,
-            cell_height: 0,
-        });
-        s.shutdown();
-    }
-
-    #[test]
-    fn new_display_only_terminal_has_no_pty() {
-        // US-011: the spawn-failure fallback builds a DisplayOnly terminal; its
-        // notifier must report no PTY so the input path drops bytes.
-        let state = TerminalState::new_display_only(24, 80);
-        assert!(!state.notifier.0.is_pty());
-    }
-
-    #[test]
-    fn new_pending_terminal_starts_display_only_then_promotes_conceptually() {
-        // US-012: a pending terminal is display-only (no PTY) until promoted.
-        // (Promotion needs a real EventLoop channel, exercised by the live
-        // `eventloop_pty_echoes_input_into_grid` smoke via the synchronous
-        // `new`, which composes new_pending + open_pty_and_eventloop + promote.)
-        let (state, _events_tx) = TerminalState::new_pending(80, 24);
-        assert!(!state.notifier.0.is_pty());
+    fn new_pending_terminal_has_no_child_until_promoted() {
+        // US-012: a pending terminal carries no child until the off-thread
+        // start resolves and `promote_ghostty` swaps the runtime in.
+        let (state, _pending) = TerminalState::new_pending(80, 24);
         assert_eq!(state.child_pid, 0);
     }
 
-    #[cfg(ghostty_native)]
     #[test]
-    fn ghostty_fallback_preserves_the_auto_request_in_structured_diagnostics() {
-        let mut state = TerminalState::new_display_only(24, 80);
-        state.set_backend_request(TerminalBackendConfig::Auto);
-        state.effective_backend = "ghostty";
-
-        state.fallback_from_ghostty(TerminalBackendFailureDiagnostics::new(
-            TerminalBackendFailurePhase::Initialization,
-            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
-            Some(5),
-        ));
-
-        let diagnostics = state.backend_diagnostics();
-        assert_eq!(diagnostics.requested, TerminalBackendConfig::Auto);
-        assert_eq!(diagnostics.effective, "alacritty");
-        assert_eq!(
-            diagnostics.failure,
-            Some(TerminalBackendFailureDiagnostics::new(
-                TerminalBackendFailurePhase::Initialization,
-                TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
-                Some(5),
-            ))
-        );
-    }
-
-    #[cfg(ghostty_native)]
-    #[test]
-    fn ghostty_post_spawn_failure_records_once_and_keeps_the_ghostty_attribution() {
-        // US-018 AC3: the child already exists, so no Alacritty session is
-        // created; the failure is recorded exactly once and the diagnostics
-        // keep naming the engine that produced the behavior.
-        let mut state = TerminalState::new_display_only(24, 80);
-        state.set_backend_request(TerminalBackendConfig::Ghostty);
-        state.effective_backend = "ghostty";
-
-        let failure = TerminalBackendFailureDiagnostics::new(
-            TerminalBackendFailurePhase::PostSpawn,
-            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
-            Some(5),
-        );
-        state.fail_ghostty_after_spawn(failure.clone());
-
-        let diagnostics = state.backend_diagnostics();
-        assert_eq!(diagnostics.requested, TerminalBackendConfig::Ghostty);
-        assert_eq!(diagnostics.effective, "ghostty");
-        assert_eq!(diagnostics.failure, Some(failure));
-        let formatted = diagnostics.to_string();
-        assert_eq!(formatted.matches("reason_code=").count(), 1);
-        assert!(formatted.contains("failure_phase=post_spawn"));
-    }
-
-    #[test]
-    fn backend_diagnostics_extract_os_codes_without_sensitive_error_text() {
+    fn spawn_failure_is_reported_once_without_sensitive_error_text() {
         const CANARY: &str =
             r#"C:\Users\synthetic-user\private\launch.ps1 --token super-secret-canary"#;
         let error = anyhow::Error::new(io::Error::from_raw_os_error(5)).context(CANARY);
         let os_error = raw_os_error_from_anyhow(&error);
         assert_eq!(os_error, Some(5));
 
-        let mut state = TerminalState::new_display_only(24, 80);
-        state.set_backend_request(TerminalBackendConfig::Ghostty);
-        state.record_backend_failure(TerminalBackendFailureDiagnostics::new(
+        let failure = TerminalBackendFailureDiagnostics::new(
             TerminalBackendFailurePhase::OpenPty,
             TerminalBackendFailureDiagnostics::GHOSTTY_OPEN_PTY_FAILED,
             os_error,
-        ));
+        );
+        let mut state = TerminalState::new_display_only(24, 80);
+        state.report_spawn_failure(failure.clone(), "engine start failed");
 
-        let formatted = state.backend_diagnostics().to_string();
+        let diagnostics = state.backend_diagnostics();
+        assert_eq!(diagnostics.failure, Some(failure));
+        let formatted = diagnostics.to_string();
+        assert_eq!(formatted.matches("reason_code=").count(), 1);
         assert!(formatted.contains("failure_phase=open_pty"));
         assert!(formatted.contains("reason_code=ghostty_open_pty_failed"));
         assert!(formatted.contains("os_error=5"));
@@ -4421,10 +2434,6 @@ mod tests {
     #[test]
     fn backend_failure_phases_and_reason_codes_are_stable() {
         assert_eq!(
-            TerminalBackendFailurePhase::Availability.as_str(),
-            "availability"
-        );
-        assert_eq!(
             TerminalBackendFailurePhase::Initialization.as_str(),
             "initialization"
         );
@@ -4433,10 +2442,6 @@ mod tests {
         assert_eq!(
             TerminalBackendFailurePhase::PostSpawn.as_str(),
             "post_spawn"
-        );
-        assert_eq!(
-            TerminalBackendFailureDiagnostics::GHOSTTY_UNAVAILABLE,
-            "ghostty_unavailable"
         );
         assert_eq!(
             TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
@@ -4455,11 +2460,10 @@ mod tests {
         assert_eq!(diagnostics.target_triple, "aarch64-apple-darwin");
     }
 
-    #[cfg(ghostty_native)]
     #[test]
     fn backend_diagnostics_expose_pinned_ghostty_build_identity() {
         let diagnostics = TerminalState::new_display_only(24, 80).backend_diagnostics();
-        let ghostty = diagnostics.ghostty.expect("Ghostty build identity");
+        let ghostty = diagnostics.ghostty;
         let identity = paneflow_terminal_ghostty::build_identity();
         assert_eq!(
             ghostty.version,
@@ -4480,7 +2484,6 @@ mod tests {
         // without this queue the command (e.g. `claude`) is lost and the
         // terminal opens to a bare shell. `write_to_pty` must buffer instead.
         let (state, _events_tx) = TerminalState::new_pending(80, 24);
-        assert!(!state.notifier.0.is_pty());
         state.write_to_pty(b"claude\r".to_vec());
         let queued = state.pending_input.lock().expect("pending_input lock");
         assert_eq!(queued.len(), 1);
@@ -4511,7 +2514,6 @@ mod tests {
         );
     }
 
-    #[cfg(ghostty_native)]
     fn test_key_input(
         action: paneflow_terminal_ghostty::KeyAction,
     ) -> paneflow_terminal_ghostty::KeyInput {
@@ -4526,7 +2528,6 @@ mod tests {
         }
     }
 
-    #[cfg(ghostty_native)]
     fn test_mouse_input(
         action: paneflow_terminal_ghostty::MouseAction,
     ) -> paneflow_terminal_ghostty::MouseInput {
@@ -4546,22 +2547,17 @@ mod tests {
         }
     }
 
-    #[cfg(ghostty_native)]
     #[test]
     fn control_releases_fit_after_general_input_saturates() {
         let general_limit = MAX_PENDING_INPUT_BYTES - INPUT_CONTROL_RESERVE_BYTES;
-        let press = PendingTerminalInput::Key {
-            input: test_key_input(paneflow_terminal_ghostty::KeyAction::Press),
-            legacy: None,
-        };
-        let key_release = PendingTerminalInput::Key {
-            input: test_key_input(paneflow_terminal_ghostty::KeyAction::Release),
-            legacy: None,
-        };
+        let press =
+            PendingTerminalInput::Key(test_key_input(paneflow_terminal_ghostty::KeyAction::Press));
+        let key_release = PendingTerminalInput::Key(test_key_input(
+            paneflow_terminal_ghostty::KeyAction::Release,
+        ));
         let mouse_release = PendingTerminalInput::Mouse {
             input: test_mouse_input(paneflow_terminal_ghostty::MouseAction::Release),
             repeat: 1,
-            legacy: Some(b"mouse-up".to_vec()),
         };
         let focus = PendingTerminalInput::Focus(paneflow_terminal_ghostty::FocusEvent::Lost);
 
@@ -4571,26 +2567,20 @@ mod tests {
         assert!(focus.fits_after(general_limit));
     }
 
-    #[cfg(ghostty_native)]
     #[test]
-    fn ghostty_startup_fallback_preserves_structured_input_in_order() {
-        let (mut state, _alacritty_pending) = TerminalState::new_pending(80, 24);
-        let (ghostty, _runtime_pending, events_rx) =
-            GhosttySession::pending(TerminalWindowSize::new(80, 24, 0, 0));
-        state.attach_ghostty(ghostty, events_rx);
+    fn structured_input_is_queued_in_order_before_promotion() {
+        // US-012: keys, mouse reports, focus events and pastes issued before
+        // the off-thread start resolves are queued, in order, rather than lost.
+        let (state, _pending) = TerminalState::new_pending(80, 24);
 
         assert_eq!(
-            state.write_ghostty_key(
-                test_key_input(paneflow_terminal_ghostty::KeyAction::Press),
-                Some(Cow::Borrowed(b"\x1b[15~")),
-            ),
+            state.write_ghostty_key(test_key_input(paneflow_terminal_ghostty::KeyAction::Press)),
             BackendInputResult::Accepted
         );
         assert_eq!(
             state.write_ghostty_mouse(
                 test_mouse_input(paneflow_terminal_ghostty::MouseAction::Press),
                 2,
-                Some(b"M".to_vec()),
             ),
             BackendInputResult::Accepted
         );
@@ -4599,62 +2589,16 @@ mod tests {
             BackendInputResult::Accepted
         );
         assert_eq!(
-            state.write_ghostty_paste("paste".to_string(), true),
+            state.write_ghostty_paste("paste".to_string()),
             BackendInputResult::Accepted
         );
 
-        state.fallback_from_ghostty(TerminalBackendFailureDiagnostics::new(
-            TerminalBackendFailurePhase::Initialization,
-            TerminalBackendFailureDiagnostics::GHOSTTY_INITIALIZATION_FAILED,
-            None,
-        ));
-        let legacy: Vec<Vec<u8>> = state
-            .drain_pending_legacy_input()
-            .into_iter()
-            .map(Cow::into_owned)
-            .collect();
-        assert_eq!(
-            legacy,
-            vec![
-                b"\x1b[15~".to_vec(),
-                b"MM".to_vec(),
-                b"\x1b[I".to_vec(),
-                b"\x1b[200~paste\x1b[201~".to_vec(),
-            ]
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn promote_flushes_buffered_input_into_grid() {
-        // US-012 end-to-end: input written while display-only must reach the
-        // child after promotion. Mirrors the synchronous `new` composition
-        // (new_pending + open_pty_and_eventloop + promote) but injects a write
-        // *between* new_pending and promote - the exact auto-launch ordering.
-        let params = TerminalState::resolve_spawn_params(None, 1, 1, Some((80, 24)), None);
-        let (mut state, pending) = TerminalState::new_pending(params.cols, params.rows);
-        // Buffered while display-only - the live notifier does not exist yet.
-        state.write_to_pty(b"echo PANEFLOW_FLUSH_OK\n".to_vec());
-        assert!(!state.notifier.0.is_pty());
-
-        let spawned = TerminalState::open_pty_and_eventloop(params, pending, None)
-            .expect("US-012: open a PTY-backed terminal via tty::new + EventLoop");
-        state.promote(spawned);
-        assert!(state.notifier.0.is_pty());
-
-        let mut found = false;
-        for _ in 0..60 {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            state.sync();
-            if grid_to_string(&state.term).contains("PANEFLOW_FLUSH_OK") {
-                found = true;
-                break;
-            }
-        }
-        assert!(
-            found,
-            "US-012: input buffered before promotion never reached the shell"
-        );
+        let queued = state.pending_input.lock().expect("pending_input lock");
+        assert_eq!(queued.len(), 4);
+        assert!(matches!(queued[0], PendingTerminalInput::Key(_)));
+        assert!(matches!(queued[1], PendingTerminalInput::Mouse { .. }));
+        assert!(matches!(queued[2], PendingTerminalInput::Focus(_)));
+        assert!(matches!(queued[3], PendingTerminalInput::Paste { .. }));
     }
 
     #[test]
@@ -4673,20 +2617,6 @@ mod tests {
         // US-012: the foreground mask snapshot must succeed on the main thread
         // so the off-thread spawn can hand it to the child (Ctrl-C parity).
         assert!(capture_foreground_signal_mask().is_some());
-    }
-
-    #[test]
-    fn cursor_shape_maps_hollow_to_hollow_block() {
-        // US-007: config shapes map to renderer (vte) shapes; the config's
-        // `Hollow` maps to the renderer's `HollowBlock`.
-        use alacritty_terminal::vte::ansi::CursorShape;
-        use paneflow_config::schema::CursorShapeConfig as C;
-        assert_eq!(map_cursor_shape(C::Vintage), CursorShape::Block);
-        assert_eq!(map_cursor_shape(C::Block), CursorShape::Block);
-        assert_eq!(map_cursor_shape(C::Beam), CursorShape::Beam);
-        assert_eq!(map_cursor_shape(C::Underline), CursorShape::Underline);
-        assert_eq!(map_cursor_shape(C::DoubleUnderline), CursorShape::Underline);
-        assert_eq!(map_cursor_shape(C::Hollow), CursorShape::HollowBlock);
     }
 
     #[test]
@@ -4789,54 +2719,42 @@ mod tests {
     #[test]
     fn child_exit_records_real_code_not_sentinel() {
         // US-003 AC: a real child exit code must round-trip into `exited`,
-        // not the -1 fallback. The status is built the same way
-        // `pty_reader_loop` builds it from `child.wait()` per platform, so
-        // this exercises the Windows path on the Windows CI leg and the Unix
-        // path elsewhere.
+        // not the -1 fallback. The engine's runtime thread already decoded the
+        // platform `ExitStatus` into this event, so the assertion is on the
+        // state transition, not on the per-OS status encoding.
         let mut state = TerminalState::new_display_only(24, 80);
         assert!(state.exited.is_none(), "fresh terminal has no exit code");
 
-        #[cfg(unix)]
-        let status: std::process::ExitStatus =
-            std::os::unix::process::ExitStatusExt::from_raw(42 << 8);
-        #[cfg(windows)]
-        let status: std::process::ExitStatus =
-            std::os::windows::process::ExitStatusExt::from_raw(42u32);
-
-        #[cfg(any(unix, windows))]
-        {
-            state.process_event(AlacEvent::ChildExit(status));
-            assert_eq!(
-                state.exited,
-                Some(42),
-                "US-003: the real exit code must be recorded, not -1"
-            );
-        }
+        state.process_ghostty_event(GhosttyUiEvent::ChildExited {
+            code: 42,
+            signal: None,
+        });
+        assert_eq!(
+            state.exited,
+            Some(42),
+            "US-003: the real exit code must be recorded, not -1"
+        );
     }
 
     #[test]
     fn exit_fallback_does_not_clobber_real_child_exit_code() {
-        // US-003 AC: first-write-wins. A bare `Exit` (EOF, no status) must
-        // never overwrite a real code already recorded by `ChildExit`.
+        // US-003 AC: first-write-wins. A runtime failure reported after a
+        // real child exit (the engine can publish both when the mailbox tears
+        // down) must never overwrite the code already recorded.
         let mut state = TerminalState::new_display_only(24, 80);
 
-        #[cfg(unix)]
-        let status: std::process::ExitStatus =
-            std::os::unix::process::ExitStatusExt::from_raw(1 << 8);
-        #[cfg(windows)]
-        let status: std::process::ExitStatus =
-            std::os::windows::process::ExitStatusExt::from_raw(1u32);
-
-        #[cfg(any(unix, windows))]
-        {
-            state.process_event(AlacEvent::ChildExit(status));
-            state.process_event(AlacEvent::Exit);
-            assert_eq!(
-                state.exited,
-                Some(1),
-                "US-003: Exit must not clobber the real ChildExit code"
-            );
-        }
+        state.process_ghostty_event(GhosttyUiEvent::ChildExited {
+            code: 1,
+            signal: None,
+        });
+        state.process_ghostty_event(GhosttyUiEvent::RuntimeFailed(
+            "engine mailbox closed".to_owned(),
+        ));
+        assert_eq!(
+            state.exited,
+            Some(1),
+            "US-003: a later failure must not clobber the real exit code"
+        );
     }
 
     // -----------------------------------------------------------------
@@ -4892,109 +2810,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // US-001 - graceful teardown sends SIGTERM before SIGKILL.
-    // -----------------------------------------------------------------
-
-    #[cfg(unix)]
-    #[test]
-    fn terminate_process_group_delivers_sigterm_and_is_honored() {
-        // US-001 AC: the process group receives SIGTERM (not a hard SIGKILL).
-        // The child is its own session/group leader (setsid) and traps SIGTERM
-        // to exit 42; a SIGKILL would instead show signal 9 with no exit code.
-        // Proving the trap ran proves SIGTERM was delivered to the group - and
-        // by construction `Drop` sends it synchronously *before* scheduling the
-        // 100ms-grace SIGKILL.
-        use std::io::{BufRead, BufReader};
-        use std::os::unix::process::{CommandExt, ExitStatusExt};
-        use std::process::{Command, Stdio};
-        use std::time::{Duration, Instant};
-
-        // `sleep 30 &` + `wait` (not a foreground sleep): POSIX requires the
-        // `wait` builtin to be interrupted by a trapped signal, so the trap
-        // runs promptly even if the group SIGTERM races `sleep`'s fork→exec
-        // window (where an inherited blocked mask can leave it alive - a
-        // foreground sleep then pins the shell for its full 30s before the
-        // trap fires, which is exactly the aarch64-CI hang this replaces).
-        // `echo ready` is the readiness handshake: once the parent reads it,
-        // setsid + trap + background spawn are all done - no blind warmup.
-        let mut cmd = Command::new("sh");
-        cmd.args(["-c", "trap 'exit 42' TERM; sleep 30 & echo ready; wait"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        // SAFETY: setsid() runs in the forked child before exec; it detaches
-        // the child into its own session/group so kill(-pid, ...) targets
-        // exactly this group, with no shared-state hazard.
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-        let mut child = cmd.spawn().expect("spawn test child");
-        let pid = child.id() as i32;
-
-        let mut ready = String::new();
-        BufReader::new(child.stdout.take().expect("piped stdout"))
-            .read_line(&mut ready)
-            .expect("read readiness line");
-        assert_eq!(ready.trim_end(), "ready", "handshake line");
-
-        assert!(
-            terminate_process_group(pid),
-            "US-001: SIGTERM must be delivered to the live process group"
-        );
-
-        // The trap exits 42 well within the 100ms grace window; poll for exit
-        // with a generous ceiling - the suite runs fully parallel on 4-core CI
-        // runners and a 5s deadline has flaked under that load (same class as
-        // the v0.3.9 stdout_cap deflake). A regression still fails, just slower.
-        let deadline = Instant::now() + Duration::from_secs(30);
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("try_wait child") {
-                break status;
-            }
-            if Instant::now() > deadline {
-                let _ = child.kill();
-                panic!("US-001: child did not exit after SIGTERM within 30s");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        };
-
-        assert_eq!(
-            status.code(),
-            Some(42),
-            "US-001: child must exit via its SIGTERM handler (42), not be SIGKILLed (signal={:?})",
-            status.signal()
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn terminate_process_group_is_noop_for_dead_or_invalid_group() {
-        // US-001 AC (unhappy path): an empty/invalid group must be a harmless
-        // no-op guarded by the `getpgid(pid) == pid` identity check - no panic,
-        // returns false.
-        assert!(
-            !terminate_process_group(0),
-            "pid 0 must be rejected (would signal the caller's own group)"
-        );
-        assert!(
-            !terminate_process_group(-5),
-            "negative pid must be rejected"
-        );
-        // A very high pid is almost certainly not its own live group leader;
-        // getpgid returns ESRCH (≠ pid) so SIGTERM is never sent.
-        assert!(
-            !terminate_process_group(0x7FFF_FFF0),
-            "non-existent group must be a no-op, not a panic"
-        );
-    }
-
-    // -----------------------------------------------------------------
-    // Env assembly contract. EP-002 US-004 removed the mockable
-    // `PtyBackend::spawn` seam (the IO core now opens the PTY via alacritty's
-    // `tty::new`), so the env that the child inherits is asserted directly
+    // Env assembly contract. There is no mockable spawn seam: the engine
+    // opens the PTY itself, so the env the child inherits is asserted directly
     // against the pure `assemble_pty_env`.
     // -----------------------------------------------------------------
 
@@ -5306,12 +3123,17 @@ mod tests {
         );
     }
 
+    // `scan_output` reads the tail the engine materializes from live PTY
+    // output, which a display-only grid never produces. These two tests cover
+    // the detection logic itself, so they hand the lines over directly.
     #[test]
     fn scan_output_uses_multiline_framework_context() {
         let mut state = TerminalState::new_display_only(24, 80);
-        state.restore_scrollback("▲ Next.js 16.1.6\n- Local: http://localhost:3000\n");
 
-        let services = state.scan_output();
+        let services = state.detect_services_in_lines(&[
+            "▲ Next.js 16.1.6".to_string(),
+            "- Local: http://localhost:3000".to_string(),
+        ]);
 
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].port, 3000);
@@ -5322,13 +3144,13 @@ mod tests {
     #[test]
     fn scan_output_dedups_until_port_leaves_live_set() {
         let mut state = TerminalState::new_display_only(24, 80);
-        state.restore_scrollback("Vite ready at http://localhost:5173\n");
+        let lines = ["Vite ready at http://localhost:5173".to_string()];
 
-        assert_eq!(state.scan_output().len(), 1);
-        assert!(state.scan_output().is_empty());
+        assert_eq!(state.detect_services_in_lines(&lines).len(), 1);
+        assert!(state.detect_services_in_lines(&lines).is_empty());
 
         state.retain_reported_ports(&[]);
-        let services = state.scan_output();
+        let services = state.detect_services_in_lines(&lines);
 
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].port, 5173);
@@ -5382,249 +3204,16 @@ mod tests {
         );
     }
 
-    fn drain_osc_filter(filter: &mut BoundedOscFilter) -> Vec<u8> {
-        let mut output = vec![0; MAX_OSC_SEQUENCE_BYTES + 256];
-        let written = filter.drain_into(&mut output);
-        output.truncate(written);
-        output
-    }
-
-    struct ChunkedTestPty {
-        chunks: VecDeque<Vec<u8>>,
-        writes: Vec<u8>,
-        read_calls: usize,
-    }
-
-    impl Read for ChunkedTestPty {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            self.read_calls += 1;
-            let Some(chunk) = self.chunks.pop_front() else {
-                return Err(io::ErrorKind::WouldBlock.into());
-            };
-            let written = chunk.len().min(buf.len());
-            buf[..written].copy_from_slice(&chunk[..written]);
-            if written < chunk.len() {
-                self.chunks.push_front(chunk[written..].to_vec());
-            }
-            Ok(written)
-        }
-    }
-
-    impl Write for ChunkedTestPty {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.writes.extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl tty::EventedReadWrite for ChunkedTestPty {
-        type Reader = Self;
-        type Writer = Self;
-
-        unsafe fn register(
-            &mut self,
-            _poller: &Arc<polling::Poller>,
-            _event: polling::Event,
-            _mode: polling::PollMode,
-        ) -> io::Result<()> {
-            Ok(())
-        }
-
-        fn reregister(
-            &mut self,
-            _poller: &Arc<polling::Poller>,
-            _event: polling::Event,
-            _mode: polling::PollMode,
-        ) -> io::Result<()> {
-            Ok(())
-        }
-
-        fn deregister(&mut self, _poller: &Arc<polling::Poller>) -> io::Result<()> {
-            Ok(())
-        }
-
-        fn reader(&mut self) -> &mut Self::Reader {
-            self
-        }
-
-        fn writer(&mut self) -> &mut Self::Writer {
-            self
-        }
-    }
-
-    impl tty::EventedPty for ChunkedTestPty {
-        fn next_child_event(&mut self) -> Option<tty::ChildEvent> {
-            None
-        }
-    }
-
-    #[test]
-    fn osc_filter_read_continues_after_a_fully_buffered_fragment() {
-        let inner = ChunkedTestPty {
-            chunks: VecDeque::from([b"\x1b]52;c;SGV".to_vec(), b"sbG8=\x07after".to_vec()]),
-            writes: Vec::new(),
-            read_calls: 0,
-        };
-        let (cwd_tx, _cwd_rx) = unbounded();
-        let (marks_tx, _marks_rx) = std::sync::mpsc::sync_channel(4);
-        let mut pty = Osc7Pty::new(inner, cwd_tx, marks_tx);
-        let mut output = [0; 64];
-
-        let read = pty.read(&mut output).expect("filtered PTY read");
-
-        assert_eq!(&output[..read], b"\x1b]52;c;SGVsbG8=\x07after");
-        assert_eq!(pty.inner.read_calls, 2);
-    }
-
-    #[test]
-    fn bounded_osc_filter_preserves_fragmented_sequences_exactly() {
-        let mut filter = BoundedOscFilter::default();
-        let mut output = Vec::new();
-
-        filter.advance(b"before\x1b]52;c;SGV");
-        output.extend(drain_osc_filter(&mut filter));
-        filter.advance(b"sbG8=\x1b");
-        output.extend(drain_osc_filter(&mut filter));
-        filter.advance(b"\\after");
-        output.extend(drain_osc_filter(&mut filter));
-
-        assert_eq!(output, b"before\x1b]52;c;SGVsbG8=\x1b\\after");
-    }
-
-    #[test]
-    fn bounded_osc_filter_drops_oversized_sequences_before_vte() {
-        let mut filter = BoundedOscFilter::default();
-        filter.advance(b"before\x1b]0;");
-        filter.advance(&vec![b'x'; MAX_OSC_SEQUENCE_BYTES + 1]);
-        assert!(matches!(filter.state, BoundedOscState::Drop));
-        filter.advance(b"\x07after");
-
-        assert_eq!(drain_osc_filter(&mut filter), b"before\x18after");
-        assert!(matches!(filter.state, BoundedOscState::Ground));
-    }
-
-    #[test]
-    fn bounded_osc_filter_preserves_raw_c1_for_vte_7_bit_parser() {
-        let input = b"\x1b[\xd1\x9dtext\x9c";
-        let mut filter = BoundedOscFilter::default();
-        for chunk in input.chunks(1) {
-            filter.advance(chunk);
-        }
-        assert_eq!(drain_osc_filter(&mut filter), input);
-    }
-
-    #[test]
-    fn osc7_scanner_extracts_bel_and_st_terminated_file_uris() {
-        let mut scanner = Osc7Scanner::default();
-        let mut seen = Vec::new();
-        scanner.advance(b"pre\x1b]7;file:///tmp/project\x07post", |cwd| {
-            seen.push(cwd)
-        });
-        scanner.advance(b"\x1b]7;file://host/home/me/project\x1b\\", |cwd| {
-            seen.push(cwd)
-        });
-
-        assert_eq!(
-            seen,
-            vec!["/tmp/project".to_string(), "/home/me/project".to_string()]
-        );
-    }
-
-    #[test]
-    fn osc7_scanner_discards_oversized_payload_through_nested_sequence() {
-        let mut scanner = Osc7Scanner::default();
-        let mut seen = Vec::new();
-        let mut input = b"\x1b]7;file:///tmp/".to_vec();
-        input.extend(std::iter::repeat_n(b'a', OSC7_MAX_PAYLOAD + 1));
-        input.extend_from_slice(b"\x1b]7;file:///tmp/nested\x07");
-        input.extend_from_slice(b"\x1b]7;file:///tmp/recovered\x07");
-
-        scanner.advance(&input, |cwd| seen.push(cwd));
-
-        assert_eq!(seen, ["/tmp/recovered"]);
-    }
-
-    #[test]
-    fn osc7_scanner_cancels_sequences_on_can_and_sub() {
-        let mut scanner = Osc7Scanner::default();
-        let mut seen = Vec::new();
-
-        scanner.advance(
-            b"\x1b]7;file:///tmp/can\x18\x1b]7;file:///tmp/sub\x1a\x1b]7;file:///tmp/recovered\x07",
-            |cwd| seen.push(cwd),
-        );
-
-        assert_eq!(seen, ["/tmp/recovered"]);
-    }
-
-    #[cfg(not(windows))]
-    #[test]
-    fn osc7_payload_preserves_drive_like_posix_path() {
-        assert_eq!(
-            cwd_from_osc7_payload("7;file:///C:/dev/path%20with%20space"),
-            Some("/C:/dev/path with space".to_string())
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn osc7_payload_decodes_windows_file_uri() {
-        assert_eq!(
-            cwd_from_osc7_payload("7;file:///C:/dev/path%20with%20space"),
-            Some(r"C:\dev\path with space".to_string())
-        );
-        assert_eq!(
-            cwd_from_osc7_payload("7;file://DESKTOP-123/C:/dev/paneflow"),
-            Some(r"C:\dev\paneflow".to_string())
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn osc7_payload_decodes_git_bash_msys_file_uri() {
-        assert_eq!(
-            cwd_from_osc7_payload("7;file://DESKTOP-123/c/dev/path%20with%20space"),
-            Some(r"C:\dev\path with space".to_string())
-        );
-        assert_eq!(
-            cwd_from_osc7_payload("7;file:///c"),
-            Some("C:\\".to_string())
-        );
-    }
-
-    #[test]
-    fn osc7_payload_accepts_raw_percent_from_posix_shells() {
-        assert_eq!(
-            cwd_from_osc7_payload("7;file://host/tmp/100% legit"),
-            Some("/tmp/100% legit".to_string())
-        );
-    }
-
-    #[test]
-    fn osc7_payload_rejects_legacy_malformed_windows_uri() {
-        assert_eq!(
-            cwd_from_osc7_payload(r"7;file://DESKTOP-123C:\dev\paneflow"),
-            None
-        );
-    }
-
     #[test]
     fn pending_clipboard_ops_are_bounded() {
         let mut state = TerminalState::new_display_only(5, 20);
 
         for i in 0..(MAX_PENDING_CLIPBOARD_OPS + 2) {
-            state.queue_clipboard_op(ClipboardOp::Store(format!("op-{i}")));
+            state.queue_clipboard_op(format!("op-{i}"));
         }
 
         assert_eq!(state.pending_clipboard_ops.len(), MAX_PENDING_CLIPBOARD_OPS);
-        match &state.pending_clipboard_ops[0] {
-            ClipboardOp::Store(text) => assert_eq!(text, "op-2"),
-            ClipboardOp::Load(_) => panic!("expected store op"),
-        }
+        assert_eq!(state.pending_clipboard_ops[0], "op-2");
     }
 
     #[test]
@@ -5632,88 +3221,63 @@ mod tests {
         let mut state = TerminalState::new_display_only(5, 20);
         state.set_osc52_mode(Osc52Mode::CopyOnly);
 
-        state.process_event(AlacEvent::ClipboardStore(
-            alacritty_terminal::term::ClipboardType::Clipboard,
-            "unfocused".into(),
-        ));
+        state.deliver_clipboard_text("unfocused".into());
         assert!(state.pending_clipboard_ops.is_empty());
 
         state.set_terminal_focused(true);
-        state.process_event(AlacEvent::ClipboardStore(
-            alacritty_terminal::term::ClipboardType::Clipboard,
-            "focused".into(),
-        ));
-        assert!(matches!(
-            state.pending_clipboard_ops.as_slice(),
-            [ClipboardOp::Store(text)] if text == "focused"
-        ));
+        state.deliver_clipboard_text("focused".into());
+        assert_eq!(state.pending_clipboard_ops, vec!["focused".to_string()]);
 
-        state.process_event(AlacEvent::ClipboardStore(
-            alacritty_terminal::term::ClipboardType::Clipboard,
-            "x".repeat(MAX_OSC52_BYTES + 1),
-        ));
+        state.deliver_clipboard_text("x".repeat(MAX_OSC52_BYTES + 1));
         assert_eq!(state.pending_clipboard_ops.len(), 1);
 
         state.set_terminal_focused(false);
-        state.process_event(AlacEvent::ClipboardStore(
-            alacritty_terminal::term::ClipboardType::Clipboard,
-            "lost-focus".into(),
-        ));
+        state.deliver_clipboard_text("lost-focus".into());
         assert_eq!(state.pending_clipboard_ops.len(), 1);
     }
 
+    /// A tampered `session.json` line can carry live VT bytes: an OSC 8
+    /// clickable-link injection, an OSC 0 title spoof, a raw CSI, an ESC
+    /// introducer, a NUL, and a C1 control. The engine sanitizes on the way
+    /// in, so none of them reach the grid as a live sequence.
     #[test]
     fn restore_scrollback_strips_escape_and_osc_injection() {
-        // A tampered session.json line carrying live VT bytes: an OSC8
-        // clickable-link injection, an OSC0 title-spoof, a raw CSI, an ESC
-        // introducer, a NUL, and a C1 control. None may survive sanitization.
         let hostile = "\x1b]8;;https://evil.example/\x07click\x1b]8;;\x07\
                        \x1b]0;PWNED\x07\x1b[31mred\x00\u{9b}38m";
-        let cleaned = TerminalState::sanitize_scrollback_line(hostile);
+        let state = TerminalState::new_display_only(6, 80);
+        state.restore_scrollback(hostile);
+        state.restore_scrollback("a\tb");
 
-        // No control byte that could start a VT sequence survives.
-        assert!(
-            !cleaned.contains('\x1b'),
-            "ESC introducer must be stripped; got {cleaned:?}"
-        );
-        assert!(
-            !cleaned.contains('\x07'),
-            "BEL (OSC terminator) must be stripped; got {cleaned:?}"
-        );
-        assert!(
-            !cleaned.contains('\x00'),
-            "NUL / C0 controls must be stripped; got {cleaned:?}"
-        );
-        assert!(
-            !cleaned.chars().any(|c| ('\u{80}'..='\u{9f}').contains(&c)),
-            "C1 controls must be stripped; got {cleaned:?}"
-        );
-        // Visible glyphs are preserved verbatim (no live sequence remains, so
-        // these read as plain text rather than executing).
+        assert_eq!(state.title, "Terminal", "OSC 0 must not retitle the pane");
+
+        let backend = state.session_backend();
+        let restored = (0..6)
+            .filter_map(|row| backend.line_text_at(Point::new(row, 0)))
+            .map(|line| line.text)
+            .collect::<Vec<_>>()
+            .join("\n");
         for marker in ["https://evil.example/", "click", "PWNED", "red", "38m"] {
             assert!(
-                cleaned.contains(marker),
-                "plain glyphs must survive; {marker:?} missing from {cleaned:?}"
+                restored.contains(marker),
+                "plain glyphs must survive; {marker:?} missing from {restored:?}"
             );
         }
-        // A tab is the one C0 byte we intentionally keep.
-        assert_eq!(
-            TerminalState::sanitize_scrollback_line("a\tb"),
-            "a\tb",
-            "tab must be preserved"
+        assert!(
+            !restored.contains('\x1b') && !restored.contains('\x07'),
+            "no VT introducer may reach the grid; got {restored:?}"
         );
     }
 
-    /// `extract_scrollback_from` can read a cloned `SharedTerm` handle while
-    /// excluding active viewport rows from the extracted terminal history.
+    /// Extraction drains terminal history while excluding the active viewport
+    /// rows, so a restore cannot replay the previous visible frame ahead of
+    /// fresh shell output.
     #[test]
-    fn extract_scrollback_from_drains_cloned_history_only() {
+    fn extract_scrollback_drains_history_only() {
         let state = TerminalState::new_display_only(3, 80);
         state.restore_scrollback("history-alpha\nhistory-bravo\nvisible-charlie\nvisible-delta");
 
-        // Clone the Arc, then extract via the associated fn without `&self`.
-        let handle = state.term.clone();
-        let drained = TerminalState::extract_scrollback_from(&handle)
+        let drained = state
+            .extract_scrollback()
             .expect("seeded scrollback should not be empty");
 
         for marker in ["history-alpha", "history-bravo"] {
@@ -5728,113 +3292,6 @@ mod tests {
                 "active viewport must exclude {marker:?}; got:\n{drained}"
             );
         }
-    }
-
-    /// U-001: a multibyte codepoint straddling the byte cap must not panic
-    /// `String::truncate`; the cut lands on a char boundary at or below the cap.
-    #[test]
-    fn cap_scrollback_truncates_on_char_boundary() {
-        const MAX: usize = 100;
-        // 99 ASCII bytes, then a 4-byte '🦀' occupying byte indices 99..103, so
-        // byte index `MAX` (100) falls inside the codepoint - the case that
-        // panics a raw `truncate(MAX)`. No newline, so the line-trim is a no-op.
-        let mut s = "a".repeat(MAX - 1);
-        s.push('🦀');
-        assert!(s.len() > MAX, "fixture must exceed the cap");
-
-        cap_scrollback_at_char_boundary(&mut s, MAX);
-
-        // `String` already guarantees valid UTF-8; the contract is length ≤ cap
-        // and that the straddling char was dropped whole rather than split.
-        assert!(s.len() <= MAX, "capped length {} must be ≤ {MAX}", s.len());
-        assert_eq!(s, "a".repeat(MAX - 1));
-    }
-
-    /// Already-aligned cap is a no-op beyond the existing line trim.
-    #[test]
-    fn cap_scrollback_noop_under_cap() {
-        let mut s = "short line".to_string();
-        let before = s.clone();
-        cap_scrollback_at_char_boundary(&mut s, 100);
-        assert_eq!(s, before);
-    }
-
-    /// Dump the viewport grid to a string for the live smoke test.
-    fn grid_to_string(term: &Arc<FairMutex<Term<ZedListener>>>) -> String {
-        let term = term.lock();
-        let grid = term.grid();
-        let mut out = String::new();
-        for line in 0..grid.screen_lines() {
-            for col in 0..grid.columns() {
-                out.push(grid[AlacPoint::new(GridLine(line as i32), GridCol(col))].c);
-            }
-            out.push('\n');
-        }
-        out
-    }
-
-    /// EP-002 US-004 live smoke: spawn a REAL PTY-backed shell via
-    /// `alacritty_terminal::tty` + `EventLoop`, write a marker command, and
-    /// confirm the EventLoop read->parse path lands the echoed output in the
-    /// `Term` grid. This is the only test that exercises `tty::new` +
-    /// `EventLoop::spawn` + `Notifier` end-to-end - the others use the
-    /// display-only path. Unix-only (drives `/bin/sh`); the process group is
-    /// torn down by `Drop` at scope exit.
-    #[cfg(unix)]
-    #[test]
-    fn eventloop_pty_echoes_input_into_grid() {
-        let mut state = TerminalState::new(None, 1, 1, Some((80, 24)), None, None)
-            .expect("EP-002: spawn a PTY-backed terminal via tty::new + EventLoop");
-        assert!(state.child_pid > 0, "a real PTY child must have a pid");
-
-        // Let the shell initialize, then send a unique marker command.
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        state.notifier.notify(b"echo PANEFLOW_SMOKE_OK\n".to_vec());
-
-        // Poll the grid (the EventLoop mutates it on its own thread) until the
-        // echoed marker appears, draining events meanwhile. Generous budget so
-        // a slow runner doesn't flake.
-        let mut found = false;
-        for _ in 0..60 {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            state.sync();
-            if grid_to_string(&state.term).contains("PANEFLOW_SMOKE_OK") {
-                found = true;
-                break;
-            }
-        }
-        assert!(
-            found,
-            "EP-002: the EventLoop read path did not deliver shell output to the grid"
-        );
-    }
-
-    #[test]
-    fn eventloop_drains_final_output_after_exit() {
-        let mut state = TerminalState::new(None, 1, 1, Some((80, 24)), None, None)
-            .expect("spawn a PTY-backed terminal");
-
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        state
-            .notifier
-            .notify(b"echo PANEFLOW_FINAL_OK\nexit\n".to_vec());
-
-        let mut found = false;
-        for _ in 0..240 {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            state.sync();
-            let visible = grid_to_string(&state.term);
-            let history = state.extract_scrollback().unwrap_or_default();
-            if visible.contains("PANEFLOW_FINAL_OK") || history.contains("PANEFLOW_FINAL_OK") {
-                found = true;
-                break;
-            }
-        }
-
-        assert!(
-            found,
-            "final PTY output must survive a fast shell exit before the overlay lands"
-        );
     }
 
     #[cfg(windows)]
@@ -5902,7 +3359,7 @@ mod tests {
         );
 
         std::thread::sleep(std::time::Duration::from_millis(250));
-        state.notifier.notify(b"echo PANEFLOW_GEN_OK\n".to_vec());
+        state.write_to_pty_silent(b"echo PANEFLOW_GEN_OK\n".to_vec());
 
         // Up to 12s. This test runs on every OS, and PowerShell (the Windows
         // default shell) can cold-start slowly on a loaded CI runner before

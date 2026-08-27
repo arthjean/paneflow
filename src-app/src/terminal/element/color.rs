@@ -8,8 +8,8 @@
 //!    threshold. Polarity-aware and perceptually uniform - more accurate than
 //!    WCAG 2.0 on dark backgrounds. Matches Zed's algorithm.
 //! 2. **Color resolution** (`convert_color`, `named_color`, `indexed_color`):
-//!    translates alacritty `AnsiColor` (Named/Spec/Indexed) into themed `Hsla`,
-//!    covering the xterm-256color palette.
+//!    translates the neutral [`crate::terminal::types::Color`] (Named / Spec /
+//!    Indexed) into themed `Hsla`, covering the xterm-256color palette.
 //!
 //! Extracted from `terminal_element.rs` per US-009 of the src-app refactor PRD.
 
@@ -221,12 +221,6 @@ pub(super) fn convert_color(color: Color, theme: &TerminalTheme) -> Hsla {
     }
 }
 
-/// Resolve the alacritty palette index `i` (0..=255) into themed `Hsla`.
-/// Exposed for OSC 4 (color-query) responses in `pty_session::process_event`.
-pub(crate) fn palette_color_at(i: u8, theme: &TerminalTheme) -> Hsla {
-    indexed_color(i, theme)
-}
-
 fn named_color(name: NamedColor, theme: &TerminalTheme) -> Hsla {
     match name {
         NamedColor::Black => theme.black,
@@ -246,18 +240,7 @@ fn named_color(name: NamedColor, theme: &TerminalTheme) -> Hsla {
         NamedColor::BrightCyan => theme.bright_cyan,
         NamedColor::BrightWhite => theme.bright_white,
         NamedColor::Foreground => theme.foreground,
-        NamedColor::BrightForeground => theme.bright_foreground,
         NamedColor::Background => theme.ansi_background,
-        NamedColor::DimBlack => theme.dim_black,
-        NamedColor::DimRed => theme.dim_red,
-        NamedColor::DimGreen => theme.dim_green,
-        NamedColor::DimYellow => theme.dim_yellow,
-        NamedColor::DimBlue => theme.dim_blue,
-        NamedColor::DimMagenta => theme.dim_magenta,
-        NamedColor::DimCyan => theme.dim_cyan,
-        NamedColor::DimWhite => theme.dim_white,
-        NamedColor::DimForeground => theme.dim_foreground,
-        NamedColor::Cursor => theme.cursor,
     }
 }
 
@@ -320,7 +303,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn foreground_intensity_uses_distinct_theme_slots() {
+    fn default_ground_colors_use_the_terminal_theme_slots() {
         let theme = crate::theme::paneflow_dark();
 
         assert_eq!(
@@ -328,12 +311,8 @@ mod tests {
             theme.foreground
         );
         assert_eq!(
-            convert_color(Color::Named(NamedColor::BrightForeground), &theme),
-            theme.bright_foreground
-        );
-        assert_eq!(
-            convert_color(Color::Named(NamedColor::DimForeground), &theme),
-            theme.dim_foreground
+            convert_color(Color::Named(NamedColor::Background), &theme),
+            theme.ansi_background
         );
     }
 }

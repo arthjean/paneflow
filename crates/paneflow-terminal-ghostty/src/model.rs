@@ -255,7 +255,7 @@ pub struct Hyperlink {
 pub enum Scroll {
     Top,
     Bottom,
-    /// Relative viewport motion in Paneflow/Alacritty coordinates: positive
+    /// Relative viewport motion in viewport coordinates: positive
     /// moves up into history, negative moves down toward the live bottom.
     Delta(i32),
 }

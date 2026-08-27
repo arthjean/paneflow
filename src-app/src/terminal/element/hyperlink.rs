@@ -65,8 +65,8 @@ pub fn detect_urls_on_line_mapped(
 /// Strip trailing punctuation a URL almost never intends when it appears in
 /// free-form prose (US-020). Returns a sub-slice of the input (zero alloc).
 ///
-/// Algorithm mirrors Zed `alacritty/hyperlinks.rs::sanitize_url_punctuation`,
-/// adapted to operate on a `&str` instead of a grid `Match`:
+/// Algorithm mirrors Zed's terminal `sanitize_url_punctuation`, adapted to
+/// operate on a `&str` instead of a grid `Match`:
 /// - count `(`/`)` and `[`/`]` over the WHOLE match first (so balanced pairs
 ///   are known before trimming);
 /// - walk from the right, stripping `. , : ; ! ? ( [` unconditionally and a

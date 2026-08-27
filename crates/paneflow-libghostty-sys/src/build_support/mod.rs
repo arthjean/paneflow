@@ -111,13 +111,13 @@ fn emit_ghostty_native_cfg() {
 ///
 /// Kept in sync with the `[[target]]` entries of
 /// `native/libghostty/manifest.toml`. A target absent from this list resolves
-/// to the Alacritty-only stub path with no `ghostty_native` cfg emitted.
+/// to the stub path with no `ghostty_native` cfg emitted.
 fn ghostty_native_target() -> bool {
     let cfg = |key: &str| std::env::var(key).unwrap_or_default();
     match cfg("CARGO_CFG_TARGET_OS").as_str() {
         "linux" => true,
         // Only Apple Silicon has a declared archive; x86_64-apple-darwin is a
-        // closed release target and resolves to the Alacritty-only stub path.
+        // closed release target and resolves to the stub path.
         "macos" => cfg("CARGO_CFG_TARGET_ARCH") == "aarch64",
         "windows" => {
             cfg("CARGO_CFG_TARGET_ARCH") == "x86_64" && cfg("CARGO_CFG_TARGET_ENV") == "msvc"

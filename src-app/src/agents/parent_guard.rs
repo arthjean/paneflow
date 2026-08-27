@@ -35,10 +35,10 @@ use std::process::{ChildStdin, Command, Stdio};
 const CLAUDECODE_ENV: &str = "CLAUDECODE";
 
 /// Remove Claude Code's nesting marker from the process environment before
-/// any worker thread or PTY backend starts. Alacritty 0.26 inherits the parent
-/// environment and does not expose arbitrary `env_remove` entries, so this
-/// process-level guard remains necessary until that spawn boundary can own the
-/// exclusion directly.
+/// any worker thread or PTY backend starts. The PTY spawn path inherits the
+/// parent environment and does not expose arbitrary `env_remove` entries, so
+/// this process-level guard remains necessary until that spawn boundary can own
+/// the exclusion directly.
 ///
 /// # Safety
 ///

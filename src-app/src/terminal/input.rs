@@ -14,18 +14,15 @@ use gpui::{
     Window,
 };
 
-#[cfg(ghostty_native)]
 use paneflow_terminal_ghostty as ghostty;
 
 use crate::keys::TerminalKeySequence;
-use crate::mouse;
 use crate::terminal::types::{
     HyperlinkSource, HyperlinkZone, Modes, Point, SelectionKind, SelectionSide, ShellQuoting,
 };
 
 #[cfg(debug_assertions)]
 use super::probe_enabled;
-#[cfg(ghostty_native)]
 use super::pty_session::BackendInputResult;
 use super::{TerminalEvent, TerminalView};
 
@@ -56,14 +53,6 @@ fn key_escape_sequence(
     Some(sequence)
 }
 
-#[cfg(ghostty_native)]
-fn legacy_key_bytes(sequence: Cow<'static, str>) -> Cow<'static, [u8]> {
-    match sequence {
-        Cow::Borrowed(value) => Cow::Borrowed(value.as_bytes()),
-        Cow::Owned(value) => Cow::Owned(value.as_bytes().to_vec()),
-    }
-}
-
 /// Sanitize and wrap `text` for a single bracketed-paste PTY write
 /// (`ESC[200~` … `ESC[201~`). ESC and C1 control bytes (U+0080..=U+009F) are
 /// stripped so the payload cannot close the paste early or smuggle a CSI
@@ -85,7 +74,6 @@ pub(super) fn wrap_bracketed_paste(text: &str) -> String {
     format!("\x1b[200~{}\x1b[201~", sanitize_bracketed_paste(text))
 }
 
-#[cfg(ghostty_native)]
 fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
     let mut result = ghostty::Modifiers::empty();
     if modifiers.shift {
@@ -103,7 +91,6 @@ fn ghostty_modifiers(modifiers: gpui::Modifiers) -> ghostty::Modifiers {
     result
 }
 
-#[cfg(ghostty_native)]
 fn ghostty_key(key: &str, key_char: Option<&str>) -> Option<ghostty::Key> {
     let named = match key {
         "enter" => Some(ghostty::Key::Enter),
@@ -141,7 +128,6 @@ fn ghostty_key(key: &str, key_char: Option<&str>) -> Option<ghostty::Key> {
         .map(ghostty::Key::Character)
 }
 
-#[cfg(ghostty_native)]
 fn ghostty_key_input(
     keystroke: &gpui::Keystroke,
     action: ghostty::KeyAction,
@@ -163,7 +149,6 @@ fn ghostty_key_input(
     })
 }
 
-#[cfg(ghostty_native)]
 pub(super) fn ghostty_text_key_input(
     keystroke: &gpui::Keystroke,
     action: ghostty::KeyAction,
@@ -191,7 +176,6 @@ pub(super) fn ghostty_text_key_input(
     input
 }
 
-#[cfg(ghostty_native)]
 fn ghostty_release_id(keystroke: &gpui::Keystroke) -> String {
     keystroke.key.clone()
 }
@@ -214,10 +198,6 @@ enum ReportedMouseButton {
 
 struct ReportedMouseInput {
     position: gpui::Point<gpui::Pixels>,
-    point: Point,
-    button: u8,
-    pressed: bool,
-    mode: Modes,
     action: ReportedMouseAction,
     reported_button: Option<ReportedMouseButton>,
     modifiers: gpui::Modifiers,
@@ -413,10 +393,7 @@ impl TerminalView {
         // Get current TermMode for key mapping (APP_CURSOR, etc.)
         let mode = self.terminal.session_backend().modes();
 
-        #[cfg(ghostty_native)]
-        {
-            self.ghostty_pending_text_key = None;
-        }
+        self.ghostty_pending_text_key = None;
 
         // Special keys / modifiers → write the escape sequence directly.
         // Printable characters are NOT handled here: GPUI's InputHandler
@@ -429,7 +406,7 @@ impl TerminalView {
             self.option_as_meta,
             event.prefer_character_input,
         ) {
-            let (seq, _encode_with_backend) = match mapped_sequence {
+            let (seq, encode_with_backend) = match mapped_sequence {
                 TerminalKeySequence::Protocol(seq) => (seq, true),
                 TerminalKeySequence::Literal(seq) => (seq, false),
             };
@@ -444,9 +421,11 @@ impl TerminalView {
                     self.scroll_remainder = 0.0;
                 }
             }
-            #[cfg(ghostty_native)]
-            let ghostty_encoded = _encode_with_backend
-                && ghostty_key_input(
+            // A `Literal` sequence is written verbatim: it is already the
+            // exact bytes the mode asked for, and re-encoding it through the
+            // engine's key model would change them.
+            let backend_key = if encode_with_backend {
+                ghostty_key_input(
                     keystroke,
                     if event.is_held {
                         ghostty::KeyAction::Repeat
@@ -454,35 +433,30 @@ impl TerminalView {
                         ghostty::KeyAction::Press
                     },
                 )
-                .map(|input| {
+            } else {
+                None
+            };
+            match backend_key {
+                Some(input) => {
                     let mut release = input.clone();
                     release.action = ghostty::KeyAction::Release;
                     release.text.clear();
                     release.composing = false;
-                    let result = self
-                        .terminal
-                        .write_ghostty_key(input, Some(legacy_key_bytes(seq.clone())));
-                    if result == BackendInputResult::Accepted {
+                    if self.terminal.write_ghostty_key(input) == BackendInputResult::Accepted {
                         self.ghostty_pressed_keys
                             .insert(ghostty_release_id(keystroke), release);
                     }
-                    result.is_handled()
-                })
-                .unwrap_or(false);
-            #[cfg(not(ghostty_native))]
-            let ghostty_encoded = false;
-            if !ghostty_encoded {
-                match seq {
+                }
+                None => match seq {
                     Cow::Borrowed(s) => {
                         self.terminal.write_to_pty(Cow::Borrowed(s.as_bytes()));
                     }
                     Cow::Owned(s) => {
                         self.terminal.write_to_pty(s.into_bytes());
                     }
-                }
+                },
             }
         } else {
-            #[cfg(ghostty_native)]
             if ghostty_key(&keystroke.key, keystroke.key_char.as_deref()).is_some() {
                 self.ghostty_pending_text_key = Some((
                     keystroke.clone(),
@@ -519,28 +493,21 @@ impl TerminalView {
         if self.search_active || self.copy_mode_active {
             return;
         }
-        #[cfg(not(ghostty_native))]
-        let _ = event;
-        #[cfg(ghostty_native)]
+        let release_id = ghostty_release_id(&event.keystroke);
+        if let Some(input) = self.ghostty_pressed_keys.remove(&release_id)
+            && self.terminal.write_ghostty_key(input) == BackendInputResult::Rejected
         {
-            let release_id = ghostty_release_id(&event.keystroke);
-            if let Some(input) = self.ghostty_pressed_keys.remove(&release_id) {
-                let result = self.terminal.write_ghostty_key(input, None);
-                if result == BackendInputResult::Rejected {
-                    log::warn!(
-                        target: "paneflow::terminal::ghostty",
-                        "Ghostty rejected a key release"
-                    );
-                }
-            }
+            log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "Ghostty rejected a key release"
+            );
         }
     }
 
-    #[cfg(ghostty_native)]
     pub(super) fn release_ghostty_pressed_keys(&mut self) {
         self.ghostty_pending_text_key = None;
         for (_, input) in std::mem::take(&mut self.ghostty_pressed_keys) {
-            if self.terminal.write_ghostty_key(input, None) == BackendInputResult::Rejected {
+            if self.terminal.write_ghostty_key(input) == BackendInputResult::Rejected {
                 log::warn!(
                     target: "paneflow::terminal::ghostty",
                     "Ghostty rejected a key release during focus loss"
@@ -580,59 +547,17 @@ impl TerminalView {
         (Point::new(line - metrics.display_offset as i32, col), side)
     }
 
-    /// Convert pixel position to viewport grid coordinates (for mouse reporting).
-    /// Unlike `pixel_to_grid`, this returns 0-based viewport coordinates without
-    /// the scrollback display_offset subtraction.
-    pub(super) fn pixel_to_viewport(&self, pos: gpui::Point<gpui::Pixels>) -> Point {
-        let origin = *self
-            .element_origin
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
-        let relative_x = (pos.x - origin.x).max(gpui::px(0.0));
-        let relative_y = (pos.y - origin.y).max(gpui::px(0.0));
-        let col_f = relative_x / self.cell_width;
-        let metrics = self.terminal.session_backend().grid_metrics();
-        let max_col = metrics.columns.saturating_sub(1);
-        let max_line = metrics.screen_lines.saturating_sub(1) as i32;
-        let col = (col_f as usize).min(max_col);
-        let line = ((relative_y / self.line_height) as i32).min(max_line);
-        Point::new(line, col)
-    }
-
-    /// Write a mouse report to the PTY using the appropriate encoding format.
+    /// Hand a mouse event to the engine, which owns the report encoding
+    /// (SGR vs normal/UTF-8) and the release-code rules for the active mode.
     fn write_mouse_report(&self, report: ReportedMouseInput) {
         let ReportedMouseInput {
             position,
-            point,
-            button,
-            pressed,
-            mode,
             action,
             reported_button,
             modifiers,
             any_button_pressed,
             repeat,
         } = report;
-        let format = mouse::MouseFormat::from_mode(mode);
-        let legacy = match format {
-            mouse::MouseFormat::Sgr => {
-                Some(mouse::sgr_mouse_report(point, button, pressed).into_bytes())
-            }
-            mouse::MouseFormat::Normal { utf8 } => {
-                // Normal/UTF-8 encoding: release always uses button code 3 (no per-button release)
-                let btn = if pressed { button } else { 3 };
-                mouse::normal_mouse_report(point, btn, utf8)
-            }
-        };
-        #[cfg(not(ghostty_native))]
-        let _ = (
-            position,
-            action,
-            reported_button,
-            modifiers,
-            any_button_pressed,
-        );
-        #[cfg(ghostty_native)]
         {
             let origin = *self
                 .element_origin
@@ -669,25 +594,7 @@ impl TerminalView {
                 padding_right: 0,
                 any_button_pressed,
             };
-            if self
-                .terminal
-                .write_ghostty_mouse(input, repeat, legacy.clone())
-                .is_handled()
-            {
-                return;
-            }
-        }
-        let Some(bytes) = legacy else {
-            return;
-        };
-        if repeat == 1 {
-            self.terminal.write_to_pty(bytes);
-        } else {
-            let mut repeated = Vec::with_capacity(bytes.len().saturating_mul(repeat));
-            for _ in 0..repeat {
-                repeated.extend_from_slice(&bytes);
-            }
-            self.terminal.write_to_pty(repeated);
+            self.terminal.write_ghostty_mouse(input, repeat);
         }
     }
 
@@ -812,16 +719,11 @@ impl TerminalView {
         if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
             // Side/Navigate mouse buttons have no terminal report encoding;
             // skip them instead of injecting a phantom Left click.
-            if let Some(button) = mouse::mouse_button_code(event.button, event.modifiers) {
-                let point = self.pixel_to_viewport(event.position);
+            if let Some(reported_button) = ReportedMouseButton::from_gpui(event.button) {
                 self.write_mouse_report(ReportedMouseInput {
                     position: event.position,
-                    point,
-                    button,
-                    pressed: true,
-                    mode,
                     action: ReportedMouseAction::Press,
-                    reported_button: ReportedMouseButton::from_gpui(event.button),
+                    reported_button: Some(reported_button),
                     modifiers: event.modifiers,
                     any_button_pressed: true,
                     repeat: 1,
@@ -890,26 +792,18 @@ impl TerminalView {
         {
             // Skip motion reports for side/Navigate buttons - they have no
             // terminal mouse-report encoding.
-            let button_base = match event.pressed_button {
-                Some(btn) => match mouse::mouse_button_code(btn, event.modifiers) {
-                    Some(b) => b,
+            let reported_button = match event.pressed_button {
+                Some(button) => match ReportedMouseButton::from_gpui(button) {
+                    Some(reported) => Some(reported),
                     None => return,
                 },
-                None => 3, // no button held = release code in motion reports
+                // No button held: a bare motion report.
+                None => None,
             };
-            let point = self.pixel_to_viewport(event.position);
-            // Motion events add +32 to the button code per protocol spec
-            let button = button_base + 32;
             self.write_mouse_report(ReportedMouseInput {
                 position: event.position,
-                point,
-                button,
-                pressed: true,
-                mode,
                 action: ReportedMouseAction::Motion,
-                reported_button: event
-                    .pressed_button
-                    .and_then(ReportedMouseButton::from_gpui),
+                reported_button,
                 modifiers: event.modifiers,
                 any_button_pressed: event.pressed_button.is_some(),
                 repeat: 1,
@@ -1077,16 +971,11 @@ impl TerminalView {
             // here so it cannot phantom-open on a later plain click once mouse
             // mode ends.
             self.mouse_down_link = None;
-            if let Some(button) = mouse::mouse_button_code(event.button, event.modifiers) {
-                let point = self.pixel_to_viewport(event.position);
+            if let Some(reported_button) = ReportedMouseButton::from_gpui(event.button) {
                 self.write_mouse_report(ReportedMouseInput {
                     position: event.position,
-                    point,
-                    button,
-                    pressed: false,
-                    mode,
                     action: ReportedMouseAction::Release,
-                    reported_button: ReportedMouseButton::from_gpui(event.button),
+                    reported_button: Some(reported_button),
                     modifiers: event.modifiers,
                     any_button_pressed: false,
                     repeat: 1,
@@ -1210,26 +1099,17 @@ impl TerminalView {
         }
     }
 
+    /// The engine owns the `ESC[200~` / `ESC[201~` framing: it wraps the
+    /// payload itself when the surface has bracketed paste active. Only the
+    /// non-bracketed newline rewrite stays here, because that one is an
+    /// interactive-paste convention, not a protocol rule.
     pub(super) fn write_paste_text(&self, text: &str, mode: Modes) {
-        let (paste_payload, paste_text) = if mode.contains(Modes::BRACKETED_PASTE) {
-            let payload = sanitize_bracketed_paste(text);
-            let wrapped = format!("\x1b[200~{payload}\x1b[201~");
-            (payload, wrapped)
+        let payload = if mode.contains(Modes::BRACKETED_PASTE) {
+            sanitize_bracketed_paste(text)
         } else {
-            let normalized = text.replace("\r\n", "\r").replace('\n', "\r");
-            (normalized.clone(), normalized)
+            text.replace("\r\n", "\r").replace('\n', "\r")
         };
-        #[cfg(ghostty_native)]
-        if self
-            .terminal
-            .write_ghostty_paste(paste_payload, mode.contains(Modes::BRACKETED_PASTE))
-            .is_handled()
-        {
-            return;
-        }
-        #[cfg(not(ghostty_native))]
-        let _ = paste_payload;
-        self.terminal.write_to_pty(paste_text.into_bytes());
+        self.terminal.write_ghostty_paste(payload);
     }
 
     /// EP-001 US-001 (agent-control-plane-hardening): deliver an automation /
@@ -1275,20 +1155,9 @@ impl TerminalView {
             }
             self.scroll_remainder -= lines as f32;
 
-            let point = self.pixel_to_viewport(event.position);
-            let direction = if lines > 0 {
-                mouse::ScrollDirection::Up
-            } else {
-                mouse::ScrollDirection::Down
-            };
-            let button = mouse::scroll_button_code(direction, event.modifiers);
             let count = lines.unsigned_abs() as usize;
             self.write_mouse_report(ReportedMouseInput {
                 position: event.position,
-                point,
-                button,
-                pressed: true,
-                mode,
                 action: ReportedMouseAction::Press,
                 reported_button: Some(if lines > 0 {
                     ReportedMouseButton::WheelUp
@@ -1446,7 +1315,6 @@ mod tests {
     use crate::terminal::types::{Modes, ShellQuoting};
     use std::path::PathBuf;
 
-    #[cfg(ghostty_native)]
     #[test]
     fn printable_altgr_commit_preserves_key_metadata_and_consumes_ctrl_alt() {
         let keystroke = gpui::Keystroke::parse("ctrl-alt-0").unwrap();

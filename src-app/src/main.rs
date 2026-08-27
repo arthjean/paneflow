@@ -49,7 +49,6 @@ mod layout;
 mod limits;
 mod login_shell_env;
 mod markdown;
-mod mouse;
 mod opencode_sessions;
 mod pane;
 mod pane_drag;

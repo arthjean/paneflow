@@ -1419,9 +1419,9 @@ impl Pane {
         // OSC 9;4 progress published by the program running in this pane,
         // ranked between the queued chip and the match badge: a build that
         // states how far along it is outranks a search-hit count, and stays
-        // below the two states the user has to act on. Only the Ghostty
-        // backend decodes OSC 9;4; on the Alacritty backend `progress` stays
-        // `None` and the chip never appears.
+        // below the two states the user has to act on. `progress` stays `None`
+        // until the engine decodes an OSC 9;4 sequence, so the chip only
+        // appears for a program that actually reports progress.
         let leading_slots: u8 = u8::from(has_errored || has_attention) + u8::from(has_pending);
         let progress = self
             .surface

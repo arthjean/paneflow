@@ -49,14 +49,6 @@ pub struct TerminalTheme {
     pub bright_magenta: Hsla,
     pub bright_cyan: Hsla,
     pub bright_white: Hsla,
-    pub dim_black: Hsla,
-    pub dim_red: Hsla,
-    pub dim_green: Hsla,
-    pub dim_yellow: Hsla,
-    pub dim_blue: Hsla,
-    pub dim_magenta: Hsla,
-    pub dim_cyan: Hsla,
-    pub dim_white: Hsla,
     /// Per-language syntax-highlighting colors for the diff view
     /// (prd-diff-syntax-palette-2026-Q3.md, EP-001). A dedicated semantic
     /// palette - NOT the 8-hue ANSI set above - so diff syntax can mirror the

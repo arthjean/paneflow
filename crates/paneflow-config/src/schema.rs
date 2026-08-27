@@ -118,7 +118,6 @@ mod tests {
                 enabled: Some(false),
             }),
             terminal: Some(TerminalConfig {
-                backend: TerminalBackendConfig::Auto,
                 ligatures: Some(false),
                 integrated_glyphs: Some(true),
                 color_emoji: Some(true),
@@ -689,42 +688,8 @@ mod tests {
     }
 
     #[test]
-    fn terminal_backend_serializes_and_fails_safe_on_unknown_values() {
-        let automatic: TerminalConfig = serde_json::from_str(r#"{}"#).unwrap();
-        assert_eq!(automatic.backend, TerminalBackendConfig::Auto);
-
-        let ghostty: TerminalConfig = serde_json::from_str(r#"{"backend":"ghostty"}"#).unwrap();
-        assert_eq!(ghostty.backend, TerminalBackendConfig::Ghostty);
-
-        let alacritty: TerminalConfig = serde_json::from_str(r#"{"backend":"alacritty"}"#).unwrap();
-        assert_eq!(alacritty.backend, TerminalBackendConfig::Alacritty);
-
-        assert_eq!(
-            serde_json::to_string(&TerminalBackendConfig::Auto).unwrap(),
-            r#""auto""#
-        );
-        assert_eq!(
-            serde_json::to_string(&TerminalBackendConfig::Ghostty).unwrap(),
-            r#""ghostty""#
-        );
-        assert_eq!(
-            serde_json::to_string(&TerminalBackendConfig::Alacritty).unwrap(),
-            r#""alacritty""#
-        );
-
-        let unknown: TerminalConfig =
-            serde_json::from_str(r#"{"backend":"future-engine"}"#).unwrap();
-        assert_eq!(unknown.backend, TerminalBackendConfig::Alacritty);
-
-        let legacy: PaneFlowConfig =
-            serde_json::from_str(r#"{"theme":"One Dark","terminal":{"scrollback_lines":4321}}"#)
-                .unwrap();
-        let terminal = legacy.terminal.expect("legacy terminal block");
-        assert_eq!(legacy.theme.as_deref(), Some("One Dark"));
-        assert_eq!(terminal.backend, TerminalBackendConfig::Auto);
-        assert_eq!(terminal.scrollback_lines, Some(4321));
-
-        // US-017: a backend typo must cost the backend setting and nothing
+    fn unknown_terminal_enum_values_fail_safe_without_dropping_the_document() {
+        // US-017: a terminal enum typo must cost that one setting and nothing
         // else. A derived `Deserialize` would abort the whole document and
         // `parse_and_validate` would hand back defaults, silently wiping the
         // theme, shell, shortcuts, and agent settings.
@@ -734,12 +699,12 @@ mod tests {
                 "default_shell": "/bin/zsh",
                 "shortcuts": {"split_right": "cmd-d"},
                 "agent_panel": {"default_profile": "Write"},
-                "terminal": {"backend": "gostty", "scrollback_lines": 4321}
+                "terminal": {"cursor_shape": "squiggle", "scrollback_lines": 4321}
             }"#,
         )
-        .expect("US-017: an unknown backend value must not fail the document");
+        .expect("US-017: an unknown enum value must not fail the document");
         let terminal = typo.terminal.expect("terminal block");
-        assert_eq!(terminal.backend, TerminalBackendConfig::Alacritty);
+        assert_eq!(terminal.cursor_shape, Some(CursorShapeConfig::Block));
         assert_eq!(terminal.scrollback_lines, Some(4321));
         assert_eq!(typo.theme.as_deref(), Some("One Dark"));
         assert_eq!(typo.default_shell.as_deref(), Some("/bin/zsh"));

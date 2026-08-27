@@ -174,12 +174,6 @@
       "description": "Terminal-scoped settings.",
       "additionalProperties": false,
       "properties": {
-        "backend": {
-          "type": "string",
-          "description": "Terminal backend for newly-created sessions. auto selects Ghostty in standard Linux builds and supported Windows x64 MSVC builds, and Alacritty on macOS, where ghostty is the explicit opt-in. Builds without the target's native Ghostty feature always use Alacritty. ghostty explicitly requests the native backend; alacritty is the cross-platform rollback. Unknown runtime values fail safe to alacritty. Applies only to new sessions.",
-          "enum": ["auto", "ghostty", "alacritty"],
-          "default": "auto"
-        },
         "ligatures": {
           "type": ["boolean", "null"],
           "description": "Render programming-font ligatures (FiraCode '=>', '!=', JetBrains Mono, Cascadia Code). Hot-reloaded.",

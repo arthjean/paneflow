@@ -1,20 +1,10 @@
-//! In-buffer scrollback search for terminal panes.
+//! Neutral result types for in-buffer scrollback search.
 //!
-//! Searches the alacritty_terminal grid (scrollback + visible area) for
-//! plain text or regex matches, returning grid-coordinate spans
-//! that TerminalElement can highlight.
+//! The scan itself lives in the Ghostty session (`terminal/ghostty_session.rs`,
+//! backed by `paneflow_terminal_ghostty::SearchEngine`). This module only
+//! carries the grid-coordinate spans that `TerminalElement` highlights, so the
+//! UI layer never names an engine type.
 
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column as GridCol, Point as AlacPoint};
-use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::Term;
-use alacritty_terminal::term::cell::Flags;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-
-use paneflow_terminal_ghostty::SearchEngine;
-
-use crate::terminal::ZedListener;
 use crate::terminal::types::Point;
 
 /// Maximum query length (bytes).
@@ -36,176 +26,11 @@ pub struct SearchResult {
     pub truncated: bool,
 }
 
-fn extract_line_text_and_columns(
-    term: &Term<ZedListener>,
-    line: alacritty_terminal::index::Line,
-    cols: usize,
-    line_text: &mut String,
-    char_to_col: &mut Vec<usize>,
-) {
-    line_text.clear();
-    char_to_col.clear();
-    line_text.reserve(cols);
-    char_to_col.reserve(cols);
-    for col in 0..cols {
-        let cell = &term.grid()[AlacPoint::new(line, GridCol(col))];
-        if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-            continue;
-        }
-        char_to_col.push(col);
-        if cell.c == '\0' {
-            line_text.push(' ');
-        } else {
-            line_text.push(cell.c);
-        }
-        if let Some(zero_width) = cell.zerowidth() {
-            for &character in zero_width {
-                char_to_col.push(col);
-                line_text.push(character);
-            }
-        }
-    }
-}
-
-/// Search the terminal's full grid (scrollback + visible) for matches.
-/// In plain text mode, performs case-insensitive substring matching.
-/// In regex mode, compiles the query as a regex pattern.
-pub fn search_term(
-    term: &Arc<FairMutex<Term<ZedListener>>>,
-    query: &str,
-    regex_mode: bool,
-) -> SearchResult {
-    search_term_with_cancel(term, query, regex_mode, &AtomicBool::new(false))
-}
-
-pub fn search_term_with_cancel(
-    term: &Arc<FairMutex<Term<ZedListener>>>,
-    query: &str,
-    regex_mode: bool,
-    cancelled: &AtomicBool,
-) -> SearchResult {
-    let mut search = match SearchEngine::new(query, regex_mode) {
-        Ok(search) => search,
-        Err(error) => {
-            return SearchResult {
-                matches: Vec::new(),
-                regex_error: Some(error.to_string()),
-                truncated: false,
-            };
-        }
-    };
-    if search.is_done() {
-        return from_shared_result(search.finish(false));
-    }
-
-    let (top, bottom, initial_cols) = {
-        let term = term.lock();
-        (term.topmost_line(), term.bottommost_line(), term.columns())
-    };
-
-    // Keep the `Term` lock only while copying one row. Regex and lowercase
-    // matching can be expensive on large scrollback, and holding the FairMutex
-    // for the whole scan blocks PTY output processing.
-    let mut line_text = String::with_capacity(initial_cols);
-    let mut char_to_col = Vec::with_capacity(initial_cols);
-    let mut line = top;
-    let mut scanned_cells = 0usize;
-    let mut truncated = false;
-    while line <= bottom {
-        if cancelled.load(Ordering::Acquire) {
-            truncated = true;
-            break;
-        }
-        if scanned_cells >= paneflow_terminal_ghostty::MAX_SEARCH_CELLS {
-            truncated = true;
-            break;
-        }
-        let copied = {
-            let term = term.lock();
-            if line < term.topmost_line() || line > term.bottommost_line() {
-                None
-            } else {
-                let cols = term.columns();
-                if scanned_cells.saturating_add(cols) > paneflow_terminal_ghostty::MAX_SEARCH_CELLS
-                {
-                    truncated = true;
-                    None
-                } else {
-                    scanned_cells += cols;
-                    extract_line_text_and_columns(
-                        &term,
-                        line,
-                        cols,
-                        &mut line_text,
-                        &mut char_to_col,
-                    );
-                    Some(())
-                }
-            }
-        };
-        if truncated {
-            break;
-        }
-        let Some(()) = copied else {
-            line += 1;
-            continue;
-        };
-
-        if !search.push_line(line.0, &line_text, &char_to_col) {
-            break;
-        }
-        line += 1;
-    }
-    from_shared_result(search.finish(truncated))
-}
-
-fn from_shared_result(result: paneflow_terminal_ghostty::SearchResult) -> SearchResult {
-    SearchResult {
-        matches: result
-            .matches
-            .into_iter()
-            .map(|found| SearchMatch {
-                start: Point::new(found.start.line, found.start.column),
-                end: Point::new(found.end.line, found.end.column),
-            })
-            .collect(),
-        regex_error: result.regex_error,
-        truncated: result.truncated,
-    }
-}
-
-/// Compute the display offset for scrolling to a match, and apply the scroll
-/// in a single lock acquisition. Returns the applied display_offset.
-pub fn scroll_to_match(term: &Arc<FairMutex<Term<ZedListener>>>, m: &SearchMatch) -> usize {
-    use alacritty_terminal::grid::Scroll as AlacScroll;
-
-    let mut term = term.lock();
-    let bottom = term.bottommost_line();
-    let screen_lines = term.screen_lines();
-
-    // lines_from_bottom is always >= 0 because matches come from topmost..=bottommost
-    let lines_from_bottom = bottom.0.saturating_sub(m.start.line.0);
-    let half_screen = screen_lines / 2;
-
-    let target_offset = if lines_from_bottom <= half_screen as i32 {
-        0
-    } else {
-        (lines_from_bottom - half_screen as i32).max(0) as usize
-    };
-
-    let current = term.grid().display_offset();
-    let delta = target_offset as i32 - current as i32;
-    if delta != 0 {
-        term.scroll_display(AlacScroll::Delta(delta));
-    }
-
-    target_offset
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::terminal::TerminalState;
+    use std::sync::atomic::AtomicBool;
 
     fn restored_search(text: &str, query: &str, regex_mode: bool) -> SearchResult {
         let state = TerminalState::new_display_only(5, 20);

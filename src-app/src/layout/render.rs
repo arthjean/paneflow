@@ -316,7 +316,7 @@ mod tests {
 
     use super::super::tree::LayoutChild;
     use crate::pane::Pane;
-    use crate::terminal::backend_corpus::{
+    use crate::terminal::bench_corpus::{
         CORPUS_SEED, cpu_model, deterministic_streams, percentile_us, process_cpu_time,
         resident_set_bytes,
     };

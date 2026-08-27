@@ -1,19 +1,19 @@
 //! Terminal state and view - PTY management and GPUI view wrapper.
 //!
-//! Manages the alacritty_terminal `Term`, its `tty` + `EventLoop` (EP-002), and
-//! periodic sync. The TerminalView creates a TerminalElement for cell-by-cell
-//! rendering.
+//! Ghostty is the only terminal engine: `ghostty_session` owns the libghostty
+//! parser, the grid, and the `portable-pty` child it drives, while
+//! `pty_session` holds `TerminalState` and the GPUI-facing lifecycle. The
+//! TerminalView creates a TerminalElement for cell-by-cell rendering.
 
 #[cfg(test)]
-pub(crate) mod backend_corpus;
+pub(crate) mod bench_corpus;
 pub mod blink;
+mod clipboard_gate;
 pub mod element;
-#[cfg(ghostty_native)]
 mod ghostty_session;
-#[cfg(all(test, ghostty_native))]
+#[cfg(test)]
 mod ghostty_stress;
 mod input;
-mod listener;
 mod marks;
 #[cfg(all(test, target_os = "linux"))]
 mod portable_pty_probe;
@@ -24,7 +24,6 @@ pub mod shell;
 pub mod types;
 pub mod view;
 
-pub use listener::{SpikeTermSize, ZedListener};
 pub(crate) use pty_session::TerminalSessionBackend;
 pub use pty_session::TerminalState;
 #[cfg(test)]

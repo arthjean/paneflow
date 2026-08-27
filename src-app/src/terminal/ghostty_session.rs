@@ -13,14 +13,11 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender, unbounded};
-// This module is only reached under `cfg(ghostty_native)` - see the `mod
-// ghostty_session` gate in `terminal/mod.rs` - so the import needs no gate of
-// its own. It used to be spelled twice, once per supported platform.
 use paneflow_terminal_ghostty as ghostty;
 use parking_lot::RwLock;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-use super::listener::ClipboardGate;
+use super::clipboard_gate::ClipboardGate;
 use super::marks::{CommandMark, Osc133Scanner, RawMark, SharedMarkRing};
 use super::pty_session::{ForegroundSignalMask, SpawnParams};
 use super::service_detector::ServiceOutputTail;
@@ -34,14 +31,11 @@ use super::types::{
 // (`cfg(unix)`: `getpgid`, `waitid`, `kill(-pid, ...)`, `strsignal`) and the
 // Win32 one. Every other target would silently assemble a half-configured
 // session type out of whichever arms happened to match, so it is rejected
-// here, at one named location, instead. `ghostty_native` is only emitted for
-// declared targets - see `ghostty_native_target` in `src-app/build.rs` - so
-// this is a backstop against a predicate mistake, never a normal build state.
+// here, at one named location, instead. `src-app/build.rs` already refuses a
+// target with no pinned libghostty archive, so this is a backstop against a
+// predicate mistake, never a normal build state.
 #[cfg(not(any(unix, windows)))]
-compile_error!(
-    "terminal::ghostty_session requires a Unix or Windows target; \
-     `ghostty_native` must not be emitted for this target"
-);
+compile_error!("terminal::ghostty_session requires a Unix or Windows target");
 
 const CONTROL_CAPACITY: usize = 256;
 const OUTPUT_BUFFER_COUNT: usize = 4;
@@ -273,6 +267,12 @@ enum RuntimeMessage {
         text: String,
         allow_unsafe: bool,
     },
+    /// Display-only injection of pre-recorded bytes. `reply` fires once the
+    /// grid reflects them, so a caller can read the snapshot right after.
+    WriteOutput {
+        bytes: Vec<u8>,
+        reply: SyncSender<()>,
+    },
     Resize(ResizeCommand),
     Scroll(ghostty::Scroll),
     ScrollToViewportRow(usize),
@@ -280,6 +280,7 @@ enum RuntimeMessage {
     SelectWord(ghostty::Point),
     SelectLine(ghostty::Point),
     ClearSelection,
+    ClearScrollback,
     UpdateAppearance(ghostty::TerminalAppearance),
     SearchChunk {
         start_row: usize,
@@ -296,7 +297,12 @@ enum RuntimeMessage {
         reply: SyncSender<Result<Option<ghostty::Hyperlink>, String>>,
     },
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
-    RestoreScrollback(String),
+    /// Restore of saved scrollback. `reply` fires once the grid reflects the
+    /// text, so a caller can read the snapshot right after.
+    RestoreScrollback {
+        text: String,
+        reply: SyncSender<()>,
+    },
     #[cfg(test)]
     SimulateWorkerCrash,
     Shutdown,
@@ -1095,6 +1101,47 @@ impl GhosttySession {
         }
     }
 
+    /// Starts a runtime that owns a terminal grid but neither a PTY nor a
+    /// child process. Display-only sessions back restored scrollback and the
+    /// error pane shown when a spawn fails.
+    pub(super) fn start_display(
+        &self,
+        pending: GhosttyRuntimePending,
+        max_scrollback: usize,
+    ) -> Result<(), GhosttyStartError> {
+        let (startup_tx, startup_rx) = sync_channel(1);
+        let inner = self.inner.clone();
+        let runtime_mailbox = pending.mailbox.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("paneflow-ghostty-display".into())
+            .spawn(move || {
+                run_display_runtime(inner, runtime_mailbox, max_scrollback, startup_tx);
+            })
+        {
+            pending.mailbox.close();
+            return Err(GhosttyStartError::Initialization(
+                anyhow::Error::new(error).context("could not start Ghostty display runtime thread"),
+            ));
+        }
+
+        match startup_rx.recv() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(GhosttyStartError::Initialization(anyhow::anyhow!(error))),
+            Err(error) => Err(GhosttyStartError::Initialization(anyhow::anyhow!(
+                "Ghostty display runtime exited before startup completed: {error}"
+            ))),
+        }
+    }
+
+    /// Feeds pre-recorded bytes into the grid. Blocks until the snapshot
+    /// reflects them so a caller can read back immediately.
+    pub(super) fn write_output(&self, bytes: &[u8]) {
+        let _ = self.request(|reply| RuntimeMessage::WriteOutput {
+            bytes: bytes.to_vec(),
+            reply,
+        });
+    }
+
     pub(super) fn promote(&self) {
         self.inner.promoted.store(true, Ordering::Release);
     }
@@ -1190,6 +1237,16 @@ impl GhosttySession {
 
     pub(super) fn queued_input_bytes(&self) -> usize {
         self.inner.queued_input_bytes.load(Ordering::Acquire)
+    }
+
+    /// The grid size the surface last asked for, used to size the
+    /// replacement display-only session that renders a spawn failure.
+    pub(super) fn requested_window_size(&self) -> TerminalWindowSize {
+        self.inner
+            .resize
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .requested
     }
 
     pub(super) fn resize(&self, size: TerminalWindowSize) {
@@ -1460,6 +1517,15 @@ impl GhosttySession {
         filter_copyable_selection_text(kind, self.selection_range(), text)
     }
 
+    /// Drop the scrollback and clear the screen. Ghostty owns the history, so
+    /// this is a runtime command, not a grid mutation the UI thread can do.
+    pub(super) fn clear_history(&self) {
+        let _ = self
+            .inner
+            .mailbox
+            .try_send_control(RuntimeMessage::ClearScrollback);
+    }
+
     pub(super) fn clear_selection(&self) {
         *self
             .inner
@@ -1650,11 +1716,13 @@ impl GhosttySession {
             .flatten()
     }
 
+    /// Blocks until the grid reflects the restored text, so a caller can read
+    /// the snapshot back immediately.
     pub(super) fn restore_scrollback(&self, text: &str) {
-        let _ = self
-            .inner
-            .mailbox
-            .try_send_control(RuntimeMessage::RestoreScrollback(text.to_owned()));
+        let _ = self.request(|reply| RuntimeMessage::RestoreScrollback {
+            text: text.to_owned(),
+            reply,
+        });
     }
 
     #[cfg(test)]
@@ -1989,8 +2057,15 @@ fn run_runtime(
                 &mut master,
             );
         }
-        match mailbox.recv_timeout(Duration::from_millis(10)) {
-            Ok(RuntimeMessage::Output(bytes)) => {
+        let received = match mailbox.recv_timeout(Duration::from_millis(10)) {
+            Ok(message) => match handle_terminal_command(&inner, &mut terminal, message) {
+                CommandOutcome::Handled => Ok(None),
+                CommandOutcome::Unhandled(message) => Ok(Some(message)),
+            },
+            Err(error) => Err(error),
+        };
+        match received {
+            Ok(Some(RuntimeMessage::Output(bytes))) => {
                 if let Err(error) = process_output_batch(
                     &inner,
                     &mailbox,
@@ -2010,7 +2085,7 @@ fn run_runtime(
                     runtime_failed = true;
                 }
             }
-            Ok(RuntimeMessage::Eof) => {
+            Ok(Some(RuntimeMessage::Eof)) => {
                 #[cfg(unix)]
                 {
                     eof = true;
@@ -2020,12 +2095,12 @@ fn run_runtime(
                     lifecycle.record_eof();
                 }
             }
-            Ok(RuntimeMessage::Input(bytes)) => {
+            Ok(Some(RuntimeMessage::Input(bytes))) => {
                 release_queued_input_bytes(&inner, bytes.len());
                 write_input_bytes(&inner, &mut writer, &bytes, &mut runtime_failed);
                 notify_command_capacity(&inner);
             }
-            Ok(RuntimeMessage::KeyInput(input)) => {
+            Ok(Some(RuntimeMessage::KeyInput(input))) => {
                 release_queued_input_bytes(
                     &inner,
                     std::mem::size_of::<ghostty::KeyInput>().saturating_add(input.text.len()),
@@ -2038,7 +2113,7 @@ fn run_runtime(
                 }
                 notify_command_capacity(&inner);
             }
-            Ok(RuntimeMessage::MouseInput { input, repeat }) => {
+            Ok(Some(RuntimeMessage::MouseInput { input, repeat })) => {
                 release_queued_input_bytes(
                     &inner,
                     std::mem::size_of::<ghostty::MouseInput>().saturating_add(repeat),
@@ -2056,7 +2131,7 @@ fn run_runtime(
                 }
                 notify_command_capacity(&inner);
             }
-            Ok(RuntimeMessage::FocusInput(event)) => {
+            Ok(Some(RuntimeMessage::FocusInput(event))) => {
                 release_queued_input_bytes(&inner, std::mem::size_of::<ghostty::FocusEvent>());
                 match terminal.encode_focus(event) {
                     Ok(bytes) => {
@@ -2066,7 +2141,7 @@ fn run_runtime(
                 }
                 notify_command_capacity(&inner);
             }
-            Ok(RuntimeMessage::PasteInput { text, allow_unsafe }) => {
+            Ok(Some(RuntimeMessage::PasteInput { text, allow_unsafe })) => {
                 release_queued_input_bytes(&inner, text.len());
                 match terminal.encode_paste(&text, allow_unsafe) {
                     Ok(bytes) => {
@@ -2076,7 +2151,7 @@ fn run_runtime(
                 }
                 notify_command_capacity(&inner);
             }
-            Ok(RuntimeMessage::Resize(command)) => {
+            Ok(Some(RuntimeMessage::Resize(command))) => {
                 let size = command.size;
                 #[cfg(unix)]
                 let resize_allowed = true;
@@ -2132,178 +2207,11 @@ fn run_runtime(
                     complete_resize(&inner, command, resize_succeeded);
                 }
             }
-            Ok(RuntimeMessage::Scroll(scroll)) => {
-                terminal.scroll(scroll);
-                if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
-                    log::warn!(target: "paneflow::terminal::ghostty", "Ghostty scroll failed: {error}");
-                }
-            }
-            Ok(RuntimeMessage::ScrollToViewportRow(row)) => {
-                let result = terminal
-                    .scroll_to_viewport_row(row)
-                    .map_err(|error| error.to_string())
-                    .and_then(|()| refresh_shared_state(&inner, &mut terminal));
-                if let Err(error) = result {
-                    log::warn!(
-                        target: "paneflow::terminal::ghostty",
-                        "Ghostty absolute scroll failed: {error}"
-                    );
-                }
-            }
-            Ok(RuntimeMessage::ApplySelection(generation)) => {
-                let range = {
-                    let mut selection = inner
-                        .selection_update
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    if selection.queued_generation == Some(generation) {
-                        selection.queued_generation = None;
-                    }
-                    if selection.generation != generation {
-                        None
-                    } else {
-                        let range = selection.requested.take();
-                        selection.in_flight =
-                            range.as_ref().map(|range| (generation, range.clone()));
-                        range
-                    }
-                };
-                if let Some(range) = range {
-                    let shared_range = selection_range_from_ghostty(range.clone());
-                    match terminal.set_selection(range.clone()) {
-                        Ok(()) => {
-                            let mut selection = inner
-                                .selection_update
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if selection.in_flight.as_ref().is_some_and(
-                                |(pending_generation, pending)| {
-                                    *pending_generation == generation && pending == &range
-                                },
-                            ) {
-                                selection.in_flight = None;
-                            }
-                            let publish = selection.generation == generation;
-                            if publish {
-                                selection.applied = Some(range);
-                            }
-                            drop(selection);
-                            if publish {
-                                update_shared_selection(&inner, Some(shared_range));
-                            }
-                        }
-                        Err(error) => {
-                            let mut selection = inner
-                                .selection_update
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner);
-                            if selection.in_flight.as_ref().is_some_and(
-                                |(pending_generation, pending)| {
-                                    *pending_generation == generation && pending == &range
-                                },
-                            ) {
-                                selection.in_flight = None;
-                            }
-                            drop(selection);
-                            log::warn!(
-                                target: "paneflow::terminal::ghostty",
-                                "Ghostty selection update failed: {error}"
-                            );
-                        }
-                    }
-                }
-            }
-            Ok(RuntimeMessage::SelectWord(point)) => {
-                let _ = terminal.select_word(point);
-                let mut selection = inner
-                    .selection_update
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                selection.in_flight = None;
-                selection.applied = None;
-                drop(selection);
-                let _ = refresh_shared_state(&inner, &mut terminal);
-            }
-            Ok(RuntimeMessage::SelectLine(point)) => {
-                let _ = terminal.select_line(point);
-                let mut selection = inner
-                    .selection_update
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                selection.in_flight = None;
-                selection.applied = None;
-                drop(selection);
-                let _ = refresh_shared_state(&inner, &mut terminal);
-            }
-            Ok(RuntimeMessage::ClearSelection) => match terminal.clear_selection() {
-                Ok(()) => {
-                    let mut selection = inner
-                        .selection_update
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    selection.in_flight = None;
-                    selection.applied = None;
-                    drop(selection);
-                    update_shared_selection(&inner, None);
-                }
-                Err(error) => log::warn!(
-                    target: "paneflow::terminal::ghostty",
-                    "Ghostty selection clear failed: {error}"
-                ),
-            },
-            Ok(RuntimeMessage::UpdateAppearance(appearance)) => {
-                if let Err(error) = terminal.set_appearance(appearance) {
-                    let _ = inner
-                        .events_tx
-                        .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
-                            "Ghostty appearance update failed: {error}"
-                        )));
-                }
-            }
-            Ok(RuntimeMessage::SearchChunk {
-                start_row,
-                max_cells,
-                reply,
-            }) => {
-                let _ = reply.send(
-                    terminal
-                        .search_chunk(start_row, max_cells)
-                        .map_err(|error| error.to_string()),
-                );
-            }
-            Ok(RuntimeMessage::LineTexts { lines, reply }) => {
-                let _ = reply.send(
-                    terminal
-                        .line_texts(&lines)
-                        .map_err(|error| error.to_string()),
-                );
-            }
-            Ok(RuntimeMessage::SelectionText(reply)) => {
-                let _ = reply.send(terminal.selection_text().map_err(|error| error.to_string()));
-            }
-            Ok(RuntimeMessage::Hyperlink { point, reply }) => {
-                let _ = reply.send(
-                    terminal
-                        .hyperlink_at(point)
-                        .map_err(|error| error.to_string()),
-                );
-            }
-            Ok(RuntimeMessage::ExtractScrollback(reply)) => {
-                let _ = reply.send(
-                    terminal
-                        .extract_scrollback()
-                        .map_err(|error| error.to_string()),
-                );
-            }
-            Ok(RuntimeMessage::RestoreScrollback(text)) => {
-                let _ = terminal.restore_scrollback(&text);
-                let _ = refresh_shared_state(&inner, &mut terminal);
-            }
             #[cfg(test)]
-            Ok(RuntimeMessage::SimulateWorkerCrash) => {
+            Ok(Some(RuntimeMessage::SimulateWorkerCrash)) => {
                 panic!("Ghostty runtime worker failure injected for test");
             }
-            Ok(RuntimeMessage::Shutdown) => {
+            Ok(Some(RuntimeMessage::Shutdown)) => {
                 #[cfg(unix)]
                 {
                     if exit.is_none() {
@@ -2317,6 +2225,8 @@ fn run_runtime(
                     shutdown_requested = true;
                 }
             }
+            // `handle_terminal_command` owns every remaining variant.
+            Ok(None) | Ok(Some(_)) => {}
             Err(MailboxRecvError::Disconnected) => {
                 #[cfg(unix)]
                 {
@@ -2537,6 +2447,316 @@ fn run_runtime(
                 drop(master);
                 publish_child_exit_once(&inner, exit.code, exit.signal);
                 return;
+            }
+        }
+    }
+}
+
+/// Outcome of routing a runtime command through the PTY-independent handler.
+enum CommandOutcome {
+    /// The command was serviced entirely against the terminal grid.
+    Handled,
+    /// The command needs the PTY-owning loop.
+    Unhandled(RuntimeMessage),
+}
+
+/// Services the commands that only touch the terminal grid, so the PTY-backed
+/// and display-only runtimes share one implementation.
+fn handle_terminal_command(
+    inner: &SessionInner,
+    terminal: &mut ghostty::DisplayTerminal,
+    message: RuntimeMessage,
+) -> CommandOutcome {
+    match message {
+        RuntimeMessage::Scroll(scroll) => {
+            terminal.scroll(scroll);
+            if let Err(error) = refresh_shared_state(inner, terminal) {
+                log::warn!(target: "paneflow::terminal::ghostty", "Ghostty scroll failed: {error}");
+            }
+        }
+        RuntimeMessage::ScrollToViewportRow(row) => {
+            let result = terminal
+                .scroll_to_viewport_row(row)
+                .map_err(|error| error.to_string())
+                .and_then(|()| refresh_shared_state(inner, terminal));
+            if let Err(error) = result {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty absolute scroll failed: {error}"
+                );
+            }
+        }
+        RuntimeMessage::ApplySelection(generation) => {
+            let range = {
+                let mut selection = inner
+                    .selection_update
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                if selection.queued_generation == Some(generation) {
+                    selection.queued_generation = None;
+                }
+                if selection.generation != generation {
+                    None
+                } else {
+                    let range = selection.requested.take();
+                    selection.in_flight = range.as_ref().map(|range| (generation, range.clone()));
+                    range
+                }
+            };
+            if let Some(range) = range {
+                let shared_range = selection_range_from_ghostty(range.clone());
+                match terminal.set_selection(range.clone()) {
+                    Ok(()) => {
+                        let mut selection = inner
+                            .selection_update
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if selection.in_flight.as_ref().is_some_and(
+                            |(pending_generation, pending)| {
+                                *pending_generation == generation && pending == &range
+                            },
+                        ) {
+                            selection.in_flight = None;
+                        }
+                        let publish = selection.generation == generation;
+                        if publish {
+                            selection.applied = Some(range);
+                        }
+                        drop(selection);
+                        if publish {
+                            update_shared_selection(inner, Some(shared_range));
+                        }
+                    }
+                    Err(error) => {
+                        let mut selection = inner
+                            .selection_update
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
+                        if selection.in_flight.as_ref().is_some_and(
+                            |(pending_generation, pending)| {
+                                *pending_generation == generation && pending == &range
+                            },
+                        ) {
+                            selection.in_flight = None;
+                        }
+                        drop(selection);
+                        log::warn!(
+                            target: "paneflow::terminal::ghostty",
+                            "Ghostty selection update failed: {error}"
+                        );
+                    }
+                }
+            }
+        }
+        RuntimeMessage::SelectWord(point) => {
+            let _ = terminal.select_word(point);
+            let mut selection = inner
+                .selection_update
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            selection.in_flight = None;
+            selection.applied = None;
+            drop(selection);
+            let _ = refresh_shared_state(inner, terminal);
+        }
+        RuntimeMessage::SelectLine(point) => {
+            let _ = terminal.select_line(point);
+            let mut selection = inner
+                .selection_update
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            selection.in_flight = None;
+            selection.applied = None;
+            drop(selection);
+            let _ = refresh_shared_state(inner, terminal);
+        }
+        RuntimeMessage::ClearSelection => match terminal.clear_selection() {
+            Ok(()) => {
+                let mut selection = inner
+                    .selection_update
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                selection.in_flight = None;
+                selection.applied = None;
+                drop(selection);
+                update_shared_selection(inner, None);
+            }
+            Err(error) => log::warn!(
+                target: "paneflow::terminal::ghostty",
+                "Ghostty selection clear failed: {error}"
+            ),
+        },
+        RuntimeMessage::ClearScrollback => {
+            if let Err(error) = terminal.clear_screen_and_scrollback() {
+                log::warn!(
+                    target: "paneflow::terminal::ghostty",
+                    "Ghostty scrollback clear failed: {error}"
+                );
+            }
+            let _ = refresh_shared_state(inner, terminal);
+        }
+        RuntimeMessage::UpdateAppearance(appearance) => {
+            if let Err(error) = terminal.set_appearance(appearance) {
+                let _ = inner
+                    .events_tx
+                    .unbounded_send(GhosttyUiEvent::RuntimeFailed(format!(
+                        "Ghostty appearance update failed: {error}"
+                    )));
+            }
+        }
+        RuntimeMessage::SearchChunk {
+            start_row,
+            max_cells,
+            reply,
+        } => {
+            let _ = reply.send(
+                terminal
+                    .search_chunk(start_row, max_cells)
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        RuntimeMessage::LineTexts { lines, reply } => {
+            let _ = reply.send(
+                terminal
+                    .line_texts(&lines)
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        RuntimeMessage::SelectionText(reply) => {
+            let _ = reply.send(terminal.selection_text().map_err(|error| error.to_string()));
+        }
+        RuntimeMessage::Hyperlink { point, reply } => {
+            let _ = reply.send(
+                terminal
+                    .hyperlink_at(point)
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        RuntimeMessage::ExtractScrollback(reply) => {
+            let _ = reply.send(
+                terminal
+                    .extract_scrollback()
+                    .map_err(|error| error.to_string()),
+            );
+        }
+        RuntimeMessage::RestoreScrollback { text, reply } => {
+            let _ = terminal.restore_scrollback(&text);
+            let _ = refresh_shared_state(inner, terminal);
+            let _ = reply.send(());
+        }
+        other => return CommandOutcome::Unhandled(other),
+    }
+    CommandOutcome::Handled
+}
+
+/// Feeds pre-recorded bytes into a display-only grid and republishes the
+/// snapshot, so the caller observes them as soon as the reply lands.
+fn feed_display_output(
+    inner: &SessionInner,
+    terminal: &mut ghostty::DisplayTerminal,
+    bytes: &[u8],
+) -> Result<(), String> {
+    terminal
+        .feed(bytes)
+        .map_err(|error| format!("Ghostty VT feed failed: {error}"))?;
+    handle_engine_events(inner, terminal, &mut None)?;
+    refresh_shared_state(inner, terminal)
+}
+
+/// Runtime loop for a session that owns a grid but no PTY and no child.
+fn run_display_runtime(
+    inner: Arc<SessionInner>,
+    mailbox: Arc<RuntimeMailbox>,
+    max_scrollback: usize,
+    startup_tx: SyncSender<Result<(), String>>,
+) {
+    let _mailbox_close = MailboxCloseGuard(mailbox.clone());
+    let initial_size = inner
+        .resize
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .requested;
+    let ghostty_size = match window_size(initial_size) {
+        Ok(size) => size,
+        Err(error) => {
+            let _ = startup_tx.send(Err(error.to_string()));
+            return;
+        }
+    };
+    let appearance = current_ghostty_appearance();
+    let mut terminal = match ghostty::DisplayTerminal::new(ghostty_size, max_scrollback, appearance)
+    {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            let _ = startup_tx.send(Err(error.to_string()));
+            return;
+        }
+    };
+    if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
+        let _ = startup_tx.send(Err(error));
+        return;
+    }
+    if startup_tx.send(Ok(())).is_err() {
+        return;
+    }
+
+    loop {
+        let message = match mailbox.recv_timeout(Duration::from_millis(10)) {
+            Ok(message) => message,
+            Err(MailboxRecvError::Timeout) => continue,
+            Err(MailboxRecvError::Disconnected) => break,
+        };
+        let CommandOutcome::Unhandled(message) =
+            handle_terminal_command(&inner, &mut terminal, message)
+        else {
+            continue;
+        };
+        match message {
+            RuntimeMessage::WriteOutput { bytes, reply } => {
+                if let Err(error) = feed_display_output(&inner, &mut terminal, &bytes) {
+                    log::warn!(
+                        target: "paneflow::terminal::ghostty",
+                        "Ghostty display feed failed: {error}"
+                    );
+                }
+                let _ = reply.send(());
+            }
+            RuntimeMessage::Resize(command) => {
+                let size = command.size;
+                let resized = window_size(size)
+                    .map_err(|error| error.to_string())
+                    .and_then(|ghostty_size| {
+                        terminal
+                            .resize(ghostty_size)
+                            .map_err(|error| error.to_string())
+                    })
+                    .and_then(|()| {
+                        if command.clear_initial {
+                            terminal
+                                .clear_screen_and_scrollback()
+                                .map_err(|error| error.to_string())?;
+                        }
+                        refresh_shared_state(&inner, &mut terminal)
+                    });
+                if let Err(error) = &resized {
+                    log::warn!(
+                        target: "paneflow::terminal::ghostty",
+                        "Ghostty display resize to {}x{} failed: {error}",
+                        size.cols,
+                        size.rows,
+                    );
+                }
+                complete_resize(&inner, command, resized.is_ok());
+            }
+            RuntimeMessage::Shutdown => break,
+            other => {
+                // A display-only session has no PTY: input and child-lifecycle
+                // messages are dropped, but their reserved bytes must be freed
+                // or the input backpressure counter never drains.
+                if let Some(bytes) = other.queued_input_bytes() {
+                    release_queued_input_bytes(&inner, bytes);
+                    notify_command_capacity(&inner);
+                }
             }
         }
     }
@@ -2897,11 +3117,11 @@ fn update_shared_selection(inner: &SessionInner, selection: Option<SelectionRang
 }
 
 fn ghostty_rgb(color: gpui::Hsla) -> ghostty::Rgb {
-    let color = super::pty_session::hsla_to_alac_rgb(color);
+    let rgba = gpui::Rgba::from(color);
     ghostty::Rgb {
-        r: color.r,
-        g: color.g,
-        b: color.b,
+        r: (rgba.r.clamp(0.0, 1.0) * 255.0) as u8,
+        g: (rgba.g.clamp(0.0, 1.0) * 255.0) as u8,
+        b: (rgba.b.clamp(0.0, 1.0) * 255.0) as u8,
     }
 }
 
@@ -3227,7 +3447,8 @@ fn filter_copyable_selection_text(
     text: Option<String>,
 ) -> Option<String> {
     // libghostty formats a point-only simple selection as the cell under the
-    // cursor. Alacritty treats that same gesture as an empty focus click.
+    // cursor, but that gesture is a focus click, not a copy: dropping it keeps
+    // a bare click from replacing the clipboard with a single character.
     let is_focus_click = matches!(kind, Some(SelectionKind::Simple))
         && range.is_some_and(|range| range.start == range.end);
     (!is_focus_click).then_some(text).flatten()
@@ -3700,10 +3921,8 @@ mod tests {
 
     #[test]
     fn queued_row_jump_does_not_reject_a_relative_drag_step() {
-        let (mut state, _alacritty_pending) = TerminalState::new_pending(80, 24);
-        let (ghostty, runtime_pending, events_rx) =
-            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
-        state.attach_ghostty(ghostty, events_rx);
+        let (mut state, pending) = TerminalState::new_pending(80, 24);
+        let runtime_pending = pending.ghostty;
         state.promote_ghostty(SpawnedGhostty {
             child_pid: 0,
             cwd: std::env::current_dir().unwrap(),
@@ -4006,10 +4225,8 @@ mod tests {
 
     #[test]
     fn promotion_replays_pending_input_once_in_order_and_enforces_cap() {
-        let (mut state, _alacritty_pending) = TerminalState::new_pending(80, 24);
-        let (ghostty, runtime_pending, events_rx) =
-            GhosttySession::pending(TerminalWindowSize::new(80, 24, 0, 0));
-        state.attach_ghostty(ghostty, events_rx);
+        let (mut state, pending) = TerminalState::new_pending(80, 24);
+        let runtime_pending = pending.ghostty;
 
         state.write_to_pty(b"first".to_vec());
         state.write_to_pty(b"second".to_vec());
@@ -4041,10 +4258,9 @@ mod tests {
 
     #[test]
     fn command_backpressure_retries_structured_key_without_raw_fallback() {
-        let (mut state, _alacritty_pending) = TerminalState::new_pending(80, 24);
-        let (session, runtime_pending, events_rx) =
-            GhosttySession::pending(TerminalWindowSize::new(80, 24, 0, 0));
-        state.attach_ghostty(session.clone(), events_rx);
+        let (mut state, pending) = TerminalState::new_pending(80, 24);
+        let runtime_pending = pending.ghostty;
+        let session = state.ghostty_session();
         state.promote_ghostty(SpawnedGhostty {
             child_pid: 0,
             cwd: std::env::current_dir().unwrap(),
@@ -4063,7 +4279,7 @@ mod tests {
             composing: false,
         };
         assert_eq!(
-            state.write_ghostty_key(key.clone(), None),
+            state.write_ghostty_key(key.clone()),
             BackendInputResult::Accepted
         );
         let saturated = runtime_pending.mailbox.drain();
@@ -4140,7 +4356,6 @@ mod tests {
             cols: 100,
             rows: 30,
             profile: TerminalSurfaceProfile::Normal,
-            surface_id: 1,
         };
         let (session, pending, mut events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(100, 30, 8, 16));
@@ -4299,7 +4514,6 @@ mod tests {
             cols: 80,
             rows: 24,
             profile: TerminalSurfaceProfile::Normal,
-            surface_id: 1,
         };
         let (session, pending, mut events_rx) =
             GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));

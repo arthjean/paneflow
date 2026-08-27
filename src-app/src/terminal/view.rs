@@ -14,114 +14,37 @@ use gpui::{
     App, ClipboardItem, Context, EventEmitter, FocusHandle, Hsla, InteractiveElement, IntoElement,
     KeyContext, MouseButton, Render, Styled, Window, div, prelude::*,
 };
-use paneflow_config::schema::{TerminalBackendConfig, TerminalConfig, TerminalSurfaceProfile};
+use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 
 use super::TerminalState;
 use super::element::TerminalElement;
 use super::pty_session::{
-    ClipboardOp, TerminalBackendEvent, TerminalBackendFailureDiagnostics,
-    TerminalBackendFailurePhase, raw_os_error_from_anyhow,
+    TerminalBackendFailureDiagnostics, TerminalBackendFailurePhase, raw_os_error_from_anyhow,
 };
 use super::service_detector::ServiceInfo;
 use super::types::{
     CopyModeCursorState, CursorShape, HyperlinkZone, Line, Modes, Point, SearchHighlight,
-    TerminalWindowSize, terminal_metric_to_u16,
+    TerminalWindowSize,
 };
-use crate::limits::MAX_OSC52_BYTES;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-#[cfg(ghostty_native)]
-use super::ghostty_session::{GhosttySession, GhosttyStartError, SpawnedGhostty};
+use super::ghostty_session::GhosttyStartError;
 
-#[cfg(any(test, ghostty_native))]
-fn should_start_ghostty_for_policy(
-    requested: TerminalBackendConfig,
-    available: bool,
-    auto_selects: bool,
-) -> bool {
-    available && policy_requests_ghostty(requested, auto_selects)
-}
-
-fn policy_requests_ghostty(requested: TerminalBackendConfig, auto_selects: bool) -> bool {
-    match requested {
-        TerminalBackendConfig::Auto => auto_selects,
-        TerminalBackendConfig::Ghostty => true,
-        TerminalBackendConfig::Alacritty => false,
-    }
-}
-
-/// The `terminal.backend = "auto"` policy table, keyed by the target a binary
-/// was built for.
+/// Where a [`GhosttyStartError`] leaves the pane.
 ///
-/// macOS is deliberately absent. US-017 ships the macOS Ghostty engine as an
-/// explicit `"terminal_backend": "ghostty"` opt-in and leaves `auto` on
-/// Alacritty; promoting it is a separate PRD. Split out from
-/// [`auto_selects_ghostty_for_target`] so the answer for a platform other than
-/// the build host is assertable from any CI leg rather than only from that
-/// platform's own job.
-fn auto_selects_ghostty(target_os: &str, target_arch: &str, target_env_msvc: bool) -> bool {
-    match target_os {
-        "linux" => true,
-        "windows" => target_arch == "x86_64" && target_env_msvc,
-        _ => false,
-    }
+/// There is no second engine to fall back to, so every startup failure ends
+/// the same way: the pane becomes a static error surface. `child_pid` is
+/// carried for the log line only, and is `Some` exactly when a child already
+/// existed when the failure happened.
+struct GhosttyStartFailure {
+    child_pid: Option<u32>,
+    diagnostics: TerminalBackendFailureDiagnostics,
 }
 
-/// The single policy switch for automatic backend selection. Its return value
-/// is the one thing a promotion PRD changes.
-fn auto_selects_ghostty_for_target() -> bool {
-    auto_selects_ghostty(
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        cfg!(target_env = "msvc"),
-    )
-}
-
-#[cfg(any(test, ghostty_native))]
-fn should_start_ghostty(requested: TerminalBackendConfig) -> bool {
-    should_start_ghostty_for_policy(
-        requested,
-        cfg!(ghostty_native),
-        auto_selects_ghostty_for_target(),
-    )
-}
-
-enum BackgroundSpawnOutcome {
-    Alacritty(anyhow::Result<super::pty_session::SpawnedPty>),
-    #[cfg(ghostty_native)]
-    Ghostty(SpawnedGhostty),
-    #[cfg(ghostty_native)]
-    GhosttyFallback {
-        spawned: anyhow::Result<super::pty_session::SpawnedPty>,
-        failure: TerminalBackendFailureDiagnostics,
-    },
-    #[cfg(ghostty_native)]
-    GhosttyPostSpawnFailed {
-        child_pid: u32,
-        failure: TerminalBackendFailureDiagnostics,
-    },
-}
-
-/// Where a [`GhosttyStartError`] sends the pane.
-///
-/// `Fallback` failures happened before a child existed, so the pane is
-/// re-spawned on Alacritty and stays usable. `PostSpawn` failures already
-/// created a child, so spawning a second one would orphan the first; the pane
-/// reports the failure instead.
-#[cfg(ghostty_native)]
-enum GhosttyFailureRoute {
-    Fallback(TerminalBackendFailureDiagnostics),
-    PostSpawn {
-        child_pid: u32,
-        failure: TerminalBackendFailureDiagnostics,
-    },
-}
-
-/// Map a Ghostty startup failure to its route and its structured diagnostics.
-/// Pure, so US-018's macOS claims are asserted by `macos_check` rather than
+/// Map a Ghostty startup failure to its structured diagnostics. Pure, so the
+/// macOS and Windows claims are asserted by their own CI legs rather than
 /// inferred from the Linux behavior of the same code.
-#[cfg(ghostty_native)]
-fn classify_ghostty_start_error(error: GhosttyStartError) -> GhosttyFailureRoute {
+fn classify_ghostty_start_error(error: GhosttyStartError) -> GhosttyStartFailure {
     let (phase, reason_code, source) = match error {
         GhosttyStartError::Initialization(error) => (
             TerminalBackendFailurePhase::Initialization,
@@ -139,9 +62,9 @@ fn classify_ghostty_start_error(error: GhosttyStartError) -> GhosttyFailureRoute
             error,
         ),
         GhosttyStartError::PostSpawn { child_pid, error } => {
-            return GhosttyFailureRoute::PostSpawn {
-                child_pid,
-                failure: TerminalBackendFailureDiagnostics::new(
+            return GhosttyStartFailure {
+                child_pid: Some(child_pid),
+                diagnostics: TerminalBackendFailureDiagnostics::new(
                     TerminalBackendFailurePhase::PostSpawn,
                     TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED,
                     raw_os_error_from_anyhow(&error),
@@ -149,71 +72,42 @@ fn classify_ghostty_start_error(error: GhosttyStartError) -> GhosttyFailureRoute
             };
         }
     };
-    GhosttyFailureRoute::Fallback(TerminalBackendFailureDiagnostics::new(
-        phase,
-        reason_code,
-        raw_os_error_from_anyhow(&source),
-    ))
-}
-
-#[cfg(all(target_os = "linux", ghostty_native))]
-fn should_render_ghostty_wakeup_immediately(event: &TerminalBackendEvent) -> bool {
-    matches!(event, TerminalBackendEvent::Ghostty(_))
-}
-
-#[cfg(not(all(target_os = "linux", ghostty_native)))]
-fn should_render_ghostty_wakeup_immediately(_event: &TerminalBackendEvent) -> bool {
-    false
-}
-
-/// Set by the first pane that reports a Ghostty degradation, so a broken
-/// artifact or an unavailable backend costs one warning line per process
-/// rather than one per pane (FR-05).
-static BACKEND_DEGRADED_WARNED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// The post-spawn counterpart of [`BACKEND_DEGRADED_WARNED`]. Kept separate so
-/// a dead pane still reports at error level once per process even after a
-/// working fallback pane has already warned.
-#[cfg(ghostty_native)]
-static BACKEND_POST_SPAWN_FAILED_LOGGED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-
-/// Claim the single process-lifetime warning slot. Returns `true` exactly once
-/// per `warned` flag; later callers log the same failure at debug level, so no
-/// per-pane detail is lost while the warning count stays at one.
-fn claim_backend_degradation_warning(warned: &std::sync::atomic::AtomicBool) -> bool {
-    !warned.swap(true, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// The level a degradation is logged at: `first` for the first occurrence in
-/// the process, debug for every later one. Parameterized because a pane that
-/// fell back to Alacritty still works and warrants a warning, while a pane
-/// killed by a post-spawn failure is an error and must not be filtered out of
-/// a default-level log just because an unrelated fallback already claimed the
-/// warning slot.
-fn backend_degradation_level_at(
-    warned: &std::sync::atomic::AtomicBool,
-    first: log::Level,
-) -> log::Level {
-    if claim_backend_degradation_warning(warned) {
-        first
-    } else {
-        log::Level::Debug
+    GhosttyStartFailure {
+        child_pid: None,
+        diagnostics: TerminalBackendFailureDiagnostics::new(
+            phase,
+            reason_code,
+            raw_os_error_from_anyhow(&source),
+        ),
     }
 }
 
-fn backend_degradation_level(warned: &std::sync::atomic::AtomicBool) -> log::Level {
-    backend_degradation_level_at(warned, log::Level::Warn)
+/// Linux renders the leading engine wakeup immediately, which is the
+/// low-latency path. Windows holds it until the batch closes, because ConPTY
+/// can split or normalize the synchronized-output sequence around TUI redraws.
+const RENDER_WAKEUP_IMMEDIATELY: bool = cfg!(target_os = "linux");
+
+/// Set by the first pane that fails to start the engine, so a broken artifact
+/// costs one error line per process rather than one per pane (FR-05).
+static BACKEND_START_FAILED_LOGGED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Claim the single process-lifetime report slot. Returns `true` exactly once
+/// per flag; later callers log the same failure at debug level, so no per-pane
+/// detail is lost while the error count stays at one.
+fn claim_backend_failure_report(reported: &std::sync::atomic::AtomicBool) -> bool {
+    !reported.swap(true, std::sync::atomic::Ordering::Relaxed)
 }
 
-#[cfg(not(ghostty_native))]
-fn warn_ghostty_unavailable_once() {
-    log::log!(
-        target: "paneflow::terminal::backend",
-        backend_degradation_level(&BACKEND_DEGRADED_WARNED),
-        "Ghostty backend requested but unavailable on this platform/build; using Alacritty"
-    );
+/// The level a startup failure is logged at: error for the first occurrence in
+/// the process, debug for every later one. A pane whose engine failed to start
+/// is dead, so the first one has to stay visible at the default log level.
+fn backend_failure_level(reported: &std::sync::atomic::AtomicBool) -> log::Level {
+    if claim_backend_failure_report(reported) {
+        log::Level::Error
+    } else {
+        log::Level::Debug
+    }
 }
 
 fn log_backend_diagnostics(terminal: &TerminalState) {
@@ -236,20 +130,22 @@ pub(crate) fn probe_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var("PANEFLOW_LATENCY_PROBE").as_deref() == Ok("1"))
 }
 
-/// Human-readable in-pane message for a failed PTY spawn - written into the
-/// display-only placeholder kept by the US-012 background-spawn path (and the
-/// old synchronous fallback). ANSI-formatted; `\r\n` because there is no PTY to
-/// translate bare `\n`.
-fn spawn_error_message(e: &anyhow::Error) -> String {
+/// Human-readable in-pane message for a failed engine start - written into the
+/// display-only surface [`TerminalState::report_spawn_failure`] swaps in.
+/// ANSI-formatted; `\r\n` because there is no PTY to translate bare `\n`.
+fn spawn_error_message(failure: &TerminalBackendFailureDiagnostics) -> String {
     format!(
-        "\x1b[1;31mError\x1b[0m: failed to start shell.\r\n\
+        "\x1b[1;31mError\x1b[0m: failed to start the terminal.\r\n\
          \r\n\
          Common causes:\r\n\
          \x20 \x20- PTY pool exhausted\r\n\
          \x20 \x20- Shell binary not found ($SHELL / default_shell)\r\n\
          \x20 \x20- Permission denied on /dev/ptmx\r\n\
          \r\n\
-         \x1b[2m{e:#}\x1b[0m\r\n",
+         \x1b[2mfailure_phase={} reason_code={} os_error={:?}\x1b[0m\r\n",
+        failure.phase.as_str(),
+        failure.reason_code,
+        failure.os_error,
     )
 }
 
@@ -405,13 +301,11 @@ pub struct TerminalView {
     focus_subscriptions: Option<(gpui::Subscription, gpui::Subscription)>,
     /// Key presses accepted by Ghostty and therefore eligible for a matching
     /// release event. Prevents app-consumed shortcuts from leaking key-up data.
-    #[cfg(ghostty_native)]
     pub(super) ghostty_pressed_keys:
         std::collections::HashMap<String, paneflow_terminal_ghostty::KeyInput>,
     /// Printable key metadata held until GPUI commits the final text. This
     /// keeps IME as the single text source while still giving Kitty encoding
     /// the logical key, modifiers, repeat action, and matching release.
-    #[cfg(ghostty_native)]
     pub(super) ghostty_pending_text_key:
         Option<(gpui::Keystroke, paneflow_terminal_ghostty::KeyAction, bool)>,
     /// Last hovered cell position for URL regex detection (US-015).
@@ -443,20 +337,6 @@ impl TerminalView {
             .terminal_window_size
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn current_window_size(&self) -> TerminalWindowSize {
-        if let Some(size) = self.recorded_window_size() {
-            return size;
-        }
-
-        let (cols, rows) = self.terminal.session_backend().grid_size();
-        TerminalWindowSize::new(
-            cols,
-            rows,
-            terminal_metric_to_u16(self.cell_width.as_f32()),
-            terminal_metric_to_u16(self.line_height.as_f32()),
-        )
     }
 
     fn process_dirty_terminal(&mut self, cx: &mut Context<Self>) {
@@ -518,7 +398,6 @@ impl TerminalView {
     ) {
         if self.cursor_color_override != color {
             self.cursor_color_override = color;
-            self.terminal.cursor_color_override = color;
             cx.notify();
         }
     }
@@ -591,47 +470,14 @@ impl TerminalView {
             user_env,
             profile,
         );
-        let (mut terminal, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
+        let (terminal, pending) = TerminalState::new_pending_with_profile_and_shell_quoting(
             params.cols,
             params.rows,
             params.profile,
             params.shell_quoting,
         );
-        let requested_backend = paneflow_config::loader::load_config()
-            .terminal
-            .unwrap_or_default()
-            .backend;
-        terminal.set_backend_request(requested_backend);
-
-        #[cfg(ghostty_native)]
-        let ghostty_spawn = if should_start_ghostty(requested_backend) {
-            let initial_window_size = TerminalWindowSize::new(params.cols, params.rows, 0, 0);
-            let (ghostty, runtime_pending, events_rx) = GhosttySession::pending_with_clipboard_gate(
-                initial_window_size,
-                terminal.clipboard_gate(),
-            );
-            terminal.attach_ghostty(ghostty.clone(), events_rx);
-            Some((ghostty, runtime_pending))
-        } else {
-            None
-        };
-
-        #[cfg(not(ghostty_native))]
-        if policy_requests_ghostty(requested_backend, auto_selects_ghostty_for_target()) {
-            warn_ghostty_unavailable_once();
-            terminal.record_backend_failure(TerminalBackendFailureDiagnostics::new(
-                TerminalBackendFailurePhase::Availability,
-                TerminalBackendFailureDiagnostics::GHOSTTY_UNAVAILABLE,
-                None,
-            ));
-        }
-        // Route the Drop-time force-kill timer through GPUI's background
-        // executor instead of a detached OS thread (Zed parity, prevents a
-        // thread leak per closed pane under heavy use).
-        terminal.set_background_executor(cx.background_executor().clone());
-        // The background `EventLoop` attaches to this same shared `term` + event
-        // channel, so the placeholder's event loop keeps working after promotion
-        // - no view-side rewiring needed.
+        let ghostty = terminal.ghostty_session();
+        let ghostty_pending = pending.ghostty;
         // Capture the foreground signal mask on the MAIN thread so the
         // background-spawned child still gets correct Ctrl-C / Ctrl-Z (US-012).
         let signal_mask = crate::terminal::pty_session::capture_foreground_signal_mask();
@@ -641,150 +487,45 @@ impl TerminalView {
         let executor = cx.background_executor().clone();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                // Blocking PTY open (`tty::new` forks) runs off the render thread.
+                // The blocking PTY open runs off the render thread, so an
+                // N-pane restore never serializes N spawns on the main thread.
                 let outcome = executor
                     .spawn(async move {
-                        #[cfg(ghostty_native)]
-                        if let Some((ghostty, runtime_pending)) = ghostty_spawn {
-                            let max_scrollback = paneflow_config::loader::load_config()
-                                .terminal
-                                .unwrap_or_default()
-                                .resolved_scrollback_lines_for_profile(params.profile);
-                            match ghostty.start(
-                                runtime_pending,
-                                params.clone(),
-                                signal_mask,
-                                max_scrollback,
-                            ) {
-                                Ok(spawned) => BackgroundSpawnOutcome::Ghostty(spawned),
-                                Err(error) => match classify_ghostty_start_error(error) {
-                                    GhosttyFailureRoute::Fallback(failure) => {
-                                        BackgroundSpawnOutcome::GhosttyFallback {
-                                            spawned: TerminalState::open_pty_and_eventloop(
-                                                params,
-                                                pending,
-                                                signal_mask,
-                                            ),
-                                            failure,
-                                        }
-                                    }
-                                    GhosttyFailureRoute::PostSpawn {
-                                        child_pid,
-                                        failure,
-                                    } => BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
-                                        child_pid,
-                                        failure,
-                                    },
-                                },
-                            }
-                        } else {
-                            BackgroundSpawnOutcome::Alacritty(
-                                TerminalState::open_pty_and_eventloop(
-                                    params,
-                                    pending,
-                                    signal_mask,
-                                ),
-                            )
-                        }
-                        #[cfg(not(ghostty_native))]
-                        {
-                            BackgroundSpawnOutcome::Alacritty(
-                                TerminalState::open_pty_and_eventloop(
-                                    params,
-                                    pending,
-                                    signal_mask,
-                                ),
-                            )
-                        }
+                        let max_scrollback = paneflow_config::loader::load_config()
+                            .terminal
+                            .unwrap_or_default()
+                            .resolved_scrollback_lines_for_profile(params.profile);
+                        ghostty
+                            .start(ghostty_pending, params, signal_mask, max_scrollback)
+                            .map_err(classify_ghostty_start_error)
                     })
                     .await;
                 let _ = this.update(cx, |view, cx| {
                     match outcome {
-                        BackgroundSpawnOutcome::Alacritty(Ok(spawned)) => {
-                            view.terminal.promote(spawned);
-                            if let Some(size) = view.recorded_window_size() {
-                                view.terminal.notify_window_size(size);
-                            }
-                        }
-                        BackgroundSpawnOutcome::Alacritty(Err(error)) => {
-                            // Spawn failed: keep the display-only placeholder and
-                            // surface the error in-pane (no orphan, no panic - same
-                            // outcome as the old synchronous fallback).
-                            log::error!(
-                                target: "paneflow::terminal::backend",
-                                "Alacritty startup failed: reason_code=alacritty_startup_failed os_error={:?}",
-                                raw_os_error_from_anyhow(&error),
-                            );
-                            view.needs_initial_clear
-                                .store(false, std::sync::atomic::Ordering::Relaxed);
-                            view.terminal
-                                .write_output(spawn_error_message(&error).as_bytes());
-                        }
-                        #[cfg(ghostty_native)]
-                        BackgroundSpawnOutcome::Ghostty(spawned) => {
+                        Ok(spawned) => {
                             view.terminal.promote_ghostty(spawned);
                             if let Some(size) = view.recorded_window_size() {
                                 view.terminal.notify_window_size(size);
                             }
                         }
-                        #[cfg(ghostty_native)]
-                        BackgroundSpawnOutcome::GhosttyFallback { spawned, failure } => {
+                        Err(failure) => {
+                            let after_child = match failure.child_pid {
+                                Some(pid) => format!(" after child creation (pid={pid})"),
+                                None => String::new(),
+                            };
                             log::log!(
                                 target: "paneflow::terminal::backend",
-                                backend_degradation_level(&BACKEND_DEGRADED_WARNED),
-                                "Ghostty startup failed before child creation; using Alacritty: failure_phase={} reason_code={} os_error={:?}",
-                                failure.phase.as_str(),
-                                failure.reason_code,
-                                failure.os_error,
+                                backend_failure_level(&BACKEND_START_FAILED_LOGGED),
+                                "Ghostty startup failed{after_child}: failure_phase={} reason_code={} os_error={:?}",
+                                failure.diagnostics.phase.as_str(),
+                                failure.diagnostics.reason_code,
+                                failure.diagnostics.os_error,
                             );
-                            view.terminal.fallback_from_ghostty(failure);
-                            match spawned {
-                                Ok(spawned) => {
-                                    view.terminal.promote(spawned);
-                                    if let Some(size) = view.recorded_window_size() {
-                                        view.terminal.notify_window_size(size);
-                                    }
-                                }
-                                Err(error) => {
-                                    log::error!(
-                                        target: "paneflow::terminal::backend",
-                                        "Alacritty startup failed after Ghostty fallback: reason_code=alacritty_startup_failed os_error={:?}",
-                                        raw_os_error_from_anyhow(&error),
-                                    );
-                                    view.needs_initial_clear.store(
-                                        false,
-                                        std::sync::atomic::Ordering::Relaxed,
-                                    );
-                                    view.terminal
-                                        .write_output(spawn_error_message(&error).as_bytes());
-                                }
-                            }
-                        }
-                        #[cfg(ghostty_native)]
-                        BackgroundSpawnOutcome::GhosttyPostSpawnFailed {
-                            child_pid,
-                            failure,
-                        } => {
-                            log::log!(
-                                target: "paneflow::terminal::backend",
-                                backend_degradation_level_at(
-                                    &BACKEND_POST_SPAWN_FAILED_LOGGED,
-                                    log::Level::Error,
-                                ),
-                                "Ghostty startup failed after child creation (pid={child_pid}); refusing Alacritty child fallback: failure_phase={} reason_code={} os_error={:?}",
-                                failure.phase.as_str(),
-                                failure.reason_code,
-                                failure.os_error,
-                            );
-                            view.terminal.fail_ghostty_after_spawn(failure);
                             view.needs_initial_clear
                                 .store(false, std::sync::atomic::Ordering::Relaxed);
-                            view.terminal.write_output(
-                                spawn_error_message(&anyhow::anyhow!(
-                                    "ghostty_post_spawn_failed"
-                                ))
-                                .as_bytes(),
-                            );
+                            let message = spawn_error_message(&failure.diagnostics);
+                            view.terminal
+                                .report_spawn_failure(failure.diagnostics, &message);
                         }
                     }
                     log_backend_diagnostics(&view.terminal);
@@ -815,28 +556,24 @@ impl TerminalView {
 
         // Backend event coalescing:
         // Phase 1: Block until first event (zero CPU when idle)
-        // Phase 2: Render the leading Linux Ghostty wakeup immediately. Windows
-        // Ghostty and Alacritty wait 4ms (max 100, dedup Wakeup) so ConPTY cannot
-        // expose a partial multi-write terminal frame.
+        // Phase 2: Render the leading Linux wakeup immediately. Windows waits
+        // 4ms (max 100, dedup Wakeup) so ConPTY cannot expose a partial
+        // multi-write terminal frame.
         // Phase 3: Process batch, yield to other GPUI tasks
         let events_rx = terminal.take_backend_events();
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let mut events_rx = events_rx;
                 let mut immediate_ghostty_wakeup_burst_active = false;
-                loop {
-                    // Phase 1: Block until first event arrives (zero CPU when idle)
-                    let Some(first_event) = events_rx.next().await else {
-                        break; // Channel closed
-                    };
-
+                // Phase 1: Block until an event arrives (zero CPU when idle); the
+                // loop ends when the runtime drops its sender.
+                while let Some(first_event) = events_rx.next().await {
                     // Phase 2: Keep the existing low-latency path for Linux PTYs. Windows
-                    // Ghostty holds its first wakeup until the batch closes because ConPTY can
-                    // split or normalize the synchronized-output sequence around TUI redraws.
+                    // holds its first wakeup until the batch closes because ConPTY can split
+                    // or normalize the synchronized-output sequence around TUI redraws.
                     let mut batch = Vec::with_capacity(32);
                     let mut dequeued = 1usize;
-                    let render_wakeup_immediately =
-                        should_render_ghostty_wakeup_immediately(&first_event);
+                    let render_wakeup_immediately = RENDER_WAKEUP_IMMEDIATELY;
                     let mut had_wakeup = first_event.is_wakeup();
                     let leading_immediate_wakeup = render_wakeup_immediately
                         && had_wakeup
@@ -907,44 +644,13 @@ impl TerminalView {
                             // Execute deferred clipboard operations (OSC 52)
                             let clipboard_ops =
                                 std::mem::take(&mut view.terminal.pending_clipboard_ops);
-                            for op in clipboard_ops {
-                                match op {
-                                    ClipboardOp::Store(text) => {
-                                        // U-023: sanitize untrusted PTY output before it
-                                        // reaches the system clipboard - symmetric with the
-                                        // Load path below, so an embedded CR/ESC can't commit
-                                        // a hidden command when the user later pastes it.
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            sanitize_osc52(&text),
-                                        ));
-                                    }
-                                    ClipboardOp::Load(format_fn) => {
-                                        // Match the OSC 52 Store cap (100 KiB) on
-                                        // Load responses too - without this, a
-                                        // very large clipboard (multi-MB) would
-                                        // be base64-encoded and streamed into
-                                        // the PTY in one shot. Cap centralized
-                                        // in `crate::limits` (US-013).
-                                        let mut text = cx
-                                            .read_from_clipboard()
-                                            .and_then(|c| c.text())
-                                            .unwrap_or_default();
-                                        if text.len() > MAX_OSC52_BYTES {
-                                            // Truncate on a UTF-8 boundary so
-                                            // the response remains valid text.
-                                            let mut cut = MAX_OSC52_BYTES;
-                                            while cut > 0 && !text.is_char_boundary(cut) {
-                                                cut -= 1;
-                                            }
-                                            text.truncate(cut);
-                                        }
-                                        // U-023: same shared control-char filter as the Store
-                                        // path (now also strips CR / other C0 / DEL, not just
-                                        // ESC + C1).
-                                        let response = format_fn(&sanitize_osc52(&text));
-                                        view.terminal.write_to_pty_silent(response.into_bytes());
-                                    }
-                                }
+                            for text in clipboard_ops {
+                                // U-023: sanitize untrusted PTY output before it reaches
+                                // the system clipboard, so an embedded CR/ESC cannot commit
+                                // a hidden command when the user later pastes it.
+                                cx.write_to_clipboard(ClipboardItem::new_string(sanitize_osc52(
+                                    &text,
+                                )));
                             }
 
                             // OSC 10/11/12 color queries are now handled
@@ -954,16 +660,6 @@ impl TerminalView {
                             // window for crossterm-based clients like the
                             // OpenAI Codex CLI, which then dropped its
                             // input-bar background tint silently.
-
-                            // Cap pending TextAreaSize replies to keep a runaway TUI
-                            // from accumulating thousands of pending responders.
-                            // Keep the most recent entries - older replies would
-                            // race the writer that requested them and are
-                            // effectively stale by the time we'd answer.
-                            let size = view.current_window_size();
-                            for response in view.terminal.drain_size_responses(size) {
-                                view.terminal.write_to_pty_silent(response.into_bytes());
-                            }
 
                             // US-002: close only on a user-initiated or clean
                             // exit. A non-zero exit with no prior user input is
@@ -1005,7 +701,7 @@ impl TerminalView {
         // cursor visibility tracks the shared toggle. Replaces the
         // per-terminal `smol::Timer` loop that previously lived here.
         // Short-circuit preserved: skip when the PTY has exited; force visible
-        // when alacritty disabled blinking (DECSCUSR / VT100 cursor style).
+        // when the program disabled blinking (DECSCUSR / VT100 cursor style).
         //
         // `try_global` rather than `global` so a future code path that
         // constructs a TerminalView outside `PaneFlowApp::new` (test
@@ -1085,9 +781,7 @@ impl TerminalView {
             copy_mode_frozen_offset: 0,
             was_focused: false,
             focus_subscriptions: None,
-            #[cfg(ghostty_native)]
             ghostty_pressed_keys: std::collections::HashMap::new(),
-            #[cfg(ghostty_native)]
             ghostty_pending_text_key: None,
             hovered_cell: None,
             ctrl_hovered_link: None,
@@ -1101,7 +795,14 @@ impl TerminalView {
 
     #[cfg(test)]
     pub(crate) fn display_only_for_test(workspace_id: u64, cx: &mut Context<Self>) -> Self {
-        let terminal = TerminalState::new_display_only(24, 80);
+        let mut terminal = TerminalState::new_display_only(24, 80);
+        // Drop the engine event channel before the view wires its coalescing
+        // task to it. The display runtime owns a real OS thread, and GPUI's
+        // test scheduler aborts the process when a foreign thread wakes a task
+        // it did not spawn. Layout and workspace tests only need a mounted
+        // surface, never its output, so an event stream that stays pending is
+        // exactly what they want.
+        drop(terminal.take_backend_events());
         Self::from_terminal_state(workspace_id, terminal, cx)
     }
 }
@@ -1114,7 +815,6 @@ impl TerminalView {
     /// Set preedit text during IME composition.
     pub fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
         self.ime_marked_text = text;
-        #[cfg(ghostty_native)]
         {
             self.ghostty_pending_text_key = None;
         }
@@ -1129,10 +829,8 @@ impl TerminalView {
 
     /// Commit composed text to the PTY.
     pub fn commit_text(&mut self, text: &str, _cx: &mut Context<Self>) {
-        #[cfg(ghostty_native)]
         let was_composing = !self.ime_marked_text.is_empty();
         self.ime_marked_text.clear();
-        #[cfg(ghostty_native)]
         {
             let pending = if was_composing {
                 self.ghostty_pending_text_key.take();
@@ -1165,17 +863,13 @@ impl TerminalView {
             let mut release = input.clone();
             release.action = paneflow_terminal_ghostty::KeyAction::Release;
             release.text.clear();
-            let result = self.terminal.write_ghostty_key(input, None);
+            let result = self.terminal.write_ghostty_key(input);
             if result == super::pty_session::BackendInputResult::Accepted
                 && let Some(release_id) = release_id
             {
                 self.ghostty_pressed_keys.insert(release_id, release);
             }
-            if result.is_handled() {
-                return;
-            }
         }
-        self.terminal.write_to_pty(text.as_bytes().to_vec());
     }
 
     /// Send arbitrary text to the PTY (no bracketed paste wrapping).
@@ -1715,7 +1409,6 @@ impl TerminalView {
         }
 
         self.terminal.set_terminal_focused(focused);
-        #[cfg(ghostty_native)]
         if !focused {
             self.release_ghostty_pressed_keys();
         }
@@ -1727,21 +1420,11 @@ impl TerminalView {
         if reports_focus {
             // This protocol write is not user input. It must not mark a failed
             // spawn as interactive merely because its pane received focus.
-            #[cfg(ghostty_native)]
-            let ghostty_encoded = self
-                .terminal
-                .write_ghostty_focus(if focused {
-                    paneflow_terminal_ghostty::FocusEvent::Gained
-                } else {
-                    paneflow_terminal_ghostty::FocusEvent::Lost
-                })
-                .is_handled();
-            #[cfg(not(ghostty_native))]
-            let ghostty_encoded = false;
-            if !ghostty_encoded {
-                let report = if focused { b"\x1b[I" } else { b"\x1b[O" };
-                self.terminal.write_to_pty_silent(report.to_vec());
-            }
+            self.terminal.write_ghostty_focus(if focused {
+                paneflow_terminal_ghostty::FocusEvent::Gained
+            } else {
+                paneflow_terminal_ghostty::FocusEvent::Lost
+            });
         }
         self.was_focused = focused;
     }
@@ -2019,131 +1702,11 @@ fn resolve_cursor_visible(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::pty_session::strip_partial_ansi_tail;
 
     #[test]
-    fn terminal_backend_policy_keeps_alacritty_as_explicit_rollback() {
-        let ghostty_available = cfg!(ghostty_native);
-
-        assert_eq!(
-            should_start_ghostty(TerminalBackendConfig::Auto),
-            ghostty_available && auto_selects_ghostty_for_target()
-        );
-        assert_eq!(
-            should_start_ghostty(TerminalBackendConfig::Ghostty),
-            ghostty_available
-        );
-        assert!(!should_start_ghostty(TerminalBackendConfig::Alacritty));
-    }
-
-    #[test]
-    fn promoted_auto_policy_preserves_rollback_and_unavailable_fallback() {
-        assert!(should_start_ghostty_for_policy(
-            TerminalBackendConfig::Auto,
-            true,
-            true,
-        ));
-        assert!(!should_start_ghostty_for_policy(
-            TerminalBackendConfig::Auto,
-            false,
-            true,
-        ));
-        assert!(!should_start_ghostty_for_policy(
-            TerminalBackendConfig::Auto,
-            true,
-            false,
-        ));
-        assert!(should_start_ghostty_for_policy(
-            TerminalBackendConfig::Ghostty,
-            true,
-            false,
-        ));
-        assert!(!should_start_ghostty_for_policy(
-            TerminalBackendConfig::Alacritty,
-            true,
-            false,
-        ));
-        assert!(policy_requests_ghostty(TerminalBackendConfig::Auto, true));
-        assert!(!policy_requests_ghostty(
-            TerminalBackendConfig::Alacritty,
-            true
-        ));
-    }
-
-    #[test]
-    fn auto_selection_keeps_macos_on_alacritty_while_ghostty_stays_opt_in() {
-        // US-017 AC1. The table is asserted for every shipped target, not only
-        // the host, so the macOS answer is proven on the Linux leg too.
-        assert!(!auto_selects_ghostty("macos", "aarch64", false));
-        assert!(!auto_selects_ghostty("macos", "x86_64", false));
-        assert!(auto_selects_ghostty("linux", "x86_64", false));
-        assert!(auto_selects_ghostty("linux", "aarch64", false));
-        assert!(auto_selects_ghostty("windows", "x86_64", true));
-        assert!(!auto_selects_ghostty("windows", "x86_64", false));
-        assert!(!auto_selects_ghostty("windows", "aarch64", true));
-        assert!(!auto_selects_ghostty("freebsd", "x86_64", false));
-
-        // The switch the promotion PRD will flip still reads from that table.
-        assert_eq!(
-            auto_selects_ghostty_for_target(),
-            auto_selects_ghostty(
-                std::env::consts::OS,
-                std::env::consts::ARCH,
-                cfg!(target_env = "msvc"),
-            )
-        );
-        #[cfg(target_os = "macos")]
-        assert!(!auto_selects_ghostty_for_target());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn macos_starts_ghostty_only_on_the_explicit_request() {
-        // US-017 AC2 and AC3, executed by the `macos_check` job. With the
-        // `libghostty-macos` feature compiled in the explicit request switches
-        // engines; `--no-default-features` degrades it to Alacritty (AC5).
-        assert_eq!(
-            should_start_ghostty(TerminalBackendConfig::Ghostty),
-            cfg!(ghostty_native)
-        );
-        assert!(!should_start_ghostty(TerminalBackendConfig::Auto));
-        assert!(!should_start_ghostty(TerminalBackendConfig::Alacritty));
-    }
-
-    #[test]
-    fn backend_degradation_warns_once_per_process() {
-        // US-017 AC5 and US-018 AC4: N failing panes cost one warning line,
-        // with the per-pane detail preserved at debug level.
-        let warned = std::sync::atomic::AtomicBool::new(false);
-        assert!(claim_backend_degradation_warning(&warned));
-        assert!(!claim_backend_degradation_warning(&warned));
-        assert!(!claim_backend_degradation_warning(&warned));
-
-        let fresh = std::sync::atomic::AtomicBool::new(false);
-        assert_eq!(backend_degradation_level(&fresh), log::Level::Warn);
-        assert_eq!(backend_degradation_level(&fresh), log::Level::Debug);
-        assert_eq!(backend_degradation_level(&fresh), log::Level::Debug);
-
-        // A post-spawn failure kills the pane, so its first occurrence stays
-        // at error level and keeps its own slot: a working fallback pane must
-        // not push a dead pane below the default log level.
-        let post_spawn = std::sync::atomic::AtomicBool::new(false);
-        assert_eq!(
-            backend_degradation_level_at(&post_spawn, log::Level::Error),
-            log::Level::Error
-        );
-        assert_eq!(
-            backend_degradation_level_at(&post_spawn, log::Level::Error),
-            log::Level::Debug
-        );
-    }
-
-    #[cfg(ghostty_native)]
-    #[test]
-    fn ghostty_start_errors_fall_back_except_after_the_child_exists() {
-        // US-018 AC2 and AC3. Every pre-child failure routes to the Alacritty
-        // fallback so the pane survives; a post-child failure must not spawn a
-        // second child, so it routes to the reporting path instead.
+    fn ghostty_start_errors_carry_their_phase_and_reason_code() {
+        // Every pre-child failure reports without a pid; a post-child failure
+        // carries the pid it already created, so the log line can name it.
         for (error, phase, reason_code) in [
             (
                 GhosttyStartError::Initialization(anyhow::anyhow!("engine")),
@@ -2161,35 +1724,41 @@ mod tests {
                 TerminalBackendFailureDiagnostics::GHOSTTY_SPAWN_FAILED,
             ),
         ] {
-            match classify_ghostty_start_error(error) {
-                GhosttyFailureRoute::Fallback(failure) => {
-                    assert_eq!(failure.phase, phase);
-                    assert_eq!(failure.reason_code, reason_code);
-                }
-                GhosttyFailureRoute::PostSpawn { .. } => {
-                    panic!("{reason_code} must keep the pane on the Alacritty fallback")
-                }
-            }
+            let failure = classify_ghostty_start_error(error);
+            assert_eq!(failure.child_pid, None);
+            assert_eq!(failure.diagnostics.phase, phase);
+            assert_eq!(failure.diagnostics.reason_code, reason_code);
         }
 
         let os_error = anyhow::Error::new(std::io::Error::from_raw_os_error(5));
-        match classify_ghostty_start_error(GhosttyStartError::PostSpawn {
+        let failure = classify_ghostty_start_error(GhosttyStartError::PostSpawn {
             child_pid: 4321,
             error: os_error,
-        }) {
-            GhosttyFailureRoute::PostSpawn { child_pid, failure } => {
-                assert_eq!(child_pid, 4321);
-                assert_eq!(failure.phase, TerminalBackendFailurePhase::PostSpawn);
-                assert_eq!(
-                    failure.reason_code,
-                    TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED
-                );
-                assert_eq!(failure.os_error, Some(5));
-            }
-            GhosttyFailureRoute::Fallback(_) => {
-                panic!("a post-spawn failure must not spawn a second child")
-            }
-        }
+        });
+        assert_eq!(failure.child_pid, Some(4321));
+        assert_eq!(
+            failure.diagnostics.phase,
+            TerminalBackendFailurePhase::PostSpawn
+        );
+        assert_eq!(
+            failure.diagnostics.reason_code,
+            TerminalBackendFailureDiagnostics::GHOSTTY_POST_SPAWN_FAILED
+        );
+        assert_eq!(failure.diagnostics.os_error, Some(5));
+    }
+
+    #[test]
+    fn backend_start_failure_reports_once_per_process() {
+        // FR-05: N failing panes cost one error line, with the per-pane detail
+        // preserved at debug level.
+        let reported = std::sync::atomic::AtomicBool::new(false);
+        assert!(claim_backend_failure_report(&reported));
+        assert!(!claim_backend_failure_report(&reported));
+
+        let fresh = std::sync::atomic::AtomicBool::new(false);
+        assert_eq!(backend_failure_level(&fresh), log::Level::Error);
+        assert_eq!(backend_failure_level(&fresh), log::Level::Debug);
+        assert_eq!(backend_failure_level(&fresh), log::Level::Debug);
     }
 
     // --- send_keystroke submission guard (US-005, orchestration-v2) ---
@@ -2236,46 +1805,6 @@ mod tests {
         assert!(!clean.contains('\u{7f}'), "DEL removed");
         assert!(!clean.contains('\u{85}'), "C1 (NEL) removed");
         assert!(clean.contains('\t') && clean.contains('\n'), "TAB/LF kept");
-    }
-
-    // --- strip_partial_ansi_tail tests (US-012 / US-015) ---
-
-    #[test]
-    fn strip_ansi_plain_text_unchanged() {
-        let mut s = "hello world\nline two".to_string();
-        strip_partial_ansi_tail(&mut s);
-        assert_eq!(s, "hello world\nline two");
-    }
-
-    #[test]
-    fn strip_ansi_lone_esc_removed() {
-        let mut s = "hello\x1b".to_string();
-        strip_partial_ansi_tail(&mut s);
-        assert_eq!(s, "hello");
-    }
-
-    #[test]
-    fn strip_ansi_incomplete_csi_removed() {
-        // Incomplete CSI: \x1b[38;2; (no terminating byte in 0x40..0x7E)
-        let mut s = "text\x1b[38;2;".to_string();
-        strip_partial_ansi_tail(&mut s);
-        assert_eq!(s, "text");
-    }
-
-    #[test]
-    fn strip_ansi_complete_csi_kept() {
-        // Complete CSI: \x1b[0m (terminated by 'm')
-        let mut s = "text\x1b[0m".to_string();
-        strip_partial_ansi_tail(&mut s);
-        assert_eq!(s, "text\x1b[0m");
-    }
-
-    #[test]
-    fn strip_ansi_incomplete_osc_removed() {
-        // Incomplete OSC: \x1b]7;file:// (no BEL or ST)
-        let mut s = "prompt\x1b]7;file://host/dir".to_string();
-        strip_partial_ansi_tail(&mut s);
-        assert_eq!(s, "prompt");
     }
 
     // --- extract_scrollback / restore_scrollback tests (US-011 / US-015) ---

@@ -7,16 +7,11 @@
 //! Keep the matchers string-based and allocation-light: this runs on every
 //! terminal write batch, on the GPUI main thread.
 
-#[cfg(any(test, ghostty_native))]
 use std::collections::VecDeque;
 
-#[cfg(any(test, ghostty_native))]
 const SERVICE_TAIL_MAX_LINES: usize = 100;
-#[cfg(any(test, ghostty_native))]
 const SERVICE_TAIL_MAX_LINE_BYTES: usize = 8 * 1024;
-#[cfg(any(test, ghostty_native))]
 const SERVICE_TAIL_MAX_TOTAL_BYTES: usize = 64 * 1024;
-#[cfg(any(test, ghostty_native))]
 const TAB_WIDTH: usize = 8;
 
 /// Bounded, ANSI-aware tail of raw PTY output used by the Ghostty backend.
@@ -26,13 +21,11 @@ const TAB_WIDTH: usize = 8;
 /// state across reads, while the performer retains only text that the detector
 /// can inspect.
 #[derive(Default)]
-#[cfg(any(test, ghostty_native))]
 pub(super) struct ServiceOutputTail {
     parser: ServiceOutputParser,
     output: ServiceOutputPerformer,
 }
 
-#[cfg(any(test, ghostty_native))]
 impl ServiceOutputTail {
     pub(super) fn advance(&mut self, bytes: &[u8]) {
         self.parser.advance(&mut self.output, bytes);
@@ -44,7 +37,6 @@ impl ServiceOutputTail {
 }
 
 #[derive(Clone, Copy, Default)]
-#[cfg(any(test, ghostty_native))]
 enum ServiceOutputParseState {
     #[default]
     Ground,
@@ -61,7 +53,6 @@ enum ServiceOutputParseState {
 /// CSI semantics, but bounds every parser state independently from untrusted
 /// PTY input, including unterminated OSC/DCS strings.
 #[derive(Default)]
-#[cfg(any(test, ghostty_native))]
 struct ServiceOutputParser {
     state: ServiceOutputParseState,
     utf8: [u8; 4],
@@ -69,7 +60,6 @@ struct ServiceOutputParser {
     utf8_expected: usize,
 }
 
-#[cfg(any(test, ghostty_native))]
 impl ServiceOutputParser {
     fn advance(&mut self, output: &mut ServiceOutputPerformer, bytes: &[u8]) {
         for &byte in bytes {
@@ -174,7 +164,6 @@ impl ServiceOutputParser {
 }
 
 #[derive(Default)]
-#[cfg(any(test, ghostty_native))]
 struct ServiceOutputPerformer {
     completed: VecDeque<String>,
     completed_bytes: usize,
@@ -182,7 +171,6 @@ struct ServiceOutputPerformer {
     carriage_return_pending: bool,
 }
 
-#[cfg(any(test, ghostty_native))]
 impl ServiceOutputPerformer {
     fn prepare_for_write(&mut self) {
         if self.carriage_return_pending {
@@ -260,7 +248,6 @@ impl ServiceOutputPerformer {
     }
 }
 
-#[cfg(any(test, ghostty_native))]
 impl ServiceOutputPerformer {
     fn execute(&mut self, byte: u8) {
         match byte {
