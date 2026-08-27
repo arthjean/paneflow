@@ -202,11 +202,19 @@ function Normalize-CoffArchive {
         Pop-Location
     }
 
-    $sourcePaths = Sort-Ordinal @(Get-ChildItem -LiteralPath $work -File -Filter "*.obj" | ForEach-Object { $_.FullName })
-    $sources = @($sourcePaths | ForEach-Object { Get-Item -LiteralPath $_ })
-    if ($sources.Count -ne $names.Count) {
-        throw "COFF extraction produced $($sources.Count) objects, expected $($names.Count)"
+    # `llvm-ar x` writes every member under its own basename, so enumerate the
+    # extraction from the member list instead of globbing `*.obj`. The Zig
+    # 0.16 build emits `.o` members next to the MSVC `.obj` ones - the
+    # manifest names two of them, `libghostty-vt-static_zcu.o` and
+    # `wuffs-v0.4.o` - and the glob dropped them, which is what "COFF
+    # extraction produced 12 objects, expected 14" reported.
+    $sourcePaths = Sort-Ordinal @($names | ForEach-Object { Join-Path $work $_ })
+    $missing = @($sourcePaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
+    if ($missing.Count -ne 0) {
+        $missingNames = @($missing | ForEach-Object { Split-Path $_ -Leaf })
+        throw "COFF extraction did not produce: $([string]::Join(', ', $missingNames))"
     }
+    $sources = @($sourcePaths | ForEach-Object { Get-Item -LiteralPath $_ })
     $members = @()
     foreach ($source in $sources) {
         $normalized = "$($source.FullName).normalized"
