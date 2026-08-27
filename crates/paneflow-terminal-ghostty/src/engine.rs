@@ -11,6 +11,41 @@ use crate::{BackendEvent, Modes, Result, Scroll, WindowSize};
 
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 
+/// The renderer geometry a mouse encoder maps positions with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MouseEncoderSize {
+    pub(crate) screen_width: u32,
+    pub(crate) screen_height: u32,
+    pub(crate) cell_width: u32,
+    pub(crate) cell_height: u32,
+    pub(crate) padding_top: u32,
+    pub(crate) padding_bottom: u32,
+    pub(crate) padding_right: u32,
+    pub(crate) padding_left: u32,
+}
+
+/// The terminal modes a mouse encoder derives its behavior from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct MouseModes {
+    report_click: bool,
+    drag: bool,
+    motion: bool,
+    sgr: bool,
+    utf8: bool,
+}
+
+impl From<Modes> for MouseModes {
+    fn from(modes: Modes) -> Self {
+        Self {
+            report_click: modes.mouse_report_click,
+            drag: modes.mouse_drag,
+            motion: modes.mouse_motion,
+            sgr: modes.sgr_mouse,
+            utf8: modes.utf8_mouse,
+        }
+    }
+}
+
 pub struct DisplayTerminal {
     pub(crate) mouse_event: OwnedHandle<sys::GhosttyMouseEvent>,
     pub(crate) mouse_encoder: OwnedHandle<sys::GhosttyMouseEncoder>,
@@ -24,6 +59,19 @@ pub struct DisplayTerminal {
     pub(crate) gesture: Option<crate::selection_gesture::GestureHandle>,
     pub(crate) terminal: OwnedHandle<sys::GhosttyTerminal>,
     pub(crate) snapshot_cache: SnapshotCache,
+    /// The mouse modes the encoder was last configured from. libghostty's
+    /// `setopt_from_terminal` clears the encoder's last-cell memory, which is
+    /// what suppresses a motion report per pixel instead of per cell, so it
+    /// is only called when these actually change.
+    pub(crate) mouse_encoder_modes: Option<MouseModes>,
+    /// The renderer geometry the mouse encoder was last configured with.
+    /// Setting it also clears the last-cell memory, so it is only pushed when
+    /// it changes.
+    pub(crate) mouse_encoder_size: Option<MouseEncoderSize>,
+    /// Encoder settings that belong to the embedder rather than the terminal.
+    /// `ghostty_key_encoder_setopt_from_terminal` resets the encoder to what
+    /// the program asked for, so these are reapplied after every such call.
+    pub(crate) key_encoder_overrides: crate::input_options::KeyEncoderOverrides,
     pub(crate) callbacks: Box<CallbackState>,
     pub(crate) _not_send_or_sync: PhantomData<Rc<()>>,
 }

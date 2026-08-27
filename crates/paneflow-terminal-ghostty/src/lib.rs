@@ -37,6 +37,7 @@ native_modules!(
     grid,
     grid_ref,
     handles,
+    input_options,
     modes,
     navigation,
     osc,
@@ -73,6 +74,8 @@ pub use grid_ref::{CellContent, CellInfo, RowInfo, SemanticContent, SemanticProm
 pub use input::{
     FocusEvent, Key, KeyAction, KeyInput, Modifiers, MouseAction, MouseButton, MouseInput,
 };
+#[cfg(ghostty_native)]
+pub use input_options::{KeyEventState, MouseEventState, OptionAsAlt};
 pub use model::{
     BackendEvent, Cell, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape, Hyperlink,
     Modes, Point, ProgressReport, ProgressState, Rgb, Scroll, SearchMatch, SearchResult,
