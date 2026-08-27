@@ -723,6 +723,37 @@ mod tests {
         assert_eq!(legacy.theme.as_deref(), Some("One Dark"));
         assert_eq!(terminal.backend, TerminalBackendConfig::Auto);
         assert_eq!(terminal.scrollback_lines, Some(4321));
+
+        // US-017: a backend typo must cost the backend setting and nothing
+        // else. A derived `Deserialize` would abort the whole document and
+        // `parse_and_validate` would hand back defaults, silently wiping the
+        // theme, shell, shortcuts, and agent settings.
+        let typo: PaneFlowConfig = serde_json::from_str(
+            r#"{
+                "theme": "One Dark",
+                "default_shell": "/bin/zsh",
+                "shortcuts": {"split_right": "cmd-d"},
+                "agent_panel": {"default_profile": "Write"},
+                "terminal": {"backend": "gostty", "scrollback_lines": 4321}
+            }"#,
+        )
+        .expect("US-017: an unknown backend value must not fail the document");
+        let terminal = typo.terminal.expect("terminal block");
+        assert_eq!(terminal.backend, TerminalBackendConfig::Alacritty);
+        assert_eq!(terminal.scrollback_lines, Some(4321));
+        assert_eq!(typo.theme.as_deref(), Some("One Dark"));
+        assert_eq!(typo.default_shell.as_deref(), Some("/bin/zsh"));
+        assert_eq!(
+            typo.shortcuts.get("split_right").map(String::as_str),
+            Some("cmd-d")
+        );
+        assert_eq!(
+            typo.agent_panel
+                .expect("agent_panel block")
+                .default_profile
+                .as_deref(),
+            Some("Write")
+        );
     }
 
     #[test]

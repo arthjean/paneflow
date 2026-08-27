@@ -50,15 +50,31 @@ fn policy_requests_ghostty(requested: TerminalBackendConfig, auto_selects: bool)
     }
 }
 
+/// The `terminal.backend = "auto"` policy table, keyed by the target a binary
+/// was built for.
+///
+/// macOS is deliberately absent. US-017 ships the macOS Ghostty engine as an
+/// explicit `"terminal_backend": "ghostty"` opt-in and leaves `auto` on
+/// Alacritty; promoting it is a separate PRD. Split out from
+/// [`auto_selects_ghostty_for_target`] so the answer for a platform other than
+/// the build host is assertable from any CI leg rather than only from that
+/// platform's own job.
+fn auto_selects_ghostty(target_os: &str, target_arch: &str, target_env_msvc: bool) -> bool {
+    match target_os {
+        "linux" => true,
+        "windows" => target_arch == "x86_64" && target_env_msvc,
+        _ => false,
+    }
+}
+
+/// The single policy switch for automatic backend selection. Its return value
+/// is the one thing a promotion PRD changes.
 fn auto_selects_ghostty_for_target() -> bool {
-    cfg!(any(
-        target_os = "linux",
-        all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc"
-        )
-    ))
+    auto_selects_ghostty(
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cfg!(target_env = "msvc"),
+    )
 }
 
 #[cfg(any(test, ghostty_native))]
@@ -1993,6 +2009,46 @@ mod tests {
             TerminalBackendConfig::Alacritty,
             true
         ));
+    }
+
+    #[test]
+    fn auto_selection_keeps_macos_on_alacritty_while_ghostty_stays_opt_in() {
+        // US-017 AC1. The table is asserted for every shipped target, not only
+        // the host, so the macOS answer is proven on the Linux leg too.
+        assert!(!auto_selects_ghostty("macos", "aarch64", false));
+        assert!(!auto_selects_ghostty("macos", "x86_64", false));
+        assert!(auto_selects_ghostty("linux", "x86_64", false));
+        assert!(auto_selects_ghostty("linux", "aarch64", false));
+        assert!(auto_selects_ghostty("windows", "x86_64", true));
+        assert!(!auto_selects_ghostty("windows", "x86_64", false));
+        assert!(!auto_selects_ghostty("windows", "aarch64", true));
+        assert!(!auto_selects_ghostty("freebsd", "x86_64", false));
+
+        // The switch the promotion PRD will flip still reads from that table.
+        assert_eq!(
+            auto_selects_ghostty_for_target(),
+            auto_selects_ghostty(
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+                cfg!(target_env = "msvc"),
+            )
+        );
+        #[cfg(target_os = "macos")]
+        assert!(!auto_selects_ghostty_for_target());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_starts_ghostty_only_on_the_explicit_request() {
+        // US-017 AC2 and AC3, executed by the `macos_check` job. With the
+        // `libghostty-macos` feature compiled in the explicit request switches
+        // engines; `--no-default-features` degrades it to Alacritty (AC5).
+        assert_eq!(
+            should_start_ghostty(TerminalBackendConfig::Ghostty),
+            cfg!(ghostty_native)
+        );
+        assert!(!should_start_ghostty(TerminalBackendConfig::Auto));
+        assert!(!should_start_ghostty(TerminalBackendConfig::Alacritty));
     }
 
     // --- send_keystroke submission guard (US-005, orchestration-v2) ---
