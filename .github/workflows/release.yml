@@ -372,10 +372,15 @@ jobs:
           --target ${{ matrix.target }}
           -- -D warnings
 
+      # US-016 AC3: release-time lint has to see the same cfg surface as the
+      # pull-request lint in `run_tests.yml`, otherwise `ghostty_native` code
+      # would first be linted at tag time, on the one run that cannot be
+      # cheaply retried.
       - name: cargo clippy (macOS)
         if: runner.os == 'macOS'
         run: >-
           cargo clippy --workspace --locked --no-default-features
+          --features paneflow-app/libghostty-macos
           --target ${{ matrix.target }} -- -D warnings
 
       - name: cargo clippy (Windows)
@@ -547,10 +552,24 @@ jobs:
           if [ "${WINDOWS_HELPERS_PREPARED:-}" = "true" ]; then
             export PANEFLOW_SKIP_EMBED_BUILD=1
           fi
-          feature_args=(--no-default-features)
-          if [ "$RUNNER_OS" = "Linux" ]; then
-            feature_args=()
-          fi
+          # US-016 AC1/AC6: each POSIX leg names the backend it ships. macOS
+          # used to fall through to `--no-default-features`, which is the
+          # Alacritty-only recovery build; it now links the pinned
+          # aarch64-apple-darwin archive like Linux and Windows do. There is
+          # deliberately no fallback branch: a missing, corrupt, or
+          # hash-mismatched archive fails `paneflow-libghostty-sys`'s build
+          # script with the `scripts/build-libghostty-macos.sh` corrective
+          # action, so a release cannot silently ship without the engine its
+          # notes claim.
+          feature_args=()
+          case "$RUNNER_OS" in
+            Linux) ;;
+            macOS) feature_args=(--no-default-features --features paneflow-app/libghostty-macos) ;;
+            *)
+              echo "::error::unexpected runner OS '$RUNNER_OS' on the POSIX build leg"
+              exit 1
+              ;;
+          esac
           cargo build --release -p paneflow-app --locked --target "$TARGET" "${feature_args[@]}"
 
       - name: Verify packaged libghostty identity and static linkage
@@ -559,6 +578,19 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           scripts/verify-libghostty-package.sh \
+            --binary "target/$TARGET/release/paneflow" \
+            --notice native/libghostty/THIRD_PARTY_NOTICES.md
+
+      # US-016 AC2: the Mach-O analog of the Linux step above. It runs on the
+      # freshly built binary, before bundling, so a leg that produced an
+      # Alacritty-only or dynamically linked artifact fails here rather than
+      # reaching signing and notarization.
+      - name: Verify packaged libghostty identity and static linkage (macOS)
+        if: runner.os == 'macOS'
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          scripts/verify-libghostty-macos.sh \
             --binary "target/$TARGET/release/paneflow" \
             --notice native/libghostty/THIRD_PARTY_NOTICES.md
 
