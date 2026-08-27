@@ -67,6 +67,11 @@ impl DisplayTerminal {
         configure_scrollback(terminal.raw(), max_scrollback)?;
         configure_safety_limits(terminal.raw())?;
         configure_appearance(terminal.raw(), appearance)?;
+        // `terminal_new` takes a cell grid but no cell size, so the pixel
+        // metrics stay at zero until something resizes. Anything that divides
+        // pixels by cells then comes back zero, which is how a Kitty image
+        // ended up occupying no grid cells at all.
+        crate::engine::resize_terminal(terminal.raw(), size)?;
         // SAFETY: the caller's allocator contract carries through to every
         // auxiliary handle `assemble` creates.
         unsafe { Self::assemble(terminal, callbacks, allocator) }
