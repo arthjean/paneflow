@@ -89,3 +89,75 @@ pub(crate) fn mouse_action(action: MouseAction) -> sys::GhosttyMouseAction {
 pub(crate) fn mouse_button(button: MouseButton) -> sys::GhosttyMouseButton {
     sys::GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_LEFT + sys::GhosttyMouseButton::from(button as u8)
 }
+
+/// Recover the neutral key from a libghostty key code.
+///
+/// The forward table is the authority; this walks the ranges it produces
+/// rather than duplicating the mapping, so the two cannot drift apart.
+pub(crate) fn key_from_code(code: sys::GhosttyKey) -> Key {
+    const NAMED: &[Key] = &[
+        Key::Enter,
+        Key::Tab,
+        Key::Backspace,
+        Key::Delete,
+        Key::Escape,
+        Key::Up,
+        Key::Down,
+        Key::Left,
+        Key::Right,
+        Key::Home,
+        Key::End,
+        Key::PageUp,
+        Key::PageDown,
+        Key::Insert,
+        Key::NumpadAdd,
+        Key::NumpadSubtract,
+        Key::NumpadMultiply,
+        Key::NumpadDivide,
+        Key::NumpadDecimal,
+        Key::NumpadEnter,
+        Key::NumpadEqual,
+    ];
+    if code == sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED {
+        return Key::Unidentified;
+    }
+    if let Some(key) = NAMED.iter().copied().find(|key| key_code(*key) == code) {
+        return key;
+    }
+    for number in 1..=25u8 {
+        if key_code(Key::Function(number)) == code {
+            return Key::Function(number);
+        }
+    }
+    for number in 0..=9u8 {
+        if key_code(Key::NumpadDigit(number)) == code {
+            return Key::NumpadDigit(number);
+        }
+    }
+    const CHARACTERS: &str = "abcdefghijklmnopqrstuvwxyz0123456789 -=[]\\;',./`";
+    CHARACTERS
+        .chars()
+        .find(|character| key_code(Key::Character(*character)) == code)
+        .map_or(Key::Unidentified, Key::Character)
+}
+
+/// Recover the neutral mouse button from a libghostty button code.
+pub(crate) fn mouse_button_from_code(code: sys::GhosttyMouseButton) -> Option<MouseButton> {
+    const BUTTONS: &[MouseButton] = &[
+        MouseButton::Left,
+        MouseButton::Right,
+        MouseButton::Middle,
+        MouseButton::Four,
+        MouseButton::Five,
+        MouseButton::Six,
+        MouseButton::Seven,
+        MouseButton::Eight,
+        MouseButton::Nine,
+        MouseButton::Ten,
+        MouseButton::Eleven,
+    ];
+    BUTTONS
+        .iter()
+        .copied()
+        .find(|button| mouse_button(*button) == code)
+}

@@ -53,6 +53,11 @@ impl Modifiers {
         self.0
     }
 
+    /// Rebuild a modifier set from the bits libghostty reports.
+    pub const fn from_bits(bits: u16) -> Self {
+        Self(bits)
+    }
+
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }

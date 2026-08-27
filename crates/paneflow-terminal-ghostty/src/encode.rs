@@ -55,6 +55,11 @@ impl DisplayTerminal {
                 self.key_encoder.raw(),
                 self.terminal.raw(),
             );
+        }
+        // The call above rewrites the whole option set from terminal state,
+        // so the embedder's own settings go back on top of it.
+        self.apply_key_encoder_overrides();
+        unsafe {
             sys::ghostty_key_event_set_key(self.key_event.raw(), key);
             sys::ghostty_key_event_set_action(self.key_event.raw(), key_action(input.action));
             let altgr = Modifiers::CONTROL | Modifiers::ALT;
@@ -91,8 +96,7 @@ impl DisplayTerminal {
     }
 
     pub fn encode_mouse(&mut self, input: MouseInput) -> Result<Vec<u8>> {
-        let size = sys::GhosttyMouseEncoderSize {
-            size: std::mem::size_of::<sys::GhosttyMouseEncoderSize>(),
+        let geometry = crate::engine::MouseEncoderSize {
             screen_width: input.screen_width,
             screen_height: input.screen_height,
             cell_width: self.callbacks_size().cell_width,
@@ -102,17 +106,49 @@ impl DisplayTerminal {
             padding_right: input.padding_right,
             padding_left: input.padding_left,
         };
+        let size = sys::GhosttyMouseEncoderSize {
+            size: std::mem::size_of::<sys::GhosttyMouseEncoderSize>(),
+            screen_width: geometry.screen_width,
+            screen_height: geometry.screen_height,
+            cell_width: geometry.cell_width,
+            cell_height: geometry.cell_height,
+            padding_top: geometry.padding_top,
+            padding_bottom: geometry.padding_bottom,
+            padding_right: geometry.padding_right,
+            padding_left: geometry.padding_left,
+        };
         let track_last_cell = true;
+        // `setopt_from_terminal` clears the encoder's last-cell memory, which
+        // is exactly the state that collapses a stream of pixel-level motion
+        // into one report per cell. Reconfiguring on every event therefore
+        // defeats the deduplication entirely, so it only runs when the mouse
+        // modes have actually changed.
+        let mouse_modes = crate::engine::MouseModes::from(self.modes()?);
+        if self.mouse_encoder_modes != Some(mouse_modes) {
+            // SAFETY: both handles are owned by `self`.
+            unsafe {
+                sys::ghostty_mouse_encoder_setopt_from_terminal(
+                    self.mouse_encoder.raw(),
+                    self.terminal.raw(),
+                );
+            }
+            self.mouse_encoder_modes = Some(mouse_modes);
+        }
+        // Pushing the size also clears the last-cell memory, so it only goes
+        // in when the geometry actually changed.
+        if self.mouse_encoder_size != Some(geometry) {
+            // SAFETY: the option takes a `GhosttyMouseEncoderSize*` that
+            // outlives the call.
+            unsafe {
+                sys::ghostty_mouse_encoder_setopt(
+                    self.mouse_encoder.raw(),
+                    sys::GhosttyMouseEncoderOption_GHOSTTY_MOUSE_ENCODER_OPT_SIZE,
+                    (&raw const size).cast(),
+                );
+            }
+            self.mouse_encoder_size = Some(geometry);
+        }
         unsafe {
-            sys::ghostty_mouse_encoder_setopt_from_terminal(
-                self.mouse_encoder.raw(),
-                self.terminal.raw(),
-            );
-            sys::ghostty_mouse_encoder_setopt(
-                self.mouse_encoder.raw(),
-                sys::GhosttyMouseEncoderOption_GHOSTTY_MOUSE_ENCODER_OPT_SIZE,
-                (&size as *const sys::GhosttyMouseEncoderSize).cast(),
-            );
             sys::ghostty_mouse_encoder_setopt(
                 self.mouse_encoder.raw(),
                 sys::GhosttyMouseEncoderOption_GHOSTTY_MOUSE_ENCODER_OPT_ANY_BUTTON_PRESSED,
