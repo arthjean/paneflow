@@ -14,6 +14,7 @@ mod ghostty_session;
 #[cfg(test)]
 mod ghostty_stress;
 mod input;
+pub mod kitty;
 mod marks;
 #[cfg(all(test, target_os = "linux"))]
 mod portable_pty_probe;
