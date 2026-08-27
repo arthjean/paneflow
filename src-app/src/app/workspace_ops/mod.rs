@@ -45,11 +45,11 @@ pub(crate) enum WorkspaceFocusTarget {
 
 fn push_closed_pane_record(records: &mut Vec<ClosedPaneRecord>, mut record: ClosedPaneRecord) {
     if let ClosedSurfaceRecord::Terminal {
-        scrollback: Some(scrollback),
+        replay: Some(replay),
         ..
     } = &mut record.surface
     {
-        scrollback.shrink_to_fit();
+        replay.shrink_to_fit();
     }
     if records.len() >= MAX_CLOSED_PANES {
         records.remove(0);
@@ -67,10 +67,10 @@ fn enforce_closed_pane_scrollback_budget(records: &mut [ClosedPaneRecord], budge
         if total <= budget {
             break;
         }
-        if let ClosedSurfaceRecord::Terminal { scrollback, .. } = &mut record.surface
-            && let Some(scrollback) = scrollback.take()
+        if let ClosedSurfaceRecord::Terminal { replay, .. } = &mut record.surface
+            && let Some(replay) = replay.take()
         {
-            total = total.saturating_sub(scrollback.len());
+            total = total.saturating_sub(replay.len());
         }
     }
 }
@@ -80,10 +80,10 @@ fn closed_pane_scrollback_bytes(records: &[ClosedPaneRecord]) -> usize {
         .iter()
         .map(|record| &record.surface)
         .filter_map(|tab| match tab {
-            ClosedSurfaceRecord::Terminal { scrollback, .. } => scrollback.as_ref(),
+            ClosedSurfaceRecord::Terminal { replay, .. } => replay.as_ref(),
             ClosedSurfaceRecord::Markdown { .. } => None,
         })
-        .map(String::len)
+        .map(Vec::len)
         .sum()
 }
 
@@ -105,7 +105,7 @@ fn capture_closed_pane_record(
                     .as_ref()
                     .map(std::path::PathBuf::from)
                     .or_else(|| tv_ref.terminal.cwd_now()),
-                scrollback: tv_ref.terminal.extract_scrollback(),
+                replay: tv_ref.terminal.capture_replay(),
                 custom_name: tv_ref.terminal.custom_name.clone(),
                 font_size: tv_ref.terminal.font_size_override,
             }
@@ -129,7 +129,7 @@ fn restore_closed_surface_record(
     match tab {
         ClosedSurfaceRecord::Terminal {
             cwd,
-            scrollback,
+            replay,
             custom_name,
             font_size,
         } => {
@@ -138,8 +138,8 @@ fn restore_closed_surface_record(
                 view.terminal.custom_name = custom_name;
                 view.terminal.font_size_override = font_size;
             });
-            if let Some(scrollback) = scrollback {
-                terminal.read(cx).restore_scrollback(&scrollback);
+            if let Some(replay) = replay {
+                terminal.read(cx).restore_replay(&replay);
             }
             cx.subscribe(&terminal, PaneFlowApp::handle_terminal_event)
                 .detach();
@@ -1402,11 +1402,11 @@ mod tests {
         assert_eq!(resolved, std::path::PathBuf::from(bare));
     }
 
-    fn closed_pane_record_with_scrollback(len: usize) -> ClosedPaneRecord {
+    fn closed_pane_record_with_replay(len: usize) -> ClosedPaneRecord {
         ClosedPaneRecord {
             surface: ClosedSurfaceRecord::Terminal {
                 cwd: None,
-                scrollback: Some("x".repeat(len)),
+                replay: Some(vec![b'x'; len]),
                 custom_name: None,
                 font_size: None,
             },
@@ -1418,34 +1418,31 @@ mod tests {
     fn closed_pane_budget_drops_oldest_scrollback_not_record() {
         let one_mib = 1024 * 1024;
         let mut records = vec![
-            closed_pane_record_with_scrollback(one_mib),
-            closed_pane_record_with_scrollback(one_mib),
+            closed_pane_record_with_replay(one_mib),
+            closed_pane_record_with_replay(one_mib),
         ];
 
-        push_closed_pane_record(&mut records, closed_pane_record_with_scrollback(one_mib));
+        push_closed_pane_record(&mut records, closed_pane_record_with_replay(one_mib));
 
         assert_eq!(records.len(), 3, "budget must preserve undo records");
         assert!(
             matches!(
                 &records[0].surface,
-                ClosedSurfaceRecord::Terminal {
-                    scrollback: None,
-                    ..
-                }
+                ClosedSurfaceRecord::Terminal { replay: None, .. }
             ),
             "oldest scrollback should be released first"
         );
         assert!(matches!(
             &records[1].surface,
             ClosedSurfaceRecord::Terminal {
-                scrollback: Some(_),
+                replay: Some(_),
                 ..
             }
         ));
         assert!(matches!(
             &records[2].surface,
             ClosedSurfaceRecord::Terminal {
-                scrollback: Some(_),
+                replay: Some(_),
                 ..
             }
         ));
@@ -1463,7 +1460,7 @@ mod tests {
             ClosedPaneRecord {
                 surface: ClosedSurfaceRecord::Terminal {
                     cwd: None,
-                    scrollback: None,
+                    replay: None,
                     custom_name: None,
                     font_size: None,
                 },
@@ -1474,10 +1471,7 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert!(matches!(
             &records[0].surface,
-            ClosedSurfaceRecord::Terminal {
-                scrollback: None,
-                ..
-            }
+            ClosedSurfaceRecord::Terminal { replay: None, .. }
         ));
         assert_eq!(closed_pane_scrollback_bytes(&records), 0);
     }

@@ -15,6 +15,10 @@ use crate::{GhosttyError, Result};
 /// rest of the crate applies to unbounded terminal data.
 const MAX_FORMAT_BYTES: usize = 32 * 1024 * 1024;
 
+/// Rows of history a replay capture carries, matching the cap the plain-text
+/// scrollback path has always applied.
+const MAX_REPLAY_HISTORY_ROWS: i32 = 4_000;
+
 /// The output syntax a formatter emits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FormatterFormat {
@@ -153,6 +157,38 @@ struct Formatter<'terminal> {
     _terminal: std::marker::PhantomData<&'terminal DisplayTerminal>,
 }
 
+impl Formatter<'_> {
+    /// Run the formatter through libghostty's allocating path, so the output
+    /// size does not have to be known in advance.
+    fn into_bytes(self) -> Result<Vec<u8>> {
+        let mut pointer: *mut u8 = std::ptr::null_mut();
+        let mut len = 0usize;
+        // SAFETY: the formatter is live, the null allocator selects
+        // libghostty's default, and both out-parameters are valid storage.
+        let result = unsafe {
+            sys::ghostty_formatter_format_alloc(self.raw, std::ptr::null(), &mut pointer, &mut len)
+        };
+        check("formatter_format_alloc", result)?;
+        if pointer.is_null() {
+            return Ok(Vec::new());
+        }
+        // The buffer belongs to libghostty's allocator, so it is copied and
+        // released here rather than adopted by Rust's allocator.
+        // SAFETY: the library reported `len` initialized bytes at `pointer`.
+        let copied = unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec();
+        // SAFETY: `pointer`/`len` are exactly what `format_alloc` produced
+        // with the same (default) allocator, and nothing else owns them.
+        unsafe { sys::ghostty_free(std::ptr::null(), pointer, len) };
+        if copied.len() > MAX_FORMAT_BYTES {
+            return Err(GhosttyError::LimitExceeded {
+                resource: "formatted screen",
+                limit: MAX_FORMAT_BYTES,
+            });
+        }
+        Ok(copied)
+    }
+}
+
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
         // SAFETY: `raw` came from `ghostty_formatter_terminal_new`, is
@@ -163,14 +199,22 @@ impl Drop for Formatter<'_> {
 
 impl DisplayTerminal {
     fn formatter(&self, options: FormatterOptions) -> Result<Formatter<'_>> {
+        // A NULL selection formats the whole active screen.
+        self.formatter_over(options, None)
+    }
+
+    fn formatter_over(
+        &self,
+        options: FormatterOptions,
+        selection: Option<&sys::GhosttySelection>,
+    ) -> Result<Formatter<'_>> {
         let options = sys::GhosttyFormatterTerminalOptions {
             size: std::mem::size_of::<sys::GhosttyFormatterTerminalOptions>(),
             emit: options.emit.raw(),
             unwrap: options.unwrap,
             trim: options.trim,
             extra: options.extra.raw(),
-            // A NULL selection formats the whole screen.
-            selection: std::ptr::null(),
+            selection: selection.map_or(std::ptr::null(), |selection| selection as *const _),
         };
         let mut raw: sys::GhosttyFormatter = std::ptr::null_mut();
         // SAFETY: the null allocator selects libghostty's default, `raw` is
@@ -269,6 +313,68 @@ impl DisplayTerminal {
         Ok(written)
     }
 
+    /// Format the current selection, or `None` when nothing is selected.
+    ///
+    /// This is what a styled copy wants: the same range the user highlighted,
+    /// rendered by libghostty instead of by walking cells, so soft-wrapped
+    /// lines rejoin and a rectangular selection stays rectangular.
+    pub fn format_selection(&self, options: FormatterOptions) -> Result<Option<String>> {
+        let Some(selection) = self.current_selection()? else {
+            return Ok(None);
+        };
+        let formatter = self.formatter_over(options, Some(&selection))?;
+        let bytes = formatter.into_bytes()?;
+        String::from_utf8(bytes)
+            .map(Some)
+            .map_err(|_| GhosttyError::InvalidUtf8("formatted selection"))
+    }
+
+    /// Capture the screen and its recent history as VT sequences that replay
+    /// it into another terminal.
+    ///
+    /// Plain text loses the styling, the modes, and the cursor; these bytes
+    /// carry all three, which is what makes a restored pane look like the one
+    /// that was closed rather than like a transcript of it. History is capped
+    /// at [`MAX_REPLAY_HISTORY_ROWS`] rows, the same bound the text path has.
+    ///
+    /// Feed the result back with [`Self::feed`].
+    pub fn capture_replay(&self) -> Result<Vec<u8>> {
+        let Some(selection) = self.replay_selection()? else {
+            return Ok(Vec::new());
+        };
+        let formatter = self.formatter_over(
+            FormatterOptions {
+                emit: FormatterFormat::Vt,
+                // Wrapping is part of what the screen looked like.
+                unwrap: false,
+                trim: true,
+                extra: TerminalExtra::all(),
+            },
+            Some(&selection),
+        )?;
+        formatter.into_bytes()
+    }
+
+    /// The range [`Self::capture_replay`] covers: the viewport plus a bounded
+    /// tail of history.
+    fn replay_selection(&self) -> Result<Option<sys::GhosttySelection>> {
+        let (cols, _, scrollback) = self.geometry_batch()?;
+        let rows = i32::from(self.callbacks.size().rows);
+        if cols == 0 || rows == 0 {
+            return Ok(None);
+        }
+        let history = i32::try_from(scrollback)
+            .unwrap_or(MAX_REPLAY_HISTORY_ROWS)
+            .min(MAX_REPLAY_HISTORY_ROWS);
+        let start = crate::Point::new(-history, 0);
+        let end = crate::Point::new(rows - 1, usize::from(cols - 1));
+        let mut selection = crate::selection::empty_selection();
+        selection.start = self.grid_ref(start)?;
+        selection.end = self.grid_ref(end)?;
+        selection.rectangle = false;
+        Ok(Some(selection))
+    }
+
     /// Stream the formatted screen to `sink`, which returns `false` to abort.
     ///
     /// This avoids materializing the whole screen when the destination is
@@ -289,6 +395,84 @@ impl DisplayTerminal {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_replay_capture_restores_styling_the_text_path_loses() {
+        let mut source = terminal(20, 3);
+        source
+            .feed(b"plain\r\n\x1b[1;31mred\x1b[0m\r\n\x1b[4munderlined")
+            .expect("styled output must parse");
+
+        let text = source
+            .extract_scrollback()
+            .expect("text capture")
+            .unwrap_or_default();
+        assert!(!text.contains('\x1b'), "the text path drops styling");
+
+        let replay = source.capture_replay().expect("replay capture");
+        assert!(!replay.is_empty());
+
+        let mut restored = terminal(20, 3);
+        restored.feed(&replay).expect("replay must parse");
+        let content = restored.snapshot().expect("restored snapshot");
+        let visible: String = content.cells.iter().map(|cell| cell.character).collect();
+        assert!(visible.contains("red"), "got {visible:?}");
+        assert!(visible.contains("underlined"), "got {visible:?}");
+
+        let red = content
+            .cells
+            .iter()
+            .find(|cell| cell.character == 'r')
+            .expect("the styled cell must survive");
+        assert!(red.flags.bold, "styling must survive the replay");
+    }
+
+    #[test]
+    fn a_replay_capture_carries_history_not_just_the_viewport() {
+        let mut source = terminal(20, 2);
+        source
+            .feed(b"scrolled-away\r\nfiller-one\r\nfiller-two")
+            .expect("fixture must parse");
+        assert!(source.snapshot().expect("snapshot").history_size > 0);
+
+        let replay = source.capture_replay().expect("replay capture");
+        let mut restored = terminal(20, 2);
+        restored.feed(&replay).expect("replay must parse");
+
+        let restored_history = restored
+            .extract_scrollback()
+            .expect("history query")
+            .expect("the replay must scroll content into history");
+        assert!(restored_history.contains("scrolled-away"), "got {restored_history:?}");
+    }
+
+    #[test]
+    fn formatting_a_selection_returns_only_what_is_selected() {
+        let mut terminal = terminal(20, 3);
+        terminal
+            .feed(b"first line\r\nsecond line")
+            .expect("fixture must parse");
+
+        assert_eq!(
+            terminal
+                .format_selection(FormatterOptions::plain_text())
+                .expect("no selection"),
+            None
+        );
+
+        terminal
+            .set_selection(crate::SelectionRange {
+                start: crate::Point::new(0, 0),
+                end: crate::Point::new(0, 4),
+                rectangle: false,
+            })
+            .expect("selection must install");
+        let selected = terminal
+            .format_selection(FormatterOptions::plain_text())
+            .expect("selection formats")
+            .expect("a selection is installed");
+        assert_eq!(selected.trim_end(), "first");
+    }
+
     use super::*;
     use crate::{TerminalAppearance, WindowSize};
 

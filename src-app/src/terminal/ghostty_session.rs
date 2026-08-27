@@ -331,6 +331,9 @@ enum RuntimeMessage {
         reply: SyncSender<Result<Option<ghostty::Hyperlink>, String>>,
     },
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
+    /// Capture the screen and its recent history as VT sequences, which keep
+    /// the styling, modes, and cursor that plain text drops.
+    CaptureReplay(SyncSender<Result<Vec<u8>, String>>),
     /// Restore of saved scrollback. `reply` fires once the grid reflects the
     /// text, so a caller can read the snapshot right after.
     RestoreScrollback {
@@ -1762,6 +1765,12 @@ impl GhosttySession {
             .flatten()
     }
 
+    pub(super) fn capture_replay(&self) -> Option<Vec<u8>> {
+        self.request(RuntimeMessage::CaptureReplay)
+            .and_then(Result::ok)
+            .filter(|replay| !replay.is_empty())
+    }
+
     /// Blocks until the grid reflects the restored text, so a caller can read
     /// the snapshot back immediately.
     pub(super) fn restore_scrollback(&self, text: &str) {
@@ -2699,6 +2708,9 @@ fn handle_terminal_command(
                     .extract_scrollback()
                     .map_err(|error| error.to_string()),
             );
+        }
+        RuntimeMessage::CaptureReplay(reply) => {
+            let _ = reply.send(terminal.capture_replay().map_err(|error| error.to_string()));
         }
         RuntimeMessage::RestoreScrollback { text, reply } => {
             let _ = terminal.restore_scrollback(&text);

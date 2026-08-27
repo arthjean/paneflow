@@ -393,6 +393,17 @@ impl TerminalView {
         self.terminal.restore_scrollback(text);
     }
 
+    /// Replay a capture this process took of a pane it closed.
+    ///
+    /// See [`crate::terminal::TerminalState::restore_replay`]: the bytes go in
+    /// verbatim so the styling survives, which makes this valid only for an
+    /// in-process capture.
+    pub(crate) fn restore_replay(&self, replay: &[u8]) {
+        self.needs_initial_clear
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        self.terminal.restore_replay(replay);
+    }
+
     pub(crate) fn set_integrated_glyphs_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.integrated_glyphs_enabled != enabled {
             self.integrated_glyphs_enabled = enabled;
