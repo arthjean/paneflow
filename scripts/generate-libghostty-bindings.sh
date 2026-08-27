@@ -62,6 +62,23 @@ bindgen \
 # Bindgen 0.72 qualifies core from the crate root. Keep the reviewed bindings
 # stable across the generator upgrade without changing their Rust semantics.
 sed -i 's/::core::ffi::/core::ffi::/g' "$OUTPUT"
+
+# Normalize the enum type aliases to `c_int`.
+#
+# bindgen takes the alias from whatever libclang reports as the enum's
+# underlying type, and that answer moved with the compiler: clang 14 (the
+# ubuntu-22.04 gate) and clang 19 both report `unsigned int` for an
+# enumeration whose enumerators are all non-negative, while clang 20 and
+# later report `int`. Without this the file regenerates differently on the
+# gate than on a current desktop toolchain, which is exactly the diff that
+# landed with the f2d5758f re-pin.
+#
+# `int` is the reviewed choice and the ABI is the same either way: every
+# Ghostty enum tops out at its `MAX_VALUE = 2147483647` sentinel, so the
+# values fit in a signed 32-bit integer and the C calling convention passes
+# both types identically. An enumerator above `i32::MAX` would fail to
+# compile here rather than silently change the alias.
+sed -i 's/^pub type \(Ghostty[A-Za-z0-9_]*\) = core::ffi::c_uint;$/pub type \1 = core::ffi::c_int;/' "$OUTPUT"
 rustfmt --edition 2024 "$OUTPUT"
 
 if ! cmp -s "$OUTPUT" "$ROOT/$(manifest_string bindings_path)"; then
