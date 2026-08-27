@@ -45,6 +45,12 @@ path = "src/main.rs"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "fecc3273ed32643c2ea1b04a74c8780e2c9ffaf8", features = ["font-kit"] }
 
+# Kitty graphics: `image::Frame` is the only way to build a `gpui::RenderImage`
+# from raw pixels, and the `png` decoder is what the protocol's `f=100`
+# payloads need. GPUI already depends on this exact crate with `png` enabled,
+# so declaring it directly adds no new transitive dependency.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 # Terminal emulation. Ghostty is the only backend: the pinned libghostty-vt
 # archive parses every byte and owns the grid, and `portable-pty` opens the
 # PTY the Ghostty session runtime drives. There is no second engine and no

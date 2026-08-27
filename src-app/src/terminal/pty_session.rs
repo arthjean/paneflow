@@ -313,6 +313,14 @@ impl TerminalSessionBackend {
         self.ghostty.set_default_cursor(shape, blink)
     }
 
+    /// Kitty graphics placements for the published frame, already resolved
+    /// and uploaded by the session runtime.
+    pub(crate) fn kitty_placements(
+        &self,
+    ) -> std::sync::Arc<[crate::terminal::kitty::KittyPlacement]> {
+        self.ghostty.kitty_placements()
+    }
+
     pub(crate) fn refresh_appearance(&self) -> bool {
         self.ghostty.refresh_appearance()
     }

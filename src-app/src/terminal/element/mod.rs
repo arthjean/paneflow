@@ -1570,6 +1570,10 @@ impl Element for TerminalElement {
             line_height,
         };
 
+        // Resolved and uploaded on the session runtime thread; this is a
+        // refcount bump, not a walk of the placement iterator.
+        let kitty_placements = self.backend.kitty_placements();
+
         // PANEFLOW_PIXEL_PROBE: log the per-frame origin once, before any
         // glyph/background record carries it implicitly. Pairs with the
         // `cell_dims` record emitted from `resolve_frame_metrics()`.
@@ -1624,8 +1628,14 @@ impl Element for TerminalElement {
                 window,
             );
 
+            // 2f. Kitty graphics under the text.
+            paint::kitty::paint_below_text(&kitty_placements, &geom, window);
+
             // 3. Batched text runs
             paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
+
+            // 3-bis. Kitty graphics over the text.
+            paint::kitty::paint_above_text(&kitty_placements, &geom, window);
 
             // 3a. PANEFLOW_PIXEL_PROBE_OVERLAY: draw thin red cell borders
             // above the text. Independent of `PANEFLOW_PIXEL_PROBE`; opt-in

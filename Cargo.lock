@@ -4419,6 +4419,7 @@ dependencies = [
  "gpui",
  "gpui_platform",
  "ignore",
+ "image",
  "imara-diff",
  "interprocess",
  "libc",

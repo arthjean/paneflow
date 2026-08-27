@@ -229,6 +229,10 @@ struct SharedState {
     content: Content,
     modes: Modes,
     metrics: GridMetrics,
+    /// Kitty graphics placements resolved for the last published frame, with
+    /// their textures already uploaded. Empty unless a program transmitted an
+    /// image, which is the overwhelmingly common case.
+    kitty: Arc<[crate::terminal::kitty::KittyPlacement]>,
 }
 
 struct ResizeState {
@@ -259,6 +263,10 @@ struct SessionInner {
     ui_events: Arc<UiEventState>,
     clipboard_gate: Arc<ClipboardGate>,
     state: RwLock<SharedState>,
+    /// Uploaded Kitty textures, keyed by libghostty's per-image generation.
+    /// Only the runtime thread touches it, but it has to outlive one frame,
+    /// so it lives here rather than on the stack of the runtime loop.
+    kitty_images: Mutex<crate::terminal::kitty::KittyImages>,
     recent_output_lines: RwLock<Arc<[String]>>,
     search_generation: AtomicU64,
     queued_input_bytes: AtomicUsize,
@@ -1046,7 +1054,9 @@ impl GhosttySession {
                     content: blank_content(size.cols.max(1), size.rows.max(1)),
                     modes: Modes::empty(),
                     metrics: initial_grid_metrics(size.cols.max(1), size.rows.max(1)),
+                    kitty: Arc::from([]),
                 }),
+                kitty_images: Mutex::default(),
                 recent_output_lines: RwLock::new(Arc::from(Vec::<String>::new())),
                 search_generation: AtomicU64::new(0),
                 queued_input_bytes: AtomicUsize::new(0),
@@ -1470,6 +1480,11 @@ impl GhosttySession {
     #[cfg(test)]
     pub(super) fn processed_output_bytes_for_test(&self) -> usize {
         self.inner.processed_output_bytes.load(Ordering::Acquire)
+    }
+
+    /// Kitty graphics placements for the published frame.
+    pub(super) fn kitty_placements(&self) -> Arc<[crate::terminal::kitty::KittyPlacement]> {
+        self.inner.state.read().kitty.clone()
     }
 
     pub(super) fn grid_metrics(&self) -> GridMetrics {
@@ -3230,10 +3245,19 @@ fn update_shared_state(
     let metrics = grid_metrics_from_ghostty(&content);
     let content = content_from_ghostty(content);
     let modes = modes_from_ghostty(modes);
+    // Resolved here, on the runtime thread, so the render thread never walks
+    // the placement iterator or copies a pixel.
+    let kitty: Arc<[_]> = inner
+        .kitty_images
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .collect(terminal)
+        .into();
     *inner.state.write() = SharedState {
         content,
         modes,
         metrics,
+        kitty,
     };
     Ok(())
 }
@@ -3293,6 +3317,7 @@ fn configure_embedder_options(terminal: &mut ghostty::DisplayTerminal, max_scrol
             );
         }
     };
+    crate::terminal::kitty::enable(terminal);
     apply(
         "color palette",
         terminal.set_palette(&current_ghostty_palette()),
