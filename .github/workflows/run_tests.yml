@@ -67,6 +67,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       rendering: ${{ steps.filter.outputs.rendering }}
+      libghostty: ${{ steps.filter.outputs.libghostty }}
       ci: ${{ steps.filter.outputs.ci }}
       security: ${{ steps.filter.outputs.security }}
       release_packaging: ${{ steps.filter.outputs.release_packaging }}
@@ -92,6 +93,17 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
               - 'clippy.toml'
+            # US-013: the native engine inputs. The `rust` filter above only
+            # matches `*.rs` and Cargo manifests, so a change to the pinned
+            # archive, its manifest, or a libghostty build script would
+            # otherwise skip `macos_check` - the only job that type-checks the
+            # Ghostty runtime against a Darwin target.
+            libghostty:
+              - 'native/libghostty/**'
+              - 'crates/paneflow-libghostty-sys/**'
+              - 'crates/paneflow-terminal-ghostty/**'
+              - 'src-app/src/terminal/**'
+              - 'scripts/*libghostty*'
             ci:
               - '.github/workflows/**'
               - 'scripts/**'
@@ -547,12 +559,23 @@ jobs:
     # waits for the cheap filter job (runs on ubuntu-latest, ~seconds) and
     # short-circuits the 14× pricier macos-14 runner on docs-only /
     # non-workflow .github/** PRs.
+    #
+    # US-013 adds the `libghostty` filter so a change to the pinned archive,
+    # its manifest, the -sys crate, the ghostty crate, or src-app/src/terminal
+    # also runs this job: it is the only PR gate that type-checks the Ghostty
+    # runtime against aarch64-apple-darwin. A docs-only PR still skips it.
     needs: orchestrate
     if: >-
       needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.libghostty == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: macos-14
+    # US-013 AC5: the libghostty steps add a native archive link to every
+    # cargo invocation here. Budget is a 25 min median over the first five
+    # runs; past that, switch to `macos-14-xlarge` and record the rationale in
+    # the PR per the US-001 AC5 note above. The timeout is the hard backstop.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
 
@@ -620,8 +643,16 @@ jobs:
       # type-checks platform-gated modules (runtime_paths.rs macOS arm,
       # install_method::AppBundle, update_checker::AssetFormat::Dmg,
       # etc.) that the ubuntu `check` job would otherwise miss.
+      #
+      # US-013 AC1: `libghostty-macos` is named explicitly rather than relied on
+      # through `default`, so the Ghostty runtime stays gated here even if the
+      # default feature set is ever narrowed. This is what type-checks the 14
+      # native modules against a Darwin target.
       - name: cargo clippy (aarch64-apple-darwin)
-        run: cargo clippy --workspace --locked --target aarch64-apple-darwin -- -D warnings
+        run: >-
+          cargo clippy --workspace --locked
+          --features paneflow-app/libghostty-macos
+          --target aarch64-apple-darwin -- -D warnings
 
       # cargo test on the config crate (39 tests) + app crate (testable
       # modules like keybindings / update_checker with 150+ tests).
@@ -629,16 +660,20 @@ jobs:
       # binaries are native Mach-O and the test run exercises the real
       # macOS codepath, not a Linux-host proxy.
       - name: cargo test --workspace
-        run: cargo test --workspace --locked --target aarch64-apple-darwin
+        run: >-
+          cargo test --workspace --locked
+          --features paneflow-app/libghostty-macos
+          --target aarch64-apple-darwin
 
       # AC1 - cargo check must exit 0 with no linker errors.
       - name: cargo check (aarch64-apple-darwin)
         run: cargo check --workspace --locked --target aarch64-apple-darwin
 
-      # The `--no-default-features` recovery build drops `libghostty-macos`
-      # and leaves Alacritty as the only terminal backend. It is the rollback
-      # a user falls back to if libghostty misbehaves on Darwin, so it has to
-      # keep building on the same runner that builds the default one.
+      # US-013 AC2: the `--no-default-features` recovery build drops
+      # `libghostty-macos` and leaves Alacritty as the only terminal backend.
+      # It is the rollback a user falls back to if libghostty misbehaves on
+      # Darwin, so it is gated on every pull request here rather than only at
+      # release time.
       - name: cargo build --no-default-features (aarch64-apple-darwin)
         run: cargo build --no-default-features -p paneflow-app --locked --target aarch64-apple-darwin
 
