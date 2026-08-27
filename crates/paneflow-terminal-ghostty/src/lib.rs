@@ -39,6 +39,7 @@ native_modules!(
     handles,
     input_options,
     io,
+    kitty,
     modes,
     navigation,
     osc,
@@ -78,6 +79,11 @@ pub use input::{
 };
 #[cfg(ghostty_native)]
 pub use input_options::{KeyEventState, MouseEventState, OptionAsAlt};
+#[cfg(ghostty_native)]
+pub use kitty::{
+    ImageCompression, ImageFormat, ImageInfo, KittyGraphics, KittyImage, Placement,
+    PlacementCursor, PlacementLayer, PlacementRenderInfo, SourceRect,
+};
 pub use model::{
     BackendEvent, Cell, CellFlags, Color, ColorScheme, Content, Cursor, CursorShape, Hyperlink,
     Modes, Point, ProgressReport, ProgressState, Rgb, Scroll, SearchMatch, SearchResult,
