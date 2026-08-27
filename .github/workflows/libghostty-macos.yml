@@ -150,26 +150,16 @@ jobs:
       - name: Lint against the repository artifact
         run: >-
           cargo clippy --workspace --locked
-          --features paneflow-app/libghostty-macos
           --target "$TARGET" -- -D warnings
 
       - name: Test against the repository artifact
         run: >-
           cargo test --workspace --locked
-          --features paneflow-app/libghostty-macos
           --target "$TARGET"
-
-      - name: Build Alacritty release baseline
-        run: |
-          cargo build --release --locked --no-default-features \
-            -p paneflow-app --target "$TARGET"
-          cp "target/$TARGET/release/paneflow" \
-             "target/$TARGET/release/paneflow-alacritty-baseline"
 
       - name: Build the Ghostty release candidate
         run: |
           cargo build --release --locked \
-            --features paneflow-app/libghostty-macos \
             -p paneflow-app --target "$TARGET"
 
       # Every other gate on this runner links the archive and calls into it
@@ -187,33 +177,17 @@ jobs:
             --target "$TARGET"
           "target/$TARGET/release/paneflow-ghostty-smoke"
 
-      # US-016 AC5: the shipped macOS binary is built `--no-default-features`
-      # today, so the Alacritty baseline built above *is* the previous
-      # release's content and the delta measured here is the growth that
-      # release would carry. 2.5 MB is the budget; exceeding it fails the pull
-      # request rather than showing up in a published .dmg.
-      - name: Enforce static link and 2.5 MB binary delta
+      # The 2.5 MB budget measured Ghostty against a second, engine-less build
+      # of the same commit. Ghostty is the only engine now, so there is no
+      # second build to diff against and no absolute ceiling has been measured
+      # for the whole application binary. What remains is the part that still
+      # has a hard contract: libghostty must be statically linked into the
+      # .dmg binary and its notices must ship.
+      - name: Enforce static link and shipped notices
         run: |
           set -euo pipefail
-          baseline="target/$TARGET/release/paneflow-alacritty-baseline"
-          candidate="target/$TARGET/release/paneflow"
-          measurement_dir="$(mktemp -d)"
-          trap 'rm -rf "$measurement_dir"' EXIT
-          cp "$baseline" "$measurement_dir/baseline"
-          cp "$candidate" "$measurement_dir/candidate"
-          strip -S -x "$measurement_dir/baseline" "$measurement_dir/candidate"
-          baseline_size="$(stat -f%z "$measurement_dir/baseline")"
-          candidate_size="$(stat -f%z "$measurement_dir/candidate")"
-          delta=$((candidate_size - baseline_size))
-          echo "alacritty baseline = ${baseline_size} B"
-          echo "ghostty candidate  = ${candidate_size} B"
-          echo "delta              = ${delta} B (budget 2621440 B)"
-          if ((delta > 2621440)); then
-            echo "::error::libghostty grows the stripped macOS binary by ${delta} bytes, over the 2.5 MB budget"
-            exit 1
-          fi
           scripts/verify-libghostty-macos.sh \
-            --binary "$candidate" \
+            --binary "target/$TARGET/release/paneflow" \
             --notice native/libghostty/THIRD_PARTY_NOTICES.md
 
       - name: Upload qualified binary

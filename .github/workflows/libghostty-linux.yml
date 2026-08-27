@@ -157,13 +157,6 @@ jobs:
           cargo install cargo-deb --version 3.6.3 --locked
           cargo install cargo-generate-rpm --version 0.20.0 --locked
 
-      - name: Build Alacritty release baseline
-        run: |
-          cargo build --release --locked --no-default-features \
-            -p paneflow-app --target "${{ matrix.target }}"
-          cp "target/${{ matrix.target }}/release/paneflow" \
-             "target/${{ matrix.target }}/release/paneflow-alacritty-baseline"
-
       - name: Prepare reproducible libghostty archive
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
@@ -184,7 +177,6 @@ jobs:
       - name: Debug tests with native backend
         run: >-
           cargo test --workspace --locked
-          --features paneflow-app/libghostty-linux
           --target "${{ matrix.target }}"
 
       - name: Release candidate and package smoke binary
@@ -207,35 +199,25 @@ jobs:
         run: |
           cargo test --release --locked \
             -p paneflow-app \
-            --features libghostty-linux \
             --target "${{ matrix.target }}" \
             ghostty_parser_and_snapshot_performance_gate \
             -- --ignored --nocapture
           cargo test --release --locked \
             -p paneflow-app \
-            --features libghostty-linux \
             --target "${{ matrix.target }}" \
             ghostty_spawn_resize_close_stress_has_no_residual_growth \
             -- --ignored --nocapture
 
-      - name: Enforce static link and 15 MiB binary delta
+      # The old 15 MiB gate measured this binary against a second, engine-less
+      # build of the same commit. Ghostty is the only engine now, so there is
+      # no second build to diff against and no absolute ceiling has been
+      # measured for the whole application binary. What remains is the part
+      # that still has a hard contract: libghostty must be statically linked
+      # and its notices must ship.
+      - name: Enforce static link and shipped notices
         run: |
-          baseline="target/${{ matrix.target }}/release/paneflow-alacritty-baseline"
-          candidate="target/${{ matrix.target }}/release/paneflow"
-          measurement_dir="$(mktemp -d)"
-          trap 'rm -rf "$measurement_dir"' EXIT
-          cp "$baseline" "$measurement_dir/baseline"
-          cp "$candidate" "$measurement_dir/candidate"
-          strip --strip-all "$measurement_dir/baseline" "$measurement_dir/candidate"
-          baseline_size="$(stat -c%s "$measurement_dir/baseline")"
-          candidate_size="$(stat -c%s "$measurement_dir/candidate")"
-          delta=$((candidate_size - baseline_size))
-          if ((delta > 15 * 1024 * 1024)); then
-            echo "libghostty candidate grows the stripped binary by ${delta} bytes" >&2
-            exit 1
-          fi
           scripts/verify-libghostty-package.sh \
-            --binary "$candidate" \
+            --binary "target/${{ matrix.target }}/release/paneflow" \
             --notice native/libghostty/THIRD_PARTY_NOTICES.md
 
       - name: Build unsigned candidate packages

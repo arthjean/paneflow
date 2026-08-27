@@ -246,10 +246,10 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Lint all Windows targets against the repository artifact
-        run: cargo clippy --workspace --all-targets --locked --features paneflow-app/libghostty-windows --target $env:TARGET -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --target $env:TARGET -- -D warnings
 
       - name: Test the Windows workspace against the repository artifact
-        run: cargo test --workspace --locked --features paneflow-app/libghostty-windows --target $env:TARGET
+        run: cargo test --workspace --locked --target $env:TARGET
 
       - name: Qualify repository artifact on the controlled runner
         env:

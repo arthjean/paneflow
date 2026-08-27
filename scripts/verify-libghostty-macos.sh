@@ -94,8 +94,8 @@ NOTICE_SHA="$(sed -n 's/^notice_sha256 = "\(.*\)"$/\1/p' "$ROOT/native/libghostt
   exit 1
 }
 # Guard the shape too: an empty SOURCE_SHA would turn the linkage proof below
-# into `grep -aFq ""`, which matches every byte stream and passes an
-# Alacritty-only binary.
+# into `grep -aFq ""`, which matches every byte stream and passes a binary with
+# no engine linked at all.
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
   echo "manifest contains an invalid pinned Ghostty source SHA" >&2
   exit 1
@@ -108,7 +108,7 @@ ACTUAL_NOTICE_SHA="$(sha256_of "$NOTICE")"
 
 # `paneflow-terminal-ghostty` embeds the whole pinned manifest through
 # include_str! under cfg(ghostty_native), so the pinned source SHA is present
-# only when the engine is actually linked. An Alacritty-only build fails here.
+# only when the engine is actually linked. A build without it fails here.
 grep -aFq "$SOURCE_SHA" "$BINARY" || {
   echo "packaged binary does not contain the pinned Ghostty build identity" >&2
   exit 1

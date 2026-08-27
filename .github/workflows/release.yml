@@ -364,11 +364,10 @@ jobs:
           cargo fmt --check
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: cargo clippy (Linux with libghostty)
+      - name: cargo clippy (Linux)
         if: runner.os == 'Linux'
         run: >-
           cargo clippy --workspace --locked
-          --features paneflow-app/libghostty-linux
           --target ${{ matrix.target }}
           -- -D warnings
 
@@ -379,15 +378,14 @@ jobs:
       - name: cargo clippy (macOS)
         if: runner.os == 'macOS'
         run: >-
-          cargo clippy --workspace --locked --no-default-features
-          --features paneflow-app/libghostty-macos
+          cargo clippy --workspace --locked
           --target ${{ matrix.target }} -- -D warnings
 
       - name: cargo clippy (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          cargo clippy --workspace --locked --no-default-features --target ${{ matrix.target }} -- -D warnings
+          cargo clippy --workspace --locked --target ${{ matrix.target }} -- -D warnings
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # cargo test runs once in the `verify_workspace_tests` job before this
@@ -552,25 +550,19 @@ jobs:
           if [ "${WINDOWS_HELPERS_PREPARED:-}" = "true" ]; then
             export PANEFLOW_SKIP_EMBED_BUILD=1
           fi
-          # US-016 AC1/AC6: each POSIX leg names the backend it ships. macOS
-          # used to fall through to `--no-default-features`, which is the
-          # Alacritty-only recovery build; it now links the pinned
-          # aarch64-apple-darwin archive like Linux and Windows do. There is
+          # Every leg links the pinned archive for its own target. There is
           # deliberately no fallback branch: a missing, corrupt, or
           # hash-mismatched archive fails `paneflow-libghostty-sys`'s build
-          # script with the `scripts/build-libghostty-macos.sh` corrective
-          # action, so a release cannot silently ship without the engine its
-          # notes claim.
-          feature_args=()
+          # script with the corrective `scripts/build-libghostty-*` action, so
+          # a release cannot silently ship without the engine its notes claim.
           case "$RUNNER_OS" in
-            Linux) ;;
-            macOS) feature_args=(--no-default-features --features paneflow-app/libghostty-macos) ;;
+            Linux | macOS) ;;
             *)
               echo "::error::unexpected runner OS '$RUNNER_OS' on the POSIX build leg"
               exit 1
               ;;
           esac
-          cargo build --release -p paneflow-app --locked --target "$TARGET" "${feature_args[@]}"
+          cargo build --release -p paneflow-app --locked --target "$TARGET"
 
       - name: Verify packaged libghostty identity and static linkage
         if: runner.os == 'Linux'
@@ -583,7 +575,7 @@ jobs:
 
       # US-016 AC2: the Mach-O analog of the Linux step above. It runs on the
       # freshly built binary, before bundling, so a leg that produced an
-      # Alacritty-only or dynamically linked artifact fails here rather than
+      # engine-less or dynamically linked artifact fails here rather than
       # reaching signing and notarization.
       - name: Verify packaged libghostty identity and static linkage (macOS)
         if: runner.os == 'macOS'
@@ -607,7 +599,7 @@ jobs:
           if ($env:WINDOWS_HELPERS_PREPARED -eq 'true') {
               $env:PANEFLOW_SKIP_EMBED_BUILD = '1'
           }
-          cargo build --release -p paneflow-app --locked --no-default-features --features paneflow-app/libghostty-windows --target $env:TARGET
+          cargo build --release -p paneflow-app --locked --target $env:TARGET
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # --- Phase 1 artifacts ---
@@ -1096,7 +1088,7 @@ jobs:
       # ─── Free disk space before .dmg ─────────────────────────────────
       # macos-14 hosted runners ship with ~14 GB free. A workspace-wide
       # `cargo build --release` for the GPUI graph routinely consumes
-      # 11-13 GB of `target/` (Zed monorepo deps, alacritty_terminal,
+      # 11-13 GB of `target/` (Zed monorepo deps, libghostty,
       # gpui_macos with Metal shaders, all release-mode codegen). By the
       # time we reach `Produce .dmg`, the runner has <100 MB free, and
       # `hdiutil create` aborts with `No space left on device` while
@@ -2375,7 +2367,7 @@ jobs:
           name: release-assets-x86_64-Windows
           path: ./release-assets
 
-      - name: Download pinned v0.8.0 Alacritty-only MSI baseline
+      - name: Download pinned v0.8.0 MSI baseline
         env:
           GH_TOKEN: ${{ github.token }}
           BASELINE_DIR: ${{ runner.temp }}\paneflow-msi-baseline
@@ -2562,23 +2554,11 @@ jobs:
               }
           }
 
-          function Invoke-BackendLaunchSmoke {
-              param(
-                  [Parameter(Mandatory = $true)][string] $Exe,
-                  [Parameter(Mandatory = $true)][ValidateSet('ghostty', 'alacritty')][string] $Backend,
-                  [Parameter(Mandatory = $true)][string] $ExpectedRequested,
-                  [Parameter(Mandatory = $true)][string] $ExpectedEffective
-              )
+          function Invoke-GhosttyLaunchSmoke {
+              param([Parameter(Mandatory = $true)][string] $Exe)
 
-              $configDir = Join-Path $env:APPDATA 'paneflow'
-              $configPath = Join-Path $configDir 'paneflow.json'
-              New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-              [ordered]@{ terminal = [ordered]@{ backend = $Backend } } |
-                  ConvertTo-Json -Depth 4 |
-                  Set-Content -LiteralPath $configPath -Encoding utf8
-
-              $stdout = Join-Path $env:SMOKE_DIR "backend-$Backend.stdout.log"
-              $stderr = Join-Path $env:SMOKE_DIR "backend-$Backend.stderr.log"
+              $stdout = Join-Path $env:SMOKE_DIR 'backend-ghostty.stdout.log'
+              $stderr = Join-Path $env:SMOKE_DIR 'backend-ghostty.stderr.log'
               $previousRustLog = $env:RUST_LOG
               $process = $null
               try {
@@ -2589,7 +2569,7 @@ jobs:
                       -RedirectStandardError $stderr
                   Start-Sleep -Seconds 15
                   if ($process.HasExited) {
-                      throw "PaneFlow $Backend launch exited before the backend diagnostic was captured"
+                      throw 'PaneFlow launch exited before the backend diagnostic was captured'
                   }
               }
               finally {
@@ -2611,35 +2591,30 @@ jobs:
                   }
               }
               $backendLog = @($backendLogParts) -join "`n"
-              $expected = "requested=$ExpectedRequested effective=$ExpectedEffective failure_phase=none"
+              $expected = 'backend=ghostty failure_phase=none'
               if (-not $backendLog.Contains($expected)) {
-                  throw "PaneFlow $Backend launch did not emit the expected privacy-safe diagnostic '$expected'"
+                  throw "PaneFlow launch did not emit the expected privacy-safe diagnostic '$expected'"
               }
               if ($backendLog -match '(?i)(command=|cwd=|clipboard=|osc_payload=|[a-z]:\\users\\)') {
-                  throw "PaneFlow $Backend diagnostic contains a forbidden sensitive field"
+                  throw 'PaneFlow backend diagnostic contains a forbidden sensitive field'
               }
-              if ($Backend -eq 'ghostty') {
-                  foreach ($identity in @(
-                      "ghostty_source_sha=$($releaseReport.source_sha)",
-                      "ghostty_version=$($releaseReport.ghostty_version)"
-                  )) {
-                      if (-not $backendLog.Contains($identity)) {
-                          throw "PaneFlow Ghostty launch did not emit runtime identity '$identity'"
-                      }
+              foreach ($identity in @(
+                  "ghostty_source_sha=$($releaseReport.source_sha)",
+                  "ghostty_version=$($releaseReport.ghostty_version)"
+              )) {
+                  if (-not $backendLog.Contains($identity)) {
+                      throw "PaneFlow launch did not emit runtime identity '$identity'"
                   }
-                  $runtimeEvidencePath = Join-Path $env:SMOKE_DIR 'ghostty-runtime-evidence.json'
-                  [ordered]@{
-                      schema_version = 1
-                      binary_sha256 = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
-                      requested = $ExpectedRequested
-                      effective = $ExpectedEffective
-                      source_sha = $releaseReport.source_sha
-                      ghostty_version = $releaseReport.ghostty_version
-                      status = 'passed'
-                  } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $runtimeEvidencePath -Encoding utf8
-                  return $runtimeEvidencePath
               }
-              return $null
+              $runtimeEvidencePath = Join-Path $env:SMOKE_DIR 'ghostty-runtime-evidence.json'
+              [ordered]@{
+                  schema_version = 1
+                  binary_sha256 = (Get-FileHash -LiteralPath $Exe -Algorithm SHA256).Hash.ToLowerInvariant()
+                  source_sha = $releaseReport.source_sha
+                  ghostty_version = $releaseReport.ghostty_version
+                  status = 'passed'
+              } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $runtimeEvidencePath -Encoding utf8
+              return $runtimeEvidencePath
           }
 
           $msiexec = Join-Path $env:WINDIR 'System32\msiexec.exe'
@@ -2673,16 +2648,7 @@ jobs:
                   throw "Fresh candidate returned '$freshVersion', expected 'paneflow $version'"
               }
 
-              $freshGhosttyEvidence = Invoke-BackendLaunchSmoke `
-                  -Exe $freshExe `
-                  -Backend 'ghostty' `
-                  -ExpectedRequested 'Ghostty' `
-                  -ExpectedEffective 'ghostty'
-              Invoke-BackendLaunchSmoke `
-                  -Exe $freshExe `
-                  -Backend 'alacritty' `
-                  -ExpectedRequested 'Alacritty' `
-                  -ExpectedEffective 'alacritty'
+              $freshGhosttyEvidence = Invoke-GhosttyLaunchSmoke -Exe $freshExe
 
               $freshReportPath = Join-Path $env:SMOKE_DIR 'fresh-install-libghostty-provenance.json'
               Invoke-SmokeProcess `
@@ -2724,7 +2690,9 @@ jobs:
           $configDir = Join-Path $env:APPDATA 'paneflow'
           $configPath = Join-Path $configDir 'paneflow.json'
           New-Item -ItemType Directory -Force -Path $configDir | Out-Null
-          [ordered]@{ terminal = [ordered]@{ backend = 'alacritty' } } |
+          # Any user setting works as the preservation probe; `scrollback_lines`
+          # is the cheapest one that no installer step has a reason to touch.
+          [ordered]@{ terminal = [ordered]@{ scrollback_lines = 4321 } } |
               ConvertTo-Json -Depth 4 |
               Set-Content -LiteralPath $configPath -Encoding utf8
           $configHashBeforeUpgrade = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
@@ -2778,8 +2746,8 @@ jobs:
               $configHashAfterUpgrade = (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash
               $preservedConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
               if ($configHashAfterUpgrade -ne $configHashBeforeUpgrade -or
-                  $preservedConfig.terminal.backend -ne 'alacritty') {
-                  throw 'MSI upgrade did not preserve the explicit Alacritty rollback configuration'
+                  $preservedConfig.terminal.scrollback_lines -ne 4321) {
+                  throw 'MSI upgrade did not preserve the existing user configuration'
               }
 
               foreach ($entry in $complianceSources.GetEnumerator()) {
@@ -2894,7 +2862,7 @@ jobs:
           Assert-NoMsiResidue -Label 'Candidate upgrade uninstall'
           if (-not (Test-Path -LiteralPath $configPath -PathType Leaf) -or
               (Get-FileHash -LiteralPath $configPath -Algorithm SHA256).Hash -ne $configHashBeforeUpgrade) {
-              throw 'MSI uninstall did not preserve the explicit Alacritty rollback configuration'
+              throw 'MSI uninstall did not preserve the existing user configuration'
           }
 
       - name: Record manual Windows backend smoke boundary
@@ -2903,10 +2871,10 @@ jobs:
           @'
           ## Windows backend release boundary
 
-          CI proved fresh install, hosted-desktop Ghostty and Alacritty launches,
-          the signed v0.8.0 MSI upgrade, preserved rollback configuration, static
-          libghostty provenance, installed compliance inventory, updater relay,
-          and clean uninstall. A release reviewer must still execute the full
+          CI proved fresh install, a hosted-desktop Ghostty launch, the signed
+          v0.8.0 MSI upgrade, preserved user configuration, static libghostty
+          provenance, installed compliance inventory, updater relay, and clean
+          uninstall. A release reviewer must still execute the full
           Windows 10 and Windows 11 desktop matrix, including IME, GPU,
           sleep/resume, non-ASCII profile paths, and conditional RDP.
           '@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
