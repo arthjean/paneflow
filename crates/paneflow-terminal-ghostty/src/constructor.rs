@@ -206,8 +206,14 @@ fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<()> {
             (&disabled as *const bool).cast::<c_void>(),
         ),
         (
+            // Ghostty f2d5758f retyped this option from `bool*` to
+            // `GhosttyString*`: it now names the directory the temporary-file
+            // medium may read from, and a NULL value pointer is what disables
+            // the medium. Handing it `&false` made libghostty read a 16-byte
+            // string header off a one-byte stack bool, and the garbage length
+            // came back as GHOSTTY_OUT_OF_MEMORY.
             sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
-            (&disabled as *const bool).cast::<c_void>(),
+            std::ptr::null::<c_void>(),
         ),
         (
             sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM,
