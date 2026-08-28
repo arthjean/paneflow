@@ -371,16 +371,39 @@ fn should_extract_mcp_bridge_for_cli(args: &[String]) -> bool {
         && args.len() == 3
 }
 
+/// Whether the native window material has to stand down for this frame.
+///
+/// macOS native fullscreen moves the window onto its own Space with a black
+/// backdrop, so AppKit's behind-window material has no desktop left to sample
+/// and the blur collapses into a flat tint. Falling back to the opaque theme
+/// chrome keeps fullscreen readable instead of showing a dead material.
+///
+/// Tiled and maximized windows stay in the desktop Space and keep a live blur
+/// (verified on macOS 15), so this keys off `is_fullscreen`, never
+/// `is_maximized`.
+fn native_material_suppressed_by_fullscreen(is_fullscreen: bool) -> bool {
+    cfg!(target_os = "macos") && is_fullscreen
+}
+
 #[cfg(test)]
 mod native_material_tests {
     use super::{
-        native_backdrop_material_active, should_extract_mcp_bridge_for_cli,
-        should_load_login_shell_env_for_startup,
+        native_backdrop_material_active, native_material_suppressed_by_fullscreen,
+        should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup,
     };
     use paneflow_config::schema::AppMode;
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_string()).collect()
+    }
+
+    #[test]
+    fn fullscreen_suppresses_the_native_material_on_macos_only() {
+        assert!(!native_material_suppressed_by_fullscreen(false));
+        assert_eq!(
+            native_material_suppressed_by_fullscreen(true),
+            cfg!(target_os = "macos")
+        );
     }
 
     #[test]
@@ -1366,10 +1389,14 @@ impl Render for PaneFlowApp {
                 self.windows_backdrop_light = Some(is_light);
             }
         }
+        // Fullscreen kills the behind-window material, so resolve it once here
+        // and keep the AppKit view and the shell tint in agreement.
+        let chrome_material_suppressed =
+            native_material_suppressed_by_fullscreen(window.is_fullscreen());
         #[cfg(target_os = "macos")]
         crate::window_chrome::macos_backdrop::sync_subtle_sidebar_material(
             theme.background.l > 0.5,
-            self.cached_config.macos_chrome_material_enabled(),
+            self.cached_config.macos_chrome_material_enabled() && !chrome_material_suppressed,
         );
         // Every mode is cockpit now (Agents first, then Cli, then Diff): the
         // title bar floats above the full window and the right panel reserves
@@ -1413,7 +1440,8 @@ impl Render for PaneFlowApp {
         // the native backdrop show through. Diff / Agents / Settings use the
         // #181818 surface.
         let terminal_material_active = self.cached_config.windows_terminal_material_enabled();
-        let chrome_material_active = self.cached_config.cockpit_chrome_material_enabled();
+        let chrome_material_active =
+            self.cached_config.cockpit_chrome_material_enabled() && !chrome_material_suppressed;
         let terminal_surface_mounted = self
             .active_workspace()
             .is_some_and(|ws| ws.active_tab().root.is_some());
