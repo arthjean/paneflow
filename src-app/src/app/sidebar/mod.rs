@@ -517,10 +517,10 @@ fn tab_pane_icon(pane: &crate::pane::Pane, cx: &gpui::App) -> TabPaneIcon {
 /// or created from a named preset) falls back to its 1-based position, so the
 /// list never shows a blank row.
 fn tab_display_title(tab: &Tab, tab_idx: usize) -> String {
-    if tab.title.trim().is_empty() {
+    if tab.title().trim().is_empty() {
         format!("Tab {}", tab_idx + 1)
     } else {
-        tab.title.clone()
+        tab.title().to_string()
     }
 }
 
@@ -558,23 +558,10 @@ fn sidebar_drop_slots(rows: &[SidebarRow], workspace_count: usize) -> Vec<Sideba
 }
 
 impl PaneFlowApp {
-    fn begin_workspace_rename(&mut self, index: usize, cx: &mut Context<Self>) {
-        self.commit_rename(cx);
-        if let Some(title) = self
-            .workspaces
-            .get(index)
-            .map(|workspace| workspace.title.clone())
-        {
-            self.rename_input
-                .update(cx, |input, cx| input.set_value(title, cx));
-            self.renaming_idx = Some(index);
-        }
-    }
-
-    /// Issue #32: the inline rename box hosts the shared `rename_input`
-    /// widget. The row above it owns the enter/escape handling, and the mouse
-    /// guards keep a click inside the field from reaching the row's click,
-    /// drag, and context-menu listeners.
+    /// Issue #32: the inline rename box hosts the `rename_input` widget. The
+    /// row above it owns the enter/escape handling, and the mouse guards keep
+    /// a click inside the field from reaching the row's click, drag, and
+    /// context-menu listeners.
     fn inline_rename_field(&self, ui: crate::theme::UiColors) -> gpui::Div {
         div()
             .flex_1()
@@ -987,20 +974,17 @@ impl PaneFlowApp {
                 if let Some(workspace) = this.workspaces.get_mut(idx) {
                     workspace.agent_completion_notification.acknowledge();
                 }
-                let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count == 2);
-                if is_double {
-                    this.begin_workspace_rename(idx, cx);
-                } else {
-                    let was_renaming = this.renaming_idx == Some(idx);
-                    this.commit_rename(cx);
-                    this.select_workspace(idx, window, cx);
-                    // US-008: the whole card is the disclosure control, not just
-                    // the folder icon. Committing a rename is exempt: that click
-                    // ends an edit, and folding the row under the cursor would
-                    // read as a side effect of typing a name.
-                    if !was_renaming {
-                        this.toggle_workspace_expanded(idx, cx);
-                    }
+                let was_renaming = this.renaming_tab.is_some();
+                this.commit_rename(cx);
+                this.select_workspace(idx, window, cx);
+                // US-008: the whole card is the disclosure control, not just
+                // the folder icon. Two clicks are exempt on either count: the
+                // second half of a double-click would fold the row straight
+                // back, and committing a rename ends an edit - folding the row
+                // under the cursor would read as a side effect of typing.
+                let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count >= 2);
+                if !was_renaming && !is_double {
+                    this.toggle_workspace_expanded(idx, cx);
                 }
                 cx.notify();
             }))
@@ -1013,28 +997,6 @@ impl PaneFlowApp {
                     this.workspace_menu_open = Some(WorkspaceContextMenu { idx, position });
                     cx.stop_propagation();
                     cx.notify();
-                }
-            }))
-            // Issue #32: the row only sits on the focus path while its own
-            // rename field is focused, so this handler is exactly the
-            // enter/escape pair. Everything else - text entry, caret, IME,
-            // clipboard - belongs to the `TextInput` below it.
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, _window, cx| {
-                if this.renaming_idx != Some(idx) {
-                    return;
-                }
-                match e.keystroke.key.as_str() {
-                    "enter" => {
-                        this.commit_rename(cx);
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                    "escape" => {
-                        this.renaming_idx = None;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
-                    _ => {}
                 }
             }));
 
@@ -1050,21 +1012,19 @@ impl PaneFlowApp {
             folder_sessions(),
             ws.agent_completion_notification.is_unread(),
         );
-        let title_el = if self.renaming_idx == Some(i) {
-            self.inline_rename_field(ui).font_weight(FontWeight::MEDIUM)
-        } else {
-            div()
-                .flex_1()
-                .min_w_0()
-                .overflow_x_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_color(ui.text)
-                .text_sm()
-                .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
-                .font_weight(FontWeight::MEDIUM)
-                .child(title)
-        };
+        // A folder row carries the directory's own name and never an edit box:
+        // the workspace title is derived from the folder, not typed.
+        let title_el = div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(ui.text)
+            .text_sm()
+            .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+            .font_weight(FontWeight::MEDIUM)
+            .child(title);
 
         // US-008: the open/closed folder glyph reports the disclosure state -
         // no chevron beside it, and no click target of its own. The whole card

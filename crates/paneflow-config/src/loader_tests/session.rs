@@ -460,3 +460,95 @@ fn test_migrate_v1_is_idempotent_on_v2_shape() {
     migrate_session_v1(&mut state);
     assert_eq!(once, state);
 }
+
+/// A `session.json` written before auto-naming existed carries no provenance,
+/// and every title in it is either a name someone typed or a preset label.
+/// Reading that silence as `User` is the half that cannot destroy anything;
+/// the app's restore path hands the preset labels back to `Auto`.
+#[test]
+fn test_tab_title_source_is_absent_when_the_file_predates_it() {
+    let tab: TabSession = serde_json::from_str(r#"{"title": "sprint 3"}"#).unwrap();
+    assert_eq!(
+        tab.title_source, None,
+        "the app's restore path, not this schema, decides what silence means"
+    );
+}
+
+#[test]
+fn test_tab_title_source_reads_an_explicit_value() {
+    let auto: TabSession =
+        serde_json::from_str(r#"{"title": "wire up the parser", "title_source": "auto"}"#).unwrap();
+    assert_eq!(auto.title_source, Some(TabTitleSource::Auto));
+
+    let user: TabSession =
+        serde_json::from_str(r#"{"title": "sprint 3", "title_source": "user"}"#).unwrap();
+    assert_eq!(user.title_source, Some(TabTitleSource::User));
+}
+
+/// Same tolerance as `AppMode`: a value this build does not know must not cost
+/// the user every workspace in the file. It fails safe, onto the variant that
+/// protects a typed name.
+#[test]
+fn test_unknown_tab_title_source_falls_back_to_user() {
+    let tab: TabSession =
+        serde_json::from_str(r#"{"title": "sprint 3", "title_source": "summarizer"}"#).unwrap();
+    assert_eq!(tab.title_source, Some(TabTitleSource::User));
+}
+
+/// A tab Paneflow builds around a layout states its provenance outright. The
+/// paneless `empty()` is `Default`, and its blank title makes the distinction
+/// moot - a blank legacy title restores as `Auto` too.
+#[test]
+fn test_a_tab_built_in_process_is_auto() {
+    assert_eq!(
+        TabSession::with_layout(LayoutNode::Pane {
+            surfaces: vec![make_surface("/home/user/project")],
+        })
+        .title_source,
+        Some(TabTitleSource::Auto)
+    );
+    assert_eq!(TabSession::empty().title, "");
+}
+
+#[test]
+fn test_tab_title_source_survives_a_roundtrip() {
+    let state = SessionState {
+        version: SESSION_SCHEMA_VERSION,
+        active_workspace: 0,
+        workspaces: vec![make_workspace(
+            "main",
+            "/home/user/project",
+            vec![
+                TabSession {
+                    title: "sprint 3".to_string(),
+                    title_source: Some(TabTitleSource::User),
+                    layout: None,
+                },
+                TabSession {
+                    title: "wire up the parser".to_string(),
+                    title_source: Some(TabTitleSource::Auto),
+                    layout: None,
+                },
+            ],
+        )],
+        mode: AppMode::default(),
+        diff_scope: None,
+    };
+    let json = serde_json::to_string(&state).unwrap();
+    let back: SessionState = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, state);
+}
+
+/// A promoted tab's title is the surface's `custom_name`, and a v1 file cannot
+/// tell one the user typed from one Paneflow wrote. The migration says so
+/// rather than guessing, and the restore path judges it by content like every
+/// other legacy title.
+#[test]
+fn test_migrate_v1_states_no_provenance_for_promoted_titles() {
+    let mut state: SessionState = serde_json::from_str(V1_FIXTURE).unwrap();
+    migrate_session_v1(&mut state);
+
+    let ws = &state.workspaces[0];
+    assert_eq!(ws.tabs[0].title, "", "the inherited tree is an unnamed tab");
+    assert_eq!(ws.tabs[1].title_source, None);
+}

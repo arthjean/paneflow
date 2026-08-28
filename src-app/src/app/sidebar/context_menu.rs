@@ -401,10 +401,17 @@ impl PaneFlowApp {
     /// entry is gone along with the tab strip that anchored it: what remains
     /// are the surface actions (copy path, cancel a queued prompt, close the
     /// pane). No dead or disabled move entry is left behind.
-    /// US-010: right-click menu on a sidebar tab row. Two entries - Rename and
-    /// Close - in the shared select-menu language of the workspace menu. Close
-    /// keeps FR-01: the last tab of a workspace is replaced by an empty one,
-    /// the workspace itself is never closed from here.
+    /// US-010: right-click menu on a sidebar tab row. Rename and Close, in the
+    /// shared select-menu language of the workspace menu, plus "Reset name" on
+    /// a tab the user has named. Close keeps FR-01: the last tab of a
+    /// workspace is replaced by an empty one, the workspace itself is never
+    /// closed from here.
+    ///
+    /// "Reset name" is the way back out of the naming lock. Renaming a tab
+    /// freezes it against auto-naming for good, which is the point - but a
+    /// one-way door would leave a tab named after a task that ended three
+    /// tasks ago, with nothing to do about it. It only appears where it does
+    /// something, so an auto-named tab shows the same two entries as before.
     pub(crate) fn render_tab_context_menu(
         &self,
         menu: TabContextMenu,
@@ -417,7 +424,13 @@ impl PaneFlowApp {
             tab_idx,
             position,
         } = menu;
-        let menu_height = px(8. + 2. * 28.);
+        let can_reset_name = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.tabs().get(tab_idx))
+            .is_some_and(|tab| tab.title_is_user_owned());
+        let rows = if can_reset_name { 3. } else { 2. };
+        let menu_height = px(8. + rows * 28.);
         let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
         let close_shortcut = self
             .shortcut_for_action("close_tab")
@@ -445,6 +458,19 @@ impl PaneFlowApp {
                     cx.stop_propagation();
                 }),
             ))
+            .when(can_reset_name, |menu| {
+                menu.child(self.render_select_menu_item(
+                    "tab-context-reset-name".into(),
+                    "Reset name",
+                    None,
+                    ui,
+                    cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                        this.tab_menu_open = None;
+                        this.reset_tab_name(ws_idx, tab_idx, cx);
+                        cx.stop_propagation();
+                    }),
+                ))
+            })
             .child(self.render_select_menu_item(
                 "tab-context-close".into(),
                 "Close",

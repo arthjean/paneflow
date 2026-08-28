@@ -868,10 +868,12 @@ struct DiffDockState {
 struct PaneFlowApp {
     workspaces: Vec<Workspace>,
     active_idx: usize,
-    renaming_idx: Option<usize>,
     /// US-010: sidebar tab being renamed inline, as `(workspace_idx, tab_idx)`.
-    /// Shares `rename_input` with the workspace rename - only one inline rename
-    /// can be live at a time, and `commit_rename` settles whichever is.
+    ///
+    /// A tab is the ONLY thing the sidebar renames. A workspace takes its name
+    /// from the folder it holds (`Workspace::title`, derived from the directory
+    /// at open time), so letting it drift from that folder would leave the rail
+    /// claiming a name nothing on disk answers to, with no way back.
     renaming_tab: Option<(usize, usize)>,
     /// Issue #32: the inline rename box is a real `TextInput`, not a text
     /// mirror fed by the row's `on_key_down`. GPUI dispatches key events along
@@ -1494,7 +1496,7 @@ impl Render for PaneFlowApp {
         // its keys back once the edit is over, so both transitions are driven
         // here rather than from the row listeners (which have no `Window`).
         let rename_focus = self.rename_input.read(cx).focus_handle.clone();
-        let rename_live = self.renaming_idx.is_some() || self.renaming_tab.is_some();
+        let rename_live = self.renaming_tab.is_some();
         if rename_live != self.rename_focus_live {
             self.rename_focus_live = rename_live;
             if rename_live {

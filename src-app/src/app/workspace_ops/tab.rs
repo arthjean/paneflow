@@ -11,7 +11,7 @@
 //! two drifting ones.
 
 use gpui::{AppContext, Context, Window};
-use paneflow_config::schema::TerminalSurfaceProfile;
+use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 
 use crate::PaneFlowApp;
 use crate::layout::LayoutTree;
@@ -68,7 +68,11 @@ impl PaneFlowApp {
         let opened = self.workspaces.get_mut(ws_idx).is_some_and(|ws| {
             let active = ws.active_tab_mut();
             if active.root.is_none() && active.saved_layout.is_none() {
-                active.title = title;
+                // The preset label is Paneflow naming the tab, not the user:
+                // `Auto` keeps it replaceable by the first prompt's subject.
+                // It must not overwrite a title the user typed on the empty
+                // tab they are filling, which `set_title` already refuses.
+                active.set_title(&title, TabTitleSource::Auto);
                 active.root = Some(root);
                 true
             } else {
@@ -270,7 +274,7 @@ impl PaneFlowApp {
             .workspaces
             .get(ws_idx)
             .and_then(|ws| ws.tabs().get(tab_idx))
-            .map(|tab| tab.title.clone())
+            .map(|tab| tab.title().to_string())
         else {
             return;
         };
@@ -278,6 +282,21 @@ impl PaneFlowApp {
             .update(cx, |input, cx| input.set_value(title, cx));
         self.renaming_tab = Some((ws_idx, tab_idx));
         cx.notify();
+    }
+
+    /// Hand a user-named tab back to auto-naming (the tab menu's "Reset
+    /// name"). The visible text stays until something automatic replaces it,
+    /// so the row does not blink back to its `Tab N` fallback.
+    pub(crate) fn reset_tab_name(&mut self, ws_idx: usize, tab_idx: usize, cx: &mut Context<Self>) {
+        if self
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tab_mut(tab_idx))
+            .is_some_and(Tab::unlock_title)
+        {
+            self.save_session(cx);
+            cx.notify();
+        }
     }
 
     /// US-011: reorder a dragged tab inside its own workspace. `target_idx` is

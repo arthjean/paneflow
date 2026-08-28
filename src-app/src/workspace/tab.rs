@@ -7,7 +7,7 @@
 //! now operate one level down.
 
 use gpui::{App, Entity, Window};
-use paneflow_config::schema::LayoutNode;
+use paneflow_config::schema::{LayoutNode, TabTitleSource};
 
 use crate::layout::LayoutTree;
 use crate::pane::Pane;
@@ -28,7 +28,14 @@ pub struct Tab {
     pub id: u64,
     /// User-facing title. Empty means "unnamed" - the sidebar derives a
     /// fallback label (US-009).
-    pub title: String,
+    ///
+    /// Private on purpose: [`Self::set_title`] is the ONE way a title changes,
+    /// and it is where "a name a human typed is never overwritten" is
+    /// enforced. A `pub` field would put that rule back in the hands of every
+    /// caller, which is how such rules quietly stop holding.
+    title: String,
+    /// Who wrote [`Self::title`]. See [`TabTitleSource`].
+    title_source: TabTitleSource,
     /// Pane layout tree. `None` for an empty tab (every pane closed).
     pub root: Option<LayoutTree>,
     /// Saved layout tree while zoomed. `Some(tree)` means this tab is zoomed
@@ -38,12 +45,34 @@ pub struct Tab {
 
 impl Tab {
     /// Create a tab holding `root`, with a freshly allocated id.
+    ///
+    /// The title is [`TabTitleSource::Auto`]: every in-process construction
+    /// site is Paneflow naming the tab itself (a preset label, the palette
+    /// placeholder, an empty string). A human's title only ever arrives
+    /// through [`Self::set_title`], or from the restore path via
+    /// [`Self::restored`].
     pub fn new(title: impl Into<String>, root: Option<LayoutTree>) -> Self {
         Self {
             id: next_tab_id(),
             title: title.into(),
+            title_source: TabTitleSource::Auto,
             root,
             saved_layout: None,
+        }
+    }
+
+    /// Rebuild a tab from a session snapshot, carrying the persisted title
+    /// provenance across the restart. Without this, every restored tab would
+    /// look app-named and the first prompt of the next session would erase a
+    /// name the user typed days ago.
+    pub fn restored(
+        title: impl Into<String>,
+        title_source: TabTitleSource,
+        root: Option<LayoutTree>,
+    ) -> Self {
+        Self {
+            title_source,
+            ..Self::new(title, root)
         }
     }
 
@@ -52,6 +81,64 @@ impl Tab {
     /// closed.
     pub fn empty() -> Self {
         Self::new(String::new(), None)
+    }
+
+    /// The tab's stored title. Empty means unnamed; the sidebar derives the
+    /// visible fallback (US-009).
+    pub fn title(&self) -> &str {
+        &self.title
+    }
+
+    pub fn title_source(&self) -> TabTitleSource {
+        self.title_source
+    }
+
+    /// Whether this title belongs to the user and is therefore frozen against
+    /// every automatic naming path.
+    pub fn title_is_user_owned(&self) -> bool {
+        self.title_source == TabTitleSource::User
+    }
+
+    /// The single write path for a tab title. Returns whether anything
+    /// changed, so callers persist the session only on a real delta.
+    ///
+    /// Rules, in order:
+    /// 1. An automatic title never overwrites a user's. This is the whole
+    ///    point of the type, and it is checked here rather than at each call
+    ///    site so no future caller can forget it.
+    /// 2. An automatic title never *clears* one. A summarizer that returns
+    ///    nothing must leave the tab as it is, not blank it.
+    /// 3. Titles are stored trimmed, and a no-op write reports `false` -
+    ///    every turn of an agent would otherwise schedule a session save that
+    ///    writes the same bytes.
+    pub fn set_title(&mut self, title: &str, source: TabTitleSource) -> bool {
+        let title = title.trim();
+        if source != TabTitleSource::User {
+            if self.title_is_user_owned() || title.is_empty() {
+                return false;
+            }
+        } else if title.is_empty() {
+            return false;
+        }
+        if self.title == title && self.title_source == source {
+            return false;
+        }
+        self.title.clear();
+        self.title.push_str(title);
+        self.title_source = source;
+        true
+    }
+
+    /// Hand a user-owned title back to auto-naming (the tab menu's "Reset
+    /// name"). Returns whether anything changed.
+    ///
+    /// The text is deliberately kept: dropping it would flash the tab back to
+    /// its "Tab 3" fallback until the next turn produced a name. Only the
+    /// ownership changes, so the next automatic title may take over.
+    pub fn unlock_title(&mut self) -> bool {
+        let was_locked = self.title_is_user_owned();
+        self.title_source = TabTitleSource::Auto;
+        was_locked
     }
 
     pub fn is_zoomed(&self) -> bool {
@@ -146,5 +233,106 @@ impl Tab {
     pub fn serialize_without_scrollback(&self, cx: &App) -> Option<LayoutNode> {
         let tree = self.saved_layout.as_ref().or(self.root.as_ref())?;
         Some(tree.serialize_without_scrollback(cx))
+    }
+}
+
+/// The title-ownership rule, tested at the one place that enforces it.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tab(title: &str) -> Tab {
+        Tab::new(title, None)
+    }
+
+    #[test]
+    fn auto_titles_replace_each_other() {
+        let mut tab = tab("Claude Code");
+        assert!(tab.set_title("wire up the parser", TabTitleSource::Auto));
+        assert_eq!(tab.title(), "wire up the parser");
+        assert!(tab.set_title("rewrite the lexer", TabTitleSource::Auto));
+        assert_eq!(tab.title(), "rewrite the lexer");
+    }
+
+    #[test]
+    fn a_user_title_is_never_overwritten_by_an_automatic_one() {
+        let mut tab = tab("Claude Code");
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+
+        assert!(!tab.set_title("wire up the parser", TabTitleSource::Auto));
+        assert_eq!(tab.title(), "sprint 3");
+        assert!(tab.title_is_user_owned());
+    }
+
+    #[test]
+    fn a_user_title_can_be_replaced_by_another_user_title() {
+        let mut tab = tab("");
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+        assert!(tab.set_title("sprint 4", TabTitleSource::User));
+        assert_eq!(tab.title(), "sprint 4");
+    }
+
+    /// A summarizer that returns nothing must leave the tab alone rather than
+    /// blank it - the sidebar would fall back to "Tab 2" out of nowhere.
+    #[test]
+    fn an_automatic_title_never_clears_one() {
+        let mut tab = tab("OpenCode");
+        assert!(!tab.set_title("", TabTitleSource::Auto));
+        assert!(!tab.set_title("   \n ", TabTitleSource::Auto));
+        assert_eq!(tab.title(), "OpenCode");
+    }
+
+    /// Every agent turn would otherwise schedule a session write of identical
+    /// bytes.
+    #[test]
+    fn an_unchanged_title_reports_no_change() {
+        let mut tab = tab("Codex");
+        assert!(!tab.set_title("Codex", TabTitleSource::Auto));
+        assert!(!tab.set_title("  Codex  ", TabTitleSource::Auto));
+        assert!(tab.set_title("Codex", TabTitleSource::User));
+    }
+
+    #[test]
+    fn titles_are_stored_trimmed() {
+        let mut tab = tab("");
+        assert!(tab.set_title("  fix the flaky test \n", TabTitleSource::User));
+        assert_eq!(tab.title(), "fix the flaky test");
+    }
+
+    /// Reset name reopens auto-naming and keeps the text, so the row does not
+    /// blink back to its positional fallback while waiting for the next turn.
+    #[test]
+    fn unlock_title_reopens_auto_naming_and_keeps_the_text() {
+        let mut tab = tab("Claude Code");
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+
+        assert!(tab.unlock_title());
+        assert_eq!(tab.title(), "sprint 3");
+        assert!(!tab.title_is_user_owned());
+        assert!(tab.set_title("wire up the parser", TabTitleSource::Auto));
+        assert_eq!(tab.title(), "wire up the parser");
+    }
+
+    #[test]
+    fn unlock_title_on_an_already_automatic_tab_reports_no_change() {
+        let mut tab = tab("Claude Code");
+        assert!(!tab.unlock_title());
+    }
+
+    /// A blank rename is the inline editor being dismissed, not a request to
+    /// erase the name - `commit_rename` guards this too, doubly on purpose.
+    #[test]
+    fn a_blank_user_title_is_refused() {
+        let mut tab = tab("Codex");
+        assert!(!tab.set_title("  ", TabTitleSource::User));
+        assert_eq!(tab.title(), "Codex");
+        assert!(!tab.title_is_user_owned());
+    }
+
+    #[test]
+    fn a_freshly_built_tab_is_app_named() {
+        assert!(!tab("Claude Code").title_is_user_owned());
+        assert!(!Tab::empty().title_is_user_owned());
+        assert!(Tab::restored("sprint 3", TabTitleSource::User, None).title_is_user_owned());
     }
 }

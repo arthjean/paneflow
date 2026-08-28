@@ -942,7 +942,7 @@ fn workspace_surface_entries(workspaces: &[Workspace], cx: &App) -> Vec<SurfaceE
                     entries.push(surface_entry_for(
                         entity.clone(),
                         ws_idx,
-                        Some((tab.id, tab.title.clone())),
+                        Some((tab.id, tab.title().to_string())),
                         cx,
                     ));
                 }

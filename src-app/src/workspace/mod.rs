@@ -364,7 +364,7 @@ impl Workspace {
     /// place instead of leaving it behind.
     pub fn is_empty_shell(&self) -> bool {
         match self.tabs.as_slice() {
-            [tab] => tab.title.is_empty() && tab.root.is_none() && tab.saved_layout.is_none(),
+            [tab] => tab.title().is_empty() && tab.root.is_none() && tab.saved_layout.is_none(),
             _ => false,
         }
     }
@@ -489,7 +489,8 @@ impl Workspace {
         self.tabs
             .iter()
             .map(|tab| TabSession {
-                title: tab.title.clone(),
+                title: tab.title().to_string(),
+                title_source: Some(tab.title_source()),
                 layout: tab.serialize_without_scrollback(cx),
             })
             .collect()
@@ -689,7 +690,7 @@ mod tests {
             "the placeholder is filled, not pushed past"
         );
         assert_eq!(ws.active_tab_idx(), 0);
-        assert_eq!(ws.active_tab().title, "first");
+        assert_eq!(ws.active_tab().title(), "first");
         assert!(!ws.is_empty_shell());
 
         assert!(ws.open_tab(Tab::new("second", None)));

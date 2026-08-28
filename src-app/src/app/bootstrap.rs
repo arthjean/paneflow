@@ -752,9 +752,8 @@ impl PaneFlowApp {
         cx.observe(&workspace_pane_prompt_input, |_, _, cx| cx.notify())
             .detach();
 
-        // Issue #32: the sidebar inline rename shares one field between the
-        // workspace rows and the tab rows, mirroring the single `renaming_idx`
-        // / `renaming_tab` pair - only one rename can be live at a time.
+        // Issue #32: the sidebar inline rename is a real text field, and a
+        // single one - `renaming_tab` names the one row that can be editing.
         let rename_input = cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Name", cx));
         cx.observe(&rename_input, |_, _, cx| cx.notify()).detach();
 
@@ -768,7 +767,6 @@ impl PaneFlowApp {
         let mut app = Self {
             workspaces,
             active_idx,
-            renaming_idx: None,
             renaming_tab: None,
             rename_input,
             rename_focus_live: false,

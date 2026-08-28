@@ -109,6 +109,64 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
+/// Who put a tab's current title there.
+///
+/// This is the whole of the "a name I typed is mine" rule: auto-naming may
+/// replace an [`Auto`](TabTitleSource::Auto) title as often as it likes and
+/// must never touch a [`User`](TabTitleSource::User) one. Provenance, not the
+/// title's content, decides - a tab opened from the preset picker already
+/// carries a non-empty, non-human title ("Claude Code"), so "is it empty?"
+/// would refuse to name exactly the tabs worth naming.
+///
+/// `Default` is `Auto`: a freshly built tab is app-named until a human says
+/// otherwise. A snapshot that states no provenance at all is a separate case;
+/// see [`TabSession::title_source`].
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TabTitleSource {
+    /// Written by Paneflow: a preset label, or an auto-generated name.
+    /// Freely replaceable by another automatic name.
+    #[default]
+    Auto,
+    /// Typed by a human. Nothing but another human edit may replace it.
+    User,
+}
+
+/// Deserialization is tolerant for the same reason [`AppMode`]'s is - an
+/// unreadable field must not cost the user every workspace in the file - and
+/// it fails *safe*: anything that is not exactly `"auto"` is read as `User`,
+/// because wrongly locking a tab out of auto-naming is a nuisance the user can
+/// undo from the tab menu, while wrongly unlocking one silently destroys a
+/// name they typed.
+impl<'de> Deserialize<'de> for TabTitleSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct SourceVisitor;
+
+        impl serde::de::Visitor<'_> for SourceVisitor {
+            type Value = TabTitleSource;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a tab title provenance string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<TabTitleSource, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(match value {
+                    "auto" => TabTitleSource::Auto,
+                    _ => TabTitleSource::User,
+                })
+            }
+        }
+
+        deserializer.deserialize_str(SourceVisitor)
+    }
+}
+
 /// Snapshot of one workspace tab: a title and the pane layout that tab owns
 /// (US-018). `layout: None` is an *empty* tab - a folder with no pane at all -
 /// which is only ever written by v2. The v1 `layout: null` meant the opposite
@@ -120,6 +178,17 @@ pub struct TabSession {
     /// fallback label rather than persisting one.
     #[serde(default)]
     pub title: String,
+    /// Who put [`Self::title`] there, or `None` when the file does not say.
+    ///
+    /// `Option` rather than a defaulted enum because the two cases genuinely
+    /// differ. A file written before auto-naming existed carries no such
+    /// field, and its titles are a mix of names people typed and preset
+    /// labels - the app's restore path tells them apart by content
+    /// (`restored_tab_title_source`). A file that DOES state its provenance
+    /// is believed as written, so a tab someone deliberately renamed
+    /// "Claude Code" keeps its lock instead of being guessed back open.
+    #[serde(default)]
+    pub title_source: Option<TabTitleSource>,
     /// Pane layout tree for this tab. `None` = the tab holds no pane.
     #[serde(default)]
     pub layout: Option<LayoutNode>,
@@ -135,6 +204,7 @@ impl TabSession {
     pub fn with_layout(layout: LayoutNode) -> Self {
         Self {
             title: String::new(),
+            title_source: Some(TabTitleSource::Auto),
             layout: Some(layout),
         }
     }
@@ -262,6 +332,12 @@ fn demote_panes_to_focused_surface(node: &mut LayoutNode, promoted: &mut Vec<Tab
                 let title = surface_title(&surface);
                 promoted.push(TabSession {
                     title,
+                    // A promoted title is the surface's `custom_name`, which
+                    // a v1 file cannot tell apart from a name the user typed
+                    // on that pane. Stating no provenance is the honest
+                    // answer, and lets the restore path judge it by content
+                    // like every other legacy title.
+                    title_source: None,
                     layout: Some(LayoutNode::Pane {
                         surfaces: vec![surface],
                     }),

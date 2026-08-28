@@ -12,9 +12,10 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui::{App, AppContext, Context, Entity};
-use paneflow_config::schema::LayoutNode;
+use paneflow_config::schema::{LayoutNode, TabTitleSource};
 
 use crate::PaneFlowApp;
+use crate::agent_launcher::TerminalAgent;
 use crate::launch_cwd;
 use crate::layout::{LayoutTree, MAX_PANES};
 use crate::limits::MAX_SESSION_SIZE_BYTES;
@@ -408,7 +409,11 @@ impl PaneFlowApp {
                         Self::spawn_pane_from_surfaces(ws_id, surfaces, &ws_cwd, cx)
                     })
                 });
-                tabs.push(Tab::new(tab_session.title.clone(), root));
+                tabs.push(Tab::restored(
+                    tab_session.title.clone(),
+                    restored_tab_title_source(tab_session, &ws_session.custom_buttons),
+                    root,
+                ));
             }
             let mut workspace =
                 Workspace::restored_with_id(ws_id, title.clone(), cwd, tabs, ws_session.active_tab);
@@ -736,6 +741,61 @@ fn canonicalize_persisted_layout(mut layout: LayoutNode) -> LayoutNode {
     layout
 }
 
+/// Title provenance to restore a persisted tab with.
+///
+/// A snapshot that states its provenance is believed as written - including a
+/// tab someone deliberately renamed "Claude Code", whose lock a content
+/// heuristic would cheerfully guess away.
+///
+/// `session.json` files written before auto-naming say nothing, and their
+/// titles are two different things wearing the same clothes: names people
+/// typed, and the label of whatever preset opened the tab ("Claude Code",
+/// "OpenCode", "Terminal"). Locking all of them would freeze exactly the tabs
+/// auto-naming exists for; unlocking all of them would erase names on the next
+/// prompt. So a legacy title is judged by content, and only what Paneflow
+/// itself writes is handed back to `Auto`: every agent's display name (not
+/// just the visible ones - hiding an agent in Settings must not freeze the
+/// tabs it opened), the shell and palette placeholders, the workspace's own
+/// custom command buttons, and a blank title.
+///
+/// The asymmetry is deliberate. A user who really had typed "Terminal" loses a
+/// lock they take back with one rename; the reverse mistake destroys a name
+/// with no warning and no undo. Files written from here on carry the field, so
+/// the heuristic applies once, to the snapshot that predates the feature.
+fn restored_tab_title_source(
+    tab: &paneflow_config::schema::TabSession,
+    custom_buttons: &[paneflow_config::schema::ButtonCommand],
+) -> TabTitleSource {
+    if let Some(stated) = tab.title_source {
+        return stated;
+    }
+    if is_app_written_tab_title(&tab.title)
+        || custom_buttons
+            .iter()
+            .any(|button| button.name.trim() == tab.title.trim())
+    {
+        return TabTitleSource::Auto;
+    }
+    TabTitleSource::User
+}
+
+/// Whether `title` is one Paneflow writes on its own, rather than a name a
+/// human chose. Agent-independent half of [`restored_tab_title_source`].
+fn is_app_written_tab_title(title: &str) -> bool {
+    let title = title.trim();
+    title.is_empty()
+        || title == crate::app::pane_palette::PALETTE_TAB_TITLE
+        || title == SHELL_PRESET_LABEL
+        || TerminalAgent::ALL
+            .iter()
+            .any(|agent| agent.display_name() == title)
+}
+
+/// The preset picker's label for a plain shell (`pane_palette`). Duplicated as
+/// a constant here rather than reached for through the picker's private list,
+/// which is built per workspace from live settings.
+const SHELL_PRESET_LABEL: &str = "Terminal";
+
 fn should_repair_restored_root_terminal(title: &str, cwd: &Path) -> bool {
     is_numbered_terminal_title(title) && launch_cwd::is_filesystem_root(cwd)
 }
@@ -973,6 +1033,96 @@ mod tests {
             .ok()
             .and_then(|path| path.ancestors().last().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR.to_string()))
+    }
+
+    fn legacy_tab(title: &str) -> paneflow_config::schema::TabSession {
+        serde_json::from_value(serde_json::json!({ "title": title }))
+            .expect("a title-only tab is a valid pre-auto-naming snapshot")
+    }
+
+    /// The migration that makes auto-naming reach the tabs it exists for.
+    /// Everything Paneflow itself writes into a tab title is handed back to
+    /// `Auto`, so a restored "Claude Code" tab can still be named after its
+    /// first prompt.
+    #[test]
+    fn a_legacy_preset_label_is_handed_back_to_auto_naming() {
+        for title in [
+            "",
+            "   ",
+            "Claude Code",
+            "OpenCode",
+            "Codex",
+            "Terminal",
+            "New pane",
+            // Hidden in Settings > AI Agent, yet still the label that opened
+            // the tab: visibility must not decide whether a tab stays frozen.
+            "Qoder",
+        ] {
+            assert_eq!(
+                restored_tab_title_source(&legacy_tab(title), &[]),
+                TabTitleSource::Auto,
+                "{title:?} is a label Paneflow writes, not a name a human chose"
+            );
+        }
+    }
+
+    /// The other half: a legacy title that matches nothing Paneflow writes can
+    /// only have been typed, and a build that guessed otherwise would erase it
+    /// on the next prompt with no warning and no undo.
+    #[test]
+    fn a_legacy_title_that_is_not_app_written_stays_user_owned() {
+        for title in ["sprint 3", "fix the flaky test", "claude code review"] {
+            assert_eq!(
+                restored_tab_title_source(&legacy_tab(title), &[]),
+                TabTitleSource::User,
+                "{title:?} looks like a name someone typed"
+            );
+        }
+    }
+
+    /// A workspace's custom command buttons are preset labels too - they just
+    /// live per workspace instead of in `TerminalAgent::ALL`.
+    #[test]
+    fn a_legacy_custom_button_label_is_handed_back_to_auto_naming() {
+        let buttons = vec![paneflow_config::schema::ButtonCommand {
+            id: "b1".to_string(),
+            name: "Run dev server".to_string(),
+            icon: "icons/rocket.svg".to_string(),
+            command: "bun dev".to_string(),
+        }];
+        assert_eq!(
+            restored_tab_title_source(&legacy_tab("Run dev server"), &buttons),
+            TabTitleSource::Auto
+        );
+        assert_eq!(
+            restored_tab_title_source(&legacy_tab("Run dev server"), &[]),
+            TabTitleSource::User,
+            "the button belongs to its own workspace, not to every workspace"
+        );
+    }
+
+    /// A file that states its provenance is believed as written - the label
+    /// heuristic is for the snapshot that predates the field, and must not
+    /// second-guess a lock the user asked for.
+    #[test]
+    fn an_explicit_provenance_is_taken_at_face_value() {
+        let user_named_after_a_preset: paneflow_config::schema::TabSession =
+            serde_json::from_value(serde_json::json!({
+                "title": "Claude Code",
+                "title_source": "user",
+            }))
+            .expect("valid tab snapshot");
+        assert_eq!(
+            restored_tab_title_source(&user_named_after_a_preset, &[]),
+            TabTitleSource::User,
+            "someone who types \"Claude Code\" over an auto name meant it"
+        );
+
+        let auto: paneflow_config::schema::TabSession = serde_json::from_value(
+            serde_json::json!({ "title": "sprint 3", "title_source": "auto" }),
+        )
+        .expect("valid tab snapshot");
+        assert_eq!(restored_tab_title_source(&auto, &[]), TabTitleSource::Auto);
     }
 
     #[test]

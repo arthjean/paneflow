@@ -20,7 +20,7 @@ mod swap;
 mod tab;
 
 use gpui::{App, AppContext, ClipboardItem, Context, Entity, Focusable, PathPromptOptions, Window};
-use paneflow_config::schema::TerminalSurfaceProfile;
+use paneflow_config::schema::{TabTitleSource, TerminalSurfaceProfile};
 use paneflow_process::spawn_detached;
 
 use crate::layout::{LayoutTree, MAX_PANES, SplitDirection};
@@ -916,29 +916,26 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    /// US-010: settle the sidebar's inline rename, if one is live.
+    ///
+    /// Only a tab is renameable, and the title it takes here is the one kind
+    /// nothing else may overwrite: [`TabTitleSource::User`] locks the tab out
+    /// of auto-naming for good (see [`crate::workspace::Tab::set_title`]).
     pub(crate) fn commit_rename(&mut self, cx: &App) {
-        if let Some(idx) = self.renaming_idx.take() {
-            let text = self.rename_input.read(cx).value().trim().to_string();
-            if !text.is_empty()
-                && let Some(ws) = self.workspaces.get_mut(idx)
-            {
-                ws.title = text;
-                self.save_session(cx);
-            }
+        let Some((ws_idx, tab_idx)) = self.renaming_tab.take() else {
+            return;
+        };
+        let text = self.rename_input.read(cx).value().trim().to_string();
+        if text.is_empty() {
+            return;
         }
-        // US-010: the sidebar tab rows share `rename_input` with the workspace
-        // rename, so one commit settles whichever inline rename was live.
-        if let Some((ws_idx, tab_idx)) = self.renaming_tab.take() {
-            let text = self.rename_input.read(cx).value().trim().to_string();
-            if !text.is_empty()
-                && let Some(tab) = self
-                    .workspaces
-                    .get_mut(ws_idx)
-                    .and_then(|ws| ws.tab_mut(tab_idx))
-            {
-                tab.title = text;
-                self.save_session(cx);
-            }
+        if self
+            .workspaces
+            .get_mut(ws_idx)
+            .and_then(|ws| ws.tab_mut(tab_idx))
+            .is_some_and(|tab| tab.set_title(&text, TabTitleSource::User))
+        {
+            self.save_session(cx);
         }
     }
 
