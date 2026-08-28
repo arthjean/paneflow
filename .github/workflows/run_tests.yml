@@ -648,10 +648,27 @@ jobs:
             >paneflow.log 2>&1 &
           APP_PID=$!
 
-          # Cold-launch on macos-14 (M1, 3 vCPU): GPUI window creation
-          # + Vulkan-equivalent Metal init + first paint typically lands
-          # under 5s. 10s gives generous slack for runner contention.
-          sleep 10
+          # Poll for the first-paint marker instead of betting the job on a
+          # fixed cold-launch budget. Typical first paint on macos-14 (M1,
+          # 3 vCPU) is under 5s, but the gate below is HARD: a contended
+          # runner that pushed past a flat 10s sleep would have failed the
+          # job for a timing race rather than a rendering regression.
+          # Stop early if the process dies, so a crash is still reported by
+          # the missing-log gate rather than waiting out the whole deadline.
+          launched_at=$SECONDS
+          while [ $((SECONDS - launched_at)) -lt 90 ]; do
+            if grep -q "font: resolved family=" paneflow.log 2>/dev/null; then
+              echo "first paint reached after $((SECONDS - launched_at))s"
+              break
+            fi
+            kill -0 "$APP_PID" 2>/dev/null || break
+            sleep 1
+          done
+
+          # The log line fires when the renderer resolves the font, a moment
+          # before the frame is actually presented. Let the compositor land it
+          # before the screenshot.
+          sleep 3
 
           # `-x` skips the camera-shutter sound; captures every display.
           screencapture -x screenshot.png
@@ -857,8 +874,21 @@ jobs:
         # a flaky single failure clears on re-run; a real failure fails all
         # three. Runs under the job's pwsh default shell.
         run: |
+          # The runner prepends `$ErrorActionPreference = 'stop'` to every pwsh
+          # step. Whether that turns a non-zero native exit into a terminating
+          # error - which would abort this loop on the first failure and make
+          # the retry a no-op - depends on $PSNativeCommandUseErrorActionPreference.
+          # It defaults to False (verified on pwsh 7.4.2), but pin it rather than
+          # inherit it, so a future runner image cannot silently disable the retry.
+          $PSNativeCommandUseErrorActionPreference = $false
+          # Log every attempt, not just failures: one line in the log means the
+          # loop aborted early and the retry is not working.
           $ok = $false
           foreach ($attempt in 1..3) {
+            Write-Host "cargo test attempt $attempt/3"
+            # A stale value from an earlier native command must not be read as
+            # this attempt's result.
+            $global:LASTEXITCODE = 0
             cargo test --workspace --locked --target x86_64-pc-windows-msvc
             if ($LASTEXITCODE -eq 0) { $ok = $true; break }
             Write-Warning "cargo test attempt $attempt failed (likely a flaky PTY/IO test on a loaded runner); retrying"
@@ -972,10 +1002,26 @@ jobs:
                                 -RedirectStandardOutput 'paneflow.log' `
                                 -RedirectStandardError  'paneflow.err.log'
 
-          # Cold launch on windows-2022 (4 vCPU, 16 GB RAM) typically
-          # hits first paint in 4-6s. 10s gives generous slack for
-          # runner contention + DX11 swap-chain init.
-          Start-Sleep -Seconds 10
+          # Poll for the first-paint marker rather than betting the job on a
+          # fixed cold-launch budget; the font gate below is HARD, so a
+          # contended runner that pushed past a flat 10s sleep would have
+          # failed the job for a timing race, not a rendering regression.
+          # stdout and stderr are separate files here, and env_logger writes
+          # to stderr, so watch both.
+          $deadline = (Get-Date).AddSeconds(90)
+          while ((Get-Date) -lt $deadline) {
+            $seen = @('paneflow.log', 'paneflow.err.log') |
+              Where-Object { Test-Path -LiteralPath $_ } |
+              ForEach-Object { Select-String -Path $_ -Pattern 'font: resolved family=' -SimpleMatch -Quiet } |
+              Where-Object { $_ }
+            if ($seen) { break }
+            if ($proc.HasExited) { break }
+            Start-Sleep -Seconds 1
+          }
+
+          # The log line fires when the renderer resolves the font, a moment
+          # before the frame is actually presented.
+          Start-Sleep -Seconds 3
 
           # Capture the primary display via System.Drawing - works on
           # every windows-2022 runner without external tooling. The
