@@ -752,23 +752,19 @@ function Invoke-NativeBuild {
     if ($machineCount -ne $members.Count -or @($headers | Where-Object { $_ -match '^Format:' -and $_ -notmatch 'COFF-x86-64' }).Count -ne 0) {
         throw "archive for $Target contains a non-x64 COFF member: $archive"
     }
+    # Keep the archive inventory and its linker directives as evidence. Under
+    # Zig 0.15.2 every C and C++ member carried a `.drectve` naming the CRT
+    # model; under 0.16.0 none of them does, so the archive no longer states
+    # its own CRT and the smoke executable below is where that claim is
+    # checked instead.
     $directives = @(& $llvmReadobj --coff-directives $archive)
     if ($LASTEXITCODE -ne 0) {
         throw "cannot inspect COFF directives in $archive"
     }
-    # Keep the raw dump next to the rest of the evidence. The bare assertion
-    # below named neither the directive that is missing nor the ones that are
-    # present, so the only way to learn which half failed was another
-    # 40-minute rebuild on a Windows runner.
     if (-not [string]::IsNullOrWhiteSpace($EvidenceDir)) {
         New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
         Write-Utf8Lines (Join-Path $EvidenceDir "archive-members-$Label.txt") $members
         Write-Utf8Lines (Join-Path $EvidenceDir "coff-directives-$Label.txt") $directives
-    }
-    if (-not ($directives -match 'RuntimeLibrary=MT_StaticRelease') -or -not ($directives -match "DEFAULTLIB:$CxxRuntime")) {
-        $observed = @($directives | Where-Object { $_ -match 'Directive' } | Select-Object -Unique)
-        $summary = if ($observed.Count -eq 0) { "<none>" } else { [string]::Join(' | ', $observed) }
-        throw "archive does not declare the reviewed MSVC static CRT model (RuntimeLibrary=MT_StaticRelease and DEFAULTLIB:$CxxRuntime); llvm-readobj emitted $($directives.Count) lines and these directives: $summary"
     }
 
     $smokeObject = Join-Path $buildRoot "windows-smoke.obj"
@@ -784,8 +780,26 @@ function Invoke-NativeBuild {
         throw "MSVC static smoke failed at runtime with exit code $smokeExitCode`n$($smokeOutput -join "`n")"
     }
     $dependencies = @(& $dumpbinExe /nologo /dependents $smokeExe)
-    if ($LASTEXITCODE -ne 0 -or $dependencies -match 'ghostty-vt\.dll') {
-        throw "MSVC static smoke has a forbidden ghostty-vt.dll dependency"
+    if ($LASTEXITCODE -ne 0) {
+        throw "cannot inspect the MSVC static smoke dependencies"
+    }
+    # `cl /MT` above links the archive into a fully static-CRT executable, so
+    # the import table is what proves `$Crt` and `$CxxRuntime`: an archive
+    # member compiled against the dynamic CRT would drag `vcruntime140.dll`,
+    # `ucrtbase.dll` or `msvcp140.dll` in behind it. This replaces the
+    # `/FAILIFMISMATCH` assertion the archive can no longer make about itself.
+    $imports = @($dependencies |
+        Select-String -Pattern '^\s+([A-Za-z0-9._-]+\.dll)\s*$' |
+        ForEach-Object { $_.Matches[0].Groups[1].Value.ToLowerInvariant() } |
+        Select-Object -Unique)
+    $forbidden = @($imports | Where-Object {
+        $_ -match '^ghostty.*\.dll$' -or
+        $_ -match '^(?:vcruntime|msvcp|msvcr)[0-9]*d?\.dll$' -or
+        $_ -match '^ucrtbased?\.dll$' -or
+        $_ -match '^api-ms-win-crt-'
+    })
+    if ($forbidden.Count -ne 0) {
+        throw "MSVC static smoke imports a forbidden runtime: $([string]::Join(', ', $forbidden))"
     }
 
     $archiveSha = Get-Sha256 $archive
