@@ -819,6 +819,8 @@ impl Pane {
                 | TerminalEvent::OpenCodePath { .. }
                 | TerminalEvent::FontZoomChanged
                 | TerminalEvent::FleetSearchRequested { .. }
+                | TerminalEvent::AgentProgressChanged { .. }
+                | TerminalEvent::AgentAttention { .. }
                 | TerminalEvent::ShellPromptReady => {}
             }
         })

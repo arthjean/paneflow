@@ -59,6 +59,117 @@ and every other key in the file are left untouched. To fully revert: run
 either) there is nothing else to clean up because the shim removes its own file
 on exit.
 
+## When hooks cannot run
+
+Hooks are not a substrate Paneflow controls. Claude Code reads *managed
+settings* from a location only an administrator can write
+(`C:\Program Files\ClaudeCode\managed-settings.json` plus
+`HKLM\SOFTWARE\Policies\ClaudeCode` on Windows,
+`/Library/Application Support/ClaudeCode/` on macOS, `/etc/claude-code/` on
+Linux, each with a `managed-settings.d/` drop-in dir), and two keys there end
+the conversation:
+
+| Key | Effect |
+|-----|--------|
+| `disableAllHooks` | No hook fires at all. **`statusLine` execution goes down with it**, so the usual "use a status line instead" answer does not apply. |
+| `allowManagedHooksOnly` | Only hooks declared in managed settings run. Paneflow's entries are ignored **silently** - `paneflow hooks status` still reports them installed, because they are. |
+
+Both are marked restrictive: no user- or project-scope setting relaxes them.
+The visible symptom is a sidebar that shows an agent running and nothing else,
+which reads as a Paneflow bug and is not one.
+
+Paneflow therefore treats hooks as the richest source, not the only one. Three
+sources feed the same state machine, ranked by
+`ai_types::AgentStateSource`:
+
+| Source | Rank | What it can prove | Latency |
+|--------|------|-------------------|---------|
+| `Terminal` | weakest | busy / idle (OSC 9;4), "the user is needed" plus the message (OSC 9 / OSC 777) | immediate for progress; Claude Code delays its notifications by 6 s of user inactivity (60 s for the idle reminder) |
+| `SessionRegistry` | middle | `busy` / `shell` / `waiting` **with the reason** / `idle` | one poll interval (400 ms) |
+| `Hook` | strongest | everything above, plus the active sub-tool, the submitted prompt and the turn summary | immediate |
+
+`upsert_session_state` enforces the rank at the single write choke point: a
+weaker observer never overwrites a live stronger one, and a stronger one that
+has been silent for `SOURCE_TAKEOVER_SILENCE` (20 s) hands over rather than
+freezing the row on whatever it last said. That is what makes the hook-free
+path arrive without changing anything for a machine where hooks do work.
+
+### The pane's own escape sequences
+
+Paneflow identifies itself as Ghostty to the programs it runs
+(`TERM_PROGRAM=ghostty`, `TERM_PROGRAM_VERSION` = the pinned libghostty
+version), so Claude Code already speaks two terminal-native channels into
+every pane, and libghostty already decodes both:
+
+- **OSC 9;4 progress.** `indeterminate` while a turn or a tool is in flight,
+  cleared when the prompt returns. Gated on Claude Code's
+  `terminalProgressBarEnabled` setting (on by default) and on `WT_SESSION`
+  being unset.
+- **OSC 9 / OSC 777 notifications.** "Claude needs your permission", "Claude
+  Code needs your input", "Claude is waiting for your input". Codex emits the
+  OSC 9 form too, gated on its `notifications` config, whose default condition
+  is `unfocused` (Paneflow reports DEC 1004 focus, so that behaves).
+
+Both are read as agent state **only when the pane has a known agent**. That
+gate is the whole safety argument: OSC 9;4 and OSC 777 are general-purpose, so
+a `make` with a progress bar or a `notify-send` in a plain shell must not
+invent an agent row.
+
+Because those channels are capability-probed, Paneflow strips the host
+terminal's identity markers from every pane's environment at the spawn
+boundary (`WT_SESSION`, `TMUX`, `ZELLIJ`, `STY`, `ConEmu*`, …). Two of them
+are load-bearing: an inherited `WT_SESSION` makes Claude Code disable OSC 9;4
+outright, and an inherited `TMUX` makes both Claude Code and Codex wrap their
+notifications in multiplexer passthrough that libghostty does not unwrap. A
+Paneflow launched from Windows Terminal or from inside tmux would otherwise
+lose the channel in every pane, with no error anywhere.
+
+The same `env_remove` pass covers the launching agent session's markers
+(`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION`, …).
+`assemble_pty_env` already drops them from the merged map, but that `retain`
+only stops a config or a base env from reintroducing one: it cannot unset a
+variable Paneflow itself was started with. Running Paneflow from inside a
+Claude Code session used to leak them into every pane, where an agent reads
+its own session ID as an ancestor's and treats the pane as a nested child.
+
+### Claude Code's session registry
+
+Claude Code maintains one file per running process at
+`<CLAUDE_CONFIG_DIR|~/.claude>/sessions/<pid>.json` for its own peer
+discovery, and it carries the whole turn state:
+
+```json
+{"pid":14404,"cwd":"C:\\dev\\paneflow","kind":"interactive",
+ "procStart":"134323895399231254","status":"busy","statusUpdatedAt":1787916617655}
+```
+
+`status` is a closed set (`busy` / `shell` / `waiting` / `idle`) and `waitingFor`
+names what a `waiting` session is blocked on. It is written on transition, not
+on a timer, and deleted when the process exits. The PID is both the filename
+and the binding key: `workspace::pid_resolve` walks it up to a pane's
+`child_pid`, the same ancestor walk the hook path uses.
+
+This is an **undocumented internal file**, verified against Claude Code
+2.1.250. `crate::claude_session_registry` is written to match: an unknown
+status, a missing field, an unreadable file or a vanished directory all mean
+"this source has nothing to say", never an error the user sees. There is no
+heartbeat, so a `SIGKILL`ed agent leaves a stale `busy`; the existing stall
+sweep and PID-liveness probe cover that.
+
+An observed end of turn also raises the sidebar's completion dot, which
+`ai.stop` normally owns and which is exactly what will not arrive here. Both
+paths key that mark on the surface that finished, so the dot rests on the tab
+row of the pane that ran the turn, not on the workspace folder above it. It
+clears when that tab is the one on screen: a workspace can be visible while
+the turn ended in one of its other tabs. A completion whose surface never
+resolved is the one case with no tab to point at, so it stays on the folder
+row, which is also where a collapsed folder re-aggregates all of them.
+
+Anthropic also ships a purpose-built tab-status protocol, `OSC 21337`
+(`indicator=#rrggbb;status=Working…;status-color=#rrggbb`), whose capability
+gate returns false in 2.1.250 - it emits nothing today. It is the channel to
+migrate to when it ships.
+
 ## Per-agent support
 
 Only **Claude Code** exposes a verified, file-based user-scope notification-hook
@@ -66,9 +177,18 @@ surface, so it is the only agent that receives a persistent install
 (`paneflow hooks setup`). Every other integration is EPHEMERAL: injected by
 the shim when the agent launches inside a Paneflow terminal, removed when it
 exits. The shim wraps all 16 `TerminalAgent` binaries; whatever has no hook
-surface below still gets the universal lifecycle (`ai.exit` on crash,
-`ai.session_end` on quit) plus the sidebar's "running" row from the process
-scan.
+surface below still gets the universal lifecycle (`ai.session_start` before
+the agent runs, `ai.exit` on crash, `ai.session_end` on quit) plus the
+sidebar's "running" row from the process scan.
+
+`ai.session_start` is emitted by the shim itself, not by the agent: the shim
+is the binary the shell actually resolved, so it is the one participant that
+always runs. It fires on a detached thread ahead of the real binary, keeping
+the spawn-to-exec path free, and it is what names the pane's agent
+immediately - which in turn is the gate the pane's own OSC channel needs (see
+[When hooks cannot run](#when-hooks-cannot-run)). It does not create a sidebar
+row: a freshly launched agent with no prompt in flight has nothing to report
+yet.
 
 | Agent | Mechanism | Where the shim writes | Events mapped |
 |-------|-----------|----------------------|---------------|

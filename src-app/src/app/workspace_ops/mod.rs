@@ -277,6 +277,7 @@ impl PaneFlowApp {
         }
         self.save_session(cx);
         self.reconcile_diff_after_workspace_change(cx);
+        self.acknowledge_visible_completions(cx);
         cx.notify();
         changed
     }

@@ -979,6 +979,20 @@ impl PaneFlowApp {
                     })
                     .detach();
             }
+            terminal::TerminalEvent::AgentProgressChanged { busy } => {
+                self.apply_terminal_agent_observation(
+                    &terminal,
+                    crate::app::agent_status::progress_lifecycle_event(*busy),
+                    cx,
+                );
+            }
+            terminal::TerminalEvent::AgentAttention { title, body } => {
+                if let Some(event) =
+                    crate::app::agent_status::notification_lifecycle_event(title, body)
+                {
+                    self.apply_terminal_agent_observation(&terminal, event, cx);
+                }
+            }
             terminal::TerminalEvent::ShellPromptReady => {
                 // The shell is back at its prompt: whatever agent this pane
                 // was running has released the foreground. Reap now instead
@@ -998,6 +1012,35 @@ impl PaneFlowApp {
             // TitleChanged is handled by Pane's subscription
             _ => {}
         }
+    }
+
+    /// Feed a pane-sourced observation into the agent-state machine.
+    ///
+    /// Gated on the pane having a known agent, and that gate is the whole
+    /// safety argument for this source: OSC 9;4 and OSC 9 / OSC 777 are
+    /// general-purpose terminal protocols, so a `make` with a progress bar or
+    /// a `notify-send` in a plain shell must not create an agent row. With an
+    /// agent in the pane the same bytes ARE the agent talking - it is the
+    /// channel Claude Code keeps using when a managed-settings policy has
+    /// disabled its hooks.
+    fn apply_terminal_agent_observation(
+        &mut self,
+        terminal: &Entity<TerminalView>,
+        event: crate::ai_types::AgentLifecycleEvent,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(tool) = terminal.read(cx).terminal.detected_agent else {
+            return;
+        };
+        let surface_id = terminal.entity_id().as_u64();
+        self.apply_observed_agent_state(
+            surface_id,
+            tool,
+            None,
+            event,
+            crate::ai_types::AgentStateSource::Terminal,
+            cx,
+        );
     }
 
     /// US-020 - append a markdown tab to the pane that owns `source_terminal`.

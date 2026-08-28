@@ -204,6 +204,21 @@ impl Tab {
 
     /// Every pane of this tab, the zoom-saved tree included, in traversal
     /// order and without duplicates.
+    /// Terminal surface ids this tab owns.
+    ///
+    /// The same walk the sidebar does to attribute a session to a tab row
+    /// (`tab_row_sessions`), so an unread completion and a session badge can
+    /// never disagree about which row speaks for a surface.
+    pub fn surface_ids(&self, cx: &gpui::App) -> std::collections::HashSet<u64> {
+        let mut ids = std::collections::HashSet::new();
+        for pane in self.collect_panes() {
+            for terminal in pane.read(cx).terminals() {
+                ids.insert(terminal.entity_id().as_u64());
+            }
+        }
+        ids
+    }
+
     pub fn collect_panes(&self) -> Vec<Entity<Pane>> {
         let mut panes = Vec::new();
         if let Some(root) = &self.root {

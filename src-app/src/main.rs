@@ -30,6 +30,7 @@ mod ai_hooks;
 mod ai_types;
 mod app;
 mod assets;
+mod claude_session_registry;
 mod claude_sessions;
 mod cli;
 mod codex_sessions;
@@ -929,6 +930,13 @@ struct PaneFlowApp {
     git_event_rx: std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
     /// Refcount for watched `.git` directories (multiple workspaces may share a repo).
     git_watch_counts: std::collections::HashMap<std::path::PathBuf, usize>,
+    /// Last state read out of Claude Code's session registry, per agent PID.
+    ///
+    /// Claude Code writes that file on transition but Paneflow reads it on a
+    /// clock, so without a watermark the same state would be re-applied every
+    /// tick and keep resetting the stall clock on a session that has not
+    /// moved. See `app::agent_status`.
+    claude_registry_seen: crate::app::agent_status::RegistryWatermark,
     /// Active settings section, or `None` if settings is closed.
     settings_section: Option<SettingsSection>,
     /// Scroll state for the inline settings page.
@@ -1908,21 +1916,19 @@ impl Render for PaneFlowApp {
                                     .rounded(crate::app::constants::PANEL_CORNER_RADIUS)
                                     .capture_any_mouse_down(cx.listener(
                                         |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                            // Clicking into the pane area is
+                                            // "I am looking at this", so it
+                                            // answers the visible tab's marks
+                                            // only - a sibling tab's dot is
+                                            // not something this click saw.
                                             if event.button == gpui::MouseButton::Left
                                                 && this.settings_section.is_none()
                                                 && matches!(
                                                     this.mode,
                                                     paneflow_config::schema::AppMode::Cli
                                                 )
-                                                && let Some(workspace) = this.active_workspace_mut()
-                                                && workspace
-                                                    .agent_completion_notification
-                                                    .is_unread()
                                             {
-                                                workspace
-                                                    .agent_completion_notification
-                                                    .acknowledge();
-                                                cx.notify();
+                                                this.acknowledge_visible_completions(cx);
                                             }
                                         },
                                     ))

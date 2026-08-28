@@ -185,9 +185,6 @@ impl PaneFlowApp {
         }
         self.commit_rename(cx);
         self.dismiss_transient_surfaces();
-        if let Some(ws) = self.workspaces.get_mut(ws_idx) {
-            ws.agent_completion_notification.acknowledge();
-        }
         self.focus_workspace_tab(ws_idx, tab_idx, window, cx);
         cx.notify();
     }
@@ -212,6 +209,36 @@ impl PaneFlowApp {
         } else {
             self.select_workspace(ws_idx, window, cx);
         }
+        self.acknowledge_visible_completions(cx);
+    }
+
+    /// Answer the completion marks of what the user is now looking at: the
+    /// active tab of the active workspace.
+    ///
+    /// Every "this is the visible tab now" path funnels through here, which is
+    /// why no call site clears the whole workspace any more. Passing a folder
+    /// on the way to one of its tabs must not silently discard a turn that
+    /// finished in a sibling tab the user never opened.
+    pub(crate) fn acknowledge_visible_completions(&mut self, cx: &mut Context<Self>) {
+        let Some(ws) = self.workspaces.get(self.active_idx) else {
+            return;
+        };
+        if !ws.agent_completion_notification.is_unread() {
+            return;
+        }
+        let seen = ws.active_tab().surface_ids(cx);
+        // The walk is only paid for once there is a mark to answer, and it is
+        // what lets a mark left by a since-closed tab be retired here rather
+        // than sitting on the folder row for the rest of the session.
+        let live: std::collections::HashSet<u64> = ws
+            .tabs()
+            .iter()
+            .flat_map(|tab| tab.surface_ids(cx))
+            .collect();
+        if let Some(ws) = self.workspaces.get_mut(self.active_idx) {
+            ws.agent_completion_notification.acknowledge(&seen, &live);
+        }
+        cx.notify();
     }
 
     /// US-010: close one tab of one workspace. Closing the last tab leaves an

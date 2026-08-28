@@ -48,28 +48,72 @@ pub fn next_workspace_id() -> u64 {
     NEXT_WORKSPACE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Runtime-only notification state for a completed agent turn.
+/// Runtime-only notification state for completed agent turns, keyed by the
+/// surface that finished.
 ///
-/// A natural `ai.stop` marks the completion unread only while this workspace is
-/// not visible in the active Paneflow window. It survives the transient
-/// `AgentState::Finished` session auto-clear until the user interacts with the
-/// workspace card or its pane area.
+/// A natural `ai.stop` marks the completion unread only while the surface that
+/// produced it is not the one the user is looking at. It survives the transient
+/// `AgentState::Finished` session auto-clear until that surface's tab becomes
+/// visible.
+///
+/// The key is `Option<u64>` on purpose: it is the same partition the sidebar
+/// already draws between a tab row and its folder row. A completion whose
+/// surface resolved keys on it and lands on that tab's row; one that could not
+/// be attributed keys `None` and stays on the folder row, which is the only row
+/// entitled to speak for it. Mirrors `folder_row_sessions`/`tab_row_sessions`.
 #[derive(Debug, Default)]
 pub(crate) struct AgentCompletionNotification {
-    unread: bool,
+    unread: std::collections::HashSet<Option<u64>>,
 }
 
 impl AgentCompletionNotification {
-    pub(crate) fn record_finished(&mut self, workspace_visible: bool) {
-        self.unread = !workspace_visible;
+    /// Record one finished turn. `seen` means the surface was under the user's
+    /// eyes as it finished, which both suppresses the mark and clears any
+    /// earlier one for that same surface.
+    ///
+    /// Per-surface, so a turn the user watched in one tab no longer erases an
+    /// unread completion sitting in a sibling tab - the old single flag did.
+    pub(crate) fn record_finished(&mut self, seen: bool, surface_id: Option<u64>) {
+        if seen {
+            self.unread.remove(&surface_id);
+        } else {
+            self.unread.insert(surface_id);
+        }
     }
 
-    pub(crate) fn acknowledge(&mut self) {
-        self.unread = false;
-    }
-
-    pub(crate) fn is_unread(&self) -> bool {
+    /// Answer the marks the user just saw, and drop the ones nothing can
+    /// answer any more.
+    ///
+    /// A mark survives only while its surface is still `live` and was not among
+    /// the `seen` ones. Two things follow, both needed: closing the tab that
+    /// held a completion retires its mark instead of stranding it on the folder
+    /// row forever, and an unattributed mark clears on the first look, which is
+    /// the only chance it will ever get.
+    pub(crate) fn acknowledge(
+        &mut self,
+        seen: &std::collections::HashSet<u64>,
+        live: &std::collections::HashSet<u64>,
+    ) {
         self.unread
+            .retain(|key| key.is_some_and(|id| live.contains(&id) && !seen.contains(&id)));
+    }
+
+    /// Any unread completion at all - what a collapsed folder row speaks for.
+    pub(crate) fn is_unread(&self) -> bool {
+        !self.unread.is_empty()
+    }
+
+    /// Unread completions no tab row can claim - what an expanded folder row
+    /// keeps, so folding hides no state.
+    pub(crate) fn has_unattributed_unread(&self) -> bool {
+        self.unread.contains(&None)
+    }
+
+    /// Unread completions belonging to one tab's surfaces.
+    pub(crate) fn is_unread_for(&self, surfaces: &std::collections::HashSet<u64>) -> bool {
+        self.unread
+            .iter()
+            .any(|key| key.is_some_and(|id| surfaces.contains(&id)))
     }
 }
 
@@ -537,6 +581,8 @@ fn walk_and_push_config(
 mod tests {
     use gpui::{AppContext, TestAppContext};
 
+    use std::collections::HashSet;
+
     use super::{AgentCompletionNotification, MAX_TABS_PER_WORKSPACE, Tab, Workspace};
     use crate::layout::LayoutTree;
     use crate::terminal::TerminalView;
@@ -707,18 +753,68 @@ mod tests {
     }
 
     #[test]
-    fn agent_completion_is_unread_only_while_workspace_is_not_visible() {
+    fn agent_completion_is_unread_only_while_the_surface_is_not_seen() {
         let mut notification = AgentCompletionNotification::default();
         assert!(!notification.is_unread());
 
-        notification.record_finished(false);
+        notification.record_finished(false, Some(7));
         assert!(notification.is_unread());
 
-        notification.record_finished(true);
+        notification.record_finished(true, Some(7));
         assert!(!notification.is_unread());
 
-        notification.record_finished(false);
-        notification.acknowledge();
+        notification.record_finished(false, Some(7));
+        notification.acknowledge(&HashSet::from([7]), &HashSet::from([7]));
+        assert!(!notification.is_unread());
+    }
+
+    #[test]
+    fn a_completion_is_claimed_by_the_tab_that_owns_its_surface() {
+        let mut notification = AgentCompletionNotification::default();
+        notification.record_finished(false, Some(7));
+
+        let owning_tab = HashSet::from([7u64]);
+        let sibling_tab = HashSet::from([8u64]);
+        let both = HashSet::from([7u64, 8]);
+        assert!(notification.is_unread_for(&owning_tab));
+        assert!(!notification.is_unread_for(&sibling_tab));
+        // Nothing for the expanded folder row to keep: a tab row speaks for it.
+        assert!(!notification.has_unattributed_unread());
+
+        // Looking at the sibling leaves the mark where it belongs. The single
+        // workspace-wide flag this replaced cleared it here, losing the signal.
+        notification.acknowledge(&sibling_tab, &both);
+        assert!(notification.is_unread_for(&owning_tab));
+
+        notification.acknowledge(&owning_tab, &both);
+        assert!(!notification.is_unread());
+    }
+
+    #[test]
+    fn an_unattributed_completion_stays_on_the_folder_row() {
+        let mut notification = AgentCompletionNotification::default();
+        notification.record_finished(false, None);
+
+        // No tab row can claim it, so the folder keeps it even when expanded.
+        assert!(notification.has_unattributed_unread());
+        assert!(notification.is_unread());
+        assert!(!notification.is_unread_for(&HashSet::from([7u64])));
+
+        // Making any tab visible is the only chance it gets to be seen.
+        notification.acknowledge(&HashSet::from([7u64]), &HashSet::from([7u64]));
+        assert!(!notification.is_unread());
+    }
+
+    #[test]
+    fn a_mark_left_by_a_closed_tab_is_retired_rather_than_stranded() {
+        let mut notification = AgentCompletionNotification::default();
+        notification.record_finished(false, Some(7));
+
+        // Surface 7's tab is gone, so no tab row can ever claim its mark and
+        // no look at it is possible. Left in, it would pin the dot on the
+        // collapsed folder row for the rest of the session.
+        let live = HashSet::from([8u64]);
+        notification.acknowledge(&live, &live);
         assert!(!notification.is_unread());
     }
 }

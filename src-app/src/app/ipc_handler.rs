@@ -2274,7 +2274,13 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn set_session_surface(&mut self, ws_id: u64, key: u32, sid: u64, cx: &mut Context<Self>) {
+    pub(crate) fn set_session_surface(
+        &mut self,
+        ws_id: u64,
+        key: u32,
+        sid: u64,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == ws_id)
             && let Some(session) = ws.agent_sessions.get_mut(&key)
             && session.surface_id != Some(sid)
@@ -3296,16 +3302,33 @@ impl PaneFlowApp {
                 let Some(tool) = read_tool(params) else {
                     return serde_json::json!({"error": "Unknown tool"});
                 };
-                let _explicit_surface_id = self.validated_frame_surface_id(params, cx);
+                let explicit_surface_id = self.validated_frame_surface_id(params, cx);
 
-                if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
+                if self.workspaces.iter().any(|ws| ws.id == workspace_id) {
                     // session_start intentionally stays off `agent_sessions`:
                     // a freshly-spawned shell with no prompt in flight should
                     // not show a sidebar badge. We still validate PID/tool
                     // and surface binding here so bad hook frames fail early;
                     // the first prompt/tool event creates the visible row.
                     // session_id/cwd are currently reserved metadata.
-                    let _ = (pid, tool, ws);
+                    let _ = pid;
+                    // What the frame IS good for: naming the pane's agent the
+                    // moment it launches. The shim emits this itself, so the
+                    // identity lands even where no agent hook can run - and
+                    // that identity is what gates the pane's own OSC channel
+                    // in `agent_status`. Declared, not confirmed: the
+                    // PID-authoritative process scan stays the truth and
+                    // corrects or clears it inside the grace window.
+                    if let Some(sid) = explicit_surface_id
+                        && let Some(terminal) =
+                            find_terminal_by_surface_id(&self.workspaces, sid, cx)
+                    {
+                        terminal.update(cx, |view, cx| {
+                            view.declare_agent(tool);
+                            cx.notify();
+                        });
+                        cx.notify();
+                    }
                     serde_json::json!({"registered": true})
                 } else {
                     serde_json::json!({"error": format!("Unknown workspace_id: {workspace_id}")})
@@ -3333,6 +3356,7 @@ impl PaneFlowApp {
                             ai_types::AgentLifecycleEvent::PromptSubmit,
                         ),
                         read_emitted_at(params),
+                        ai_types::AgentStateSource::Hook,
                     ) else {
                         return stale_frame_response();
                     };
@@ -3397,6 +3421,7 @@ impl PaneFlowApp {
                             tool_name: active_tool_name,
                         }),
                         read_emitted_at(params),
+                        ai_types::AgentStateSource::Hook,
                     ) else {
                         return stale_frame_response();
                     };
@@ -3440,6 +3465,7 @@ impl PaneFlowApp {
                             },
                         ),
                         read_emitted_at(params),
+                        ai_types::AgentStateSource::Hook,
                     ) else {
                         return stale_frame_response();
                     };
@@ -3481,13 +3507,9 @@ impl PaneFlowApp {
                 };
                 let explicit_surface_id = self.validated_frame_surface_id(params, cx);
                 let notify_config = self.cached_config.clone();
-                let workspace_visible = self.settings_section.is_none()
-                    && matches!(self.mode, paneflow_config::schema::AppMode::Cli)
-                    && self
-                        .workspaces
-                        .get(self.active_idx)
-                        .is_some_and(|ws| ws.id == workspace_id)
-                    && desktop_notifications::window_active();
+                // Collected before the mutable borrow below, because the
+                // surface that finished is only known after the upsert.
+                let visible_surfaces = self.surfaces_under_user_eye(workspace_id, cx);
                 if let Some(ws) = self.workspaces.iter_mut().find(|ws| ws.id == workspace_id) {
                     let interrupt_stop = is_interrupt_lifecycle_event(params);
                     // EP-004 US-015: a best-effort summary of the just-finished
@@ -3513,14 +3535,25 @@ impl PaneFlowApp {
                             summary: session_summary.clone(),
                         }),
                         read_emitted_at(params),
+                        ai_types::AgentStateSource::Hook,
                     ) else {
                         return stale_frame_response();
                     };
                     // Counted only for a stop that actually applied, so a
                     // reordered frame can't inflate the completion tally.
                     if !interrupt_stop {
+                        // Key the mark on the surface that finished, so the dot
+                        // lands on that tab's row rather than on the folder.
+                        let finished_surface = ws
+                            .agent_sessions
+                            .get(&session_key)
+                            .and_then(|session| session.surface_id);
+                        let seen = crate::app::agent_status::completion_was_seen(
+                            visible_surfaces.as_ref(),
+                            finished_surface,
+                        );
                         ws.agent_completion_notification
-                            .record_finished(workspace_visible);
+                            .record_finished(seen, finished_surface);
                     }
                     // EP-004 US-020: natural turn ends notify when the user is
                     // looking elsewhere. Ctrl+C stops only clear local state.
@@ -3645,6 +3678,7 @@ impl PaneFlowApp {
                         tool,
                         transition,
                         read_emitted_at(params),
+                        ai_types::AgentStateSource::Hook,
                     ) else {
                         return stale_frame_response();
                     };
@@ -3902,12 +3936,13 @@ const SYNTHETIC_SESSION_PID_BASE: u32 = 0xFFFF_0000;
 // `&mut Workspace` so the single state-write choke point is unit-testable
 // without a GPUI Workspace (which needs a live layout tree). Every `ai.*`
 // handler passes `&mut ws.agent_sessions`.
-fn upsert_session_state(
+pub(crate) fn upsert_session_state(
     sessions: &mut std::collections::HashMap<u32, AgentSession>,
     pid: Option<u32>,
     tool: crate::agent_launcher::TerminalAgent,
     transition: ai_types::SessionTransition,
     emitted_at_ms: Option<u64>,
+    source: ai_types::AgentStateSource,
 ) -> Option<u32> {
     let key = match pid {
         Some(p) => p,
@@ -3938,6 +3973,19 @@ fn upsert_session_state(
     // (notifications, prefill flush, auto-clear timer) off a stale frame too.
     if let Some(existing) = sessions.get(&key)
         && !ai_types::accepts_event(existing.last_event_at_ms, emitted_at_ms)
+    {
+        return None;
+    }
+
+    // Precedence belt, for the same reason and at the same choke point: a
+    // weaker observer must not talk over a stronger one that is still live.
+    // Both are needed - the stamp orders frames from ONE source, this orders
+    // the sources themselves, and neither implies the other.
+    if let Some(existing) = sessions.get(&key)
+        && !ai_types::accepts_source(
+            Some((existing.source, existing.last_activity.elapsed())),
+            source,
+        )
     {
         return None;
     }
@@ -3974,6 +4022,7 @@ fn upsert_session_state(
             s.tool = tool;
             s.state = transition.state;
             s.active_tool_name = transition.active_tool_name;
+            s.source = source;
             apply_field_update(&mut s.message, transition.message);
             apply_field_update(&mut s.last_result, transition.last_result);
             s.last_activity = now;
@@ -3987,6 +4036,7 @@ fn upsert_session_state(
         None => {
             let mut session = ai_types::AgentSession::new(tool, transition.state);
             session.waiting_since = ai_types::next_waiting_since(None, &session.state, now);
+            session.source = source;
             session.active_tool_name = transition.active_tool_name;
             apply_field_update(&mut session.message, transition.message);
             apply_field_update(&mut session.last_result, transition.last_result);
@@ -5134,6 +5184,7 @@ mod tests {
                 tool_name: Some("Edit".into()),
             }),
             Some(1_000),
+            crate::ai_types::AgentStateSource::Hook,
         )
         .expect("a first frame is never stale");
         assert_eq!(key, 4242);
@@ -5151,6 +5202,7 @@ mod tests {
                 message: Some("Approve edit?".into()),
             }),
             Some(1_100),
+            crate::ai_types::AgentStateSource::Hook,
         )
         .expect("a forward frame applies");
         assert_eq!(key, 4242, "same PID updates in place");
@@ -5172,6 +5224,7 @@ mod tests {
                 TerminalAgent::ClaudeCode,
                 reduce_lifecycle_event(AgentLifecycleEvent::Stop { summary: None }),
                 Some(1_050),
+                crate::ai_types::AgentStateSource::Hook,
             ),
             None
         );
@@ -5188,6 +5241,7 @@ mod tests {
                 summary: Some("done".into()),
             }),
             None,
+            crate::ai_types::AgentStateSource::Hook,
         )
         .expect("an unstamped frame is accepted");
         assert_eq!(
@@ -5210,12 +5264,120 @@ mod tests {
             TerminalAgent::Codex,
             reduce_lifecycle_event(AgentLifecycleEvent::PromptSubmit),
             None,
+            crate::ai_types::AgentStateSource::Hook,
         )
         .expect("a first frame is never stale");
         assert!(
             key >= super::SYNTHETIC_SESSION_PID_BASE,
             "synthetic key lands in the reserved band"
         );
+    }
+
+    #[test]
+    fn a_weaker_source_is_refused_at_the_write_choke_point() {
+        use crate::agent_launcher::TerminalAgent;
+        use crate::ai_types::{
+            AgentLifecycleEvent, AgentSession, AgentState, AgentStateSource, reduce_lifecycle_event,
+        };
+        let mut sessions: std::collections::HashMap<u32, AgentSession> =
+            std::collections::HashMap::new();
+
+        // A hook reports a permission dialog.
+        super::upsert_session_state(
+            &mut sessions,
+            Some(4242),
+            TerminalAgent::ClaudeCode,
+            reduce_lifecycle_event(AgentLifecycleEvent::Notification {
+                message: Some("Approve edit?".into()),
+            }),
+            None,
+            AgentStateSource::Hook,
+        )
+        .expect("a first frame is never stale");
+
+        // The pane's own OSC 9;4 has been `indeterminate` since the turn
+        // started and keeps saying so. It must not flip the row off the thing
+        // the user has to act on.
+        assert_eq!(
+            super::upsert_session_state(
+                &mut sessions,
+                Some(4242),
+                TerminalAgent::ClaudeCode,
+                reduce_lifecycle_event(AgentLifecycleEvent::Working),
+                None,
+                AgentStateSource::Terminal,
+            ),
+            None,
+            "the terminal channel cannot talk over a live hook"
+        );
+        assert_eq!(sessions[&4242].state, AgentState::WaitingForInput);
+        assert_eq!(sessions[&4242].message.as_deref(), Some("Approve edit?"));
+
+        // The hook itself still applies, and records that it is the holder.
+        super::upsert_session_state(
+            &mut sessions,
+            Some(4242),
+            TerminalAgent::ClaudeCode,
+            reduce_lifecycle_event(AgentLifecycleEvent::Stop { summary: None }),
+            None,
+            AgentStateSource::Hook,
+        )
+        .expect("the stronger source applies");
+        assert_eq!(sessions[&4242].state, AgentState::Finished);
+        assert_eq!(sessions[&4242].source, AgentStateSource::Hook);
+    }
+
+    #[test]
+    fn a_hook_free_session_is_driven_by_the_sources_that_remain() {
+        use crate::agent_launcher::TerminalAgent;
+        use crate::ai_types::{
+            AgentLifecycleEvent, AgentSession, AgentState, AgentStateSource, reduce_lifecycle_event,
+        };
+        let mut sessions: std::collections::HashMap<u32, AgentSession> =
+            std::collections::HashMap::new();
+
+        // This is the locked-down machine: no hook ever runs, so the registry
+        // is the first thing to describe the session.
+        super::upsert_session_state(
+            &mut sessions,
+            Some(4242),
+            TerminalAgent::ClaudeCode,
+            reduce_lifecycle_event(AgentLifecycleEvent::Working),
+            None,
+            AgentStateSource::SessionRegistry,
+        )
+        .expect("nothing holds the session yet");
+        assert_eq!(sessions[&4242].state, AgentState::Thinking);
+
+        // A registry record that turned `waiting` carries the reason, which is
+        // what the sidebar and the attention queue show.
+        super::upsert_session_state(
+            &mut sessions,
+            Some(4242),
+            TerminalAgent::ClaudeCode,
+            reduce_lifecycle_event(AgentLifecycleEvent::Notification {
+                message: Some("input needed".into()),
+            }),
+            None,
+            AgentStateSource::SessionRegistry,
+        )
+        .expect("the same source always applies");
+        assert_eq!(sessions[&4242].state, AgentState::WaitingForInput);
+        assert!(sessions[&4242].waiting_since.is_some());
+
+        // Work resuming answers the question, exactly as a prompt would.
+        super::upsert_session_state(
+            &mut sessions,
+            Some(4242),
+            TerminalAgent::ClaudeCode,
+            reduce_lifecycle_event(AgentLifecycleEvent::Working),
+            None,
+            AgentStateSource::SessionRegistry,
+        )
+        .expect("the same source always applies");
+        assert_eq!(sessions[&4242].state, AgentState::Thinking);
+        assert!(sessions[&4242].message.is_none());
+        assert!(sessions[&4242].waiting_since.is_none());
     }
 
     #[test]

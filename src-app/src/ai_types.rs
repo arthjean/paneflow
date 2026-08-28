@@ -110,11 +110,76 @@ pub fn state_for_exit(exit_code: i32) -> AgentState {
     }
 }
 
+/// Where a session's state was observed.
+///
+/// Paneflow no longer has one way to learn what an agent is doing, so two
+/// observers can describe the same session at the same time and disagree. The
+/// variants are ordered weakest evidence first, which makes `>=` the entire
+/// precedence rule.
+///
+/// - [`Terminal`](Self::Terminal): escape sequences the agent wrote into its
+///   own pane (OSC 9;4 progress, OSC 9 / OSC 777 notifications). Always
+///   available, and the coarsest: progress is a bare busy/idle bit and a
+///   notification says "look at me" without saying what changed.
+/// - [`SessionRegistry`](Self::SessionRegistry): the status file the agent CLI
+///   maintains for its own peer discovery. Carries the real state vocabulary
+///   including *why* it is waiting, but nothing about the active sub-tool and
+///   nothing about the turn's result.
+/// - [`Hook`](Self::Hook): the `ai.*` lifecycle frames. The only source that
+///   carries the active tool name, the submitted prompt and the turn summary,
+///   so it outranks the others wherever it is allowed to run.
+///
+/// The ordering is deliberately not "most recent wins". A permission dialog
+/// reported by a hook as `WaitingForInput` coexists with an OSC 9;4
+/// `indeterminate` that has been true since the turn started: last-write-wins
+/// would flip the sidebar back to `Thinking` and lose the thing the user has
+/// to act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AgentStateSource {
+    Terminal,
+    SessionRegistry,
+    Hook,
+}
+
+/// How long a stronger source may stay silent before a weaker one is allowed
+/// to describe the session again.
+///
+/// Without a ceiling, one hook frame would pin a session to the hook source
+/// forever and a policy that disables hooks mid-session (or a SIGKILLed shim)
+/// would freeze the sidebar on the last thing a hook said. 20 s is longer than
+/// any gap between two frames inside a live turn - `PreToolUse` / `PostToolUse`
+/// bracket every tool call - and short enough that a genuinely dead channel
+/// hands over within one user glance.
+pub const SOURCE_TAKEOVER_SILENCE: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Whether `incoming` may overwrite a session whose current state came from
+/// `existing` (its source, and how long that source has been silent).
+///
+/// Pure, so the precedence rule is unit-tested without a running app.
+pub fn accepts_source(
+    existing: Option<(AgentStateSource, std::time::Duration)>,
+    incoming: AgentStateSource,
+) -> bool {
+    match existing {
+        None => true,
+        Some((held, silence)) => incoming >= held || silence >= SOURCE_TAKEOVER_SILENCE,
+    }
+}
+
 /// One row in the per-workspace `agent_sessions` map.
 #[derive(Debug, Clone)]
 pub struct AgentSession {
     pub tool: TerminalAgent,
     pub state: AgentState,
+    /// Which observer last wrote `state` - see [`AgentStateSource`].
+    ///
+    /// `AgentSession::new` starts at [`AgentStateSource::Hook`], the
+    /// conservative end: a session built outside the write choke point is
+    /// treated as the strongest evidence and cannot be talked over. Every real
+    /// session is created BY that choke point (`upsert_session_state`), which
+    /// always writes the caller's actual source, so the default is a floor and
+    /// not a claim.
+    pub source: AgentStateSource,
     /// Name of the active sub-tool (Edit, Bash, Read, …) reported by
     /// `ai.tool_use` hooks. Cleared on every non-Thinking transition.
     pub active_tool_name: Option<String>,
@@ -182,6 +247,7 @@ impl AgentSession {
         Self {
             tool,
             state,
+            source: AgentStateSource::Hook,
             active_tool_name: None,
             message: None,
             surface_id: None,
@@ -242,6 +308,15 @@ pub enum AgentLifecycleEvent {
     Stop { summary: Option<String> },
     /// `ai.exit` - the agent binary itself exited, with its real status.
     Exit { exit_code: i32 },
+    /// The agent is working, reported by a source that knows nothing else:
+    /// an OSC 9;4 progress report, or a session-registry record that turned
+    /// `busy` / `shell`. Distinct from [`PromptSubmit`](Self::PromptSubmit)
+    /// because no prompt was observed - only the fact that work resumed.
+    Working,
+    /// The agent stopped working, reported by the same kind of source. There
+    /// is no summary to record and no way to tell a finished turn from a
+    /// cancelled one, which is exactly why [`Stop`](Self::Stop) stays separate.
+    Idle,
 }
 
 /// The state write a lifecycle event implies. Every field the event owns is
@@ -298,6 +373,24 @@ pub fn reduce_lifecycle_event(event: AgentLifecycleEvent) -> SessionTransition {
         // human-interruption codes are not failures (FR-06).
         AgentLifecycleEvent::Exit { exit_code } => SessionTransition {
             state: state_for_exit(exit_code),
+            active_tool_name: None,
+            message: FieldUpdate::Set(None),
+            last_result: FieldUpdate::Keep,
+        },
+        // Work resumed, so whatever the agent was blocked on has been
+        // answered - the same reasoning as `PromptSubmit`, which clears the
+        // question for the same reason. No sub-tool is known here: only a
+        // hook can name the tool a turn is currently inside.
+        AgentLifecycleEvent::Working => SessionTransition {
+            state: AgentState::Thinking,
+            active_tool_name: None,
+            message: FieldUpdate::Set(None),
+            last_result: FieldUpdate::Keep,
+        },
+        // Idle carries no summary of its own, and must not erase one a hook
+        // recorded for the turn that just ended.
+        AgentLifecycleEvent::Idle => SessionTransition {
+            state: AgentState::Finished,
             active_tool_name: None,
             message: FieldUpdate::Set(None),
             last_result: FieldUpdate::Keep,
@@ -462,6 +555,81 @@ mod tests {
 
     fn s(tool: TerminalAgent, state: AgentState) -> AgentSession {
         AgentSession::new(tool, state)
+    }
+
+    #[test]
+    fn a_weaker_source_never_talks_over_a_live_stronger_one() {
+        use std::time::Duration;
+        let fresh = Duration::from_secs(1);
+
+        // Nothing held the session yet: any observer may describe it.
+        assert!(accepts_source(None, AgentStateSource::Terminal));
+
+        // The case this exists for: hooks report a permission dialog while
+        // OSC 9;4 has been `indeterminate` since the turn started. The
+        // progress bit must not flip the sidebar off the thing to act on.
+        assert!(!accepts_source(
+            Some((AgentStateSource::Hook, fresh)),
+            AgentStateSource::Terminal
+        ));
+        assert!(!accepts_source(
+            Some((AgentStateSource::Hook, fresh)),
+            AgentStateSource::SessionRegistry
+        ));
+        assert!(!accepts_source(
+            Some((AgentStateSource::SessionRegistry, fresh)),
+            AgentStateSource::Terminal
+        ));
+
+        // Equal or stronger always applies, so a hook still refreshes itself
+        // and the registry still corrects the terminal.
+        for held in [
+            AgentStateSource::Terminal,
+            AgentStateSource::SessionRegistry,
+            AgentStateSource::Hook,
+        ] {
+            assert!(accepts_source(Some((held, fresh)), AgentStateSource::Hook));
+            assert!(accepts_source(Some((held, fresh)), held));
+        }
+        assert!(accepts_source(
+            Some((AgentStateSource::Terminal, fresh)),
+            AgentStateSource::SessionRegistry
+        ));
+    }
+
+    #[test]
+    fn a_silent_source_hands_over_instead_of_freezing_the_session() {
+        // A policy that disables hooks mid-session, or a SIGKILLed shim,
+        // leaves the last hook frame in place forever otherwise.
+        assert!(accepts_source(
+            Some((AgentStateSource::Hook, SOURCE_TAKEOVER_SILENCE)),
+            AgentStateSource::Terminal
+        ));
+        assert!(!accepts_source(
+            Some((
+                AgentStateSource::Hook,
+                SOURCE_TAKEOVER_SILENCE - std::time::Duration::from_millis(1)
+            )),
+            AgentStateSource::Terminal
+        ));
+    }
+
+    #[test]
+    fn sourceless_observations_move_state_without_inventing_detail() {
+        // `Working` answers the pending question the same way `PromptSubmit`
+        // does, but names no sub-tool: only a hook knows that.
+        let working = reduce_lifecycle_event(AgentLifecycleEvent::Working);
+        assert_eq!(working.state, AgentState::Thinking);
+        assert_eq!(working.active_tool_name, None);
+        assert_eq!(working.message, FieldUpdate::Set(None));
+        assert_eq!(working.last_result, FieldUpdate::Keep);
+
+        // `Idle` must not erase a summary a hook recorded for the turn that
+        // just ended - it has none of its own to put there.
+        let idle = reduce_lifecycle_event(AgentLifecycleEvent::Idle);
+        assert_eq!(idle.state, AgentState::Finished);
+        assert_eq!(idle.message, FieldUpdate::Set(None));
+        assert_eq!(idle.last_result, FieldUpdate::Keep);
     }
 
     #[test]

@@ -660,6 +660,11 @@ impl TerminalView {
                         this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                             let old_title = view.terminal.title.clone();
                             let old_cwd = view.terminal.current_cwd.clone();
+                            // `progress` is `None` for OSC 9;4 "remove" and
+                            // `Some` for every live state, so its presence is
+                            // the busy bit. Sampled around the whole batch so
+                            // a burst that starts and ends busy emits nothing.
+                            let was_busy = view.terminal.progress.is_some();
                             view.terminal.sync_channels();
                             if had_wakeup {
                                 view.terminal.process_backend_wakeup();
@@ -687,6 +692,10 @@ impl TerminalView {
                             if !notifications.is_empty() {
                                 let pane_title = view.terminal.title.clone();
                                 for notification in notifications {
+                                    cx.emit(TerminalEvent::AgentAttention {
+                                        title: notification.title.clone(),
+                                        body: notification.body.clone(),
+                                    });
                                     crate::agents::notifications::fire_program_notification(
                                         crate::agents::notifications::program_notification(
                                             notification.title,
@@ -705,6 +714,16 @@ impl TerminalView {
                             // window for crossterm-based clients like the
                             // OpenAI Codex CLI, which then dropped its
                             // input-bar background tint silently.
+
+                            // Ahead of the exit check below on purpose: a
+                            // dying child clears its progress, and reporting
+                            // that as a turn boundary after the pane has
+                            // already been torn down would re-create the
+                            // session the teardown just purged.
+                            let is_busy = view.terminal.progress.is_some();
+                            if is_busy != was_busy && view.terminal.exited.is_none() {
+                                cx.emit(TerminalEvent::AgentProgressChanged { busy: is_busy });
+                            }
 
                             // US-002: close only on a user-initiated or clean
                             // exit. A non-zero exit with no prior user input is
@@ -1193,6 +1212,18 @@ pub enum TerminalEvent {
     /// pane of every workspace off the render thread and opens the fleet
     /// results overlay.
     FleetSearchRequested { query: String, regex: bool },
+    /// The OSC 9;4 progress state of this pane flipped between "something is
+    /// running" and "nothing is". Claude Code publishes `indeterminate` for
+    /// the whole of a turn and clears it when the prompt comes back, so on a
+    /// pane running an agent this is a turn boundary reported by the agent
+    /// itself - no hook involved. Emitted only on a change, never per report.
+    AgentProgressChanged { busy: bool },
+    /// The program in this pane asked for the user's attention through OSC 9
+    /// or OSC 777. Already routed to a desktop notification; the receiver
+    /// (`PaneFlowApp`) additionally reads it as agent state when the pane is
+    /// running an agent, because that is the one thing Claude Code still says
+    /// out loud when its hooks are switched off.
+    AgentAttention { title: String, body: String },
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}

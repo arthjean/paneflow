@@ -132,8 +132,14 @@ the agents inside its panes are doing.
 ```
 agent CLI (claude, codex, opencode, …)
   └─ launched through a PATH shim (paneflow-shim)
-       └─ agent hooks fire paneflow-ai-hook on lifecycle events
-            └─ ai.* JSON-RPC notifications over the local socket
+       ├─ agent hooks fire paneflow-ai-hook on lifecycle events ─┐
+       ├─ the shim fires session_start / exit / session_end ─────┤
+       │                                                         └─ ai.*
+       ├─ the agent's own OSC 9;4 + OSC 9/777 in the pane's grid     JSON-RPC
+       └─ the agent's own session registry on disk                   socket
+                                                                      │
+            ┌─────────────────────────────────────────────────────────┘
+            └─ one write choke point, ordered by source
                  └─ GUI: tab dots, sidebar spinners, attention queue,
                     desktop notifications carrying the actual question
 ```
@@ -141,11 +147,22 @@ agent CLI (claude, codex, opencode, …)
 - **Shim**: launching an agent from Paneflow puts a shim directory first in
   `PATH`. The shim records the real PID and process start time (PID-reuse
   safe), then execs the real binary. Sixteen agent CLIs are recognized by
-  name; unknown tools are reported as themselves.
+  name; unknown tools are reported as themselves. It emits `session_start`,
+  `exit` and `session_end` on its own, so presence and exit never depend on
+  the agent cooperating.
 - **Hooks**: agents that support lifecycle hooks (Claude Code, Codex, …)
   report `session_start`, `prompt_submit`, `tool_use`, `notification`, `stop`,
-  `exit`, and `session_end` through the `ai.*` IPC namespace. Agents without
-  hooks fall back to process-tree and terminal-activity detection.
+  `exit`, and `session_end` through the `ai.*` IPC namespace. Richest source,
+  and the only one that names the active sub-tool or carries a turn summary.
+- **Three sources, one order**: hooks can be switched off outside Paneflow's
+  reach (Claude Code's managed settings do exactly that), so they are not the
+  substrate. Two hook-free sources back them: the escape sequences the agent
+  writes into its own pane, and the status file it maintains for its own peer
+  discovery. `ai_types::AgentStateSource` ranks them
+  (`Terminal < SessionRegistry < Hook`) and `upsert_session_state` enforces the
+  rank, so a weaker observer never talks over a live stronger one - and a
+  stronger one that falls silent hands over instead of freezing the sidebar.
+  See [docs/hooks.md](docs/hooks.md#when-hooks-cannot-run).
 - **States**: thinking, waiting for input (with the actual prompt text),
   finished, errored (non-zero exit), stalled (no hook activity past a
   threshold). Each state routes to the UI - and to your own tooling, since
