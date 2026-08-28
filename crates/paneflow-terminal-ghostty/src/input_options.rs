@@ -297,19 +297,34 @@ mod tests {
 
     #[test]
     fn option_as_alt_is_accepted_and_survives_an_encode() {
+        // Off macOS no key reports itself as Option, so libghostty compiles
+        // the policy out and Alt is always Alt. On macOS the policy is real:
+        // with it off the key sends the text the layout produced instead of
+        // an Alt escape. The event carries no modifier side and libghostty
+        // defaults every modifier to its left side, so the left-only policy
+        // still treats this key as Alt. What all three pin down is that the
+        // option survives `setopt_from_terminal`, which rewrites the whole
+        // encoder on every key.
+        let alt_escape = b"\x1ba".as_slice();
+        let layout_text: &[u8] = if cfg!(target_os = "macos") {
+            b"a"
+        } else {
+            alt_escape
+        };
+
         let mut terminal = terminal();
-        // The setting only changes anything on macOS, where a key can report
-        // itself as Option. Everywhere else Alt is already Alt, so both
-        // values encode the same escape prefix. What this pins down is that
-        // the option round-trips through `setopt_from_terminal`, which
-        // rewrites the encoder on every key.
-        for option_as_alt in [OptionAsAlt::Always, OptionAsAlt::Never, OptionAsAlt::Left] {
+        for (option_as_alt, expected) in [
+            (OptionAsAlt::Always, alt_escape),
+            (OptionAsAlt::Never, layout_text),
+            (OptionAsAlt::Left, alt_escape),
+        ] {
             terminal.set_option_as_alt(option_as_alt);
             assert_eq!(
                 terminal
                     .encode_key(&key("a", Modifiers::ALT))
                     .expect("encode"),
-                b"\x1ba"
+                expected,
+                "{option_as_alt:?} encodes the wrong bytes"
             );
         }
     }
