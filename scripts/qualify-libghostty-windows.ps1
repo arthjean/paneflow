@@ -70,6 +70,25 @@ function Test-PerformanceRetryEligible {
     return $budgetFailed -and $withinRetryBand
 }
 
+function Test-TeardownRetryEligible {
+    param([Parameter(Mandatory = $true)][string]$LogPath)
+
+    # Only the ConPTY teardown race is retried. ConPTY's host process outlives
+    # the shell by an unbounded moment, so on a loaded runner the descendant
+    # wait can miss its deadline while nothing is actually leaking. Every other
+    # stress failure - residual RSS growth, handle growth, a non-zero exit,
+    # missing output - carries a different `phase=` marker and must fail on the
+    # first attempt, so this matches the cleanup phase and nothing else.
+    if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
+        return $false
+    }
+    $content = Get-Content -LiteralPath $LogPath -Raw
+    if ([string]::IsNullOrEmpty($content)) {
+        return $false
+    }
+    return $content -match 'phase=cleanup'
+}
+
 function Convert-MeasurementLine {
     param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Line)
 
@@ -102,10 +121,16 @@ function Invoke-CargoGate {
     param(
         [Parameter(Mandatory = $true)][string]$Name,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [switch]$RunnerVarianceRetry
+        [switch]$RunnerVarianceRetry,
+        [switch]$TeardownVarianceRetry
     )
 
-    $maximumAttempts = if ($RunnerVarianceRetry) { 2 } else { 1 }
+    # A non-zero native exit must set $LASTEXITCODE, not raise a terminating
+    # error: otherwise the bounded rerun below never happens. This is the
+    # default (pwsh 7.4), pinned here so a runner image bump cannot change it.
+    $PSNativeCommandUseErrorActionPreference = $false
+
+    $maximumAttempts = if ($RunnerVarianceRetry -or $TeardownVarianceRetry) { 2 } else { 1 }
     $attemptsRun = 0
     for ($attempt = 1; $attempt -le $maximumAttempts; $attempt++) {
         $attemptsRun = $attempt
@@ -118,10 +143,18 @@ function Invoke-CargoGate {
             return
         }
         if ($attempt -lt $maximumAttempts) {
-            if (-not (Test-PerformanceRetryEligible -LogPath $logPath)) {
-                break
+            if ($TeardownVarianceRetry) {
+                if (-not (Test-TeardownRetryEligible -LogPath $logPath)) {
+                    break
+                }
+                Write-Warning "$Name failed only on the ConPTY descendant teardown deadline; performing the single bounded rerun"
             }
-            Write-Warning "$Name stayed inside the documented 5 percent runner-variance band; performing the single bounded rerun"
+            else {
+                if (-not (Test-PerformanceRetryEligible -LogPath $logPath)) {
+                    break
+                }
+                Write-Warning "$Name stayed inside the documented 5 percent runner-variance band; performing the single bounded rerun"
+            }
         }
     }
     throw "$Name failed after $attemptsRun bounded attempt(s)"
@@ -185,13 +218,13 @@ try {
             "test", "--release", "--locked", "-p", "paneflow-app",
             "--target", $Target, "ghostty_spawn_resize_close_stress_has_no_residual_growth",
             "--", "--ignored", "--nocapture", "--test-threads=1"
-        )
+        ) -TeardownVarianceRetry
 
         Invoke-CargoGate "stress-panes" @(
             "test", "--release", "--locked", "-p", "paneflow-app",
             "--target", $Target, "windows_ghostty_32_pane_resize_and_close_orders_are_bounded",
             "--", "--ignored", "--nocapture", "--test-threads=1"
-        )
+        ) -TeardownVarianceRetry
     }
 
     $CandidateSize = (Get-Item -LiteralPath $CandidateBinary).Length

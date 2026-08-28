@@ -25,6 +25,22 @@ const HOST_CREATION_P95_LIMIT: Duration = Duration::from_millis(500);
 const RESIZES_PER_CYCLE: usize = 200;
 const RESOURCE_LIMIT_PERCENT: usize = 5;
 const CYCLE_TIMEOUT: Duration = Duration::from_secs(8);
+/// Deadline for a process and its descendants to leave the process table.
+///
+/// Windows gets a wider window than the other targets. ConPTY's host process
+/// outlives the shell by an unbounded moment, and a loaded CI runner routinely
+/// schedules that teardown past eight seconds: this is what turned
+/// `ghostty_spawn_resize_close_stress_has_no_residual_growth` red twice on
+/// `libghostty Windows` with `phase=cleanup`, once needing three attempts.
+///
+/// Widening a teardown wait can only make the check more patient, never more
+/// permissive. What this test exists to catch is residual growth, and that is
+/// asserted separately against RSS and handle counts, not against how quickly
+/// the kernel reaps a child. The happy path is unaffected because
+/// `wait_process_inactive` returns as soon as the process is gone.
+#[cfg(target_os = "windows")]
+const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
+#[cfg(not(target_os = "windows"))]
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 #[cfg(target_os = "windows")]
