@@ -129,7 +129,8 @@ jobs:
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
         run: |
-          scripts/build-libghostty-macos.sh \
+          scripts/ci-retry-network.sh \
+            scripts/build-libghostty-macos.sh \
             --target "$TARGET" \
             --verify-reproducible
 

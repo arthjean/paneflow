@@ -21,7 +21,15 @@ runs:
         EXTRA_PACKAGES: ${{ inputs.extra-packages }}
       run: |
         set -euo pipefail
-        sudo apt-get update
+        # Azure's apt mirrors return the odd 5xx or truncated Release file, and
+        # a bare `apt-get update` has no retry of its own. Five jobs share this
+        # step, so one retry loop here covers all of them.
+        for attempt in 1 2 3; do
+          sudo apt-get update && break
+          echo "::warning::apt-get update failed (attempt $attempt/3)"
+          [ "$attempt" -lt 3 ] || { echo "::error::apt-get update failed 3 times"; exit 1; }
+          sleep $((attempt * 10))
+        done
         # shellcheck disable=SC2086 # word splitting is the point for EXTRA_PACKAGES
         sudo apt-get install -y \
           libfontconfig1-dev \

@@ -204,13 +204,58 @@ jobs:
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
         run: |
           New-Item -ItemType Directory -Force -Path $env:EVIDENCE_DIR | Out-Null
-          $log = Join-Path $env:EVIDENCE_DIR 'native-rebuild.log'
-          & ./scripts/build-libghostty-windows.ps1 `
-            -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
-            -Zig $env:PANEFLOW_ZIG `
-            -OutputDir "target\libghostty\$env:TARGET" `
-            -VerifyReproducible *>&1 | Tee-Object -FilePath $log
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          # Same narrow retry as scripts/ci-retry-network.sh on the Unix lanes.
+          # Zig fetches the 16 build.zig.zon dependencies from two hosts on
+          # every clean build, twice under -VerifyReproducible, with no cache.
+          # Only a transport failure is retried; an archive hash mismatch or a
+          # reproducibility divergence still fails on the first attempt.
+          $transient = 'unable to connect to server|TemporaryNameServerFailure|UnknownHostName|' +
+            'HostLacksNetworkAddresses|NameServerFailure|ConnectionRefused|ConnectionResetByPeer|' +
+            'ConnectionTimedOut|NetworkUnreachable|TlsInitializationFailed|unexpected EOF|' +
+            'TemporaryFailure|error: unable to fetch|502 Bad Gateway|503 Service Unavailable'
+          $canonicalLog = Join-Path $env:EVIDENCE_DIR 'native-rebuild.log'
+          $attempts = 3
+
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            $log = Join-Path $env:EVIDENCE_DIR "native-rebuild-attempt-$attempt.log"
+            Write-Host "native rebuild attempt $attempt/$attempts"
+            $failure = $null
+            # Reset first: `$LASTEXITCODE` can otherwise carry a stale value
+            # from an unrelated native command earlier in the job.
+            $global:LASTEXITCODE = 0
+            try {
+              & ./scripts/build-libghostty-windows.ps1 `
+                -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
+                -Zig $env:PANEFLOW_ZIG `
+                -OutputDir "target\libghostty\$env:TARGET" `
+                -VerifyReproducible *>&1 | Tee-Object -FilePath $log
+              if ($LASTEXITCODE -ne 0) { $failure = "exit code $LASTEXITCODE" }
+            }
+            catch {
+              $failure = $_.Exception.Message
+            }
+
+            Copy-Item -LiteralPath $log -Destination $canonicalLog -Force -ErrorAction SilentlyContinue
+
+            if (-not $failure) {
+              if ($attempt -gt 1) {
+                Write-Host "succeeded on attempt $attempt after a transient network failure"
+              }
+              break
+            }
+
+            $output = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
+            if (-not (($output -match $transient) -or ($failure -match $transient))) {
+              throw "native rebuild failed with no transient network signature: $failure"
+            }
+            if ($attempt -eq $attempts) {
+              throw "native rebuild still failing on a transient network error after $attempts attempts: $failure"
+            }
+            $delay = $attempt * 20
+            Write-Warning "transient network failure ($failure); retrying in ${delay}s"
+            Start-Sleep -Seconds $delay
+          }
 
       - name: Verify repository consumer inputs and publish provenance
         env:
