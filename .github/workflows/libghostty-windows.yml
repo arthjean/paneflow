@@ -66,7 +66,10 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
-    timeout-minutes: 90
+    # One reproducibility pass is two clean builds, and a clean build costs
+    # roughly 35 minutes at -j1 with no reusable Zig cache. The nightly cron
+    # runs three passes, so it needs its own ceiling.
+    timeout-minutes: ${{ github.event_name == 'schedule' && 300 || 120 }}
     defaults:
       run:
         shell: pwsh
@@ -207,19 +210,23 @@ jobs:
           Write-Host "LLVM normalization tools: $expectedLlvm at $llvmObjcopy"
 
       # The rebuild deliberately has no native object cache. The canonical
-      # source/cache paths are part of the reproducibility contract, and the
-      # script performs six independent clean builds before publication.
-      - name: Rebuild and compare six canonical archives
+      # source/cache paths are part of the reproducibility contract, so every
+      # clean build starts from an empty Zig cache.
+      - name: Rebuild and compare the canonical archives
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
+          # Every pass is two clean builds compared against each other, so the
+          # nightly cron proves reproducibility across six archives while push
+          # and pull_request stay at the two the pin itself requires. A cron
+          # divergence still fails the lane, it just does not hold up a push.
+          REPRODUCIBILITY_PASSES: ${{ github.event_name == 'schedule' && '3' || '1' }}
         run: |
           New-Item -ItemType Directory -Force -Path $env:EVIDENCE_DIR | Out-Null
 
           # Same narrow retry as scripts/ci-retry-network.sh on the Unix lanes.
           # Zig fetches the 16 build.zig.zon dependencies from two hosts on
-          # every clean build, six times across three reproducibility passes,
-          # with no cache.
+          # every clean build, twice per reproducibility pass, with no cache.
           # Only a transport failure is retried; an archive hash mismatch or a
           # reproducibility divergence still fails on the first attempt.
           $transient = 'unable to connect to server|TemporaryNameServerFailure|UnknownHostName|' +
@@ -228,6 +235,11 @@ jobs:
             'TemporaryFailure|error: unable to fetch|502 Bad Gateway|503 Service Unavailable'
           $canonicalLog = Join-Path $env:EVIDENCE_DIR 'native-rebuild.log'
           $attempts = 3
+          $reproPasses = [int]$env:REPRODUCIBILITY_PASSES
+          if ($reproPasses -lt 1) {
+            throw "REPRODUCIBILITY_PASSES must be at least 1; got '$env:REPRODUCIBILITY_PASSES'"
+          }
+          Write-Host "reproducibility passes: $reproPasses ($($reproPasses * 2) clean builds)"
 
           for ($attempt = 1; $attempt -le $attempts; $attempt++) {
             $log = Join-Path $env:EVIDENCE_DIR "native-rebuild-attempt-$attempt.log"
@@ -237,8 +249,8 @@ jobs:
             # from an unrelated native command earlier in the job.
             $global:LASTEXITCODE = 0
             try {
-              for ($reproPass = 1; $reproPass -le 3; $reproPass++) {
-                Write-Host "reproducibility pass $reproPass/3"
+              for ($reproPass = 1; $reproPass -le $reproPasses; $reproPass++) {
+                Write-Host "reproducibility pass $reproPass/$reproPasses"
                 $passEvidence = Join-Path $env:EVIDENCE_DIR "reproducibility-pass-$reproPass"
                 & ./scripts/build-libghostty-windows.ps1 `
                   -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
