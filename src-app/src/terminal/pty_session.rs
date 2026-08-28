@@ -172,12 +172,27 @@ impl TerminalSessionBackend {
         last_visible_row: i32,
         clear_on_resize: bool,
     ) -> (Content, bool) {
-        self.ghostty.render_content(
+        // The render thread pays for this call once per pane per frame, and the
+        // Ghostty state lock is held inside it. Time the whole round-trip so the
+        // eight-pane performance gate keeps a lock-contention signal.
+        #[cfg(test)]
+        let snapshot_started_at = RENDER_CONTENT_TIMING_ENABLED
+            .load(std::sync::atomic::Ordering::Acquire)
+            .then(std::time::Instant::now);
+        let rendered = self.ghostty.render_content(
             window_size,
             first_visible_row,
             last_visible_row,
             clear_on_resize,
-        )
+        );
+        #[cfg(test)]
+        if let Some(snapshot_started_at) = snapshot_started_at {
+            RENDER_CONTENT_LOCK_DURATIONS
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(snapshot_started_at.elapsed());
+        }
+        rendered
     }
 
     pub(crate) fn notify_window_size(&self, size: TerminalWindowSize) {
