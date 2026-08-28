@@ -19,7 +19,27 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
-use crate::app::diff_dock::{DiffDockData, DiffDockTab};
+use crate::app::diff_dock::{DIFF_DOCK_PANEL_MIN_WIDTH, DiffDockData, DiffDockTab};
+
+/// Width the pane grid keeps beside the dock: one minimum pane plus the gutter
+/// on each of its sides, so a dock wider than the panel gives ground instead of
+/// pushing its own right edge past the clip.
+const PANE_GRID_RESERVED_WIDTH: f32 =
+    crate::layout::MIN_PANE_SIZE + 2. * crate::layout::PANE_GUTTER_PX;
+
+/// How the dock fits inside `available` px of main panel: `(render, max)`.
+///
+/// The stored width is a *preference*, not a layout fact: opening a right rail
+/// (Files, Sessions) narrows the panel under a dock that was sized for the wide
+/// one. Clamping at render rather than writing the preference back means the
+/// dock returns to its full width when the rail closes. The ceiling travels
+/// with it so a resize drag started under a rail cannot store a width the panel
+/// could not show.
+fn diff_dock_fit(preferred: f32, available: f32) -> (f32, f32) {
+    let max = (available - PANE_GRID_RESERVED_WIDTH - crate::layout::PANE_GUTTER_PX)
+        .max(DIFF_DOCK_PANEL_MIN_WIDTH);
+    (preferred.min(max), max)
+}
 
 /// The dock state one workspace owns, parked while another workspace is active.
 ///
@@ -176,6 +196,7 @@ impl PaneFlowApp {
     pub(crate) fn wrap_cli_diff_dock(
         &mut self,
         body: AnyElement,
+        available_width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         // Before the visibility test, not after: a workspace whose parked dock
@@ -185,6 +206,7 @@ impl PaneFlowApp {
             return body;
         }
         let ui = crate::theme::ui_colors();
+        let (width, max_width) = diff_dock_fit(self.diff_dock.width, available_width);
         div()
             .size_full()
             .flex()
@@ -224,7 +246,7 @@ impl PaneFlowApp {
                     .pt(px(crate::layout::PANE_GUTTER_PX))
                     .pb(px(crate::layout::PANE_GUTTER_PX))
                     .pr(px(crate::layout::PANE_GUTTER_PX))
-                    .child(self.render_diff_dock_panel(ui, cx)),
+                    .child(self.render_diff_dock_panel(width, max_width, ui, cx)),
             )
             .into_any_element()
     }
@@ -243,6 +265,38 @@ mod tests {
             active_tab: 0,
             data: None,
         }
+    }
+
+    #[test]
+    fn a_wide_panel_leaves_the_preferred_dock_width_alone() {
+        // 1920px of panel: the dock has no reason to give ground, and the
+        // preference is what the user dragged it to.
+        assert_eq!(diff_dock_fit(880., 1920.).0, 880.);
+    }
+
+    #[test]
+    fn opening_a_right_rail_shrinks_the_dock_instead_of_clipping_it() {
+        // A 300px rail over a 1280px window leaves ~970px of panel. The dock
+        // must fit inside it with the pane grid's reserve, not overflow the
+        // panel's clip by the difference.
+        let available = 970.;
+        let (width, max) = diff_dock_fit(880., available);
+        assert!(width < 880., "the dock must give ground: {width}");
+        assert_eq!(width, max, "a clamped dock renders at its ceiling");
+        assert!(
+            width + PANE_GRID_RESERVED_WIDTH + crate::layout::PANE_GUTTER_PX <= available,
+            "the dock still overflows the panel: {width}"
+        );
+    }
+
+    #[test]
+    fn a_panel_too_narrow_for_the_floor_stops_at_the_floor() {
+        // Past this point something has to be clipped; the dock stays readable
+        // rather than collapsing to a sliver.
+        assert_eq!(
+            diff_dock_fit(880., 200.),
+            (DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MIN_WIDTH)
+        );
     }
 
     #[test]

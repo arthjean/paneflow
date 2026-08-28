@@ -23,7 +23,7 @@ pub(crate) const DIFF_DOCK_PANEL_WIDTH: f32 = 880.0;
 /// Resize clamp for the diff dock's user-dragged width. The floor keeps the
 /// gutters plus a readable code column; the ceiling stops the dock from
 /// swallowing the whole main area on a wide window.
-pub(super) const DIFF_DOCK_PANEL_MIN_WIDTH: f32 = 360.0;
+pub(crate) const DIFF_DOCK_PANEL_MIN_WIDTH: f32 = 360.0;
 pub(super) const DIFF_DOCK_PANEL_MAX_WIDTH: f32 = 1400.0;
 
 /// How many `File` tabs the dock keeps open at once (US-017). Past the cap the

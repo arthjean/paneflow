@@ -33,7 +33,10 @@ mod surface_picker;
 mod tabs;
 
 pub(crate) use branch::DiffBranchMenuState;
-pub(crate) use model::{DIFF_DOCK_PANEL_WIDTH, DiffDockData, DiffDockHScrollDrag, DiffDockTab};
+pub(crate) use model::{
+    DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_WIDTH, DiffDockData, DiffDockHScrollDrag,
+    DiffDockTab,
+};
 
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
@@ -43,7 +46,7 @@ use gpui::{
 
 use self::branch::render_diff_branch_chip;
 use self::git::build_diff_dock;
-use self::model::{DIFF_DOCK_PANEL_MAX_WIDTH, DIFF_DOCK_PANEL_MIN_WIDTH, DiffChrome};
+use self::model::{DIFF_DOCK_PANEL_MAX_WIDTH, DiffChrome};
 use self::render::{
     diff_file_header_path, diff_panel_centered, render_diff_file_header, render_diff_files_toolbar,
     render_diff_resize_handle, render_diff_tab_strip,
@@ -295,8 +298,14 @@ impl PaneFlowApp {
 
     /// The docked diff panel: a header over the body. Reads the live snapshot
     /// from state (cloned cheaply) so the caller keeps its `self` borrow short.
+    ///
+    /// `width` is the width the dock renders at and `max_width` the widest the
+    /// main panel can give it (see `cli_diff_dock::diff_dock_fit`) - neither is
+    /// `self.diff_dock.width`, which is only the user's preference.
     pub(crate) fn render_diff_dock_panel(
         &mut self,
+        width: f32,
+        max_width: f32,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -305,7 +314,7 @@ impl PaneFlowApp {
         // pane-header toggle - the Agents dock is opened from its own chrome,
         // already on a chosen surface, and must never inherit the question.
         if self.diff_dock.picker && matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
-            return self.render_diff_dock_picker(ui, cx);
+            return self.render_diff_dock_picker(width, max_width, ui, cx);
         }
         self.refresh_diff_dock_if_theme_changed(cx);
         let data = self.diff_dock.data.clone();
@@ -369,13 +378,13 @@ impl PaneFlowApp {
         let radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
             .relative()
-            .w(px(self.diff_dock.width))
+            .w(px(width))
             .h_full()
             .flex_none()
             .flex()
             .flex_col()
             .child(squircle_fill(radius, ui.base))
-            .child(render_diff_resize_handle(ui, cx))
+            .child(render_diff_resize_handle(width, max_width, ui, cx))
             .child(header)
             .children(toolbar)
             .child(body)
@@ -389,19 +398,21 @@ impl PaneFlowApp {
     /// the picker never pays for the diff snapshot it is not showing.
     fn render_diff_dock_picker(
         &mut self,
+        width: f32,
+        max_width: f32,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
             .relative()
-            .w(px(self.diff_dock.width))
+            .w(px(width))
             .h_full()
             .flex_none()
             .flex()
             .flex_col()
             .child(squircle_fill(radius, ui.base))
-            .child(render_diff_resize_handle(ui, cx))
+            .child(render_diff_resize_handle(width, max_width, ui, cx))
             .child(render_diff_picker_header(ui, cx))
             .child(render_diff_surface_picker(ui, cx))
             .child(squircle_border(radius, px(1.), ui.border))
@@ -413,12 +424,15 @@ impl PaneFlowApp {
     /// capture surface, so the drag survives the cursor leaving the dock for the
     /// pane grid beside it). No-op when no drag is in progress.
     pub(crate) fn drag_diff_dock_resize(&mut self, cursor_x: f32, cx: &mut Context<Self>) {
-        if let Some((anchor_x, anchor_w)) = self.diff_dock.resize {
+        if let Some((anchor_x, anchor_w, max_w)) = self.diff_dock.resize {
             // The panel docks right and the handle is on its left edge, so
-            // dragging left (cursor_x shrinks) widens the dock.
+            // dragging left (cursor_x shrinks) widens the dock. The stored
+            // width never passes the ceiling the panel can render: letting it
+            // run past what is on screen would leave the handle unresponsive
+            // until the cursor came back over the overshoot.
             let delta = anchor_x - cursor_x;
-            self.diff_dock.width =
-                (anchor_w + delta).clamp(DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MAX_WIDTH);
+            let ceiling = max_w.clamp(DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MAX_WIDTH);
+            self.diff_dock.width = (anchor_w + delta).clamp(DIFF_DOCK_PANEL_MIN_WIDTH, ceiling);
             cx.notify();
         }
     }

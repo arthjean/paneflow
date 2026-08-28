@@ -853,9 +853,11 @@ struct DiffDockState {
     /// Width in px of the diff dock; user-resizable by dragging its left edge.
     /// Clamped to `[DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MAX_WIDTH]`.
     pub(crate) width: f32,
-    /// Live drag anchor `(cursor_x, width_at_grab)` while the dock's left edge is
-    /// being dragged to resize; `None` when not resizing.
-    pub(crate) resize: Option<(f32, f32)>,
+    /// Live drag anchor `(cursor_x, width_at_grab, max_width)` while the dock's
+    /// left edge is being dragged to resize; `None` when not resizing. The
+    /// ceiling is captured at grab time because it depends on the panel the
+    /// dock is docked in, which the drag math does not see.
+    pub(crate) resize: Option<(f32, f32, f32)>,
     /// Live horizontal-scrollbar drag inside the dock's shared diff body.
     pub(crate) h_scroll_drag: Option<crate::app::diff_dock::DiffDockHScrollDrag>,
     /// Per-file horizontal scroll offsets (px) for the diff dock, indexed by
@@ -1388,6 +1390,17 @@ impl Render for PaneFlowApp {
             / crate::app::files_sidebar::FILES_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
         let secondary_sidebar_open = sessions_sidebar_mounted || files_sidebar_mounted;
+        // The two right rails are mutually exclusive layout children, so the
+        // main panel loses exactly one of their widths. Bound once: the Linux
+        // blur geometry and the diff dock's width ceiling describe the same
+        // strip and must not drift apart.
+        let right_rail_width = if sessions_sidebar_mounted {
+            sessions_sidebar_width
+        } else if files_sidebar_mounted {
+            files_sidebar_width
+        } else {
+            0.
+        };
         // Every mode now renders the right area as ONE top-rounded clipped panel
         // (`panel_bg` fill + 16px rail-side top radius + 5px inset), replacing the
         // old Cli/Diff corner-mask trick. GPUI clips the panel's bg fill to the
@@ -1470,18 +1483,21 @@ impl Render for PaneFlowApp {
         let main_panel_left_inset = crate::app::constants::PANEL_INSET * panel_edge_share;
         let pane_grid_left_gutter = crate::layout::PANE_GUTTER_PX * panel_edge_share;
         let main_panel_corner_mask_bg = panel_corner_mask_bg;
+        // Room the main panel actually has between the rails, for children
+        // sized in absolute px (the CLI diff dock). The window shell's own
+        // client-side inset is not subtracted here: the dock's reserve for the
+        // pane grid is an order of magnitude larger than it.
+        let main_panel_width = f32::from(window.viewport_size().width)
+            - primary_sidebar_width
+            - right_rail_width
+            - main_panel_left_inset
+            - crate::app::constants::PANEL_INSET;
         #[cfg(target_os = "linux")]
         {
             crate::window_chrome::linux_backdrop::set_chrome_geometry(
                 crate::window_chrome::linux_backdrop::ChromeGeometry {
                     left_sidebar_width: primary_sidebar_width,
-                    right_sidebar_width: if sessions_sidebar_mounted {
-                        sessions_sidebar_width
-                    } else if files_sidebar_mounted {
-                        files_sidebar_width
-                    } else {
-                        0.
-                    },
+                    right_sidebar_width: right_rail_width,
                     title_bar_height: f32::from(title_bar_h),
                     title_bar_spans_window: true,
                 },
@@ -1646,7 +1662,7 @@ impl Render for PaneFlowApp {
         };
         // The right diff dock rides beside the CLI pane grid, opened from a
         // pane header. A no-op in every other mode.
-        let main_content = self.wrap_cli_diff_dock(main_content, cx);
+        let main_content = self.wrap_cli_diff_dock(main_content, main_panel_width, cx);
         // Update title bar with current workspace name.
         let ws_name = if self.settings_section.is_some() {
             // Settings open: the title-bar center is left empty (the section

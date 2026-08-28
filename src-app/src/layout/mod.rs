@@ -25,6 +25,7 @@ mod tree;
 
 pub use navigation::{FocusDirection, FocusNav};
 pub(crate) use render::SplitPreview;
+pub(crate) use tree::MIN_PANE_SIZE;
 pub use tree::{LayoutTree, SplitDirection};
 
 /// Outer padding around the pane grid, matching the gap between two sibling
