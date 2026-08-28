@@ -756,15 +756,19 @@ function Invoke-NativeBuild {
     if ($LASTEXITCODE -ne 0) {
         throw "cannot inspect COFF directives in $archive"
     }
+    # Keep the raw dump next to the rest of the evidence. The bare assertion
+    # below named neither the directive that is missing nor the ones that are
+    # present, so the only way to learn which half failed was another
+    # 40-minute rebuild on a Windows runner.
+    if (-not [string]::IsNullOrWhiteSpace($EvidenceDir)) {
+        New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
+        Write-Utf8Lines (Join-Path $EvidenceDir "archive-members-$Label.txt") $members
+        Write-Utf8Lines (Join-Path $EvidenceDir "coff-directives-$Label.txt") $directives
+    }
     if (-not ($directives -match 'RuntimeLibrary=MT_StaticRelease') -or -not ($directives -match "DEFAULTLIB:$CxxRuntime")) {
-        # Name what the archive actually asks for. The bare assertion sent the
-        # Ghostty re-pin looking for a needle in a 40-minute rebuild.
-        $observed = Sort-Ordinal @($directives |
-            Select-String -Pattern '/(?:DEFAULTLIB|FAILIFMISMATCH):[^ "]+' -AllMatches |
-            ForEach-Object { $_.Matches } |
-            ForEach-Object { $_.Value } |
-            Select-Object -Unique)
-        throw "archive does not declare the reviewed MSVC static CRT model (RuntimeLibrary=MT_StaticRelease and DEFAULTLIB:$CxxRuntime); it declares: $([string]::Join(', ', $observed))"
+        $observed = @($directives | Where-Object { $_ -match 'Directive' } | Select-Object -Unique)
+        $summary = if ($observed.Count -eq 0) { "<none>" } else { [string]::Join(' | ', $observed) }
+        throw "archive does not declare the reviewed MSVC static CRT model (RuntimeLibrary=MT_StaticRelease and DEFAULTLIB:$CxxRuntime); llvm-readobj emitted $($directives.Count) lines and these directives: $summary"
     }
 
     $smokeObject = Join-Path $buildRoot "windows-smoke.obj"
