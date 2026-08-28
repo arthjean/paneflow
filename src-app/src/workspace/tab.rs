@@ -46,16 +46,17 @@ pub struct Tab {
 impl Tab {
     /// Create a tab holding `root`, with a freshly allocated id.
     ///
-    /// The title is [`TabTitleSource::Auto`]: every in-process construction
-    /// site is Paneflow naming the tab itself (a preset label, the palette
-    /// placeholder, an empty string). A human's title only ever arrives
-    /// through [`Self::set_title`], or from the restore path via
-    /// [`Self::restored`].
+    /// The title is [`TabTitleSource::Preset`], the weakest rank: every
+    /// in-process construction site is Paneflow naming the tab itself (a
+    /// preset label, the palette placeholder, an empty string), and all of it
+    /// is meant to be replaced by a name that describes the work. A human's
+    /// title only ever arrives through [`Self::set_title`], or from the
+    /// restore path via [`Self::restored`].
     pub fn new(title: impl Into<String>, root: Option<LayoutTree>) -> Self {
         Self {
             id: next_tab_id(),
             title: title.into(),
-            title_source: TabTitleSource::Auto,
+            title_source: TabTitleSource::Preset,
             root,
             saved_layout: None,
         }
@@ -99,25 +100,28 @@ impl Tab {
         self.title_source == TabTitleSource::User
     }
 
+    /// Whether an automatic name should still be looked for. See
+    /// [`TabTitleSource::is_settled`].
+    pub fn title_is_settled(&self) -> bool {
+        self.title_source.is_settled()
+    }
+
     /// The single write path for a tab title. Returns whether anything
     /// changed, so callers persist the session only on a real delta.
     ///
     /// Rules, in order:
-    /// 1. An automatic title never overwrites a user's. This is the whole
-    ///    point of the type, and it is checked here rather than at each call
-    ///    site so no future caller can forget it.
-    /// 2. An automatic title never *clears* one. A summarizer that returns
-    ///    nothing must leave the tab as it is, not blank it.
-    /// 3. Titles are stored trimmed, and a no-op write reports `false` -
-    ///    every turn of an agent would otherwise schedule a session save that
-    ///    writes the same bytes.
+    /// 1. Precedence is [`TabTitleSource::yields_to`]'s to decide, and only
+    ///    its. Checking it here rather than at each call site is what keeps
+    ///    "a name a human typed is never overwritten" true of code not yet
+    ///    written.
+    /// 2. An automatic title never *clears* one. A CLI that generated nothing
+    ///    must leave the tab as it is, not blank it.
+    /// 3. Titles are stored trimmed, and a write that changes nothing reports
+    ///    `false` - every turn of an agent would otherwise schedule a session
+    ///    save of identical bytes.
     pub fn set_title(&mut self, title: &str, source: TabTitleSource) -> bool {
         let title = title.trim();
-        if source != TabTitleSource::User {
-            if self.title_is_user_owned() || title.is_empty() {
-                return false;
-            }
-        } else if title.is_empty() {
+        if title.is_empty() || !self.title_source.yields_to(source) {
             return false;
         }
         if self.title == title && self.title_source == source {
@@ -129,16 +133,18 @@ impl Tab {
         true
     }
 
-    /// Hand a user-owned title back to auto-naming (the tab menu's "Reset
-    /// name"). Returns whether anything changed.
+    /// Hand a named tab back to auto-naming (the tab menu's "Reset name").
+    /// Returns whether anything changed.
     ///
     /// The text is deliberately kept: dropping it would flash the tab back to
     /// its "Tab 3" fallback until the next turn produced a name. Only the
-    /// ownership changes, so the next automatic title may take over.
+    /// ownership changes - and it drops all the way to `Preset`, so the very
+    /// next thing the agent does can name the tab, rather than the reset only
+    /// taking effect once a *better* rank comes along.
     pub fn unlock_title(&mut self) -> bool {
-        let was_locked = self.title_is_user_owned();
-        self.title_source = TabTitleSource::Auto;
-        was_locked
+        let changed = self.title_source != TabTitleSource::Preset;
+        self.title_source = TabTitleSource::Preset;
+        changed
     }
 
     pub fn is_zoomed(&self) -> bool {
@@ -236,7 +242,7 @@ impl Tab {
     }
 }
 
-/// The title-ownership rule, tested at the one place that enforces it.
+/// The title-precedence rule, tested at the one place that enforces it.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,13 +251,22 @@ mod tests {
         Tab::new(title, None)
     }
 
+    /// The ladder each rank climbs: a preset label gives way to the first
+    /// prompt's placeholder, which gives way to the title the CLI generates,
+    /// which gives way to a human.
     #[test]
-    fn auto_titles_replace_each_other() {
+    fn each_rank_replaces_the_ones_below_it() {
         let mut tab = tab("Claude Code");
-        assert!(tab.set_title("wire up the parser", TabTitleSource::Auto));
-        assert_eq!(tab.title(), "wire up the parser");
-        assert!(tab.set_title("rewrite the lexer", TabTitleSource::Auto));
-        assert_eq!(tab.title(), "rewrite the lexer");
+        assert_eq!(tab.title_source(), TabTitleSource::Preset);
+
+        assert!(tab.set_title("fix the flaky worktree test", TabTitleSource::Prompt));
+        assert_eq!(tab.title(), "fix the flaky worktree test");
+
+        assert!(tab.set_title("Worktree test deflake", TabTitleSource::Generated));
+        assert_eq!(tab.title(), "Worktree test deflake");
+
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+        assert_eq!(tab.title(), "sprint 3");
     }
 
     #[test]
@@ -259,9 +274,38 @@ mod tests {
         let mut tab = tab("Claude Code");
         assert!(tab.set_title("sprint 3", TabTitleSource::User));
 
-        assert!(!tab.set_title("wire up the parser", TabTitleSource::Auto));
+        for source in [
+            TabTitleSource::Preset,
+            TabTitleSource::Prompt,
+            TabTitleSource::Generated,
+        ] {
+            assert!(!tab.set_title("something else", source), "{source:?}");
+        }
         assert_eq!(tab.title(), "sprint 3");
         assert!(tab.title_is_user_owned());
+    }
+
+    /// The bug this ranking exists for: a session is torn down a few seconds
+    /// after each turn, so every new turn used to look like a first one and
+    /// rename the tab after whatever was just typed. A tab keeps naming the
+    /// work it was opened for.
+    #[test]
+    fn a_later_prompt_does_not_replace_the_first_ones_placeholder() {
+        let mut tab = tab("Claude Code");
+        assert!(tab.set_title("fix the flaky worktree test", TabTitleSource::Prompt));
+
+        assert!(!tab.set_title("yes go ahead", TabTitleSource::Prompt));
+        assert_eq!(tab.title(), "fix the flaky worktree test");
+    }
+
+    /// A generated title is live intent, not a one-shot: a CLI that
+    /// regenerates its session title has a better one.
+    #[test]
+    fn a_generated_title_replaces_an_earlier_generated_title() {
+        let mut tab = tab("Claude Code");
+        assert!(tab.set_title("Worktree test deflake", TabTitleSource::Generated));
+        assert!(tab.set_title("Release checksum job", TabTitleSource::Generated));
+        assert_eq!(tab.title(), "Release checksum job");
     }
 
     #[test]
@@ -272,24 +316,34 @@ mod tests {
         assert_eq!(tab.title(), "sprint 4");
     }
 
-    /// A summarizer that returns nothing must leave the tab alone rather than
-    /// blank it - the sidebar would fall back to "Tab 2" out of nowhere.
+    /// A preset label never replaces one: the empty tab being filled already
+    /// carries whatever it should.
+    #[test]
+    fn a_preset_label_does_not_replace_a_preset_label() {
+        let mut tab = tab("Claude Code");
+        assert!(!tab.set_title("Codex", TabTitleSource::Preset));
+        assert_eq!(tab.title(), "Claude Code");
+    }
+
+    /// A CLI that generated nothing must leave the tab alone rather than blank
+    /// it - the sidebar would fall back to "Tab 2" out of nowhere.
     #[test]
     fn an_automatic_title_never_clears_one() {
         let mut tab = tab("OpenCode");
-        assert!(!tab.set_title("", TabTitleSource::Auto));
-        assert!(!tab.set_title("   \n ", TabTitleSource::Auto));
+        assert!(!tab.set_title("", TabTitleSource::Generated));
+        assert!(!tab.set_title("   \n ", TabTitleSource::Prompt));
         assert_eq!(tab.title(), "OpenCode");
     }
 
-    /// Every agent turn would otherwise schedule a session write of identical
-    /// bytes.
+    /// Every turn of an agent would otherwise schedule a session write of
+    /// identical bytes.
     #[test]
     fn an_unchanged_title_reports_no_change() {
         let mut tab = tab("Codex");
-        assert!(!tab.set_title("Codex", TabTitleSource::Auto));
-        assert!(!tab.set_title("  Codex  ", TabTitleSource::Auto));
-        assert!(tab.set_title("Codex", TabTitleSource::User));
+        assert!(tab.set_title("Deflake the tests", TabTitleSource::Generated));
+        assert!(!tab.set_title("Deflake the tests", TabTitleSource::Generated));
+        assert!(!tab.set_title("  Deflake the tests  ", TabTitleSource::Generated));
+        assert!(tab.set_title("Deflake the tests", TabTitleSource::User));
     }
 
     #[test]
@@ -299,24 +353,43 @@ mod tests {
         assert_eq!(tab.title(), "fix the flaky test");
     }
 
-    /// Reset name reopens auto-naming and keeps the text, so the row does not
-    /// blink back to its positional fallback while waiting for the next turn.
+    /// Only the top two ranks stop the search for a better name. A tab still
+    /// wearing a preset label or a placeholder is one worth reading a
+    /// transcript for.
     #[test]
-    fn unlock_title_reopens_auto_naming_and_keeps_the_text() {
+    fn only_a_generated_or_user_title_settles_a_tab() {
+        let mut tab = tab("Claude Code");
+        assert!(!tab.title_is_settled());
+
+        assert!(tab.set_title("fix the flaky test", TabTitleSource::Prompt));
+        assert!(!tab.title_is_settled());
+
+        assert!(tab.set_title("Test deflake", TabTitleSource::Generated));
+        assert!(tab.title_is_settled());
+
+        assert!(tab.set_title("sprint 3", TabTitleSource::User));
+        assert!(tab.title_is_settled());
+    }
+
+    /// Reset name drops all the way to the weakest rank, so the very next
+    /// thing the agent does can name the tab. Dropping only one rank would
+    /// leave a reset tab waiting on a title better than the one it had.
+    #[test]
+    fn unlock_title_reopens_naming_and_keeps_the_text() {
         let mut tab = tab("Claude Code");
         assert!(tab.set_title("sprint 3", TabTitleSource::User));
 
         assert!(tab.unlock_title());
         assert_eq!(tab.title(), "sprint 3");
         assert!(!tab.title_is_user_owned());
-        assert!(tab.set_title("wire up the parser", TabTitleSource::Auto));
-        assert_eq!(tab.title(), "wire up the parser");
+        assert!(!tab.title_is_settled());
+        assert!(tab.set_title("fix the flaky test", TabTitleSource::Prompt));
+        assert_eq!(tab.title(), "fix the flaky test");
     }
 
     #[test]
-    fn unlock_title_on_an_already_automatic_tab_reports_no_change() {
-        let mut tab = tab("Claude Code");
-        assert!(!tab.unlock_title());
+    fn unlock_title_on_a_preset_named_tab_reports_no_change() {
+        assert!(!tab("Claude Code").unlock_title());
     }
 
     /// A blank rename is the inline editor being dismissed, not a request to

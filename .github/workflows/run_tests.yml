@@ -44,14 +44,6 @@ jobs:
   #   - rust:             any Rust source or manifest changed
   #   - rendering:        the GPUI paint / font / theme paths the visual
   #                       smoke jobs are designed to protect
-  #   - changed_packages: space-separated cargo workspace member names
-  #                       whose source tree changed. Empty string means
-  #                       "workspace-wide change OR cannot compute" -
-  #                       downstream consumers must treat empty as
-  #                       "everything changed" (fail-safe). Computed
-  #                       dynamically via `cargo metadata --no-deps`
-  #                       so adding new workspace members requires no
-  #                       workflow update.
   #
   # Gating posture (US-018 AC5 etc.): the macos-14 / windows-2022
   # runners are 14× / 2× pricier than ubuntu-latest and contribute
@@ -71,18 +63,15 @@ jobs:
       ci: ${{ steps.filter.outputs.ci }}
       security: ${{ steps.filter.outputs.security }}
       release_packaging: ${{ steps.filter.outputs.release_packaging }}
-      changed_packages: ${{ steps.detect_packages.outputs.changed_packages }}
     steps:
-      # fetch-depth tuned for the `detect_packages` git diff below: on a
-      # PR we need enough history to reach the merge-base with the base
-      # branch (~350 commits matches Zed's pattern, comfortably covers
-      # long-running feature branches); on a push to main HEAD~1 is
-      # enough.
-      - uses: actions/checkout@v5
+      # `dorny/paths-filter` fetches the base ref it needs on its own, so a
+      # shallow checkout is enough here.
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
-          fetch-depth: ${{ github.event_name == 'pull_request' && 350 || 2 }}
+          persist-credentials: false
+          fetch-depth: 1
 
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
         with:
           filters: |
@@ -143,96 +132,6 @@ jobs:
               - 'src-app/src/layout/render.rs'
               - 'src-app/tests/flex_nchild.rs'
 
-      # Per-package detector. Adapted from Zed's orchestrate step. The
-      # output isn't consumed yet (`cargo test --workspace` still runs
-      # cheaply enough), but exposing it now lets
-      # future jobs gate per-crate (e.g. when crate count grows or
-      # nextest is adopted). Empty `changed_packages` means "treat as
-      # full rebuild" - fail-safe default.
-      #
-      # cargo + jq are preinstalled on ubuntu-latest. cargo metadata's
-      # output is JSON; jq extracts the member-name × directory map.
-      - id: detect_packages
-        name: Detect changed Cargo packages
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [ -z "${GITHUB_BASE_REF:-}" ]; then
-            echo "Push event - comparing against HEAD~1"
-            COMPARE_REV="$(git rev-parse HEAD~1 2>/dev/null || true)"
-          else
-            echo "PR event - comparing against merge-base with ${GITHUB_BASE_REF}"
-            git fetch origin "$GITHUB_BASE_REF" --depth=350 || true
-            COMPARE_REV="$(git merge-base "origin/${GITHUB_BASE_REF}" HEAD 2>/dev/null || true)"
-          fi
-
-          if [ -z "$COMPARE_REV" ]; then
-            echo "Cannot determine compare base - treating as full rebuild"
-            echo "changed_packages=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          CHANGED_FILES="$(git diff --name-only "$COMPARE_REV" "$GITHUB_SHA" || true)"
-          echo "$CHANGED_FILES" | head -20
-
-          # Workspace-wide change → bypass per-package detection. Matches
-          # Zed's pattern: any edit to the toolchain pin, cargo config,
-          # root manifest/lockfile, or workflow files forces a full
-          # rebuild because the change can affect every crate.
-          if echo "$CHANGED_FILES" | grep -qE '^(rust-toolchain\.toml|\.cargo/|Cargo\.lock$|Cargo\.toml$|\.github/workflows/)'; then
-            echo "Workspace-wide change detected - emitting empty changed_packages (treat as full rebuild)"
-            echo "changed_packages=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Build dir→pkg map dynamically from cargo metadata so new
-          # workspace members are auto-detected. manifest_path looks
-          # like `/.../src-app/Cargo.toml` or
-          # `/.../crates/paneflow-config/Cargo.toml`; capture the leaf
-          # directory.
-          DIR_TO_PKG="$(cargo metadata --format-version=1 --no-deps 2>/dev/null \
-            | jq -r '
-                .packages[]
-                | select(.manifest_path | test("/(src-app|crates/[^/]+)/Cargo\\.toml$"))
-                | (.manifest_path | capture("/(?<dir>src-app|crates/[^/]+)/Cargo\\.toml$") | .dir)
-                  + "=" + .name
-              ' || true)"
-          echo "Workspace member map:"
-          echo "$DIR_TO_PKG"
-
-          if [ -z "$DIR_TO_PKG" ]; then
-            echo "cargo metadata returned no members - treating as full rebuild"
-            echo "changed_packages=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # For each member dir, check whether any file under it changed.
-          CHANGED_PKGS=""
-          while IFS='=' read -r dir pkg; do
-            [ -n "$dir" ] || continue
-            if echo "$CHANGED_FILES" | grep -qE "^${dir}/"; then
-              CHANGED_PKGS="${CHANGED_PKGS}${pkg} "
-            fi
-          done <<< "$DIR_TO_PKG"
-
-          # Empty CHANGED_PKGS means the diff touched files outside every
-          # workspace member dir (e.g. root-level deny.toml, docs/, tasks/).
-          # Treat as a no-op for per-package gating - downstream consumers
-          # interpret empty changed_packages as "full rebuild" (fail-safe).
-          # The early-return avoids piping empty input into `grep -v '^$'`,
-          # which exits 1 on no-match and trips `set -euo pipefail` because
-          # bash propagates command-substitution exit status under `set -e`.
-          if [ -z "${CHANGED_PKGS// /}" ]; then
-            echo "No workspace member touched - emitting empty changed_packages"
-            echo "changed_packages=" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          CHANGED_PKGS="$(echo "$CHANGED_PKGS" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ' ' | sed 's/ $//')"
-          echo "Changed packages: '${CHANGED_PKGS}'"
-          echo "changed_packages=${CHANGED_PKGS}" >> "$GITHUB_OUTPUT"
-
   # Linux quality gates are split into 3 parallel jobs so the wall-clock
   # time of the CI run is max(jobs) instead of sum(steps). Previously a
   # single `check` job ran fmt → clippy → test → release-build → size
@@ -261,30 +160,18 @@ jobs:
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libvulkan-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-x11-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev
+      - uses: ./.github/actions/linux-build-deps
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: check_style
@@ -293,7 +180,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --workspace --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   run_tests_linux:
     name: Tests (Linux x86_64)
@@ -304,29 +191,17 @@ jobs:
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libvulkan-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-x11-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev
+      - uses: ./.github/actions/linux-build-deps
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: run_tests_linux
@@ -343,29 +218,17 @@ jobs:
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libvulkan-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-x11-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev
+      - uses: ./.github/actions/linux-build-deps
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: release_build_linux
@@ -502,28 +365,30 @@ jobs:
       needs.orchestrate.outputs.ci == 'true'
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
 
-      # Reuse the same cache prefix as `check` so the advisory job
-      # shares target/ with the main Linux build (no extra minutes
-      # spent re-compiling for cargo-deny's own resolve).
-      - uses: Swatinem/rust-cache@v2
+      # `rust-cache` keys on prefix-key + key + job, so this slot is this
+      # job's own; it is not shared with `check_style`. What it buys here is
+      # ${CARGO_HOME}/bin, which keeps the `cargo install cargo-deny` below
+      # off the critical path on a warm cache.
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: security-audit
 
-      - name: Install cargo-deny (pinned 0.19.x)
-        # `--locked` pins cargo-deny's own dep graph for reproducibility.
-        # `--version '^0.19'` accepts any 0.19.x patch but not 0.20+
-        # (verified against deny.toml semantics: 0.16+ introduces the
-        # `unmaintained = "workspace"` scope and `[[licenses.exceptions]]`
-        # syntax we rely on; 0.19 is the current stable upstream and
-        # the version validated locally before bumping).
-        run: cargo install cargo-deny --locked --version '^0.19'
+      - name: Install cargo-deny
+        # Exact pin, matching `libghostty-linux.yml::supply-chain`. A floating
+        # `^0.19` let the two workflows resolve different patch releases and
+        # disagree about the same lockfile. `--locked` pins cargo-deny's own
+        # dep graph on top of that. The rust-cache step above restores
+        # ${CARGO_HOME}/bin, so this is a no-op compile on a warm cache.
+        run: cargo install cargo-deny --locked --version 0.19.8
 
       - name: cargo deny check advisories licenses sources
         # Retry once with 30s backoff on a DB-fetch failure (GitHub's
@@ -568,6 +433,7 @@ jobs:
     if: >-
       needs.orchestrate.outputs.rust == 'true' ||
       needs.orchestrate.outputs.libghostty == 'true' ||
+      needs.orchestrate.outputs.rendering == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: macos-14
@@ -577,7 +443,9 @@ jobs:
     # the PR per the US-001 AC5 note above. The timeout is the hard backstop.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       # US-003 - fail fast if the runner image drifts away from a full Xcode
       # install. The macos-14 hosted image ships Xcode 15+ with the Metal
@@ -619,7 +487,7 @@ jobs:
           fi
           echo "Metal framework headers: $METAL_HEADERS"
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
           targets: aarch64-apple-darwin
@@ -628,7 +496,7 @@ jobs:
           # does NOT install by default even when `targets:` is set.
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: aarch64-apple-darwin
@@ -648,7 +516,7 @@ jobs:
       # this is what type-checks the native modules against a Darwin target.
       - name: cargo clippy (aarch64-apple-darwin)
         run: >-
-          cargo clippy --workspace --locked
+          cargo clippy --workspace --all-targets --locked
           --target aarch64-apple-darwin -- -D warnings
 
       # cargo test on the config crate (39 tests) + app crate (testable
@@ -682,7 +550,7 @@ jobs:
       # they can `file`/`otool` locally if something downstream misbehaves.
       - name: Upload aarch64 binary artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: paneflow-aarch64-apple-darwin
           path: target/aarch64-apple-darwin/release/paneflow
@@ -737,10 +605,12 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Download paneflow binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: paneflow-aarch64-apple-darwin
           path: target/aarch64-apple-darwin/release/
@@ -835,7 +705,7 @@ jobs:
 
       - name: Upload visual smoke artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos_render_smoke
           path: |
@@ -869,6 +739,7 @@ jobs:
     needs: orchestrate
     if: >-
       needs.orchestrate.outputs.rust == 'true' ||
+      needs.orchestrate.outputs.rendering == 'true' ||
       needs.orchestrate.outputs.ci == 'true' ||
       needs.orchestrate.outputs.release_packaging == 'true'
     runs-on: windows-2022
@@ -881,28 +752,16 @@ jobs:
       run:
         shell: pwsh
     timeout-minutes: 50
-    env:
-      # US-009 (v0.2.1): `ilammy/msvc-dev-cmd@v1` (latest v1.13.0 as of
-      # 2026-04-21) still declares `runs: using: node20` in its
-      # action.yml. Upstream issue #99 + PR #101 are open but not
-      # merged. GitHub Actions force-migrates to Node 24 on 2026-06-02
-      # and removes Node 20 on 2026-09-16. This env shim instructs the
-      # runner to execute the action on the node24 binary regardless
-      # of its declared runtime - documented in
-      # https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
-      # Remove this env once `ilammy/msvc-dev-cmd` publishes a tag
-      # that declares `using: node24` natively, and pin to that tag.
-      # Scoped to this job so other jobs don't silently accept
-      # stragglers elsewhere.
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       # Load VS 2022 Build Tools env: cl.exe, link.exe, lib.exe on PATH,
       # INCLUDE/LIB/LIBPATH set. Required by AC-2's `where cl.exe link.exe`.
       # x64 arch targets the same toolchain the rustc msvc triple uses.
       - name: Setup MSVC developer environment
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
         with:
           arch: x64
 
@@ -937,13 +796,13 @@ jobs:
       # US-003 AC-1 + US-018 AC-1: Rust toolchain with rustfmt + clippy
       # components (required by the fmt/clippy steps below) and the MSVC
       # cross-compile target.
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
           components: rustfmt, clippy
           targets: x86_64-pc-windows-msvc
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: x86_64-pc-windows-msvc
@@ -984,7 +843,7 @@ jobs:
       # matching the Linux `check` job pattern (line 74) and the release
       # pipeline's clippy gate.
       - name: cargo clippy --target x86_64-pc-windows-msvc
-        run: cargo clippy --workspace --locked --target x86_64-pc-windows-msvc -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
 
       # AC-2 step 3/4: tests. Ghostty is linked unconditionally, so the
       # workspace run executes the Windows backend corpus against the real
@@ -1041,7 +900,7 @@ jobs:
       # PRs is fast, but the from-scratch path on cold runs is ~5 min).
       - name: Upload x86_64 binary artifact
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: paneflow-x86_64-pc-windows-msvc
           path: target/x86_64-pc-windows-msvc/release/paneflow.exe
@@ -1083,10 +942,12 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Download paneflow.exe
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: paneflow-x86_64-pc-windows-msvc
           path: target/x86_64-pc-windows-msvc/release/
@@ -1160,7 +1021,7 @@ jobs:
 
       - name: Upload visual smoke artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows_render_smoke
           path: |
@@ -1205,31 +1066,19 @@ jobs:
     # complexity is why this job prefers the native runner.
     runs-on: ubuntu-22.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libvulkan-dev \
-            libwayland-dev \
-            libxkbcommon-dev \
-            libx11-dev \
-            libxcb1-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxkbcommon-x11-dev \
-            libfontconfig1-dev \
-            libfreetype6-dev
+      - uses: ./.github/actions/linux-build-deps
 
-      - uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
           components: rustfmt, clippy
           targets: aarch64-unknown-linux-gnu
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
         with:
           prefix-key: "v1-rust"
           key: aarch64-unknown-linux-gnu
@@ -1240,7 +1089,7 @@ jobs:
         run: cargo fmt --check
 
       - name: cargo clippy (aarch64-unknown-linux-gnu)
-        run: cargo clippy --workspace --locked --target aarch64-unknown-linux-gnu -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked --target aarch64-unknown-linux-gnu -- -D warnings
 
       - name: cargo test --workspace (aarch64-unknown-linux-gnu)
         run: cargo test --workspace --locked --target aarch64-unknown-linux-gnu

@@ -109,35 +109,90 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
-/// Who put a tab's current title there.
+/// Who put a tab's current title there, and therefore what may replace it.
 ///
-/// This is the whole of the "a name I typed is mine" rule: auto-naming may
-/// replace an [`Auto`](TabTitleSource::Auto) title as often as it likes and
-/// must never touch a [`User`](TabTitleSource::User) one. Provenance, not the
-/// title's content, decides - a tab opened from the preset picker already
-/// carries a non-empty, non-human title ("Claude Code"), so "is it empty?"
-/// would refuse to name exactly the tabs worth naming.
+/// The variants are RANKED, weakest first, and a title may only be replaced by
+/// one of strictly higher rank - plus, for the top two, by another of its own
+/// kind. That single rule carries every guarantee tab naming makes:
 ///
-/// `Default` is `Auto`: a freshly built tab is app-named until a human says
-/// otherwise. A snapshot that states no provenance at all is a separate case;
-/// see [`TabSession::title_source`].
+/// - a name a human typed is never overwritten by anything automatic;
+/// - the title a CLI generates for its session replaces the placeholder, and a
+///   later, better one replaces it in turn;
+/// - the placeholder taken from the first prompt does NOT get replaced by the
+///   second prompt's, so a tab keeps naming the work it was opened for;
+/// - a preset label ("Claude Code") is the weakest of all, which is the whole
+///   point - it is what auto-naming exists to replace.
+///
+/// Rank, not content, decides. A tab opened from the preset picker already
+/// carries a non-empty, non-human title, so "is it empty?" would refuse to
+/// name exactly the tabs worth naming.
+///
+/// Ownership lives HERE, on the tab, and not on the agent session that
+/// produced it. Sessions are torn down a few seconds after each turn ends, so
+/// state kept there would reset every turn and let each new prompt rename the
+/// tab - which is the bug this ranking replaced.
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TabTitleSource {
-    /// Written by Paneflow: a preset label, or an auto-generated name.
-    /// Freely replaceable by another automatic name.
+    /// The label of the preset that opened the tab, or any other name
+    /// Paneflow gives a tab for want of a better one.
     #[default]
-    Auto,
+    Preset,
+    /// The opening words of the first prompt sent to the agent in this tab. A
+    /// placeholder: it lands instantly and says something, while the real
+    /// title does not exist yet.
+    Prompt,
+    /// The title the agent's own CLI generated for the session - what its
+    /// resume picker shows. The real name.
+    Generated,
     /// Typed by a human. Nothing but another human edit may replace it.
     User,
 }
 
+impl TabTitleSource {
+    /// Position in the ordering above. Only a strictly higher rank may
+    /// overwrite, so this is the whole precedence rule in one place.
+    fn rank(self) -> u8 {
+        match self {
+            Self::Preset => 0,
+            Self::Prompt => 1,
+            Self::Generated => 2,
+            Self::User => 3,
+        }
+    }
+
+    /// Whether a title of this kind may be replaced by another of the same
+    /// kind.
+    ///
+    /// True for the two that describe live intent: a CLI that regenerates its
+    /// session title has a better one, and a user renaming twice means the
+    /// second name. False for the two that are one-shot: the second prompt of
+    /// a session must not rename the tab away from what it was opened for, and
+    /// a second preset label would mean a tab being re-purposed, which does
+    /// not happen.
+    fn replaces_itself(self) -> bool {
+        matches!(self, Self::Generated | Self::User)
+    }
+
+    /// Whether a title written by `self` may be replaced by one from
+    /// `incoming`.
+    pub fn yields_to(self, incoming: Self) -> bool {
+        incoming.rank() > self.rank() || (incoming == self && incoming.replaces_itself())
+    }
+
+    /// Whether this title is final enough that no automatic naming should keep
+    /// looking for a better one. Reading a transcript to produce a title that
+    /// would be refused is work for nothing.
+    pub fn is_settled(self) -> bool {
+        matches!(self, Self::Generated | Self::User)
+    }
+}
+
 /// Deserialization is tolerant for the same reason [`AppMode`]'s is - an
 /// unreadable field must not cost the user every workspace in the file - and
-/// it fails *safe*: anything that is not exactly `"auto"` is read as `User`,
-/// because wrongly locking a tab out of auto-naming is a nuisance the user can
-/// undo from the tab menu, while wrongly unlocking one silently destroys a
-/// name they typed.
+/// it fails *safe*: anything unrecognized is read as `User`, because wrongly
+/// locking a tab out of auto-naming is a nuisance the user undoes from the tab
+/// menu, while wrongly unlocking one silently destroys a name they typed.
 impl<'de> Deserialize<'de> for TabTitleSource {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -157,7 +212,14 @@ impl<'de> Deserialize<'de> for TabTitleSource {
                 E: serde::de::Error,
             {
                 Ok(match value {
-                    "auto" => TabTitleSource::Auto,
+                    // "auto" was this field's single non-user value while the
+                    // ladder was still a pair. It meant "Paneflow wrote this",
+                    // which is `Preset` now. Without this arm it would fall
+                    // through to `User` and freeze every tab a session file
+                    // from that build carries.
+                    "preset" | "auto" => TabTitleSource::Preset,
+                    "prompt" => TabTitleSource::Prompt,
+                    "generated" => TabTitleSource::Generated,
                     _ => TabTitleSource::User,
                 })
             }
@@ -204,7 +266,7 @@ impl TabSession {
     pub fn with_layout(layout: LayoutNode) -> Self {
         Self {
             title: String::new(),
-            title_source: Some(TabTitleSource::Auto),
+            title_source: Some(TabTitleSource::Preset),
             layout: Some(layout),
         }
     }

@@ -12,7 +12,7 @@ Run from the repository root. The toolchain is pinned in `rust-toolchain.toml`
 
 ```bash
 cargo fmt --check                                   # mandatory before commit and push
-cargo clippy --workspace --locked -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo deny check advisories licenses sources        # only when dependencies change
 ```
@@ -40,8 +40,14 @@ Local `cargo clippy --workspace --all-targets` runs on the host target, so every
 item behind `#[cfg(windows)]` is compiled out and never linted. The same holds
 for the `Style (fmt + clippy)` and `Tests (Linux x86_64)` jobs. Windows-gated
 code is first seen by the `Windows x86_64 libghostty check` job in
-`.github/workflows/run_tests.yml` and by `.github/workflows/libghostty-windows.yml`,
-both of which clippy `--target x86_64-pc-windows-msvc` with `-D warnings`.
+`.github/workflows/run_tests.yml`, which clippies
+`--target x86_64-pc-windows-msvc` with `-D warnings`.
+
+Every clippy gate in `run_tests.yml` passes `--all-targets`. Do not drop it:
+without it Cargo strips `#[cfg(test)]` before the HIR, so no `mod tests` is
+ever linted and a whole class of lint never fires anywhere in CI. That was the
+case until 2026-08-28, which is why this section used to name a job that could
+not in fact catch the trap below.
 
 The concrete trap: **when you add an item to a file that already has a
 `mod tests`, declare it before that module, whatever its `cfg`.**

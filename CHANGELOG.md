@@ -8,12 +8,17 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 ### Added
 
 - Tabs name themselves. A tab opened from the preset picker used to sit in the
-  sidebar as a fourth "Claude Code" row; it now takes the opening words of the
-  first prompt sent to the agent running in it, so a rail of agents says what
-  each one is doing. Renaming a tab yourself turns naming off for that tab for
-  good - a name you typed is never overwritten - and "Reset name" in the tab's
-  context menu hands it back. A tab split between several agents is left alone,
-  since no single one speaks for it.
+  sidebar as a fourth "Claude Code" row; it now names itself after the work
+  going on inside it, so a rail of agents says what each one is doing. The
+  opening words of the first prompt land immediately as a placeholder, and the
+  title the agent's own CLI generates for its resume picker replaces it once
+  the CLI has written one (Claude Code today; Codex and Pi generate none and
+  keep the placeholder). No model of our own is ever called.
+
+  Renaming a tab yourself turns naming off for that tab for good - a name you
+  typed is never overwritten - and "Reset name" in the tab's context menu hands
+  it back. A tab split between several agents is left alone, since no single
+  one speaks for it.
 
 - Panes show a progress chip in their header when the running program reports
   OSC 9;4 progress: a percentage, `working`, `paused`, or `error`. The chip

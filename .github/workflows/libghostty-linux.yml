@@ -3,84 +3,22 @@ name: libghostty Linux
 on:
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/libghostty-linux.yml"
-      - ".github/workflows/release.yml"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "LICENSE"
-      - "README.md"
-      - "assets/icons/**"
-      - "assets/io.github.arthurdev44.paneflow.metainfo.xml"
-      - "assets/paneflow.desktop"
-      - "crates/paneflow-config/**"
-      - "crates/paneflow-ghostty-smoke/**"
-      - "crates/paneflow-libghostty-sys/**"
-      - "crates/paneflow-terminal-ghostty/**"
-      - "debian/changelog"
-      - "deny.toml"
-      - "docs/user/configuration/schema.md"
-      - "docs/user/settings.md"
-      - "fuzz/**"
-      - "native/libghostty/**"
-      - "packaging/AppRun"
-      - "packaging/debian/**"
-      - "packaging/paneflow-release.asc"
-      - "packaging/rpm/**"
-      - "schemas/paneflow.schema.json"
-      - "scripts/*libghostty*"
-      - "scripts/bundle-appimage.sh"
-      - "scripts/bundle-tarball.sh"
-      - "src-app/Cargo.toml"
-      - "src-app/src/app/**"
-      - "src-app/src/keybindings/**"
-      - "src-app/src/layout/**"
-      - "src-app/src/search.rs"
-      - "src-app/src/terminal/**"
-      - "src-app/tests/dependency_source_policy.rs"
   pull_request:
     branches: [main]
-    paths:
-      - ".github/workflows/libghostty-linux.yml"
-      - ".github/workflows/release.yml"
-      - "Cargo.lock"
-      - "Cargo.toml"
-      - "LICENSE"
-      - "README.md"
-      - "assets/icons/**"
-      - "assets/io.github.arthurdev44.paneflow.metainfo.xml"
-      - "assets/paneflow.desktop"
-      - "crates/paneflow-config/**"
-      - "crates/paneflow-ghostty-smoke/**"
-      - "crates/paneflow-libghostty-sys/**"
-      - "crates/paneflow-terminal-ghostty/**"
-      - "debian/changelog"
-      - "deny.toml"
-      - "docs/user/configuration/schema.md"
-      - "docs/user/settings.md"
-      - "fuzz/**"
-      - "native/libghostty/**"
-      - "packaging/AppRun"
-      - "packaging/debian/**"
-      - "packaging/paneflow-release.asc"
-      - "packaging/rpm/**"
-      - "schemas/paneflow.schema.json"
-      - "scripts/*libghostty*"
-      - "scripts/bundle-appimage.sh"
-      - "scripts/bundle-tarball.sh"
-      - "src-app/Cargo.toml"
-      - "src-app/src/app/**"
-      - "src-app/src/keybindings/**"
-      - "src-app/src/layout/**"
-      - "src-app/src/search.rs"
-      - "src-app/src/terminal/**"
-      - "src-app/tests/dependency_source_policy.rs"
   schedule:
     - cron: "17 1 * * *"
   workflow_dispatch: {}
 
 permissions:
   contents: read
+
+# Same posture as run_tests.yml: -e fail-on-error, -u error-on-unset,
+# -o pipefail propagate pipe failures. Several steps below build a path
+# through `find ... -print -quit` and pipe it, which silently passed a
+# missing artifact through before pipefail was on.
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -93,8 +31,59 @@ env:
   ZIG_VERSION: 0.16.0
 
 jobs:
+  # Gating lives here, at job level, not in a `paths:` filter on the trigger.
+  # A workflow that a trigger-level `paths:` filtered out reports no status at
+  # all, which leaves a required status check pending forever and blocks the
+  # PR. This job always runs, always reports, and costs seconds; the expensive
+  # lanes below read its output. Same pattern as `run_tests.yml::orchestrate`.
+  changes:
+    name: Detect libghostty inputs
+    runs-on: ubuntu-latest
+    outputs:
+      native: ${{ steps.filter.outputs.native }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            native:
+              - '.github/actions/linux-build-deps/action.yml'
+              - '.github/workflows/libghostty-linux.yml'
+              - '.github/workflows/release.yml'
+              - 'Cargo.lock'
+              - 'Cargo.toml'
+              - 'assets/icons/**'
+              - 'assets/io.github.arthurdev44.paneflow.metainfo.xml'
+              - 'assets/paneflow.desktop'
+              - 'crates/paneflow-ghostty-smoke/**'
+              - 'crates/paneflow-libghostty-sys/**'
+              - 'crates/paneflow-terminal-ghostty/**'
+              - 'debian/changelog'
+              - 'deny.toml'
+              - 'fuzz/**'
+              - 'native/libghostty/**'
+              - 'packaging/AppRun'
+              - 'packaging/debian/**'
+              - 'packaging/paneflow-release.asc'
+              - 'packaging/rpm/**'
+              - 'scripts/*libghostty*'
+              - 'scripts/bundle-appimage.sh'
+              - 'scripts/bundle-tarball.sh'
+              - 'src-app/Cargo.toml'
+              - 'src-app/src/terminal/**'
+              - 'src-app/tests/dependency_source_policy.rs'
+
   native:
     name: Native, tests, release, package (${{ matrix.arch }})
+    needs: changes
+    if: >-
+      needs.changes.outputs.native == 'true' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -106,8 +95,14 @@ jobs:
             target: aarch64-unknown-linux-gnu
             runs-on: ubuntu-22.04-arm
     runs-on: ${{ matrix.runs-on }}
+    # Two clean Ghostty builds (--verify-reproducible), the workspace test
+    # run, a release build and four package formats. This was the only long
+    # job in the four workflows with no backstop but the 360 min default.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
 
       - name: Checkout pinned Ghostty source
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
@@ -116,6 +111,27 @@ jobs:
           ref: ${{ env.GHOSTTY_SHA }}
           path: .ghostty-source
           fetch-depth: 1
+          persist-credentials: false
+
+      # `GHOSTTY_SHA` / `ZIG_VERSION` are duplicated in three workflows on top
+      # of native/libghostty/manifest.toml. Keep them visible in `env:` (the
+      # Ghostty checkout above needs the value before any script can run) but
+      # fail loudly the moment a manifest bump forgets one of the copies.
+      - name: Verify workflow pins match the manifest
+        run: |
+          manifest_string() {
+            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
+          }
+          for key in source_sha:"$GHOSTTY_SHA" zig_version:"$ZIG_VERSION"; do
+            name="${key%%:*}"
+            want="${key#*:}"
+            got="$(manifest_string "$name")"
+            if [ "$got" != "$want" ]; then
+              echo "::error::workflow pin $name is '$want' but the manifest says '$got'"
+              exit 1
+            fi
+          done
+          echo "workflow pins match native/libghostty/manifest.toml"
 
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
@@ -132,28 +148,15 @@ jobs:
           prefix-key: v1-libghostty
           key: ${{ matrix.target }}
 
-      - name: Install Linux build and packaging tools
+      - uses: ./.github/actions/linux-build-deps
+        with:
+          extra-packages: >-
+            appstream binutils elfutils icnsutils imagemagick patchelf rpm
+
+      # `Swatinem/rust-cache` above restores ${CARGO_HOME}/bin, so on a warm
+      # cache these two resolve to a no-op instead of a ~4 min rebuild.
+      - name: Install pinned packaging tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            appstream \
-            binutils \
-            elfutils \
-            icnsutils \
-            imagemagick \
-            libfontconfig1-dev \
-            libfreetype6-dev \
-            libvulkan-dev \
-            libwayland-dev \
-            libx11-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxcb1-dev \
-            libxkbcommon-dev \
-            libxkbcommon-x11-dev \
-            patchelf \
-            rpm
           cargo install cargo-deb --version 3.6.3 --locked
           cargo install cargo-generate-rpm --version 0.20.0 --locked
 
@@ -173,6 +176,29 @@ jobs:
              "target/libghostty/${{ matrix.target }}/"
           echo "PANEFLOW_LIBGHOSTTY_DIR=${{ github.workspace }}/target/libghostty/${{ matrix.target }}" \
             >> "$GITHUB_ENV"
+
+      # `--verify-reproducible` above only proves build-1 == build-2, and the
+      # script now also pins the result to `manifest.archive_sha256`. This step
+      # closes the last link: it proves the archive committed under
+      # native/libghostty/prebuilt - the one every release actually links,
+      # because run_tests.yml and release.yml leave PANEFLOW_LIBGHOSTTY_DIR
+      # unset - is byte-identical to what the recipe produces. Mirrors
+      # `libghostty-macos.yml::Compare against the committed prebuilt archive`.
+      - name: Compare against the committed prebuilt archive
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          rebuilt="target/libghostty/$TARGET/lib/libghostty-vt.a"
+          committed="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
+          for path in "$rebuilt" "$committed"; do
+            [ -f "$path" ] || { echo "::error::missing archive $path"; exit 1; }
+          done
+          if ! cmp "$rebuilt" "$committed"; then
+            echo "::error::the committed $TARGET archive is not the one scripts/build-libghostty-linux.sh produces"
+            sha256sum "$rebuilt" "$committed"
+            exit 1
+          fi
+          sha256sum "$committed"
 
       - name: Debug tests with native backend
         run: >-
@@ -226,6 +252,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           version="$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)"
+          [ -n "$version" ] || { echo "::error::could not read version from Cargo.toml"; exit 1; }
           scripts/bundle-tarball.sh "$version"
           cargo deb --no-build -p paneflow-app --target "$TARGET"
           cargo generate-rpm -p src-app --target "$TARGET"
@@ -269,9 +296,16 @@ jobs:
 
   bindings:
     name: Regenerated bindings and ABI
+    needs: changes
+    if: >-
+      needs.changes.outputs.native == 'true' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
       - name: Checkout pinned Ghostty source
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -279,12 +313,37 @@ jobs:
           ref: ${{ env.GHOSTTY_SHA }}
           path: .ghostty-source
           fetch-depth: 1
+          persist-credentials: false
+      # `GHOSTTY_SHA` / `ZIG_VERSION` are duplicated in three workflows on top
+      # of native/libghostty/manifest.toml. Keep them visible in `env:` (the
+      # Ghostty checkout above needs the value before any script can run) but
+      # fail loudly the moment a manifest bump forgets one of the copies.
+      - name: Verify workflow pins match the manifest
+        run: |
+          manifest_string() {
+            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
+          }
+          for key in source_sha:"$GHOSTTY_SHA" zig_version:"$ZIG_VERSION"; do
+            name="${key%%:*}"
+            want="${key#*:}"
+            got="$(manifest_string "$name")"
+            if [ "$got" != "$want" ]; then
+              echo "::error::workflow pin $name is '$want' but the manifest says '$got'"
+              exit 1
+            fi
+          done
+          echo "workflow pins match native/libghostty/manifest.toml"
+
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: ${{ env.ZIG_VERSION }}
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: v1-libghostty
+          key: bindings
       - name: Install pinned bindgen and native tools
         run: |
           sudo apt-get update
@@ -313,9 +372,15 @@ jobs:
         target: [parser, snapshot]
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: nightly-2026-07-14
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: v1-libghostty
+          key: fuzz-nightly-2026-07-14
       - name: Install pinned cargo-fuzz
         run: cargo install cargo-fuzz --version 0.12.0 --locked
       - name: Download prepared x86_64 archive
@@ -331,24 +396,32 @@ jobs:
         run: cargo fuzz run "${{ matrix.target }}" -- -max_total_time="$FUZZ_SECONDS"
 
   distro-smoke:
-    name: Package smoke (${{ matrix.distro }})
+    name: Package smoke (${{ matrix.distro }}, ${{ matrix.arch }})
     needs: native
-    runs-on: ubuntu-22.04
+    runs-on: ${{ matrix.runs-on }}
     container: ${{ matrix.image }}
     strategy:
       fail-fast: false
       matrix:
         include:
           - distro: ubuntu
+            arch: x86_64
+            runs-on: ubuntu-22.04
             image: ubuntu:22.04@sha256:0e0a0fc6d18feda9db1590da249ac93e8d5abfea8f4c3c0c849ce512b5ef8982
             format: deb
           - distro: debian
+            arch: x86_64
+            runs-on: ubuntu-22.04
             image: debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
             format: deb
           - distro: fedora
+            arch: x86_64
+            runs-on: ubuntu-22.04
             image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
             format: rpm
           - distro: opensuse
+            arch: x86_64
+            runs-on: ubuntu-22.04
             # Tag rather than digest, unlike every other leg: Tumbleweed rolls
             # daily and its registry drops the superseded manifests, so a pin
             # turns this job red with "manifest unknown" within weeks. The smoke
@@ -356,13 +429,31 @@ jobs:
             image: registry.opensuse.org/opensuse/tumbleweed:latest
             format: rpm
           - distro: arch
+            arch: x86_64
+            runs-on: ubuntu-22.04
             image: archlinux:base@sha256:fe6972d4dc1f660c0c10f4c41b2de8986bab89e7e2955378f8beadb8ebcd7433
             format: tar
+          # The `native` job builds and uploads aarch64 .deb / .rpm / tarball /
+          # AppImage on every run, and until now nothing ever installed them.
+          # One leg per package format on a native ARM runner covers the
+          # shipping aarch64 artifacts without doubling the whole matrix.
+          - distro: debian
+            arch: aarch64
+            runs-on: ubuntu-22.04-arm
+            image: debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+            format: deb
+          - distro: fedora
+            arch: aarch64
+            runs-on: ubuntu-22.04-arm
+            image: registry.fedoraproject.org/fedora:44@sha256:e70db1fd517c7d6990715fb200b1aae95ef6a1ef1492dc12c8ca25cc129a5094
+            format: rpm
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: libghostty-packages-x86_64
+          name: libghostty-packages-${{ matrix.arch }}
           path: candidate
       - name: Install candidate and inspection tools
         env:
@@ -431,29 +522,59 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
+      - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        with:
+          prefix-key: v1-libghostty
+          key: supply-chain
       - name: Install pinned cargo-deny
         run: cargo install cargo-deny --version 0.19.8 --locked
+      # Same three checks as `run_tests.yml::security_audit`, and the same
+      # three AGENTS.md documents. A bare `cargo deny check` also ran `bans`,
+      # whose defaults apply silently because deny.toml has no [bans] section,
+      # so the two workflows could disagree about the same lockfile.
       - name: Audit Cargo graph
-        run: cargo deny check
+        run: cargo deny check advisories licenses sources
 
   validation-summary:
     name: libghostty validation
     if: always()
-    needs: [native, bindings, fuzz, distro-smoke, supply-chain]
+    needs: [changes, native, bindings, fuzz, distro-smoke, supply-chain]
     runs-on: ubuntu-22.04
     steps:
       - name: Require every automated check
         env:
+          # Fail-closed in both directions: when a libghostty input changed,
+          # every lane must be green; when none did, every lane must have
+          # actually skipped. `skipped` is never silently accepted, so a lane
+          # dropped because `native` failed still turns this job red.
+          EXPECTED_TO_RUN: ${{ needs.changes.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           NATIVE: ${{ needs.native.result }}
           BINDINGS: ${{ needs.bindings.result }}
           FUZZ: ${{ needs.fuzz.result }}
           DISTRO: ${{ needs.distro-smoke.result }}
           SUPPLY: ${{ needs.supply-chain.result }}
         run: |
-          for result in "$NATIVE" "$BINDINGS" "$FUZZ" "$DISTRO" "$SUPPLY"; do
-            [ "$result" = success ] || exit 1
+          if [ "$EXPECTED_TO_RUN" = true ]; then
+            want=success
+            note="All automated libghostty Linux checks passed."
+          else
+            want=skipped
+            note="No libghostty input changed; every lane correctly skipped."
+          fi
+          status=0
+          for lane in "native:$NATIVE" "bindings:$BINDINGS" "fuzz:$FUZZ" \
+                      "distro-smoke:$DISTRO" "supply-chain:$SUPPLY"; do
+            name="${lane%%:*}"
+            result="${lane#*:}"
+            if [ "$result" != "$want" ]; then
+              echo "::error::$name reported '$result', expected '$want'"
+              status=1
+            fi
           done
-          echo "All automated libghostty Linux checks passed."
+          [ "$status" -eq 0 ] || exit 1
+          echo "$note"

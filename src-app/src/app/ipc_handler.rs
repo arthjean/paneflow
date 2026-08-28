@@ -31,7 +31,7 @@ use crate::layout::LayoutTree;
 use crate::layout::{MAX_PANES, SplitDirection};
 use crate::pane::Pane;
 use crate::terminal::TerminalView;
-use crate::workspace::{MAX_WORKSPACES, Workspace, next_workspace_id};
+use crate::workspace::{MAX_WORKSPACES, Tab, Workspace, next_workspace_id};
 use crate::{PaneFlowApp, ai_types, keybindings, update};
 
 /// Prompt-prefill readiness window for `workspace.up` (US-010,
@@ -2301,25 +2301,26 @@ impl PaneFlowApp {
         }
     }
 
-    /// Name the tab of `session_key`'s pane after the first prompt of that
-    /// session, if it is still waiting to be named.
+    /// Put the placeholder built from a session's first prompt on the tab its
+    /// pane lives in.
     ///
     /// Called from the two places a naming can become possible: the prompt
     /// arriving, and the pane behind it being resolved. Idempotent, and cheap
-    /// enough to sit on both - a session past its one naming leaves on the
-    /// first line.
+    /// enough to sit on both.
     ///
-    /// Four things can refuse the name, and all four are ordinary rather than
-    /// error cases:
-    /// - the session has already named its tab, or has no prompt yet;
-    /// - its pane is not resolved (a late binding retries through
-    ///   `set_session_surface`, still carrying the FIRST prompt);
-    /// - the tab holds several terminals, so no single session speaks for it;
-    /// - the user has named the tab, and [`Tab::set_title`] refuses.
+    /// It lands the moment the prompt is sent, which is the point - the title
+    /// the CLI generates does not exist yet, and will replace this one a turn
+    /// or two later ([`Self::schedule_generated_title_scan`]). It is written
+    /// at [`TabTitleSource::Prompt`], which outranks a preset label and
+    /// nothing else: a second prompt cannot rename the tab away from the work
+    /// it was opened for, and a generated title or a human's replaces it
+    /// freely.
     ///
-    /// The last two still mark the session `Applied`: the answer will not
-    /// change on the next prompt, and re-deciding it every turn would only
-    /// mean rebuilding a title to throw it away.
+    /// Three things can refuse it, all ordinary rather than error cases: the
+    /// session has no prompt waiting, its pane is not resolved yet (a late
+    /// binding retries through `set_session_surface`, still carrying the FIRST
+    /// prompt), or the tab holds several terminals and no single session
+    /// speaks for it.
     pub(crate) fn apply_pending_tab_title(
         &mut self,
         ws_id: u64,
@@ -2332,12 +2333,7 @@ impl PaneFlowApp {
         let Some((title, surface_id)) = self.workspaces[ws_idx]
             .agent_sessions
             .get(&session_key)
-            .and_then(|session| match &session.tab_title_seed {
-                ai_types::TabTitleSeed::Pending(title) => {
-                    Some((title.clone(), session.surface_id?))
-                }
-                _ => None,
-            })
+            .and_then(|session| Some((session.pending_tab_title.clone()?, session.surface_id?)))
         else {
             return;
         };
@@ -2345,18 +2341,130 @@ impl PaneFlowApp {
         else {
             return;
         };
-
+        // Taken whatever `set_title` decides: a placeholder refused once (the
+        // tab is shared, or already better named) would be refused every turn,
+        // and holding it would only mean re-deciding that forever.
+        if let Some(session) = self.workspaces[ws_idx].agent_sessions.get_mut(&session_key) {
+            session.pending_tab_title = None;
+        }
         let named = surfaces == 1
             && self.workspaces[ws_idx]
                 .tab_mut(tab_idx)
-                .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Auto));
-        if let Some(session) = self.workspaces[ws_idx].agent_sessions.get_mut(&session_key) {
-            session.tab_title_seed = ai_types::TabTitleSeed::Applied;
-        }
+                .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Prompt));
         if named {
             self.save_session(cx);
             cx.notify();
         }
+    }
+
+    /// Read the title the agent's own CLI generated for this session, off the
+    /// render thread, and put it on the tab in place of the placeholder.
+    ///
+    /// The placeholder is the opening of the first prompt, which is a poor
+    /// name and known to be one: "Ne penses-tu pas qu'il y a" says who was
+    /// asked, not what about. A CLI worth naming a tab after already writes a
+    /// real title for its own resume picker - Claude Code's `type:"ai-title"`
+    /// record is the one read here - so the good name is a file read away
+    /// rather than a model call of our own.
+    ///
+    /// Called on every turn end until it succeeds, because the title is not
+    /// there on the first one: Claude Code writes it once it has enough of the
+    /// conversation to summarize. A session that has its title, or whose tab
+    /// can never be named, is `Settled` and reads nothing.
+    ///
+    /// Agents that generate no such title (Codex, Pi) keep the placeholder.
+    /// The scan is skipped for them rather than run and failed:
+    /// [`generated_title_source`] is the single place that says which agent
+    /// has one, and where it lives.
+    fn schedule_generated_title_scan(
+        &mut self,
+        ws_id: u64,
+        session_key: u32,
+        tool: crate::agent_launcher::TerminalAgent,
+        params: &serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        if self.tab_title_is_settled(ws_id, session_key, cx) {
+            return;
+        }
+        let Some(source) = generated_title_source(tool, params) else {
+            return;
+        };
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let Some(title) = smol::unblock(move || source.read()).await else {
+                    return;
+                };
+                cx.update(|cx| {
+                    let _ = this.update(cx, |app, cx| {
+                        app.apply_generated_tab_title(ws_id, session_key, &title, cx);
+                    });
+                });
+            },
+        )
+        .detach();
+    }
+
+    /// Put a generated title on the tab of `session_key`'s pane, and stop
+    /// looking for one.
+    ///
+    /// Re-resolves everything rather than trusting what the scan was launched
+    /// with: while the file was being read the pane may have moved to another
+    /// tab, the tab may have been renamed by hand, or a second agent may have
+    /// joined it. `Tab::set_title` still has the last word on a user's title.
+    fn apply_generated_tab_title(
+        &mut self,
+        ws_id: u64,
+        session_key: u32,
+        title: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws_idx) = self.workspaces.iter().position(|ws| ws.id == ws_id) else {
+            return;
+        };
+        let Some(surface_id) = self.workspaces[ws_idx]
+            .agent_sessions
+            .get(&session_key)
+            .and_then(|session| session.surface_id)
+        else {
+            return;
+        };
+        let Some((tab_idx, surfaces)) = tab_for_surface(&self.workspaces[ws_idx], surface_id, cx)
+        else {
+            return;
+        };
+        if surfaces == 1
+            && self.workspaces[ws_idx]
+                .tab_mut(tab_idx)
+                .is_some_and(|tab| tab.set_title(title, TabTitleSource::Generated))
+        {
+            self.save_session(cx);
+            cx.notify();
+        }
+    }
+
+    /// Whether the tab holding `session_key`'s pane already carries a title no
+    /// generated one should replace - or one no scan could reach, because
+    /// several agents share the tab.
+    ///
+    /// A session whose pane is not resolved yet is NOT settled: the binding
+    /// lands within a turn, and refusing to read now would mean never reading
+    /// for an agent launched by hand.
+    fn tab_title_is_settled(&self, ws_id: u64, session_key: u32, cx: &App) -> bool {
+        let Some(ws) = self.workspaces.iter().find(|ws| ws.id == ws_id) else {
+            return false;
+        };
+        let Some(surface_id) = ws
+            .agent_sessions
+            .get(&session_key)
+            .and_then(|session| session.surface_id)
+        else {
+            return false;
+        };
+        let Some((tab_idx, surfaces)) = tab_for_surface(ws, surface_id, cx) else {
+            return false;
+        };
+        surfaces > 1 || ws.tabs().get(tab_idx).is_some_and(Tab::title_is_settled)
     }
 
     /// US-018/US-020 (orchestration-v2): push the WaitingForInput state down
@@ -3228,16 +3336,16 @@ impl PaneFlowApp {
                     ) else {
                         return stale_frame_response();
                     };
-                    // The opening prompt names the tab, so a rail of agent
-                    // rows says what each one is doing instead of repeating
-                    // the name of the CLI four times. Recorded before the
-                    // surface is resolved, and only for the FIRST prompt of
-                    // the session: later turns leave the name alone.
+                    // The opening prompt gives the tab a name to wear until
+                    // the CLI generates a real one, so a rail of agent rows
+                    // says what each one is doing instead of repeating the
+                    // name of the CLI four times. Held here until the tab is
+                    // known; `TabTitleSource::Prompt` is what keeps the second
+                    // prompt of a session from replacing the first's.
                     if let Some(session) = ws.agent_sessions.get_mut(&key)
-                        && session.tab_title_seed == ai_types::TabTitleSeed::Unseeded
                         && let Some(title) = read_hook_prompt_title(params)
                     {
-                        session.tab_title_seed = ai_types::TabTitleSeed::Pending(title);
+                        session.pending_tab_title = Some(title);
                     }
                     cx.notify();
                     self.bind_or_resolve_session_surface(
@@ -3418,6 +3526,19 @@ impl PaneFlowApp {
                     // looking elsewhere. Ctrl+C stops only clear local state.
                     let ws_title = ws.title.clone();
                     cx.notify();
+                    // A finished turn is when the CLI has had a chance to
+                    // write the session title that replaces the tab's
+                    // prompt-derived placeholder. Not on an interrupt: a
+                    // Ctrl+C turn wrote nothing new to summarize.
+                    if !interrupt_stop {
+                        self.schedule_generated_title_scan(
+                            workspace_id,
+                            session_key,
+                            tool,
+                            params,
+                            cx,
+                        );
+                    }
                     if !interrupt_stop {
                         if let Some(path) = transcript_to_read {
                             Self::schedule_transcript_turn_end(
@@ -3673,6 +3794,50 @@ fn read_frame_surface_id(params: &serde_json::Value) -> Option<u64> {
 /// [`TerminalAgent::from_binary`]. `None` for an unknown string: the frame
 /// is then ignored by the caller instead of silently retyped as Claude
 /// (the historical `from_name` fallback mislabeled every future agent).
+/// Where one agent's generated session title can be read from.
+///
+/// The single place that answers "does this CLI write a real title, and
+/// where": a variant exists only for an agent that does. Everything the read
+/// needs is captured here on the render thread, so the read itself is a pure
+/// `smol::unblock` call with no borrow of app state.
+enum GeneratedTitleSource {
+    /// Claude Code writes a `type:"ai-title"` record into the session
+    /// transcript, which is the label its own `--resume` picker shows. The
+    /// stop hook hands us that file's path.
+    ClaudeTranscript(std::path::PathBuf),
+}
+
+impl GeneratedTitleSource {
+    /// Blocking. Call from inside `smol::unblock`.
+    fn read(self) -> Option<String> {
+        match self {
+            Self::ClaudeTranscript(path) => crate::claude_sessions::read_generated_title(&path),
+        }
+    }
+}
+
+/// The generated-title source for `tool`, if it has one and this frame says
+/// where to find it.
+///
+/// Codex writes no equivalent record (see `codex_sessions`), and Pi's reader
+/// falls back to the first user message - for both, a scan could only return
+/// the placeholder the tab already shows, so there is nothing to read and the
+/// tab keeps the prompt-derived name. OpenCode DOES generate a title, but it
+/// lives behind an `opencode session list` subprocess rather than in a file
+/// the hook points at; wiring that up is a separate decision about spawning a
+/// process per turn, not an oversight.
+fn generated_title_source(
+    tool: crate::agent_launcher::TerminalAgent,
+    params: &serde_json::Value,
+) -> Option<GeneratedTitleSource> {
+    match tool {
+        crate::agent_launcher::TerminalAgent::ClaudeCode => {
+            read_transcript_path(params).map(GeneratedTitleSource::ClaudeTranscript)
+        }
+        _ => None,
+    }
+}
+
 /// The tab title carried by an `ai.prompt_submit` frame, if the agent's hook
 /// payload names its prompt `prompt` (Claude Code, Codex, Grok, Gemini). One
 /// that calls it something else simply names no tab, and its rows keep the
@@ -5660,6 +5825,57 @@ mod tests {
             serde_json::json!({ "hook_payload": { "prompt": 42 } }),
         ] {
             assert_eq!(read_hook_prompt_title(&frame), None, "{frame}");
+        }
+    }
+
+    /// Which agents a generated-title scan is even attempted for. Reading a
+    /// transcript that cannot hold a generated title is work for nothing, and
+    /// worse, its fallback would be the placeholder the tab already wears.
+    #[test]
+    fn a_generated_title_is_only_looked_for_where_one_exists() {
+        use crate::agent_launcher::TerminalAgent;
+
+        #[cfg(windows)]
+        let transcript = r"C:\abs\session.jsonl";
+        #[cfg(not(windows))]
+        let transcript = "/abs/session.jsonl";
+        let frame = serde_json::json!({
+            "hook_payload": { "transcript_path": transcript },
+        });
+
+        assert!(
+            generated_title_source(TerminalAgent::ClaudeCode, &frame).is_some(),
+            "Claude Code writes an ai-title record into the transcript"
+        );
+        for tool in [
+            TerminalAgent::Codex,
+            TerminalAgent::Pi,
+            TerminalAgent::OpenCode,
+            TerminalAgent::Gemini,
+        ] {
+            assert!(
+                generated_title_source(tool, &frame).is_none(),
+                "{tool:?} has no generated title reachable from a hook frame"
+            );
+        }
+    }
+
+    /// A frame with no transcript path names nothing rather than guessing at
+    /// one - the same absolute-path gate `read_transcript_path` applies.
+    #[test]
+    fn a_generated_title_needs_the_frame_to_say_where_to_look() {
+        use crate::agent_launcher::TerminalAgent;
+
+        for frame in [
+            serde_json::json!({}),
+            serde_json::json!({ "hook_payload": {} }),
+            serde_json::json!({ "hook_payload": { "transcript_path": "" } }),
+            serde_json::json!({ "hook_payload": { "transcript_path": "relative.jsonl" } }),
+        ] {
+            assert!(
+                generated_title_source(TerminalAgent::ClaudeCode, &frame).is_none(),
+                "{frame}"
+            );
         }
     }
 

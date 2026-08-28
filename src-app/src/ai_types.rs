@@ -162,34 +162,19 @@ pub struct AgentSession {
     /// against. `None` until a stamped frame lands (frames from a hook
     /// predating the field carry none and are always accepted).
     pub last_event_at_ms: Option<u64>,
-    /// Where this session stands in naming its tab after the work it was
-    /// given. See [`TabTitleSeed`]. In-memory only: the tab title it produces
-    /// is what gets persisted, and a restored session starts over.
-    pub tab_title_seed: TabTitleSeed,
-}
-
-/// The one-shot sequence that names a tab after the first prompt of the
-/// session running in it.
-///
-/// Three states rather than an `Option<String>` because "no prompt yet" and
-/// "already named" must not look alike: the second must stop the second and
-/// twentieth prompts of a session from renaming the tab out from under a name
-/// that already describes it.
-///
-/// The seed survives an unresolved surface. A session started outside the
-/// preset picker - an agent launched by hand in an existing shell - has no
-/// surface id on its first frame, and its binding lands a moment later; the
-/// title is applied then, still built from the FIRST prompt rather than
-/// whichever one happened to arrive after the surface showed up.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub enum TabTitleSeed {
-    /// No prompt has arrived yet.
-    #[default]
-    Unseeded,
-    /// The first prompt's title, waiting for a tab to put it on.
-    Pending(String),
-    /// This session has had its say. Later prompts change nothing.
-    Applied,
+    /// The placeholder title built from this session's FIRST prompt, held
+    /// only until it has been put on a tab.
+    ///
+    /// It waits here because a session's pane is not always known when its
+    /// first prompt arrives - an agent launched by hand in an existing shell
+    /// binds a moment later. Holding it means that tab is still named after
+    /// the first prompt rather than whichever one followed the binding.
+    ///
+    /// Nothing durable lives here. Sessions are torn down a few seconds after
+    /// each turn ends, so "this tab has been named" is a fact about the TAB
+    /// (`TabTitleSource`), not about the session: keeping it here let every
+    /// new turn rename the tab after its own prompt.
+    pub pending_tab_title: Option<String>,
 }
 
 impl AgentSession {
@@ -205,7 +190,7 @@ impl AgentSession {
             proc_start: None,
             last_result: None,
             last_event_at_ms: None,
-            tab_title_seed: TabTitleSeed::default(),
+            pending_tab_title: None,
         }
     }
 }

@@ -291,12 +291,51 @@ fn read_session_meta(path: &Path) -> Option<SessionMeta> {
     read_session_meta_inner(path, false)
 }
 
+/// The LLM-generated title of the session at `path`, and ONLY that.
+///
+/// Auto-naming a tab wants the real thing or nothing: the first-user-message
+/// fallback [`read_session_meta`] falls back to is exactly the placeholder the
+/// tab already shows, so accepting it would end the search having changed
+/// nothing. `None` here means "not written yet, ask again after the next
+/// turn", which is a state the caller must be able to tell from success.
+///
+/// Blocking file I/O - call from inside `smol::unblock`.
+pub fn read_generated_title(path: &Path) -> Option<String> {
+    scan_session_head(path, false)?.ai_title
+}
+
+/// What one pass over a session file's head yields, before it is composed
+/// into a [`SessionMeta`]. Keeping the generated title and the first-message
+/// fallback apart is the point: by the time they are folded into
+/// `SessionMeta::summary` there is no telling which one won.
+struct SessionHead {
+    envelope: FirstLineEnvelope,
+    ai_title: Option<String>,
+    user_fallback: Option<String>,
+    model: Option<String>,
+    usage: Option<AssistantUsage>,
+}
+
 /// Shared session-head scan. `scan_usage = false` is the title-only popover
 /// path: bounded by [`TITLE_SCAN_LIMIT`], it stops as soon as the envelope +
 /// title are known. `scan_usage = true` is the EP-004 attribution path: it
 /// walks past the title (bounded by [`MODEL_USAGE_SCAN_LIMIT`]) aggregating
 /// `message.usage` across assistant turns and capturing `message.model`.
 fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta> {
+    let head = scan_session_head(path, scan_usage)?;
+    Some(SessionMeta {
+        agent: SessionAgent::Claude,
+        session_id: head.envelope.session_id,
+        timestamp: head.envelope.timestamp,
+        cwd: head.envelope.cwd,
+        git_branch: head.envelope.git_branch,
+        summary: head.ai_title.or(head.user_fallback),
+        model: head.model,
+        usage: head.usage,
+    })
+}
+
+fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
     let file = fs::File::open(path).ok()?;
     let mut reader = BufReader::new(file);
     let mut buf = String::new();
@@ -491,16 +530,10 @@ fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta>
         }
     }
 
-    let envelope = envelope?;
-    let summary = ai_title.or(user_fallback);
-
-    Some(SessionMeta {
-        agent: SessionAgent::Claude,
-        session_id: envelope.session_id,
-        timestamp: envelope.timestamp,
-        cwd: envelope.cwd,
-        git_branch: envelope.git_branch,
-        summary,
+    Some(SessionHead {
+        envelope: envelope?,
+        ai_title,
+        user_fallback,
         model,
         usage: saw_usage.then_some(usage),
     })
@@ -678,6 +711,54 @@ mod tests {
         assert_eq!(meta.timestamp, "2026-04-26T13:38:41.095Z");
         assert_eq!(meta.git_branch, "main");
         assert_eq!(meta.summary.as_deref(), Some("Implement feature X"));
+    }
+
+    /// Tab naming wants the generated title or nothing. Returning the
+    /// first-user-message fallback would hand back exactly the placeholder the
+    /// tab already shows, and the caller would take it for success and stop
+    /// looking for the real one.
+    #[test]
+    fn read_generated_title_refuses_the_first_message_fallback() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let envelope = r#"{"parentUuid":null,"type":"user","message":{"role":"user","content":"Ne penses-tu pas qu'il y a trop de features"},"uuid":"u","timestamp":"2026-04-26T13:38:41.095Z","cwd":"/tmp/proj","sessionId":"s"}"#;
+
+        let untitled = dir.path().join("untitled.jsonl");
+        std::fs::write(&untitled, format!("{envelope}\n")).expect("write fixture");
+        assert_eq!(
+            read_generated_title(&untitled),
+            None,
+            "no ai-title yet means ask again after the next turn"
+        );
+        assert_eq!(
+            read_session_meta(&untitled)
+                .expect("meta")
+                .summary
+                .as_deref(),
+            Some("Ne penses-tu pas qu'il y a trop de features"),
+            "the sessions popover still gets its fallback label"
+        );
+
+        let titled = dir.path().join("titled.jsonl");
+        std::fs::write(
+            &titled,
+            format!(
+                "{envelope}\n{}\n",
+                r#"{"type":"ai-title","aiTitle":"Pyxis feature-count review","sessionId":"s"}"#
+            ),
+        )
+        .expect("write fixture");
+        assert_eq!(
+            read_generated_title(&titled).as_deref(),
+            Some("Pyxis feature-count review")
+        );
+    }
+
+    #[test]
+    fn read_generated_title_survives_a_missing_file() {
+        assert_eq!(
+            read_generated_title(std::path::Path::new("/nonexistent/session.jsonl")),
+            None
+        );
     }
 
     #[test]

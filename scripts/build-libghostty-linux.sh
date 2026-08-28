@@ -5,6 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$ROOT/native/libghostty/manifest.toml"
 SOURCE_DIR="${PANEFLOW_GHOSTTY_SOURCE_DIR:-}"
 VERIFY_REPRODUCIBLE=0
+ALLOW_HASH_DRIFT=0
 TARGETS=()
 
 manifest_string() {
@@ -59,6 +60,13 @@ while (($#)); do
       ;;
     --verify-reproducible)
       VERIFY_REPRODUCIBLE=1
+      shift
+      ;;
+    --allow-hash-drift)
+      # Only for minting a new reviewed archive: it downgrades the manifest
+      # hash gate to a warning so the recipe can be re-pinned deliberately.
+      # Matches scripts/build-libghostty-macos.sh.
+      ALLOW_HASH_DRIFT=1
       shift
       ;;
     *)
@@ -211,6 +219,20 @@ build_one() {
   }
   local archive_sha
   archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
+  # Close the recipe-to-manifest link, exactly as the macOS and Windows
+  # recipes do. Without it `--verify-reproducible` only proves build-1 ==
+  # build-2, so a tampered prebuilt tree could pass every Linux gate by
+  # shipping a matching tampered manifest hash.
+  local expected_archive_sha
+  expected_archive_sha="$(target_manifest_string "$rust_target" archive_sha256)"
+  if [[ "$archive_sha" != "$expected_archive_sha" ]]; then
+    if ((ALLOW_HASH_DRIFT)); then
+      echo "warning: canonical Linux archive hash differs from manifest; expected $expected_archive_sha, got $archive_sha" >&2
+    else
+      echo "canonical Linux archive hash differs from manifest; expected $expected_archive_sha, got $archive_sha" >&2
+      return 1
+    fi
+  fi
   cp "$ROOT/$BINDINGS_PATH" "$output/bindings.rs"
   {
     echo "source_sha=$SOURCE_SHA"

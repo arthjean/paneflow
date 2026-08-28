@@ -1,0 +1,38 @@
+name: Linux build dependencies
+description: >-
+  Install the GPUI / Blade / fontconfig system libraries every Linux cargo job
+  in this repository needs. Kept as a composite action so the package list has
+  a single source of truth instead of one copy per job.
+
+inputs:
+  extra-packages:
+    description: >-
+      Space-separated additional apt packages to install in the same
+      transaction (packaging tools, inspection tools, ...).
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies
+      shell: bash
+      env:
+        EXTRA_PACKAGES: ${{ inputs.extra-packages }}
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        # shellcheck disable=SC2086 # word splitting is the point for EXTRA_PACKAGES
+        sudo apt-get install -y \
+          libfontconfig1-dev \
+          libfreetype6-dev \
+          libvulkan-dev \
+          libwayland-dev \
+          libx11-dev \
+          libxcb-render0-dev \
+          libxcb-shape0-dev \
+          libxcb-xfixes0-dev \
+          libxcb1-dev \
+          libxkbcommon-dev \
+          libxkbcommon-x11-dev \
+          $EXTRA_PACKAGES

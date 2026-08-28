@@ -774,7 +774,7 @@ fn restored_tab_title_source(
             .iter()
             .any(|button| button.name.trim() == tab.title.trim())
     {
-        return TabTitleSource::Auto;
+        return TabTitleSource::Preset;
     }
     TabTitleSource::User
 }
@@ -1060,7 +1060,7 @@ mod tests {
         ] {
             assert_eq!(
                 restored_tab_title_source(&legacy_tab(title), &[]),
-                TabTitleSource::Auto,
+                TabTitleSource::Preset,
                 "{title:?} is a label Paneflow writes, not a name a human chose"
             );
         }
@@ -1092,7 +1092,7 @@ mod tests {
         }];
         assert_eq!(
             restored_tab_title_source(&legacy_tab("Run dev server"), &buttons),
-            TabTitleSource::Auto
+            TabTitleSource::Preset
         );
         assert_eq!(
             restored_tab_title_source(&legacy_tab("Run dev server"), &[]),
@@ -1119,10 +1119,13 @@ mod tests {
         );
 
         let auto: paneflow_config::schema::TabSession = serde_json::from_value(
-            serde_json::json!({ "title": "sprint 3", "title_source": "auto" }),
+            serde_json::json!({ "title": "sprint 3", "title_source": "preset" }),
         )
         .expect("valid tab snapshot");
-        assert_eq!(restored_tab_title_source(&auto, &[]), TabTitleSource::Auto);
+        assert_eq!(
+            restored_tab_title_source(&auto, &[]),
+            TabTitleSource::Preset
+        );
     }
 
     #[test]

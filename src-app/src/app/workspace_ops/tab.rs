@@ -69,10 +69,11 @@ impl PaneFlowApp {
             let active = ws.active_tab_mut();
             if active.root.is_none() && active.saved_layout.is_none() {
                 // The preset label is Paneflow naming the tab, not the user:
-                // `Auto` keeps it replaceable by the first prompt's subject.
-                // It must not overwrite a title the user typed on the empty
-                // tab they are filling, which `set_title` already refuses.
-                active.set_title(&title, TabTitleSource::Auto);
+                // the weakest rank, so the first prompt's subject and then the
+                // CLI's own session title both replace it. It must not
+                // overwrite a title the user typed on the empty tab they are
+                // filling, which `set_title` already refuses.
+                active.set_title(&title, TabTitleSource::Preset);
                 active.root = Some(root);
                 true
             } else {

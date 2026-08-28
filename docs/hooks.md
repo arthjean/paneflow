@@ -108,9 +108,11 @@ path at launch.
 
 `paneflow-ai-hook` compacts each agent's payload before it crosses the socket,
 keeping only the fields the app reads. `ai.prompt_submit` carries the opening
-512 bytes of the `prompt` field, which is what names the tab after the work
-asked of the agent; `ai.stop` carries `summary`, `last_result`, and
-`transcript_path`. Everything else in an agent's payload is dropped at the hook
+512 bytes of the `prompt` field, which gives the tab a placeholder name;
+`ai.stop` carries `summary`, `last_result`, and `transcript_path`. The
+transcript path is also how the app finds the title the CLI generated for the
+session (Claude Code's `type:"ai-title"` record), which replaces that
+placeholder. Everything else in an agent's payload is dropped at the hook
 rather than sent and ignored.
 
 An agent whose payload calls its prompt something else (Cursor's

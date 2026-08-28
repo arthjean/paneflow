@@ -476,13 +476,32 @@ fn test_tab_title_source_is_absent_when_the_file_predates_it() {
 
 #[test]
 fn test_tab_title_source_reads_an_explicit_value() {
-    let auto: TabSession =
-        serde_json::from_str(r#"{"title": "wire up the parser", "title_source": "auto"}"#).unwrap();
-    assert_eq!(auto.title_source, Some(TabTitleSource::Auto));
+    let prompt: TabSession =
+        serde_json::from_str(r#"{"title": "wire up the parser", "title_source": "prompt"}"#)
+            .unwrap();
+    assert_eq!(prompt.title_source, Some(TabTitleSource::Prompt));
+
+    let generated: TabSession =
+        serde_json::from_str(r#"{"title": "Parser wiring", "title_source": "generated"}"#).unwrap();
+    assert_eq!(generated.title_source, Some(TabTitleSource::Generated));
+
+    let preset: TabSession =
+        serde_json::from_str(r#"{"title": "Claude Code", "title_source": "preset"}"#).unwrap();
+    assert_eq!(preset.title_source, Some(TabTitleSource::Preset));
 
     let user: TabSession =
         serde_json::from_str(r#"{"title": "sprint 3", "title_source": "user"}"#).unwrap();
     assert_eq!(user.title_source, Some(TabTitleSource::User));
+}
+
+/// The field briefly had a two-value ladder whose non-user half was "auto".
+/// A session file from that build must not have every tab read as user-named,
+/// which would freeze them all out of auto-naming with no visible cause.
+#[test]
+fn test_the_retired_auto_value_reads_as_preset() {
+    let tab: TabSession =
+        serde_json::from_str(r#"{"title": "Claude Code", "title_source": "auto"}"#).unwrap();
+    assert_eq!(tab.title_source, Some(TabTitleSource::Preset));
 }
 
 /// Same tolerance as `AppMode`: a value this build does not know must not cost
@@ -497,15 +516,15 @@ fn test_unknown_tab_title_source_falls_back_to_user() {
 
 /// A tab Paneflow builds around a layout states its provenance outright. The
 /// paneless `empty()` is `Default`, and its blank title makes the distinction
-/// moot - a blank legacy title restores as `Auto` too.
+/// moot - a blank legacy title restores as `Preset` too.
 #[test]
-fn test_a_tab_built_in_process_is_auto() {
+fn test_a_tab_built_in_process_is_preset() {
     assert_eq!(
         TabSession::with_layout(LayoutNode::Pane {
             surfaces: vec![make_surface("/home/user/project")],
         })
         .title_source,
-        Some(TabTitleSource::Auto)
+        Some(TabTitleSource::Preset)
     );
     assert_eq!(TabSession::empty().title, "");
 }
@@ -526,7 +545,7 @@ fn test_tab_title_source_survives_a_roundtrip() {
                 },
                 TabSession {
                     title: "wire up the parser".to_string(),
-                    title_source: Some(TabTitleSource::Auto),
+                    title_source: Some(TabTitleSource::Prompt),
                     layout: None,
                 },
             ],
@@ -551,4 +570,49 @@ fn test_migrate_v1_states_no_provenance_for_promoted_titles() {
     let ws = &state.workspaces[0];
     assert_eq!(ws.tabs[0].title, "", "the inherited tree is an unnamed tab");
     assert_eq!(ws.tabs[1].title_source, None);
+}
+
+/// The precedence ladder, at the schema boundary that persists it. The app's
+/// `Tab::set_title` enforces it; this pins the ordering the file format
+/// promises, so a variant reordered here fails loudly rather than silently
+/// letting an automatic title overwrite a typed one.
+#[test]
+fn test_title_source_precedence_is_a_strict_ladder() {
+    use TabTitleSource::*;
+
+    // Each rank yields to every rank above it.
+    for (weaker, stronger) in [
+        (Preset, Prompt),
+        (Preset, Generated),
+        (Preset, User),
+        (Prompt, Generated),
+        (Prompt, User),
+        (Generated, User),
+    ] {
+        assert!(weaker.yields_to(stronger), "{weaker:?} -> {stronger:?}");
+        assert!(
+            !stronger.yields_to(weaker),
+            "{stronger:?} must not yield to {weaker:?}"
+        );
+    }
+
+    // The one-shot ranks refuse their own kind; the live ones accept it.
+    assert!(!Preset.yields_to(Preset), "a preset label is written once");
+    assert!(
+        !Prompt.yields_to(Prompt),
+        "a later prompt must not rename the tab away from the first"
+    );
+    assert!(
+        Generated.yields_to(Generated),
+        "a regenerated session title is a better one"
+    );
+    assert!(User.yields_to(User), "renaming twice means the second name");
+}
+
+#[test]
+fn test_only_the_top_two_ranks_settle_a_title() {
+    assert!(!TabTitleSource::Preset.is_settled());
+    assert!(!TabTitleSource::Prompt.is_settled());
+    assert!(TabTitleSource::Generated.is_settled());
+    assert!(TabTitleSource::User.is_settled());
 }

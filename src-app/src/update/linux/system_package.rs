@@ -1140,9 +1140,9 @@ mod tests {
     /// tempdir must stay alive for the duration of the test so
     /// the script file is not deleted out from under `Command`.
     ///
-    /// The write is an explicit `File::create + write_all + sync_all
-    /// + drop` rather than the terser `fs::write`, and permissions
-    /// are set AFTER the parent handle is fully closed. On Linux,
+    /// The write is an explicit `File::create + write_all +
+    /// sync_all + drop` rather than the terser `fs::write`, and
+    /// permissions are set AFTER the parent handle is closed. On Linux,
     /// `exec(2)` returns `ETXTBSY` ("Text file busy", OS error 26) if
     /// any process has a write handle open to the target file. A spawn
     /// concurrent with this write window can fork and inherit that
