@@ -170,7 +170,8 @@ function Normalize-CoffArchive {
         [string]$Archive,
         [string]$Destination,
         [string]$LlvmObjcopy,
-        [string]$LlvmAr
+        [string]$LlvmAr,
+        [AllowEmptyCollection()][string[]]$BundledImportLibraries = @()
     )
 
     $work = Join-Path (Split-Path -Parent $Destination) "normalize"
@@ -215,6 +216,43 @@ function Normalize-CoffArchive {
         throw "COFF extraction did not produce: $([string]::Join(', ', $missingNames))"
     }
     $sources = @($sourcePaths | ForEach-Object { Get-Item -LiteralPath $_ })
+
+    # Ghostty asks Zig to link ntdll and kernel32 into the static libghostty-vt,
+    # and a static Zig link resolves a system library by archiving the SDK's
+    # whole import library as a member. Those members are import libraries, not
+    # x64 COFF objects, so llvm-objcopy rejects them outright. Drop them: the
+    # Rust consumer already emits its own link directives from the manifest's
+    # `system_libraries`, and shipping Microsoft's import libraries inside our
+    # archive buys nothing. Anything else that is not a COFF object still
+    # fails loudly below.
+    $importLibrarySet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($importLibrary in $BundledImportLibraries) {
+        $null = $importLibrarySet.Add($importLibrary)
+    }
+    $dropped = @($sources | Where-Object { $importLibrarySet.Contains($_.Name) })
+    foreach ($source in $dropped) {
+        $head = [byte[]]::new(8)
+        $stream = [IO.File]::OpenRead($source.FullName)
+        try {
+            $read = $stream.Read($head, 0, $head.Length)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        $magic = if ($read -eq $head.Length) { [Text.Encoding]::ASCII.GetString($head) } else { "" }
+        if ($magic -ne "!<arch>`n") {
+            throw "$($source.Name) is named after a system library but is not an import library"
+        }
+        Remove-Item -LiteralPath $source.FullName -Force
+    }
+    if ($dropped.Count -ne 0) {
+        Write-Host "dropped bundled import libraries: $([string]::Join(', ', @($dropped | ForEach-Object { $_.Name })))"
+    }
+
+    $sources = @($sources | Where-Object { -not $importLibrarySet.Contains($_.Name) })
+    if ($sources.Count -eq 0) {
+        throw "COFF normalization left no object members in $Archive"
+    }
     $members = @()
     foreach ($source in $sources) {
         $normalized = "$($source.FullName).normalized"
@@ -557,7 +595,7 @@ if ($LASTEXITCODE -ne 0 -or -not ($llvmVersionOutput -match "LLVM version $([reg
     throw "libghostty requires LLVM normalization tools $LlvmVersion"
 }
 
-if ($Normalization -ne "fixed-source-cache-prefix+zig-build-seed0-j1+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
+if ($Normalization -ne "fixed-source-cache-prefix+zig-build-seed0-j1+drop-bundled-import-libs+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
     throw "unsupported Windows archive normalization: $Normalization"
 }
 
@@ -666,7 +704,7 @@ function Invoke-NativeBuild {
     $archiveDirectory = Split-Path $archive -Parent
     $includeDir = Join-Path $prepared "include"
     New-Item -ItemType Directory -Force -Path $archiveDirectory, $includeDir | Out-Null
-    Normalize-CoffArchive $rawArchive $archive $llvmObjcopy $llvmAr
+    Normalize-CoffArchive $rawArchive $archive $llvmObjcopy $llvmAr $SystemLibraryArgs
     Copy-Item -LiteralPath (Join-Path $rawInclude "ghostty") -Destination $includeDir -Recurse -Force
     $bindingText = [IO.File]::ReadAllText($bindings).Replace("`r`n", "`n").Replace("`r", "`n")
     $encoding = New-Object System.Text.UTF8Encoding($false)

@@ -105,10 +105,15 @@ with no local modification: upstream restructured the page formatter itself, so
 the specialization patch the 0.15.2 pin carried is gone and `--seed 0 -j1` alone
 now bounds ReleaseFast code generation on all three platforms.
 
-The export is built at fixed source, cache, and prefix paths. LLVM strips
-debug data from every member of Ghostty's emitted fat archive, zeros each COFF
-timestamp, and repacks ordinally sorted members with deterministic `llvm-ar
-rcD` mode. It deliberately does not replay the emitted `build-lib` command.
+The export is built at fixed source, cache, and prefix paths. Ghostty asks Zig
+to link ntdll and kernel32 into the static library, and a static Zig link
+resolves a system library by archiving the SDK's whole import library, so
+normalization drops those two members first: they are import libraries rather
+than COFF objects, and both the Rust consumer and the MSVC smoke already link
+them from `system_libraries`. LLVM then strips debug data from every remaining
+member of Ghostty's emitted fat archive, zeros each COFF timestamp, and repacks
+ordinally sorted members with deterministic `llvm-ar rcD` mode. It deliberately
+does not replay the emitted `build-lib` command.
 Header and symbol inventories use the same ordinal, case-sensitive ordering,
 so hashes do not depend on the Windows locale. Two complete builds start from
 empty caches at the same canonical paths and must match byte for byte before
