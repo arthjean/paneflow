@@ -106,9 +106,14 @@ jobs:
 
           $archiveUrl = Get-ManifestString 'windows_zig_archive_url'
           $expectedArchiveSha = Get-ManifestString 'windows_zig_archive_sha256'
+          $sourceArchiveUrl = Get-ManifestString 'windows_zig_source_archive_url'
+          $expectedSourceArchiveSha = Get-ManifestString 'windows_zig_source_archive_sha256'
           $toolRoot = Join-Path $env:RUNNER_TEMP "paneflow-zig-$env:ZIG_VERSION"
           $archive = "$toolRoot.zip"
-          if ((Test-Path -LiteralPath $toolRoot) -or (Test-Path -LiteralPath $archive)) {
+          $sourceArchive = "$toolRoot-source.tar.xz"
+          if ((Test-Path -LiteralPath $toolRoot) -or
+              (Test-Path -LiteralPath $archive) -or
+              (Test-Path -LiteralPath $sourceArchive)) {
             throw "refusing to replace an existing Zig tool path: $toolRoot"
           }
           Invoke-WebRequest -Uri $archiveUrl -OutFile $archive
@@ -121,7 +126,13 @@ jobs:
           if (-not (Test-Path -LiteralPath $zig -PathType Leaf)) {
             throw "Zig distribution did not contain the expected executable: $zig"
           }
+          Invoke-WebRequest -Uri $sourceArchiveUrl -OutFile $sourceArchive
+          $actualSourceArchiveSha = (Get-FileHash -LiteralPath $sourceArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualSourceArchiveSha -ne $expectedSourceArchiveSha) {
+            throw "Zig source archive checksum mismatch: expected $expectedSourceArchiveSha, got $actualSourceArchiveSha"
+          }
           "PANEFLOW_ZIG=$zig" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PANEFLOW_ZIG_SOURCE_ARCHIVE=$sourceArchive" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install manifest-pinned MSVC toolset and Windows SDK
         env:
@@ -197,8 +208,8 @@ jobs:
 
       # The rebuild deliberately has no native object cache. The canonical
       # source/cache paths are part of the reproducibility contract, and the
-      # script performs two independent clean builds before publication.
-      - name: Rebuild and compare canonical archive
+      # script performs six independent clean builds before publication.
+      - name: Rebuild and compare six canonical archives
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
@@ -207,7 +218,8 @@ jobs:
 
           # Same narrow retry as scripts/ci-retry-network.sh on the Unix lanes.
           # Zig fetches the 16 build.zig.zon dependencies from two hosts on
-          # every clean build, twice under -VerifyReproducible, with no cache.
+          # every clean build, six times across three reproducibility passes,
+          # with no cache.
           # Only a transport failure is retried; an archive hash mismatch or a
           # reproducibility divergence still fails on the first attempt.
           $transient = 'unable to connect to server|TemporaryNameServerFailure|UnknownHostName|' +
@@ -225,12 +237,20 @@ jobs:
             # from an unrelated native command earlier in the job.
             $global:LASTEXITCODE = 0
             try {
-              & ./scripts/build-libghostty-windows.ps1 `
-                -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
-                -Zig $env:PANEFLOW_ZIG `
-                -OutputDir "target\libghostty\$env:TARGET" `
-                -VerifyReproducible *>&1 | Tee-Object -FilePath $log
-              if ($LASTEXITCODE -ne 0) { $failure = "exit code $LASTEXITCODE" }
+              for ($reproPass = 1; $reproPass -le 3; $reproPass++) {
+                Write-Host "reproducibility pass $reproPass/3"
+                $passEvidence = Join-Path $env:EVIDENCE_DIR "reproducibility-pass-$reproPass"
+                & ./scripts/build-libghostty-windows.ps1 `
+                  -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
+                  -Zig $env:PANEFLOW_ZIG `
+                  -OutputDir "target\libghostty\$env:TARGET" `
+                  -EvidenceDir $passEvidence `
+                  -VerifyReproducible *>&1 | Tee-Object -FilePath $log -Append
+                if ($LASTEXITCODE -ne 0) {
+                  $failure = "reproducibility pass $reproPass exited with code $LASTEXITCODE"
+                  break
+                }
+              }
             }
             catch {
               $failure = $_.Exception.Message
