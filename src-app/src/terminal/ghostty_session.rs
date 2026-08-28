@@ -2003,6 +2003,19 @@ fn run_runtime(
     let mut command = CommandBuilder::new(&params.shell);
     command.args(&params.extra_args);
     command.cwd(&params.cwd);
+    // `CommandBuilder` seeds its env from this process's, so a marker Paneflow
+    // inherited reaches the pane unless it is removed HERE - the assembled env
+    // map only carries overrides and cannot unset an inherited name. Two
+    // families qualify: the host terminal's identity (Windows Terminal's
+    // `WT_SESSION`, tmux's `TMUX`) and the launching agent session's own
+    // (`CLAUDE_CODE_*`).
+    // Runs before the override loop so an explicit `terminal.env` entry still
+    // wins: the target is inheritance, not the user's stated intent. The agent
+    // markers are not exposed to that intent anyway - `assemble_pty_env`
+    // strips them from the merged map after the user layer.
+    for key in super::pty_session::inherited_env_keys_to_strip() {
+        command.env_remove(&key);
+    }
     for (key, value) in &params.env {
         command.env(key, value);
     }
