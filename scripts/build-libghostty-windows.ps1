@@ -753,8 +753,18 @@ function Invoke-NativeBuild {
         throw "archive for $Target contains a non-x64 COFF member: $archive"
     }
     $directives = @(& $llvmReadobj --coff-directives $archive)
-    if ($LASTEXITCODE -ne 0 -or -not ($directives -match 'RuntimeLibrary=MT_StaticRelease') -or -not ($directives -match 'DEFAULTLIB:libcpmt.lib')) {
-        throw "archive does not declare the reviewed MSVC static CRT model"
+    if ($LASTEXITCODE -ne 0) {
+        throw "cannot inspect COFF directives in $archive"
+    }
+    if (-not ($directives -match 'RuntimeLibrary=MT_StaticRelease') -or -not ($directives -match "DEFAULTLIB:$CxxRuntime")) {
+        # Name what the archive actually asks for. The bare assertion sent the
+        # Ghostty re-pin looking for a needle in a 40-minute rebuild.
+        $observed = Sort-Ordinal @($directives |
+            Select-String -Pattern '/(?:DEFAULTLIB|FAILIFMISMATCH):[^ "]+' -AllMatches |
+            ForEach-Object { $_.Matches } |
+            ForEach-Object { $_.Value } |
+            Select-Object -Unique)
+        throw "archive does not declare the reviewed MSVC static CRT model (RuntimeLibrary=MT_StaticRelease and DEFAULTLIB:$CxxRuntime); it declares: $([string]::Join(', ', $observed))"
     }
 
     $smokeObject = Join-Path $buildRoot "windows-smoke.obj"
