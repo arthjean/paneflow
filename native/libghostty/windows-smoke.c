@@ -19,12 +19,7 @@ int main(void) {
     }
 
     GhosttyTerminal terminal = NULL;
-    const GhosttyTerminalOptions options = {
-        .cols = 80,
-        .rows = 24,
-        .max_scrollback = 1,
-    };
-    if (ghostty_terminal_new(NULL, &terminal, options) != GHOSTTY_SUCCESS || terminal == NULL) {
+    if (ghostty_terminal_new(NULL, &terminal, 80, 24) != GHOSTTY_SUCCESS || terminal == NULL) {
         fputs("ghostty_terminal_new failed\n", stderr);
         return 1;
     }

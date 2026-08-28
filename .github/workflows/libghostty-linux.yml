@@ -263,12 +263,19 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
         run: |
-          tar -tzf "$(find target/bundle -name '*.tar.gz' -print -quit)" \
-            | grep -Fq 'paneflow.app/THIRD_PARTY_NOTICES.md'
-          dpkg-deb -c "$(find "target/$TARGET/debian" -name '*.deb' -print -quit)" \
-            | grep -Fq './usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md'
-          rpm -qlp "$(find "target/$TARGET/generate-rpm" -name '*.rpm' -print -quit)" \
-            | grep -Fq '/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md'
+          # Capture-then-grep via here-strings instead of a pipe, the same
+          # way release.yml checks apt-cache policy. Under `set -o pipefail`,
+          # `tar -tzf | grep -Fq` flakes with exit 2: grep closes its stdin
+          # on the first match, tar takes EPIPE on its next write and reports
+          # `tar: stdout: write error`, and pipefail turns that into a step
+          # failure. Every listing here is multi-line, so all three have the
+          # same surface. Observed on the aarch64 and x86_64 lanes.
+          bundle=$(tar -tzf "$(find target/bundle -name '*.tar.gz' -print -quit)")
+          grep -Fq 'paneflow.app/THIRD_PARTY_NOTICES.md' <<< "$bundle"
+          deb=$(dpkg-deb -c "$(find "target/$TARGET/debian" -name '*.deb' -print -quit)")
+          grep -Fq './usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md' <<< "$deb"
+          rpm_listing=$(rpm -qlp "$(find "target/$TARGET/generate-rpm" -name '*.rpm' -print -quit)")
+          grep -Fq '/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md' <<< "$rpm_listing"
           appimage="$(find target/appimage -name '*.AppImage' -print -quit)"
           chmod +x "$appimage"
           extract_dir="$(mktemp -d)"

@@ -3,6 +3,7 @@ param(
     [string]$SourceDir = $env:PANEFLOW_GHOSTTY_SOURCE_DIR,
     [string]$OutputDir,
     [string]$Zig = "zig",
+    [string]$ZigSourceArchive = $env:PANEFLOW_ZIG_SOURCE_ARCHIVE,
     [string]$EvidenceDir = $env:EVIDENCE_DIR,
     [switch]$VerifyReproducible
 )
@@ -93,6 +94,18 @@ function Write-Utf8Lines {
     [IO.File]::WriteAllText($Path, $content, $encoding)
 }
 
+function Normalize-InstalledHeaders {
+    param([string]$IncludeDir)
+
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    foreach ($header in Get-ChildItem -LiteralPath $IncludeDir -Recurse -File -Filter "*.h") {
+        $text = [IO.File]::ReadAllText($header.FullName).Replace("`r`n", "`n").Replace("`r", "`n")
+        $text = $text.Replace([char]0x2014, [char]0x002d)
+        $text = [regex]::Replace($text, '(?m)[\t ]+$', '')
+        [IO.File]::WriteAllText($header.FullName, $text, $encoding)
+    }
+}
+
 function Sort-Ordinal {
     param([AllowEmptyCollection()][string[]]$Values)
 
@@ -170,7 +183,8 @@ function Normalize-CoffArchive {
         [string]$Archive,
         [string]$Destination,
         [string]$LlvmObjcopy,
-        [string]$LlvmAr
+        [string]$LlvmAr,
+        [AllowEmptyCollection()][string[]]$BundledImportLibraries = @()
     )
 
     $work = Join-Path (Split-Path -Parent $Destination) "normalize"
@@ -215,6 +229,43 @@ function Normalize-CoffArchive {
         throw "COFF extraction did not produce: $([string]::Join(', ', $missingNames))"
     }
     $sources = @($sourcePaths | ForEach-Object { Get-Item -LiteralPath $_ })
+
+    # Ghostty asks Zig to link ntdll and kernel32 into the static libghostty-vt,
+    # and a static Zig link resolves a system library by archiving the SDK's
+    # whole import library as a member. Those members are import libraries, not
+    # x64 COFF objects, so llvm-objcopy rejects them outright. Drop them: the
+    # Rust consumer already emits its own link directives from the manifest's
+    # `system_libraries`, and shipping Microsoft's import libraries inside our
+    # archive buys nothing. Anything else that is not a COFF object still
+    # fails loudly below.
+    $importLibrarySet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($importLibrary in $BundledImportLibraries) {
+        $null = $importLibrarySet.Add($importLibrary)
+    }
+    $dropped = @($sources | Where-Object { $importLibrarySet.Contains($_.Name) })
+    foreach ($source in $dropped) {
+        $head = [byte[]]::new(8)
+        $stream = [IO.File]::OpenRead($source.FullName)
+        try {
+            $read = $stream.Read($head, 0, $head.Length)
+        }
+        finally {
+            $stream.Dispose()
+        }
+        $magic = if ($read -eq $head.Length) { [Text.Encoding]::ASCII.GetString($head) } else { "" }
+        if ($magic -ne "!<arch>`n") {
+            throw "$($source.Name) is named after a system library but is not an import library"
+        }
+        Remove-Item -LiteralPath $source.FullName -Force
+    }
+    if ($dropped.Count -ne 0) {
+        Write-Host "dropped bundled import libraries: $([string]::Join(', ', @($dropped | ForEach-Object { $_.Name })))"
+    }
+
+    $sources = @($sources | Where-Object { -not $importLibrarySet.Contains($_.Name) })
+    if ($sources.Count -eq 0) {
+        throw "COFF normalization left no object members in $Archive"
+    }
     $members = @()
     foreach ($source in $sources) {
         $normalized = "$($source.FullName).normalized"
@@ -412,11 +463,21 @@ function Export-ReproducibilityEvidence {
         target = $Target
         source_sha = $SourceSha
         source_date_epoch = $SourceDateEpoch
+        source_patch = [ordered]@{
+            path = $SourcePatchPath
+            sha256 = $SourcePatchSha
+            target = $SourcePatchTarget
+            input_sha256 = $SourcePatchInputSha
+            output_sha256 = $SourcePatchOutputSha
+        }
+        headers_normalization = $HeadersNormalization
         toolchain = [ordered]@{
             zig_version = $ZigVersion
             zig_archive_url = $ZigArchiveUrl
             zig_archive_sha256 = $ZigArchiveSha
             zig_executable_sha256 = $ZigExecutableSha
+            zig_source_archive_url = $ZigSourceArchiveUrl
+            zig_source_archive_sha256 = $ZigSourceArchiveSha
             zig_image_base = $ZigImageBase
             zig_dll_characteristics = $ZigDllCharacteristics
             msvc_toolset = $MsvcToolset
@@ -443,6 +504,10 @@ if ([string]::IsNullOrWhiteSpace($SourceDir)) {
     throw "PANEFLOW_GHOSTTY_SOURCE_DIR or -SourceDir must point to the pinned Ghostty checkout"
 }
 $SourceDir = (Resolve-Path -LiteralPath $SourceDir).Path
+if ([string]::IsNullOrWhiteSpace($ZigSourceArchive)) {
+    throw "PANEFLOW_ZIG_SOURCE_ARCHIVE or -ZigSourceArchive must point to the pinned Zig source archive"
+}
+$ZigSourceArchive = (Resolve-Path -LiteralPath $ZigSourceArchive).Path
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $Root "target\libghostty\$Target"
 }
@@ -453,8 +518,16 @@ $ZigVersion = Get-ManifestString "zig_version"
 $ZigArchiveUrl = Get-ManifestString "windows_zig_archive_url"
 $ZigArchiveSha = Get-ManifestString "windows_zig_archive_sha256"
 $ZigExecutableSha = Get-ManifestString "windows_zig_executable_sha256"
+$ZigSourceArchiveUrl = Get-ManifestString "windows_zig_source_archive_url"
+$ZigSourceArchiveSha = Get-ManifestString "windows_zig_source_archive_sha256"
 $ZigImageBase = Get-ManifestString "windows_zig_image_base"
 $ZigDllCharacteristics = Get-ManifestString "windows_zig_dll_characteristics"
+$SourcePatchPath = Get-ManifestString "windows_source_patch_path"
+$SourcePatchSha = Get-ManifestString "windows_source_patch_sha256"
+$SourcePatchTarget = Get-ManifestString "windows_source_patch_target"
+$SourcePatchInputSha = Get-ManifestString "windows_source_patch_input_sha256"
+$SourcePatchOutputSha = Get-ManifestString "windows_source_patch_output_sha256"
+$HeadersNormalization = Get-ManifestString "windows_headers_normalization"
 $HeaderPath = Get-ManifestString "header_path"
 $HeaderSha = Get-ManifestString "header_sha256"
 $BindingsPath = Get-ManifestString "bindings_path"
@@ -518,13 +591,42 @@ if ($zigMetadata.ImageBase -ne $ZigImageBase -or
     $zigMetadata.DllCharacteristics -ne $ZigDllCharacteristics) {
     throw "Zig $ZigVersion PE metadata drift: expected image base $ZigImageBase and DLL characteristics $ZigDllCharacteristics, got $($zigMetadata.ImageBase) and $($zigMetadata.DllCharacteristics)"
 }
-$ZigLibDir = Join-Path (Split-Path $ZigPath -Parent) "lib"
-if (-not (Test-Path -LiteralPath $ZigLibDir -PathType Container)) {
+$ZigBinaryLibDir = Join-Path (Split-Path $ZigPath -Parent) "lib"
+if (-not (Test-Path -LiteralPath $ZigBinaryLibDir -PathType Container)) {
     throw "libghostty requires the Zig $ZigVersion library beside $ZigPath"
 }
 $actualZig = (& $ZigPath version).Trim()
 if ($LASTEXITCODE -ne 0 -or $actualZig -ne $ZigVersion) {
     throw "libghostty requires Zig $ZigVersion, found $actualZig"
+}
+if ((Get-Sha256 $ZigSourceArchive) -ne $ZigSourceArchiveSha) {
+    throw "Zig $ZigVersion source archive checksum mismatch: $ZigSourceArchive"
+}
+
+$SourcePatch = [IO.Path]::GetFullPath((Join-Path $Root $SourcePatchPath))
+if (-not $SourcePatch.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+    -not (Test-Path -LiteralPath $SourcePatch -PathType Leaf)) {
+    throw "manifest-pinned Ghostty source patch must be a repository file: $SourcePatchPath"
+}
+if ((Get-NormalizedTextSha256 $SourcePatch) -ne $SourcePatchSha) {
+    throw "Ghostty source patch checksum mismatch at $SourcePatch"
+}
+$patchStats = @(& git -c core.autocrlf=false apply --unidiff-zero --numstat $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
+if ($LASTEXITCODE -ne 0 -or $patchStats.Count -ne 1 -or
+    $patchStats[0] -notmatch '^[0-9-]+\t[0-9-]+\t(.+)$' -or
+    $matches[1].Replace('\', '/') -ne $SourcePatchTarget.Replace('\', '/')) {
+    throw "Ghostty source patch must modify exactly $SourcePatchTarget"
+}
+$sourcePatchTargetPath = [IO.Path]::GetFullPath((Join-Path $SourceDir $SourcePatchTarget))
+if (-not $sourcePatchTargetPath.StartsWith($SourceDir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+    -not (Test-Path -LiteralPath $sourcePatchTargetPath -PathType Leaf)) {
+    throw "manifest-pinned Ghostty source patch target is invalid: $SourcePatchTarget"
+}
+if ((Get-NormalizedTextSha256 $sourcePatchTargetPath) -ne $SourcePatchInputSha) {
+    throw "Ghostty source patch input checksum mismatch at $sourcePatchTargetPath"
+}
+if ($HeadersNormalization -ne "utf8-lf+trim-trailing-space+em-dash-to-hyphen") {
+    throw "unsupported Windows header normalization: $HeadersNormalization"
 }
 
 $sourceHeader = Join-Path $SourceDir $HeaderPath
@@ -557,7 +659,7 @@ if ($LASTEXITCODE -ne 0 -or -not ($llvmVersionOutput -match "LLVM version $([reg
     throw "libghostty requires LLVM normalization tools $LlvmVersion"
 }
 
-if ($Normalization -ne "fixed-source-cache-prefix+zig-build-seed0-j1+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
+if ($Normalization -ne "pinned-formatter-patch+fixed-source-cache-prefix+zig-source-lib+zig-build-seed0-j1+drop-bundled-import-libs+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
     throw "unsupported Windows archive normalization: $Normalization"
 }
 
@@ -584,6 +686,21 @@ $fixedSourceCreated = $false
 $canonicalSource = [IO.Path]::GetFullPath($CanonicalSourcePath)
 $sourceArchive = Join-Path $tempRoot "source.tar"
 $buildSource = $null
+$ZigLibDir = $null
+
+function Initialize-ZigSourceLib {
+    $zigSourceRoot = Join-Path $tempRoot "zig-source"
+    New-Item -ItemType Directory -Path $zigSourceRoot | Out-Null
+    $null = & $tarExe -xf $ZigSourceArchive -C $zigSourceRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "cannot extract the pinned Zig source archive"
+    }
+    $sourceLib = Join-Path $zigSourceRoot "zig-$ZigVersion\lib"
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceLib "std\std.zig") -PathType Leaf)) {
+        throw "Zig $ZigVersion source archive does not contain the expected library"
+    }
+    return $sourceLib
+}
 
 function Initialize-CanonicalSource {
     $publicRoot = [IO.Path]::GetFullPath("C:\Users\Public")
@@ -605,6 +722,28 @@ function Initialize-CanonicalSource {
     }
     if ((Get-Sha256 (Join-Path $canonicalSource $HeaderPath)) -ne $HeaderSha) {
         throw "canonical Ghostty export has an unexpected header checksum"
+    }
+    $canonicalPatchTarget = [IO.Path]::GetFullPath((Join-Path $canonicalSource $SourcePatchTarget))
+    if (-not $canonicalPatchTarget.StartsWith($canonicalSource + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
+        (Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchInputSha) {
+        throw "canonical Ghostty export has an unexpected source patch input"
+    }
+    Push-Location $canonicalSource
+    try {
+        $patchCheck = @(& git -c core.autocrlf=false apply --unidiff-zero --check --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
+        if ($LASTEXITCODE -ne 0) {
+            throw "manifest-pinned Ghostty source patch does not apply cleanly`n$($patchCheck -join "`n")"
+        }
+        $patchOutput = @(& git -c core.autocrlf=false apply --unidiff-zero --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
+        if ($LASTEXITCODE -ne 0) {
+            throw "cannot apply manifest-pinned Ghostty source patch`n$($patchOutput -join "`n")"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    if ((Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchOutputSha) {
+        throw "canonical Ghostty source patch output checksum mismatch"
     }
     return $canonicalSource
 }
@@ -666,8 +805,9 @@ function Invoke-NativeBuild {
     $archiveDirectory = Split-Path $archive -Parent
     $includeDir = Join-Path $prepared "include"
     New-Item -ItemType Directory -Force -Path $archiveDirectory, $includeDir | Out-Null
-    Normalize-CoffArchive $rawArchive $archive $llvmObjcopy $llvmAr
+    Normalize-CoffArchive $rawArchive $archive $llvmObjcopy $llvmAr $SystemLibraryArgs
     Copy-Item -LiteralPath (Join-Path $rawInclude "ghostty") -Destination $includeDir -Recurse -Force
+    Normalize-InstalledHeaders (Join-Path $includeDir "ghostty\vt")
     $bindingText = [IO.File]::ReadAllText($bindings).Replace("`r`n", "`n").Replace("`r", "`n")
     $encoding = New-Object System.Text.UTF8Encoding($false)
     [IO.File]::WriteAllText((Join-Path $prepared "bindings.rs"), $bindingText, $encoding)
@@ -714,9 +854,19 @@ function Invoke-NativeBuild {
     if ($machineCount -ne $members.Count -or @($headers | Where-Object { $_ -match '^Format:' -and $_ -notmatch 'COFF-x86-64' }).Count -ne 0) {
         throw "archive for $Target contains a non-x64 COFF member: $archive"
     }
+    # Keep the archive inventory and its linker directives as evidence. Under
+    # Zig 0.15.2 every C and C++ member carried a `.drectve` naming the CRT
+    # model; under 0.16.0 none of them does, so the archive no longer states
+    # its own CRT and the smoke executable below is where that claim is
+    # checked instead.
     $directives = @(& $llvmReadobj --coff-directives $archive)
-    if ($LASTEXITCODE -ne 0 -or -not ($directives -match 'RuntimeLibrary=MT_StaticRelease') -or -not ($directives -match 'DEFAULTLIB:libcpmt.lib')) {
-        throw "archive does not declare the reviewed MSVC static CRT model"
+    if ($LASTEXITCODE -ne 0) {
+        throw "cannot inspect COFF directives in $archive"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($EvidenceDir)) {
+        New-Item -ItemType Directory -Force -Path $EvidenceDir | Out-Null
+        Write-Utf8Lines (Join-Path $EvidenceDir "archive-members-$Label.txt") $members
+        Write-Utf8Lines (Join-Path $EvidenceDir "coff-directives-$Label.txt") $directives
     }
 
     $smokeObject = Join-Path $buildRoot "windows-smoke.obj"
@@ -732,8 +882,26 @@ function Invoke-NativeBuild {
         throw "MSVC static smoke failed at runtime with exit code $smokeExitCode`n$($smokeOutput -join "`n")"
     }
     $dependencies = @(& $dumpbinExe /nologo /dependents $smokeExe)
-    if ($LASTEXITCODE -ne 0 -or $dependencies -match 'ghostty-vt\.dll') {
-        throw "MSVC static smoke has a forbidden ghostty-vt.dll dependency"
+    if ($LASTEXITCODE -ne 0) {
+        throw "cannot inspect the MSVC static smoke dependencies"
+    }
+    # `cl /MT` above links the archive into a fully static-CRT executable, so
+    # the import table is what proves `$Crt` and `$CxxRuntime`: an archive
+    # member compiled against the dynamic CRT would drag `vcruntime140.dll`,
+    # `ucrtbase.dll` or `msvcp140.dll` in behind it. This replaces the
+    # `/FAILIFMISMATCH` assertion the archive can no longer make about itself.
+    $imports = @($dependencies |
+        Select-String -Pattern '^\s+([A-Za-z0-9._-]+\.dll)\s*$' |
+        ForEach-Object { $_.Matches[0].Groups[1].Value.ToLowerInvariant() } |
+        Select-Object -Unique)
+    $forbidden = @($imports | Where-Object {
+        $_ -match '^ghostty.*\.dll$' -or
+        $_ -match '^(?:vcruntime|msvcp|msvcr)[0-9]*d?\.dll$' -or
+        $_ -match '^ucrtbased?\.dll$' -or
+        $_ -match '^api-ms-win-crt-'
+    })
+    if ($forbidden.Count -ne 0) {
+        throw "MSVC static smoke imports a forbidden runtime: $([string]::Join(', ', $forbidden))"
     }
 
     $archiveSha = Get-Sha256 $archive
@@ -743,10 +911,18 @@ function Invoke-NativeBuild {
     Write-Utf8Lines $buildInfo @(
         "source_sha=$SourceSha",
         "source_date_epoch=$SourceDateEpoch",
+        "source_patch_path=$SourcePatchPath",
+        "source_patch_sha256=$SourcePatchSha",
+        "source_patch_target=$SourcePatchTarget",
+        "source_patch_input_sha256=$SourcePatchInputSha",
+        "source_patch_output_sha256=$SourcePatchOutputSha",
+        "headers_normalization=$HeadersNormalization",
         "zig_version=$ZigVersion",
         "zig_archive_url=$ZigArchiveUrl",
         "zig_archive_sha256=$ZigArchiveSha",
         "zig_executable_sha256=$ZigExecutableSha",
+        "zig_source_archive_url=$ZigSourceArchiveUrl",
+        "zig_source_archive_sha256=$ZigSourceArchiveSha",
         "zig_image_base=$ZigImageBase",
         "zig_dll_characteristics=$ZigDllCharacteristics",
         "header_sha256=$HeaderSha",
@@ -782,6 +958,7 @@ function Invoke-NativeBuild {
 }
 
 try {
+    $ZigLibDir = Initialize-ZigSourceLib
     $buildSource = Initialize-CanonicalSource
     $first = Invoke-NativeBuild "build-1"
     if ($VerifyReproducible) {
