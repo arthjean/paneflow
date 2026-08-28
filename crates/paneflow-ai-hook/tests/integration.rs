@@ -410,7 +410,9 @@ fn supported_events_dispatch_through_the_process_boundary() {
         let frame = server.expect_frame(case.name);
         let params = assert_envelope(&frame, &case);
         if case.name == "claude_prompt" {
-            assert!(params["hook_payload"].get("prompt").is_none());
+            // The prompt crosses the real process boundary intact: the app
+            // names the tab after it.
+            assert_eq!(params["hook_payload"]["prompt"], "hello");
         }
         if case.name == "codex_session_start" {
             assert_eq!(params["pid"], 4242);

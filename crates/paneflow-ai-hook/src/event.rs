@@ -9,6 +9,15 @@ use serde_json::Value;
 
 pub(crate) const MAX_HOOK_TEXT_BYTES: usize = 4096;
 
+/// Cap on the `prompt` carried by `ai.prompt_submit`, which the app reads to
+/// name the tab after what the turn is about.
+///
+/// Much tighter than [`MAX_HOOK_TEXT_BYTES`] because a tab title is a handful
+/// of words: everything past the opening sentence is bytes crossing the socket
+/// on every single prompt for nothing. The app truncates again on its own side
+/// - this is about what the wire carries, not about trusting the length.
+pub(crate) const MAX_HOOK_PROMPT_BYTES: usize = 512;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HookEvent {
     SessionStart,
@@ -204,7 +213,18 @@ fn compact_hook_payload(event: HookEvent, payload: &Value) -> Value {
 
     match event {
         HookEvent::SessionStart => copy_string_field(payload, &mut compact, "cwd", 2048),
-        HookEvent::UserPromptSubmit => {}
+        // The opening of the prompt, and only the opening: the app names the
+        // tab after the first thing asked of the agent, so a row reads "fix
+        // the flaky worktree test" instead of a fourth "Claude Code". Nothing
+        // else consumes it, and nothing interprets it - it is UNTRUSTED text
+        // that reaches a label, and the app sanitizes it there.
+        //
+        // Agents whose hook payload calls this field something else simply
+        // send no prompt, and their tabs keep the preset label. That is a
+        // missing nicety, not a broken session.
+        HookEvent::UserPromptSubmit => {
+            copy_string_field(payload, &mut compact, "prompt", MAX_HOOK_PROMPT_BYTES);
+        }
         HookEvent::Notification => {
             copy_string_field(payload, &mut compact, "notification_type", 128);
             copy_string_field(payload, &mut compact, "message", MAX_HOOK_TEXT_BYTES);
@@ -422,19 +442,60 @@ mod tests {
     }
 
     #[test]
-    fn payload_compaction_drops_prompts_and_caps_text() {
+    fn payload_compaction_caps_text() {
         let payload = json!({
             "session_id": "s1",
             "prompt": "x".repeat(10_000),
             "message": "é".repeat(10_000),
             "notification_type": "permission_prompt",
         });
-        let prompt = compact_hook_payload(HookEvent::UserPromptSubmit, &payload);
-        assert_eq!(prompt, json!({"session_id": "s1"}));
+        let submit = compact_hook_payload(HookEvent::UserPromptSubmit, &payload);
+        let prompt = submit["prompt"].as_str().expect("prompt string");
+        assert_eq!(prompt.len(), MAX_HOOK_PROMPT_BYTES);
+        assert_eq!(submit["session_id"], json!("s1"));
 
         let notification = compact_hook_payload(HookEvent::Notification, &payload);
         let message = notification["message"].as_str().expect("message string");
         assert!(message.len() <= MAX_HOOK_TEXT_BYTES);
         assert!(message.is_char_boundary(message.len()));
+    }
+
+    /// A prompt is cut on a character boundary, not a byte one - the frame
+    /// would otherwise carry a half-encoded character.
+    #[test]
+    fn a_multibyte_prompt_is_truncated_on_a_character_boundary() {
+        let payload = json!({ "prompt": "é".repeat(1_000) });
+        let submit = compact_hook_payload(HookEvent::UserPromptSubmit, &payload);
+        let prompt = submit["prompt"].as_str().expect("prompt string");
+        assert!(prompt.len() <= MAX_HOOK_PROMPT_BYTES);
+        assert!(prompt.is_char_boundary(prompt.len()));
+        assert!(
+            prompt
+                .trim_end_matches("...[truncated]")
+                .chars()
+                .all(|ch| ch == 'é'),
+            "only the shared truncation marker follows the kept text"
+        );
+    }
+
+    /// Nothing else rides along: an agent that puts its whole conversation in
+    /// the prompt payload must not push it all across the socket.
+    #[test]
+    fn payload_compaction_keeps_only_the_prompt_and_its_identifiers() {
+        let payload = json!({
+            "session_id": "s1",
+            "pid": 4242,
+            "prompt": "fix the flaky worktree test",
+            "cwd": "/home/user/project",
+            "transcript_path": "/home/user/.claude/projects/x.jsonl",
+        });
+        assert_eq!(
+            compact_hook_payload(HookEvent::UserPromptSubmit, &payload),
+            json!({
+                "session_id": "s1",
+                "pid": 4242,
+                "prompt": "fix the flaky worktree test",
+            })
+        );
     }
 }

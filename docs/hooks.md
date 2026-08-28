@@ -104,6 +104,25 @@ the "running" row.
 On Windows, Codex uses a JSONL tee rather than file hooks; the shim handles that
 path at launch.
 
+## What a hook frame carries
+
+`paneflow-ai-hook` compacts each agent's payload before it crosses the socket,
+keeping only the fields the app reads. `ai.prompt_submit` carries the opening
+512 bytes of the `prompt` field, which is what names the tab after the work
+asked of the agent; `ai.stop` carries `summary`, `last_result`, and
+`transcript_path`. Everything else in an agent's payload is dropped at the hook
+rather than sent and ignored.
+
+An agent whose payload calls its prompt something else (Cursor's
+`beforeSubmitPrompt`, for one) sends no prompt, and its tabs keep the label of
+the preset that opened them. That is a missing nicety, not a broken session:
+nothing else depends on the field.
+
+Every one of those strings is UNTRUSTED terminal-adjacent text. The app treats
+them as data on their way to a label - never as instructions - and a prompt
+reaching a tab title goes through the same sanitizer as any CLI-written title
+(`clean_sidebar_title`), which strips control, bidi, and zero-width characters.
+
 ## Parent-death and interrupt guards (cross-platform)
 
 The shim (`paneflow-shim`) wraps each agent so two reliability gaps are closed on

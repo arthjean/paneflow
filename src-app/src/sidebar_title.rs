@@ -9,6 +9,17 @@
 /// Longest title a sidebar row keeps; the rest is elided with `…`.
 const MAX_SIDEBAR_TITLE_CHARS: usize = 240;
 
+/// Words a tab title keeps from the prompt that opened the session.
+///
+/// Enough to tell "fix the flaky worktree test" from "add the release
+/// checksum job", short enough that a rail full of them stays scannable.
+const PROMPT_TITLE_WORDS: usize = 6;
+
+/// And a character ceiling for those words, since six of them can still be
+/// six identifiers. Well under [`MAX_SIDEBAR_TITLE_CHARS`]: this one is about
+/// what a person reads at a glance, not about bounding a buffer.
+const PROMPT_TITLE_MAX_CHARS: usize = 48;
+
 /// Strip leading decoration glyphs and invisible characters that CLI
 /// agents (Claude Code, Codex, OpenCode, Pi, Amp) bake into their
 /// session / OSC titles to indicate status. Without this:
@@ -105,6 +116,47 @@ fn is_title_meaningful_lead(c: char) -> bool {
         )
 }
 
+/// A tab title made from the first prompt of a session.
+///
+/// The opening words of what was asked, which is what tells one agent tab
+/// from another - the alternative being a rail of identical "Claude Code"
+/// rows. Deliberately not a summary: no model runs here, so naming costs
+/// nothing and cannot be slow, wrong, or unavailable.
+///
+/// `prompt` is UNTRUSTED text from the agent's hook payload. It goes through
+/// the same [`clean_sidebar_title`] every other CLI-written label does, which
+/// neutralizes control and bidi characters, folds the newlines a pasted
+/// prompt carries, and strips leading decoration.
+///
+/// Returns `None` when nothing usable remains - the caller leaves the tab's
+/// current title alone rather than blanking it.
+pub fn tab_title_from_prompt(prompt: &str) -> Option<String> {
+    let cleaned = clean_sidebar_title(prompt)?;
+    let mut title = String::new();
+    for word in cleaned.split_whitespace().take(PROMPT_TITLE_WORDS) {
+        // Keep whole words: a title cut mid-identifier reads as corruption
+        // rather than as an abbreviation. The first word is kept whatever its
+        // length, so a single very long one still names the tab.
+        if !title.is_empty()
+            && title.chars().count() + 1 + word.chars().count() > PROMPT_TITLE_MAX_CHARS
+        {
+            break;
+        }
+        if !title.is_empty() {
+            title.push(' ');
+        }
+        title.push_str(word);
+    }
+    if title.is_empty() {
+        return None;
+    }
+    if title.chars().count() > PROMPT_TITLE_MAX_CHARS {
+        title = title.chars().take(PROMPT_TITLE_MAX_CHARS).collect();
+        title.push('…');
+    }
+    Some(title)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,5 +178,74 @@ mod tests {
     #[test]
     fn pure_decoration_leaves_nothing() {
         assert_eq!(clean_sidebar_title("●  \u{200B}"), None);
+    }
+
+    #[test]
+    fn a_prompt_title_keeps_the_opening_words() {
+        assert_eq!(
+            tab_title_from_prompt("fix the flaky worktree test").as_deref(),
+            Some("fix the flaky worktree test")
+        );
+        assert_eq!(
+            tab_title_from_prompt(
+                "rewrite the session restore path so a legacy snapshot keeps its titles"
+            )
+            .as_deref(),
+            Some("rewrite the session restore path so"),
+            "six words, and no seventh"
+        );
+    }
+
+    /// A pasted prompt arrives with newlines and indentation; a tab row is one
+    /// line.
+    #[test]
+    fn a_multiline_prompt_becomes_one_line() {
+        let title = tab_title_from_prompt("update the changelog\n\n  - add EP-004\n  - bump")
+            .expect("a usable title");
+        assert_eq!(title, "update the changelog - add EP-004");
+        assert!(!title.contains('\n'));
+    }
+
+    /// Six words can still be six identifiers, and a rail is not a paragraph.
+    #[test]
+    fn a_prompt_title_stays_within_its_character_budget() {
+        let title = tab_title_from_prompt(
+            "refactor TerminalSessionBackend AbstractSyntaxTreeVisitor ConfigurationLoader now",
+        )
+        .expect("a usable title");
+        assert!(
+            title.chars().count() <= PROMPT_TITLE_MAX_CHARS + 1,
+            "{title:?} overruns the budget"
+        );
+        assert!(
+            !title.contains("ConfigurationLoader"),
+            "{title:?} should have stopped at a word boundary"
+        );
+    }
+
+    /// One word longer than the whole budget still names the tab - refusing
+    /// would leave the row on its "Tab 3" fallback for no good reason.
+    #[test]
+    fn a_single_overlong_word_is_elided_rather_than_dropped() {
+        let word = "x".repeat(PROMPT_TITLE_MAX_CHARS + 20);
+        let title = tab_title_from_prompt(&word).expect("a usable title");
+        assert_eq!(title.chars().count(), PROMPT_TITLE_MAX_CHARS + 1);
+        assert!(title.ends_with('…'));
+    }
+
+    /// The prompt is untrusted text on its way to a label: the same
+    /// neutralization every other CLI-written title gets.
+    #[test]
+    fn a_prompt_title_is_sanitized_like_any_other_label() {
+        let title =
+            tab_title_from_prompt("● \u{202E}drop the table\u{200B} now").expect("a usable title");
+        assert_eq!(title, "drop the table now");
+    }
+
+    #[test]
+    fn a_prompt_with_nothing_usable_names_nothing() {
+        assert_eq!(tab_title_from_prompt(""), None);
+        assert_eq!(tab_title_from_prompt("   \n\t "), None);
+        assert_eq!(tab_title_from_prompt("●  \u{200B}"), None);
     }
 }

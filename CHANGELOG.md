@@ -7,6 +7,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Added
 
+- Tabs name themselves. A tab opened from the preset picker used to sit in the
+  sidebar as a fourth "Claude Code" row; it now takes the opening words of the
+  first prompt sent to the agent running in it, so a rail of agents says what
+  each one is doing. Renaming a tab yourself turns naming off for that tab for
+  good - a name you typed is never overwritten - and "Reset name" in the tab's
+  context menu hands it back. A tab split between several agents is left alone,
+  since no single one speaks for it.
+
 - Panes show a progress chip in their header when the running program reports
   OSC 9;4 progress: a percentage, `working`, `paused`, or `error`. The chip
   clears when the program removes the indicator or the child exits.
@@ -25,6 +33,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   Hold `Alt` while dragging for a rectangular (block) selection.
 
 ### Changed
+
+- Workspaces can no longer be renamed. A workspace is named after the folder it
+  holds, and a title free to drift from that folder left the sidebar claiming a
+  name nothing on disk answered to, with no way back. Double-clicking a folder
+  row now just selects it.
 
 - The statically linked Ghostty terminal engine is now the only terminal
   engine, on every platform including macOS Apple Silicon. It is always linked

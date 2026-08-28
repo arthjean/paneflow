@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{App, AppContext, BackgroundExecutor, Context, Entity, Focusable};
-use paneflow_config::schema::{LayoutNode, PaneFlowConfig, TerminalSurfaceProfile};
+use paneflow_config::schema::{LayoutNode, PaneFlowConfig, TabTitleSource, TerminalSurfaceProfile};
 use paneflow_ipc_client::ai_hook::{
     AiToolName, LifecycleEventSource, METHOD_EXIT, METHOD_NOTIFICATION, METHOD_PROMPT_SUBMIT,
     METHOD_SESSION_END, METHOD_SESSION_START, METHOD_STOP, METHOD_TOOL_USE, SessionPid, SurfaceId,
@@ -779,6 +779,31 @@ pub(crate) fn find_terminal_by_surface_id(
         }
     }
     None
+}
+
+/// The index of the tab of `ws` that holds `surface_id`, together with how
+/// many terminal surfaces that tab holds in total (its zoom-saved tree
+/// included, so zooming a pane does not change the count).
+///
+/// The count is what decides whether auto-naming may speak for the tab: in a
+/// tab split between several agents, the first one to be prompted would
+/// otherwise name the whole tab after its own task and leave the others
+/// misrepresented.
+fn tab_for_surface(ws: &Workspace, surface_id: u64, cx: &App) -> Option<(usize, usize)> {
+    ws.tabs().iter().enumerate().find_map(|(idx, tab)| {
+        let panes = tab.collect_panes();
+        let mut holds_surface = false;
+        let mut surfaces = 0;
+        for pane in &panes {
+            for terminal in pane.read(cx).terminals() {
+                surfaces += 1;
+                if terminal.entity_id().as_u64() == surface_id {
+                    holds_surface = true;
+                }
+            }
+        }
+        holds_surface.then_some((idx, surfaces))
+    })
 }
 
 fn find_terminal_in_tree(
@@ -2270,6 +2295,67 @@ impl PaneFlowApp {
             // a pane's busy verdict - refresh the Composer chip.
             self.agent_sessions_changed(cx);
             cx.notify();
+            // A session prompted before its pane was known has been holding
+            // its title since; this is the moment it can be placed.
+            self.apply_pending_tab_title(ws_id, key, cx);
+        }
+    }
+
+    /// Name the tab of `session_key`'s pane after the first prompt of that
+    /// session, if it is still waiting to be named.
+    ///
+    /// Called from the two places a naming can become possible: the prompt
+    /// arriving, and the pane behind it being resolved. Idempotent, and cheap
+    /// enough to sit on both - a session past its one naming leaves on the
+    /// first line.
+    ///
+    /// Four things can refuse the name, and all four are ordinary rather than
+    /// error cases:
+    /// - the session has already named its tab, or has no prompt yet;
+    /// - its pane is not resolved (a late binding retries through
+    ///   `set_session_surface`, still carrying the FIRST prompt);
+    /// - the tab holds several terminals, so no single session speaks for it;
+    /// - the user has named the tab, and [`Tab::set_title`] refuses.
+    ///
+    /// The last two still mark the session `Applied`: the answer will not
+    /// change on the next prompt, and re-deciding it every turn would only
+    /// mean rebuilding a title to throw it away.
+    pub(crate) fn apply_pending_tab_title(
+        &mut self,
+        ws_id: u64,
+        session_key: u32,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws_idx) = self.workspaces.iter().position(|ws| ws.id == ws_id) else {
+            return;
+        };
+        let Some((title, surface_id)) = self.workspaces[ws_idx]
+            .agent_sessions
+            .get(&session_key)
+            .and_then(|session| match &session.tab_title_seed {
+                ai_types::TabTitleSeed::Pending(title) => {
+                    Some((title.clone(), session.surface_id?))
+                }
+                _ => None,
+            })
+        else {
+            return;
+        };
+        let Some((tab_idx, surfaces)) = tab_for_surface(&self.workspaces[ws_idx], surface_id, cx)
+        else {
+            return;
+        };
+
+        let named = surfaces == 1
+            && self.workspaces[ws_idx]
+                .tab_mut(tab_idx)
+                .is_some_and(|tab| tab.set_title(&title, TabTitleSource::Auto));
+        if let Some(session) = self.workspaces[ws_idx].agent_sessions.get_mut(&session_key) {
+            session.tab_title_seed = ai_types::TabTitleSeed::Applied;
+        }
+        if named {
+            self.save_session(cx);
+            cx.notify();
         }
     }
 
@@ -3142,6 +3228,17 @@ impl PaneFlowApp {
                     ) else {
                         return stale_frame_response();
                     };
+                    // The opening prompt names the tab, so a rail of agent
+                    // rows says what each one is doing instead of repeating
+                    // the name of the CLI four times. Recorded before the
+                    // surface is resolved, and only for the FIRST prompt of
+                    // the session: later turns leave the name alone.
+                    if let Some(session) = ws.agent_sessions.get_mut(&key)
+                        && session.tab_title_seed == ai_types::TabTitleSeed::Unseeded
+                        && let Some(title) = read_hook_prompt_title(params)
+                    {
+                        session.tab_title_seed = ai_types::TabTitleSeed::Pending(title);
+                    }
                     cx.notify();
                     self.bind_or_resolve_session_surface(
                         workspace_id,
@@ -3149,6 +3246,12 @@ impl PaneFlowApp {
                         explicit_surface_id,
                         cx,
                     );
+                    // Not redundant with the call inside `set_session_surface`:
+                    // that one only fires when the binding CHANGES, and the
+                    // common case is a session already bound by its
+                    // `ai.session_start` frame - the surface does not move, so
+                    // this is the call that actually names the tab.
+                    self.apply_pending_tab_title(workspace_id, key, cx);
                     self.sync_attention(cx);
                     // EP-001 US-003 (cli-cockpit): the target just turned
                     // busy - refresh the Composer chip (no flush can apply).
@@ -3570,6 +3673,23 @@ fn read_frame_surface_id(params: &serde_json::Value) -> Option<u64> {
 /// [`TerminalAgent::from_binary`]. `None` for an unknown string: the frame
 /// is then ignored by the caller instead of silently retyped as Claude
 /// (the historical `from_name` fallback mislabeled every future agent).
+/// The tab title carried by an `ai.prompt_submit` frame, if the agent's hook
+/// payload names its prompt `prompt` (Claude Code, Codex, Grok, Gemini). One
+/// that calls it something else simply names no tab, and its rows keep the
+/// preset label.
+///
+/// UNTRUSTED text from a terminal-adjacent process: it is turned into a label
+/// and never interpreted. `tab_title_from_prompt` is the same sanitizer every
+/// other CLI-written title goes through, and the hook already capped the
+/// prompt on its side of the socket.
+fn read_hook_prompt_title(params: &serde_json::Value) -> Option<String> {
+    let prompt = params
+        .get("hook_payload")?
+        .get("prompt")
+        .and_then(serde_json::Value::as_str)?;
+    crate::sidebar_title::tab_title_from_prompt(prompt)
+}
+
 fn read_tool(params: &serde_json::Value) -> Option<crate::agent_launcher::TerminalAgent> {
     let tool_name = AiToolName::from_wire_params(params).ok()?;
     crate::agent_launcher::TerminalAgent::from_binary(tool_name.as_str())
@@ -5435,6 +5555,112 @@ mod tests {
             cx.update(|_, cx| find_terminal_by_surface_id(&workspaces, visible_sid, cx))
                 .is_some()
         );
+    }
+
+    /// A tab running one agent is named after that agent's first prompt; a tab
+    /// split between several is named after none of them, because no single
+    /// session speaks for it.
+    #[gpui::test]
+    fn tab_for_surface_counts_the_terminals_that_share_the_tab(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let make_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            let surface_id = terminal.entity_id().as_u64();
+            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+            (pane, surface_id)
+        };
+        let (solo_pane, solo_sid) = make_pane(cx);
+        let (shared_pane, shared_sid) = make_pane(cx);
+        let (neighbor_pane, neighbor_sid) = make_pane(cx);
+
+        let mut ws = Workspace::with_layout_and_id(
+            1,
+            "ws",
+            std::path::PathBuf::new(),
+            crate::layout::LayoutTree::Leaf(solo_pane),
+        );
+        let mut shared_tree = crate::layout::LayoutTree::Leaf(shared_pane);
+        shared_tree.split_first_leaf(crate::layout::SplitDirection::Horizontal, neighbor_pane);
+        assert!(ws.open_tab(crate::workspace::Tab::new("shared", Some(shared_tree))));
+
+        assert_eq!(
+            cx.update(|_, cx| tab_for_surface(&ws, solo_sid, cx)),
+            Some((0, 1)),
+            "the tab holds this surface and nothing else"
+        );
+        for sid in [shared_sid, neighbor_sid] {
+            assert_eq!(
+                cx.update(|_, cx| tab_for_surface(&ws, sid, cx)),
+                Some((1, 2)),
+                "both halves of the split see the same crowded tab"
+            );
+        }
+        assert_eq!(
+            cx.update(|_, cx| tab_for_surface(&ws, 999_999, cx)),
+            None,
+            "a surface that is not here resolves to no tab"
+        );
+    }
+
+    /// Zoom moves panes into `saved_layout`; a zoomed split is still a shared
+    /// tab, and forgetting the second tree would let one agent name it.
+    #[gpui::test]
+    fn tab_for_surface_counts_a_zoomed_tab_by_its_saved_layout(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let cx = cx.add_empty_window();
+        let make_pane = |cx: &mut gpui::VisualTestContext| {
+            let terminal = cx.new(|cx| crate::terminal::TerminalView::display_only_for_test(1, cx));
+            let surface_id = terminal.entity_id().as_u64();
+            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+            (pane, surface_id)
+        };
+        let (zoomed_pane, zoomed_sid) = make_pane(cx);
+        let (hidden_pane, _) = make_pane(cx);
+
+        let mut tab = crate::workspace::Tab::new(
+            "zoomed",
+            Some(crate::layout::LayoutTree::Leaf(zoomed_pane.clone())),
+        );
+        let mut saved = crate::layout::LayoutTree::Leaf(zoomed_pane);
+        saved.split_first_leaf(crate::layout::SplitDirection::Horizontal, hidden_pane);
+        tab.saved_layout = Some(saved);
+        let ws = Workspace::restored_with_id(1, "ws", std::path::PathBuf::new(), vec![tab], 0);
+
+        assert_eq!(
+            cx.update(|_, cx| tab_for_surface(&ws, zoomed_sid, cx)),
+            Some((0, 2)),
+            "the pane hidden by zoom still shares the tab"
+        );
+    }
+
+    #[test]
+    fn a_prompt_frame_yields_the_title_its_payload_carries() {
+        let frame = serde_json::json!({
+            "hook_payload": { "prompt": "fix the flaky worktree test now please" },
+        });
+        assert_eq!(
+            read_hook_prompt_title(&frame).as_deref(),
+            Some("fix the flaky worktree test now")
+        );
+    }
+
+    /// An agent whose payload names the field something else, or carries no
+    /// prompt at all, names no tab. Its rows keep the preset label - a missing
+    /// nicety, not a broken session.
+    #[test]
+    fn a_prompt_frame_without_a_usable_prompt_yields_no_title() {
+        for frame in [
+            serde_json::json!({}),
+            serde_json::json!({ "hook_payload": {} }),
+            serde_json::json!({ "hook_payload": { "user_input": "hello" } }),
+            serde_json::json!({ "hook_payload": { "prompt": "   " } }),
+            serde_json::json!({ "hook_payload": { "prompt": 42 } }),
+        ] {
+            assert_eq!(read_hook_prompt_title(&frame), None, "{frame}");
+        }
     }
 
     /// US-019: every CLI surface reported by `surface.list` carries the id and
