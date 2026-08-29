@@ -138,6 +138,15 @@ fn main() -> ExitCode {
 
     let args: Vec<OsString> = env::args_os().skip(1).collect();
 
+    // Announce the session ourselves rather than waiting for the agent's own
+    // `SessionStart` hook. The hook may never fire - an organization can
+    // disable hooks wholesale from Claude Code's managed settings - and the
+    // shim is the one participant that always runs, because it IS the binary
+    // the shell resolved. Off the spawn-to-exec critical path (US-004's 15 ms
+    // budget) on a detached thread; a shim that exits first simply leaves the
+    // already-spawned hook to finish on its own.
+    notify_session_start(tool);
+
     let (code, agent_exit) = run_real(tool, &real, &args);
 
     // EP-004 US-010: report the agent binary's REAL exit status. The shell's
@@ -295,6 +304,48 @@ fn notify_exit(tool: &str, exit_code: i32, interrupted: bool) {
         );
     }
     let _ = cmd.status();
+}
+
+/// Best-effort notify of `ai.session_start` before the real AI binary runs.
+///
+/// Unlike [`notify_exit`] and [`notify_session_end`], this one sits in front
+/// of the user's command, so it must not be waited on: the whole point of the
+/// shim is that it costs nothing measurable between the shell resolving the
+/// name and the agent starting. The spawn, the write and the wait all happen
+/// on a detached thread.
+///
+/// The hook reads `SessionStart` from stdin like the agent-fired one does, so
+/// the shim hands it an empty JSON object - the frame's real content is the
+/// tool/pid/surface identity that rides in the environment.
+fn notify_session_start(tool: &str) {
+    let Some(hook_path) = locate_sibling_hook_binary() else {
+        return;
+    };
+    let tool = tool.to_owned();
+    let pid = std::process::id().to_string();
+    let spawned = std::thread::Builder::new()
+        .name("paneflow-shim-session-start".into())
+        .spawn(move || {
+            let child = std::process::Command::new(&hook_path)
+                .arg("SessionStart")
+                .env("PANEFLOW_AI_TOOL", &tool)
+                .env("PANEFLOW_AI_PID", &pid)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn();
+            let Ok(mut child) = child else {
+                return;
+            };
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write as _;
+                let _ = stdin.write_all(b"{}");
+            }
+            let _ = child.wait();
+        });
+    // A thread that cannot be created is not worth failing a launch over:
+    // the process scan still finds the agent a tick later.
+    let _ = spawned;
 }
 
 /// Best-effort notify of `ai.session_end` after the real AI binary exits.

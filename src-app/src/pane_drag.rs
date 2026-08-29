@@ -2,10 +2,11 @@
 //! PRD `prd-cli-tab-hierarchy-2026-Q3.md` EP-002).
 //!
 //! Holds the payloads carried by GPUI's managed drag API (an agent session
-//! dragged out of the sessions sidebar, a markdown file dragged out of the
-//! Files sidebar) and the [`DragPreview`] ghost entity rendered under the
-//! cursor, plus the edge geometry shared by every drop-to-split target
-//! ([`DropEdge`], [`compute_drop_edge`], [`split_rect`]).
+//! dragged out of the sessions sidebar, a pane dragged by its own header) and
+//! the [`DragPreview`] ghost entity rendered under the cursor, plus the edge
+//! geometry shared by every drop-to-split target ([`DropEdge`],
+//! [`compute_drop_edge`], [`split_rect`]). The Files sidebar carries no drag:
+//! every file opens in the dock editor from a click.
 //!
 //! EP-002 US-007 removed the pane-level tab strip, and with it the cross-pane
 //! tab move: a pane holds exactly one surface, so the only placement gestures
@@ -26,20 +27,6 @@ pub struct SessionDrag {
     pub agent: SessionAgent,
     pub session_id: String,
     pub cwd: String,
-    pub title: SharedString,
-    pub icon: SharedString,
-}
-
-/// Drag payload for a markdown file dragged out of the docked Files sidebar
-/// (PRD `prd-files-tree-sidebar-2026-Q3`, EP-003). Dropping it on a pane opens
-/// the file via `MarkdownView::open` - into a new split (edge) or into a new
-/// workspace tab (center) - without a process. Only markdown rows are draggable; every
-/// other file is inert. Cloned cheaply (an owned `PathBuf` + snapshotted
-/// `title`/`icon`) so the shared [`DragPreview`] ghost renders without the
-/// sidebar.
-#[derive(Clone)]
-pub struct MarkdownFileDrag {
-    pub path: std::path::PathBuf,
     pub title: SharedString,
     pub icon: SharedString,
 }
@@ -112,8 +99,7 @@ impl DropEdge {
     /// whether the new pane swaps to the "before" position. `split_at_pane`
     /// always inserts *after* the target, so the leading edges (Up/Left) swap
     /// the moved/duplicated pane onto the correct side. Single source for the
-    /// three drop-to-split handlers (DropSplit / dropped markdown file /
-    /// dropped session).
+    /// drop-to-split handlers (DropSplit / dropped session).
     pub fn to_split(self) -> (crate::layout::SplitDirection, bool) {
         match self {
             DropEdge::Up => (crate::layout::SplitDirection::Horizontal, true),

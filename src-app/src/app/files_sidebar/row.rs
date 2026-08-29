@@ -1,7 +1,8 @@
 //! Single Files-tree row render: indent + chevron + icon + name, with the
-//! editor-refusal styling (US-019), click-to-open / expand (US-003/004),
-//! markdown drag-to-pane (US-008), and the right-click copy-path menu trigger
-//! (US-009). Split out of `view.rs` to keep each file under the 250-line budget.
+//! editor-refusal styling (US-019), click-to-open / expand (US-003/004), and
+//! the right-click copy-path menu trigger (US-009). Rows carry no drag: every
+//! file opens in the dock editor, so the sidebar has a single gesture. Split
+//! out of `view.rs` to keep each file under the 250-line budget.
 
 use std::ops::Range;
 
@@ -14,7 +15,6 @@ use super::{DIMMED_OPACITY, INDENT_STEP, ROW_GAP, ROW_HEIGHT, ROW_SLOT};
 use crate::PaneFlowApp;
 use crate::app::files_tree::{self, VisibleRowRef};
 use crate::app::sidebar::{SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_X};
-use crate::pane_drag::{DragPreview, MarkdownFileDrag};
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
 /// What a row prints on its name line. In tree mode this is the node's own file
@@ -44,7 +44,6 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let node = row.node;
-        let is_md = !node.is_dir && files_tree::is_markdown(&node.path);
         // US-019: the markdown lock is gone - every file is clickable and read
         // at full text color. The one remaining muted tier is a file the editor
         // would refuse (binary extension or over `MAX_FILE_BYTES`); it stays
@@ -166,38 +165,21 @@ impl PaneFlowApp {
             }
         }));
 
-        // Whole row toggles a directory (US-003), opens a markdown in the active
-        // pane (US-004), or opens any other file in the diff dock's editor
-        // (US-019).
+        // Whole row toggles a directory (US-003) or opens any file, markdown
+        // included, in the diff dock's editor (US-019). Markdown gets no
+        // surface of its own: a click reads it as source next to every other
+        // file, and the drag below stays the only way to send it to a pane.
         let click_path = path.clone();
         el = el.on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
             this.files_focus.focus(window, cx);
             this.select_files_row(&click_path, cx);
             if is_dir {
                 this.toggle_dir(&click_path, cx);
-            } else if is_md {
-                this.open_markdown_in_active_pane(click_path.clone(), window, cx);
             } else {
                 this.open_file_in_diff_dock(click_path.clone(), window, cx);
             }
             cx.stop_propagation();
         }));
-
-        // US-008: only markdown rows are draggable into a pane. The ghost reuses
-        // the shared tab-drag preview; US-019 deliberately leaves drag alone.
-        if is_md {
-            let drag = MarkdownFileDrag {
-                path: path.clone(),
-                title: SharedString::from(files_tree::node_name(node)),
-                icon: SharedString::from("icons/file-text.svg"),
-            };
-            el = el.on_drag(drag, |drag, _offset, _window, cx| {
-                cx.new(|_| DragPreview {
-                    title: drag.title.clone(),
-                    icon: drag.icon.clone(),
-                })
-            });
-        }
 
         // US-020: the matched segment is picked out with `StyledText`'s
         // highlight list - one text element with a styled byte range, not

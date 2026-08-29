@@ -169,22 +169,34 @@ cannot be served by Zig's bundled tooling.
 ## Toolchain pin
 
 `macos_llvm_version` is pinned to `22.1.2-rust-1.96.1-stable`, the LLVM shipped
-by the `llvm-tools` component of the repository's own pinned Rust toolchain:
+by the `llvm-tools` component of Rust 1.96.1. That was the repository pin when
+the archive was normalized; `rust-toolchain.toml` has since moved on, so on a
+workstation the component has to come from that exact toolchain:
 
 ```bash
-rustup component add llvm-tools
+rustup toolchain install 1.96.1 --component llvm-tools
 ```
 
 The tools then live under
 `$(rustc --print sysroot)/lib/rustlib/<host>/bin`, which
-`scripts/build-libghostty-macos.sh` resolves automatically.
-`PANEFLOW_LLVM_BIN` overrides that search for a differently pinned set.
+`scripts/build-libghostty-macos.sh` resolves automatically: run it with
+`RUSTUP_TOOLCHAIN=1.96.1`, or point `PANEFLOW_LLVM_BIN` straight at the
+`bin` directory, since the root `rust-toolchain.toml` otherwise selects the
+workspace toolchain and the preflight rejects its LLVM.
 
 The rationale is that this LLVM is exactly pinned by an existing project pin
 and costs a roughly 30 MB rustup component in CI, against a 1.65 GB standalone
-LLVM tarball. The tradeoff is that a Rust toolchain bump moves
-`macos_llvm_version` and forces one archive re-normalization plus a new
-`archive_sha256`, the same way a Zig bump does.
+LLVM tarball. The tradeoff is that moving `macos_llvm_version` forces one
+archive re-normalization plus a new `archive_sha256`, the same way a Zig bump
+does.
+
+Because of that cost the two pins are decoupled: bumping
+`rust-toolchain.toml` does **not** move `macos_llvm_version`. The `llvm-tools`
+step in `.github/workflows/libghostty-macos.yml` stays on the toolchain that
+normalized the committed archive and sets `RUSTUP_TOOLCHAIN` so the root
+`rust-toolchain.toml` cannot outrank it in `rustc --print sysroot`. Re-normalize
+on purpose, as its own change: bump `macos_llvm_version`, the workflow pin, and
+`archive_sha256` together, and let the reproducibility job verify them.
 
 ## Pinned inputs and required tools
 

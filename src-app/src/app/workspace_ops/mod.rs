@@ -258,7 +258,7 @@ impl PaneFlowApp {
             }
         }
 
-        self.reroot_files_tree(cx);
+        self.sync_files_sidebar_session(cx);
         if self.agent_sessions.sessions_sidebar_open {
             let keep_sidebar_focus = self.agent_sessions.sessions_focus.is_focused(window);
             match self.workspaces[idx]
@@ -277,6 +277,7 @@ impl PaneFlowApp {
         }
         self.save_session(cx);
         self.reconcile_diff_after_workspace_change(cx);
+        self.acknowledge_visible_completions(cx);
         cx.notify();
         changed
     }
@@ -293,7 +294,7 @@ impl PaneFlowApp {
         let changed = idx != self.active_idx;
         self.dismiss_transient_surfaces();
         self.active_idx = idx;
-        self.reroot_files_tree(cx);
+        self.sync_files_sidebar_session(cx);
         if self.agent_sessions.sessions_sidebar_open {
             self.close_sessions_sidebar(cx);
         }

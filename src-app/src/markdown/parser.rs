@@ -506,11 +506,7 @@ impl Walker {
                     buf.push_str(&text);
                     return;
                 }
-                Frame::Table {
-                    current_cell,
-                    in_head: _,
-                    ..
-                } => {
+                Frame::Table { current_cell, .. } => {
                     push_or_extend(current_cell, text, self.style, self.link_url.as_deref());
                     return;
                 }

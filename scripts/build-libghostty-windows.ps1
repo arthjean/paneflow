@@ -94,6 +94,43 @@ function Write-Utf8Lines {
     [IO.File]::WriteAllText($Path, $content, $encoding)
 }
 
+function Write-Phase {
+    param([string]$Message)
+
+    # The rebuild is otherwise silent for its whole duration: Zig's output is
+    # captured into a variable and only printed when the build fails, so a
+    # stalled pass and a slow pass look identical in the job log. That is what
+    # burned five 90 minute Windows runs between 2026-08-28 and 2026-08-29
+    # without producing one diagnosable line. These markers go to the host
+    # stream, so they never contaminate a function's return value.
+    Write-Host ("[{0}Z] {1}" -f [DateTime]::UtcNow.ToString("HH:mm:ss"), $Message)
+}
+
+function Add-DefenderExclusion {
+    param([string]$Path)
+
+    # Real-time scanning dominates this build. The pinned Zig source archive
+    # alone unpacks to 19660 files across 239 MB, and the Zig cache under the
+    # canonical source writes tens of thousands more. On 2026-08-29 a single
+    # `tar -xf` of that archive was still running when the job was killed at
+    # the 90 minute mark; the same extraction costs about 4 seconds on an
+    # unscanned filesystem.
+    #
+    # Exclusions never touch a build input, so they cannot move the archive
+    # hash. Best effort on purpose: a developer machine without an elevated
+    # shell, or a host with no Defender at all, must still build.
+    if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
+        return
+    }
+    try {
+        Add-MpPreference -ExclusionPath $Path -ErrorAction Stop
+        Write-Phase "Defender exclusion added for $Path"
+    }
+    catch {
+        Write-Phase "no Defender exclusion for $Path ($($_.Exception.Message)); expect a slow build"
+    }
+}
+
 function Normalize-InstalledHeaders {
     param([string]$IncludeDir)
 
@@ -675,6 +712,8 @@ $requiredSymbols = @(
 )
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("paneflow-libghostty-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
+Add-DefenderExclusion $tempRoot
+Add-DefenderExclusion ([IO.Path]::GetFullPath($CanonicalSourcePath))
 if ([string]::IsNullOrWhiteSpace($EvidenceDir)) {
     $EvidenceDir = Join-Path $tempRoot "reproducibility-evidence"
 }
@@ -683,18 +722,51 @@ else {
 }
 $succeeded = $false
 $fixedSourceCreated = $false
+$zigSourceScratch = $null
 $canonicalSource = [IO.Path]::GetFullPath($CanonicalSourcePath)
 $sourceArchive = Join-Path $tempRoot "source.tar"
 $buildSource = $null
 $ZigLibDir = $null
 
 function Initialize-ZigSourceLib {
-    $zigSourceRoot = Join-Path $tempRoot "zig-source"
-    New-Item -ItemType Directory -Path $zigSourceRoot | Out-Null
-    $null = & $tarExe -xf $ZigSourceArchive -C $zigSourceRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "cannot extract the pinned Zig source archive"
+    # This tree is scratch: nothing under it is a recorded build input, and the
+    # reproducibility contract pins only the canonical source, cache, and
+    # prefix paths, all of which live under $buildSource. So it is free to sit
+    # on whichever volume is fastest. On a GitHub runner that is the ephemeral
+    # temp disk named by RUNNER_TEMP (D:), not the OS disk that
+    # [IO.Path]::GetTempPath() resolves to (C:).
+    $zigSourceParent = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -and
+        (Test-Path -LiteralPath $env:RUNNER_TEMP -PathType Container)) {
+        Join-Path $env:RUNNER_TEMP ("paneflow-zig-source-" + [guid]::NewGuid().ToString("N"))
     }
+    else {
+        $tempRoot
+    }
+    $zigSourceRoot = Join-Path $zigSourceParent "zig-source"
+    New-Item -ItemType Directory -Force -Path $zigSourceRoot | Out-Null
+    $script:zigSourceScratch = $zigSourceParent
+    Add-DefenderExclusion $zigSourceParent
+
+    # Extract verbosely and count entries as they stream past. Two runs died at
+    # the job timeout inside this one call with no output at all, which left
+    # "stalled at entry zero" and "grinding along slowly" indistinguishable.
+    # bsdtar names each entry on stderr, so the counter below costs nothing and
+    # settles the question on the next run.
+    Write-Phase "extracting the pinned Zig $ZigVersion source archive with $tarExe into $zigSourceRoot"
+    $extractTimer = [Diagnostics.Stopwatch]::StartNew()
+    $entries = 0
+    & $tarExe -xvf $ZigSourceArchive -C $zigSourceRoot 2>&1 | ForEach-Object {
+        $entries++
+        if ($entries % 2000 -eq 0) {
+            Write-Phase "extracted $entries entries in $([int]$extractTimer.Elapsed.TotalSeconds)s"
+        }
+    }
+    $tarExit = $LASTEXITCODE
+    $extractTimer.Stop()
+    if ($tarExit -ne 0) {
+        throw "cannot extract the pinned Zig source archive (tar exit $tarExit)"
+    }
+    Write-Phase "Zig source library extracted: $entries entries in $([int]$extractTimer.Elapsed.TotalSeconds)s"
     $sourceLib = Join-Path $zigSourceRoot "zig-$ZigVersion\lib"
     if (-not (Test-Path -LiteralPath (Join-Path $sourceLib "std\std.zig") -PathType Leaf)) {
         throw "Zig $ZigVersion source archive does not contain the expected library"
@@ -712,6 +784,7 @@ function Initialize-CanonicalSource {
     }
     New-Item -ItemType Directory -Path $canonicalSource | Out-Null
     $script:fixedSourceCreated = $true
+    Write-Phase "exporting the pinned Ghostty source tree at $SourceSha"
     $null = & git -C $SourceDir archive --format=tar -o $sourceArchive $SourceSha
     if ($LASTEXITCODE -ne 0) {
         throw "cannot export the pinned Ghostty source tree"
@@ -774,6 +847,8 @@ function Invoke-NativeBuild {
     $env:SOURCE_DATE_EPOCH = $SourceDateEpoch
     $env:NO_COLOR = "1"
     Push-Location $buildSource
+    $buildTimer = [Diagnostics.Stopwatch]::StartNew()
+    Write-Phase "$Label clean build starting"
     try {
         $zigOutput = @(& $ZigPath build --zig-lib-dir $ZigLibDir --verbose --seed $BuildSeed "-j$BuildJobs" -Demit-lib-vt=true "-Dtarget=$ZigTarget" "-Doptimize=$BuildMode" "-Dsimd=$SimdText" --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
         $zigExitCode = $LASTEXITCODE
@@ -782,6 +857,8 @@ function Invoke-NativeBuild {
         }
     }
     finally {
+        $buildTimer.Stop()
+        Write-Phase "$Label clean build ran for $([int]$buildTimer.Elapsed.TotalSeconds)s"
         Pop-Location
         $env:ZIG_GLOBAL_CACHE_DIR = $oldGlobal
         $env:ZIG_LOCAL_CACHE_DIR = $oldLocal
@@ -1044,6 +1121,15 @@ finally {
             throw "refusing to remove unexpected canonical source path $canonicalSource"
         }
         Remove-Item -LiteralPath $canonicalSource -Recurse -Force
+    }
+    if ($null -ne $zigSourceScratch -and (Test-Path -LiteralPath $zigSourceScratch)) {
+        $resolvedScratch = [IO.Path]::GetFullPath($zigSourceScratch)
+        if ((Split-Path $resolvedScratch -Leaf) -notlike "paneflow-zig-source-*" -and $resolvedScratch -ne [IO.Path]::GetFullPath($tempRoot)) {
+            throw "refusing to remove unexpected Zig source scratch path $resolvedScratch"
+        }
+        if ((Split-Path $resolvedScratch -Leaf) -like "paneflow-zig-source-*") {
+            Remove-Item -LiteralPath $resolvedScratch -Recurse -Force
+        }
     }
     if ($succeeded) {
         $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())

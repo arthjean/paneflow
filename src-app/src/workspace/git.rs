@@ -181,10 +181,7 @@ pub fn find_git_dir(cwd: &str) -> Option<std::path::PathBuf> {
         if candidate.exists() {
             break candidate;
         }
-        match search_dir.parent() {
-            Some(parent) => search_dir = parent,
-            None => return None,
-        }
+        search_dir = search_dir.parent()?;
     };
 
     if git_path.is_file() {

@@ -333,6 +333,30 @@ impl PaneFlowApp {
         )
         .detach();
 
+        // Claude Code session-registry sweep. The registry is the only
+        // channel that reports an agent's turn state when a managed-settings
+        // policy has disabled hooks, so this loop is what keeps the sidebar
+        // alive on a locked-down machine. It gates itself on a pane actually
+        // running Claude Code and does no filesystem work otherwise, so a
+        // Paneflow with no agent in it pays only this timer.
+        cx.spawn(
+            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                loop {
+                    smol::Timer::after(crate::app::agent_status::REGISTRY_POLL_INTERVAL).await;
+                    let alive = cx.update(|cx| {
+                        this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                            app.sweep_claude_session_registry(cx);
+                        })
+                    });
+                    // An update that cannot run means the app is gone.
+                    if alive.is_err() {
+                        break;
+                    }
+                }
+            },
+        )
+        .detach();
+
         // Files-sidebar watcher drain loop (EP-002 US-005). Mirrors the git
         // loop above: poll the per-open watch channel, coalesce affected parent
         // dirs, debounce ~100ms with a 500ms hard-flush ceiling (so a
@@ -786,6 +810,7 @@ impl PaneFlowApp {
             git_watcher,
             git_event_rx,
             git_watch_counts,
+            claude_registry_seen: std::collections::HashMap::new(),
             settings_section: None,
             settings_scroll: gpui::ScrollHandle::new(),
             settings_drag: None,

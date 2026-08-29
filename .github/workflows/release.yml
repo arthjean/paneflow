@@ -111,7 +111,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.96.1"
+          toolchain: "1.98.0"
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -322,7 +322,7 @@ jobs:
           # Must match `rust-toolchain.toml` channel verbatim. The
           # workspace dep graph (oo7, cosmic-text, smol_str, wgpu)
           # requires rustc >= 1.92, so this can't drift below 1.92.
-          toolchain: "1.96.1"
+          toolchain: "1.98.0"
           components: rustfmt, clippy
           targets: ${{ matrix.target }}
 

@@ -81,7 +81,7 @@ Telemetry is opt-in, never includes terminal contents, paths, or prompts, and `P
 
 ## Build from source
 
-Paneflow pins Rust 1.96.1 through [rust-toolchain.toml](rust-toolchain.toml). Linux builds need Vulkan and the usual Wayland/X11 development libraries.
+Paneflow pins Rust 1.98.0 through [rust-toolchain.toml](rust-toolchain.toml). Linux builds need Vulkan and the usual Wayland/X11 development libraries.
 
 ```bash
 git clone https://github.com/arthjean/paneflow.git

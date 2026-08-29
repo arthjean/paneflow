@@ -970,10 +970,11 @@ impl PaneFlowApp {
                 },
             )
             .on_click(cx.listener(move |this, e: &ClickEvent, window, cx| {
+                // No acknowledge here: `select_workspace` below answers the
+                // marks of the tab this click actually reveals. Clearing the
+                // whole workspace would drop a completion sitting in a tab the
+                // user is not opening.
                 this.dismiss_transient_surfaces();
-                if let Some(workspace) = this.workspaces.get_mut(idx) {
-                    workspace.agent_completion_notification.acknowledge();
-                }
                 let was_renaming = this.renaming_tab.is_some();
                 this.commit_rename(cx);
                 this.select_workspace(idx, window, cx);
@@ -1008,10 +1009,15 @@ impl PaneFlowApp {
         // longer counting.
         let folder_sessions = || folder_row_sessions(ws.agent_sessions.values(), is_expanded);
         let agent_status = ai_types::workspace_agent_status(folder_sessions(), &ws.detected_agents);
-        let row_agent_status = sidebar_agent_summary(
-            folder_sessions(),
-            ws.agent_completion_notification.is_unread(),
-        );
+        // Same partition as `folder_sessions`: expanded, the folder only keeps
+        // the completions no tab row can claim; collapsed, its tab rows are off
+        // screen so it speaks for all of them again.
+        let completion_unread = if is_expanded {
+            ws.agent_completion_notification.has_unattributed_unread()
+        } else {
+            ws.agent_completion_notification.is_unread()
+        };
+        let row_agent_status = sidebar_agent_summary(folder_sessions(), completion_unread);
         // A folder row carries the directory's own name and never an edit box:
         // the workspace title is derived from the folder, not typed.
         let title_el = div()
@@ -1199,7 +1205,14 @@ impl PaneFlowApp {
             _ => false,
         };
         let tab_sessions = || tab_row_sessions(ws.agent_sessions.values(), &surfaces);
-        let row_agent_status = sidebar_agent_summary(tab_sessions(), false);
+        // A finished turn belongs to the pane that ran it, so the completion
+        // dot rests on this row and not on the folder above it. The session
+        // itself is already gone by then (`AgentState::Finished` auto-clears),
+        // which is why the mark is carried separately from `tab_sessions`.
+        let row_agent_status = sidebar_agent_summary(
+            tab_sessions(),
+            ws.agent_completion_notification.is_unread_for(&surfaces),
+        );
         let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
         // One tint for both states, deliberately: the selected row rests at the
         // very fill a hovered row lifts to, so moving the pointer across the

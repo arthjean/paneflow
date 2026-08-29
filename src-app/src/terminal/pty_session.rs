@@ -64,6 +64,50 @@ const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
     "CLAUDE_CODE_MESSAGING_SOCKET",
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
+/// Host-terminal identity markers Paneflow inherits from whatever launched it.
+///
+/// A pane must look like a Paneflow surface, never like the terminal that
+/// happened to start Paneflow. These are how TUI programs answer "which
+/// emulator am I talking to", and Paneflow already owns the answer through
+/// `TERM` / `TERM_PROGRAM` / `TERM_PROGRAM_VERSION`. Leaving a stale one in
+/// place makes the child believe something else entirely, and two agent CLIs
+/// change their wire behavior on exactly these bytes:
+///
+/// - `WT_SESSION`: Claude Code disables its OSC 9;4 progress reporting
+///   outright when it is set, so a Paneflow launched from Windows Terminal
+///   silently loses the progress channel in *every* pane.
+/// - `TMUX` / `STY` / `ZELLIJ`: Claude Code and Codex both wrap their OSC
+///   notifications in multiplexer passthrough (`ESC P tmux ; ESC …`), which
+///   libghostty does not unwrap - the notification is swallowed whole.
+/// - `KITTY_WINDOW_ID` / `TERMINAL_EMULATOR` / `VTE_VERSION` / `ConEmu*`:
+///   same class of capability probe, no known agent-visible breakage today,
+///   dropped for the same reason - the answer they give is about a terminal
+///   that is not rendering this pane.
+///
+/// `ConEmu*` is matched by prefix (`ConEmuANSI`, `ConEmuPID`, `ConEmuTask`,
+/// `ConEmuBuild`, …). Matching is ASCII-case-insensitive because these arrive
+/// by INHERITANCE, in whatever casing the host set them (`ConEmuANSI` is
+/// mixed-case by definition), not through the upper-cased user-env merge.
+const INHERITED_HOST_TERMINAL_ENV: &[&str] = &[
+    "WT_SESSION",
+    "WT_PROFILE_ID",
+    "TMUX",
+    "TMUX_PANE",
+    "STY",
+    "ZELLIJ",
+    "ZELLIJ_SESSION_NAME",
+    "ZELLIJ_PANE_ID",
+    "KITTY_WINDOW_ID",
+    "KITTY_LISTEN_ON",
+    "TERMINAL_EMULATOR",
+    "VTE_VERSION",
+    "ITERM_SESSION_ID",
+    "LC_TERMINAL",
+    "LC_TERMINAL_VERSION",
+    "ALACRITTY_WINDOW_ID",
+    "ALACRITTY_SOCKET",
+];
+const CONEMU_ENV_PREFIX: &str = "conemu";
 const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
 const MAX_PENDING_NOTIFICATIONS: usize = 8;
 
@@ -1891,6 +1935,43 @@ fn is_forbidden_child_env_key(key: &str) -> bool {
     is_inherited_agent_session_env_key(key) || is_loader_influencing_env_key(key)
 }
 
+/// True if `key` names a host-terminal identity marker - see
+/// [`INHERITED_HOST_TERMINAL_ENV`]. Pure, so the list is unit-tested without
+/// touching the process environment.
+pub(super) fn is_inherited_host_terminal_env_key(key: &str) -> bool {
+    INHERITED_HOST_TERMINAL_ENV
+        .iter()
+        .any(|known| key.eq_ignore_ascii_case(known))
+        || key.len() > CONEMU_ENV_PREFIX.len()
+            && key[..CONEMU_ENV_PREFIX.len()].eq_ignore_ascii_case(CONEMU_ENV_PREFIX)
+}
+
+/// The names Paneflow inherited that must not reach a pane: host-terminal
+/// identity markers, plus the launching agent session's own markers.
+///
+/// `portable_pty::CommandBuilder` seeds itself from `std::env::vars_os()` and
+/// Paneflow only layers overrides on top, so removing a key from the assembled
+/// env map cannot unset an INHERITED variable - only an explicit
+/// `env_remove` at the spawn boundary can. That is why
+/// [`assemble_pty_env`]'s `retain` is not enough on its own for
+/// [`INHERITED_AGENT_SESSION_ENV`]: it stops a merge from reintroducing a
+/// marker, it cannot unset one Paneflow was started with. Enumerating the real
+/// environment is also what lets the `ConEmu*` prefix rule resolve to concrete
+/// names to remove.
+///
+/// Non-UTF-8 names are left alone: none of the targets can be spelled that way,
+/// and guessing at a lossy comparison would risk unsetting an unrelated var.
+pub(super) fn inherited_env_keys_to_strip() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .map(|(key, _)| key)
+        .filter(|key| {
+            key.to_str().is_some_and(|key| {
+                is_inherited_host_terminal_env_key(key) || is_inherited_agent_session_env_key(key)
+            })
+        })
+        .collect()
+}
+
 /// True if `key` is a well-formed environment variable name safe to insert into
 /// a child env block: non-empty and free of `=` and NUL, which would otherwise
 /// corrupt the name/value framing. Charset is intentionally NOT restricted to a
@@ -3220,6 +3301,90 @@ mod tests {
             env.get("KEEP_ME").map(String::as_str),
             Some("yes"),
             "a benign var alongside the markers must still pass through"
+        );
+    }
+
+    #[test]
+    fn host_terminal_markers_are_recognized_whatever_their_casing() {
+        // These arrive by inheritance in the host's own casing, so the match
+        // cannot be the exact-name check the user-env merge relies on.
+        for key in INHERITED_HOST_TERMINAL_ENV {
+            assert!(
+                is_inherited_host_terminal_env_key(key),
+                "{key} is listed and must be recognized"
+            );
+            assert!(
+                is_inherited_host_terminal_env_key(&key.to_lowercase()),
+                "{key} must be recognized case-insensitively"
+            );
+        }
+        // ConEmu ships a whole family and only sets some of them.
+        for key in ["ConEmuANSI", "ConEmuPID", "ConEmuTask", "CONEMUBUILD"] {
+            assert!(
+                is_inherited_host_terminal_env_key(key),
+                "{key} must be matched by the ConEmu prefix rule"
+            );
+        }
+    }
+
+    #[test]
+    fn host_terminal_matcher_does_not_swallow_unrelated_names() {
+        // The prefix rule is the risky half: it must not reach a var that
+        // merely starts with the same letters, and the bare prefix names no
+        // real variable.
+        for key in [
+            "conemu",
+            "CONEMU",
+            "TERM",
+            "TERM_PROGRAM",
+            "TMUXINATOR_CONFIG",
+            "STYLE",
+            "PATH",
+            "KITTY_WINDOW_IDS",
+            "PANEFLOW_SURFACE_ID",
+        ] {
+            assert!(
+                !is_inherited_host_terminal_env_key(key),
+                "{key} must survive - it is not a host-terminal identity marker"
+            );
+        }
+    }
+
+    #[test]
+    fn the_strip_list_covers_both_families_it_claims_to() {
+        // `inherited_env_keys_to_strip` reads the real process env, so what is
+        // pinned here is its predicate: an agent-session marker must be
+        // removed at the spawn boundary too, not only filtered out of the
+        // assembled map - a `retain` cannot unset an INHERITED variable.
+        for key in INHERITED_AGENT_SESSION_ENV {
+            assert!(
+                is_inherited_agent_session_env_key(key) || is_inherited_host_terminal_env_key(key),
+                "{key} must be stripped from the inherited env, not just the map"
+            );
+        }
+        assert!(
+            !is_inherited_agent_session_env_key("PANEFLOW_SURFACE_ID")
+                && !is_inherited_host_terminal_env_key("PANEFLOW_SURFACE_ID"),
+            "the strip must not reach a variable Paneflow sets for the pane"
+        );
+    }
+
+    #[test]
+    fn host_terminal_markers_are_not_smuggled_through_the_assembled_env() {
+        // The removal itself happens at the spawn boundary (`env_remove`),
+        // because the assembled map only carries overrides. What this pins is
+        // the other half of the contract: `assemble_pty_env` must not be the
+        // thing that PUTS one back, and the keys Paneflow owns are untouched.
+        let env = assemble_pty_env(HashMap::new(), 1, 1, None);
+        for key in env.keys() {
+            assert!(
+                !is_inherited_host_terminal_env_key(key),
+                "assemble_pty_env must never introduce the host marker {key}"
+            );
+        }
+        assert_eq!(
+            env.get("TERM_PROGRAM").map(String::as_str),
+            Some("paneflow")
         );
     }
 

@@ -30,6 +30,7 @@ mod ai_hooks;
 mod ai_types;
 mod app;
 mod assets;
+mod claude_session_registry;
 mod claude_sessions;
 mod cli;
 mod codex_sessions;
@@ -370,16 +371,39 @@ fn should_extract_mcp_bridge_for_cli(args: &[String]) -> bool {
         && args.len() == 3
 }
 
+/// Whether the native window material has to stand down for this frame.
+///
+/// macOS native fullscreen moves the window onto its own Space with a black
+/// backdrop, so AppKit's behind-window material has no desktop left to sample
+/// and the blur collapses into a flat tint. Falling back to the opaque theme
+/// chrome keeps fullscreen readable instead of showing a dead material.
+///
+/// Tiled and maximized windows stay in the desktop Space and keep a live blur
+/// (verified on macOS 15), so this keys off `is_fullscreen`, never
+/// `is_maximized`.
+fn native_material_suppressed_by_fullscreen(is_fullscreen: bool) -> bool {
+    cfg!(target_os = "macos") && is_fullscreen
+}
+
 #[cfg(test)]
 mod native_material_tests {
     use super::{
-        native_backdrop_material_active, should_extract_mcp_bridge_for_cli,
-        should_load_login_shell_env_for_startup,
+        native_backdrop_material_active, native_material_suppressed_by_fullscreen,
+        should_extract_mcp_bridge_for_cli, should_load_login_shell_env_for_startup,
     };
     use paneflow_config::schema::AppMode;
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|part| (*part).to_string()).collect()
+    }
+
+    #[test]
+    fn fullscreen_suppresses_the_native_material_on_macos_only() {
+        assert!(!native_material_suppressed_by_fullscreen(false));
+        assert_eq!(
+            native_material_suppressed_by_fullscreen(true),
+            cfg!(target_os = "macos")
+        );
     }
 
     #[test]
@@ -825,17 +849,18 @@ struct DiffDockState {
     /// tab (see `diff_dock::surface_picker`). Set by the pane-header toggle on
     /// the workspace's first open of the dock.
     pub(crate) picker: bool,
-    /// Whether the picker has been answered at least once *for the workspace
+    /// Whether the picker has been answered at least once *for the session
     /// that owns the live dock*. Once it has, opening the dock there restores
     /// the last active tab rather than asking again.
     pub(crate) picked: bool,
-    /// Which workspace the live dock fields above describe. `None` until the
-    /// dock is first opened. [`PaneFlowApp::sync_diff_dock_workspace`] parks and
-    /// swaps them whenever this drifts from the active workspace.
+    /// Which session (workspace tab id) the live dock fields above describe.
+    /// `None` until the dock is first opened.
+    /// [`PaneFlowApp::sync_diff_dock_session`] parks and swaps them whenever
+    /// this drifts from the visible session.
     pub(crate) owner: Option<u64>,
-    /// Dock state parked per workspace id, for every workspace that is not
-    /// [`Self::owner`]. The dock is detached per workspace: opening it
-    /// in one project leaves the next one untouched.
+    /// Dock state parked per session id, for every session that is not
+    /// [`Self::owner`]. The dock is detached per session: opening it in one tab
+    /// leaves its siblings, and the next workspace, untouched.
     pub(crate) parked: std::collections::HashMap<u64, crate::app::cli_diff_dock::DiffDockSlot>,
     /// The dock's tabs. Index 0 is always the permanent `Changes` diff; the
     /// rest are terminals opened from the `+` menu, closable from their tab.
@@ -852,9 +877,11 @@ struct DiffDockState {
     /// Width in px of the diff dock; user-resizable by dragging its left edge.
     /// Clamped to `[DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MAX_WIDTH]`.
     pub(crate) width: f32,
-    /// Live drag anchor `(cursor_x, width_at_grab)` while the dock's left edge is
-    /// being dragged to resize; `None` when not resizing.
-    pub(crate) resize: Option<(f32, f32)>,
+    /// Live drag anchor `(cursor_x, width_at_grab, max_width)` while the dock's
+    /// left edge is being dragged to resize; `None` when not resizing. The
+    /// ceiling is captured at grab time because it depends on the panel the
+    /// dock is docked in, which the drag math does not see.
+    pub(crate) resize: Option<(f32, f32, f32)>,
     /// Live horizontal-scrollbar drag inside the dock's shared diff body.
     pub(crate) h_scroll_drag: Option<crate::app::diff_dock::DiffDockHScrollDrag>,
     /// Per-file horizontal scroll offsets (px) for the diff dock, indexed by
@@ -929,6 +956,13 @@ struct PaneFlowApp {
     git_event_rx: std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
     /// Refcount for watched `.git` directories (multiple workspaces may share a repo).
     git_watch_counts: std::collections::HashMap<std::path::PathBuf, usize>,
+    /// Last state read out of Claude Code's session registry, per agent PID.
+    ///
+    /// Claude Code writes that file on transition but Paneflow reads it on a
+    /// clock, so without a watermark the same state would be re-applied every
+    /// tick and keep resetting the stall clock on a session that has not
+    /// moved. See `app::agent_status`.
+    claude_registry_seen: crate::app::agent_status::RegistryWatermark,
     /// Active settings section, or `None` if settings is closed.
     settings_section: Option<SettingsSection>,
     /// Scroll state for the inline settings page.
@@ -1007,9 +1041,15 @@ struct PaneFlowApp {
     profile_menu_open: Option<Point<Pixels>>,
     /// US-053: agent-sessions sidebar state (see `AgentSessionsState`).
     agent_sessions: AgentSessionsState,
-    /// Whether the docked Files right sidebar is visible (PRD
+    /// Whether the docked Files right sidebar is up (PRD
     /// `prd-files-tree-sidebar-2026-Q3`, EP-001). Mutually exclusive with
     /// `sessions_sidebar_open`. Never persisted - always `false` on launch.
+    ///
+    /// Live mirror of the visible session's `Tab::files_sidebar_open`, which is
+    /// where the desire is actually owned; `sync_files_sidebar_session`
+    /// reconciles the two. Being up is still not being on screen: Review and
+    /// Settings unmount the rail while this stays set
+    /// (`files_sidebar_host_visible`).
     files_sidebar_open: bool,
     /// Width animation for opening/closing the docked Files right sidebar.
     /// Matches the agent-sessions sidebar animation.
@@ -1356,10 +1396,14 @@ impl Render for PaneFlowApp {
                 self.windows_backdrop_light = Some(is_light);
             }
         }
+        // Fullscreen kills the behind-window material, so resolve it once here
+        // and keep the AppKit view and the shell tint in agreement.
+        let chrome_material_suppressed =
+            native_material_suppressed_by_fullscreen(window.is_fullscreen());
         #[cfg(target_os = "macos")]
         crate::window_chrome::macos_backdrop::sync_subtle_sidebar_material(
             theme.background.l > 0.5,
-            self.cached_config.macos_chrome_material_enabled(),
+            self.cached_config.macos_chrome_material_enabled() && !chrome_material_suppressed,
         );
         // Every mode is cockpit now (Agents first, then Cli, then Diff): the
         // title bar floats above the full window and the right panel reserves
@@ -1373,13 +1417,42 @@ impl Render for PaneFlowApp {
         let sessions_sidebar_opacity = (sessions_sidebar_width
             / crate::app::sessions_sidebar::SESSIONS_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
-        let files_sidebar_width = self.rendered_files_sidebar_width(window);
-        let files_sidebar_mounted =
-            self.files_sidebar_open || self.files_sidebar_animation.is_some();
+        // The Files rail belongs to the CLI cockpit only. Review and Settings
+        // unmount it (`files_sidebar_host_visible`) while `files_sidebar_open`
+        // survives, so returning to the cockpit brings the same tree back. The
+        // width animation is still advanced off-screen so an in-flight close
+        // finishes and releases the tree state instead of freezing mid-way.
+        let files_sidebar_host_visible = self.files_sidebar_host_visible();
+        // The rail follows the session on screen, so every tab switch, tab
+        // close and cross-workspace tab move is reconciled here instead of in
+        // each of those mutations. Off the cockpit the rail is unmounted
+        // anyway: leave the live state alone and reconcile on the way back.
+        if files_sidebar_host_visible {
+            self.sync_files_sidebar_session(cx);
+        }
+        let animated_files_sidebar_width = self.rendered_files_sidebar_width(window);
+        let files_sidebar_width = if files_sidebar_host_visible {
+            animated_files_sidebar_width
+        } else {
+            0.
+        };
+        let files_sidebar_mounted = files_sidebar_host_visible
+            && (self.files_sidebar_open || self.files_sidebar_animation.is_some());
         let files_sidebar_opacity = (files_sidebar_width
             / crate::app::files_sidebar::FILES_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
         let secondary_sidebar_open = sessions_sidebar_mounted || files_sidebar_mounted;
+        // The two right rails are mutually exclusive layout children, so the
+        // main panel loses exactly one of their widths. Bound once: the Linux
+        // blur geometry and the diff dock's width ceiling describe the same
+        // strip and must not drift apart.
+        let right_rail_width = if sessions_sidebar_mounted {
+            sessions_sidebar_width
+        } else if files_sidebar_mounted {
+            files_sidebar_width
+        } else {
+            0.
+        };
         // Every mode now renders the right area as ONE top-rounded clipped panel
         // (`panel_bg` fill + 16px rail-side top radius + 5px inset), replacing the
         // old Cli/Diff corner-mask trick. GPUI clips the panel's bg fill to the
@@ -1392,7 +1465,8 @@ impl Render for PaneFlowApp {
         // the native backdrop show through. Diff / Agents / Settings use the
         // #181818 surface.
         let terminal_material_active = self.cached_config.windows_terminal_material_enabled();
-        let chrome_material_active = self.cached_config.cockpit_chrome_material_enabled();
+        let chrome_material_active =
+            self.cached_config.cockpit_chrome_material_enabled() && !chrome_material_suppressed;
         let terminal_surface_mounted = self
             .active_workspace()
             .is_some_and(|ws| ws.active_tab().root.is_some());
@@ -1462,18 +1536,21 @@ impl Render for PaneFlowApp {
         let main_panel_left_inset = crate::app::constants::PANEL_INSET * panel_edge_share;
         let pane_grid_left_gutter = crate::layout::PANE_GUTTER_PX * panel_edge_share;
         let main_panel_corner_mask_bg = panel_corner_mask_bg;
+        // Room the main panel actually has between the rails, for children
+        // sized in absolute px (the CLI diff dock). The window shell's own
+        // client-side inset is not subtracted here: the dock's reserve for the
+        // pane grid is an order of magnitude larger than it.
+        let main_panel_width = f32::from(window.viewport_size().width)
+            - primary_sidebar_width
+            - right_rail_width
+            - main_panel_left_inset
+            - crate::app::constants::PANEL_INSET;
         #[cfg(target_os = "linux")]
         {
             crate::window_chrome::linux_backdrop::set_chrome_geometry(
                 crate::window_chrome::linux_backdrop::ChromeGeometry {
                     left_sidebar_width: primary_sidebar_width,
-                    right_sidebar_width: if sessions_sidebar_mounted {
-                        sessions_sidebar_width
-                    } else if files_sidebar_mounted {
-                        files_sidebar_width
-                    } else {
-                        0.
-                    },
+                    right_sidebar_width: right_rail_width,
                     title_bar_height: f32::from(title_bar_h),
                     title_bar_spans_window: true,
                 },
@@ -1638,7 +1715,7 @@ impl Render for PaneFlowApp {
         };
         // The right diff dock rides beside the CLI pane grid, opened from a
         // pane header. A no-op in every other mode.
-        let main_content = self.wrap_cli_diff_dock(main_content, cx);
+        let main_content = self.wrap_cli_diff_dock(main_content, main_panel_width, cx);
         // Update title bar with current workspace name.
         let ws_name = if self.settings_section.is_some() {
             // Settings open: the title-bar center is left empty (the section
@@ -1908,21 +1985,19 @@ impl Render for PaneFlowApp {
                                     .rounded(crate::app::constants::PANEL_CORNER_RADIUS)
                                     .capture_any_mouse_down(cx.listener(
                                         |this, event: &gpui::MouseDownEvent, _window, cx| {
+                                            // Clicking into the pane area is
+                                            // "I am looking at this", so it
+                                            // answers the visible tab's marks
+                                            // only - a sibling tab's dot is
+                                            // not something this click saw.
                                             if event.button == gpui::MouseButton::Left
                                                 && this.settings_section.is_none()
                                                 && matches!(
                                                     this.mode,
                                                     paneflow_config::schema::AppMode::Cli
                                                 )
-                                                && let Some(workspace) = this.active_workspace_mut()
-                                                && workspace
-                                                    .agent_completion_notification
-                                                    .is_unread()
                                             {
-                                                workspace
-                                                    .agent_completion_notification
-                                                    .acknowledge();
-                                                cx.notify();
+                                                this.acknowledge_visible_completions(cx);
                                             }
                                         },
                                     ))

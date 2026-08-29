@@ -124,8 +124,8 @@ impl PaneFlowApp {
         }
     }
 
-    /// Keyboard twin of the row click (US-019): directories toggle, markdown
-    /// opens in the active pane, every other file opens in the diff dock.
+    /// Keyboard twin of the row click (US-019): directories toggle, every file
+    /// opens in the diff dock.
     fn activate_files_path(
         &mut self,
         path: PathBuf,
@@ -136,8 +136,6 @@ impl PaneFlowApp {
         self.select_files_row(&path, cx);
         if is_dir {
             self.toggle_dir(&path, cx);
-        } else if files_tree::is_markdown(&path) {
-            self.open_markdown_in_active_pane(path, window, cx);
         } else {
             self.open_file_in_diff_dock(path, window, cx);
         }

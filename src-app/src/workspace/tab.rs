@@ -41,6 +41,15 @@ pub struct Tab {
     /// Saved layout tree while zoomed. `Some(tree)` means this tab is zoomed
     /// and `root` holds only the zoomed pane as a single Leaf.
     pub saved_layout: Option<LayoutTree>,
+    /// Whether this tab wants the docked Files rail on screen.
+    ///
+    /// The rail itself is a single app-level surface (one tree, one watcher),
+    /// but *wanting* it is a property of the session that asked for it: opening
+    /// the tree in one tab must not put it in front of a sibling tab. The app
+    /// mirrors the visible tab's flag and reconciles on every session change
+    /// ([`crate::PaneFlowApp::sync_files_sidebar_session`]). Never persisted -
+    /// like the app-level mirror, a restart starts every tab closed.
+    pub files_sidebar_open: bool,
 }
 
 impl Tab {
@@ -59,6 +68,7 @@ impl Tab {
             title_source: TabTitleSource::Preset,
             root,
             saved_layout: None,
+            files_sidebar_open: false,
         }
     }
 
@@ -204,6 +214,21 @@ impl Tab {
 
     /// Every pane of this tab, the zoom-saved tree included, in traversal
     /// order and without duplicates.
+    /// Terminal surface ids this tab owns.
+    ///
+    /// The same walk the sidebar does to attribute a session to a tab row
+    /// (`tab_row_sessions`), so an unread completion and a session badge can
+    /// never disagree about which row speaks for a surface.
+    pub fn surface_ids(&self, cx: &gpui::App) -> std::collections::HashSet<u64> {
+        let mut ids = std::collections::HashSet::new();
+        for pane in self.collect_panes() {
+            for terminal in pane.read(cx).terminals() {
+                ids.insert(terminal.entity_id().as_u64());
+            }
+        }
+        ids
+    }
+
     pub fn collect_panes(&self) -> Vec<Entity<Pane>> {
         let mut panes = Vec::new();
         if let Some(root) = &self.root {

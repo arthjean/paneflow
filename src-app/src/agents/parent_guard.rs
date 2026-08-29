@@ -35,10 +35,14 @@ use std::process::{ChildStdin, Command, Stdio};
 const CLAUDECODE_ENV: &str = "CLAUDECODE";
 
 /// Remove Claude Code's nesting marker from the process environment before
-/// any worker thread or PTY backend starts. The PTY spawn path inherits the
-/// parent environment and does not expose arbitrary `env_remove` entries, so
-/// this process-level guard remains necessary until that spawn boundary can own
-/// the exclusion directly.
+/// any worker thread or PTY backend starts.
+///
+/// The PTY spawn path now strips the whole
+/// `terminal::pty_session::INHERITED_AGENT_SESSION_ENV` family at the
+/// `env_remove` boundary, so this guard is no longer the only thing keeping
+/// `CLAUDECODE` out of a pane. It is kept because it is broader: it also
+/// covers every non-PTY child Paneflow spawns (agent CLIs, the self-update
+/// relay, helper binaries), which never pass through that boundary.
 ///
 /// # Safety
 ///
