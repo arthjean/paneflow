@@ -843,6 +843,7 @@ impl PaneFlowApp {
             recording_shortcut_idx: None,
             shortcut_search_input,
             shortcut_capture_active: false,
+            shortcut_reset_pending: false,
             collapsed_shortcut_groups: std::collections::HashSet::new(),
             settings_focus: cx.focus_handle(),
             mono_font_names: Vec::new(),

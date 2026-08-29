@@ -1021,6 +1021,10 @@ struct PaneFlowApp {
     /// While this is set, [`Self::intercept_shortcut_keystroke`] swallows every
     /// chord before GPUI can dispatch its action.
     shortcut_capture_active: bool,
+    /// Whether "Reset to defaults" on the Shortcuts page is awaiting
+    /// confirmation. The reset rewrites every binding in `paneflow.json` with
+    /// no undo, so the button asks before it fires.
+    shortcut_reset_pending: bool,
     /// Sections collapsed on the Shortcuts page. Empty = everything expanded.
     collapsed_shortcut_groups: std::collections::HashSet<keybindings::ShortcutGroup>,
     /// Focus handle for the settings page (receives key events during recording/font search).

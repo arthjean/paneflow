@@ -28,8 +28,9 @@ use gpui::{
 
 use crate::keybindings::ShortcutGroup;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, hairline, secondary_button, setting_card,
+    SETTINGS_CONTROL_CORNER_RADIUS, destructive_button, hairline, secondary_button, setting_card,
 };
+use crate::terminal::element::{MIN_APCA_CONTRAST, ensure_minimum_contrast};
 use crate::ui_primitives::{LABEL_SM, ROW_RADIUS, squircle_skin};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
@@ -158,6 +159,11 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let capture_active = self.shortcut_capture_active;
+        // `accent` and `text` are independent theme tokens: on vercel_dark they
+        // are #ffffff and #ededed, so a plain `text` label on an `accent` fill
+        // is invisible. Lift the label off the fill with the same APCA pass the
+        // terminal uses for selected text.
+        let on_accent = ensure_minimum_contrast(ui.text, ui.accent, MIN_APCA_CONTRAST);
 
         // One field in both modes. In capture mode the interceptor writes the
         // pressed chord straight into it, so the user always reads back exactly
@@ -207,12 +213,12 @@ impl PaneFlowApp {
                 .size(px(13.))
                 .flex_none()
                 .path("icons/keyboard.svg")
-                .text_color(if capture_active { ui.text } else { ui.muted }),
+                .text_color(if capture_active { on_accent } else { ui.muted }),
         )
         .child(
             div()
                 .text_size(px(11.))
-                .text_color(if capture_active { ui.text } else { ui.muted })
+                .text_color(if capture_active { on_accent } else { ui.muted })
                 .child(if capture_active {
                     "Capturing"
                 } else {
@@ -220,29 +226,68 @@ impl PaneFlowApp {
                 }),
         );
 
-        let reset_btn = secondary_button(
-            "reset-shortcuts",
-            "Reset to defaults",
-            ui,
-            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                config_writer::reset_shortcuts();
-                let config = paneflow_config::loader::load_config();
-                keybindings::apply_keybindings(cx, &config.shortcuts);
-                this.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
-                this.recording_shortcut_idx = None;
-                cx.notify();
-            }),
-        );
-
-        div()
+        // Resetting rewrites every binding in paneflow.json with no undo, so it
+        // asks first. A two-step inline confirm rather than a dialog: settings
+        // already live in a modal, and stacking a second one over it to ask a
+        // one-line question reads as heavier than the action deserves.
+        let mut row = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(8.))
             .child(field)
-            .child(capture_toggle)
-            .child(reset_btn)
-            .into_any_element()
+            .child(capture_toggle);
+
+        row = if self.shortcut_reset_pending {
+            row.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(ui.muted)
+                            .child("Reset all?"),
+                    )
+                    .child(secondary_button(
+                        "reset-shortcuts-cancel",
+                        "Cancel",
+                        ui,
+                        cx.listener(|this, _: &ClickEvent, _w, cx| {
+                            this.shortcut_reset_pending = false;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(
+                        destructive_button("reset-shortcuts-confirm", "Reset", ui).on_click(
+                            cx.listener(|this, _: &ClickEvent, _w, cx| {
+                                config_writer::reset_shortcuts();
+                                let config = paneflow_config::loader::load_config();
+                                keybindings::apply_keybindings(cx, &config.shortcuts);
+                                this.effective_shortcuts =
+                                    keybindings::effective_shortcuts(&config.shortcuts);
+                                this.recording_shortcut_idx = None;
+                                this.shortcut_reset_pending = false;
+                                cx.notify();
+                            }),
+                        ),
+                    ),
+            )
+        } else {
+            row.child(secondary_button(
+                "reset-shortcuts",
+                "Reset to defaults",
+                ui,
+                cx.listener(|this, _: &ClickEvent, _w, cx| {
+                    this.shortcut_reset_pending = true;
+                    cx.notify();
+                }),
+            ))
+        };
+
+        row.into_any_element()
     }
 
     /// The "Expand all / Collapse all" control above the sections.

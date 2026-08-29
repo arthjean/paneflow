@@ -84,6 +84,7 @@ impl PaneFlowApp {
         self.profile_menu_open = None;
         self.clear_shortcut_filters(cx);
         self.collapsed_shortcut_groups.clear();
+        self.shortcut_reset_pending = false;
         self.font_dropdown_open = false;
         self.font_search.clear();
         self.theme_dropdown_open = false;
