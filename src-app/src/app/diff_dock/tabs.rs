@@ -108,15 +108,6 @@ impl PaneFlowApp {
             .position(|tab| matches!(tab, DiffDockTab::PendingFile))
     }
 
-    /// Retire the placeholder without putting a document in its slot: the Files
-    /// tree answered somewhere else (a markdown row opens as a workspace tab,
-    /// not a dock tab), so the invitation has been served.
-    pub(crate) fn discard_pending_file_tab(&mut self, cx: &mut Context<Self>) {
-        if let Some(index) = self.pending_file_tab() {
-            self.close_diff_tab(index, cx);
-        }
-    }
-
     /// Project the strip into the facts the lifecycle rules read.
     fn diff_tab_facts(&self, cx: &Context<Self>) -> Vec<DiffTabFact> {
         self.diff_dock

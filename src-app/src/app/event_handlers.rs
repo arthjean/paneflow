@@ -791,82 +791,6 @@ impl PaneFlowApp {
                 self.save_session(cx);
                 cx.notify();
             }
-            pane::PaneEvent::DropMarkdownSplit { edge, path } => {
-                // A markdown row was dropped out of the Files sidebar onto a
-                // pane (EP-003 US-008). Open it via the existing `MarkdownView`
-                // API, then split the target toward the previewed edge. EP-002
-                // US-007: the center band opens the surface in a new *workspace*
-                // tab (panes are mono-surface, there is no pane-level tab to
-                // append to). Mirrors `DropSessionSplit`, minus the terminal
-                // spawn.
-                let edge = *edge;
-                let path = path.clone();
-                let target = pane.clone(); // the emitting pane is the target
-
-                // US-003: the pane cap bounds a tab, so resolve the owning
-                // tab and count (and later mutate) that one.
-                let Some((ws_idx, tab_idx)) =
-                    self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
-                        ws.tab_index_containing_pane(&target).map(|t| (idx, t))
-                    })
-                else {
-                    return;
-                };
-
-                // A split adds one pane to the current tab - refuse at the cap
-                // (edge case #9). A center drop opens its own workspace tab, so
-                // it isn't capped here.
-                if edge.is_some()
-                    && !self.workspaces[ws_idx]
-                        .tabs()
-                        .get(tab_idx)
-                        .is_some_and(|tab| tab.can_add_pane())
-                {
-                    return;
-                }
-
-                let ws_id = self.workspaces[ws_idx].id;
-                let markdown = cx.new(|cx| crate::markdown::MarkdownView::open(path, cx));
-
-                match edge {
-                    Some(edge) => {
-                        let new_pane = self.create_pane_with_existing_surface(
-                            crate::pane::PaneSurface::Markdown(markdown),
-                            ws_id,
-                            cx,
-                        );
-                        let inserted = if let Some(root) = self.workspaces[ws_idx]
-                            .tab_mut(tab_idx)
-                            .and_then(|tab| tab.root.as_mut())
-                        {
-                            split_pane_at_edge(root, &target, edge, new_pane.clone())
-                        } else {
-                            false
-                        };
-                        if !inserted {
-                            return;
-                        }
-                        self.pending_pane_focus = Some(new_pane);
-                    }
-                    None => {
-                        // EP-002 US-007: a center drop opens the file in a NEW
-                        // WORKSPACE TAB, for the same reason as
-                        // `DropSessionSplit` - the target pane holds a single
-                        // surface and must not be overwritten.
-                        let new_pane = self.create_pane_with_existing_surface(
-                            crate::pane::PaneSurface::Markdown(markdown),
-                            ws_id,
-                            cx,
-                        );
-                        if !self.open_pane_in_new_workspace_tab(ws_idx, new_pane.clone(), cx) {
-                            return;
-                        }
-                        self.pending_pane_focus = Some(new_pane);
-                    }
-                }
-                self.save_session(cx);
-                cx.notify();
-            }
             pane::PaneEvent::Split(direction) => {
                 let direction = *direction;
                 // US-003: split into the tab that owns the pane and cap on
@@ -2090,10 +2014,10 @@ mod tests {
         );
     }
 
-    /// EP-002 US-007: an edgeless drop (`DropSessionSplit` / `DropMarkdownSplit`
-    /// with `edge: None`, i.e. the center band) opens a NEW workspace tab. The
-    /// pane it was dropped on is mono-surface, so this proves the drop never
-    /// evicts the surface already running there.
+    /// EP-002 US-007: an edgeless drop (`DropSessionSplit` with `edge: None`,
+    /// i.e. the center band) opens a NEW workspace tab. The pane it was dropped
+    /// on is mono-surface, so this proves the drop never evicts the surface
+    /// already running there.
     #[gpui::test]
     fn edgeless_drop_opens_a_new_workspace_tab(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;

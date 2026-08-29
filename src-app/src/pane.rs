@@ -33,8 +33,7 @@ use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 use crate::diff::DiffView;
 use crate::markdown::MarkdownView;
 use crate::pane_drag::{
-    DragPreview, DropEdge, MarkdownFileDrag, PaneDrag, SPLIT_EDGE_BAND, SessionDrag,
-    compute_drop_edge, split_rect,
+    DragPreview, DropEdge, PaneDrag, SPLIT_EDGE_BAND, SessionDrag, compute_drop_edge, split_rect,
 };
 use crate::terminal::{TerminalEvent, TerminalView};
 
@@ -253,17 +252,6 @@ pub enum PaneEvent {
         agent: crate::agent_sessions::SessionAgent,
         session_id: String,
         cwd: String,
-    },
-    /// A markdown file was dropped out of the Files sidebar onto this (the
-    /// emitting target) pane (PRD `prd-files-tree-sidebar-2026-Q3`, EP-003).
-    /// For `edge = Some` the parent opens the file in a new pane split toward
-    /// that edge; for `edge = None` (center band) it opens a new workspace tab
-    /// holding the file, for the same reason as `DropSessionSplit` (EP-002
-    /// US-007). Routed to `PaneFlowApp` (LayoutTree owner) to keep the tree
-    /// mutation out of the drop callback (entity re-entrancy).
-    DropMarkdownSplit {
-        edge: Option<DropEdge>,
-        path: std::path::PathBuf,
     },
     /// A pane was dragged by its header and dropped onto this (the emitting
     /// target) pane (PRD `prd-pane-drag-drop-2026-Q3.md`). Same gesture as the
@@ -1289,9 +1277,9 @@ impl Pane {
     }
 
     /// Shared `on_drag_move` body for every drag type accepted by a pane
-    /// ([`SessionDrag`], [`MarkdownFileDrag`], [`PaneDrag`]): resolve the cursor (relative to
-    /// the content `bounds`) to a split edge and, when it changes, seed the
-    /// overlay glide and request a repaint. Both drag types drive the same blue
+    /// ([`SessionDrag`], [`PaneDrag`]): resolve the cursor (relative to the
+    /// content `bounds`) to a split edge and, when it changes, seed the overlay
+    /// glide and request a repaint. Both drag types drive the same blue
     /// preview, so the geometry lives here once.
     fn apply_drag_edge(
         &mut self,
@@ -1861,8 +1849,6 @@ impl Render for Pane {
             .invisible()
             // A session dragged from the sidebar lights up the drop overlay.
             .group_drag_over::<SessionDrag>(group_name.clone(), |s| s.visible())
-            // A markdown file dragged from the Files sidebar - same overlay.
-            .group_drag_over::<MarkdownFileDrag>(group_name.clone(), |s| s.visible())
             // A pane dragged by its header: same overlay, neutral palette -
             // the drop swaps the two panes instead of splitting this one.
             .group_drag_over::<PaneDrag>(group_name.clone(), move |s| {
@@ -1880,21 +1866,6 @@ impl Render for Pane {
                 });
                 cx.notify();
             }))
-            // Markdown drop: open the file via `MarkdownView`, split toward the
-            // previewed edge (or, for the center band, in a new workspace tab -
-            // EP-002 US-007). Tree mutation + open live in `PaneFlowApp`, so
-            // emit + defer out of this callback (entity re-entrancy, mirrors
-            // the session drop).
-            .on_drop(
-                cx.listener(move |this, drag: &MarkdownFileDrag, _window, cx| {
-                    let edge = this.drag_split_direction.take();
-                    cx.emit(PaneEvent::DropMarkdownSplit {
-                        edge,
-                        path: drag.path.clone(),
-                    });
-                    cx.notify();
-                }),
-            )
             // Session drop: spawn a fresh terminal running the resume command,
             // split toward the previewed edge (or, for the center band, in a
             // new workspace tab - EP-002 US-007). Tree mutation + spawn live in
@@ -1967,12 +1938,6 @@ impl Render for Pane {
             // it gets the identical blue preview (bridges the sessions PRD).
             .on_drag_move::<SessionDrag>(cx.listener(
                 |this, e: &DragMoveEvent<SessionDrag>, _window, cx| {
-                    this.apply_drag_edge(e.bounds, e.event.position, cx);
-                },
-            ))
-            // Identical edge-band probe for a markdown file dragged in.
-            .on_drag_move::<MarkdownFileDrag>(cx.listener(
-                |this, e: &DragMoveEvent<MarkdownFileDrag>, _window, cx| {
                     this.apply_drag_edge(e.bounds, e.event.position, cx);
                 },
             ))

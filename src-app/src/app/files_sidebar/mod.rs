@@ -5,17 +5,19 @@
 //! `toggle_files_sidebar` action (`secondary-alt-f`), mutually exclusive with
 //! the sessions sidebar (one right column). The pane header carries no Files
 //! button: the tree is keyboard/command-driven only. Renders a lazily-expanded,
-//! folders-first tree of the active workspace's `cwd`. Markdown rows open into
-//! the active pane (the WCAG 2.5.7 single-pointer alternative to the EP-003
-//! drag); since US-019 of `prd-file-editor-2026-Q3` every other file opens in
-//! the diff dock's editor, leaving only editor-refused files (binary or over
-//! `MAX_FILE_BYTES`) muted; gitignored/hidden entries are filtered out before
-//! rendering.
+//! folders-first tree of the active workspace's `cwd`. Since US-019 of
+//! `prd-file-editor-2026-Q3` every file opens in the diff dock's editor, and
+//! markdown is no longer the exception: a `.md` row reads as source there like
+//! any other file rather than opening a rendered pane of its own. Only
+//! editor-refused files (binary or over `MAX_FILE_BYTES`) stay muted;
+//! gitignored/hidden entries are filtered out before rendering. Rows carry no
+//! drag: the EP-003 markdown drag-to-pane is gone, so a click is the sidebar's
+//! only gesture and the dock editor its only destination.
 //!
 //! This module holds the state mutations (open/close, re-root, expand/collapse,
-//! open-markdown, open-in-dock) + the container render; the header/body/row
-//! rendering lives in `view.rs`, the type-to-filter matcher in `filter.rs`, and
-//! the pure tree model + fs helpers in `files_tree.rs`.
+//! open-in-dock) + the container render; the header/body/row rendering lives in
+//! `view.rs`, the type-to-filter matcher in `filter.rs`, and the pure tree model
+//! + fs helpers in `files_tree.rs`.
 
 mod context_menu;
 mod filter;
@@ -28,7 +30,7 @@ use std::path::{Path, PathBuf};
 
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Pixels, Styled, Window,
-    div, prelude::*, px,
+    div, px,
 };
 
 use crate::app::files_tree::{self, FilesTreeState};
@@ -233,7 +235,8 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// US-019: open a non-markdown file in the diff dock's editor.
+    /// US-019: open a file in the diff dock's editor. Every file goes here,
+    /// markdown included - a `.md` row opens as source, not as a preview.
     ///
     /// The dock is the editor's only host, so a click from the sidebar has to
     /// put it on screen first. `wrap_cli_diff_dock` only mounts the panel when
@@ -270,39 +273,6 @@ impl PaneFlowApp {
         self.diff_dock.picker = false;
         self.diff_dock.picked = true;
         self.open_diff_file_tab(path, window, cx);
-    }
-
-    /// Open a markdown file from the Files sidebar.
-    ///
-    /// EP-002 US-007: a pane holds a single surface, so the file opens as a new
-    /// workspace tab of the active workspace rather than being appended next to
-    /// a running terminal. The sidebar stays open.
-    fn open_markdown_in_active_pane(
-        &mut self,
-        path: PathBuf,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let ws_idx = self.active_idx;
-        let Some(ws_id) = self.workspaces.get(ws_idx).map(|ws| ws.id) else {
-            return;
-        };
-        // The tree answered the dock's "Open a file" invitation - just not in
-        // the dock. Leaving the placeholder up would keep asking for a click
-        // the user has already made.
-        self.discard_pending_file_tab(cx);
-        let markdown = cx.new(|cx| crate::markdown::MarkdownView::open(path, cx));
-        let pane = self.create_pane_with_existing_surface(
-            crate::pane::PaneSurface::Markdown(markdown),
-            ws_id,
-            cx,
-        );
-        if !self.open_pane_in_new_workspace_tab(ws_idx, pane.clone(), cx) {
-            return;
-        }
-        self.pending_pane_focus = Some(pane);
-        self.save_session(cx);
-        cx.notify();
     }
 
     /// Render the docked Files sidebar. Only called when `files_sidebar_open`.
