@@ -95,7 +95,6 @@ impl PaneFlowApp {
             .is_empty();
 
         let groups = self.filtered_shortcut_groups(cx);
-        let total_visible: usize = groups.iter().map(|(_, rows)| rows.len()).sum();
 
         let toolbar = self.render_shortcut_toolbar(ui, filtering, cx);
 
@@ -130,24 +129,14 @@ impl PaneFlowApp {
             "Click a row to record a new shortcut. Escape to cancel."
         };
 
+        // No result count: the matching rows are on screen, and counting what
+        // the user can already see answers no question they have.
         column.child(
             div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_between()
-                .gap(px(12.))
                 .pt(px(2.))
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(ui.muted)
-                        .child(hint.to_string()),
-                )
-                .child(div().text_size(px(11.)).text_color(ui.muted).child(format!(
-                    "{total_visible} of {}",
-                    self.effective_shortcuts.len()
-                ))),
+                .text_size(px(11.))
+                .text_color(ui.muted)
+                .child(hint.to_string()),
         )
     }
 
