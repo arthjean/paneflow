@@ -94,6 +94,18 @@ function Write-Utf8Lines {
     [IO.File]::WriteAllText($Path, $content, $encoding)
 }
 
+function Write-Phase {
+    param([string]$Message)
+
+    # The rebuild is otherwise silent for its whole duration: Zig's output is
+    # captured into a variable and only printed when the build fails, so a
+    # stalled pass and a slow pass look identical in the job log. That is what
+    # burned five 90 minute Windows runs between 2026-08-28 and 2026-08-29
+    # without producing one diagnosable line. These markers go to the host
+    # stream, so they never contaminate a function's return value.
+    Write-Host ("[{0}Z] {1}" -f [DateTime]::UtcNow.ToString("HH:mm:ss"), $Message)
+}
+
 function Normalize-InstalledHeaders {
     param([string]$IncludeDir)
 
@@ -691,10 +703,12 @@ $ZigLibDir = $null
 function Initialize-ZigSourceLib {
     $zigSourceRoot = Join-Path $tempRoot "zig-source"
     New-Item -ItemType Directory -Path $zigSourceRoot | Out-Null
+    Write-Phase "extracting the pinned Zig $ZigVersion source archive"
     $null = & $tarExe -xf $ZigSourceArchive -C $zigSourceRoot
     if ($LASTEXITCODE -ne 0) {
         throw "cannot extract the pinned Zig source archive"
     }
+    Write-Phase "Zig source library extracted"
     $sourceLib = Join-Path $zigSourceRoot "zig-$ZigVersion\lib"
     if (-not (Test-Path -LiteralPath (Join-Path $sourceLib "std\std.zig") -PathType Leaf)) {
         throw "Zig $ZigVersion source archive does not contain the expected library"
@@ -712,6 +726,7 @@ function Initialize-CanonicalSource {
     }
     New-Item -ItemType Directory -Path $canonicalSource | Out-Null
     $script:fixedSourceCreated = $true
+    Write-Phase "exporting the pinned Ghostty source tree at $SourceSha"
     $null = & git -C $SourceDir archive --format=tar -o $sourceArchive $SourceSha
     if ($LASTEXITCODE -ne 0) {
         throw "cannot export the pinned Ghostty source tree"
@@ -774,6 +789,8 @@ function Invoke-NativeBuild {
     $env:SOURCE_DATE_EPOCH = $SourceDateEpoch
     $env:NO_COLOR = "1"
     Push-Location $buildSource
+    $buildTimer = [Diagnostics.Stopwatch]::StartNew()
+    Write-Phase "$Label clean build starting"
     try {
         $zigOutput = @(& $ZigPath build --zig-lib-dir $ZigLibDir --verbose --seed $BuildSeed "-j$BuildJobs" -Demit-lib-vt=true "-Dtarget=$ZigTarget" "-Doptimize=$BuildMode" "-Dsimd=$SimdText" --prefix $zigPrefix 2>&1 | ForEach-Object { $_.ToString() })
         $zigExitCode = $LASTEXITCODE
@@ -782,6 +799,8 @@ function Invoke-NativeBuild {
         }
     }
     finally {
+        $buildTimer.Stop()
+        Write-Phase "$Label clean build ran for $([int]$buildTimer.Elapsed.TotalSeconds)s"
         Pop-Location
         $env:ZIG_GLOBAL_CACHE_DIR = $oldGlobal
         $env:ZIG_LOCAL_CACHE_DIR = $oldLocal

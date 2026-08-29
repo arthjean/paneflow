@@ -207,19 +207,33 @@ jobs:
           Write-Host "LLVM normalization tools: $expectedLlvm at $llvmObjcopy"
 
       # The rebuild deliberately has no native object cache. The canonical
-      # source/cache paths are part of the reproducibility contract, and the
-      # script performs six independent clean builds before publication.
-      - name: Rebuild and compare six canonical archives
+      # source/cache paths are part of the reproducibility contract, and each
+      # pass performs two independent clean builds before publication.
+      #
+      # The pass count is event-scoped. A pull request pays one pass, which
+      # still proves the archive hash against the manifest and still catches a
+      # divergence between two clean builds; on this exact pin two clean builds
+      # cost 7m33s (run 33154407103, 2026-08-28). The three-pass soak that
+      # 47d3baf introduced costs six clean builds and has never once completed:
+      # it hit the 90 minute wall on every execution from 2026-08-28 onward, on
+      # main and on branches alike, so it belongs on the nightly lane where a
+      # long soak is affordable and no PR is blocked behind it.
+      - name: Rebuild and compare canonical archives
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
+          REPRO_PASSES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 3 || 1 }}
         run: |
           New-Item -ItemType Directory -Force -Path $env:EVIDENCE_DIR | Out-Null
+          $passes = [int]$env:REPRO_PASSES
+          if ($passes -lt 1 -or $passes -gt 3) {
+            throw "REPRO_PASSES must be between 1 and 3, got '$env:REPRO_PASSES'"
+          }
+          Write-Host "running $passes reproducibility pass(es) for $env:GITHUB_EVENT_NAME"
 
           # Same narrow retry as scripts/ci-retry-network.sh on the Unix lanes.
           # Zig fetches the 16 build.zig.zon dependencies from two hosts on
-          # every clean build, six times across three reproducibility passes,
-          # with no cache.
+          # every clean build, twice per reproducibility pass, with no cache.
           # Only a transport failure is retried; an archive hash mismatch or a
           # reproducibility divergence still fails on the first attempt.
           $transient = 'unable to connect to server|TemporaryNameServerFailure|UnknownHostName|' +
@@ -237,8 +251,9 @@ jobs:
             # from an unrelated native command earlier in the job.
             $global:LASTEXITCODE = 0
             try {
-              for ($reproPass = 1; $reproPass -le 3; $reproPass++) {
-                Write-Host "reproducibility pass $reproPass/3"
+              for ($reproPass = 1; $reproPass -le $passes; $reproPass++) {
+                $stamp = [DateTime]::UtcNow.ToString("HH:mm:ss")
+                Write-Host "[${stamp}Z] reproducibility pass $reproPass/$passes"
                 $passEvidence = Join-Path $env:EVIDENCE_DIR "reproducibility-pass-$reproPass"
                 & ./scripts/build-libghostty-windows.ps1 `
                   -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
