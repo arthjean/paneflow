@@ -20,6 +20,11 @@ pub struct ShortcutEntry {
     /// (zero-override) case. Indexing `DEFAULTS` by row would silently rebind
     /// the *wrong* action and corrupt `paneflow.json`.
     pub action_name: &'static str,
+    /// Section this row is filed under on the Shortcuts settings page.
+    pub group: super::registry::ShortcutGroup,
+    /// Lowercase ASCII spellings of [`Self::key`], for the settings text
+    /// filter. Empty when the action is unbound. See [`ascii_key_forms`].
+    pub search_key: String,
 }
 
 /// Format a GPUI keystroke string for display.
@@ -89,6 +94,47 @@ pub fn format_keystroke(key: &str) -> String {
     }
 }
 
+/// ASCII spellings of a raw keystroke, for the Shortcuts page's text filter.
+///
+/// [`format_keystroke`] renders Apple HIG glyphs on macOS (`⌘⇧D`, no
+/// separator), so a user typing "cmd+shift" or "ctrl+shift" would match
+/// nothing there. This returns every plus-joined ASCII spelling of the chord so
+/// a substring search finds it on any platform, including both readings of
+/// GPUI's `secondary` (Cmd on macOS, Ctrl elsewhere) and the usual aliases.
+///
+/// Result is lowercase and space-separated, e.g. `secondary-shift-d` ->
+/// `"ctrl+shift+d cmd+shift+d command+shift+d"`.
+fn ascii_key_forms(raw_key: &str) -> String {
+    // Each token expands to its accepted spellings; the chord is then the
+    // cartesian product of those, which stays tiny (chords are 2-4 tokens).
+    let alternatives: Vec<Vec<&str>> = raw_key
+        .split('-')
+        .map(|part| match part {
+            "secondary" => vec!["ctrl", "cmd", "command"],
+            "cmd" | "super" | "win" => vec!["cmd", "command", "super", "win"],
+            "ctrl" => vec!["ctrl", "control"],
+            "alt" => vec!["alt", "option", "opt"],
+            other => vec![other],
+        })
+        .collect();
+
+    let mut forms: Vec<String> = vec![String::new()];
+    for options in &alternatives {
+        let mut next = Vec::with_capacity(forms.len() * options.len());
+        for prefix in &forms {
+            for option in options {
+                if prefix.is_empty() {
+                    next.push((*option).to_string());
+                } else {
+                    next.push(format!("{prefix}+{option}"));
+                }
+            }
+        }
+        forms = next;
+    }
+    forms.join(" ").to_lowercase()
+}
+
 /// Compute the effective shortcut list by merging defaults with user overrides.
 ///
 /// User overrides replace default bindings for the same action. Additional user
@@ -148,6 +194,10 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
             key,
             description: meta.description.to_string(),
             action_name: meta.name,
+            group: meta.group,
+            search_key: ascii_key_forms(
+                user_by_action.get(d.action_name).copied().unwrap_or(d.key),
+            ),
         });
     }
 
@@ -163,6 +213,8 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
                 key: format_keystroke(key),
                 description: meta.description.to_string(),
                 action_name: meta.name,
+                group: meta.group,
+                search_key: ascii_key_forms(key),
             });
         }
     }
@@ -173,6 +225,8 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
                 key: "Unassigned".to_string(),
                 description: action_description(meta.name).to_string(),
                 action_name: meta.name,
+                group: meta.group,
+                search_key: String::new(),
             });
         }
     }
@@ -310,6 +364,69 @@ mod tests {
             .find(|e| e.action_name == "split_horizontally")
             .expect("unbound actions remain visible for rebinding");
         assert_eq!(split_h.key, "Unassigned");
+    }
+
+    #[test]
+    fn ascii_key_forms_covers_both_readings_of_secondary() {
+        // `secondary` is Cmd on macOS and Ctrl elsewhere, so both spellings
+        // must find the row whatever platform the settings page renders on.
+        let forms = ascii_key_forms("secondary-shift-d");
+        assert!(forms.contains("ctrl+shift+d"), "{forms}");
+        assert!(forms.contains("cmd+shift+d"), "{forms}");
+        assert!(forms.contains("command+shift+d"), "{forms}");
+    }
+
+    #[test]
+    fn ascii_key_forms_expands_modifier_aliases() {
+        assert!(ascii_key_forms("alt-left").contains("option+left"));
+        assert!(ascii_key_forms("ctrl-c").contains("control+c"));
+        assert!(ascii_key_forms("cmd-q").contains("super+q"));
+    }
+
+    #[test]
+    fn ascii_key_forms_is_lowercase_for_substring_matching() {
+        // The settings filter lowercases the query, so the haystack must be
+        // lowercase too or a match on an uppercase key would be missed.
+        let forms = ascii_key_forms("ctrl-shift-PageUp");
+        assert_eq!(forms, forms.to_lowercase());
+        assert!(forms.contains("pageup"), "{forms}");
+    }
+
+    #[test]
+    fn every_entry_carries_its_registry_group() {
+        // The Shortcuts page buckets by group; an entry landing in the wrong
+        // section (or a section the page never renders) would go missing.
+        let entries = effective_shortcuts(&HashMap::new());
+        for entry in &entries {
+            let meta = ACTIONS
+                .iter()
+                .find(|a| a.name == entry.action_name)
+                .expect("every entry comes from the registry");
+            assert_eq!(
+                entry.group, meta.group,
+                "{} landed in the wrong section",
+                entry.action_name
+            );
+        }
+        // Every declared section is reachable from the page.
+        for group in super::super::registry::ShortcutGroup::ALL {
+            assert!(
+                entries.iter().any(|e| e.group == *group),
+                "{group:?} has no rows, so its header would render empty"
+            );
+        }
+    }
+
+    #[test]
+    fn bound_entries_have_a_searchable_ascii_key() {
+        let entries = effective_shortcuts(&HashMap::new());
+        for entry in entries.iter().filter(|e| e.key != "Unassigned") {
+            assert!(
+                !entry.search_key.is_empty(),
+                "{} is bound but not findable by key",
+                entry.action_name
+            );
+        }
     }
 
     #[cfg(not(target_os = "macos"))]

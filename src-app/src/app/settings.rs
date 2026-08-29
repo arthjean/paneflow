@@ -58,9 +58,40 @@ impl PaneFlowApp {
         cx.notify();
     }
 
+    /// Arm or disarm the Shortcuts page's key-capture mode.
+    ///
+    /// Disarming always drops the captured chord: leaving the mode with a
+    /// filter still applied would strand the user on a filtered list whose
+    /// cause is no longer visible on screen.
+    pub(crate) fn set_shortcut_capture(&mut self, active: bool, cx: &mut Context<Self>) {
+        self.shortcut_capture_active = active;
+        if !active {
+            self.shortcut_captured_key = None;
+        }
+        // A capture and a text query are two ways to ask the same question, so
+        // arming one clears the other rather than intersecting them.
+        if active {
+            self.shortcut_search_input.update(cx, |input, cx| {
+                input.set_value("", cx);
+            });
+        }
+        self.recording_shortcut_idx = None;
+    }
+
+    /// Clear every Shortcuts-page filter (text query and captured chord).
+    pub(crate) fn clear_shortcut_filters(&mut self, cx: &mut Context<Self>) {
+        self.shortcut_capture_active = false;
+        self.shortcut_captured_key = None;
+        self.shortcut_search_input.update(cx, |input, cx| {
+            input.set_value("", cx);
+        });
+    }
+
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_section = None;
         self.profile_menu_open = None;
+        self.clear_shortcut_filters(cx);
+        self.collapsed_shortcut_groups.clear();
         self.font_dropdown_open = false;
         self.font_search.clear();
         self.theme_dropdown_open = false;
@@ -217,6 +248,26 @@ impl PaneFlowApp {
                     }
                 }
             }
+            return;
+        }
+
+        // Shortcuts-page key capture: the pressed chord becomes the filter
+        // rather than a rebind. Checked before the Escape branch below so
+        // Escape leaves capture mode instead of closing the whole modal - a
+        // user who armed capture expects Escape to disarm it first.
+        if self.shortcut_capture_active && self.recording_shortcut_idx.is_none() {
+            if event.keystroke.key == "escape" {
+                self.set_shortcut_capture(false, cx);
+                cx.notify();
+                return;
+            }
+            // Bare modifiers are held on the way to a real chord, not a chord.
+            if keybindings::is_bare_modifier(&event.keystroke) {
+                return;
+            }
+            self.shortcut_captured_key =
+                Some(keybindings::format_keystroke(&event.keystroke.to_string()));
+            cx.notify();
             return;
         }
 

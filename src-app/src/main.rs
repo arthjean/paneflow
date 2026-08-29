@@ -1010,6 +1010,20 @@ struct PaneFlowApp {
     effective_shortcuts: Vec<keybindings::ShortcutEntry>,
     /// Index of the shortcut row currently being recorded (`None` = not recording).
     recording_shortcut_idx: Option<usize>,
+    /// Free-text filter for the Shortcuts page. Matches the action description
+    /// *and* the rendered keystroke, so "ctrl+shift" and "workspace" both work.
+    shortcut_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    /// Chord captured by the Shortcuts page's key-capture mode, already
+    /// formatted for display. `Some` only while a chord has been pressed; the
+    /// mode itself is [`Self::shortcut_capture_active`].
+    shortcut_captured_key: Option<String>,
+    /// Whether the Shortcuts page is in key-capture mode: the next chord filters
+    /// the list instead of typing into the search field. This answers "what
+    /// already owns this key?", which a text search cannot without knowing how
+    /// the chord is spelled.
+    shortcut_capture_active: bool,
+    /// Sections collapsed on the Shortcuts page. Empty = everything expanded.
+    collapsed_shortcut_groups: std::collections::HashSet<keybindings::ShortcutGroup>,
     /// Focus handle for the settings page (receives key events during recording/font search).
     settings_focus: FocusHandle,
     /// Cached list of monospace font family names from the system.
