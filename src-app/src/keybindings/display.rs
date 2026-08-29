@@ -169,6 +169,15 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
     let mut entries = Vec::new();
     let mut seen_actions: HashSet<&'static str> = HashSet::new();
 
+    // On macOS an action can be bound twice - once generically in `DEFAULTS`
+    // and once platform-natively in `MACOS_ONLY_DEFAULTS` (copy is both
+    // ctrl-shift-c and cmd-c). The settings page shows the platform-native
+    // chord for those, matching the menu bar and what a Mac user reaches for.
+    let macos_key_by_action: HashMap<&str, &str> = MACOS_ONLY_DEFAULTS
+        .iter()
+        .map(|d| (d.action_name, d.key))
+        .collect();
+
     // Defaults first, with user overrides applied. US-010: include the
     // macOS-only defaults so the settings page reflects cmd-c/cmd-v on
     // macOS (and stays unchanged on Linux where MACOS_ONLY_DEFAULTS is empty).
@@ -177,16 +186,30 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
             continue;
         };
 
+        // One row per *action*, not per binding. A rebind is keyed by action
+        // name, so a second row for the same action would be a duplicate the
+        // user cannot edit independently - editing either rewrites the same
+        // entry in paneflow.json.
+        if seen_actions.contains(meta.name) {
+            continue;
+        }
+
+        // Prefer the platform-native chord when this action has one.
+        let default_key = macos_key_by_action
+            .get(d.action_name)
+            .copied()
+            .unwrap_or(d.key);
+
         // If user overrode this action to a different key, show that key. If a
         // different action claimed this default chord, mirror apply_keybindings
         // and hide the displaced default row until it is explicitly rebound.
         let key = if let Some(user_key) = user_by_action.get(d.action_name) {
             format_keystroke(user_key)
         } else {
-            if is_unbound(d.key) || is_user_claimed(d.key) {
+            if is_unbound(default_key) || is_user_claimed(default_key) {
                 continue;
             }
-            format_keystroke(d.key)
+            format_keystroke(default_key)
         };
 
         seen_actions.insert(meta.name);
@@ -196,7 +219,10 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
             action_name: meta.name,
             group: meta.group,
             search_key: ascii_key_forms(
-                user_by_action.get(d.action_name).copied().unwrap_or(d.key),
+                user_by_action
+                    .get(d.action_name)
+                    .copied()
+                    .unwrap_or(default_key),
             ),
         });
     }
@@ -390,6 +416,42 @@ mod tests {
         let forms = ascii_key_forms("ctrl-shift-PageUp");
         assert_eq!(forms, forms.to_lowercase());
         assert!(forms.contains("pageup"), "{forms}");
+    }
+
+    #[test]
+    fn the_page_lists_each_action_exactly_once() {
+        // The row count is shown to the user ("N of M"), and a rebind is keyed
+        // by action name - so a second row for one action is both a wrong
+        // count and a row the user cannot edit on its own. On macOS
+        // terminal_copy and terminal_paste are bound in DEFAULTS *and* in
+        // MACOS_ONLY_DEFAULTS, which used to emit them twice.
+        let entries = effective_shortcuts(&HashMap::new());
+        let mut seen: HashSet<&str> = HashSet::new();
+        for entry in &entries {
+            assert!(
+                seen.insert(entry.action_name),
+                "{} is listed more than once",
+                entry.action_name
+            );
+        }
+        assert_eq!(
+            entries.len(),
+            ACTIONS.len(),
+            "every registry action gets exactly one row"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_rows_show_the_platform_native_chord() {
+        // Copy is ctrl-shift-c generically and cmd-c on macOS; the row should
+        // read the one the menu bar shows.
+        let entries = effective_shortcuts(&HashMap::new());
+        let copy = entries
+            .iter()
+            .find(|e| e.action_name == "terminal_copy")
+            .expect("copy is bound");
+        assert_eq!(copy.key, format_keystroke("cmd-c"));
     }
 
     #[test]
