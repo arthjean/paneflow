@@ -8,7 +8,7 @@ shipping targets. This file is the canonical instruction source for every agent;
 ## Gates you must not skip
 
 Run from the repository root. The toolchain is pinned in `rust-toolchain.toml`
-(1.96.1), so do not add `+stable` or `+nightly`.
+(1.98.0), so do not add `+stable` or `+nightly`.
 
 ```bash
 cargo fmt --check                                   # mandatory before commit and push

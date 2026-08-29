@@ -218,11 +218,9 @@ fn find_escape(bytes: &[u8]) -> Option<usize> {
     const LOW_BITS: u64 = u64::from_ne_bytes([0x01; 8]);
     const HIGH_BITS: u64 = u64::from_ne_bytes([0x80; 8]);
 
-    let mut chunks = bytes.chunks_exact(8);
-    for (chunk_index, chunk) in chunks.by_ref().enumerate() {
-        let word = u64::from_ne_bytes([
-            chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-        ]);
+    let (chunks, remainder) = bytes.as_chunks::<8>();
+    for (chunk_index, chunk) in chunks.iter().enumerate() {
+        let word = u64::from_ne_bytes(*chunk);
         let candidates = word ^ ESCAPES;
         if candidates.wrapping_sub(LOW_BITS) & !candidates & HIGH_BITS != 0 {
             return chunk
@@ -232,9 +230,8 @@ fn find_escape(bytes: &[u8]) -> Option<usize> {
         }
     }
 
-    let tail_start = bytes.len() - chunks.remainder().len();
-    chunks
-        .remainder()
+    let tail_start = bytes.len() - remainder.len();
+    remainder
         .iter()
         .position(|byte| *byte == 0x1b)
         .map(|offset| tail_start + offset)
