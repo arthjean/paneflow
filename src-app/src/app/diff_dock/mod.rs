@@ -68,9 +68,9 @@ impl PaneFlowApp {
     pub(crate) fn open_diff_dock_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
         // The single door to an open dock, so the single place that records
-        // which workspace owns it - `sync_diff_dock_workspace` would otherwise
-        // read the open as a drift and park it on the next frame.
-        self.diff_dock.owner = self.active_workspace().map(|ws| ws.id);
+        // which session owns it - `sync_diff_dock_session` would otherwise read
+        // the open as a drift and park it on the next frame.
+        self.diff_dock.owner = self.active_session_id();
         let split = self.diff_dock.split;
         let has_current_snapshot = self.diff_dock.data.as_ref().is_some_and(|data| {
             data.cwd == cwd

@@ -274,6 +274,10 @@ impl PaneFlowApp {
         self.sync_broadcast_stripes(cx);
         self.flush_pending_prefill(cx);
         self.sync_pending_chips(cx);
+        // A background tab closes without moving the visible one, so the dock's
+        // own reconcile never runs: its parked slot (and the terminals in it)
+        // would outlive the session it belonged to.
+        self.prune_parked_diff_docks();
     }
 
     pub(crate) fn handle_close_tab(

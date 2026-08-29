@@ -8,10 +8,11 @@
 //! toggle, the per-workspace attachment, and the dock host; the panel itself is
 //! rendered once by [`crate::app::diff_dock`].
 //!
-//! The dock is *detached per workspace*: it belongs to the folder it was opened
-//! on, so switching workspace parks it and brings up whatever the incoming
-//! workspace last had - nothing at all, until that workspace opens the dock
-//! itself and answers the picker.
+//! The dock is *detached per session* (workspace tab): it belongs to the tab it
+//! was opened in, so switching tab - or workspace, which switches tab too -
+//! parks it and brings up whatever the incoming session last had: nothing at
+//! all, until that session opens the dock itself and answers the picker. A
+//! sibling tab of the same folder is a different session and starts clean.
 
 use gpui::{
     AnyElement, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Styled, div,
@@ -41,14 +42,14 @@ fn diff_dock_fit(preferred: f32, available: f32) -> (f32, f32) {
     (preferred.min(max), max)
 }
 
-/// The dock state one workspace owns, parked while another workspace is active.
+/// The dock state one session owns, parked while another session is on screen.
 ///
-/// Only what makes the dock *this project's* dock is carried: whether it is
+/// Only what makes the dock *this session's* dock is carried: whether it is
 /// open, which surface was picked, the tabs it accumulated and the last diff
 /// snapshot (kept so returning repaints from warm rows instead of flashing a
 /// loader while git re-runs). Width, split/unified layout and the fold state
 /// stay app-global - they are preferences about how a diff reads, not facts
-/// about which project is open.
+/// about which session is on screen.
 pub(crate) struct DiffDockSlot {
     open: bool,
     picker: bool,
@@ -59,8 +60,8 @@ pub(crate) struct DiffDockSlot {
 }
 
 impl DiffDockSlot {
-    /// Nothing worth keeping: the workspace never opened the dock (or was left
-    /// at its birth state), so parking it would only grow the map with slots
+    /// Nothing worth keeping: the session never opened the dock (or was left at
+    /// its birth state), so parking it would only grow the map with slots
     /// indistinguishable from a fresh one.
     fn is_idle(&self) -> bool {
         !self.open && !self.picked && self.tabs.len() <= 1
@@ -68,30 +69,48 @@ impl DiffDockSlot {
 }
 
 impl PaneFlowApp {
-    /// Keep the live dock attached to the active workspace.
+    /// Keep the live dock attached to the session on screen.
     ///
     /// Called once per frame from [`Self::wrap_cli_diff_dock`] rather than from
-    /// each of the eight places `active_idx` moves (sidebar click, `Ctrl+1..9`,
+    /// each of the places the visible tab moves (sidebar click, `Ctrl+1..9`,
+    /// tab switch / create / close / reorder, cross-workspace tab move,
     /// workspace create / close / restore, IPC `workspace.select`, Settings):
-    /// the dock follows one fact - which workspace is active - so it reconciles
+    /// the dock follows one fact - which session is visible - so it reconciles
     /// against that fact instead of asking every caller to remember it.
-    fn sync_diff_dock_workspace(&mut self, cx: &mut Context<Self>) {
-        let active = self.active_workspace().map(|ws| ws.id);
+    fn sync_diff_dock_session(&mut self, cx: &mut Context<Self>) {
+        let active = self.active_session_id();
         if self.diff_dock.owner == active {
             return;
         }
         let previous = self.diff_dock.owner;
         self.diff_dock.owner = active;
         self.park_live_diff_dock(previous, cx);
-        // A workspace closed while its dock was parked never comes back: drop
-        // its slot so the terminals and documents it holds die with it.
-        let live: Vec<u64> = self.workspaces.iter().map(|ws| ws.id).collect();
-        self.diff_dock.parked.retain(|id, _| live.contains(id));
+        self.prune_parked_diff_docks();
         self.restore_diff_dock(active, cx);
     }
 
+    /// Id of the session (workspace tab) the cockpit is showing. Tab ids come
+    /// from one process-global counter, so a tab id is unique across every
+    /// workspace and needs no workspace half to key on.
+    pub(crate) fn active_session_id(&self) -> Option<u64> {
+        self.active_workspace().map(|ws| ws.active_tab().id)
+    }
+
+    /// Drop the slots of sessions that no longer exist. A tab closed while its
+    /// dock was parked never comes back, so its slot has to go with it or the
+    /// terminals and documents it holds stay alive with nothing on screen.
+    pub(crate) fn prune_parked_diff_docks(&mut self) {
+        let workspaces = &self.workspaces;
+        self.diff_dock.parked.retain(|id, _| {
+            workspaces
+                .iter()
+                .flat_map(|ws| ws.tabs())
+                .any(|tab| tab.id == *id)
+        });
+    }
+
     /// Move the live dock fields into `owner`'s slot and reset them to the
-    /// state a workspace that has never opened the dock sees.
+    /// state a session that has never opened the dock sees.
     fn park_live_diff_dock(&mut self, owner: Option<u64>, cx: &mut Context<Self>) {
         let slot = DiffDockSlot {
             open: self.diff_dock.open,
@@ -113,10 +132,15 @@ impl PaneFlowApp {
         self.diff_dock.diff_new_tab_menu_open = false;
         self.diff_dock.diff_branch_menu = None;
 
-        let owner = owner.filter(|id| self.workspaces.iter().any(|ws| ws.id == *id));
+        let owner = owner.filter(|id| {
+            self.workspaces
+                .iter()
+                .flat_map(|ws| ws.tabs())
+                .any(|tab| tab.id == *id)
+        });
         match owner {
-            // The owner is gone (its workspace was just closed): dropping the
-            // slot here is that workspace's dock teardown.
+            // The owner is gone (its tab was just closed): dropping the slot
+            // here is that session's dock teardown.
             None => drop(slot),
             Some(id) if slot.is_idle() => {
                 self.diff_dock.parked.remove(&id);
@@ -127,11 +151,11 @@ impl PaneFlowApp {
         }
     }
 
-    /// Bring `ws_id`'s parked dock back. A workspace with no slot keeps the
+    /// Bring `session_id`'s parked dock back. A session with no slot keeps the
     /// closed dock the parking reset left, which is the whole point: opening a
-    /// dock in one project must not open one in the next.
-    fn restore_diff_dock(&mut self, ws_id: Option<u64>, cx: &mut Context<Self>) {
-        let Some(slot) = ws_id.and_then(|id| self.diff_dock.parked.remove(&id)) else {
+    /// dock in one session must not open one in the next.
+    fn restore_diff_dock(&mut self, session_id: Option<u64>, cx: &mut Context<Self>) {
+        let Some(slot) = session_id.and_then(|id| self.diff_dock.parked.remove(&id)) else {
             return;
         };
         self.diff_dock.picker = slot.picker;
@@ -168,7 +192,7 @@ impl PaneFlowApp {
         if showing {
             self.close_diff_dock_panel(cx);
         } else {
-            // The button opens the dock, not the diff: until this workspace has
+            // The button opens the dock, not the diff: until this session has
             // said once what it wants in it, the dock comes up on its surface
             // picker. Afterwards it restores whatever tab was last active there.
             self.diff_dock.picker = !self.diff_dock.picked;
@@ -199,9 +223,9 @@ impl PaneFlowApp {
         available_width: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Before the visibility test, not after: a workspace whose parked dock
-        // is open has to be swapped in to *become* visible.
-        self.sync_diff_dock_workspace(cx);
+        // Before the visibility test, not after: a session whose parked dock is
+        // open has to be swapped in to *become* visible.
+        self.sync_diff_dock_session(cx);
         if !self.diff_dock_visible() {
             return body;
         }
@@ -300,17 +324,17 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_that_never_opened_the_dock_parks_nothing() {
-        // The birth state. Parking it would make "this workspace has a slot"
-        // stop meaning "this workspace has a dock", and every workspace merely
-        // visited once would grow the map.
+    fn a_session_that_never_opened_the_dock_parks_nothing() {
+        // The birth state. Parking it would make "this session has a slot"
+        // stop meaning "this session has a dock", and every tab merely visited
+        // once would grow the map.
         assert!(slot(false, false, 1).is_idle());
     }
 
     #[test]
     fn a_dock_worth_restoring_is_parked() {
         // Open, or answered, or carrying tabs: each on its own is state the
-        // workspace must find again when it comes back.
+        // session must find again when it comes back.
         assert!(!slot(true, false, 1).is_idle(), "an open dock must survive");
         assert!(
             !slot(false, true, 1).is_idle(),
