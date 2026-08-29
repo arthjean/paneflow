@@ -539,6 +539,14 @@ mod tests {
             .collect::<Vec<_>>();
         drop(frame_trace);
         let traced_frame_samples = frame_timings.len();
+        // Every target-window draw paints all eight panes, but a draw with no
+        // observed invalidation carries no dirty-to-draw duration. Count the
+        // draws for the paint invariant and keep the timed subset for the
+        // pacing percentiles.
+        let target_window_draws = frame_timings
+            .iter()
+            .filter(|timing| timing.window_id == target_window_id)
+            .count();
         let mut target_frames = frame_timings
             .into_iter()
             .filter(|timing| timing.window_id == target_window_id)
@@ -551,8 +559,8 @@ mod tests {
         );
         assert_eq!(
             render_content_lock.len(),
-            target_frames.len() * terminals.len(),
-            "each traced target-window frame must paint every active terminal exactly once"
+            target_window_draws * terminals.len(),
+            "each traced target-window draw must paint every active terminal exactly once"
         );
 
         burst_to_park.sort_unstable();
@@ -561,7 +569,7 @@ mod tests {
         let throughput = total_bytes as f64 / wall.as_secs_f64() / (1024.0 * 1024.0);
         let input_to_frame_p95_us = percentile_us(&target_frames, 95);
         println!(
-            "{{\"seed\":\"0x{CORPUS_SEED:016x}\",\"panes\":8,\"streams_per_pane\":{},\"resize_events\":{},\"bytes\":{total_bytes},\"throughput_mib_s\":{throughput:.3},\"input_to_frame_samples\":{},\"input_to_frame_p50_us\":{},\"input_to_frame_p95_us\":{input_to_frame_p95_us},\"input_to_frame_p95_limit_us\":{INPUT_TO_FRAME_P95_LIMIT_US},\"burst_to_park_samples\":{},\"burst_to_park_p50_us\":{},\"burst_to_park_p95_us\":{},\"traced_frame_samples\":{traced_frame_samples},\"render_content_lock_samples\":{},\"render_content_lock_held_p50_us\":{},\"render_content_lock_held_p95_us\":{},\"wall_ms\":{},\"cpu_ms\":{},\"rss_start_bytes\":{rss_start},\"rss_peak_bytes\":{rss_peak},\"rss_end_bytes\":{rss_end},\"hardware\":{:?},\"platform\":{:?},\"profile\":\"release\",\"measurement_boundary\":\"per-target-window GPUI frame from first dirty invalidation through draw completion\",\"burst_measurement\":\"diagnostic wall time for resize plus eight terminal updates through GPUI dispatcher until parked\",\"backend_scope\":\"backend-neutral GPUI renderer; Ghostty parser and host are covered by separate qualification gates\",\"lock_measurement\":\"one render_content terminal-lock hold duration per pane in each traced target-window frame\",\"presentation_scope\":\"GPUI test-platform scene generation; excludes Window::present, GPU submission, compositor, and display scanout\"}}",
+            "{{\"seed\":\"0x{CORPUS_SEED:016x}\",\"panes\":8,\"streams_per_pane\":{},\"resize_events\":{},\"bytes\":{total_bytes},\"throughput_mib_s\":{throughput:.3},\"input_to_frame_samples\":{},\"input_to_frame_p50_us\":{},\"input_to_frame_p95_us\":{input_to_frame_p95_us},\"input_to_frame_p95_limit_us\":{INPUT_TO_FRAME_P95_LIMIT_US},\"burst_to_park_samples\":{},\"burst_to_park_p50_us\":{},\"burst_to_park_p95_us\":{},\"traced_frame_samples\":{traced_frame_samples},\"target_window_draws\":{target_window_draws},\"render_content_lock_samples\":{},\"render_content_lock_held_p50_us\":{},\"render_content_lock_held_p95_us\":{},\"wall_ms\":{},\"cpu_ms\":{},\"rss_start_bytes\":{rss_start},\"rss_peak_bytes\":{rss_peak},\"rss_end_bytes\":{rss_end},\"hardware\":{:?},\"platform\":{:?},\"profile\":\"release\",\"measurement_boundary\":\"per-target-window GPUI frame from first dirty invalidation through draw completion\",\"burst_measurement\":\"diagnostic wall time for resize plus eight terminal updates through GPUI dispatcher until parked\",\"backend_scope\":\"backend-neutral GPUI renderer; Ghostty parser and host are covered by separate qualification gates\",\"lock_measurement\":\"one render_content snapshot round-trip per pane in each traced target-window draw, covering the Ghostty state-lock hold\",\"presentation_scope\":\"GPUI test-platform scene generation; excludes Window::present, GPU submission, compositor, and display scanout\"}}",
             streams.len(),
             streams.len(),
             target_frames.len(),
