@@ -60,17 +60,20 @@ jobs:
 
   native-rebuild:
     name: Rebuild pinned native archive
-    needs: changes
+    # Six clean ReleaseFast builds at -j1, preceded by the extraction of the
+    # 19660 file Zig source library, and it ran on every push and PR touching
+    # the `native` paths. This is the tradeoff `libghostty-macos.yml` already
+    # resolved for its own 3 h rebuild: what a PR actually needs to know is
+    # that the committed archive is intact, which `paneflow-libghostty-sys`
+    # asserts against `manifest.archive_sha256` on every cargo invocation in
+    # `consumer-qualification` and in `run_tests.yml::windows_check`. The full
+    # reproducibility proof runs nightly and on demand, and must be run by hand
+    # before re-pinning the archive.
     if: >-
-      needs.changes.outputs.native == 'true' ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
-    # Sized per lane, not for the worst case of both. A pull request runs one
-    # pass and should land near 20 minutes; capping it at 45 means a stall
-    # costs 45 wasted minutes instead of the 90 that every run from
-    # 2026-08-28 onward burned. The nightly soak runs three passes.
-    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 120 || 45 }}
+    timeout-minutes: 120
     defaults:
       run:
         shell: pwsh
@@ -226,7 +229,7 @@ jobs:
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
-          REPRO_PASSES: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 3 || 1 }}
+          REPRO_PASSES: "3"
         run: |
           New-Item -ItemType Directory -Force -Path $env:EVIDENCE_DIR | Out-Null
           $passes = [int]$env:REPRO_PASSES
@@ -409,28 +412,31 @@ jobs:
     steps:
       - name: Require native and consumer lanes
         env:
-          # Fail-closed in both directions: when a libghostty input changed,
-          # both lanes must be green; when none did, both must have actually
-          # skipped. `skipped` is never silently accepted.
-          EXPECTED_TO_RUN: ${{ needs.changes.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+          # Fail-closed in both directions, and now per lane, because the two
+          # lanes no longer run on the same events: a lane that was supposed to
+          # run must be green, and a lane that was not must have actually
+          # skipped. `skipped` is never silently accepted, which is the hole
+          # that let this workflow report success for two days while
+          # `native-rebuild` was timing out on every real execution.
+          NATIVE_EXPECTED: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           NATIVE: ${{ needs.native-rebuild.result }}
+          CONSUMER_EXPECTED: ${{ needs.changes.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           CONSUMER: ${{ needs.consumer-qualification.result }}
         run: |
-          if [ "$EXPECTED_TO_RUN" = true ]; then
-            want=success
-            note="All automated libghostty Windows checks passed."
-          else
-            want=skipped
-            note="No libghostty input changed; both lanes correctly skipped."
-          fi
           status=0
-          for lane in "native-rebuild:$NATIVE" "consumer-qualification:$CONSUMER"; do
+          for lane in \
+            "native-rebuild:$NATIVE_EXPECTED:$NATIVE" \
+            "consumer-qualification:$CONSUMER_EXPECTED:$CONSUMER"; do
             name="${lane%%:*}"
-            result="${lane#*:}"
+            rest="${lane#*:}"
+            expected="${rest%%:*}"
+            result="${rest#*:}"
+            if [ "$expected" = true ]; then want=success; else want=skipped; fi
             if [ "$result" != "$want" ]; then
               echo "::error::$name reported '$result', expected '$want'"
               status=1
             fi
+            echo "$name: $result (expected $want)"
           done
           [ "$status" -eq 0 ] || exit 1
-          echo "$note"
+          echo "All libghostty Windows lanes reported the expected result."
