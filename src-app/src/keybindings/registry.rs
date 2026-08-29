@@ -692,6 +692,23 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_action_group_appears_in_all() {
+        // `ShortcutGroup::ALL` is hand-maintained and is the settings page's
+        // only iteration source, so a variant tagged on actions but forgotten
+        // in `ALL` makes those rows vanish - unrebindable, with no error. A
+        // test that iterates `ALL` cannot catch that; this one starts from the
+        // actions instead.
+        for meta in ACTIONS {
+            assert!(
+                ShortcutGroup::ALL.contains(&meta.group),
+                "{:?} is missing from ShortcutGroup::ALL, so {} would never render",
+                meta.group,
+                meta.name
+            );
+        }
+    }
+
+    #[test]
     fn action_from_name_known_actions() {
         assert!(action_from_name("split_horizontally").is_some());
         assert!(action_from_name("close_pane").is_some());

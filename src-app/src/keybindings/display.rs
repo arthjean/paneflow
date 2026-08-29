@@ -105,10 +105,23 @@ pub fn format_keystroke(key: &str) -> String {
 /// Result is lowercase and space-separated, e.g. `secondary-shift-d` ->
 /// `"ctrl+shift+d cmd+shift+d command+shift+d"`.
 fn ascii_key_forms(raw_key: &str) -> String {
+    // The key itself can be `-` (font_size_decrease is `secondary--`), so the
+    // final separator is split off explicitly instead of letting `split('-')`
+    // turn the chord into empty tokens.
+    let (modifier_part, key) = match raw_key.strip_suffix("--") {
+        Some(modifiers) => (modifiers, "-"),
+        None => match raw_key.rsplit_once('-') {
+            Some((modifiers, key)) => (modifiers, key),
+            None => ("", raw_key),
+        },
+    };
+
     // Each token expands to its accepted spellings; the chord is then the
     // cartesian product of those, which stays tiny (chords are 2-4 tokens).
-    let alternatives: Vec<Vec<&str>> = raw_key
+    let alternatives: Vec<Vec<&str>> = modifier_part
         .split('-')
+        .filter(|part| !part.is_empty())
+        .chain(std::iter::once(key))
         .map(|part| match part {
             "secondary" => vec!["ctrl", "cmd", "command"],
             "cmd" | "super" | "win" => vec!["cmd", "command", "super", "win"],
@@ -194,19 +207,25 @@ pub fn effective_shortcuts(user_shortcuts: &HashMap<String, String>) -> Vec<Shor
             continue;
         }
 
-        // Prefer the platform-native chord when this action has one.
-        let default_key = macos_key_by_action
-            .get(d.action_name)
-            .copied()
-            .unwrap_or(d.key);
+        // Prefer the platform-native chord, but only while it is still live:
+        // if the user unbound or reassigned cmd-c, copy is still on
+        // ctrl-shift-c and the row must say so rather than claim the chord it
+        // no longer owns.
+        let default_key = match macos_key_by_action.get(d.action_name).copied() {
+            Some(native) if !is_unbound(native) && !is_user_claimed(native) => native,
+            _ => d.key,
+        };
 
         // If user overrode this action to a different key, show that key. If a
         // different action claimed this default chord, mirror apply_keybindings
         // and hide the displaced default row until it is explicitly rebound.
+        // The displacement test is on `d.key` - the binding this iteration
+        // represents - so a dead native chord cannot suppress a live generic
+        // one and leave the action reading "Unassigned" while it still works.
         let key = if let Some(user_key) = user_by_action.get(d.action_name) {
             format_keystroke(user_key)
         } else {
-            if is_unbound(default_key) || is_user_claimed(default_key) {
+            if is_unbound(d.key) || is_user_claimed(d.key) {
                 continue;
             }
             format_keystroke(default_key)
@@ -390,6 +409,40 @@ mod tests {
             .find(|e| e.action_name == "split_horizontally")
             .expect("unbound actions remain visible for rebinding");
         assert_eq!(split_h.key, "Unassigned");
+    }
+
+    #[test]
+    fn ascii_key_forms_handles_a_minus_key() {
+        // font_size_decrease is `secondary--`: the key itself is `-`. Splitting
+        // naively produced empty tokens and spellings like "ctrl++".
+        let forms = ascii_key_forms("secondary--");
+        assert!(forms.contains("ctrl+-"), "{forms}");
+        assert!(forms.contains("cmd+-"), "{forms}");
+        assert!(!forms.contains("++"), "{forms}");
+    }
+
+    #[test]
+    fn every_default_chord_round_trips_through_parse() {
+        // A saved chord has to be readable by `Keystroke::parse`, which is what
+        // the keymap uses. `Keystroke::to_string` is the *display* impl (Apple
+        // glyphs on macOS) and does not round-trip; `unparse` does. This pins
+        // the property the rebind path depends on.
+        for d in DEFAULTS.iter().chain(MACOS_ONLY_DEFAULTS.iter()) {
+            let parsed = Keystroke::parse(d.key)
+                .unwrap_or_else(|_| panic!("default chord {} does not parse", d.key));
+            let round_tripped = Keystroke::parse(&parsed.unparse())
+                .unwrap_or_else(|_| panic!("unparse of {} does not re-parse", d.key));
+            assert_eq!(
+                round_tripped.key, parsed.key,
+                "{} lost its key through unparse",
+                d.key
+            );
+            assert_eq!(
+                round_tripped.modifiers, parsed.modifiers,
+                "{} lost its modifiers through unparse",
+                d.key
+            );
+        }
     }
 
     #[test]

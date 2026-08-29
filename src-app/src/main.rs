@@ -2416,6 +2416,15 @@ fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> 
             let Some(app) = weak.upgrade() else {
                 return;
             };
+            // This runs for every keystroke in the app, terminal typing
+            // included, so the common answer has to be cheap. `Entity::update`
+            // opens an update cycle and flushes the effect queue on exit;
+            // doing that mid-key-dispatch just to read one field would put a
+            // flush on the keystroke-to-pixel path AGENTS.md protects. Read
+            // the gate first and only take the update when the page is open.
+            if app.read(cx).settings_section != Some(SettingsSection::Shortcuts) {
+                return;
+            }
             let consumed = app.update(cx, |this, cx| {
                 this.intercept_shortcut_keystroke(&event.keystroke, window, cx)
             });

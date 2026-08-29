@@ -26,12 +26,15 @@ use gpui::{
     prelude::*, px, svg,
 };
 
+use std::collections::HashMap;
+
 use crate::keybindings::ShortcutGroup;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, destructive_button, hairline, secondary_button, setting_card,
+    SETTINGS_CONTROL_CORNER_RADIUS, destructive_button, hairline, secondary_button,
+    section_header_with_action, setting_card,
 };
 use crate::terminal::element::{MIN_APCA_CONTRAST, ensure_minimum_contrast};
-use crate::ui_primitives::{LABEL_SM, ROW_RADIUS, squircle_skin};
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
 /// A row that survived the filter, paired with its index into the unfiltered
@@ -63,6 +66,12 @@ impl PaneFlowApp {
             if query.is_empty() {
                 return true;
             }
+            // A captured chord asks "what owns exactly this?". macOS glyphs
+            // concatenate with no separator, so a substring test would answer
+            // ⌘⇧D with every row that merely contains it, ⌃⌘⇧D included.
+            if self.shortcut_capture_active {
+                return entry.key.to_lowercase() == query;
+            }
             entry.description.to_lowercase().contains(&query)
                 || entry.key.to_lowercase().contains(&query)
                 // `key` renders Apple glyphs on macOS, so the ASCII spellings
@@ -70,18 +79,21 @@ impl PaneFlowApp {
                 || entry.search_key.contains(&query)
         };
 
+        // One pass over the entries rather than one per section: this runs on
+        // the render thread for every keystroke typed into the filter.
+        let mut by_group: HashMap<ShortcutGroup, Vec<VisibleRow<'_>>> = HashMap::new();
+        for (idx, entry) in self.effective_shortcuts.iter().enumerate() {
+            if matches(entry) {
+                by_group
+                    .entry(entry.group)
+                    .or_default()
+                    .push(VisibleRow { idx, entry });
+            }
+        }
+
         ShortcutGroup::ALL
             .iter()
-            .filter_map(|group| {
-                let rows: Vec<VisibleRow<'_>> = self
-                    .effective_shortcuts
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, entry)| entry.group == *group && matches(entry))
-                    .map(|(idx, entry)| VisibleRow { idx, entry })
-                    .collect();
-                (!rows.is_empty()).then_some((*group, rows))
-            })
+            .filter_map(|group| by_group.remove(group).map(|rows| (*group, rows)))
             .collect()
     }
 
@@ -103,7 +115,7 @@ impl PaneFlowApp {
             .flex_col()
             .gap(px(16.))
             .child(toolbar)
-            .child(self.render_shortcut_group_controls(ui, &groups, cx));
+            .child(self.render_shortcut_group_controls(ui, &groups, filtering, cx));
 
         if groups.is_empty() {
             column = column.child(
@@ -250,7 +262,7 @@ impl PaneFlowApp {
                         }),
                     ))
                     .child(
-                        destructive_button("reset-shortcuts-confirm", "Reset", ui).on_click(
+                        destructive_button("reset-shortcuts-confirm", "Reset").on_click(
                             cx.listener(|this, _: &ClickEvent, _w, cx| {
                                 config_writer::reset_shortcuts();
                                 let config = paneflow_config::loader::load_config();
@@ -279,13 +291,23 @@ impl PaneFlowApp {
         row.into_any_element()
     }
 
-    /// The "Expand all / Collapse all" control above the sections.
+    /// The "Bindings" eyebrow, with an "Expand all" / "Collapse all" action.
+    ///
+    /// The action is dropped while a filter is active: `render_shortcut_section`
+    /// forces every matching section open for the duration of a query, so the
+    /// button could only ever be a no-op there - it would set the fold state
+    /// and change nothing on screen.
     fn render_shortcut_group_controls(
         &self,
         ui: crate::theme::UiColors,
         groups: &[(ShortcutGroup, Vec<VisibleRow<'_>>)],
+        filtering: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        if filtering {
+            return section_header_with_action(ui, "Bindings", div()).into_any_element();
+        }
+
         // Offer whichever action actually changes something: if every visible
         // section is already folded, the only useful verb is "expand".
         let all_collapsed = !groups.is_empty()
@@ -298,19 +320,10 @@ impl PaneFlowApp {
             ("Collapse all", true)
         };
 
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(12.))
-            .child(
-                div()
-                    .text_size(LABEL_SM)
-                    .text_color(ui.muted)
-                    .child("Bindings"),
-            )
-            .child(secondary_button(
+        section_header_with_action(
+            ui,
+            "Bindings",
+            secondary_button(
                 "shortcut-toggle-all",
                 label,
                 ui,
@@ -322,8 +335,9 @@ impl PaneFlowApp {
                     }
                     cx.notify();
                 }),
-            ))
-            .into_any_element()
+            ),
+        )
+        .into_any_element()
     }
 
     /// One collapsible section: a clickable header, then its rows.
@@ -423,7 +437,14 @@ impl PaneFlowApp {
                 .bg(ui.accent)
                 .text_size(px(11.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                .text_color(ui.text)
+                // Same APCA lift as the capture toggle: on themes where accent
+                // and text nearly coincide, a plain `text` label would leave
+                // the armed row looking like an empty pill.
+                .text_color(ensure_minimum_contrast(
+                    ui.text,
+                    ui.accent,
+                    MIN_APCA_CONTRAST,
+                ))
                 .child("Press a key…")
         } else {
             div()

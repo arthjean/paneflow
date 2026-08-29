@@ -63,19 +63,27 @@ impl PaneFlowApp {
     /// Arming clears the field so the next chord lands in an empty box; the
     /// captured chord is then just the field's value, which keeps a single
     /// visible filter state instead of a hidden second one.
+    ///
+    /// Disarming deliberately leaves the field alone. Clicking a row to rebind
+    /// disarms capture, and wiping the query there would drop the filter that
+    /// put the row on screen - re-collapsing its section and scrolling the
+    /// now-armed row out of sight.
     pub(crate) fn set_shortcut_capture(&mut self, active: bool, cx: &mut Context<Self>) {
         self.shortcut_capture_active = active;
-        self.shortcut_search_input.update(cx, |input, cx| {
-            input.set_value("", cx);
-        });
-        self.recording_shortcut_idx = None;
+        if active {
+            self.shortcut_search_input.update(cx, |input, cx| {
+                input.clear(cx);
+            });
+            self.recording_shortcut_idx = None;
+        }
     }
 
-    /// Clear the Shortcuts-page filter and leave capture mode.
+    /// Clear the Shortcuts-page filter and leave capture mode. The explicit
+    /// "start over" action, unlike [`Self::set_shortcut_capture`].
     pub(crate) fn clear_shortcut_filters(&mut self, cx: &mut Context<Self>) {
         self.shortcut_capture_active = false;
         self.shortcut_search_input.update(cx, |input, cx| {
-            input.set_value("", cx);
+            input.clear(cx);
         });
     }
 
@@ -308,7 +316,9 @@ impl PaneFlowApp {
         // The chord goes straight into the search field: seeing what was
         // pressed is the whole point, and it keeps one visible filter state
         // rather than a hidden second one.
-        let formatted = keybindings::format_keystroke(&keystroke.to_string());
+        // Same reason: format_keystroke expects the `-`-separated spelling, and
+        // double-formatting a glyph string leaves it unmatchable.
+        let formatted = keybindings::format_keystroke(&keystroke.unparse());
         self.shortcut_search_input.update(cx, |input, cx| {
             input.set_value(formatted, cx);
         });
@@ -348,8 +358,11 @@ impl PaneFlowApp {
             return;
         };
 
-        // Format keystroke to a GPUI string (e.g. "ctrl-shift-d") and save it.
-        let new_key = keystroke.to_string();
+        // `unparse` is the parseable form (`cmd-shift-d`). `to_string` is the
+        // Display impl - Apple glyphs on macOS, `❖` for Super on Linux - which
+        // `Keystroke::parse` cannot read back. Saving that wrote a chord no
+        // keypress could ever match while displacing the original default.
+        let new_key = keystroke.unparse();
         if !config_writer::save_shortcut_checked(&new_key, action_name) {
             self.recording_shortcut_idx = None;
             self.show_toast("Could not save shortcut", cx);
