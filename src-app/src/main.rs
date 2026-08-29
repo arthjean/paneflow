@@ -1040,9 +1040,15 @@ struct PaneFlowApp {
     profile_menu_open: Option<Point<Pixels>>,
     /// US-053: agent-sessions sidebar state (see `AgentSessionsState`).
     agent_sessions: AgentSessionsState,
-    /// Whether the docked Files right sidebar is visible (PRD
+    /// Whether the docked Files right sidebar is up (PRD
     /// `prd-files-tree-sidebar-2026-Q3`, EP-001). Mutually exclusive with
     /// `sessions_sidebar_open`. Never persisted - always `false` on launch.
+    ///
+    /// Live mirror of the visible session's `Tab::files_sidebar_open`, which is
+    /// where the desire is actually owned; `sync_files_sidebar_session`
+    /// reconciles the two. Being up is still not being on screen: Review and
+    /// Settings unmount the rail while this stays set
+    /// (`files_sidebar_host_visible`).
     files_sidebar_open: bool,
     /// Width animation for opening/closing the docked Files right sidebar.
     /// Matches the agent-sessions sidebar animation.
@@ -1410,9 +1416,27 @@ impl Render for PaneFlowApp {
         let sessions_sidebar_opacity = (sessions_sidebar_width
             / crate::app::sessions_sidebar::SESSIONS_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
-        let files_sidebar_width = self.rendered_files_sidebar_width(window);
-        let files_sidebar_mounted =
-            self.files_sidebar_open || self.files_sidebar_animation.is_some();
+        // The Files rail belongs to the CLI cockpit only. Review and Settings
+        // unmount it (`files_sidebar_host_visible`) while `files_sidebar_open`
+        // survives, so returning to the cockpit brings the same tree back. The
+        // width animation is still advanced off-screen so an in-flight close
+        // finishes and releases the tree state instead of freezing mid-way.
+        let files_sidebar_host_visible = self.files_sidebar_host_visible();
+        // The rail follows the session on screen, so every tab switch, tab
+        // close and cross-workspace tab move is reconciled here instead of in
+        // each of those mutations. Off the cockpit the rail is unmounted
+        // anyway: leave the live state alone and reconcile on the way back.
+        if files_sidebar_host_visible {
+            self.sync_files_sidebar_session(cx);
+        }
+        let animated_files_sidebar_width = self.rendered_files_sidebar_width(window);
+        let files_sidebar_width = if files_sidebar_host_visible {
+            animated_files_sidebar_width
+        } else {
+            0.
+        };
+        let files_sidebar_mounted = files_sidebar_host_visible
+            && (self.files_sidebar_open || self.files_sidebar_animation.is_some());
         let files_sidebar_opacity = (files_sidebar_width
             / crate::app::files_sidebar::FILES_SIDEBAR_WIDTH.max(1.))
         .clamp(0., 1.);
