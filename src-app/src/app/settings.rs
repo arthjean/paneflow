@@ -60,28 +60,20 @@ impl PaneFlowApp {
 
     /// Arm or disarm the Shortcuts page's key-capture mode.
     ///
-    /// Disarming always drops the captured chord: leaving the mode with a
-    /// filter still applied would strand the user on a filtered list whose
-    /// cause is no longer visible on screen.
+    /// Arming clears the field so the next chord lands in an empty box; the
+    /// captured chord is then just the field's value, which keeps a single
+    /// visible filter state instead of a hidden second one.
     pub(crate) fn set_shortcut_capture(&mut self, active: bool, cx: &mut Context<Self>) {
         self.shortcut_capture_active = active;
-        if !active {
-            self.shortcut_captured_key = None;
-        }
-        // A capture and a text query are two ways to ask the same question, so
-        // arming one clears the other rather than intersecting them.
-        if active {
-            self.shortcut_search_input.update(cx, |input, cx| {
-                input.set_value("", cx);
-            });
-        }
+        self.shortcut_search_input.update(cx, |input, cx| {
+            input.set_value("", cx);
+        });
         self.recording_shortcut_idx = None;
     }
 
-    /// Clear every Shortcuts-page filter (text query and captured chord).
+    /// Clear the Shortcuts-page filter and leave capture mode.
     pub(crate) fn clear_shortcut_filters(&mut self, cx: &mut Context<Self>) {
         self.shortcut_capture_active = false;
-        self.shortcut_captured_key = None;
         self.shortcut_search_input.update(cx, |input, cx| {
             input.set_value("", cx);
         });
@@ -221,7 +213,7 @@ impl PaneFlowApp {
     pub(crate) fn handle_settings_key_down(
         &mut self,
         event: &KeyDownEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         // Font dropdown typeahead (Terminal page).
@@ -251,29 +243,10 @@ impl PaneFlowApp {
             return;
         }
 
-        // Shortcuts-page key capture: the pressed chord becomes the filter
-        // rather than a rebind. Checked before the Escape branch below so
-        // Escape leaves capture mode instead of closing the whole modal - a
-        // user who armed capture expects Escape to disarm it first.
-        if self.shortcut_capture_active && self.recording_shortcut_idx.is_none() {
-            if event.keystroke.key == "escape" {
-                self.set_shortcut_capture(false, cx);
-                cx.notify();
-                return;
-            }
-            // Bare modifiers are held on the way to a real chord, not a chord.
-            if keybindings::is_bare_modifier(&event.keystroke) {
-                return;
-            }
-            self.shortcut_captured_key =
-                Some(keybindings::format_keystroke(&event.keystroke.to_string()));
-            cx.notify();
-            return;
-        }
-
-        // Escape (outside active shortcut recording): close an open Terminal-page
-        // dropdown first, otherwise leave settings. During recording, Escape
-        // falls through to `handle_shortcut_recording`, which cancels capture.
+        // Escape: close an open Terminal-page dropdown first, otherwise leave
+        // settings. Escape during shortcut recording or key capture never gets
+        // here - `intercept_shortcut_keystroke` consumes it upstream, before
+        // GPUI matches any binding.
         if event.keystroke.key == "escape" && self.recording_shortcut_idx.is_none() {
             if self.terminal_dropdown.is_some() {
                 self.terminal_dropdown = None;
@@ -285,18 +258,66 @@ impl PaneFlowApp {
                 self.close_settings(cx);
             }
             cx.notify();
-            return;
+        }
+    }
+
+    /// App-wide keystroke interceptor for the Shortcuts settings page.
+    ///
+    /// Registered through `App::intercept_keystrokes`, which is the *only*
+    /// hook that runs before GPUI matches a key binding. A `on_key_down` (or
+    /// even `capture_key_down`) listener is too late: when a binding matches
+    /// and its action is handled, `dispatch_key_event` returns without ever
+    /// calling `finish_dispatch_key_event`, so no key listener fires at all.
+    /// That is why pressing Cmd+Q to search for - or rebind - the Quit
+    /// shortcut used to quit the app instead.
+    ///
+    /// Returns `true` when the chord was consumed, in which case the caller
+    /// must call `cx.stop_propagation()` to suppress the action.
+    pub(crate) fn intercept_shortcut_keystroke(
+        &mut self,
+        keystroke: &gpui::Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.settings_section != Some(SettingsSection::Shortcuts) {
+            return false;
+        }
+        // Modifiers held on the way to a real chord are not a chord.
+        if keybindings::is_bare_modifier(keystroke) {
+            return false;
         }
 
-        // Shortcut recording (only on the Shortcuts page).
-        if self.settings_section == Some(SettingsSection::Shortcuts) {
-            self.handle_shortcut_recording(event, window, cx);
+        // Rebind recording takes precedence: the row is already armed.
+        if self.recording_shortcut_idx.is_some() {
+            self.handle_shortcut_recording(keystroke, window, cx);
+            cx.notify();
+            return true;
         }
+
+        if !self.shortcut_capture_active {
+            return false;
+        }
+
+        if keystroke.key == "escape" {
+            self.set_shortcut_capture(false, cx);
+            cx.notify();
+            return true;
+        }
+
+        // The chord goes straight into the search field: seeing what was
+        // pressed is the whole point, and it keeps one visible filter state
+        // rather than a hidden second one.
+        let formatted = keybindings::format_keystroke(&keystroke.to_string());
+        self.shortcut_search_input.update(cx, |input, cx| {
+            input.set_value(formatted, cx);
+        });
+        cx.notify();
+        true
     }
 
     pub(crate) fn handle_shortcut_recording(
         &mut self,
-        event: &KeyDownEvent,
+        keystroke: &gpui::Keystroke,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -305,12 +326,12 @@ impl PaneFlowApp {
         };
 
         // Ignore bare modifier presses (Shift alone, Ctrl alone, etc.)
-        if keybindings::is_bare_modifier(&event.keystroke) {
+        if keybindings::is_bare_modifier(keystroke) {
             return;
         }
 
         // Escape cancels recording.
-        if event.keystroke.key == "escape" {
+        if keystroke.key == "escape" {
             self.recording_shortcut_idx = None;
             cx.notify();
             return;
@@ -327,7 +348,7 @@ impl PaneFlowApp {
         };
 
         // Format keystroke to a GPUI string (e.g. "ctrl-shift-d") and save it.
-        let new_key = event.keystroke.to_string();
+        let new_key = keystroke.to_string();
         if !config_writer::save_shortcut_checked(&new_key, action_name) {
             self.recording_shortcut_idx = None;
             self.show_toast("Could not save shortcut", cx);

@@ -51,21 +51,14 @@ impl PaneFlowApp {
         &self,
         cx: &Context<Self>,
     ) -> Vec<(ShortcutGroup, Vec<VisibleRow<'_>>)> {
-        let captured = self.shortcut_captured_key.as_deref();
-        let query = if captured.is_some() {
-            String::new()
-        } else {
-            self.shortcut_search_input
-                .read(cx)
-                .value()
-                .trim()
-                .to_lowercase()
-        };
+        let query = self
+            .shortcut_search_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_lowercase();
 
         let matches = |entry: &keybindings::ShortcutEntry| -> bool {
-            if let Some(chord) = captured {
-                return entry.key.eq_ignore_ascii_case(chord);
-            }
             if query.is_empty() {
                 return true;
             }
@@ -93,13 +86,12 @@ impl PaneFlowApp {
 
     pub(crate) fn render_shortcuts_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
-        let filtering = self.shortcut_captured_key.is_some()
-            || !self
-                .shortcut_search_input
-                .read(cx)
-                .value()
-                .trim()
-                .is_empty();
+        let filtering = !self
+            .shortcut_search_input
+            .read(cx)
+            .value()
+            .trim()
+            .is_empty();
 
         let groups = self.filtered_shortcut_groups(cx);
         let total_visible: usize = groups.iter().map(|(_, rows)| rows.len()).sum();
@@ -167,42 +159,22 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let capture_active = self.shortcut_capture_active;
 
-        // While capture is armed the field stops being a text box and becomes a
-        // readout of the pressed chord: typing is routed to the capture handler,
-        // so a live text cursor there would be a lie.
-        let field: AnyElement = if capture_active {
-            let label = self
-                .shortcut_captured_key
-                .clone()
-                .unwrap_or_else(|| "Press a chord…".to_string());
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_size(px(12.))
-                .text_color(if self.shortcut_captured_key.is_some() {
-                    ui.text
-                } else {
-                    ui.muted
-                })
-                .truncate()
-                .child(label)
-                .into_any_element()
-        } else {
-            crate::ui_primitives::filter_pill(
-                "shortcut-search",
-                "shortcut-search-clear",
-                ui,
-                self.shortcut_search_input.clone(),
-                filtering,
-                cx.listener(|this, _: &ClickEvent, _window, cx| {
-                    this.clear_shortcut_filters(cx);
-                    cx.notify();
-                }),
-            )
-            .flex_1()
-            .min_w_0()
-            .into_any_element()
-        };
+        // One field in both modes. In capture mode the interceptor writes the
+        // pressed chord straight into it, so the user always reads back exactly
+        // what was captured instead of trusting an invisible filter.
+        let field = crate::ui_primitives::filter_pill(
+            "shortcut-search",
+            "shortcut-search-clear",
+            ui,
+            self.shortcut_search_input.clone(),
+            filtering,
+            cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.clear_shortcut_filters(cx);
+                cx.notify();
+            }),
+        )
+        .flex_1()
+        .min_w_0();
 
         let capture_toggle = squircle_skin(
             div()

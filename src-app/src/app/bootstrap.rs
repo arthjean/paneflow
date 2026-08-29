@@ -842,7 +842,6 @@ impl PaneFlowApp {
             effective_shortcuts,
             recording_shortcut_idx: None,
             shortcut_search_input,
-            shortcut_captured_key: None,
             shortcut_capture_active: false,
             collapsed_shortcut_groups: std::collections::HashSet::new(),
             settings_focus: cx.focus_handle(),
