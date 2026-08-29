@@ -722,23 +722,51 @@ else {
 }
 $succeeded = $false
 $fixedSourceCreated = $false
+$zigSourceScratch = $null
 $canonicalSource = [IO.Path]::GetFullPath($CanonicalSourcePath)
 $sourceArchive = Join-Path $tempRoot "source.tar"
 $buildSource = $null
 $ZigLibDir = $null
 
 function Initialize-ZigSourceLib {
-    $zigSourceRoot = Join-Path $tempRoot "zig-source"
-    New-Item -ItemType Directory -Path $zigSourceRoot | Out-Null
-    Write-Phase "extracting the pinned Zig $ZigVersion source archive with $tarExe"
-    $extractTimer = [Diagnostics.Stopwatch]::StartNew()
-    $null = & $tarExe -xf $ZigSourceArchive -C $zigSourceRoot
-    $extractTimer.Stop()
-    if ($LASTEXITCODE -ne 0) {
-        throw "cannot extract the pinned Zig source archive"
+    # This tree is scratch: nothing under it is a recorded build input, and the
+    # reproducibility contract pins only the canonical source, cache, and
+    # prefix paths, all of which live under $buildSource. So it is free to sit
+    # on whichever volume is fastest. On a GitHub runner that is the ephemeral
+    # temp disk named by RUNNER_TEMP (D:), not the OS disk that
+    # [IO.Path]::GetTempPath() resolves to (C:).
+    $zigSourceParent = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -and
+        (Test-Path -LiteralPath $env:RUNNER_TEMP -PathType Container)) {
+        Join-Path $env:RUNNER_TEMP ("paneflow-zig-source-" + [guid]::NewGuid().ToString("N"))
     }
-    $extracted = @(Get-ChildItem -LiteralPath $zigSourceRoot -Recurse -File).Count
-    Write-Phase "Zig source library extracted: $extracted files in $([int]$extractTimer.Elapsed.TotalSeconds)s"
+    else {
+        $tempRoot
+    }
+    $zigSourceRoot = Join-Path $zigSourceParent "zig-source"
+    New-Item -ItemType Directory -Force -Path $zigSourceRoot | Out-Null
+    $script:zigSourceScratch = $zigSourceParent
+    Add-DefenderExclusion $zigSourceParent
+
+    # Extract verbosely and count entries as they stream past. Two runs died at
+    # the job timeout inside this one call with no output at all, which left
+    # "stalled at entry zero" and "grinding along slowly" indistinguishable.
+    # bsdtar names each entry on stderr, so the counter below costs nothing and
+    # settles the question on the next run.
+    Write-Phase "extracting the pinned Zig $ZigVersion source archive with $tarExe into $zigSourceRoot"
+    $extractTimer = [Diagnostics.Stopwatch]::StartNew()
+    $entries = 0
+    & $tarExe -xvf $ZigSourceArchive -C $zigSourceRoot 2>&1 | ForEach-Object {
+        $entries++
+        if ($entries % 2000 -eq 0) {
+            Write-Phase "extracted $entries entries in $([int]$extractTimer.Elapsed.TotalSeconds)s"
+        }
+    }
+    $tarExit = $LASTEXITCODE
+    $extractTimer.Stop()
+    if ($tarExit -ne 0) {
+        throw "cannot extract the pinned Zig source archive (tar exit $tarExit)"
+    }
+    Write-Phase "Zig source library extracted: $entries entries in $([int]$extractTimer.Elapsed.TotalSeconds)s"
     $sourceLib = Join-Path $zigSourceRoot "zig-$ZigVersion\lib"
     if (-not (Test-Path -LiteralPath (Join-Path $sourceLib "std\std.zig") -PathType Leaf)) {
         throw "Zig $ZigVersion source archive does not contain the expected library"
@@ -1093,6 +1121,15 @@ finally {
             throw "refusing to remove unexpected canonical source path $canonicalSource"
         }
         Remove-Item -LiteralPath $canonicalSource -Recurse -Force
+    }
+    if ($null -ne $zigSourceScratch -and (Test-Path -LiteralPath $zigSourceScratch)) {
+        $resolvedScratch = [IO.Path]::GetFullPath($zigSourceScratch)
+        if ((Split-Path $resolvedScratch -Leaf) -notlike "paneflow-zig-source-*" -and $resolvedScratch -ne [IO.Path]::GetFullPath($tempRoot)) {
+            throw "refusing to remove unexpected Zig source scratch path $resolvedScratch"
+        }
+        if ((Split-Path $resolvedScratch -Leaf) -like "paneflow-zig-source-*") {
+            Remove-Item -LiteralPath $resolvedScratch -Recurse -Force
+        }
     }
     if ($succeeded) {
         $tempBase = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
