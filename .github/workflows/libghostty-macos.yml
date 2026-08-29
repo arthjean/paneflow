@@ -117,6 +117,11 @@ jobs:
       # `llvm-tools` carries llvm-strip / llvm-ar / llvm-nm / llvm-objdump at
       # exactly `macos_llvm_version` in the manifest. The build script refuses
       # any other LLVM, because the normalization recipe is version-sensitive.
+      #
+      # This pin is deliberately NOT `rust-toolchain.toml`'s channel. It names
+      # the toolchain whose llvm-tools normalized the committed archive, so it
+      # moves only with `macos_llvm_version` and a fresh `archive_sha256`, not
+      # with a workspace toolchain bump. See docs/release/macos-libghostty.md.
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
           toolchain: "1.96.1"
@@ -128,6 +133,11 @@ jobs:
       - name: Rebuild and compare canonical archive
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+          # The build script resolves llvm-strip through `rustc --print
+          # sysroot`, and a directory `rust-toolchain.toml` outranks the
+          # toolchain the step above made default. Only RUSTUP_TOOLCHAIN wins,
+          # the same way the nightly fuzz job in libghostty-linux.yml pins its.
+          RUSTUP_TOOLCHAIN: "1.96.1"
         run: |
           scripts/ci-retry-network.sh \
             scripts/build-libghostty-macos.sh \
@@ -178,7 +188,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.96.1"
+          toolchain: "1.98.0"
           targets: aarch64-apple-darwin
 
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
