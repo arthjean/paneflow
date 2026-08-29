@@ -66,7 +66,11 @@ jobs:
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_dispatch'
     runs-on: windows-2022
-    timeout-minutes: 90
+    # Sized per lane, not for the worst case of both. A pull request runs one
+    # pass and should land near 20 minutes; capping it at 45 means a stall
+    # costs 45 wasted minutes instead of the 90 that every run from
+    # 2026-08-28 onward burned. The nightly soak runs three passes.
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 120 || 45 }}
     defaults:
       run:
         shell: pwsh

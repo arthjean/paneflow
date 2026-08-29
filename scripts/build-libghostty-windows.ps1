@@ -106,6 +106,31 @@ function Write-Phase {
     Write-Host ("[{0}Z] {1}" -f [DateTime]::UtcNow.ToString("HH:mm:ss"), $Message)
 }
 
+function Add-DefenderExclusion {
+    param([string]$Path)
+
+    # Real-time scanning dominates this build. The pinned Zig source archive
+    # alone unpacks to 19660 files across 239 MB, and the Zig cache under the
+    # canonical source writes tens of thousands more. On 2026-08-29 a single
+    # `tar -xf` of that archive was still running when the job was killed at
+    # the 90 minute mark; the same extraction costs about 4 seconds on an
+    # unscanned filesystem.
+    #
+    # Exclusions never touch a build input, so they cannot move the archive
+    # hash. Best effort on purpose: a developer machine without an elevated
+    # shell, or a host with no Defender at all, must still build.
+    if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
+        return
+    }
+    try {
+        Add-MpPreference -ExclusionPath $Path -ErrorAction Stop
+        Write-Phase "Defender exclusion added for $Path"
+    }
+    catch {
+        Write-Phase "no Defender exclusion for $Path ($($_.Exception.Message)); expect a slow build"
+    }
+}
+
 function Normalize-InstalledHeaders {
     param([string]$IncludeDir)
 
@@ -687,6 +712,8 @@ $requiredSymbols = @(
 )
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("paneflow-libghostty-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
+Add-DefenderExclusion $tempRoot
+Add-DefenderExclusion ([IO.Path]::GetFullPath($CanonicalSourcePath))
 if ([string]::IsNullOrWhiteSpace($EvidenceDir)) {
     $EvidenceDir = Join-Path $tempRoot "reproducibility-evidence"
 }
@@ -703,12 +730,15 @@ $ZigLibDir = $null
 function Initialize-ZigSourceLib {
     $zigSourceRoot = Join-Path $tempRoot "zig-source"
     New-Item -ItemType Directory -Path $zigSourceRoot | Out-Null
-    Write-Phase "extracting the pinned Zig $ZigVersion source archive"
+    Write-Phase "extracting the pinned Zig $ZigVersion source archive with $tarExe"
+    $extractTimer = [Diagnostics.Stopwatch]::StartNew()
     $null = & $tarExe -xf $ZigSourceArchive -C $zigSourceRoot
+    $extractTimer.Stop()
     if ($LASTEXITCODE -ne 0) {
         throw "cannot extract the pinned Zig source archive"
     }
-    Write-Phase "Zig source library extracted"
+    $extracted = @(Get-ChildItem -LiteralPath $zigSourceRoot -Recurse -File).Count
+    Write-Phase "Zig source library extracted: $extracted files in $([int]$extractTimer.Elapsed.TotalSeconds)s"
     $sourceLib = Join-Path $zigSourceRoot "zig-$ZigVersion\lib"
     if (-not (Test-Path -LiteralPath (Join-Path $sourceLib "std\std.zig") -PathType Leaf)) {
         throw "Zig $ZigVersion source archive does not contain the expected library"
