@@ -534,6 +534,13 @@ impl PaneFlowApp {
             let config = paneflow_config::loader::load_config();
             crate::keybindings::apply_keybindings(cx, &config.shortcuts);
         }
+        // Shortcuts-page ephemeral state. The armed "Reset" confirmation is the
+        // one that matters: left standing across a nav round-trip, it turns a
+        // stray click into "every binding erased, no undo". The capture mode
+        // and the filter are cleared for the same reason - a page that comes
+        // back silently swallowing keystrokes reads as broken.
+        self.shortcut_reset_pending = false;
+        self.clear_shortcut_filters(cx);
         if section == SettingsSection::McpServers {
             self.refresh_mcp_status(cx);
         }

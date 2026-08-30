@@ -1011,6 +1011,23 @@ struct PaneFlowApp {
     effective_shortcuts: Vec<keybindings::ShortcutEntry>,
     /// Index of the shortcut row currently being recorded (`None` = not recording).
     recording_shortcut_idx: Option<usize>,
+    /// Free-text filter for the Shortcuts page. Matches the action description
+    /// *and* the rendered keystroke, so "ctrl+shift" and "workspace" both work.
+    shortcut_search_input: gpui::Entity<crate::widgets::text_input::TextInput>,
+    /// Whether the Shortcuts page is in key-capture mode: the pressed chord is
+    /// written into the search field instead of reaching the app, so the page
+    /// can answer "what already owns this key?" - which a text search cannot,
+    /// unless the user already knows how the chord is spelled.
+    ///
+    /// While this is set, [`Self::intercept_shortcut_keystroke`] swallows every
+    /// chord before GPUI can dispatch its action.
+    shortcut_capture_active: bool,
+    /// Whether "Reset to defaults" on the Shortcuts page is awaiting
+    /// confirmation. The reset rewrites every binding in `paneflow.json` with
+    /// no undo, so the button asks before it fires.
+    shortcut_reset_pending: bool,
+    /// Sections collapsed on the Shortcuts page. Empty = everything expanded.
+    collapsed_shortcut_groups: std::collections::HashSet<keybindings::ShortcutGroup>,
     /// Focus handle for the settings page (receives key events during recording/font search).
     settings_focus: FocusHandle,
     /// Cached list of monospace font family names from the system.
@@ -2414,6 +2431,33 @@ mod windows_startup_console_tests {
 fn mount_paneflow_app(window: &mut Window, cx: &mut App) -> Entity<PaneFlowApp> {
     let view = window.replace_root(cx, |_, cx| PaneFlowApp::new(cx));
     view.update(cx, |_, cx| {
+        // Shortcuts-page key capture and rebind recording have to see a chord
+        // *before* GPUI matches it against the keymap, or pressing Cmd+Q to
+        // find (or rebind) Quit simply quits. `intercept_keystrokes` is the
+        // only hook that runs that early; a key-down listener never fires at
+        // all once a binding has been dispatched and handled.
+        let weak = cx.weak_entity();
+        cx.intercept_keystrokes(move |event, window, cx| {
+            let Some(app) = weak.upgrade() else {
+                return;
+            };
+            // This runs for every keystroke in the app, terminal typing
+            // included, so the common answer has to be cheap. `Entity::update`
+            // opens an update cycle and flushes the effect queue on exit;
+            // doing that mid-key-dispatch just to read one field would put a
+            // flush on the keystroke-to-pixel path AGENTS.md protects. Read
+            // the gate first and only take the update when the page is open.
+            if app.read(cx).settings_section != Some(SettingsSection::Shortcuts) {
+                return;
+            }
+            let consumed = app.update(cx, |this, cx| {
+                this.intercept_shortcut_keystroke(&event.keystroke, window, cx)
+            });
+            if consumed {
+                cx.stop_propagation();
+            }
+        })
+        .detach();
         let subscription = cx.observe_window_bounds(window, |this, window, cx| {
             crate::window_state::record_windowed_size(window);
             #[cfg(target_os = "linux")]

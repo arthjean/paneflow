@@ -751,6 +751,13 @@ impl PaneFlowApp {
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search settings…", cx));
         cx.observe(&settings_search_input, |_, _, cx| cx.notify())
             .detach();
+        // Shortcuts-page filter. Same recipe: a real TextInput, observed so
+        // every keystroke re-renders the page and re-filters the sections.
+        let shortcut_search_input = cx.new(|cx| {
+            crate::widgets::text_input::TextInput::new("", "Search actions or keys…", cx)
+        });
+        cx.observe(&shortcut_search_input, |_, _, cx| cx.notify())
+            .detach();
         let workspace_template_name_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Workspace name", cx));
         cx.observe(&workspace_template_name_input, |_, _, cx| cx.notify())
@@ -834,6 +841,10 @@ impl PaneFlowApp {
             sidebar_scroll: gpui::ScrollHandle::new(),
             effective_shortcuts,
             recording_shortcut_idx: None,
+            shortcut_search_input,
+            shortcut_capture_active: false,
+            shortcut_reset_pending: false,
+            collapsed_shortcut_groups: std::collections::HashSet::new(),
             settings_focus: cx.focus_handle(),
             mono_font_names: Vec::new(),
             font_dropdown_open: false,

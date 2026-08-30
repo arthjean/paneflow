@@ -273,6 +273,46 @@ pub fn secondary_button(
     .on_click(on_click)
 }
 
+/// The one destructive red in the app: Apple's systemRed. Hardcoded rather
+/// than themed because `accent` and `text` are independent per theme and their
+/// pairing is not guaranteed legible, while red-on-white reads the same
+/// everywhere and carries the warning by itself.
+pub fn destructive_color() -> Hsla {
+    Hsla::from(gpui::rgb(0xff453a))
+}
+
+/// A [`secondary_button`] in destructive red, for an action that cannot be
+/// undone. Red fill with a white label rather than theme tokens: `accent` and
+/// `text` are independent per theme and their pairing is not guaranteed to be
+/// legible, while red-on-white reads the same everywhere and carries the
+/// warning by itself.
+///
+/// Returns the element unclicked so the caller attaches its own listener; a
+/// destructive action is never generic enough to bake in here.
+pub fn destructive_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+    let resting = destructive_color();
+    let hovered = Hsla {
+        l: (resting.l - 0.05).max(0.0),
+        ..resting
+    };
+
+    squircle_skin(
+        div()
+            .id(id)
+            .px(px(10.))
+            .py(px(4.))
+            .cursor(CursorStyle::PointingHand)
+            .text_size(px(12.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(gpui::white()),
+        format!("{id}-squircle"),
+        ROW_RADIUS,
+        Some(resting),
+        Some(hovered),
+    )
+    .child(label)
+}
+
 // ── Codex-style select / dropdown primitives ─────────────────────────────
 //
 // Shared by the General, Themes (font picker) and Terminal settings pages so

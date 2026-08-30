@@ -1,123 +1,498 @@
-//! "Shortcuts" settings tab - agents-styled list of every rebindable
+//! "Shortcuts" settings tab - grouped, searchable list of every rebindable
 //! action with click-to-record key capture.
 //!
-//! Layout: a "Bindings" eyebrow with an inline "Reset to defaults" button on
-//! the right, then a single `setting_card` containing one row per shortcut,
-//! separated by 1px hairlines. The card carries 4px of padding so a hovered row
-//! reads as its own squircle inside it, the way a menu row does on the rail -
-//! a full-bleed hover fill would square the card's own corners instead. Click capture is driven by
-//! `PaneFlowApp::handle_shortcut_recording` (in `app::settings`).
+//! The page used to be one flat card of ~80 rows in registry order, which made
+//! finding a binding a scrolling exercise and answering "what already owns this
+//! chord?" impossible. Three things fix that:
+//!
+//! - **Sections.** Rows are filed under [`ShortcutGroup`], declared on the
+//!   action in `keybindings::registry` rather than implied by table order.
+//!   Each section collapses, and a header control folds or unfolds all of them.
+//! - **Text filter.** One field matching the action description *and* the
+//!   rendered keystroke, so "workspace" and "ctrl+shift" both narrow the list.
+//! - **Key capture.** A toggle that turns the next pressed chord into the
+//!   filter (the VS Code / KDE recipe). Text search cannot answer "who owns
+//!   this key?" unless you already know how the chord is spelled; capture can.
+//!
+//! Filtering auto-expands: a collapsed section that contains a match opens for
+//! the duration of the query, so a hit is never hidden behind a closed header.
+//! Rebind capture itself is still driven by
+//! `PaneFlowApp::handle_shortcut_recording` (in `app::settings`), and every row
+//! carries its index into the *unfiltered* `effective_shortcuts`, because that
+//! is what the rebind keys off.
 
 use gpui::{
-    ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Styled, div, prelude::*,
-    px,
+    AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, Styled, div,
+    prelude::*, px, svg,
 };
 
+use std::collections::HashMap;
+
+use crate::keybindings::ShortcutGroup;
 use crate::settings::components::{
-    SETTINGS_CONTROL_CORNER_RADIUS, hairline, secondary_button, section_header_with_action,
-    setting_card,
+    SETTINGS_CONTROL_CORNER_RADIUS, destructive_button, hairline, secondary_button,
+    section_header_with_action, setting_card,
 };
+use crate::terminal::element::{MIN_APCA_CONTRAST, ensure_minimum_contrast};
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
+/// A row that survived the filter, paired with its index into the unfiltered
+/// `effective_shortcuts` - the index the rebind must use.
+struct VisibleRow<'a> {
+    idx: usize,
+    entry: &'a keybindings::ShortcutEntry,
+}
+
 impl PaneFlowApp {
-    pub(crate) fn render_shortcuts_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui = crate::theme::ui_colors();
-        let recording_idx = self.recording_shortcut_idx;
+    /// Rows matching the active filter, bucketed by section in display order.
+    ///
+    /// Matching is case-insensitive and substring-based over both the action
+    /// description and the displayed keystroke. A captured chord is compared
+    /// against the whole keystroke instead, since a chord is an exact thing:
+    /// substring-matching "Ctrl+C" would also drag in "Ctrl+Shift+C".
+    fn filtered_shortcut_groups(
+        &self,
+        cx: &Context<Self>,
+    ) -> Vec<(ShortcutGroup, Vec<VisibleRow<'_>>)> {
+        let query = self
+            .shortcut_search_input
+            .read(cx)
+            .value()
+            .trim()
+            .to_lowercase();
 
-        let reset_btn = secondary_button(
-            "reset-shortcuts",
-            "Reset to defaults",
-            ui,
-            cx.listener(|this, _: &ClickEvent, _w, cx| {
-                config_writer::reset_shortcuts();
-                let config = paneflow_config::loader::load_config();
-                keybindings::apply_keybindings(cx, &config.shortcuts);
-                this.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
-                this.recording_shortcut_idx = None;
-                cx.notify();
-            }),
-        );
+        let matches = |entry: &keybindings::ShortcutEntry| -> bool {
+            if query.is_empty() {
+                return true;
+            }
+            // A captured chord asks "what owns exactly this?". macOS glyphs
+            // concatenate with no separator, so a substring test would answer
+            // ⌘⇧D with every row that merely contains it, ⌃⌘⇧D included.
+            if self.shortcut_capture_active {
+                return entry.key.to_lowercase() == query;
+            }
+            entry.description.to_lowercase().contains(&query)
+                || entry.key.to_lowercase().contains(&query)
+                // `key` renders Apple glyphs on macOS, so the ASCII spellings
+                // are what makes "cmd+shift" / "ctrl+shift" find anything there.
+                || entry.search_key.contains(&query)
+        };
 
-        let header = section_header_with_action(ui, "Bindings", reset_btn);
-
-        let mut list = setting_card(ui).p(px(4.));
-
-        let total = self.effective_shortcuts.len();
-        for (i, entry) in self.effective_shortcuts.iter().enumerate() {
-            let is_recording = recording_idx == Some(i);
-            let is_last = i + 1 == total;
-
-            let key_badge = if is_recording {
-                div()
-                    .px(px(10.))
-                    .py(px(3.))
-                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .bg(ui.accent)
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .text_color(ui.text)
-                    .child("Press a key…")
-            } else {
-                div()
-                    .px(px(10.))
-                    .py(px(3.))
-                    .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
-                    .bg(ui.subtle)
-                    .text_size(px(11.))
-                    .font_weight(gpui::FontWeight::MEDIUM)
-                    .text_color(ui.text)
-                    .child(entry.key.clone())
-            };
-
-            let row = squircle_skin(
-                div()
-                    .id(("shortcut", i))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(12.))
-                    .px(px(8.))
-                    .py(px(10.)),
-                format!("shortcut-squircle-{i}"),
-                ROW_RADIUS,
-                None,
-                Some(ui.subtle),
-            )
-            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                this.recording_shortcut_idx = Some(i);
-                this.settings_focus.focus(window, cx);
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(13.))
-                    .text_color(ui.text)
-                    .truncate()
-                    .child(entry.description.clone()),
-            )
-            .child(key_badge);
-
-            list = list.child(row);
-            if !is_last {
-                list = list.child(hairline(ui));
+        // One pass over the entries rather than one per section: this runs on
+        // the render thread for every keystroke typed into the filter.
+        let mut by_group: HashMap<ShortcutGroup, Vec<VisibleRow<'_>>> = HashMap::new();
+        for (idx, entry) in self.effective_shortcuts.iter().enumerate() {
+            if matches(entry) {
+                by_group
+                    .entry(entry.group)
+                    .or_default()
+                    .push(VisibleRow { idx, entry });
             }
         }
 
-        let hint = div()
-            .pt(px(10.))
-            .text_size(px(11.))
-            .text_color(ui.muted)
-            .child("Click a row to record a new shortcut. Escape to cancel.");
+        ShortcutGroup::ALL
+            .iter()
+            .filter_map(|group| by_group.remove(group).map(|rows| (*group, rows)))
+            .collect()
+    }
 
-        div()
+    pub(crate) fn render_shortcuts_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let ui = crate::theme::ui_colors();
+        let filtering = !self
+            .shortcut_search_input
+            .read(cx)
+            .value()
+            .trim()
+            .is_empty();
+
+        let groups = self.filtered_shortcut_groups(cx);
+
+        let toolbar = self.render_shortcut_toolbar(ui, filtering, cx);
+
+        let mut column = div()
             .flex()
             .flex_col()
-            .child(header)
-            .child(list)
-            .child(hint)
+            .gap(px(16.))
+            .child(toolbar)
+            .child(self.render_shortcut_group_controls(ui, &groups, filtering, cx));
+
+        if groups.is_empty() {
+            column = column.child(
+                setting_card(ui).p(px(4.)).child(
+                    div()
+                        .px(px(8.))
+                        .py(px(14.))
+                        .text_size(px(12.))
+                        .text_color(ui.muted)
+                        .child("No shortcut matches this filter"),
+                ),
+            );
+        } else {
+            for (group, rows) in &groups {
+                column =
+                    column.child(self.render_shortcut_section(ui, *group, rows, filtering, cx));
+            }
+        }
+
+        let hint = if self.shortcut_capture_active {
+            "Press a chord to find what owns it. Escape to leave capture mode."
+        } else {
+            "Click a row to record a new shortcut. Escape to cancel."
+        };
+
+        // No result count: the matching rows are on screen, and counting what
+        // the user can already see answers no question they have.
+        column.child(
+            div()
+                .pt(px(2.))
+                .text_size(px(11.))
+                .text_color(ui.muted)
+                .child(hint.to_string()),
+        )
+    }
+
+    /// Search field + key-capture toggle + "Reset to defaults".
+    fn render_shortcut_toolbar(
+        &self,
+        ui: crate::theme::UiColors,
+        filtering: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let capture_active = self.shortcut_capture_active;
+        // `accent` and `text` are independent theme tokens: on vercel_dark they
+        // are #ffffff and #ededed, so a plain `text` label on an `accent` fill
+        // is invisible. Lift the label off the fill with the same APCA pass the
+        // terminal uses for selected text.
+        let on_accent = ensure_minimum_contrast(ui.text, ui.accent, MIN_APCA_CONTRAST);
+
+        // One field in both modes. In capture mode the interceptor writes the
+        // pressed chord straight into it, so the user always reads back exactly
+        // what was captured instead of trusting an invisible filter.
+        let field = crate::ui_primitives::filter_pill(
+            "shortcut-search",
+            "shortcut-search-clear",
+            ui,
+            self.shortcut_search_input.clone(),
+            filtering,
+            cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.clear_shortcut_filters(cx);
+                cx.notify();
+            }),
+        )
+        .flex_1()
+        .min_w_0();
+
+        let capture_toggle = squircle_skin(
+            div()
+                .id("shortcut-capture-toggle")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .px(px(10.))
+                .py(px(5.)),
+            "shortcut-capture-skin",
+            ROW_RADIUS,
+            // Armed state is a resting fill, not just a hover: the mode
+            // swallows keystrokes, so it must be visible without pointing at it.
+            capture_active.then_some(ui.accent),
+            Some(ui.subtle),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            let next = !this.shortcut_capture_active;
+            this.set_shortcut_capture(next, cx);
+            if next {
+                // The chord has to land on the settings surface, not on
+                // whatever held focus before.
+                this.settings_focus.focus(window, cx);
+            }
+            cx.notify();
+        }))
+        .child(
+            svg()
+                .size(px(13.))
+                .flex_none()
+                .path("icons/keyboard.svg")
+                .text_color(if capture_active { on_accent } else { ui.muted }),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(if capture_active { on_accent } else { ui.muted })
+                .child(if capture_active {
+                    "Capturing"
+                } else {
+                    "Find by key"
+                }),
+        );
+
+        // Resetting rewrites every binding in paneflow.json with no undo, so it
+        // asks first. A two-step inline confirm rather than a dialog: settings
+        // already live in a modal, and stacking a second one over it to ask a
+        // one-line question reads as heavier than the action deserves.
+        let mut row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.))
+            .child(field)
+            .child(capture_toggle);
+
+        row = if self.shortcut_reset_pending {
+            row.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(ui.muted)
+                            .child("Reset all?"),
+                    )
+                    .child(secondary_button(
+                        "reset-shortcuts-cancel",
+                        "Cancel",
+                        ui,
+                        cx.listener(|this, _: &ClickEvent, _w, cx| {
+                            this.shortcut_reset_pending = false;
+                            cx.notify();
+                        }),
+                    ))
+                    .child(
+                        destructive_button("reset-shortcuts-confirm", "Reset").on_click(
+                            cx.listener(|this, _: &ClickEvent, _w, cx| {
+                                config_writer::reset_shortcuts();
+                                let config = paneflow_config::loader::load_config();
+                                keybindings::apply_keybindings(cx, &config.shortcuts);
+                                this.effective_shortcuts =
+                                    keybindings::effective_shortcuts(&config.shortcuts);
+                                this.recording_shortcut_idx = None;
+                                this.shortcut_reset_pending = false;
+                                cx.notify();
+                            }),
+                        ),
+                    ),
+            )
+        } else {
+            row.child(secondary_button(
+                "reset-shortcuts",
+                "Reset to defaults",
+                ui,
+                cx.listener(|this, _: &ClickEvent, _w, cx| {
+                    this.shortcut_reset_pending = true;
+                    cx.notify();
+                }),
+            ))
+        };
+
+        row.into_any_element()
+    }
+
+    /// The "Bindings" eyebrow, with an "Expand all" / "Collapse all" action.
+    ///
+    /// The action is dropped while a filter is active: `render_shortcut_section`
+    /// forces every matching section open for the duration of a query, so the
+    /// button could only ever be a no-op there - it would set the fold state
+    /// and change nothing on screen.
+    fn render_shortcut_group_controls(
+        &self,
+        ui: crate::theme::UiColors,
+        groups: &[(ShortcutGroup, Vec<VisibleRow<'_>>)],
+        filtering: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        if filtering {
+            return section_header_with_action(ui, "Bindings", div()).into_any_element();
+        }
+
+        // Offer whichever action actually changes something: if every visible
+        // section is already folded, the only useful verb is "expand".
+        let all_collapsed = !groups.is_empty()
+            && groups
+                .iter()
+                .all(|(group, _)| self.collapsed_shortcut_groups.contains(group));
+        let (label, collapse) = if all_collapsed {
+            ("Expand all", false)
+        } else {
+            ("Collapse all", true)
+        };
+
+        section_header_with_action(
+            ui,
+            "Bindings",
+            secondary_button(
+                "shortcut-toggle-all",
+                label,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                    this.collapsed_shortcut_groups.clear();
+                    if collapse {
+                        this.collapsed_shortcut_groups
+                            .extend(ShortcutGroup::ALL.iter().copied());
+                    }
+                    cx.notify();
+                }),
+            ),
+        )
+        .into_any_element()
+    }
+
+    /// One collapsible section: a clickable header, then its rows.
+    fn render_shortcut_section(
+        &self,
+        ui: crate::theme::UiColors,
+        group: ShortcutGroup,
+        rows: &[VisibleRow<'_>],
+        filtering: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // A filter overrides the fold: hiding a match behind a closed header
+        // would make the search look broken. The user's fold state is kept, not
+        // cleared, so it comes back when the query does.
+        let collapsed = !filtering && self.collapsed_shortcut_groups.contains(&group);
+        let count = rows.len();
+
+        let header = squircle_skin(
+            div()
+                .id(("shortcut-group", group as usize))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.))
+                .px(px(8.))
+                .py(px(6.)),
+            format!("shortcut-group-skin-{}", group as usize),
+            ROW_RADIUS,
+            None,
+            Some(ui.subtle),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            if !this.collapsed_shortcut_groups.remove(&group) {
+                this.collapsed_shortcut_groups.insert(group);
+            }
+            cx.notify();
+        }))
+        .child(
+            svg()
+                .size(px(11.))
+                .flex_none()
+                .path(if collapsed {
+                    "icons/chevron-right.svg"
+                } else {
+                    "icons/chevron-down.svg"
+                })
+                .text_color(ui.muted),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(12.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(ui.text)
+                .truncate()
+                .child(group.label()),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(ui.muted)
+                .child(count.to_string()),
+        );
+
+        let mut section = div().flex().flex_col().gap(px(6.)).child(header);
+
+        if !collapsed {
+            let mut card = setting_card(ui).p(px(4.));
+            for (position, row) in rows.iter().enumerate() {
+                card = card.child(self.render_shortcut_row(ui, row, cx));
+                if position + 1 != count {
+                    card = card.child(hairline(ui));
+                }
+            }
+            section = section.child(card);
+        }
+
+        section.into_any_element()
+    }
+
+    fn render_shortcut_row(
+        &self,
+        ui: crate::theme::UiColors,
+        row: &VisibleRow<'_>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let idx = row.idx;
+        let is_recording = self.recording_shortcut_idx == Some(idx);
+        let unassigned = row.entry.key == "Unassigned";
+
+        let key_badge = if is_recording {
+            div()
+                .px(px(10.))
+                .py(px(3.))
+                .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+                .bg(ui.accent)
+                .text_size(px(11.))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                // Same APCA lift as the capture toggle: on themes where accent
+                // and text nearly coincide, a plain `text` label would leave
+                // the armed row looking like an empty pill.
+                .text_color(ensure_minimum_contrast(
+                    ui.text,
+                    ui.accent,
+                    MIN_APCA_CONTRAST,
+                ))
+                .child("Press a key…")
+        } else {
+            div()
+                .px(px(10.))
+                .py(px(3.))
+                .rounded(SETTINGS_CONTROL_CORNER_RADIUS)
+                .bg(ui.subtle)
+                .text_size(px(11.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                // An unassigned row is an absence, not a binding, so it reads
+                // muted instead of sitting at the same weight as a real chord.
+                .text_color(if unassigned { ui.muted } else { ui.text })
+                .child(row.entry.key.clone())
+        };
+
+        squircle_skin(
+            div()
+                .id(("shortcut", idx))
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_between()
+                .gap(px(12.))
+                .px(px(8.))
+                .py(px(10.)),
+            format!("shortcut-squircle-{idx}"),
+            ROW_RADIUS,
+            None,
+            Some(ui.subtle),
+        )
+        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+            // Recording a rebind and capturing a search chord both want the
+            // keyboard; arming one disarms the other.
+            this.set_shortcut_capture(false, cx);
+            this.recording_shortcut_idx = Some(idx);
+            this.settings_focus.focus(window, cx);
+            cx.notify();
+        }))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(13.))
+                .text_color(ui.text)
+                .truncate()
+                .child(row.entry.description.clone()),
+        )
+        .child(key_badge)
+        .into_any_element()
     }
 }
