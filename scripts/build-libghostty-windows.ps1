@@ -109,12 +109,15 @@ function Write-Phase {
 function Add-DefenderExclusion {
     param([string]$Path)
 
-    # Real-time scanning dominates this build. The pinned Zig source archive
-    # alone unpacks to 19660 files across 239 MB, and the Zig cache under the
-    # canonical source writes tens of thousands more. On 2026-08-29 a single
-    # `tar -xf` of that archive was still running when the job was killed at
-    # the 90 minute mark; the same extraction costs about 4 seconds on an
-    # unscanned filesystem.
+    # Real-time scanning is a plausible tax on this build: the pinned Zig
+    # source archive unpacks to 19660 files across 239 MB, and the Zig cache
+    # under the canonical source writes tens of thousands more.
+    #
+    # It is not, however, what stalled the extraction. These exclusions were
+    # added on 2026-08-29 against that stall and were refuted the same day:
+    # both applied cleanly and `tar -xf` still ran past 38 minutes. They are
+    # kept because they are free and hash-neutral, not because they were shown
+    # to help. Do not cite them as the fix for a slow extraction.
     #
     # Exclusions never touch a build input, so they cannot move the archive
     # hash. Best effort on purpose: a developer machine without an elevated
@@ -129,6 +132,29 @@ function Add-DefenderExclusion {
     catch {
         Write-Phase "no Defender exclusion for $Path ($($_.Exception.Message)); expect a slow build"
     }
+}
+
+function Get-SevenZip {
+    # Preinstalled on GitHub's Windows images and on most developer machines
+    # that build this archive, but never required: the caller falls back to a
+    # single-step `tar -xf` when this returns $null.
+    $onPath = Get-Command 7z -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($null -ne $onPath) {
+        return $onPath.Source
+    }
+    # Build the fallback list without Join-Path: it throws on a null root, and
+    # ProgramFiles(x86) is absent on a 32-bit host.
+    foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if ([string]::IsNullOrWhiteSpace($root)) {
+            continue
+        }
+        $candidate = [IO.Path]::Combine($root, "7-Zip", "7z.exe")
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+            return $candidate
+        }
+    }
+    return $null
 }
 
 function Normalize-InstalledHeaders {
@@ -747,26 +773,64 @@ function Initialize-ZigSourceLib {
     $script:zigSourceScratch = $zigSourceParent
     Add-DefenderExclusion $zigSourceParent
 
-    # Extract verbosely and count entries as they stream past. Two runs died at
-    # the job timeout inside this one call with no output at all, which left
-    # "stalled at entry zero" and "grinding along slowly" indistinguishable.
-    # bsdtar names each entry on stderr, so the counter below costs nothing and
-    # settles the question on the next run.
-    Write-Phase "extracting the pinned Zig $ZigVersion source archive with $tarExe into $zigSourceRoot"
-    $extractTimer = [Diagnostics.Stopwatch]::StartNew()
-    $entries = 0
-    & $tarExe -xvf $ZigSourceArchive -C $zigSourceRoot 2>&1 | ForEach-Object {
-        $entries++
-        if ($entries % 2000 -eq 0) {
-            Write-Phase "extracted $entries entries in $([int]$extractTimer.Elapsed.TotalSeconds)s"
+    # `tar -xf` on the .tar.xz directly does not finish on a GitHub Windows
+    # runner. Five runs between 2026-08-28 and 2026-08-29 died at the job
+    # timeout inside this one call, at 84 minutes and again at 38, on both the
+    # OS disk and the ephemeral one, with Defender exclusions applied. The same
+    # archive, 19660 entries, extracts in 4.4 s on macOS. Granting a Windows
+    # runner a 10x to 20x penalty on small-file creation predicts one to two
+    # minutes, so file creation alone does not explain the observed magnitude,
+    # and the xz filter in the bundled bsdtar is the prime suspect.
+    #
+    # So split the work and time each half separately: 7-Zip owns the xz
+    # decompression, bsdtar owns only the plain tar. The two numbers below say
+    # which half is pathological, and they keep saying it on every future run.
+    # This is byte-neutral for the reproducibility contract: the extracted tree
+    # is identical either way, and nothing under it is a recorded build input.
+    $sevenZip = Get-SevenZip
+    if ($null -ne $sevenZip) {
+        $xzStage = Join-Path $zigSourceParent "xz-stage"
+        New-Item -ItemType Directory -Force -Path $xzStage | Out-Null
+
+        Write-Phase "decompressing the pinned Zig $ZigVersion source archive with $sevenZip"
+        $xzTimer = [Diagnostics.Stopwatch]::StartNew()
+        & $sevenZip x $ZigSourceArchive "-o$xzStage" -y -bso0 -bsp0
+        $xzExit = $LASTEXITCODE
+        $xzTimer.Stop()
+        Write-Phase "xz decompression finished in $([int]$xzTimer.Elapsed.TotalSeconds)s (exit $xzExit)"
+        if ($xzExit -ne 0) {
+            throw "cannot decompress the pinned Zig source archive (7z exit $xzExit)"
+        }
+
+        $plainTar = @(Get-ChildItem -LiteralPath $xzStage -Filter *.tar -File)
+        if ($plainTar.Count -ne 1) {
+            throw "expected exactly one .tar in $xzStage, found $($plainTar.Count)"
+        }
+
+        Write-Phase "extracting the plain tar with $tarExe into $zigSourceRoot"
+        $tarTimer = [Diagnostics.Stopwatch]::StartNew()
+        & $tarExe -xf $plainTar[0].FullName -C $zigSourceRoot
+        $tarExit = $LASTEXITCODE
+        $tarTimer.Stop()
+        Write-Phase "tar extraction finished in $([int]$tarTimer.Elapsed.TotalSeconds)s (exit $tarExit)"
+        if ($tarExit -ne 0) {
+            throw "cannot extract the pinned Zig source archive (tar exit $tarExit)"
+        }
+        Remove-Item -LiteralPath $xzStage -Recurse -Force
+    }
+    else {
+        # No 7-Zip, so this is a developer machine and not a runner. Keep the
+        # single-step path working rather than adding a hard dependency.
+        Write-Phase "no 7-Zip found; extracting the pinned Zig $ZigVersion source archive with $tarExe in one step"
+        $extractTimer = [Diagnostics.Stopwatch]::StartNew()
+        & $tarExe -xf $ZigSourceArchive -C $zigSourceRoot
+        $tarExit = $LASTEXITCODE
+        $extractTimer.Stop()
+        Write-Phase "single-step extraction finished in $([int]$extractTimer.Elapsed.TotalSeconds)s (exit $tarExit)"
+        if ($tarExit -ne 0) {
+            throw "cannot extract the pinned Zig source archive (tar exit $tarExit)"
         }
     }
-    $tarExit = $LASTEXITCODE
-    $extractTimer.Stop()
-    if ($tarExit -ne 0) {
-        throw "cannot extract the pinned Zig source archive (tar exit $tarExit)"
-    }
-    Write-Phase "Zig source library extracted: $entries entries in $([int]$extractTimer.Elapsed.TotalSeconds)s"
     $sourceLib = Join-Path $zigSourceRoot "zig-$ZigVersion\lib"
     if (-not (Test-Path -LiteralPath (Join-Path $sourceLib "std\std.zig") -PathType Leaf)) {
         throw "Zig $ZigVersion source archive does not contain the expected library"
