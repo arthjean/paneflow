@@ -82,6 +82,7 @@ mod tests {
             macos_chrome_material: Some(true),
             unfocused_pane_opacity: Some(0.7),
             reduce_motion: Some(false),
+            sidebar_density: Some(SidebarDensity::Compact),
             line_height: Some(1.2),
             cell_width: Some(0.6),
             font_family: Some("Geist Mono".to_string()),
@@ -574,6 +575,29 @@ mod tests {
             Some("One Dark"),
             "siblings survive a malformed AI-access toggle"
         );
+    }
+
+    #[test]
+    fn the_rail_stays_compact_unless_asked_otherwise() {
+        // The branch and the diffstat were taken out of the rail deliberately;
+        // the setting exists for the reader they help, not to walk that back.
+        // So absent means compact, and so does anything unreadable - a typo in
+        // one key must never cost the whole config file.
+        let cfg: PaneFlowConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(cfg.sidebar_density.is_none());
+        assert_eq!(cfg.resolved_sidebar_density(), SidebarDensity::Compact);
+
+        let cfg: PaneFlowConfig = serde_json::from_str(r#"{"sidebar_density": "Bogus"}"#).unwrap();
+        assert_eq!(cfg.resolved_sidebar_density(), SidebarDensity::Compact);
+
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_density": "detailed"}"#).unwrap();
+        assert_eq!(cfg.resolved_sidebar_density(), SidebarDensity::Detailed);
+
+        // The settings page writes the same spelling it reads.
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_density": "compact"}"#).unwrap();
+        assert_eq!(cfg.resolved_sidebar_density(), SidebarDensity::Compact);
     }
 
     #[test]

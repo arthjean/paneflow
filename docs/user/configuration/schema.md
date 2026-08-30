@@ -39,6 +39,7 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `cell_width` | number or null | `0.6` | Multiplier, range `0.3` to `2.0`. |
 | `unfocused_pane_opacity` | number or null | `0.7` | Opacity of panes without focus when a workspace has more than one pane, range `0.15` to `1.0`. `1.0` disables the dim. |
 | `reduce_motion` | boolean or null | `false` | Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. |
+| `sidebar_density` | string or null | `compact` | `compact` is one line per rail row. `detailed` gives a workspace row a second line with its git branch and diffstat. |
 | `window_decorations` | string or null | `client` | `client` for Paneflow chrome, `server` for OS/compositor chrome. Read at startup. |
 | `window_backdrop` | string or null | `auto` | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. Read at startup. |
 | `windows_terminal_material` | boolean or null | `false` | Windows-only terminal background transparency for Mica/blur materials. |
@@ -260,6 +261,7 @@ unconditionally.
   "cell_width": 0.6,
   "unfocused_pane_opacity": 0.7,
   "reduce_motion": false,
+  "sidebar_density": "compact",
   "window_decorations": "client",
   "window_backdrop": "auto",
   "windows_terminal_material": false,

@@ -413,6 +413,41 @@ impl Workspace {
         }
     }
 
+    /// The single tab this workspace's own rail row stands in for, if any.
+    ///
+    /// Most sessions never open a second tab: one project, one composition. A
+    /// tree with exactly one leaf under every node is not a hierarchy, it is
+    /// two rows saying the same thing, so the rail draws no child row at all
+    /// and the workspace row *is* that tab - it carries its status, and its
+    /// leading glyph becomes what the tab is running rather than a folder.
+    ///
+    /// The tab must still be one Paneflow named itself. A title from the agent
+    /// ([`TabTitleSource::Generated`]) or from a human ([`TabTitleSource::User`])
+    /// says something the folder name does not, and hiding the row would throw
+    /// that away; only a [`TabTitleSource::Preset`] label ("Claude Code", or
+    /// nothing at all) is safe to fold into the row above it.
+    ///
+    /// `root.is_some()` keeps the empty-folder placeholder out: an
+    /// [`Self::is_empty_shell`] workspace has a tab with no pane, nothing is
+    /// running in it, and its row stays a plain folder.
+    pub(crate) fn solo_tab(&self) -> Option<&Tab> {
+        match self.tabs.as_slice() {
+            [tab]
+                if tab.root.is_some()
+                    && tab.title_source() == paneflow_config::schema::TabTitleSource::Preset =>
+            {
+                Some(tab)
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether the rail renders no child row for this workspace's tabs - and
+    /// therefore whether its own row has to speak for their sessions.
+    pub(crate) fn hides_its_tabs(&self) -> bool {
+        self.is_empty_shell() || self.solo_tab().is_some()
+    }
+
     /// Make `tab` the active tab. It replaces the placeholder of an empty
     /// workspace and is appended otherwise. Returns `false` - without mutating
     /// anything - when the workspace already holds [`MAX_TABS_PER_WORKSPACE`]
@@ -586,11 +621,78 @@ mod tests {
     use super::{AgentCompletionNotification, MAX_TABS_PER_WORKSPACE, Tab, Workspace};
     use crate::layout::LayoutTree;
     use crate::terminal::TerminalView;
+    use paneflow_config::schema::TabTitleSource;
 
     fn test_workspace(cx: &mut impl AppContext) -> Workspace {
         let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
         let pane = cx.new(|cx| crate::pane::Pane::new(terminal, 1, cx));
         Workspace::build(1, "ws".to_string(), String::new(), LayoutTree::Leaf(pane))
+    }
+
+    /// The common case the rail is now built for: one project, one
+    /// composition, and no child row restating it.
+    #[gpui::test]
+    fn a_workspace_with_one_unnamed_tab_folds_it_into_its_own_row(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let ws = test_workspace(cx);
+
+        assert!(ws.solo_tab().is_some());
+        assert!(ws.hides_its_tabs());
+    }
+
+    /// A name a human or an agent put there says something the folder name does
+    /// not. Folding the row would throw it away, so only a title Paneflow gave
+    /// itself is safe to absorb.
+    #[gpui::test]
+    fn a_named_single_tab_keeps_its_row(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let mut ws = test_workspace(cx);
+
+        for source in [TabTitleSource::Prompt, TabTitleSource::Generated] {
+            ws.active_tab_mut().set_title("refonte panier", source);
+            assert!(
+                ws.solo_tab().is_none(),
+                "a {source:?} title was folded away with its row"
+            );
+            ws.active_tab_mut().unlock_title();
+        }
+
+        ws.active_tab_mut()
+            .set_title("refonte panier", TabTitleSource::User);
+        assert!(ws.solo_tab().is_none());
+        assert!(!ws.hides_its_tabs());
+    }
+
+    #[gpui::test]
+    fn a_second_tab_brings_both_rows_back(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let mut ws = test_workspace(cx);
+        assert!(ws.hides_its_tabs());
+
+        assert!(ws.open_tab(Tab::new("", None)));
+
+        assert!(
+            ws.solo_tab().is_none(),
+            "the workspace row cannot stand in for two tabs"
+        );
+        assert_eq!(ws.tab_count(), 2, "the hidden default came back with it");
+    }
+
+    /// The empty-folder placeholder is not a tab anyone opened and nothing runs
+    /// in it, so its row stays a plain folder rather than pretending to be a
+    /// composition.
+    #[gpui::test]
+    fn an_empty_workspace_is_not_a_solo_one(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let mut ws = test_workspace(cx);
+        ws.close_tab(0);
+
+        assert!(ws.is_empty_shell());
+        assert!(ws.solo_tab().is_none());
+        assert!(
+            ws.hides_its_tabs(),
+            "an empty folder shows no child row either"
+        );
     }
 
     #[gpui::test]

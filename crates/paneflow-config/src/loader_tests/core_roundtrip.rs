@@ -28,6 +28,7 @@ fn test_serialization_roundtrip() {
         macos_chrome_material: None,
         unfocused_pane_opacity: None,
         reduce_motion: None,
+        sidebar_density: None,
         line_height: None,
         cell_width: None,
         font_family: None,

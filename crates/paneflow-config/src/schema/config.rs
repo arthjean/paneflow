@@ -59,6 +59,10 @@ pub struct PaneFlowConfig {
     /// through `App::set_reduce_motion`, so it hot-reloads.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub reduce_motion: Option<bool>,
+    /// How much a row of the workspaces rail says. See [`SidebarDensity`].
+    /// `None` is [`SidebarDensity::Compact`], today's rail.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub sidebar_density: Option<SidebarDensity>,
     /// Terminal line height multiplier (default: 1.2, valid range: 1.0-2.5).
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
@@ -296,6 +300,57 @@ pub struct PaneFlowConfig {
     pub tool_permissions: HashMap<String, ToolPermissionsEntry>,
 }
 
+/// How much a row of the workspaces rail says.
+///
+/// `Compact` is the rail as it has always been: one line per row, the name and
+/// its activity. `Detailed` adds a second line to a workspace row carrying the
+/// git branch it sits on and its diffstat - the two that `4f8c982` removed from
+/// the rail with the note that "both crowded the row for little signal, and the
+/// Diff view is where change counts belong".
+///
+/// That reasoning is why this is a setting rather than a straight return: it
+/// holds for anyone whose rail is a list of projects they are not comparing,
+/// and it stops holding for anyone reading several checkouts at once. The
+/// default keeps the decision `4f8c982` made; the option exists for the second
+/// reader.
+///
+/// The second line is deliberately NOT on a tab row. A tab has no branch of its
+/// own until a tab can be bound to a worktree (discussion #41), so putting one
+/// there would print the workspace's branch on every tab it holds - exactly the
+/// near-constant line the original note called noise.
+#[derive(Debug, Clone, Copy, Default, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SidebarDensity {
+    /// One line per row: the name and its activity.
+    #[default]
+    Compact,
+    /// A workspace row also carries its branch and diffstat.
+    Detailed,
+}
+
+/// Tolerant like every other config enum: an unreadable value must cost the
+/// user one setting, never the whole file.
+impl<'de> Deserialize<'de> for SidebarDensity {
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(d)?;
+        match raw.as_str() {
+            "detailed" => Ok(Self::Detailed),
+            "compact" => Ok(Self::Compact),
+            other => {
+                tracing::warn!(
+                    target: "paneflow_config::config",
+                    value = other,
+                    "sidebar_density value not recognized, defaulting to compact",
+                );
+                Ok(Self::Compact)
+            }
+        }
+    }
+}
+
 impl PaneFlowConfig {
     /// EP-004 US-011 (cli-cockpit) + US-013 (agent-control-plane): default
     /// Stalled silence threshold. Tightened from 300 s to 60 s so a likely-lost
@@ -393,6 +448,11 @@ impl PaneFlowConfig {
     /// Resolve the reduce-motion switch. Absent means full motion.
     pub fn reduce_motion_enabled(&self) -> bool {
         self.reduce_motion.unwrap_or(false)
+    }
+
+    /// Resolve the rail's density. Absent means [`SidebarDensity::Compact`].
+    pub fn resolved_sidebar_density(&self) -> SidebarDensity {
+        self.sidebar_density.unwrap_or_default()
     }
 
     /// Resolve `agent_stall_threshold_secs`: default 60, clamped to

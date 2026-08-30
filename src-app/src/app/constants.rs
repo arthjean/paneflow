@@ -63,13 +63,6 @@ const DARK_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.11;
 const DARK_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.07;
 const LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY: f32 = 0.08;
 const LIGHT_SIDEBAR_TAB_HOVER_OPACITY: f32 = 0.04;
-const SIDEBAR_TAB_ICON_CARD_TINT: u32 = 0x000000;
-/// How much darker than the selected tab card the pane-icon card sits. Small
-/// on purpose: the card reads as the same material as the row it lives on,
-/// one step down, not as a second color.
-const DARK_SIDEBAR_TAB_ICON_CARD_DARKEN: f32 = 0.10;
-const LIGHT_SIDEBAR_TAB_ICON_CARD_DARKEN: f32 = 0.05;
-
 /// Shared radius for the Agents search field and its primary navigation rows.
 pub(crate) const SIDEBAR_TAB_CORNER_RADIUS: Pixels = px(8.);
 
@@ -292,48 +285,43 @@ pub(crate) fn sidebar_tab_active_background() -> Hsla {
     )
 }
 
+/// The extra wash a SELECTED row takes under the pointer.
+///
+/// The rail's fills stack: `squircle_skin` paints the resting fill always and
+/// the hovered one on top of it, so a hovered value is an INCREMENT, not a
+/// target. A selected row already rests at the hover tint, so this is the alpha
+/// that carries it the rest of the way to the active tint - `hover + x * (1 -
+/// hover) = active`, solved for `x`.
+///
+/// Deliberately translucent on every platform, unlike the fills themselves: it
+/// is painted over one of them, and an opaque increment would erase what it is
+/// meant to deepen.
+pub(crate) fn sidebar_tab_selected_hover_increment() -> Hsla {
+    let theme = crate::theme::active_theme();
+    let is_light = theme.background.l > 0.5;
+    let (tint, hover, active) = if is_light {
+        (
+            LIGHT_SIDEBAR_TAB_TINT,
+            LIGHT_SIDEBAR_TAB_HOVER_OPACITY,
+            LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY,
+        )
+    } else {
+        (
+            DARK_SIDEBAR_TAB_TINT,
+            DARK_SIDEBAR_TAB_HOVER_OPACITY,
+            DARK_SIDEBAR_TAB_ACTIVE_OPACITY,
+        )
+    };
+    let increment = ((active - hover) / (1.0 - hover)).clamp(0.0, 1.0);
+    Hsla::from(gpui::rgb(tint)).opacity(increment)
+}
+
 /// Background for a hovered, non-selected sidebar tab.
 pub(crate) fn sidebar_tab_hover_background() -> Hsla {
     sidebar_tab_background(
         LIGHT_SIDEBAR_TAB_HOVER_OPACITY,
         DARK_SIDEBAR_TAB_HOVER_OPACITY,
     )
-}
-
-/// US-013: fill of one pane-icon card in a tab row's stacked cluster.
-///
-/// Opaque on every platform, unlike the row backgrounds above: the cards
-/// overlap, and a translucent fill doubles up in the seam and lets the card
-/// underneath show through its own right edge. Blending a tint onto an opaque
-/// title-bar background is the recipe `sidebar_tab_background` already uses on
-/// Linux, applied unconditionally here because a 15x18 card is far too small
-/// for the macOS/Windows material to read through anyway.
-pub(crate) fn sidebar_tab_icon_card_background() -> Hsla {
-    let theme = crate::theme::active_theme();
-    let is_light = theme.background.l > 0.5;
-    let (tab_tint, tab_opacity, darken) = if is_light {
-        (
-            LIGHT_SIDEBAR_TAB_TINT,
-            LIGHT_SIDEBAR_TAB_ACTIVE_OPACITY,
-            LIGHT_SIDEBAR_TAB_ICON_CARD_DARKEN,
-        )
-    } else {
-        (
-            DARK_SIDEBAR_TAB_TINT,
-            DARK_SIDEBAR_TAB_ACTIVE_OPACITY,
-            DARK_SIDEBAR_TAB_ICON_CARD_DARKEN,
-        )
-    };
-    // Same material as the selected tab card, one step darker: the card is the
-    // row's own surface pushed back, not a color of its own. The tab tint is
-    // composed here rather than reused from `sidebar_tab_background` because
-    // that one stays translucent off Linux, and this card must be opaque.
-    let card = Hsla {
-        a: 1.0,
-        ..theme.title_bar_background
-    }
-    .blend(Hsla::from(gpui::rgb(tab_tint)).opacity(tab_opacity));
-    card.blend(Hsla::from(gpui::rgb(SIDEBAR_TAB_ICON_CARD_TINT)).opacity(darken))
 }
 
 fn sidebar_tab_background(light_opacity: f32, dark_opacity: f32) -> Hsla {

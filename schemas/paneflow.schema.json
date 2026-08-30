@@ -95,6 +95,12 @@
       "description": "Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. Default false.",
       "default": false
     },
+    "sidebar_density": {
+      "type": ["string", "null"],
+      "description": "How much a row of the workspaces rail says. 'compact' is one line per row. 'detailed' gives a workspace row a second line carrying its git branch and diffstat. Default 'compact'.",
+      "enum": ["compact", "detailed", null],
+      "default": "compact"
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",

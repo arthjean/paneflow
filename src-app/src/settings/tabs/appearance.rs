@@ -6,17 +6,30 @@ use gpui::{
 };
 
 use crate::PaneFlowApp;
+use crate::app::sidebar::{
+    SIDEBAR_FOLDER_ICON_WIDTH, SIDEBAR_GUIDE_ALPHA, SIDEBAR_GUIDE_X, SIDEBAR_ROW_LINE_HEIGHT,
+    SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING,
+    SIDEBAR_TAB_INDENT, SIDEBAR_TITLE_ROW_GAP,
+};
 use crate::settings::components::{
     deferred_select_menu, secondary_button, section_header, section_header_with_action,
     select_chevron, select_item, select_menu, select_trigger, setting_card, setting_text,
     toggle_pill, with_alpha,
 };
-use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
+use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, lerp_color, squircle_skin};
+use paneflow_config::schema::SidebarDensity;
 
 /// Height of the three Light/Dark/System mockup tiles. Sized so a 700px-wide
 /// settings column (three `flex_1` tiles, 12px gutters) keeps a ~1.55:1 tile.
 const THEME_MODE_TILE_HEIGHT: f32 = 134.;
 const THEME_MODE_TILE_RADIUS: f32 = 10.;
+/// Height of the two density tiles. Taller than a theme tile because it has to
+/// hold what it previews: a workspace row plus two tab rows, and in the
+/// detailed density each tab row carries a second line. 8 + 30 + 4 + 48 + 4 +
+/// 48 = 142, plus the bottom breathing room. Both tiles take it so they align,
+/// which leaves the compact one showing empty rail below its rows - honest,
+/// since a rail is a column.
+const SIDEBAR_DENSITY_TILE_HEIGHT: f32 = 150.;
 /// Ring width of a mode tile (`border_2`). The mockup inside rounds its own
 /// full-bleed fills to the tile radius minus this, because GPUI's
 /// `overflow_hidden` masks children to a plain *rectangle*: a corner radius on
@@ -107,6 +120,24 @@ impl PaneFlowApp {
                     .child(toggle_pill(reduce_motion, ui)),
             );
 
+        let density = self.cached_config.resolved_sidebar_density();
+        let mut density_row = div().flex().flex_row().w_full().gap(px(12.));
+        for (value, label, id) in [
+            (
+                SidebarDensity::Compact,
+                "Compact",
+                "sidebar-density-compact",
+            ),
+            (
+                SidebarDensity::Detailed,
+                "Detailed",
+                "sidebar-density-detailed",
+            ),
+        ] {
+            density_row = density_row
+                .child(self.render_sidebar_density_tile(value, label, id, density, ui, cx));
+        }
+
         let content = div()
             .flex()
             .flex_col()
@@ -116,6 +147,14 @@ impl PaneFlowApp {
             .child(render_theme_diff_preview(ui))
             .child(div().h(px(12.)).flex_none())
             .child(setting_card(ui).child(preset_row))
+            .child(div().h(px(18.)).flex_none())
+            .child(section_header(ui, "Sidebar"))
+            .child(div().px(px(12.)).pb(px(10.)).child(setting_text(
+                ui,
+                "Density",
+                "Detailed gives a workspace row a second line with its branch and diffstat.",
+            )))
+            .child(density_row)
             .child(div().h(px(18.)).flex_none())
             .child(section_header(ui, "Preferences"))
             .child(setting_card(ui).child(motion_row));
@@ -278,6 +317,83 @@ impl PaneFlowApp {
                 this.apply_theme_mode(mode, window, cx);
             }))
             .child(mockup);
+
+        div()
+            .flex_1()
+            .min_w(px(120.))
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(frame)
+            .child(
+                div()
+                    .w_full()
+                    .text_center()
+                    .text_size(crate::ui_primitives::BODY)
+                    .font_weight(if is_active {
+                        gpui::FontWeight::MEDIUM
+                    } else {
+                        gpui::FontWeight::NORMAL
+                    })
+                    .text_color(if is_active { ui.text } else { ui.muted })
+                    .child(label),
+            )
+    }
+
+    /// One density tile, on the Light/Dark/System patron: a bordered frame
+    /// holding a mockup of what the choice does, and the label under it.
+    ///
+    /// The mockup is drawn at the rail's REAL geometry, from the rail's own
+    /// constants, because it can be: a tile is about as wide as the 300px rail,
+    /// so the preview is the thing itself rather than a diagram of it. That
+    /// also means it cannot drift - change `SIDEBAR_TAB_INDENT` and this moves
+    /// with it.
+    fn render_sidebar_density_tile(
+        &self,
+        value: SidebarDensity,
+        label: &'static str,
+        id: &'static str,
+        current: SidebarDensity,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_active = current == value;
+        let resting = if is_active {
+            with_alpha(ui.text, 0.85)
+        } else {
+            with_alpha(ui.text, 0.12)
+        };
+        let hovered = if is_active {
+            with_alpha(ui.text, 0.85)
+        } else {
+            with_alpha(ui.text, 0.32)
+        };
+        let stored = match value {
+            SidebarDensity::Compact => "compact",
+            SidebarDensity::Detailed => "detailed",
+        };
+
+        let frame = div()
+            .id(id)
+            .w_full()
+            .h(px(SIDEBAR_DENSITY_TILE_HEIGHT))
+            .rounded(px(THEME_MODE_TILE_RADIUS))
+            .overflow_hidden()
+            .border_2()
+            .border_color(resting)
+            .cursor(CursorStyle::PointingHand)
+            .animated_hover(move |style, delta| {
+                style.border_color(lerp_color(resting, hovered, delta));
+            })
+            .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                this.persist_setting(
+                    false,
+                    "sidebar_density",
+                    serde_json::Value::String(stored.to_string()),
+                    cx,
+                );
+            }))
+            .child(sidebar_density_mockup(value, ui));
 
         div()
             .flex_1()
@@ -577,6 +693,189 @@ fn theme_mode_mockup(p: ThemePreview, half: MockupHalf) -> impl IntoElement {
                     .child(mock_bar(44., 5., p.accent))
                     .child(mock_bar(88., 5., with_alpha(p.text, 0.16))),
             ),
+    )
+}
+
+/// A slice of the real rail: one workspace and its two tabs, drawn with the
+/// rail's own constants so the tile shows the thing rather than a diagram.
+///
+/// Only the workspace row differs between the two densities - the second line
+/// is what the setting buys - which is exactly the comparison the two tiles
+/// side by side are for.
+fn sidebar_density_mockup(density: SidebarDensity, ui: crate::theme::UiColors) -> impl IntoElement {
+    let theme = crate::theme::active_theme();
+    let rail_bg = Hsla {
+        a: 1.0,
+        ..theme.title_bar_background
+    };
+    let detailed = density == SidebarDensity::Detailed;
+
+    let row_pad = |d: gpui::Div| {
+        d.px(px(SIDEBAR_ROW_PADDING_X))
+            .py(px(SIDEBAR_ROW_PADDING_Y))
+    };
+    let title_line = |text: &'static str, medium: bool, color: Hsla| {
+        div()
+            .flex_1()
+            .min_w_0()
+            .overflow_x_hidden()
+            .whitespace_nowrap()
+            .text_ellipsis()
+            .text_color(color)
+            .text_sm()
+            .line_height(px(SIDEBAR_ROW_LINE_HEIGHT))
+            .when(medium, |d| d.font_weight(gpui::FontWeight::MEDIUM))
+            .child(text)
+    };
+    let badge = |text: &'static str, color: Hsla| {
+        div()
+            .flex_none()
+            .text_size(px(10.))
+            .font_weight(gpui::FontWeight::MEDIUM)
+            .text_color(color)
+            .child(text)
+    };
+
+    let workspace_body = div().flex().flex_col().gap(px(4.)).child(
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(SIDEBAR_TITLE_ROW_GAP))
+            .child(
+                svg()
+                    .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+                    .flex_none()
+                    .path("icons/folder-open.svg")
+                    .text_color(ui.muted),
+            )
+            .child(title_line("paneflow", true, ui.text)),
+    );
+    let meta = |branch: &'static str, added: &'static str, removed: &'static str| {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.))
+            .h(px(14.))
+            .child(
+                svg()
+                    .size(px(10.))
+                    .flex_none()
+                    .path("icons/git-branch-sidebar.svg")
+                    .text_color(ui.muted),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_size(px(10.))
+                    .text_color(ui.muted)
+                    .child(branch),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .gap(px(5.))
+                    .text_size(px(10.))
+                    .child(div().text_color(ui.vc_added).child(added))
+                    .child(div().text_color(ui.vc_deleted).child(removed)),
+            )
+    };
+
+    let tab = |text: &'static str,
+               status: Option<(&'static str, Hsla)>,
+               selected: bool,
+               git: (&'static str, &'static str, &'static str)| {
+        let title = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(SIDEBAR_TITLE_ROW_GAP))
+            .child(title_line(text, false, ui.text))
+            .when_some(status, |d, (word, color)| d.child(badge(word, color)));
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(4.))
+            .child(title)
+            .when(detailed, |d| d.child(meta(git.0, git.1, git.2)));
+        let height =
+            SIDEBAR_ROW_LINE_HEIGHT + 2. * SIDEBAR_ROW_PADDING_Y + if detailed { 18. } else { 0. };
+        let shell = row_pad(div())
+            .id(SharedString::from(format!("density-tab-{text}")))
+            .relative()
+            .flex_none()
+            .h(px(height));
+        div()
+            .relative()
+            .ml(px(SIDEBAR_ROW_MARGIN_X + SIDEBAR_TAB_INDENT))
+            .mr(px(SIDEBAR_ROW_MARGIN_X))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(SIDEBAR_GUIDE_X
+                        - SIDEBAR_ROW_MARGIN_X
+                        - SIDEBAR_TAB_INDENT))
+                    .top(px(-SIDEBAR_ROW_SPACING))
+                    .bottom(px(0.))
+                    .w(px(1.))
+                    .bg(ui.text.opacity(SIDEBAR_GUIDE_ALPHA)),
+            )
+            .child(if selected {
+                squircle_skin(
+                    shell,
+                    SharedString::from("density-mock-selected"),
+                    ROW_RADIUS,
+                    Some(crate::app::constants::sidebar_tab_hover_background()),
+                    None,
+                )
+                .child(body)
+                .into_any_element()
+            } else {
+                shell.child(body).into_any_element()
+            })
+    };
+
+    // Pinned to the rail's own width, then clipped by the tile. A tile is wider
+    // than 300px, and a mockup stretched to fill it would show rows the rail
+    // never draws - previewing at real geometry is pointless the moment the
+    // geometry stops being real.
+    div().size_full().bg(rail_bg).overflow_hidden().child(
+        div()
+            .w(px(crate::SIDEBAR_WIDTH))
+            .flex_none()
+            .h_full()
+            .pt(px(8.))
+            .flex()
+            .flex_col()
+            .gap(px(SIDEBAR_ROW_SPACING))
+            .child(
+                row_pad(div())
+                    .mx(px(SIDEBAR_ROW_MARGIN_X))
+                    .flex_none()
+                    .child(workspace_body),
+            )
+            .child(tab(
+                "shortcuts search",
+                // The badge's own colour, not a theme slot: `agent_summary_visual`
+                // hardcodes this amber for `NeedsInput`, and a preview that picks a
+                // near-enough token is a preview that lies.
+                Some(("Input", gpui::rgb(0xFBBF24).into())),
+                false,
+                ("feat/shortcuts-search", "+142", "\u{2212}38"),
+            ))
+            .child(tab(
+                "sidebar hierarchy",
+                Some(("Working", ui.muted)),
+                true,
+                ("feat/sidebar-hierarchy", "+12", "\u{2212}4"),
+            )),
     )
 }
 

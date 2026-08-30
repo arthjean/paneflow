@@ -11,17 +11,16 @@ pub(crate) mod context_menu;
 
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
-    Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
+    Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, CursorStyle, FontWeight,
+    Hsla, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
     SharedString, Styled, Window, div, prelude::*, px, rgb, svg,
 };
 
 use crate::{
     PaneFlowApp, SIDEBAR_WIDTH, TabContextMenu, TabDrag, WorkspaceContextMenu, WorkspaceDrag,
     WorkspaceDragPreview, ai_types,
-    app::pane_palette::PalettePlacement,
     pane_drag::PaneDrag,
-    ui_primitives::{ROW_RADIUS, squircle, squircle_skin},
+    ui_primitives::{ROW_RADIUS, squircle_skin},
     workspace::{Tab, Workspace},
 };
 
@@ -101,9 +100,7 @@ const SIDEBAR_ROW_GAP: f32 = 4.0;
 /// px here and made every row 35 px tall. Pinning it keeps the row at 30 px,
 /// the height the rail is designed against, whatever font resolves.
 pub(crate) const SIDEBAR_ROW_LINE_HEIGHT: f32 = 18.0;
-const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
-const SIDEBAR_AGENT_STATUS_SLOT_WIDTH: f32 = 48.0;
-const SIDEBAR_AGENT_ICON_SLOT_WIDTH: f32 = 20.0;
+pub(crate) const SIDEBAR_TITLE_ROW_GAP: f32 = 8.0;
 /// Group the rail's file-manager drop placeholder reads its visibility from.
 const SIDEBAR_DROP_GROUP: &str = "sidebar-drop-zone";
 /// Gap between the drop placeholder and the rail's edges, so the rounded box
@@ -118,20 +115,10 @@ const SIDEBAR_DROP_PLACEHOLDER_BORDER_ALPHA: f32 = 0.22;
 const SIDEBAR_ACTION_BUTTON_SIZE: f32 = 20.0;
 /// Gap between two buttons of the same cluster.
 const SIDEBAR_ACTION_BUTTON_GAP: f32 = 4.0;
-/// US-010: room the hover action cluster needs in the right corner of a
-/// workspace row, plus the gap that keeps it off the trailing agent badge. The
-/// folder cluster carries a single button - "new pane". Closing a workspace is
-/// deliberately context-menu only (right click): the hover `x` sat one stray
-/// click away from dropping every tab of the folder.
-///
-/// It is trailing padding on the title row, held at all times rather than
-/// opened on hover: reserving it only under the pointer left whatever could
-/// not shrink sitting under the button.
-const SIDEBAR_ACTION_LANE_WIDTH: f32 = SIDEBAR_TITLE_ROW_GAP + SIDEBAR_ACTION_BUTTON_SIZE;
 /// Vertical space between two rows of the rail. The divider element *is* that
 /// space (the list itself sets no gap), so inserting the drop slots costs no
 /// layout: nothing moves when a drag starts.
-const SIDEBAR_ROW_SPACING: f32 = 4.0;
+pub(crate) const SIDEBAR_ROW_SPACING: f32 = 4.0;
 /// Thickness of the insertion line. Two pixels, not one: a hairline reads as
 /// an artifact of the row above it.
 const SIDEBAR_DROP_LINE_PX: f32 = 2.0;
@@ -150,56 +137,46 @@ const SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH: f32 =
 /// more, so every title in the rail - folder and tab alike - starts on the same
 /// X. The folder icon is then the only thing that distinguishes a workspace
 /// from its tabs.
-const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 14.0;
-/// US-013: geometry of the per-pane icon cluster carried by a tab row.
+pub(crate) const SIDEBAR_FOLDER_ICON_WIDTH: f32 = 14.0;
+/// Extra left inset a tab row takes over its workspace row, on top of the
+/// shared [`SIDEBAR_ROW_MARGIN_X`].
 ///
-/// The cap is the visual reference's: past four panes the cluster would eat
-/// the title before it reaches the activity badge, so the tail folds into a
-/// `+N`. Each slot is fixed and painted whether or not the pane's agent is
-/// known yet, so the scan landing later swaps a glyph in place instead of
-/// reflowing the row (edge case 15).
-const SIDEBAR_TAB_ICON_SIZE: f32 = 16.0;
-const SIDEBAR_TAB_ICON_GAP: f32 = 3.0;
-const SIDEBAR_TAB_ICON_CAP: usize = 4;
-/// One card per pane, not one capsule around the stack: each glyph carries its
-/// own rounded fill plus hairline, and the cards slide over each other. The
-/// height is the row's line height, so a stack never grows the row; the width
-/// and the glyph keep the visual reference's proportions (card slightly taller
-/// than wide, glyph about two thirds of the card width).
-///
-/// The card is a square chip: 24x24 around a 16px glyph, so the padding is
-/// exactly 4px on all four sides. Both the difference (24 - 16 = 8) and each
-/// side (4) are whole pixels on purpose - an odd gap splits into 4.5px per side
-/// and GPUI's rounding then lands the glyph half a pixel off center, which on a
-/// mark this small is visible as a lean.
-///
-/// Centering is left to `items_center` + `justify_center` and nothing else: no
-/// per-icon nudge. The glyphs are optically centered *inside their own
-/// viewBox*, which is the fix that survives a size change - see `codex.svg`,
-/// whose viewBox is widened around the blossom's bounding box so the mark
-/// carries the same relative margin as the Lucide-derived icons next to it.
-///
-/// The card is *taller* than the row's line height (18px). It is laid out
-/// absolutely and overhangs into the row's 6px vertical padding rather than
-/// pushing the row past 30px, so the height must stay under that 30px total -
-/// the row shell clips its overflow, and a card past 30px would paint sliced.
-/// `tab_card_fits_inside_a_row` guards both bounds.
-///
-/// The corner is the rail's own: `ROW_RADIUS`, traced by the same `squircle`
-/// primitive the rows use, not GPUI's `rounded()` circular arc. A card sitting
-/// inside a row must not answer its container's continuous corner with a
-/// different curve. `trace` clamps the radius to half the shorter side, so a
-/// 14px corner on a 24px card resolves to the full superellipse - the card is
-/// all corner, which is exactly what makes it read as the row's own material.
-const SIDEBAR_TAB_CARD_WIDTH: f32 = 24.0;
-const SIDEBAR_TAB_CARD_HEIGHT: f32 = 24.0;
-const SIDEBAR_TAB_CARD_ICON_SIZE: f32 = 16.0;
-/// Stacked-card overlap: past the first slot every card slides back over its
-/// predecessor, which is what reads as one cluster rather than a row of loose
-/// cards. Children paint in declaration order, so the later pane sits on top -
-/// the same direction as the visual reference.
-const SIDEBAR_TAB_ICON_OVERLAP: f32 = 11.0;
-
+/// Chosen so the tab title lands on exactly the workspace title's X: the
+/// workspace title starts at `margin + padding + folder glyph + gap` = 38, and
+/// a tab row pays its own `padding` again, so the inset is `38 - margin -
+/// padding` = 22. Anything less and the two titles disagree by a few pixels,
+/// which reads as a misalignment rather than as a level.
+pub(crate) const SIDEBAR_TAB_INDENT: f32 = SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP;
+/// Lane a workspace row's SECOND line steps over: the leading glyph and the gap
+/// after it, so the line starts under the title rather than under the glyph.
+/// A branch beginning under the folder mark reads as a third column instead of
+/// as a continuation of the name above it.
+pub(crate) const SIDEBAR_META_INDENT: f32 = SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP;
+/// X of the guide that ties a workspace row to its tabs, from the rail's left
+/// edge: the centre line of the folder glyph above it. The tab rows start 7 px
+/// to its right, so a filled row never touches the line.
+pub(crate) const SIDEBAR_GUIDE_X: f32 =
+    SIDEBAR_ROW_MARGIN_X + SIDEBAR_ROW_PADDING_X + SIDEBAR_FOLDER_ICON_WIDTH / 2.0;
+/// Extra space above a workspace row that follows another workspace, and the
+/// hairline drawn in the middle of it. Both are what separates two groups now
+/// that tab rows are indented instead of flush.
+const SIDEBAR_GROUP_GAP: f32 = 10.0;
+const SIDEBAR_GROUP_SEPARATOR_ALPHA: f32 = 0.13;
+pub(crate) const SIDEBAR_GUIDE_ALPHA: f32 = 0.22;
+/// Marks a folded workspace row paints before the tail folds into a `+N`, and
+/// the side of the square that stands for a tab with nothing running.
+const SIDEBAR_FOLDED_MARK_CAP: usize = 5;
+/// Space between two marks of a folded row's cluster. Wider than the 3px the
+/// badge uses between its glyph and its word: those two are one thing read
+/// together, while these are N separate answers that have to be countable at a
+/// glance - too tight and four marks read as one smear.
+const SIDEBAR_FOLDED_MARK_GAP: f32 = 5.0;
+const SIDEBAR_IDLE_MARK_SIZE: f32 = 7.0;
+const SIDEBAR_IDLE_MARK_ALPHA: f32 = 0.32;
+/// Content width of a tab row: the rail minus its indent, its own margin and
+/// its own padding on both sides.
+const SIDEBAR_TAB_ROW_CONTENT_WIDTH: f32 =
+    SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X * 2.0 - SIDEBAR_TAB_INDENT - SIDEBAR_ROW_PADDING_X * 2.0;
 /// Shared shell of every rail row, folder and tab alike, so a workspace row is
 /// exactly as tall as a tab row: same padding, same corner, no minimum height.
 /// A workspace only grows past that when it renders a meta line (a detected
@@ -285,6 +262,7 @@ fn sidebar_action_button(
     let active_bg = crate::app::constants::sidebar_tab_active_background();
     div()
         .id(id)
+        .cursor(CursorStyle::PointingHand)
         .flex_none()
         .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
         .flex()
@@ -303,16 +281,6 @@ fn sidebar_action_button(
 }
 
 impl SidebarAgentSummary {
-    fn slot_width(self) -> f32 {
-        if self.state == SidebarAgentState::NeedsInput {
-            SIDEBAR_AGENT_STATUS_SLOT_WIDTH
-        } else if self.count > 1 {
-            28.0
-        } else {
-            SIDEBAR_AGENT_ICON_SLOT_WIDTH
-        }
-    }
-
     fn tooltip_state(self) -> String {
         match self.state {
             SidebarAgentState::NeedsInput => {
@@ -443,12 +411,18 @@ where
 /// Collapsed, the tab rows are off screen, so the folder re-aggregates every
 /// session again: the fold must hide no state (FR-05).
 ///
+/// `speaks_for_all` is that second case, and it is deliberately NOT spelled
+/// `!expanded`. A workspace whose single unnamed tab is folded into its own row
+/// ([`Workspace::solo_tab`]) is expanded and still has no tab row on screen -
+/// a third case the old wording could not express, and one where an agent
+/// waiting for input would have had no row left to report it.
+///
 /// The completion notification is deliberately NOT filtered here - it is
 /// workspace-scoped and carries no surface, so it stays on the folder row in
-/// both states, for the same reason.
+/// every state, for the same reason.
 fn folder_row_sessions<'a, I>(
     sessions: I,
-    expanded: bool,
+    speaks_for_all: bool,
 ) -> impl Iterator<Item = &'a ai_types::AgentSession>
 where
     I: IntoIterator<Item = &'a ai_types::AgentSession>,
@@ -456,7 +430,7 @@ where
 {
     sessions
         .into_iter()
-        .filter(move |session| !expanded || session.surface_id.is_none())
+        .filter(move |session| speaks_for_all || session.surface_id.is_none())
 }
 
 /// US-012: the sessions one tab row speaks for - those whose `surface_id` is a
@@ -476,13 +450,6 @@ where
     sessions
         .into_iter()
         .filter(move |session| session.surface_id.is_some_and(|id| surfaces.contains(&id)))
-}
-
-/// US-013: how many pane icons a tab row paints, and how many fold into the
-/// trailing `+N`.
-fn tab_icon_cluster_split(pane_count: usize) -> (usize, usize) {
-    let shown = pane_count.min(SIDEBAR_TAB_ICON_CAP);
-    (shown, pane_count - shown)
 }
 
 /// US-013: what one pane contributes to its tab row's icon cluster.
@@ -573,6 +540,9 @@ impl PaneFlowApp {
             .bg(ui.overlay)
             .px_1()
             .rounded_sm()
+            // The row underneath now asks for a pointing hand; a field being
+            // typed into must not inherit it.
+            .cursor(CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
             .child(self.rename_input.clone())
@@ -799,7 +769,12 @@ impl PaneFlowApp {
             // An empty workspace shows no child row at all: its single tab is
             // the FR-01 placeholder, not something the user created, and
             // `open_tab` fills it in place. The folder simply reads as empty.
-            if self.workspaces[i].sidebar_expanded && !self.workspaces[i].is_empty_shell() {
+            //
+            // A workspace holding one unnamed tab shows none either, for a
+            // different reason: the tab is real, but a tree with one leaf is
+            // two rows saying the same thing. Its row absorbs the tab (see
+            // `Workspace::solo_tab`), and both cases answer `hides_its_tabs`.
+            if self.workspaces[i].sidebar_expanded && !self.workspaces[i].hides_its_tabs() {
                 for tab_idx in 0..self.workspaces[i].tab_count() {
                     rows.push(SidebarRow::Tab(i, tab_idx));
                 }
@@ -816,10 +791,15 @@ impl PaneFlowApp {
     ) -> gpui::Stateful<gpui::Div> {
         let rows = self.sidebar_rows();
         let slots = sidebar_drop_slots(&rows, self.workspaces.len());
+        let mut seen_workspace = false;
         for (k, row) in rows.iter().enumerate() {
             list = list.child(self.render_drop_divider(k, slots[k], ui, cx));
             list = list.child(match *row {
-                SidebarRow::Folder(i) => self.render_workspace_row(i, ui, cx).into_any_element(),
+                SidebarRow::Folder(i) => {
+                    let follows_workspace = std::mem::replace(&mut seen_workspace, true);
+                    self.render_workspace_row(i, follows_workspace, ui, cx)
+                        .into_any_element()
+                }
                 SidebarRow::Tab(i, tab_idx) => {
                     self.render_tab_row(i, tab_idx, ui, cx).into_any_element()
                 }
@@ -932,9 +912,15 @@ impl PaneFlowApp {
             .child(band.child(line))
     }
 
+    /// `follows_workspace` is positional, not `i > 0`: the rail renders in
+    /// `compute_display_order`, so the workspace that happens to be first in
+    /// `self.workspaces` is not the one that heads the list. Separating on the
+    /// index would have drawn the group rule above whichever workspace was
+    /// stored first and skipped it on the one actually at the top.
     fn render_workspace_row(
         &self,
         i: usize,
+        follows_workspace: bool,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -956,6 +942,13 @@ impl PaneFlowApp {
         let is_expanded = ws.sidebar_expanded;
 
         let row_shell = sidebar_row_shell()
+            // Every row in the rail is a click target - selecting a tab,
+            // opening or folding a workspace - so the pointer says so, the way
+            // the app's other rows already do (`pane_palette`,
+            // `surface_picker`). Set here and not on `sidebar_row_shell`:
+            // `.cursor()` asks GPUI for the view being rendered, and the layout
+            // tests measure a bare shell outside one.
+            .cursor(CursorStyle::PointingHand)
             .id(SharedString::from(format!("ws-{ws_id}")))
             .group(group_name.clone())
             .on_drag(
@@ -984,7 +977,11 @@ impl PaneFlowApp {
                 // back, and committing a rename ends an edit - folding the row
                 // under the cursor would read as a side effect of typing.
                 let is_double = matches!(e, ClickEvent::Mouse(m) if m.down.click_count >= 2);
-                if !was_renaming && !is_double {
+                let has_children = this
+                    .workspaces
+                    .get(idx)
+                    .is_some_and(|ws| !ws.hides_its_tabs());
+                if !was_renaming && !is_double && has_children {
                     this.toggle_workspace_expanded(idx, cx);
                 }
                 cx.notify();
@@ -1007,15 +1004,18 @@ impl PaneFlowApp {
         // collapsed, it speaks for everything again. The tooltip reads the very
         // same set, or an expanded folder would enumerate tools its badge is no
         // longer counting.
-        let folder_sessions = || folder_row_sessions(ws.agent_sessions.values(), is_expanded);
+        // The row answers for everything its workspace holds whenever no tab
+        // row of its own is on screen - folded shut, or folded *into* it
+        // because the workspace has a single unnamed tab.
+        let solo_tab = ws.solo_tab();
+        let speaks_for_all = !is_expanded || ws.hides_its_tabs();
+        let folder_sessions = || folder_row_sessions(ws.agent_sessions.values(), speaks_for_all);
         let agent_status = ai_types::workspace_agent_status(folder_sessions(), &ws.detected_agents);
-        // Same partition as `folder_sessions`: expanded, the folder only keeps
-        // the completions no tab row can claim; collapsed, its tab rows are off
-        // screen so it speaks for all of them again.
-        let completion_unread = if is_expanded {
-            ws.agent_completion_notification.has_unattributed_unread()
-        } else {
+        // Same partition as `folder_sessions`, for the same reason.
+        let completion_unread = if speaks_for_all {
             ws.agent_completion_notification.is_unread()
+        } else {
+            ws.agent_completion_notification.has_unattributed_unread()
         };
         let row_agent_status = sidebar_agent_summary(folder_sessions(), completion_unread);
         // A folder row carries the directory's own name and never an edit box:
@@ -1038,10 +1038,21 @@ impl PaneFlowApp {
         // icon is a pure indicator; giving it a private handler would have made
         // its 14px square the one spot on the row that toggles without also
         // selecting the workspace.
-        let folder_path = if is_expanded {
-            "icons/folder-open.svg"
-        } else {
-            "icons/folder.svg"
+        // A solo workspace row is not a container: it IS the tab, so an
+        // open/closed folder glyph there would report a disclosure state for
+        // children that do not exist. It leads with what the tab is running
+        // instead - the very glyph `tab_pane_icon` picks for a pane, the
+        // detected agent's or the surface kind's - so the row says something
+        // about the work rather than restating that a project is a directory.
+        let folder_path = match solo_tab {
+            Some(tab) => tab
+                .collect_panes()
+                .first()
+                .map_or("icons/terminal.svg", |pane| {
+                    tab_pane_icon(pane.read(cx), cx).path
+                }),
+            None if is_expanded => "icons/folder-open.svg",
+            None => "icons/folder.svg",
         };
         let disclosure = div()
             .flex_none()
@@ -1066,20 +1077,30 @@ impl PaneFlowApp {
             .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
             .min_w_0()
             .overflow_x_hidden()
-            // The lane is reserved at all times, not opened on hover: a hover
-            // padding only shifts what can still shrink, so a long name ended
-            // up under the `+` anyway.
-            .pr(px(SIDEBAR_ACTION_LANE_WIDTH))
             .child(disclosure)
             .child(title_el);
-        if let Some(row_agent_status) = row_agent_status {
-            let status_tooltip = sidebar_agent_status_tooltip(row_agent_status, &agent_status);
-            title_row = title_row.child(render_workspace_agent_summary(
-                row_agent_status,
-                &format!("ws-{ws_id}"),
-                status_tooltip,
-                ui,
-            ));
+        // Folded with tab rows of its own to answer for, the row says what is in
+        // each of them instead of aggregating them into one word. A folded solo
+        // workspace is excluded: its row already IS the tab, so a single mark
+        // would only repeat the badge beside it.
+        let folded_marks = (!is_expanded && !ws.hides_its_tabs())
+            .then(|| render_folded_tab_marks(ws, ws_id, ui, group_name.clone(), cx))
+            .flatten();
+        match folded_marks {
+            Some(marks) => title_row = title_row.child(marks),
+            None => {
+                if let Some(row_agent_status) = row_agent_status {
+                    let status_tooltip =
+                        sidebar_agent_status_tooltip(row_agent_status, &agent_status);
+                    title_row = title_row.child(render_agent_badge(
+                        row_agent_status,
+                        &format!("ws-{ws_id}"),
+                        status_tooltip,
+                        ui,
+                        group_name.clone(),
+                    ));
+                }
+            }
         }
 
         let mut body = div()
@@ -1135,13 +1156,33 @@ impl PaneFlowApp {
         // above it read as two selections at once.
         let row = squircle_row(row_shell, group_name.clone(), None, Some(hover_bg), body);
 
+        // Two workspaces used to be told apart by nothing but their glyph,
+        // because every row in the rail was flush and identically sized. The
+        // tabs are indented now, so the group needs a top edge of its own: a
+        // wider gap above a workspace that follows another, with a hairline in
+        // the middle of it. The line is absolutely positioned inside that
+        // margin, so it costs no layout and the drop dividers still tile the
+        // rail unchanged.
         div()
             .id(SharedString::from(format!("ws-drop-{ws_id}")))
+            .relative()
             .mx(px(SIDEBAR_ROW_MARGIN_X))
+            .when(follows_workspace, |d| d.mt(px(SIDEBAR_GROUP_GAP)))
             .flex_none()
             .flex()
             .flex_col()
             .rounded(ROW_RADIUS)
+            .when(follows_workspace, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(SIDEBAR_ROW_PADDING_X))
+                        .right(px(SIDEBAR_ROW_PADDING_X))
+                        .top(px(-SIDEBAR_GROUP_GAP / 2.0))
+                        .h(px(1.))
+                        .bg(ui.text.opacity(SIDEBAR_GROUP_SEPARATOR_ALPHA)),
+                )
+            })
             .child(row)
     }
 
@@ -1192,18 +1233,6 @@ impl PaneFlowApp {
             }
             pane_icons.push(tab_pane_icon(pane, cx));
         }
-        // The split picker holds a slot this tab is about to fill, but nothing
-        // is split until a preset is picked - so the tab still counts one pane
-        // and its icon would render bare. Card it early: the row then already
-        // reads as the stack the choice is about to produce, and the pane the
-        // new one lands next to is named rather than left ambiguous.
-        let pending_split_pane = match self.pane_palette.as_ref().map(|p| &p.placement) {
-            Some(PalettePlacement::Split { target, .. }) => {
-                let target = target.entity_id();
-                panes.iter().any(|pane| pane.entity_id() == target)
-            }
-            _ => false,
-        };
         let tab_sessions = || tab_row_sessions(ws.agent_sessions.values(), &surfaces);
         // A finished turn belongs to the pane that ran it, so the completion
         // dot rests on this row and not on the folder above it. The session
@@ -1214,22 +1243,32 @@ impl PaneFlowApp {
             ws.agent_completion_notification.is_unread_for(&surfaces),
         );
         let agent_status = ai_types::workspace_agent_status(tab_sessions(), &tab_agents);
-        // One tint for both states, deliberately: the selected row rests at the
-        // very fill a hovered row lifts to, so moving the pointer across the
-        // rail never produces a block heavier than the selection it is passing
-        // over. `sidebar_tab_active_background` is the stronger step, and it
-        // stays reserved for what sits *on* a filled row - the hover action
-        // buttons - which needs one step further to read at all.
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+        // The row's own colour, when it has one: the status wash, in the hue of
+        // the badge it carries. It is what lets the eye sort a rail of rows
+        // before reading a single word.
+        let wash = row_agent_status.and_then(|status| agent_summary_wash(status, ui));
         // Leaf-only selection, on the Agents `thread_row` grammar: exactly one
         // row in the whole rail rests filled - the visible tab of the visible
         // workspace. The visible tab of another workspace stays flat and is
         // marked by its title color alone (US-009 AC3), so an expanded rail
         // reads as a tree instead of a stack of gray blocks.
-        let (resting_bg, hovered_bg) = if is_active_tab && is_active_workspace {
-            (Some(hover_bg), None)
+        //
+        // The selected row used to rest at the very fill a hover produced, so
+        // hovering it changed nothing at all - the one row the pointer is most
+        // often on was the only one in the rail with no feedback. It gets a
+        // step of its own now: `sidebar_tab_active_background`, the tint the
+        // app already reserves for what sits ON a filled row. The resting
+        // selection stays at the lighter value, so crossing the rail still
+        // never produces a block heavier than the selection it passes over.
+        let is_selected = is_active_tab && is_active_workspace;
+        let (resting_bg, hovered_bg) = if is_selected {
+            (
+                Some(over(hover_bg, wash)),
+                Some(crate::app::constants::sidebar_tab_selected_hover_increment()),
+            )
         } else {
-            (None, Some(hover_bg))
+            (wash, Some(hover_bg))
         };
         // Every title in the rail carries the same weight, selected or not: the
         // resting fill is what marks the visible tab now (US-009 AC3's dimmed
@@ -1252,24 +1291,6 @@ impl PaneFlowApp {
                 .child(title.clone())
         };
 
-        // US-012: the activity badge leads the title, in the folder-icon slot.
-        // Without a running agent the same slot stays empty, so the flex gap
-        // lands the tab title on the same X as the workspace title above it -
-        // no extra indent, no per-tab icon, the folder glyph alone marks the
-        // level.
-        let leading_slot = match row_agent_status {
-            Some(status) => render_tab_agent_summary(
-                status,
-                &format!("tab-{tab_id}"),
-                sidebar_agent_status_tooltip(status, &agent_status),
-                ui,
-            ),
-            None => div()
-                .flex_none()
-                .w(px(SIDEBAR_FOLDER_ICON_WIDTH))
-                .into_any_element(),
-        };
-
         // No `overflow_x_hidden()` here, deliberately. GPUI's `overflow_mask`
         // builds a mask as soon as *either* axis is hidden, and on the
         // x-hidden/y-visible arm that mask still clamps Y to the element's own
@@ -1279,50 +1300,31 @@ impl PaneFlowApp {
         // they painted squashed. The row cannot overflow horizontally anyway:
         // its width is pinned, every child but the title is `flex_none`, and
         // the title carries its own `overflow_x_hidden` + `text_ellipsis`.
+        let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
         let mut title_row = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(SIDEBAR_TITLE_ROW_GAP))
-            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .w(px(SIDEBAR_TAB_ROW_CONTENT_WIDTH))
+            .max_w(px(SIDEBAR_TAB_ROW_CONTENT_WIDTH))
             .min_w_0()
-            .child(leading_slot)
             .child(title_el);
-        let tab_group = SharedString::from(format!("tab-row-group-{tab_id}"));
-        // US-013: the cluster owns the trailing lane - the title is the only
-        // thing that shrinks, so the icons are never pushed out of the row.
-        //
-        // The lane is shared with the row's close action, by swap rather than
-        // by reservation: the pane cards state what the tab holds at rest, the
-        // `x` takes their place under the pointer. A folder row can afford to
-        // hold its lane open at all times (its trailing badge is narrow), but a
-        // tab row's cluster is up to four cards wide - reserving room next to
-        // it would eat the title on every row to serve a hover-only control.
-        // An empty tab has no cards, so it reserves the button's own width
-        // instead, or the `x` would land on the title's tail.
-        match render_tab_pane_icons(
-            &pane_icons,
-            &format!("tab-{tab_id}"),
-            pending_split_pane,
-            ui,
-        ) {
-            Some(cluster) => {
-                title_row = title_row.child(
-                    div()
-                        .flex_none()
-                        // Hiding by `visibility`, not by `display`, for the
-                        // reason `sidebar_hover_actions` documents: the two
-                        // element phases must agree within the frame the hover
-                        // flips. It also stops the hidden lane from holding its
-                        // tooltip open under the close button.
-                        .group_hover(tab_group.clone(), |style| style.invisible())
-                        .child(cluster),
-                );
-            }
-            None => {
-                title_row = title_row.child(div().flex_none().w(px(SIDEBAR_ACTION_BUTTON_SIZE)));
-            }
+        // The status trails now, on the workspace row's own X, and the
+        // per-pane icon cluster is gone. It had taken the trailing lane, which
+        // is what pushed the badge into the folder-glyph column on the left -
+        // a coloured mark aligned with the glyphs that mark the level above it,
+        // which is precisely what made a tab hard to tell from a workspace. The
+        // cluster restated what the tab holds; the row now states what it is
+        // doing, which is the thing a rail is scanned for.
+        if let Some(status) = row_agent_status {
+            title_row = title_row.child(render_agent_badge(
+                status,
+                &format!("tab-{tab_id}"),
+                sidebar_agent_status_tooltip(status, &agent_status),
+                ui,
+                tab_group.clone(),
+            ));
         }
 
         // US-010 patron, applied to a tab: closing drops the `Tab`, and with it
@@ -1370,6 +1372,13 @@ impl PaneFlowApp {
         );
 
         let row_shell = sidebar_row_shell()
+            // Every row in the rail is a click target - selecting a tab,
+            // opening or folding a workspace - so the pointer says so, the way
+            // the app's other rows already do (`pane_palette`,
+            // `surface_picker`). Set here and not on `sidebar_row_shell`:
+            // `.cursor()` asks GPUI for the view being rendered, and the layout
+            // tests measure a bare shell outside one.
+            .cursor(CursorStyle::PointingHand)
             .id(SharedString::from(format!("tab-row-{tab_id}")))
             .group(tab_group.clone())
             .on_drag(
@@ -1429,15 +1438,75 @@ impl PaneFlowApp {
                 }
             }));
 
-        let row = squircle_row(row_shell, tab_group, resting_bg, hovered_bg, title_row);
+        // The detailed density's second line, on the row that stands for the
+        // work. Until #41 binds a tab to a worktree of its own, the only branch
+        // a tab can report is the one its workspace is checked out on, so every
+        // tab of a workspace shows the same pair. That is the honest state of
+        // the feature, and the shape does not change when #41 lands - only
+        // where the values come from.
+        let body: AnyElement = match self
+            .sidebar_is_detailed()
+            .then(|| self.render_git_meta(&ws.git_branch, &ws.git_stats, ws.is_git_repo, ui))
+            .flatten()
+        {
+            Some(meta) => div()
+                .flex()
+                .flex_col()
+                .gap(px(SIDEBAR_ROW_GAP))
+                .child(title_row)
+                .child(
+                    div()
+                        .w(px(SIDEBAR_TAB_ROW_CONTENT_WIDTH))
+                        .max_w(px(SIDEBAR_TAB_ROW_CONTENT_WIDTH))
+                        .h(px(14.))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .child(meta),
+                )
+                .into_any_element(),
+            None => title_row.into_any_element(),
+        };
 
+        let row = squircle_row(row_shell, tab_group, resting_bg, hovered_bg, body);
+
+        // The indent, and the guide that makes it read as a level rather than
+        // as a misalignment. The rail is a flat list of sibling rows - the tabs
+        // of a workspace are not nested inside its row - so the guide cannot be
+        // one element spanning the group: each tab row paints its own segment
+        // at `SIDEBAR_GUIDE_X`, reaching `SIDEBAR_ROW_SPACING` above itself to
+        // bridge the divider element that separates it from the row above. The
+        // segments therefore join into one continuous line running from the
+        // bottom of the workspace row down to the last tab, and a tab that
+        // moves or is dropped carries its own piece of it.
+        //
+        // Absolutely positioned, so it costs no layout and nothing shifts when
+        // a group gains or loses a tab.
         div()
             .id(SharedString::from(format!("tab-drop-{tab_id}")))
-            .mx(px(SIDEBAR_ROW_MARGIN_X))
+            .relative()
+            .ml(px(SIDEBAR_ROW_MARGIN_X + SIDEBAR_TAB_INDENT))
+            .mr(px(SIDEBAR_ROW_MARGIN_X))
             .flex_none()
             .flex()
             .flex_col()
             .rounded(ROW_RADIUS)
+            .child(
+                div()
+                    .absolute()
+                    // Both insets are measured from this wrapper, which starts
+                    // at the indent - hence the subtraction back to the rail's
+                    // own left edge.
+                    .left(px(SIDEBAR_GUIDE_X
+                        - SIDEBAR_ROW_MARGIN_X
+                        - SIDEBAR_TAB_INDENT))
+                    .top(px(-SIDEBAR_ROW_SPACING))
+                    .bottom(px(0.))
+                    .w(px(1.))
+                    .bg(ui.text.opacity(SIDEBAR_GUIDE_ALPHA)),
+            )
             .child(row)
     }
 
@@ -1447,23 +1516,50 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        // Detected services only. Neither the git branch nor a diffstat is
-        // rendered in the rail: both crowded the row for little signal, and the
-        // Diff view is where change counts belong.
-        let service = sidebar_service_summary(&ws.active_ports, &ws.service_labels)?;
+        // `4f8c982` took the branch and the diffstat out of the rail: "both
+        // crowded the row for little signal, and the Diff view is where change
+        // counts belong". That holds for a rail of projects nobody is comparing
+        // and stops holding the moment several checkouts are being read at once,
+        // so the two come back only under `SidebarDensity::Detailed`, and only
+        // on a workspace row - the row that actually has a branch. A tab has
+        // none of its own until #41 binds one to a worktree, and printing the
+        // workspace's branch on every tab it holds would be exactly the
+        // near-constant line the original note called noise.
+        // ... and only on a row that stands for WORK, never on a group head.
+        // A workspace with tabs has its checkout described by each of them; the
+        // head would repeat underneath itself. That leaves the solo row, which
+        // is a tab, and the tab rows themselves.
+        let git = (self.sidebar_is_detailed() && ws.solo_tab().is_some())
+            .then(|| self.render_git_meta(&ws.git_branch, &ws.git_stats, ws.is_git_repo, ui))
+            .flatten();
+        let service = sidebar_service_summary(&ws.active_ports, &ws.service_labels);
+        if git.is_none() && service.is_none() {
+            return None;
+        }
+        // The second line starts where the TITLE starts (`SIDEBAR_META_INDENT`),
+        // and the width gives that lane back so the line still ends flush with
+        // the title's own right edge.
+        let meta_indent = SIDEBAR_META_INDENT;
         let mut meta_row = div()
             .flex()
             .flex_row()
             .items_center()
             .gap(px(4.))
-            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+            .ml(px(meta_indent))
+            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - meta_indent))
+            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH - meta_indent))
             .h(px(14.))
             .overflow_x_hidden()
             .whitespace_nowrap()
             .text_xs()
             .text_color(ui.muted);
 
+        if let Some(git) = git {
+            meta_row = meta_row.child(git);
+        }
+        let Some(service) = service else {
+            return Some(meta_row.into_any_element());
+        };
         let port = service.primary;
         let workspace_id = ws.id;
         let info = ws.service_labels.get(&port);
@@ -1554,6 +1650,83 @@ impl PaneFlowApp {
         }
 
         Some(meta_row.into_any_element())
+    }
+
+    /// The detailed line's git half: the branch on the left, the diffstat on
+    /// the right, both from what the workspace already polls (`git_branch`,
+    /// `git_stats`) - this starts no subprocess of its own.
+    ///
+    /// `None` for a workspace that is not in a repository, which is the whole
+    /// reason the row can afford the line at all: it appears only where it says
+    /// something.
+    pub(crate) fn sidebar_is_detailed(&self) -> bool {
+        self.cached_config.resolved_sidebar_density()
+            == paneflow_config::schema::SidebarDensity::Detailed
+    }
+
+    fn render_git_meta(
+        &self,
+        branch: &str,
+        stats: &crate::workspace::GitDiffStats,
+        is_git_repo: bool,
+        ui: crate::theme::UiColors,
+    ) -> Option<AnyElement> {
+        if !is_git_repo || branch.is_empty() {
+            return None;
+        }
+        // A clean checkout prints nothing at all. The counts answer "how much
+        // has changed here"; when the answer is nothing, the question was never
+        // asked, and a "clean" chip would spend a permanent slot on the rows
+        // that have the least to say. The branch alone is the whole line.
+        let counts = (stats.insertions > 0 || stats.deletions > 0).then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(5.))
+                .text_size(px(10.))
+                .child(
+                    div()
+                        .text_color(ui.vc_added)
+                        .child(format!("+{}", stats.insertions)),
+                )
+                .child(
+                    div()
+                        .text_color(ui.vc_deleted)
+                        .child(format!("\u{2212}{}", stats.deletions)),
+                )
+        });
+
+        Some(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.))
+                .child(
+                    svg()
+                        .size(px(10.))
+                        .flex_none()
+                        .path("icons/git-branch-sidebar.svg")
+                        .text_color(ui.muted),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.))
+                        .text_color(ui.muted)
+                        .child(branch.to_string()),
+                )
+                .when_some(counts, |d, counts| d.child(counts))
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn sidebar_list_wrapper(
@@ -1663,162 +1836,131 @@ fn sidebar_agent_status_tooltip(
     }
 }
 
-/// US-013: one icon per pane of a tab, in the leaf order of its tree, so a
-/// work thread is recognizable without opening it. `None` for an empty tab -
-/// nothing is painted and the row keeps the height of every other row.
-fn render_tab_pane_icons(
-    icons: &[TabPaneIcon],
-    row_key: &str,
-    pending_pane: bool,
+/// What a FOLDED workspace row says about what is inside it: one mark per tab,
+/// in tab order.
+///
+/// Folded, its tab rows are off screen and the row falls back to a single
+/// aggregate badge - one word for the whole workspace, which answers "something
+/// needs input" without saying how much of the workspace is fine. The marks
+/// answer the question the fold actually raises: four tabs, one waiting, one
+/// working, one errored, one idle.
+///
+/// Only when folded. Expanded, every tab already speaks for itself and the
+/// marks would be the same information twice.
+///
+/// The idle mark is a SQUARE, not a dot: a grey dot reads as a dimmed version
+/// of the blue `Finished` dot rather than as a state of its own.
+fn render_folded_tab_marks(
+    ws: &Workspace,
+    ws_id: u64,
     ui: crate::theme::UiColors,
+    group: SharedString,
+    cx: &gpui::App,
 ) -> Option<AnyElement> {
-    if icons.is_empty() {
+    let tabs = ws.tabs();
+    if tabs.is_empty() {
         return None;
     }
-    let (shown, overflow) = tab_icon_cluster_split(icons.len());
-    let tooltip: SharedString = icons
-        .iter()
-        .map(|icon| icon.label)
-        .collect::<Vec<_>>()
-        .join(", ")
-        .into();
-
-    // Every glyph is monochrome - one tint for the whole rail, no brand color.
-    // That means `svg()` for all of them, and `svg()` is a mask: without its
-    // own `text_color` it paints nothing, and the parent's does not cascade.
-    let glyph = ui.text.opacity(0.75);
-    // A lone pane is drawn bare: a card around a single icon is a box, not a
-    // stack. From two panes up each one gets its own card and the cards slide
-    // over each other, which is what reads as a stack. `pending_pane` is the
-    // one exception - a split picker already stands in the second slot, so the
-    // lone pane cards up now instead of popping into a card the moment the
-    // preset is picked.
-    if shown == 1 && !pending_pane {
-        return Some(tab_pane_icon_lane(
-            row_key,
-            tooltip,
-            overflow,
-            ui,
-            svg()
-                .size(px(SIDEBAR_TAB_ICON_SIZE))
-                .min_w(px(SIDEBAR_TAB_ICON_SIZE))
-                .flex_none()
-                .path(icons[0].path)
-                .text_color(glyph),
-        ));
-    }
-
-    let card_fill = crate::app::constants::sidebar_tab_icon_card_background();
-    let card_border = ui.text.opacity(0.14);
-    // Brighter than the bare glyph above: the card fill is a step darker than
-    // the row, so the mark needs the contrast back to read as the same weight.
-    let card_glyph = ui.text.opacity(0.92);
-
-    // The stack is laid out absolutely, not by flex with negative margins.
-    // The cluster sits at the end of a fixed-width title row, and a flex row
-    // is free to shrink or clip a child whose size is derived from its
-    // content: derived, the cards measured about half their width, then
-    // vanished entirely once there were two of them. Stating the cluster's
-    // exact box and placing each card at its own offset inside it takes the
-    // row's remaining space out of the equation.
-    let step = SIDEBAR_TAB_CARD_WIDTH - SIDEBAR_TAB_ICON_OVERLAP;
-    let cluster_width = SIDEBAR_TAB_CARD_WIDTH + (shown.saturating_sub(1) as f32) * step;
-    // The cluster reserves the row's line height, not the card's: the cards
-    // are absolute, so their extra two pixels overhang into the row's vertical
-    // padding instead of making a tab row taller than every other row.
-    let card_overhang = (SIDEBAR_ROW_LINE_HEIGHT - SIDEBAR_TAB_CARD_HEIGHT) / 2.0;
-    let mut cluster = div()
-        .flex_none()
-        .relative()
-        .w(px(cluster_width))
-        .min_w(px(cluster_width))
-        .h(px(SIDEBAR_ROW_LINE_HEIGHT));
-    for (slot, icon) in icons[..shown].iter().enumerate() {
-        // Cards paint in declaration order, so the later pane sits on top -
-        // the same direction as the visual reference.
-        cluster = cluster.child(
-            div()
-                .absolute()
-                .top(px(card_overhang))
-                .left(px(slot as f32 * step))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .w(px(SIDEBAR_TAB_CARD_WIDTH))
-                .h(px(SIDEBAR_TAB_CARD_HEIGHT))
-                // Fill and hairline are painted paths, not `bg()` + `border_1()`:
-                // GPUI's box border is a circular arc and would betray the
-                // squircle underneath it at the corners, where the two curves
-                // diverge most. Both children are absolute, so the flex box
-                // still centers the glyph alone.
-                .child(squircle::squircle_fill(ROW_RADIUS, card_fill))
-                .child(squircle::squircle_border(ROW_RADIUS, px(1.), card_border))
-                .child(
-                    svg()
-                        .size(px(SIDEBAR_TAB_CARD_ICON_SIZE))
-                        .flex_none()
-                        .path(icon.path)
-                        .text_color(card_glyph),
-                ),
-        );
-    }
-    Some(tab_pane_icon_lane(row_key, tooltip, overflow, ui, cluster))
-}
-
-/// US-013: the trailing lane of a tab row - the pane cluster, and past the cap
-/// the `+N`. The counter is text, not a glyph: it labels the stack from
-/// outside it, so it neither joins the overlap nor makes a card's width depend
-/// on how a digit measures. The lane carries the row's pane tooltip.
-fn tab_pane_icon_lane(
-    row_key: &str,
-    tooltip: SharedString,
-    overflow: usize,
-    ui: crate::theme::UiColors,
-    cluster: impl IntoElement,
-) -> AnyElement {
-    div()
-        .id(SharedString::from(format!("tab-panes-{row_key}")))
+    let mut marks = div()
         .flex_none()
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(SIDEBAR_TAB_ICON_GAP))
-        .delayed_tooltip(move |_w, cx| {
-            cx.new(|_| SidebarTooltip {
-                label: tooltip.clone(),
-            })
-            .into()
-        })
-        .child(cluster)
-        .when(overflow > 0, |d| {
-            d.child(
-                div()
-                    .flex_none()
-                    .text_size(px(10.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ui.muted)
-                    .child(format!("+{overflow}")),
-            )
-        })
-        .into_any_element()
+        .h(px(20.))
+        .gap(px(SIDEBAR_FOLDED_MARK_GAP));
+
+    for (idx, tab) in tabs.iter().take(SIDEBAR_FOLDED_MARK_CAP).enumerate() {
+        let surfaces = tab.surface_ids(cx);
+        let summary = sidebar_agent_summary(
+            tab_row_sessions(ws.agent_sessions.values(), &surfaces),
+            ws.agent_completion_notification.is_unread_for(&surfaces),
+        );
+        let title = tab_display_title(tab, idx);
+        let tooltip: SharedString = match summary {
+            Some(summary) => format!("{title} \u{b7} {}", agent_summary_word(summary)).into(),
+            None => title.into(),
+        };
+        let glyph = match summary {
+            Some(summary) => {
+                agent_summary_visual(summary, &format!("ws-{ws_id}-mark-{}", tab.id), ui).1
+            }
+            None => div()
+                .size(px(SIDEBAR_IDLE_MARK_SIZE))
+                .flex_none()
+                .rounded(px(2.))
+                .bg(ui.muted.opacity(SIDEBAR_IDLE_MARK_ALPHA))
+                .into_any_element(),
+        };
+        marks = marks.child(
+            div()
+                .id(SharedString::from(format!("ws-{ws_id}-mark-{}", tab.id)))
+                .size(px(11.))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .delayed_tooltip(move |_w, cx| {
+                    cx.new(|_| SidebarTooltip {
+                        label: tooltip.clone(),
+                    })
+                    .into()
+                })
+                .child(glyph),
+        );
+    }
+
+    if let Some(overflow) = tabs.len().checked_sub(SIDEBAR_FOLDED_MARK_CAP)
+        && overflow > 0
+    {
+        marks = marks.child(
+            div()
+                .flex_none()
+                .text_size(px(10.))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(ui.muted.opacity(0.7))
+                .child(format!("+{overflow}")),
+        );
+    }
+
+    Some(
+        div()
+            .flex_none()
+            // Same swap the badge's word makes: the action button takes this
+            // space under the pointer.
+            .group_hover(group, |style| style.invisible())
+            .child(marks)
+            .into_any_element(),
+    )
 }
 
+/// The activity badge, trailing, on a workspace row and on a tab row alike -
+/// which is the point: they line up on one X, and a coloured mark on a tab no
+/// longer sits in the folder-glyph column pretending to be a level.
+///
 /// `row_key` scopes the element and animation ids to one sidebar row. It is a
 /// string, not an id: workspace ids and tab ids come from independent counters,
 /// so a folder row and a tab row could otherwise collide on the same numeric
 /// key inside the same list.
-fn render_workspace_agent_summary(
+///
+/// The badge takes its natural width instead of a fixed slot, and the row's
+/// hover action is NOT given a reserved lane beside it. The lane is shared by
+/// swap, the grammar `render_tab_row`'s pane cards already used: under the
+/// pointer the word goes `invisible` - keeping its width, so nothing reflows -
+/// and the absolutely positioned action cluster paints over exactly that space.
+/// The glyph survives the swap on purpose: losing the state at the moment the
+/// user reaches for the row is the regression this whole arrangement exists to
+/// avoid.
+fn render_agent_badge(
     summary: SidebarAgentSummary,
     row_key: &str,
     tooltip: SharedString,
     ui: crate::theme::UiColors,
+    group: SharedString,
 ) -> AnyElement {
     let (color, glyph, label) = agent_summary_visual(summary, row_key, ui);
 
     div()
         .id(SharedString::from(format!("agent-status-{row_key}")))
-        .w(px(summary.slot_width()))
         .h(px(20.))
         .flex_none()
         .flex()
@@ -1836,40 +1978,84 @@ fn render_workspace_agent_summary(
             .into()
         })
         .child(glyph)
-        .when_some(label, |d, label| d.child(label))
+        .when_some(label, |d, label| {
+            d.child(
+                div()
+                    .flex_none()
+                    .group_hover(group.clone(), |style| style.invisible())
+                    .child(label),
+            )
+        })
         .into_any_element()
 }
 
-/// US-012: on a tab row the activity badge leads the title instead of trailing
-/// it - the trailing lane belongs to the pane-icon cluster. It occupies exactly
-/// the folder-icon slot the invisible placeholder would have taken, so the tab
-/// title keeps the same X whether or not an agent is running, and the count
-/// stays in the tooltip rather than widening the slot and shifting the title.
-fn render_tab_agent_summary(
-    summary: SidebarAgentSummary,
-    row_key: &str,
-    tooltip: SharedString,
-    ui: crate::theme::UiColors,
-) -> AnyElement {
-    let (_, glyph, _) = agent_summary_visual(summary, row_key, ui);
+/// Alpha-composite `top` over `bottom`, source-over, in straight RGB.
+///
+/// The rail now stacks two independent things in one fill: a status wash that
+/// belongs to the row's state, and a selection tint that belongs to where the
+/// user is. `squircle_skin` takes one resting colour, so the two have to be
+/// resolved into it rather than layered as two elements - and a translucent
+/// tint over a translucent wash is not either of them.
+///
+/// `top` at full alpha short-circuits, which is what keeps the Linux arm of
+/// `sidebar_tab_background` (an opaque blend onto the title bar) behaving
+/// exactly as it did.
+fn over(top: Hsla, bottom: Option<Hsla>) -> Hsla {
+    let Some(bottom) = bottom else { return top };
+    if top.a >= 1.0 {
+        return top;
+    }
+    let (t, b) = (gpui::Rgba::from(top), gpui::Rgba::from(bottom));
+    let a = t.a + b.a * (1.0 - t.a);
+    if a <= f32::EPSILON {
+        return top;
+    }
+    let mix = |ct: f32, cb: f32| (ct * t.a + cb * b.a * (1.0 - t.a)) / a;
+    Hsla::from(gpui::Rgba {
+        r: mix(t.r, b.r),
+        g: mix(t.g, b.g),
+        b: mix(t.b, b.b),
+        a,
+    })
+}
 
-    div()
-        .id(SharedString::from(format!("agent-status-{row_key}")))
-        .w(px(SIDEBAR_FOLDER_ICON_WIDTH))
-        .h(px(20.))
-        .flex_none()
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .delayed_tooltip(move |_w, cx| {
-            cx.new(|_| SidebarTooltip {
-                label: tooltip.clone(),
-            })
-            .into()
-        })
-        .child(glyph)
-        .into_any_element()
+/// The word a state answers to. A coloured mark alone never says what it
+/// means: the bell already carried "Input" and nothing else carried anything,
+/// so a blue dot, a red octagon and a grey triangle were three glyphs the user
+/// had to have been taught. The count rides the same label rather than a
+/// second slot, which is what keeps every badge in the rail one X wide.
+fn agent_summary_word(summary: SidebarAgentSummary) -> String {
+    let word = match summary.state {
+        SidebarAgentState::NeedsInput => "Input",
+        SidebarAgentState::Errored => "Error",
+        SidebarAgentState::Stalled => "Stalled",
+        SidebarAgentState::Thinking => "Working",
+        SidebarAgentState::Finished => "Done",
+    };
+    if summary.count > 1 {
+        format!("{word} {}", summary.count)
+    } else {
+        word.to_string()
+    }
+}
+
+/// The wash a row in this state carries, or `None` for the states that must
+/// not tint one.
+///
+/// A wash is not a glyph. `Finished`'s pale blue is the right foreground and
+/// the wrong background: laid over the rail at any readable alpha it mostly
+/// adds white and lands on the very grey the selection fill produces, so the
+/// wash uses a deeper blue of the same hue while the dot keeps the pale one.
+/// `Stalled` and `Thinking` are grey by definition and get no wash at all - a
+/// grey film on a grey rail reads as a hover, which is exactly the signal it
+/// would be stealing.
+fn agent_summary_wash(summary: SidebarAgentSummary, ui: crate::theme::UiColors) -> Option<Hsla> {
+    match summary.state {
+        SidebarAgentState::NeedsInput => Some(Hsla::from(rgb(0xFBBF24)).opacity(0.10)),
+        SidebarAgentState::Errored => Some(ui.agent_error.opacity(0.10)),
+        SidebarAgentState::Finished => Some(Hsla::from(rgb(0x2E8FFF)).opacity(0.16)),
+        SidebarAgentState::Stalled | SidebarAgentState::Thinking => None,
+    }
 }
 
 fn agent_summary_visual(
@@ -1877,6 +2063,7 @@ fn agent_summary_visual(
     row_key: &str,
     ui: crate::theme::UiColors,
 ) -> (gpui::Hsla, AnyElement, Option<String>) {
+    let label = Some(agent_summary_word(summary));
     match summary.state {
         SidebarAgentState::NeedsInput => (
             rgb(0xFBBF24).into(),
@@ -1886,11 +2073,7 @@ fn agent_summary_visual(
                 .path("icons/bell.svg")
                 .text_color(rgb(0xFBBF24))
                 .into_any_element(),
-            Some(if summary.count > 1 {
-                format!("Input {}", summary.count)
-            } else {
-                "Input".to_string()
-            }),
+            label,
         ),
         SidebarAgentState::Errored => (
             ui.agent_error,
@@ -1900,7 +2083,7 @@ fn agent_summary_visual(
                 .path("icons/x_circle.svg")
                 .text_color(ui.agent_error)
                 .into_any_element(),
-            (summary.count > 1).then(|| summary.count.to_string()),
+            label,
         ),
         SidebarAgentState::Stalled => (
             ui.agent_stalled,
@@ -1910,15 +2093,11 @@ fn agent_summary_visual(
                 .path("icons/triangle-alert.svg")
                 .text_color(ui.agent_stalled)
                 .into_any_element(),
-            (summary.count > 1).then(|| summary.count.to_string()),
+            label,
         ),
         SidebarAgentState::Thinking => {
             let color = ui.muted;
-            (
-                color,
-                render_comet_trail_loader(row_key, color),
-                (summary.count > 1).then(|| summary.count.to_string()),
-            )
+            (color, render_comet_trail_loader(row_key, color), label)
         }
         SidebarAgentState::Finished => {
             let color: gpui::Hsla = rgb(0x83C3FF).into();
@@ -1932,7 +2111,7 @@ fn agent_summary_visual(
                     .justify_center()
                     .child(div().size(px(7.)).rounded_full().bg(color))
                     .into_any_element(),
-                None,
+                label,
             )
         }
     }
@@ -2027,23 +2206,24 @@ impl Render for SidebarTooltip {
 #[cfg(test)]
 mod tests {
     use super::{
-        ROW_RADIUS, SIDEBAR_ACTION_BUTTON_SIZE, SIDEBAR_ACTION_LANE_WIDTH, SIDEBAR_DROP_BAND_REACH,
-        SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDER_ICON_WIDTH, SIDEBAR_ROW_LINE_HEIGHT,
-        SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_TAB_CARD_HEIGHT,
-        SIDEBAR_TAB_CARD_ICON_SIZE, SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_ICON_CAP,
-        SIDEBAR_TAB_ICON_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WIDTH, SidebarAgentState,
-        SidebarAgentSummary, SidebarDropSlot, SidebarRow, SidebarServiceSummary,
-        folder_row_sessions, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
-        sidebar_row_shell, sidebar_service_summary, tab_display_title, tab_icon_cluster_split,
-        tab_row_sessions, visible_service_ports,
+        ROW_RADIUS, SIDEBAR_DROP_BAND_REACH, SIDEBAR_DROP_LINE_PX, SIDEBAR_FOLDED_MARK_CAP,
+        SIDEBAR_FOLDED_MARK_GAP, SIDEBAR_FOLDER_ICON_WIDTH, SIDEBAR_GUIDE_X, SIDEBAR_META_INDENT,
+        SIDEBAR_ROW_LINE_HEIGHT, SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_X,
+        SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_TAB_INDENT,
+        SIDEBAR_TAB_ROW_CONTENT_WIDTH, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WIDTH,
+        SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH, SidebarAgentState, SidebarAgentSummary,
+        SidebarDropSlot, SidebarRow, SidebarServiceSummary, agent_summary_wash, agent_summary_word,
+        folder_row_sessions, over, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
+        sidebar_row_shell, sidebar_service_summary, tab_display_title, tab_row_sessions,
+        visible_service_ports,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
     use crate::terminal::ServiceInfo;
     use crate::workspace::Tab;
     use gpui::{
-        AvailableSpace, InteractiveElement, ParentElement, Styled, TestAppContext, div, point, px,
-        size,
+        AvailableSpace, Hsla, InteractiveElement, ParentElement, Styled, TestAppContext, div,
+        point, px, size,
     };
     use std::collections::{HashMap, HashSet};
 
@@ -2494,33 +2674,39 @@ mod tests {
     }
 
     #[test]
-    fn expanded_folder_keeps_only_the_unattributed_sessions() {
+    fn a_folder_with_tab_rows_keeps_only_the_unattributed_sessions() {
         let sessions = attributed_sessions();
         // FR-04: the residue is the `surface_id: None` session, and nothing
         // else - the two resolved ones are spoken for by their tab rows.
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), false),
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), false),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::Thinking,
                 count: 1
             })
         );
 
-        // ... and an expanded folder with no residue paints nothing at all.
+        // ... and such a folder with no residue paints nothing at all.
         let resolved = [attributed_sessions()[0].clone()];
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(resolved.iter(), true), false),
+            sidebar_agent_summary(folder_row_sessions(resolved.iter(), false), false),
             None
         );
     }
 
     #[test]
-    fn collapsed_folder_re_aggregates_every_tab() {
+    fn a_folder_with_no_tab_rows_re_aggregates_every_tab() {
         let sessions = attributed_sessions();
-        // FR-05: folding hides no state, so the collapsed row falls back to the
+        // FR-05: hiding tab rows hides no state, so the row falls back to the
         // full precedence over every session, resolved or not.
+        //
+        // Two situations reach this, and the second is why the flag is not
+        // spelled `!expanded`: a folded workspace, and an expanded one whose
+        // single unnamed tab was folded INTO its row. Without it, an agent
+        // waiting for input in a solo workspace would have no row to report
+        // from - the tab row that used to carry it is not rendered any more.
         assert_eq!(
-            sidebar_agent_summary(folder_row_sessions(sessions.iter(), false), false),
+            sidebar_agent_summary(folder_row_sessions(sessions.iter(), true), false),
             Some(SidebarAgentSummary {
                 state: SidebarAgentState::NeedsInput,
                 count: 1
@@ -2534,81 +2720,185 @@ mod tests {
         // is counted by the folder or by its tab, never by both.
         let mut sessions = attributed_sessions().to_vec();
         let surfaces = HashSet::from([11u64, 33u64]);
-        let folder_before = folder_row_sessions(sessions.iter(), true).count();
+        let folder_before = folder_row_sessions(sessions.iter(), false).count();
         let tab_before = tab_row_sessions(sessions.iter(), &surfaces).count();
         assert_eq!((folder_before, tab_before), (1, 1));
 
         sessions[2].surface_id = Some(33);
-        let folder_after = folder_row_sessions(sessions.iter(), true).count();
+        let folder_after = folder_row_sessions(sessions.iter(), false).count();
         let tab_after = tab_row_sessions(sessions.iter(), &surfaces).count();
         assert_eq!((folder_after, tab_after), (0, 2));
         assert_eq!(folder_before + tab_before, folder_after + tab_after);
     }
 
     #[test]
-    fn the_folder_action_lane_holds_its_button() {
-        // The folder row reserves this lane as trailing padding at all times,
-        // so it is the one geometry that must track the cluster's real width:
-        // a lane narrower than the cluster leaves a button sitting on the agent
-        // badge, which is what the reservation exists to prevent.
-        let cluster = SIDEBAR_ACTION_BUTTON_SIZE + SIDEBAR_TITLE_ROW_GAP;
+    fn a_workspace_second_line_starts_under_its_title() {
+        // The lane the meta line steps over must be the one the title row
+        // actually spends before its text: the glyph and the gap after it.
+        // Anything else and the branch begins under the folder mark, reading as
+        // a third column rather than as a continuation of the name above it.
         assert_eq!(
-            SIDEBAR_ACTION_LANE_WIDTH, cluster,
-            "the reserved lane no longer matches the cluster it holds"
+            SIDEBAR_META_INDENT,
+            SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP,
+            "the second line no longer clears the row's leading glyph"
         );
-        // A tab row reserves nothing: it hides its pane cluster and drops the
-        // button in its place. That only holds while the narrowest cluster - a
-        // lone bare glyph - plus the row's gap still clears the button, or the
-        // `x` would overhang a title it is not covering for.
-        let narrowest_cluster = SIDEBAR_TAB_ICON_SIZE + SIDEBAR_TITLE_ROW_GAP;
-        assert!(
-            narrowest_cluster >= SIDEBAR_ACTION_BUTTON_SIZE,
-            "a tab row's close button now overhangs past its pane cluster onto the title"
+        // A tab row has no leading glyph, so its own second line steps over
+        // nothing - the two indents are deliberately equal but unrelated, and
+        // this pins that they stay computed apart.
+        assert_eq!(SIDEBAR_META_INDENT, SIDEBAR_TAB_INDENT);
+    }
+
+    #[test]
+    fn every_row_puts_its_badge_on_one_x() {
+        // The whole point of the trailing badge: a workspace row and a tab row
+        // must end their content on the same X, or the status marks zigzag down
+        // the rail. Neither reserves a lane for its hover button any more - the
+        // lane is shared by swap - so the only thing that could still separate
+        // them is a difference in trailing padding, and there is none.
+        let row_right = SIDEBAR_WIDTH - SIDEBAR_ROW_MARGIN_X - SIDEBAR_ROW_PADDING_X;
+        let tab_right = SIDEBAR_ROW_MARGIN_X
+            + SIDEBAR_TAB_INDENT
+            + SIDEBAR_ROW_PADDING_X
+            + SIDEBAR_TAB_ROW_CONTENT_WIDTH;
+        assert_eq!(
+            row_right, tab_right,
+            "a tab row's content no longer ends where a workspace row's does"
         );
     }
 
     #[test]
-    fn tab_card_fits_inside_a_row() {
-        // The pane cards are absolute and overhang the title's line height into
-        // the row's vertical padding. The row shell clips its own overflow, so
-        // a card taller than the whole row paints sliced - which is exactly how
-        // an oversized card failed once. This is the bound that keeps it whole.
-        let row_height = SIDEBAR_ROW_LINE_HEIGHT + 2. * SIDEBAR_ROW_PADDING_Y;
+    fn an_indented_tab_title_lands_under_its_workspace_title() {
+        // The indent is not a loose "looks nested" value: the tab title has to
+        // land on exactly the workspace title's X. A few pixels off and the two
+        // read as a misalignment rather than as a level, which is the whole
+        // failure this indent exists to fix.
+        let workspace_title_x = SIDEBAR_ROW_MARGIN_X
+            + SIDEBAR_ROW_PADDING_X
+            + SIDEBAR_FOLDER_ICON_WIDTH
+            + SIDEBAR_TITLE_ROW_GAP;
+        let tab_title_x = SIDEBAR_ROW_MARGIN_X + SIDEBAR_TAB_INDENT + SIDEBAR_ROW_PADDING_X;
+        assert_eq!(workspace_title_x, tab_title_x);
+    }
+
+    #[test]
+    fn the_guide_clears_the_rows_it_ties_together() {
+        // The guide rides the folder glyph's centre line and the tab rows start
+        // to its right. A filled row touching the line looks like a rendering
+        // fault, so the clearance is the property, not the coordinate.
+        let tab_left = SIDEBAR_ROW_MARGIN_X + SIDEBAR_TAB_INDENT;
         assert!(
-            SIDEBAR_TAB_CARD_HEIGHT <= row_height,
-            "a {SIDEBAR_TAB_CARD_HEIGHT}px card overflows a {row_height}px row and would be clipped"
+            SIDEBAR_GUIDE_X < tab_left,
+            "the guide now runs under the tab rows it is meant to sit beside"
         );
-        // The glyph must leave breathing room on every side, or the mark reads
-        // as a framed icon instead of a chip.
         assert!(
-            SIDEBAR_TAB_CARD_ICON_SIZE + 8. <= SIDEBAR_TAB_CARD_WIDTH.min(SIDEBAR_TAB_CARD_HEIGHT),
-            "a {SIDEBAR_TAB_CARD_ICON_SIZE}px glyph leaves under 4px of padding in the card"
+            tab_left - SIDEBAR_GUIDE_X >= 4.,
+            "the guide is close enough to the rows that a filled one touches it"
         );
-        // ... and the leftover must split into whole pixels on both axes, or
-        // rounding lands the glyph off center by half a pixel.
-        for side in [SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_CARD_HEIGHT] {
-            let gap = side - SIDEBAR_TAB_CARD_ICON_SIZE;
-            assert_eq!(
-                gap % 2.,
-                0.,
-                "a {gap}px gap around the glyph centers it on a half pixel"
+    }
+
+    #[test]
+    fn the_folded_cluster_caps_before_it_eats_the_title() {
+        // Five 11px marks plus their gaps is what a 300px rail can spare next
+        // to a name; past that the tail folds into a `+N`.
+        let marks = SIDEBAR_FOLDED_MARK_CAP as f32;
+        let cluster = marks * 11. + (marks - 1.) * SIDEBAR_FOLDED_MARK_GAP;
+        assert!(
+            cluster < SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH / 2.,
+            "the folded cluster now takes more than half the row from its title"
+        );
+    }
+
+    #[test]
+    fn every_state_says_what_it_is() {
+        // A coloured mark alone teaches nobody: the bell used to be the only
+        // state carrying a word, so a blue dot and a grey triangle were glyphs
+        // the user had to have been taught. Every state answers with one now,
+        // and the count rides that same label rather than a second slot.
+        for state in [
+            SidebarAgentState::NeedsInput,
+            SidebarAgentState::Errored,
+            SidebarAgentState::Stalled,
+            SidebarAgentState::Thinking,
+            SidebarAgentState::Finished,
+        ] {
+            let one = agent_summary_word(SidebarAgentSummary { state, count: 1 });
+            assert!(!one.is_empty(), "{state:?} has no word");
+            assert!(
+                !one.chars().next().is_some_and(|c| c.is_ascii_digit()),
+                "{state:?} answers with a bare count"
+            );
+            let many = agent_summary_word(SidebarAgentSummary { state, count: 3 });
+            assert_eq!(many, format!("{one} 3"), "{state:?} drops its count");
+        }
+    }
+
+    #[test]
+    fn only_a_coloured_state_washes_its_row() {
+        // A grey film on a grey rail reads as a hover, which is the one signal
+        // the wash must not steal. So the two grey states carry none.
+        let ui = crate::theme::ui_colors();
+        for state in [SidebarAgentState::Stalled, SidebarAgentState::Thinking] {
+            assert!(
+                agent_summary_wash(SidebarAgentSummary { state, count: 1 }, ui).is_none(),
+                "{state:?} washes its row in the colour of a hover"
+            );
+        }
+        for state in [
+            SidebarAgentState::NeedsInput,
+            SidebarAgentState::Errored,
+            SidebarAgentState::Finished,
+        ] {
+            let wash = agent_summary_wash(SidebarAgentSummary { state, count: 1 }, ui)
+                .unwrap_or_else(|| panic!("{state:?} lost its wash"));
+            assert!(
+                wash.a > 0. && wash.a < 0.25,
+                "{state:?} washes at {}, which paints over the row instead of tinting it",
+                wash.a
             );
         }
     }
 
     #[test]
-    fn tab_icon_cluster_caps_at_four_panes() {
-        // US-013: up to the cap every pane gets its own slot; past it the tail
-        // folds into a single `+N`.
-        assert_eq!(tab_icon_cluster_split(0), (0, 0));
-        assert_eq!(tab_icon_cluster_split(1), (1, 0));
-        assert_eq!(
-            tab_icon_cluster_split(SIDEBAR_TAB_ICON_CAP),
-            (SIDEBAR_TAB_ICON_CAP, 0)
+    fn a_wash_survives_a_translucent_tint_over_it() {
+        // The two are composited into one resting colour, so the selection must
+        // not swallow the state: an `over` that returned the top colour would
+        // leave every selected row the same grey whatever it is doing.
+        //
+        // The tint is spelled out here rather than read from
+        // `sidebar_tab_hover_background`, which is PLATFORM-DEPENDENT: its Linux
+        // arm blends onto the title bar and hands back an opaque colour, so an
+        // assertion phrased against it held on macOS and could not hold on
+        // Linux. What is being tested is the compositing rule, and that rule is
+        // the same everywhere.
+        let ui = crate::theme::ui_colors();
+        let wash = agent_summary_wash(
+            SidebarAgentSummary {
+                state: SidebarAgentState::NeedsInput,
+                count: 1,
+            },
+            ui,
+        );
+        assert!(wash.is_some(), "the state under test lost its wash");
+
+        let tint = Hsla::from(gpui::rgb(0xffffff)).opacity(0.07);
+        let composed = over(tint, wash);
+        assert!(
+            composed.a > tint.a,
+            "compositing dropped the wash underneath the tint"
         );
         assert_eq!(
-            tab_icon_cluster_split(SIDEBAR_TAB_ICON_CAP + 3),
-            (SIDEBAR_TAB_ICON_CAP, 3)
+            over(tint, None),
+            tint,
+            "a row with no wash must rest at exactly the tint"
+        );
+
+        // ... and the short-circuit that keeps the Linux arm behaving as it did:
+        // an opaque tint has nothing to composite with, so it is the answer.
+        let opaque = Hsla { a: 1.0, ..tint };
+        assert_eq!(
+            over(opaque, wash),
+            opaque,
+            "an opaque tint must not be reopened by the wash under it"
         );
     }
 }
