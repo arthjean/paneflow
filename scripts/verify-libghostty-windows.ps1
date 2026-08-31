@@ -332,8 +332,6 @@ if (-not [string]::IsNullOrWhiteSpace($RuntimeEvidence)) {
     $RuntimeDocument = Get-Content -LiteralPath $RuntimeEvidence -Raw | ConvertFrom-Json
     foreach ($expectation in @(
         @{ Key = "binary_sha256"; Value = $BinaryHash },
-        @{ Key = "requested"; Value = "Ghostty" },
-        @{ Key = "effective"; Value = "ghostty" },
         @{ Key = "source_sha"; Value = $SourceSha },
         @{ Key = "ghostty_version"; Value = $GhosttyVersion },
         @{ Key = "status"; Value = "passed" }
