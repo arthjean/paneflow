@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-libghostty-sys"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "serde",
  "sha2",
@@ -179,7 +179,7 @@ dependencies = [
 
 [[package]]
 name = "paneflow-terminal-ghostty"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "paneflow-libghostty-sys",
  "regex",

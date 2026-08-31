@@ -63,6 +63,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.10.0" date="2026-08-31">
+      <description>
+        <p>One terminal engine on every platform, self-naming tabs, and a searchable shortcuts page.</p>
+        <ul>
+          <li>The statically linked Ghostty engine is now the only terminal engine on every shipping target, macOS Apple Silicon included; the Alacritty backend and the terminal.backend setting are removed</li>
+          <li>Panes render Kitty graphics, raise desktop notifications from OSC 9 and OSC 777, show OSC 9;4 progress in the header, and resolve selection through the engine</li>
+          <li>A tab names itself after the first prompt of the agent running in it, replaced by the title the agent CLI writes for its own resume picker</li>
+          <li>Settings, Shortcuts becomes nine collapsible groups with a text filter and key capture, and a rebind now stores a chord that keypresses actually match</li>
+          <li>Help, System Info copies a bug report environment block, and agent status is reported even where managed settings disable hooks</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-08-26">
       <description>
         <p>Workspace tabs, an editable file tab in the diff dock, and theme presets.</p>
