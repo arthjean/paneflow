@@ -24,6 +24,22 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   OSC 9;4 progress: a percentage, `working`, `paused`, or `error`. The chip
   clears when the program removes the indicator or the child exits.
 
+- "Clear scroll history" and "Reset terminal" now have default shortcuts.
+  Both actions worked but nothing bound them and no menu offered them, so they
+  were unreachable unless you went and bound them by hand. Clearing the
+  scrollback is Ctrl+Shift+K on Linux and Windows, Cmd+K on macOS (Cmd+Shift+K
+  also works), matching kitty, Ghostty, iTerm2 and Terminal.app. Resetting the
+  terminal, which is what recovers a pane wrecked by dumping a binary to it, is
+  Ctrl+Shift+R or Cmd+Shift+R.
+
+- Quit now has a keyboard shortcut on every platform: Ctrl+Q on Linux and
+  Windows, Cmd+Q on macOS. It was a macOS-only binding before, so there was no
+  way to quit Paneflow from the keyboard elsewhere. Note that this takes the
+  chord away from the shell in every pane, where bare Ctrl+Q is XON flow
+  control (the key that resumes output after Ctrl+S) or readline's
+  quoted-insert; rebind or unbind it in Settings > Shortcuts if you need it
+  back.
+
 - Images render in the terminal. A program that transmits through the Kitty
   graphics protocol gets its placements painted in the grid, cropped and
   scaled as it asked, under or over the text according to their z-index.
@@ -38,6 +54,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   Hold `Alt` while dragging for a rectangular (block) selection.
 
 ### Changed
+
+- The Attention Queue moves from Ctrl+Shift+K to Ctrl+Shift+A (Cmd+Shift+A on
+  macOS). Ctrl+Shift+K is what every terminal uses to clear the scrollback, and
+  that action now claims it. The queue keeps its place in the UI, so the chord
+  it gave up is the one that was harder to discover.
 
 - Workspaces can no longer be renamed. A workspace is named after the folder it
   holds, and a title free to drift from that folder left the sidebar claiming a

@@ -38,6 +38,23 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "close_workspace",
         context: None,
     },
+    // Ctrl+Q on Linux and Windows, Cmd+Q on macOS, where it also populates the
+    // "⌘Q" glyph next to the Quit PaneFlow menu item. Global context so the
+    // menu picks it up whether or not a terminal pane holds focus.
+    //
+    // This one deliberately shadows the shell. Bare Ctrl+Q is XON in a POSIX
+    // terminal (`IXON` is on by default, so Ctrl+S freezes output and Ctrl+Q
+    // resumes it), and readline's `quoted-insert` for anyone running
+    // `stty -ixon`. GPUI stops dispatching a keystroke once a binding handles
+    // it, so the PTY never sees this chord again. That is the IDE convention
+    // (Zed and VS Code both take Ctrl+Q on Linux) rather than the terminal one
+    // (GNOME Terminal and Ghostty leave it alone and quit on Ctrl+Shift+Q,
+    // which is `close_workspace` here). Paneflow follows the IDE side.
+    DefaultBinding {
+        key: "secondary-q",
+        action_name: "quit",
+        context: None,
+    },
     DefaultBinding {
         key: "ctrl-shift-alt-c",
         action_name: "copy_workspace_path",
@@ -203,6 +220,32 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
         key: "secondary-shift-down",
         action_name: "jump_next_prompt",
+        context: Some("Terminal"),
+    },
+    // Terminal recovery. Both actions existed and worked but had no default on
+    // any platform and no menu entry, so they were unreachable until someone
+    // bound them by hand in Settings > Shortcuts.
+    //
+    // `secondary-shift-k` is the Linux and Windows chord for this: kitty
+    // (`clear_terminal scroll`) and Ghostty both use Ctrl+Shift+K. macOS spells
+    // it ⌘K with no shift (iTerm2 "Clear Buffer", Terminal.app, Ghostty), so
+    // that spelling is added separately in `MACOS_ONLY_DEFAULTS` and this entry
+    // is the ⌘⇧K alias there. It cost `open_attention_queue` its original slot;
+    // the queue moved to `secondary-shift-a` because it is reachable from the
+    // UI and clearing the scrollback is not. FR-12 still holds: Ctrl+K
+    // kill-line is BARE ctrl, not ctrl+shift.
+    //
+    // `secondary-shift-r` follows iTerm2's ⌘R "Reset". It is distinct from
+    // `alt-r` (toggle_search_regex, Search context) and `ctrl-alt-r`
+    // (reveal_workspace_in_file_manager).
+    DefaultBinding {
+        key: "secondary-shift-k",
+        action_name: "clear_scroll_history",
+        context: Some("Terminal"),
+    },
+    DefaultBinding {
+        key: "secondary-shift-r",
+        action_name: "reset_terminal",
         context: Some("Terminal"),
     },
     DefaultBinding {
@@ -421,12 +464,13 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "open_broadcast_groups",
         context: None,
     },
-    // EP-002 (cli-cockpit): Attention Queue + Launch Pad. `secondary-shift-k`
-    // and `secondary-shift-l` are unclaimed (taken set before this block:
-    // d/e/w/n/q/j/t/z/=/s/a/g/space/b/m) and shadow no shell/readline/TUI
-    // chord (FR-12 - Ctrl+K kill-line is BARE ctrl, not ctrl+shift).
+    // EP-002 (cli-cockpit): Attention Queue + Launch Pad. The queue used to sit
+    // on `secondary-shift-k`, which the terminal convention wants for
+    // `clear_scroll_history` (see that binding above); `a` for "attention" is
+    // the mnemonic and shadows no shell/readline/TUI chord, same FR-12 test as
+    // `secondary-shift-l`.
     DefaultBinding {
-        key: "secondary-shift-k",
+        key: "secondary-shift-a",
         action_name: "open_attention_queue",
         context: None,
     },
@@ -440,10 +484,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
 /// Platform-specific default bindings layered on top of [`DEFAULTS`].
 ///
 /// US-010 binds `cmd-c` / `cmd-v` to terminal copy/paste on macOS so muscle
-/// memory from iTerm2 / Terminal.app / WezTerm works. Kept empty on Linux
-/// (AC5) because Linux keyboards don't have a `cmd` key by default. The
-/// existing `ctrl-shift-c/v` Terminal bindings stay intact on both platforms -
-/// these are purely additive.
+/// memory from iTerm2 / Terminal.app / WezTerm works, and `cmd-k` clears the
+/// scrollback for the same reason. Kept empty on Linux (AC5) because Linux
+/// keyboards don't have a `cmd` key by default. The existing `ctrl-shift-c/v`
+/// Terminal bindings stay intact on both platforms - these are purely
+/// additive.
 #[cfg(target_os = "macos")]
 pub(super) const MACOS_ONLY_DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
@@ -456,13 +501,13 @@ pub(super) const MACOS_ONLY_DEFAULTS: &[DefaultBinding] = &[
         action_name: "terminal_paste",
         context: Some("Terminal"),
     },
-    // US-012: Cmd+Q quits the app and populates the "⌘Q" shortcut next to
-    // the Quit PaneFlow menu item. Global context so the menu picks it up
-    // whether or not a terminal pane holds focus.
+    // ⌘K is the macOS spelling of "clear the scrollback" (iTerm2 "Clear
+    // Buffer", Terminal.app, Ghostty). The cross-platform `secondary-shift-k`
+    // entry stays as the ⌘⇧K alias; both reach the same action.
     DefaultBinding {
-        key: "cmd-q",
-        action_name: "quit",
-        context: None,
+        key: "cmd-k",
+        action_name: "clear_scroll_history",
+        context: Some("Terminal"),
     },
 ];
 
@@ -618,20 +663,23 @@ mod tests {
 
     // -- US-012 ---------------------------------------------------------
 
-    #[cfg(target_os = "macos")]
     #[test]
-    fn us012_cmd_q_bound_to_quit() {
-        let quit = MACOS_ONLY_DEFAULTS
+    fn us012_secondary_q_bound_to_quit_on_every_platform() {
+        let quit = DEFAULTS
             .iter()
-            .find(|d| d.key == "cmd-q")
-            .expect("cmd-q must be a macOS default");
+            .find(|d| d.key == "secondary-q")
+            .expect("secondary-q must be a default on every platform");
         assert_eq!(quit.action_name, "quit");
-        assert_eq!(quit.context, None);
+        assert_eq!(
+            quit.context, None,
+            "the macOS Quit menu item only picks the glyph up from a global binding"
+        );
     }
 
-    #[cfg(not(target_os = "macos"))]
     #[test]
-    fn us012_no_cmd_q_on_linux() {
-        assert!(MACOS_ONLY_DEFAULTS.iter().all(|d| d.key != "cmd-q"));
+    fn us012_quit_is_not_also_a_platform_default() {
+        // `secondary` already resolves to cmd on macOS, so a second `cmd-q`
+        // entry would be a duplicate binding for the same action.
+        assert!(MACOS_ONLY_DEFAULTS.iter().all(|d| d.action_name != "quit"));
     }
 }
