@@ -5,6 +5,21 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- A tab binds to its own worktree. The "New pane" palette and the tab context
+  menu list the repository's branches: picking one that has no worktree creates
+  it under `<workspace>.worktrees/`, picking one that already has a worktree
+  reuses it, and the pane starts there. An agent that creates a branch from
+  inside a pane now moves that tab alone, where it used to drag every tab of
+  the workspace with it.
+
+- A Customize Sidebar menu on the rail header, with a switch per value: Branch,
+  PR, Diffstat and the indent guide, all off by default. A branch that already
+  has a pull request swaps its glyph for the PR one, in GitHub's state colors.
+  Below them, Expand all / Collapse all, and the fold state of each workspace
+  row now survives a restart.
+
 ## [0.10.0] - 2026-08-31
 
 ### Added
