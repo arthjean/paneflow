@@ -128,6 +128,20 @@ pub(crate) enum SettingsSection {
     Workspaces,
 }
 
+impl SettingsSection {
+    /// Whether the page renders its own scroll container instead of riding the
+    /// page-level one.
+    ///
+    /// Only Shortcuts does: it is the one page long enough (~90 rows) that
+    /// rendering every row each frame is what made the settings surface lag,
+    /// so it virtualizes with `gpui::list`. A virtualized list needs a bounded
+    /// viewport to virtualize against, which a page-level scroll container -
+    /// which hands its child unbounded height - cannot give it.
+    pub(crate) fn owns_its_scroll(self) -> bool {
+        matches!(self, SettingsSection::Shortcuts)
+    }
+}
+
 /// Light / dark / system selector shown at the top of the Themes settings page.
 #[derive(Clone, Copy, PartialEq)]
 pub(crate) enum ThemeMode {
@@ -1029,6 +1043,19 @@ struct PaneFlowApp {
     shortcut_reset_pending: bool,
     /// Sections collapsed on the Shortcuts page. Empty = everything expanded.
     collapsed_shortcut_groups: std::collections::HashSet<keybindings::ShortcutGroup>,
+    /// The Shortcuts page, flattened: section headers interleaved with the
+    /// bindings that survived the filter.
+    ///
+    /// Cached rather than derived in `render`, because the page is virtualized
+    /// and its item *count* has to be known before any item is rendered.
+    /// Rebuilt by `PaneFlowApp::rebuild_shortcut_rows` whenever the query, the
+    /// fold state or `effective_shortcuts` changes - never once per frame.
+    shortcut_rows: Vec<crate::settings::tabs::shortcuts::ShortcutListRow>,
+    /// Virtualized-list state for [`Self::shortcut_rows`]. Owns the page's
+    /// scroll position and the measured item heights.
+    shortcut_list: gpui::ListState,
+    /// Thumb-drag state for the Shortcuts list scrollbar.
+    shortcut_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
     /// Focus handle for the settings page (receives key events during recording/font search).
     settings_focus: FocusHandle,
     /// Cached list of monospace font family names from the system.

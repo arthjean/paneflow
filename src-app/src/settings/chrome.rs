@@ -369,20 +369,20 @@ impl PaneFlowApp {
         .into_any_element()
     }
 
-    /// The right content panel: the section H1 title + the scrollable body.
+    /// The right content panel: the section H1 title + the section body.
+    ///
+    /// Two shells, chosen by [`SettingsSection::owns_its_scroll`]. Most pages
+    /// are short forms that ride the page-level scroll container
+    /// ([`Self::render_settings_scroll`]). Shortcuts is not: it is ~90 rows,
+    /// and rendering them all every frame is what made the page lag, so it
+    /// virtualizes its own list and needs a *fixed* viewport to virtualize
+    /// against - a page-level scroll container would hand it unbounded height
+    /// and defeat the whole thing. Zed splits its settings window the same way
+    /// (`crates/settings_ui/src/settings_ui.rs`: sub-pages use
+    /// `overflow_y_scroll`, the long page uses `gpui::list`).
     pub(crate) fn render_settings_content_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let section = self.settings_section.unwrap_or(SettingsSection::General);
-
-        let body = match section {
-            SettingsSection::General => self.render_general_content(cx).into_any_element(),
-            SettingsSection::Appearance => self.render_appearance_content(cx).into_any_element(),
-            SettingsSection::Shortcuts => self.render_shortcuts_content(cx).into_any_element(),
-            SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
-            SettingsSection::AiAgent => self.render_ai_agent_content(cx).into_any_element(),
-            SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
-            SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
-        };
 
         let ipc_banner = self.ipc_status.is_disabled().then(|| {
             use crate::widgets::callout::{Callout, CalloutIcon, CalloutSeverity};
@@ -401,15 +401,15 @@ impl PaneFlowApp {
             .text_color(ui.text)
             .child(section_title(section));
 
-        let column = div()
+        let heading = div()
             .flex()
             .flex_col()
+            .flex_none()
             .child(title)
             .when_some(ipc_banner, |d, b| d.child(b))
-            .child(body)
             .into_any_element();
 
-        div()
+        let shell = div()
             .id("settings-panel")
             .track_focus(&self.settings_focus)
             .on_key_down(cx.listener(Self::handle_settings_key_down))
@@ -418,8 +418,45 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .min_h_0()
-            .bg(settings_chrome_bg())
-            .child(self.render_settings_scroll(column, cx))
+            .bg(settings_chrome_bg());
+
+        if section.owns_its_scroll() {
+            return shell.child(self.render_shortcuts_page(heading, cx));
+        }
+
+        let body = match section {
+            SettingsSection::General => self.render_general_content(cx).into_any_element(),
+            SettingsSection::Appearance => self.render_appearance_content(cx).into_any_element(),
+            SettingsSection::Terminal => self.render_terminal_content(cx).into_any_element(),
+            SettingsSection::AiAgent => self.render_ai_agent_content(cx).into_any_element(),
+            SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
+            SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
+            // Handled above; a page that owns its scroll never reaches here.
+            SettingsSection::Shortcuts => gpui::Empty.into_any_element(),
+        };
+
+        let column = div()
+            .flex()
+            .flex_col()
+            .child(heading)
+            .child(body)
+            .into_any_element();
+
+        shell.child(self.render_settings_scroll(column, cx))
+    }
+
+    /// Geometry shared by the page-level scroll container and the pages that
+    /// scroll themselves: the centered max-width reading column, at the same
+    /// left/right offset either way so switching sections never shifts it.
+    pub(crate) fn settings_reading_column(&self) -> gpui::Div {
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .max_w(px(700.))
+            .mx_auto()
+            .px(px(28.))
+            .pt(px(28.))
     }
 
     /// Scrollable content area + visible scrollbar overlay. Centers a
@@ -447,15 +484,8 @@ impl PaneFlowApp {
             .flex_col()
             .items_start()
             .child(
-                div()
-                    .w_full()
+                self.settings_reading_column()
                     .flex_none()
-                    .flex()
-                    .flex_col()
-                    .max_w(px(700.))
-                    .mx_auto()
-                    .px(px(28.))
-                    .pt(px(28.))
                     .pb(px(72.))
                     .child(content),
             );
@@ -488,7 +518,11 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .min_h_0()
-            .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
+            // No `on_scroll_wheel` here: GPUI's own scroll listener already
+            // notifies, and only when the offset actually moved
+            // (`div.rs`, `paint_scroll_listener`). A blanket notify repainted
+            // the whole app on every wheel event, including the ones that hit
+            // a scroll end and changed nothing.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
                 if let Some(drag) = this.settings_drag
                     && let Some(off) =
@@ -501,7 +535,8 @@ impl PaneFlowApp {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if this.settings_drag.take().is_some() {
+                    let drag = this.settings_drag.take();
+                    if scrollbar::end_drag(&this.settings_scroll, drag) {
                         cx.notify();
                     }
                 }),
@@ -541,6 +576,12 @@ impl PaneFlowApp {
         // back silently swallowing keystrokes reads as broken.
         self.shortcut_reset_pending = false;
         self.clear_shortcut_filters(cx);
+        if section == SettingsSection::Shortcuts {
+            // The page is virtualized: its rows have to exist before the first
+            // frame renders, and `effective_shortcuts` may have changed since
+            // the page was last open.
+            self.rebuild_shortcut_rows(cx);
+        }
         if section == SettingsSection::McpServers {
             self.refresh_mcp_status(cx);
         }

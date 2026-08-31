@@ -752,12 +752,17 @@ impl PaneFlowApp {
         cx.observe(&settings_search_input, |_, _, cx| cx.notify())
             .detach();
         // Shortcuts-page filter. Same recipe: a real TextInput, observed so
-        // every keystroke re-renders the page and re-filters the sections.
+        // every keystroke re-filters the sections. Unlike the other fields, the
+        // observer does real work: the page is virtualized, so the filtered row
+        // list has to be rebuilt here rather than inside `render`.
         let shortcut_search_input = cx.new(|cx| {
             crate::widgets::text_input::TextInput::new("", "Search actions or keys…", cx)
         });
-        cx.observe(&shortcut_search_input, |_, _, cx| cx.notify())
-            .detach();
+        cx.observe(&shortcut_search_input, |this: &mut Self, _, cx| {
+            this.rebuild_shortcut_rows(cx);
+            cx.notify();
+        })
+        .detach();
         let workspace_template_name_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Workspace name", cx));
         cx.observe(&workspace_template_name_input, |_, _, cx| cx.notify())
@@ -845,6 +850,9 @@ impl PaneFlowApp {
             shortcut_capture_active: false,
             shortcut_reset_pending: false,
             collapsed_shortcut_groups: std::collections::HashSet::new(),
+            shortcut_rows: Vec::new(),
+            shortcut_list: crate::settings::tabs::shortcuts::new_shortcut_list_state(),
+            shortcut_drag: None,
             settings_focus: cx.focus_handle(),
             mono_font_names: Vec::new(),
             font_dropdown_open: false,

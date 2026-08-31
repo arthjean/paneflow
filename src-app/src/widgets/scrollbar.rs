@@ -35,9 +35,8 @@
 //!     }),
 //! );
 //!
-//! // 4. Wire move/up/wheel on the wrapper or popover root:
+//! // 4. Wire move/up on the wrapper or popover root:
 //! div().relative()
-//!     .on_scroll_wheel(cx.listener(|_, _, _, cx| cx.notify()))
 //!     .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
 //!         if let Some(drag) = this.my_drag
 //!             && let Some(off) = scrollbar::drag_offset(&this.my_scroll, &drag, ev.position.y)
@@ -47,11 +46,18 @@
 //!         }
 //!     }))
 //!     .on_mouse_up(MouseButton::Left, cx.listener(|this, _, _, cx| {
-//!         if this.my_drag.take().is_some() { cx.notify(); }
+//!         let drag = this.my_drag.take();
+//!         if scrollbar::end_drag(&this.my_scroll, drag) { cx.notify(); }
 //!     }))
 //!     .child(list)
 //!     .when_some(scrollbar, |d, sb| d.child(sb))
 //! ```
+//!
+//! Do **not** add an `on_scroll_wheel` that only calls `cx.notify()`: GPUI's
+//! own scroll listener already notifies, and only when the offset actually
+//! moved (`div.rs`, `paint_scroll_listener`; `list.rs`, `StateInner::scroll`).
+//! A blanket notify repaints the whole view on every wheel event, including
+//! the ones that hit a scroll end and change nothing.
 //!
 //! ## Sign convention (load-bearing!)
 //!
@@ -63,12 +69,87 @@
 //! first-frame fallback estimate.
 
 use gpui::{
-    AnyElement, App, ElementId, InteractiveElement, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, ScrollHandle, Styled, Window, div, px,
+    AnyElement, App, Bounds, ElementId, InteractiveElement, IntoElement, ListState, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, ScrollHandle, Styled, Window, div, px,
 };
 
 use crate::theme::UiColors;
 use crate::ui_primitives::AnimatedHoverExt;
+
+/// What this module needs from a scroll source, so one scrollbar serves both
+/// GPUI scroll models.
+///
+/// `overflow_y_scroll + track_scroll` hands out a [`ScrollHandle`]; a
+/// virtualized [`ListState`] keeps its own offset in item space and exposes
+/// pixel equivalents through a separate set of accessors. Everything below is
+/// written against this trait so a page can switch from one to the other -
+/// which is exactly what the Shortcuts page did - without the scrollbar
+/// noticing. Zed factors it the same way
+/// (`crates/ui/src/components/scrollbar.rs`, trait `ScrollableHandle`).
+///
+/// The sign convention documented above holds for every implementor:
+/// `max_offset` is a non-negative magnitude, `offset` is `<= 0`.
+pub trait ScrollableHandle {
+    /// Bounds of the scrollable viewport, which is also the scrollbar track.
+    fn viewport(&self) -> Bounds<Pixels>;
+    /// Non-negative scrollable range.
+    fn max_offset(&self) -> Point<Pixels>;
+    /// Current offset, zero at the top and `-max_offset` at the bottom.
+    fn offset(&self) -> Point<Pixels>;
+    /// Jump to `offset`. Does not repaint - the caller owns `cx.notify()`.
+    fn set_offset(&self, offset: Point<Pixels>);
+    /// The user grabbed the thumb.
+    fn drag_started(&self) {}
+    /// The user let go of the thumb.
+    fn drag_ended(&self) {}
+}
+
+impl ScrollableHandle for ScrollHandle {
+    fn viewport(&self) -> Bounds<Pixels> {
+        ScrollHandle::bounds(self)
+    }
+
+    fn max_offset(&self) -> Point<Pixels> {
+        ScrollHandle::max_offset(self)
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        ScrollHandle::offset(self)
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        ScrollHandle::set_offset(self, offset);
+    }
+}
+
+impl ScrollableHandle for ListState {
+    fn viewport(&self) -> Bounds<Pixels> {
+        self.viewport_bounds()
+    }
+
+    fn max_offset(&self) -> Point<Pixels> {
+        self.max_offset_for_scrollbar()
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        self.scroll_px_offset_for_scrollbar()
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        self.set_offset_from_scrollbar(offset);
+    }
+
+    /// A `ListState` measures items lazily, so the content height grows as the
+    /// drag reveals new rows. Freezing it for the duration keeps the thumb from
+    /// shrinking out from under the pointer.
+    fn drag_started(&self) {
+        self.scrollbar_drag_started();
+    }
+
+    fn drag_ended(&self) {
+        self.scrollbar_drag_ended();
+    }
+}
 
 /// Track + thumb width. Anything thinner is hard to grab.
 pub const SCROLLBAR_WIDTH: Pixels = px(6.);
@@ -92,10 +173,22 @@ pub struct ScrollDragState {
 }
 
 /// Capture the drag-start pose. Call from the thumb's `on_mouse_down`.
-pub fn begin_drag(handle: &ScrollHandle, mouse_y: Pixels) -> ScrollDragState {
+pub fn begin_drag<H: ScrollableHandle>(handle: &H, mouse_y: Pixels) -> ScrollDragState {
+    handle.drag_started();
     ScrollDragState {
         start_mouse_y: mouse_y,
         start_offset_y: handle.offset().y,
+    }
+}
+
+/// Release the drag-start pose. Call from the `mouse_up` that ends the drag,
+/// so a lazily-measured source can unfreeze its reported content height.
+pub fn end_drag<H: ScrollableHandle>(handle: &H, drag: Option<ScrollDragState>) -> bool {
+    if drag.is_some() {
+        handle.drag_ended();
+        true
+    } else {
+        false
     }
 }
 
@@ -138,9 +231,9 @@ fn metrics_from(viewport_h: f32, max_off_y: f32, off_y: f32) -> Option<Scrollbar
 
 /// Thumb geometry for a live scroll handle, or `None` when the content fits or
 /// the host has not been laid out yet.
-pub fn metrics(handle: &ScrollHandle) -> Option<ScrollbarMetrics> {
+pub fn metrics<H: ScrollableHandle>(handle: &H) -> Option<ScrollbarMetrics> {
     metrics_from(
-        f32::from(handle.bounds().size.height),
+        f32::from(handle.viewport().size.height),
         f32::from(handle.max_offset().y),
         f32::from(handle.offset().y),
     )
@@ -149,8 +242,8 @@ pub fn metrics(handle: &ScrollHandle) -> Option<ScrollbarMetrics> {
 /// Compute the new offset.y when the user clicks anywhere on the track.
 /// Returns the target offset (negative or zero) or `None` if there's no
 /// overflow / no laid-out viewport yet. Centres the thumb on the click.
-pub fn track_click_offset(handle: &ScrollHandle, mouse_y: Pixels) -> Option<f32> {
-    let track_top = f32::from(handle.bounds().origin.y);
+pub fn track_click_offset<H: ScrollableHandle>(handle: &H, mouse_y: Pixels) -> Option<f32> {
+    let track_top = f32::from(handle.viewport().origin.y);
     let ScrollbarMetrics {
         viewport_h: track_h,
         max_off_y,
@@ -169,7 +262,11 @@ pub fn track_click_offset(handle: &ScrollHandle, mouse_y: Pixels) -> Option<f32>
 
 /// Compute the new offset.y while the user drags the thumb. Returns the
 /// target offset or `None` if there's nothing to scroll.
-pub fn drag_offset(handle: &ScrollHandle, drag: &ScrollDragState, mouse_y: Pixels) -> Option<f32> {
+pub fn drag_offset<H: ScrollableHandle>(
+    handle: &H,
+    drag: &ScrollDragState,
+    mouse_y: Pixels,
+) -> Option<f32> {
     let ScrollbarMetrics {
         viewport_h,
         max_off_y,
@@ -195,8 +292,8 @@ pub fn drag_offset(handle: &ScrollHandle, drag: &ScrollDragState, mouse_y: Pixel
 ///
 /// Returns `None` when the content fits the viewport (no scrolling
 /// possible) - caller should `when_some` the result onto its child list.
-pub fn render(
-    handle: &ScrollHandle,
+pub fn render<H: ScrollableHandle>(
+    handle: &H,
     ui: UiColors,
     estimate: Option<(f32, f32)>,
     track_id: impl Into<ElementId>,
@@ -204,7 +301,7 @@ pub fn render(
     on_track_click: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
     on_thumb_down: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Option<AnyElement> {
-    let real_viewport_h = f32::from(handle.bounds().size.height);
+    let real_viewport_h = f32::from(handle.viewport().size.height);
     let real_max_off_y = f32::from(handle.max_offset().y);
     let off_y = f32::from(handle.offset().y);
 

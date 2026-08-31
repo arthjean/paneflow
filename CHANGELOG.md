@@ -99,6 +99,13 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Fixed
 
+- Settings > Shortcuts no longer lags with every section open. The page laid
+  out all ~90 rows on every repaint, offscreen ones included, and since each
+  row highlights on hover, moving the pointer across the list was enough to
+  redraw the whole thing. It now renders only the rows the viewport shows, and
+  filters when the query or the fold state changes rather than once per frame.
+  A repaint of the fully expanded page went from 6.2 ms to 0.3 ms here.
+
 - A configured `scrollback_lines` is honored. The line budget was passed to the
   terminal engine but its byte budget was not, so an 80-column pane pruned at
   roughly a thousand rows whatever the setting said.

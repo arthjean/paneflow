@@ -51,6 +51,12 @@ impl PaneFlowApp {
         // leftover query could filter the nav to a section that doesn't match
         // the displayed page).
         self.clear_settings_search(cx);
+        if section == SettingsSection::Shortcuts {
+            // The page is virtualized, so its rows have to exist before the
+            // first frame renders. `select_settings_section` does the same for
+            // the nav path; this is the deep-link one.
+            self.rebuild_shortcut_rows(cx);
+        }
         // Warm the MCP bridge status off-thread so the MCP page can render its
         // button label without ever doing config I/O during a frame.
         self.refresh_mcp_status(cx);
@@ -69,12 +75,23 @@ impl PaneFlowApp {
     /// put the row on screen - re-collapsing its section and scrolling the
     /// now-armed row out of sight.
     pub(crate) fn set_shortcut_capture(&mut self, active: bool, cx: &mut Context<Self>) {
+        let changed = self.shortcut_capture_active != active;
         self.shortcut_capture_active = active;
         if active {
+            // Clearing the field notifies, and the observer on it rebuilds the
+            // filtered rows - no explicit rebuild needed on this arm.
             self.shortcut_search_input.update(cx, |input, cx| {
                 input.clear(cx);
             });
             self.recording_shortcut_idx = None;
+        } else if changed {
+            // Leaving capture flips the match rule from "this exact chord" back
+            // to substring, so the visible rows change while the query does not
+            // - nothing else would tell the page to re-filter. Guarded on
+            // `changed` because every row click disarms capture on the way to
+            // recording, and an unconditional rebuild would re-seed the list
+            // (and scroll it) under the row the user just clicked.
+            self.rebuild_shortcut_rows(cx);
         }
     }
 
@@ -85,6 +102,9 @@ impl PaneFlowApp {
         self.shortcut_search_input.update(cx, |input, cx| {
             input.clear(cx);
         });
+        // Both halves of the filter moved at once, and the field's observer
+        // only knows about one of them.
+        self.rebuild_shortcut_rows(cx);
     }
 
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
@@ -375,6 +395,9 @@ impl PaneFlowApp {
         keybindings::apply_keybindings(cx, &config.shortcuts);
         self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
         self.recording_shortcut_idx = None;
+        // The rows carry indices into `effective_shortcuts` and render its key
+        // text, so they are stale the moment it is replaced.
+        self.rebuild_shortcut_rows(cx);
         cx.notify();
     }
 }
