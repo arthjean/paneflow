@@ -41,6 +41,27 @@ pub struct Tab {
     /// Saved layout tree while zoomed. `Some(tree)` means this tab is zoomed
     /// and `root` holds only the zoomed pane as a single Leaf.
     pub saved_layout: Option<LayoutTree>,
+    /// The git worktree this tab works in, or `None` for an unbound tab.
+    ///
+    /// This is the tab's git identity, in the sense discussion #41 asks for:
+    /// bound, every pane opened in the tab starts in this checkout, and the
+    /// sidebar row names the branch it sits on. Unbound, the tab behaves
+    /// exactly as it always has and its row says nothing extra - which is what
+    /// makes the line signal rather than chrome, since it only appears where it
+    /// tells two tabs apart.
+    ///
+    /// The same unit as a Cursor agent and a Codex chat, both of which carry
+    /// the worktree on the session rather than on the window. Zed is the
+    /// counter-example: its active repository is one field per window
+    /// (`crates/project/src/git_store.rs`, `active_repo_id`), recomputed from
+    /// the focused item, and it opens a *window* per worktree - the opposite of
+    /// several agents side by side in one.
+    ///
+    /// A path, not a branch name: a branch can only be checked out in one
+    /// worktree at a time, the checkout directory is what a pane actually needs
+    /// to spawn in, and a detached-HEAD worktree (what the Codex app creates by
+    /// default) has no branch at all. The branch is derived for display.
+    pub worktree: Option<std::path::PathBuf>,
     /// Whether this tab wants the docked Files rail on screen.
     ///
     /// The rail itself is a single app-level surface (one tree, one watcher),
@@ -68,6 +89,7 @@ impl Tab {
             title_source: TabTitleSource::Preset,
             root,
             saved_layout: None,
+            worktree: None,
             files_sidebar_open: false,
         }
     }
@@ -80,10 +102,31 @@ impl Tab {
         title: impl Into<String>,
         title_source: TabTitleSource,
         root: Option<LayoutTree>,
+        worktree: Option<std::path::PathBuf>,
     ) -> Self {
         Self {
             title_source,
+            worktree,
             ..Self::new(title, root)
+        }
+    }
+
+    /// The cwd a pane opened in this tab must start in, given the cwd it would
+    /// otherwise have inherited.
+    ///
+    /// An unbound tab keeps `inherited` untouched. A bound tab keeps it only
+    /// while it stays inside its own checkout - splitting from a pane sitting
+    /// in `src/` must land in `src/`, not back at the root - and pulls anything
+    /// outside back to the worktree. That last clause is the whole safety
+    /// property: without it a `cd` in one pane leaks into every pane opened
+    /// after it, and the binding is decoration.
+    pub fn confine_cwd(&self, inherited: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
+        let Some(worktree) = self.worktree.as_ref() else {
+            return inherited;
+        };
+        match inherited {
+            Some(cwd) if cwd.starts_with(worktree) => Some(cwd),
+            _ => Some(worktree.clone()),
         }
     }
 
@@ -431,6 +474,49 @@ mod tests {
     fn a_freshly_built_tab_is_app_named() {
         assert!(!tab("Claude Code").title_is_user_owned());
         assert!(!Tab::empty().title_is_user_owned());
-        assert!(Tab::restored("sprint 3", TabTitleSource::User, None).title_is_user_owned());
+        assert!(Tab::restored("sprint 3", TabTitleSource::User, None, None).title_is_user_owned());
+    }
+
+    #[test]
+    fn an_unbound_tab_inherits_whatever_it_was_given() {
+        let tab = Tab::new("free", None);
+        let inherited = std::path::PathBuf::from("/anywhere/at/all");
+        assert_eq!(tab.confine_cwd(Some(inherited.clone())), Some(inherited));
+        assert_eq!(tab.confine_cwd(None), None);
+    }
+
+    #[test]
+    fn a_bound_tab_confines_every_pane_to_its_worktree() {
+        let worktree = std::path::PathBuf::from("/repo.worktrees/feat-login");
+        let tab = Tab::restored(
+            "login",
+            TabTitleSource::Preset,
+            None,
+            Some(worktree.clone()),
+        );
+
+        // Splitting from a pane deeper inside the same checkout keeps that
+        // directory: the boundary is the worktree, not its root.
+        let inside = worktree.join("src/auth");
+        assert_eq!(tab.confine_cwd(Some(inside.clone())), Some(inside));
+
+        // A pane that wandered out - a `cd` to the main checkout, to a sibling
+        // worktree, to anywhere - does not drag the next pane out with it.
+        // Without this the binding is decoration.
+        assert_eq!(
+            tab.confine_cwd(Some(std::path::PathBuf::from("/repo"))),
+            Some(worktree.clone())
+        );
+        assert_eq!(
+            tab.confine_cwd(Some(std::path::PathBuf::from(
+                "/repo.worktrees/feat-billing"
+            ))),
+            Some(worktree.clone()),
+            "a sibling worktree is outside, however similar its path looks"
+        );
+
+        // Nothing inherited at all still lands in the worktree, never at the
+        // process cwd.
+        assert_eq!(tab.confine_cwd(None), Some(worktree));
     }
 }

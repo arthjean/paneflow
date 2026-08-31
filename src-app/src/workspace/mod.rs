@@ -15,7 +15,9 @@ pub mod surface_naming;
 mod tab;
 pub mod worktree;
 
-pub use git::{GitDiffStats, detect_branch, find_git_dir, resolve_repo_root};
+pub use git::{
+    GitDiffStats, detect_branch, find_git_dir, resolve_repo_root, resolve_worktree_root,
+};
 #[cfg(test)]
 pub(crate) use ports::PortEntry;
 pub use ports::{PaneScan, scan_panes};
@@ -303,6 +305,12 @@ impl Workspace {
     }
 
     /// Create a workspace with a pre-allocated ID and layout tree.
+    /// Test-only since `workspace.up` started building its tabs itself: every
+    /// production path either restores a set of tabs
+    /// ([`Self::restored_with_id`]) or goes through the workspace constructors
+    /// above. Kept because a one-tab workspace is what most tests want to
+    /// assert against.
+    #[cfg(test)]
     pub fn with_layout_and_id(
         id: u64,
         title: impl Into<String>,
@@ -529,6 +537,24 @@ impl Workspace {
     ///
     /// This is what `session.json` v2 stores: the whole tab list, not just the
     /// tab that happened to be visible at save time.
+    /// The tab holding `pane`, or `None` when no tab of this workspace does.
+    /// Used to resolve which checkout a pane belongs to: with a tab bound to a
+    /// worktree, that is the tab's, not the workspace's.
+    pub fn tab_for_pane(&self, pane: &gpui::Entity<Pane>) -> Option<&Tab> {
+        self.tabs.iter().find(|tab| tab.contains_pane(pane))
+    }
+
+    /// The worktree of every tab bound to one, as absolute path strings.
+    /// Feeds the git probe set: a bound tab needs its own branch and diffstat,
+    /// which the workspace's own fields cannot answer.
+    pub fn bound_tab_worktrees(&self) -> Vec<String> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| tab.worktree.as_ref())
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect()
+    }
+
     pub fn serialize_tabs_without_scrollback(&self, cx: &App) -> Vec<TabSession> {
         self.tabs
             .iter()
@@ -536,6 +562,10 @@ impl Workspace {
                 title: tab.title().to_string(),
                 title_source: Some(tab.title_source()),
                 layout: tab.serialize_without_scrollback(cx),
+                worktree: tab
+                    .worktree
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().into_owned()),
             })
             .collect()
     }

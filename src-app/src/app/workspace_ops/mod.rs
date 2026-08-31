@@ -182,6 +182,17 @@ impl PaneFlowApp {
                 }
             }
         }
+        // The same result also answers for a tab bound to this checkout, which
+        // is not necessarily any workspace's root - so the probe is stored
+        // whether or not a workspace matched.
+        changed |= self.worktree_states.set_checkout(
+            cwd,
+            crate::app::tab_worktree::CheckoutGit {
+                branch,
+                is_repo,
+                stats,
+            },
+        );
         changed
     }
 
@@ -326,7 +337,7 @@ impl PaneFlowApp {
     /// switch (re-target) and close (Multi-project group reconcile). Deferred so
     /// the rebuild (which mounts a fresh entity) never runs inside a
     /// render/callback. No-op outside Diff mode.
-    fn reconcile_diff_after_workspace_change(&self, cx: &mut Context<Self>) {
+    pub(crate) fn reconcile_diff_after_workspace_change(&self, cx: &mut Context<Self>) {
         if matches!(self.mode, paneflow_config::schema::AppMode::Diff) {
             let weak = cx.weak_entity();
             cx.defer(move |cx| {
@@ -461,9 +472,16 @@ impl PaneFlowApp {
         &self,
         source_cwd: Option<std::path::PathBuf>,
     ) -> Option<std::path::PathBuf> {
-        source_cwd.or_else(|| {
-            self.active_workspace()
-                .map(|ws| ws.cwd.as_str())
+        let Some(ws) = self.active_workspace() else {
+            return source_cwd;
+        };
+        // A bound tab confines every pane opened in it to its worktree
+        // (discussion #41). This is the single choke point every in-app pane
+        // creation goes through, which is why the rule lives here rather than
+        // being repeated at each call site.
+        let confined = ws.active_tab().confine_cwd(source_cwd);
+        confined.or_else(|| {
+            Some(ws.cwd.as_str())
                 .filter(|cwd| !cwd.is_empty())
                 .map(std::path::PathBuf::from)
         })
@@ -645,8 +663,11 @@ impl PaneFlowApp {
             && ws.active_tab().root.is_none()
         {
             let ws_id = ws.id;
-            let cwd = std::path::PathBuf::from(&ws.cwd);
-            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, Some(cwd), None, cx));
+            // Through `new_terminal_cwd` rather than straight from `ws.cwd`:
+            // respawning the last pane of a bound tab must land back in that
+            // tab's worktree, not at the workspace root.
+            let cwd = self.new_terminal_cwd(None);
+            let terminal = cx.new(|cx| TerminalView::with_cwd(ws_id, cwd, None, cx));
             // US-028: do NOT subscribe here - `create_pane` already wires
             // `handle_terminal_event` (main.rs:539). The duplicate subscription
             // fired every terminal event twice (double toast / port-scan /
@@ -798,6 +819,8 @@ impl PaneFlowApp {
         // US-009: this workspace's managed worktrees are torn down (clean
         // ones only) in the background once the workspace is gone.
         let worktrees = std::mem::take(&mut self.workspaces[idx].managed_worktrees);
+        // Every checkout this workspace's tabs were bound to leaves with it.
+        self.prune_worktree_states();
         Self::spawn_worktree_teardown(worktrees, cx);
         self.workspaces.remove(idx);
         if self.workspaces.is_empty() {

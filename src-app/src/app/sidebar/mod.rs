@@ -1405,6 +1405,10 @@ impl PaneFlowApp {
                         tab_idx,
                         position,
                     });
+                    // Discussion #41: refresh the repository's worktree list
+                    // for the menu's Worktree section. Off the render thread,
+                    // and only on this gesture - the menu is the only reader.
+                    this.spawn_worktree_listing(ws_idx, cx);
                     cx.stop_propagation();
                     cx.notify();
                 }

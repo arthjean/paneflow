@@ -184,6 +184,46 @@ pub(crate) fn build_up_layout(
     }
 }
 
+/// Split `workspace.up`'s panes into one tab per git worktree.
+///
+/// Returns each tab's worktree (`None` for the workspace's own checkout) with
+/// the pane indices it holds, in display order: the unbound panes first, then
+/// one tab per distinct worktree in first-appearance order.
+///
+/// This is the fix for the confusion discussion #41 describes, and Paneflow's
+/// own orchestration path was producing it: `up` accepts a per-pane
+/// `worktree = "branch"`, creates each checkout, then stacked every pane into a
+/// single tab where two worktrees sat side by side, visually identical. One tab
+/// per worktree makes switching checkout a deliberate gesture with a visible
+/// target.
+///
+/// A batch that declares no worktree at all yields exactly one group holding
+/// every pane in order - byte-for-byte the layout `up` has always built.
+pub(crate) fn group_up_panes_by_worktree(
+    worktrees: &[Option<String>],
+) -> Vec<(Option<String>, Vec<usize>)> {
+    let mut unbound: Vec<usize> = Vec::new();
+    // Insertion-ordered rather than a map: the tab order must follow the order
+    // the panes were declared in, which is the order the conductor wrote them.
+    let mut bound: Vec<(String, Vec<usize>)> = Vec::new();
+    for (idx, worktree) in worktrees.iter().enumerate() {
+        match worktree {
+            None => unbound.push(idx),
+            Some(path) => match bound.iter_mut().find(|(known, _)| known == path) {
+                Some((_, panes)) => panes.push(idx),
+                None => bound.push((path.clone(), vec![idx])),
+            },
+        }
+    }
+
+    let mut groups: Vec<(Option<String>, Vec<usize>)> = Vec::with_capacity(bound.len() + 1);
+    if !unbound.is_empty() {
+        groups.push((None, unbound));
+    }
+    groups.extend(bound.into_iter().map(|(path, panes)| (Some(path), panes)));
+    groups
+}
+
 fn fire_turn_end_notification(
     agent: TerminalAgent,
     workspace_title: &str,
@@ -1820,10 +1860,19 @@ impl PaneFlowApp {
         // these panes - the workspace records ownership so close tears them
         // down (US-009) and session restore keeps the record across a crash.
         let mut managed_worktrees: Vec<crate::workspace::worktree::ManagedWorktree> = Vec::new();
+        // Which worktree each pane belongs to, by pane index. Kept parallel to
+        // `planned` rather than folded into the flat ownership list above: the
+        // tab split below needs the pane-to-checkout mapping, and reading it
+        // back from cwd prefixes would guess where the spec already states it.
+        let mut pane_worktrees: Vec<Option<String>> = Vec::with_capacity(pane_specs.len());
         let mut planned: Vec<PlannedPane> = Vec::with_capacity(pane_specs.len());
         for (i, spec) in pane_specs.iter().enumerate() {
-            if let Some(mw) = parse_managed_worktree(spec.get("managed_worktree")) {
-                managed_worktrees.push(mw);
+            match parse_managed_worktree(spec.get("managed_worktree")) {
+                Some(mw) => {
+                    pane_worktrees.push(Some(mw.path.to_string_lossy().into_owned()));
+                    managed_worktrees.push(mw);
+                }
+                None => pane_worktrees.push(None),
             }
             match parse_workspace_pane_plan(spec) {
                 Ok(plan) => planned.push(plan),
@@ -1886,15 +1935,56 @@ impl PaneFlowApp {
         }
 
         let focus_idx = planned.iter().position(|p| p.focus).unwrap_or(0);
-        let Some(tree) = build_up_layout(preset, panes, focus_idx) else {
-            return JsonRpcError::invalid_params("could not build layout from panes").into_value();
-        };
 
-        let ws_cwd = planned
+        // Discussion #41: one tab per worktree. With no worktree declared this
+        // is a single group holding every pane, so the layout is the one `up`
+        // has always built.
+        let groups = group_up_panes_by_worktree(&pane_worktrees);
+        let mut tabs: Vec<crate::workspace::Tab> = Vec::with_capacity(groups.len());
+        let mut active_tab = 0;
+        for (tab_idx, (worktree, pane_idxs)) in groups.iter().enumerate() {
+            if pane_idxs.contains(&focus_idx) {
+                active_tab = tab_idx;
+            }
+            let group_panes: Vec<Entity<Pane>> =
+                pane_idxs.iter().map(|i| panes[*i].clone()).collect();
+            // The focused pane's position WITHIN this tab: `main_vertical`
+            // promotes it, and a global index would promote the wrong pane.
+            let local_focus = pane_idxs.iter().position(|i| *i == focus_idx).unwrap_or(0);
+            let Some(tree) = build_up_layout(preset, group_panes, local_focus) else {
+                return JsonRpcError::invalid_params("could not build layout from panes")
+                    .into_value();
+            };
+            // A worktree tab is named by its branch, at the weakest title rank
+            // so the agent's own session title still replaces it.
+            let title = worktree
+                .as_ref()
+                .and_then(|path| {
+                    managed_worktrees
+                        .iter()
+                        .find(|mw| mw.path.to_string_lossy() == path.as_str())
+                        .map(|mw| mw.branch.clone())
+                })
+                .unwrap_or_default();
+            tabs.push(crate::workspace::Tab::restored(
+                title,
+                paneflow_config::schema::TabTitleSource::Preset,
+                Some(tree),
+                worktree.as_ref().map(std::path::PathBuf::from),
+            ));
+        }
+
+        // The workspace root is the checkout the unbound panes are in, so a
+        // batch that puts every agent in its own worktree still roots the
+        // workspace at the repository rather than at whichever worktree came
+        // first.
+        let ws_cwd = groups
             .iter()
-            .find_map(|p| p.cwd.clone())
+            .find(|(worktree, _)| worktree.is_none())
+            .and_then(|(_, pane_idxs)| pane_idxs.iter().find_map(|i| planned[*i].cwd.clone()))
+            .or_else(|| planned.iter().find_map(|p| p.cwd.clone()))
             .unwrap_or_else(crate::launch_cwd::implicit_launch_cwd);
-        let mut ws = Workspace::with_layout_and_id(ws_id, &name, ws_cwd, tree);
+        let mut ws = Workspace::restored_with_id(ws_id, &name, ws_cwd, tabs, active_tab);
         ws.managed_worktrees = managed_worktrees;
         self.watch_git_dir(&ws);
         Self::spawn_initial_git_stats(ws_id, ws.cwd.clone(), cx);
@@ -3220,6 +3310,16 @@ impl PaneFlowApp {
                 {
                     return JsonRpcError::invalid_params("Surface not found").into_value();
                 }
+                // Discussion #41: a split into a tab bound to a worktree starts
+                // in that worktree. An explicit `cwd` still wins - a conductor
+                // that names a directory means it - but it is confined the same
+                // way, so a bound tab cannot be split into a sibling checkout
+                // by omission.
+                let spawn_cwd = tab.confine_cwd(
+                    spawn_cwd
+                        .clone()
+                        .or_else(|| (!ws.cwd.is_empty()).then(|| PathBuf::from(&ws.cwd))),
+                );
                 let new_terminal = cx.new(|cx| {
                     TerminalView::with_cwd_env_and_profile(
                         ws_id,
@@ -4300,6 +4400,52 @@ mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
     use std::sync::{Arc, mpsc};
+
+    #[test]
+    fn a_batch_without_worktrees_is_the_single_tab_it_has_always_been() {
+        // The regression guard for the split below: `up` must not grow a second
+        // tab for a plain batch, and the pane order inside it is the order the
+        // conductor declared - `surface_ids` in the response are keyed on it.
+        let groups = group_up_panes_by_worktree(&[None, None, None]);
+        assert_eq!(groups, vec![(None, vec![0, 1, 2])]);
+        assert_eq!(group_up_panes_by_worktree(&[]), vec![]);
+    }
+
+    #[test]
+    fn each_worktree_gets_its_own_tab_in_declaration_order() {
+        let wt = |p: &str| Some(p.to_string());
+        // Two agents on one worktree share its tab; the shell that stayed in
+        // the main checkout keeps the workspace's own tab, which leads.
+        let groups = group_up_panes_by_worktree(&[
+            wt("/r.worktrees/b"),
+            None,
+            wt("/r.worktrees/a"),
+            wt("/r.worktrees/b"),
+        ]);
+        assert_eq!(
+            groups,
+            vec![
+                (None, vec![1]),
+                (wt("/r.worktrees/b"), vec![0, 3]),
+                (wt("/r.worktrees/a"), vec![2]),
+            ],
+            "tab order follows first appearance, not path order"
+        );
+    }
+
+    #[test]
+    fn an_all_worktree_batch_opens_no_empty_main_tab() {
+        let wt = |p: &str| Some(p.to_string());
+        let groups = group_up_panes_by_worktree(&[wt("/r.worktrees/a"), wt("/r.worktrees/b")]);
+        assert_eq!(
+            groups,
+            vec![
+                (wt("/r.worktrees/a"), vec![0]),
+                (wt("/r.worktrees/b"), vec![1])
+            ],
+            "no pane in the main checkout means no tab for it"
+        );
+    }
 
     fn test_ipc_request(method: &str, cancelled: bool) -> crate::ipc::IpcRequest {
         let (response_tx, _response_rx) = mpsc::channel();

@@ -172,9 +172,7 @@ impl PaneFlowApp {
             // Reopening on the snapshot's own folder, not the workspace root:
             // the two are the same today, and asking the data keeps the warm
             // snapshot valid if a dock is ever opened on a subfolder.
-            let cwd = cwd
-                .or_else(|| self.active_workspace().map(|ws| ws.cwd.clone()))
-                .unwrap_or_default();
+            let cwd = cwd.or_else(|| self.active_checkout()).unwrap_or_default();
             self.open_diff_dock_panel(cwd, cx);
         }
     }

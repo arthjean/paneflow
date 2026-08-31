@@ -542,11 +542,13 @@ fn test_tab_title_source_survives_a_roundtrip() {
                     title: "sprint 3".to_string(),
                     title_source: Some(TabTitleSource::User),
                     layout: None,
+                    worktree: None,
                 },
                 TabSession {
                     title: "wire up the parser".to_string(),
                     title_source: Some(TabTitleSource::Prompt),
                     layout: None,
+                    worktree: Some("/home/user/project.worktrees/parser".to_string()),
                 },
             ],
         )],

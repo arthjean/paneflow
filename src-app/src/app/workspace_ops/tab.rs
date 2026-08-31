@@ -51,7 +51,19 @@ impl PaneFlowApp {
             return false;
         };
         let ws_id = ws.id;
-        let cwd = (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd));
+        // The active tab is the one this surface lands in when it is empty (the
+        // palette's own tab, and any tab whose last pane closed), so its
+        // worktree binding decides the cwd. A surface that opens a NEW tab
+        // instead starts unbound, at the workspace root. Reading `ws.cwd`
+        // directly here was the one pane-creation path that bypassed
+        // `Tab::confine_cwd`, which meant an agent picked from the palette in a
+        // bound tab spawned in the wrong checkout.
+        let fills_active_tab =
+            ws.active_tab().root.is_none() && ws.active_tab().saved_layout.is_none();
+        let cwd = fills_active_tab
+            .then(|| ws.active_tab().worktree.clone())
+            .flatten()
+            .or_else(|| (!ws.cwd.is_empty()).then(|| std::path::PathBuf::from(&ws.cwd)));
         // A preset label reaches the sidebar verbatim, and a custom command's
         // name is user input: strip CLI decoration (spinners, zero-width
         // glyphs) the way every other title path does.
@@ -200,12 +212,21 @@ impl PaneFlowApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Discussion #41: a tab bound to a worktree reviews that checkout, so
+        // switching tab inside the active workspace can change what Diff mode
+        // is looking at - which the workspace-switch reconcile below never
+        // covers, because the workspace did not change. The dock needs no help:
+        // it already parks and restores per tab id.
+        let checkout_before = self.active_checkout();
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             ws.set_active_tab(tab_idx);
         }
         if ws_idx == self.active_idx {
             self.workspaces[ws_idx].focus_first(window, cx);
             self.save_session(cx);
+            if self.active_checkout() != checkout_before {
+                self.reconcile_diff_after_workspace_change(cx);
+            }
         } else {
             self.select_workspace(ws_idx, window, cx);
         }
@@ -278,6 +299,10 @@ impl PaneFlowApp {
         // own reconcile never runs: its parked slot (and the terminals in it)
         // would outlive the session it belonged to.
         self.prune_parked_diff_docks();
+        // The closed tab may have been the last reader of a worktree's git
+        // state. The checkout itself is left alone: tearing it down is a
+        // separate, destructive decision.
+        self.prune_worktree_states();
     }
 
     pub(crate) fn handle_close_tab(

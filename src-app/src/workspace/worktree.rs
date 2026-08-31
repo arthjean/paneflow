@@ -142,6 +142,30 @@ pub struct WorktreeEntry {
     pub branch: Option<String>,
 }
 
+/// Display name for a checkout: its branch, or a directory name when HEAD is
+/// detached.
+///
+/// Detached is not an edge case - `git worktree add --detach` leaves that
+/// state, the Codex app creates every one of its worktrees that way, and agent
+/// tooling that lays checkouts out as `<...>/<slug>/<repo>` produces a
+/// directory whose own name is just the repository's, identical for every
+/// worktree. So when the last component repeats the repository's name, the
+/// parent is what actually distinguishes this checkout and the label uses it.
+pub fn checkout_label(branch: Option<&str>, path: &Path, repo_root: &Path) -> String {
+    if let Some(branch) = branch.filter(|b| !b.is_empty()) {
+        return branch.to_string();
+    }
+    let name = path.file_name();
+    if name.is_some()
+        && name == repo_root.file_name()
+        && let Some(parent) = path.parent().and_then(Path::file_name)
+    {
+        return parent.to_string_lossy().into_owned();
+    }
+    name.map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// Filesystem-safe directory name for a branch (`feat/x` → `feat-x`).
 /// Conservative whitelist: anything outside `[A-Za-z0-9._-]` becomes `-`.
 /// Leading/trailing `-` AND `.` are trimmed: a dot-only branch (`.`/`..`)
@@ -279,6 +303,104 @@ pub fn branch_exists(repo_root: &Path, branch: &str) -> bool {
         GIT_DEADLINE,
     )
     .is_ok()
+}
+
+/// Local branches, most recently committed first.
+///
+/// The picker offers branches, not worktrees: a worktree is how git gives a
+/// second branch a directory, and it is the branch the user is choosing
+/// between. Ordering by commit date puts the ones actually being worked on at
+/// the top, where a repository with fifty branches needs them.
+pub fn list_branches(repo_root: &Path) -> Result<Vec<String>, String> {
+    let stdout = run_git(
+        repo_root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "--sort=-committerdate",
+            "refs/heads",
+        ],
+        GIT_DEADLINE,
+    )?;
+    Ok(stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Where a chosen branch's checkout is, or has to be made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchCheckout {
+    /// A worktree already holds the branch - bind to it, create nothing.
+    Existing(PathBuf),
+    /// Nothing holds it yet; this is where its worktree belongs.
+    Create(PathBuf),
+}
+
+/// Resolve a branch to a checkout directory, without touching the filesystem.
+///
+/// Split from [`prepare_branch_checkout`] so the collision rules are testable
+/// without a repository. `Existing` first: git refuses a second worktree on the
+/// same branch, so reusing the one that holds it is the only way selecting an
+/// already-checked-out branch can work at all.
+pub fn plan_branch_checkout(
+    entries: &[WorktreeEntry],
+    repo_root: &Path,
+    branch: &str,
+) -> Result<BranchCheckout, String> {
+    if let Some(entry) = entries
+        .iter()
+        .find(|entry| entry.branch.as_deref() == Some(branch))
+    {
+        return Ok(BranchCheckout::Existing(entry.path.clone()));
+    }
+    let legacy = worktree_dir(repo_root, branch);
+    let path = if entries.iter().any(|entry| entry.path == legacy) {
+        worktree_dir_hashed(repo_root, branch)
+    } else {
+        legacy
+    };
+    if let Some(entry) = entries.iter().find(|entry| entry.path == path) {
+        return Err(format!(
+            "{} exists but holds another branch ({})",
+            path.display(),
+            entry.branch.as_deref().unwrap_or("detached")
+        ));
+    }
+    Ok(BranchCheckout::Create(path))
+}
+
+/// The directory to work in for `branch`: the worktree that already holds it,
+/// or a new sibling worktree checked out from it.
+///
+/// Blocking (two to three git subprocesses, one of them a full checkout) - the
+/// caller runs it through `smol::unblock`.
+///
+/// The result is deliberately NOT recorded as a [`ManagedWorktree`]: teardown
+/// is for the checkouts orchestration creates behind the user's back, and a
+/// directory asked for by name, by hand, is the user's. Nothing here removes
+/// it, and the branch is untouched either way.
+pub fn prepare_branch_checkout(repo_root: &Path, branch: &str) -> Result<PathBuf, String> {
+    let entries = list_worktrees(repo_root)?;
+    match plan_branch_checkout(&entries, repo_root, branch)? {
+        BranchCheckout::Existing(path) => Ok(path),
+        BranchCheckout::Create(path) => {
+            if path.exists() {
+                return Err(format!(
+                    "{} exists but is not a registered worktree; remove it first",
+                    path.display()
+                ));
+            }
+            add_worktree(repo_root, &path, branch, false)?;
+            // Same courtesy `paneflow up` extends its worktrees: a checkout
+            // without the repository's gitignored `.env*` cannot run the app
+            // it holds.
+            copy_env_files(repo_root, &path);
+            Ok(path)
+        }
+    }
 }
 
 /// `git worktree add <path> [-b] <branch>`. `create_branch` chooses between
@@ -436,6 +558,77 @@ mod tests {
     }
 
     #[test]
+    fn a_branch_already_checked_out_is_reused_never_recreated() {
+        let repo = Path::new("/home/a/dev/paneflow");
+        let entries = vec![
+            WorktreeEntry {
+                path: repo.to_path_buf(),
+                branch: Some("main".to_string()),
+            },
+            WorktreeEntry {
+                path: PathBuf::from("/home/a/dev/paneflow.worktrees/feat-x"),
+                branch: Some("feat/x".to_string()),
+            },
+        ];
+        // git refuses a second worktree on one branch, so the only workable
+        // answer for an already-checked-out branch is the checkout it is in -
+        // including the repository's own, which is how selecting `main` unbinds.
+        assert_eq!(
+            plan_branch_checkout(&entries, repo, "feat/x"),
+            Ok(BranchCheckout::Existing(PathBuf::from(
+                "/home/a/dev/paneflow.worktrees/feat-x"
+            )))
+        );
+        assert_eq!(
+            plan_branch_checkout(&entries, repo, "main"),
+            Ok(BranchCheckout::Existing(repo.to_path_buf()))
+        );
+        assert_eq!(
+            plan_branch_checkout(&entries, repo, "chore/rust-1.98"),
+            Ok(BranchCheckout::Create(PathBuf::from(
+                "/home/a/dev/paneflow.worktrees/chore-rust-1.98"
+            )))
+        );
+    }
+
+    #[test]
+    fn a_slug_collision_falls_back_to_the_hashed_dir() {
+        let repo = Path::new("/home/a/dev/paneflow");
+        // `feat/x` and `feat-x` slugify the same; the second one asked for
+        // takes the hashed path rather than the occupied one.
+        let entries = vec![WorktreeEntry {
+            path: worktree_dir(repo, "feat/x"),
+            branch: Some("feat/x".to_string()),
+        }];
+        assert_eq!(
+            plan_branch_checkout(&entries, repo, "feat-x"),
+            Ok(BranchCheckout::Create(worktree_dir_hashed(repo, "feat-x")))
+        );
+    }
+
+    #[test]
+    fn a_registered_checkout_on_the_target_path_is_refused_not_overwritten() {
+        let repo = Path::new("/home/a/dev/paneflow");
+        // Both candidate paths are taken by checkouts of something else (a
+        // detached HEAD names no branch, so neither matches by branch).
+        let entries = vec![
+            WorktreeEntry {
+                path: worktree_dir(repo, "feat/x"),
+                branch: None,
+            },
+            WorktreeEntry {
+                path: worktree_dir_hashed(repo, "feat/x"),
+                branch: None,
+            },
+        ];
+        let planned = plan_branch_checkout(&entries, repo, "feat/x");
+        assert!(
+            planned.is_err(),
+            "a registered checkout on the target path must never be written over: {planned:?}"
+        );
+    }
+
+    #[test]
     fn worktree_dir_is_a_sibling_of_the_repo() {
         let dir = worktree_dir(Path::new("/home/a/dev/paneflow"), "feat/x");
         assert_eq!(dir, PathBuf::from("/home/a/dev/paneflow.worktrees/feat-x"));
@@ -576,5 +769,34 @@ mod tests {
         let dst = tempfile::tempdir().expect("dst");
         let copied = copy_env_files(Path::new("/nonexistent-paneflow-test"), dst.path());
         assert!(copied.is_empty());
+    }
+
+    #[test]
+    fn a_detached_checkout_is_named_by_what_distinguishes_it() {
+        let repo = Path::new("/home/u/dev/paneflow");
+        assert_eq!(
+            checkout_label(Some("feat/login"), Path::new("/wt/feat-login"), repo),
+            "feat/login"
+        );
+        // The layout agent tooling produces: every worktree directory is named
+        // after the repository, so the last component says nothing.
+        assert_eq!(
+            checkout_label(
+                None,
+                Path::new("/home/u/dev/worktrees/paneflow/poplar-plume/paneflow"),
+                repo
+            ),
+            "poplar-plume"
+        );
+        // A directory that already differs is kept as-is.
+        assert_eq!(
+            checkout_label(None, Path::new("/wt/hotfix-42"), repo),
+            "hotfix-42"
+        );
+        // An empty branch is a detached HEAD, not a branch named "".
+        assert_eq!(
+            checkout_label(Some(""), Path::new("/wt/hotfix-42"), repo),
+            "hotfix-42"
+        );
     }
 }

@@ -19,8 +19,8 @@
 
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, Entity, FocusHandle, Focusable,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, ScrollHandle,
-    SharedString, Styled, WeakEntity, Window, div, prelude::*, px, svg,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseUpEvent, ParentElement,
+    ScrollHandle, SharedString, Styled, WeakEntity, Window, deferred, div, prelude::*, px, svg,
 };
 use paneflow_config::schema::{ButtonCommand, PaneFlowConfig, TerminalSurfaceProfile};
 
@@ -28,11 +28,16 @@ use crate::PaneFlowApp;
 use crate::agent_launcher::TerminalAgent;
 use crate::layout::SplitDirection;
 use crate::pane::Pane;
-use crate::settings::components::select_item;
+use crate::settings::components::{select_item, select_menu, with_alpha};
 use crate::ui_primitives::squircle::squircle_fill;
+use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
 /// Title of the surface the picker stands in for, until a preset renames it.
 pub(crate) const PALETTE_TAB_TITLE: &str = "New pane";
+
+/// Width of the picker's column: the preset buttons, the checkout select above
+/// them, and that select's menu all share one edge.
+const PICKER_WIDTH: f32 = 260.0;
 
 /// Where the picked preset lands - and therefore where the card is drawn.
 pub(crate) enum PalettePlacement {
@@ -46,6 +51,25 @@ pub(crate) enum PalettePlacement {
         target: WeakEntity<Pane>,
         direction: SplitDirection,
     },
+}
+
+/// What one row of the branch select points at.
+#[derive(Clone)]
+enum BranchTarget {
+    /// A branch, checked out on demand if nothing holds it yet.
+    Branch(String),
+    /// A checkout with no branch to name it - bound directly, since there is
+    /// no branch to resolve.
+    Checkout(std::path::PathBuf),
+}
+
+/// One row of the branch select.
+struct BranchOption {
+    target: BranchTarget,
+    label: String,
+    selected: bool,
+    /// Whether picking it has to create a worktree first.
+    needs_checkout: bool,
 }
 
 /// The three catalogues the picker projects (US-015). No fourth source, and
@@ -133,6 +157,9 @@ pub(crate) struct PanePaletteState {
     /// a split placement, which hands focus back to its target pane instead.
     pub(crate) restore_focus: Option<FocusHandle>,
     pub(crate) scroll: ScrollHandle,
+    /// Whether the branch menu is up over the presets. Closed on open, so the
+    /// picker always comes up on its presets.
+    pub(crate) branch_picker_open: bool,
 }
 
 impl PaneFlowApp {
@@ -205,6 +232,12 @@ impl PaneFlowApp {
             ws.sidebar_expanded = true;
         }
 
+        // The tab exists before any preset is picked, which is what lets the
+        // worktree be chosen BEFORE the agent's process spawns - the ordering
+        // Cursor and the Codex app both rely on. Refresh the repository's
+        // worktree list now so the header row is populated by the time the eye
+        // reaches it.
+        self.spawn_worktree_listing(ws_idx, cx);
         self.pane_palette = Some(PanePaletteState {
             ws_id,
             placement: PalettePlacement::Tab { tab_id },
@@ -212,6 +245,7 @@ impl PaneFlowApp {
             error: None,
             restore_focus,
             scroll: ScrollHandle::new(),
+            branch_picker_open: false,
         });
         let tab_idx = self.workspaces[ws_idx].active_tab_idx();
         self.focus_workspace_tab(ws_idx, tab_idx, window, cx);
@@ -246,6 +280,9 @@ impl PaneFlowApp {
             error: None,
             restore_focus: None,
             scroll: ScrollHandle::new(),
+            // A split fills an existing tab, whose binding already governs
+            // where its panes start: no worktree row, nothing to unfold.
+            branch_picker_open: false,
         });
         self.pending_palette_focus = true;
         cx.notify();
@@ -348,6 +385,12 @@ impl PaneFlowApp {
             self.pane_palette_set_error("This project is no longer open", cx);
             return;
         };
+        // A pane started now would spawn in the checkout being left behind: the
+        // binding is what decides its cwd, and it is not settled yet.
+        if let Some(branch) = self.branch_checkout_pending.clone() {
+            self.pane_palette_set_error(format!("Checking out {branch}..."), cx);
+            return;
+        }
         let Some(preset) = self.pane_palette_presets(ws_idx).get(idx).cloned() else {
             return;
         };
@@ -406,7 +449,19 @@ impl PaneFlowApp {
             .pane_palette_ws_idx()
             .map_or(0, |ws_idx| self.pane_palette_presets(ws_idx).len());
         let selected = self.pane_palette.as_ref().map_or(0, |p| p.selected);
+        let picker_open = self
+            .pane_palette
+            .as_ref()
+            .is_some_and(|palette| palette.branch_picker_open);
         match event.keystroke.key.as_str() {
+            // The checkout menu is a layer over the list, so Escape folds it
+            // first and only discards the palette once nothing sits above it.
+            "escape" if picker_open => {
+                if let Some(palette) = self.pane_palette.as_mut() {
+                    palette.branch_picker_open = false;
+                }
+                cx.notify();
+            }
             "escape" => self.close_pane_palette(window, cx),
             "enter" => {
                 if selected < len {
@@ -456,7 +511,7 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .gap(px(2.))
-            .w(px(260.))
+            .w(px(PICKER_WIDTH))
             .max_h(px(420.))
             .overflow_y_scroll()
             .track_scroll(&palette.scroll);
@@ -464,17 +519,16 @@ impl PaneFlowApp {
             buttons = buttons.child(self.render_pane_palette_button(idx, preset, palette, ui, cx));
         }
 
-        let mut column = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .child(title)
-            .child(buttons);
+        let mut column = div().flex().flex_col().items_center().child(title);
+        if let Some(row) = self.render_palette_branch_row(palette, ui, cx) {
+            column = column.child(row);
+        }
+        column = column.child(buttons);
         if let Some(error) = &palette.error {
             column = column.child(
                 div()
                     .pt(px(10.))
-                    .max_w(px(260.))
+                    .max_w(px(PICKER_WIDTH))
                     .text_size(px(11.))
                     .text_color(ui.vc_deleted)
                     .child(error.clone()),
@@ -506,6 +560,263 @@ impl PaneFlowApp {
                     .justify_center()
                     .child(column),
             )
+            .into_any_element()
+    }
+
+    /// The palette's tab, as `(ws_idx, tab_idx)`. `None` for a split placement,
+    /// which fills an existing pane rather than a tab of its own.
+    fn pane_palette_tab(&self, palette: &PanePaletteState) -> Option<(usize, usize)> {
+        let PalettePlacement::Tab { tab_id } = &palette.placement else {
+            return None;
+        };
+        let ws_idx = self.pane_palette_ws_idx()?;
+        let tab_idx = self.workspaces[ws_idx]
+            .tabs()
+            .iter()
+            .position(|tab| tab.id == *tab_id)?;
+        Some((ws_idx, tab_idx))
+    }
+
+    /// The tab's branch, as a compact select above the presets.
+    ///
+    /// Branches, not worktrees: a worktree is only how git gives a second
+    /// branch a directory of its own, and what the user is choosing between is
+    /// the branch. Picking one that has no checkout yet makes it - see
+    /// [`PaneFlowApp::bind_tab_to_branch`] - so the choice reads the way it
+    /// does on a forge, where switching branch is one click and where the
+    /// directory lives is not the user's problem.
+    ///
+    /// A control, not a second list: the options live in a floating menu
+    /// anchored under the trigger, so opening it never pushes the presets down
+    /// and its rows never read as another column of launch buttons. Folding
+    /// them into the flow did exactly that - `select_item` cards stacked under
+    /// a bare text header looked like the agent buttons they sat above, and
+    /// the card was suddenly two lists deep.
+    ///
+    /// Here rather than in the tab's context menu because of the ordering every
+    /// product that does this respects: the branch is chosen BEFORE the
+    /// agent's process starts. T3 Code prepares the worktree and writes it on
+    /// the thread before dispatching the first turn
+    /// (`apps/server/src/ws.ts`), and rebinding a live session there costs a
+    /// kill and a restart of the provider process
+    /// (`ProviderCommandReactor.ts`, `cwdChanged`). A PTY cannot be resumed
+    /// that way, so Paneflow makes the choice while the tab is still empty and
+    /// leaves running panes alone afterwards.
+    ///
+    /// Only for a tab placement: a split lands in an existing tab, whose own
+    /// binding already governs where its panes start.
+    fn render_palette_branch_row(
+        &self,
+        palette: &PanePaletteState,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let (ws_idx, tab_idx) = self.pane_palette_tab(palette)?;
+        let ws = self.workspaces.get(ws_idx)?;
+        // Outside a repository there is nothing to switch between.
+        let root = ws.repo_root.clone()?;
+        let bound = ws.tabs().get(tab_idx)?.worktree.clone();
+        let listing = self.workspace_worktree_listing(ws_idx);
+        // The branch the tab works on today: the one its worktree holds, or
+        // the repository's own when it is unbound.
+        let on_branch = match bound.as_ref() {
+            Some(path) => listing
+                .iter()
+                .find(|entry| entry.path == *path)
+                .and_then(|entry| entry.branch.clone()),
+            None => Some(self.workspace_checkout_label(ws_idx)),
+        };
+
+        let mut options: Vec<BranchOption> = self
+            .workspace_branches(ws_idx)
+            .iter()
+            .map(|branch| BranchOption {
+                target: BranchTarget::Branch(branch.clone()),
+                label: branch.clone(),
+                selected: on_branch.as_deref() == Some(branch.as_str()),
+                // A branch git already has a directory for costs nothing to
+                // switch to; the others are checked out on the spot.
+                needs_checkout: !listing
+                    .iter()
+                    .any(|entry| entry.branch.as_deref() == Some(branch.as_str())),
+            })
+            .collect();
+        // Detached checkouts have no branch to be listed under, and dropping
+        // them would strand a tab bound to one - the Codex app creates every
+        // worktree of its own that way.
+        options.extend(
+            listing
+                .iter()
+                .filter(|entry| entry.branch.is_none() && entry.path != root)
+                .map(|entry| BranchOption {
+                    label: crate::workspace::worktree::checkout_label(None, &entry.path, &root),
+                    target: BranchTarget::Checkout(entry.path.clone()),
+                    selected: bound.as_deref() == Some(entry.path.as_path()),
+                    needs_checkout: false,
+                }),
+        );
+
+        // What the trigger names: the branch being checked out while git works,
+        // then whatever the tab settled on.
+        let current = self.branch_checkout_pending.clone().or_else(|| {
+            options
+                .iter()
+                .find(|option| option.selected)
+                .map(|option| option.label.clone())
+        });
+        let current = current
+            .or(on_branch)
+            .unwrap_or_else(|| self.workspace_checkout_label(ws_idx));
+        let open = palette.branch_picker_open;
+        let fill = with_alpha(ui.text, 0.05);
+
+        let trigger = squircle_skin(
+            div()
+                .id("palette-branch")
+                .flex_none()
+                .h(px(28.))
+                .px(px(8.))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.))
+                .w(px(PICKER_WIDTH)),
+            "palette-branch-group",
+            ROW_RADIUS,
+            open.then_some(fill),
+            Some(fill),
+        )
+        .cursor(CursorStyle::PointingHand)
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // Toggle the render-time snapshot, not the live flag: the menu's
+        // `on_mouse_up_out` fires on this same release and has already cleared
+        // it, so a live toggle would reopen what the press was closing.
+        .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+            if let Some(palette) = this.pane_palette.as_mut() {
+                palette.branch_picker_open = !open;
+                cx.notify();
+            }
+        }))
+        .child(
+            svg()
+                .size(px(11.))
+                .flex_none()
+                .path("icons/git-branch-sidebar.svg")
+                .text_color(ui.muted),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .overflow_x_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_size(px(11.))
+                .text_color(ui.text)
+                .child(current),
+        )
+        .child(
+            svg()
+                .size(px(11.))
+                .flex_none()
+                .path("icons/chevron-down.svg")
+                .text_color(ui.muted),
+        )
+        .when(open, |trigger| {
+            let mut menu = select_menu("palette-branch-menu", ui)
+                .absolute()
+                .top(px(32.))
+                .left(px(0.))
+                .w(px(PICKER_WIDTH))
+                .occlude()
+                // Dismiss on release for the reason the sidebar's popover does:
+                // the capture-phase `on_mouse_down_out` would close the menu
+                // before a row's own click could bubble.
+                .on_mouse_up_out(
+                    MouseButton::Left,
+                    cx.listener(|this, _: &MouseUpEvent, _w, cx| {
+                        if let Some(palette) = this.pane_palette.as_mut() {
+                            palette.branch_picker_open = false;
+                            cx.notify();
+                        }
+                    }),
+                );
+            for option in options {
+                menu =
+                    menu.child(self.render_palette_branch_option(option, ws_idx, tab_idx, ui, cx));
+            }
+            trigger.child(deferred(menu).with_priority(3))
+        });
+
+        Some(
+            div()
+                .flex_none()
+                .pb(px(10.))
+                .child(trigger)
+                .into_any_element(),
+        )
+    }
+
+    /// One branch in the select's menu: its name, a check when the tab is on
+    /// it, and otherwise a hint when picking it will have to make a checkout.
+    fn render_palette_branch_option(
+        &self,
+        option: BranchOption,
+        ws_idx: usize,
+        tab_idx: usize,
+        ui: crate::theme::UiColors,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let BranchOption {
+            target,
+            label,
+            selected,
+            needs_checkout,
+        } = option;
+        let id = SharedString::from(format!("palette-branch-{label}"));
+        select_item(id, selected, ui)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
+                match target.clone() {
+                    BranchTarget::Branch(branch) => {
+                        this.bind_tab_to_branch(ws_idx, tab_idx, branch, cx)
+                    }
+                    BranchTarget::Checkout(path) => {
+                        this.set_tab_worktree(ws_idx, tab_idx, Some(path), cx)
+                    }
+                }
+                if let Some(palette) = this.pane_palette.as_mut() {
+                    palette.branch_picker_open = false;
+                }
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_x_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis()
+                    .text_color(ui.text)
+                    .child(label),
+            )
+            // One trailing slot, reserved either way so the names stay on one
+            // left edge: the check for where the tab is, and for a branch with
+            // no directory yet the icon for the one this will make.
+            .child(div().w(px(13.)).flex_none().child(if selected {
+                svg()
+                    .size(px(13.))
+                    .path("icons/check.svg")
+                    .text_color(ui.text)
+                    .into_any_element()
+            } else if needs_checkout {
+                svg()
+                    .size(px(13.))
+                    .path("icons/folder-plus.svg")
+                    .text_color(with_alpha(ui.muted, 0.7))
+                    .into_any_element()
+            } else {
+                div().size(px(13.)).into_any_element()
+            }))
             .into_any_element()
     }
 
