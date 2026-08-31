@@ -43,7 +43,6 @@ actions!(
         TerminalPaste,
         ScrollPageUp,
         ScrollPageDown,
-        CloseWindow,
         ToggleZoom,
         LayoutEvenHorizontal,
         LayoutEvenVertical,

@@ -558,13 +558,24 @@ mod tests {
     }
 
     #[test]
-    fn effective_shortcuts_lists_registry_actions_without_defaults() {
+    fn effective_shortcuts_lists_every_registry_action() {
+        // The Shortcuts page can only rebind what it lists, so a registry
+        // action must show up whether or not a default binds it - as
+        // "Unassigned" when nothing does. This used to be asserted against
+        // whichever action happened to have no default (`close_window`, then
+        // `reset_terminal`); both have since been removed or bound, so the
+        // invariant is checked against the registry as a whole instead.
         let entries = effective_shortcuts(&HashMap::new());
-        let close_window = entries
+        let listed: HashSet<&str> = entries.iter().map(|e| e.action_name).collect();
+        let missing: Vec<&str> = ACTIONS
             .iter()
-            .find(|e| e.action_name == "close_window")
-            .expect("registry action should be visible in shortcuts settings");
-        assert_eq!(close_window.key, "Unassigned");
+            .map(|meta| meta.name)
+            .filter(|name| !listed.contains(name))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "registry actions absent from the shortcuts settings list: {missing:?}"
+        );
     }
 
     #[test]

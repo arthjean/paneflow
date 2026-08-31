@@ -1809,19 +1809,11 @@ impl Render for PaneFlowApp {
             .on_action(cx.listener(Self::handle_ws7))
             .on_action(cx.listener(Self::handle_ws8))
             .on_action(cx.listener(Self::handle_ws9))
-            .on_action(
-                cx.listener(|this: &mut Self, _: &CloseWindow, _window, cx| {
-                    this.save_session_blocking(cx);
-                    this.emit_app_exited_and_flush();
-                    cx.quit();
-                }),
-            )
-            // US-012: macOS menu-bar actions. `Quit` mirrors `CloseWindow`;
-            // `About` opens the in-app About dialog. `Copy` / `Paste`
-            // delegate to the existing terminal clipboard actions so Edit >
-            // Copy works when a terminal pane is focused (matches the ⌘C
-            // keybinding from US-010). `SelectAll` is a no-op until the
-            // terminal exposes a select-all action.
+            // US-012: macOS menu-bar actions. `About` opens the in-app About
+            // dialog. `Copy` / `Paste` delegate to the existing terminal
+            // clipboard actions so Edit > Copy works when a terminal pane is
+            // focused (matches the ⌘C keybinding from US-010). `SelectAll` is
+            // a no-op until the terminal exposes a select-all action.
             .on_action(cx.listener(|this: &mut Self, _: &Quit, _window, cx| {
                 this.save_session_blocking(cx);
                 this.emit_app_exited_and_flush();

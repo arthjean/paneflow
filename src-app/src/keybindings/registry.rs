@@ -7,10 +7,10 @@
 use gpui::Action;
 
 use crate::{
-    ClearScrollHistory, ClosePane, CloseTab, CloseWindow, CloseWorkspace, CopyWorkspacePath,
-    DismissSearch, FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextPrompt, JumpNextWaiting,
-    JumpPrevPrompt, LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled,
-    MarkdownCopy, MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
+    ClearScrollHistory, ClosePane, CloseTab, CloseWorkspace, CopyWorkspacePath, DismissSearch,
+    FocusDown, FocusLeft, FocusRight, FocusUp, JumpNextPrompt, JumpNextWaiting, JumpPrevPrompt,
+    LayoutEvenHorizontal, LayoutEvenVertical, LayoutMainVertical, LayoutTiled, MarkdownCopy,
+    MarkdownFindDismiss, MarkdownFindNext, MarkdownFindOpen, MarkdownFindPrev,
     MarkdownScrollPageDown, MarkdownScrollPageUp, NewTab, NewWorkspace, NextTab, NextWorkspace,
     OpenWorkspaceInCursor, OpenWorkspaceInVsCode, OpenWorkspaceInWindsurf, OpenWorkspaceInZed,
     PreviousTab, Quit, ResetTerminal, RevealWorkspaceInFileManager, ScrollPageDown, ScrollPageUp,
@@ -335,13 +335,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         context: "Terminal",
         description: "Jump to next prompt",
         group: ShortcutGroup::Terminal,
-    },
-    ActionMeta {
-        name: "close_window",
-        factory: || Box::new(CloseWindow),
-        context: "",
-        description: "Close window",
-        group: ShortcutGroup::Application,
     },
     ActionMeta {
         name: "toggle_zoom",

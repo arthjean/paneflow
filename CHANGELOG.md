@@ -76,6 +76,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Removed
 
+- The "Close window" shortcut action is gone. Paneflow only ever opens one
+  window, and the action ran exactly the same code as Quit, so it was a second
+  name for quitting that no default bound and no menu offered. The window's own
+  close button and the window manager still close it.
+
 - The Alacritty terminal backend and the `terminal.backend` setting are gone.
   There is no second parser and no runtime fallback: a `"backend"` key left in
   `paneflow.json` is ignored, and a Ghostty startup failure is now reported in
