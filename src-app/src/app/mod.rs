@@ -26,6 +26,7 @@ pub mod launch_pad;
 pub mod notifications;
 pub mod pane_palette;
 pub mod profile_menu;
+pub mod pull_request;
 pub mod self_update_flow;
 pub mod session;
 pub mod sessions_sidebar;

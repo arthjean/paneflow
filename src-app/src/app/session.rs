@@ -114,6 +114,10 @@ impl PaneFlowApp {
                             teardown: wt.teardown.as_str().to_string(),
                         })
                         .collect(),
+                    // Folding a rail row survives a restart: reopening ten
+                    // folders you had deliberately closed is exactly the chore
+                    // the fold was avoiding.
+                    sidebar_collapsed: !ws.sidebar_expanded,
                 })
                 .collect(),
             // Persist the live UI mode so the restore branch reopens
@@ -420,6 +424,7 @@ impl PaneFlowApp {
                 Workspace::restored_with_id(ws_id, title.clone(), cwd, tabs, ws_session.active_tab);
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
+            workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
             // EP-002 (orchestration-v2): rehydrate worktree ownership so the
             // close-time teardown still applies after a restart.
             workspace.managed_worktrees = ws_session
