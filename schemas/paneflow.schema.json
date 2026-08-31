@@ -95,6 +95,33 @@
       "description": "Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. Default false.",
       "default": false
     },
+    "sidebar_show": {
+      "type": ["object", "null"],
+      "description": "What the workspaces rail shows beyond a row's name. Everything off is the default rail.",
+      "additionalProperties": false,
+      "properties": {
+        "branch": {
+          "type": ["boolean", "null"],
+          "description": "Show a session tab's git branch: its bound worktree's, or its workspace's when the tab is unbound. Default false.",
+          "default": false
+        },
+        "diffstat": {
+          "type": ["boolean", "null"],
+          "description": "Show that same checkout's insertion and deletion counts. Default false.",
+          "default": false
+        },
+        "pr": {
+          "type": ["boolean", "null"],
+          "description": "Mark a branch that already has a pull request: its icon becomes the pull-request glyph, colored by the request's state. Needs the 'gh' CLI, and answers for GitHub remotes only. Default false.",
+          "default": false
+        },
+        "indent_guide": {
+          "type": ["boolean", "null"],
+          "description": "Draw a hairline under a workspace's folder icon, running down its tab rows. Default false.",
+          "default": false
+        }
+      }
+    },
     "window_decorations": {
       "type": ["string", "null"],
       "description": "Window decoration mode. 'client' = client-side decorations (custom title bar). 'server' = server-side decorations (compositor-drawn). Read once at startup; changes require a restart.",

@@ -8,6 +8,7 @@
 //! remain in `main.rs` because they cross module boundaries.
 
 pub(crate) mod context_menu;
+pub(crate) mod customize_menu;
 
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
@@ -219,6 +220,36 @@ fn sidebar_row_shell() -> gpui::Div {
         .gap(px(SIDEBAR_ROW_GAP))
 }
 
+/// The hairline that ties a workspace's tab rows to the folder above them.
+///
+/// Centered on the folder icon's slot rather than inset from the row's edge:
+/// what the line stands under is that glyph, which is also where the tab rows
+/// align their own leading slot. Painted before the row, so a selected row's
+/// fill covers it instead of the line cutting across the card.
+///
+/// One segment per row rather than one line for the group: the rail is a flat
+/// list of rows - that is what the drop dividers between them address - so
+/// there is no element spanning a workspace's tabs to hang a single line on.
+/// The rows are contiguous, so the segments read as one line.
+fn render_sidebar_indent_guide(ui: crate::theme::UiColors, interrupted: bool) -> Vec<gpui::Div> {
+    let color = ui.text.opacity(0.08);
+    let left = px(SIDEBAR_ROW_PADDING_X + (SIDEBAR_FOLDER_ICON_WIDTH / 2.).floor());
+    let segment = move || div().absolute().left(left).w(px(1.)).bg(color);
+    if !interrupted {
+        return vec![segment().top_0().bottom_0()];
+    }
+    // A row whose agent badge sits in that same column breaks the line rather
+    // than letting it run under the glyph: the spinner is a moving mark, and a
+    // hairline crossing it reads as part of it. The gap is the badge's own
+    // slot, so the line resumes exactly where the glyph ends.
+    let center = SIDEBAR_ROW_PADDING_Y + SIDEBAR_ROW_LINE_HEIGHT / 2.;
+    let radius = SIDEBAR_AGENT_ICON_SLOT_WIDTH / 2.;
+    vec![
+        segment().top_0().h(px(center - radius)),
+        segment().top(px(center + radius)).bottom_0(),
+    ]
+}
+
 /// A rail row: the shared continuous-corner skin, with `body` on top.
 fn squircle_row(
     shell: gpui::Stateful<gpui::Div>,
@@ -370,6 +401,19 @@ fn visible_service_ports(
         .copied()
         .filter(|port| service_labels.contains_key(port))
         .collect()
+}
+
+/// Whether a tab row prints its insertion and deletion counts.
+///
+/// Two ways to get nothing: the switch is off, or the checkout is clean. The
+/// counts answer "how much has changed here", and when the answer is none the
+/// question was never asked - a permanent "0" would spend a slot on the rows
+/// with the least to say.
+fn tab_diffstat_visible(
+    show: paneflow_config::schema::SidebarShow,
+    stats: &crate::workspace::GitDiffStats,
+) -> bool {
+    show.diffstat_enabled() && (stats.insertions > 0 || stats.deletions > 0)
 }
 
 fn sidebar_service_summary(
@@ -672,40 +716,61 @@ impl PaneFlowApp {
                         .text_color(ui.muted)
                         .child("Workspaces"),
                 )
-                .child({
-                    // The header action is skinned as a rail row, not as its
-                    // own control: same hover tint and same continuous corner,
-                    // so it reads as part of the list it heads.
-                    let hover_bg = crate::app::constants::sidebar_tab_hover_background();
-                    squircle_skin(
-                        div()
-                            .id("sidebar-new-workspace")
-                            .size(px(28.))
-                            .flex()
-                            .items_center()
-                            .justify_center(),
-                        "sidebar-new-workspace-group",
-                        ROW_RADIUS,
-                        None,
-                        Some(hover_bg),
-                    )
-                    .delayed_tooltip(move |_w, cx| {
-                        cx.new(|_| SidebarTooltip {
-                            label: new_workspace_tooltip.clone().into(),
-                        })
-                        .into()
-                    })
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.create_workspace_with_picker(window, cx);
-                    }))
-                    .child(
-                        svg()
-                            .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
-                            .flex_none()
-                            .path("icons/folder-plus.svg")
-                            .text_color(ui.muted),
-                    )
-                }),
+                .child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        // Tight enough that the pair reads as one trailing
+                        // cluster rather than as two unrelated controls.
+                        .gap(px(2.))
+                        .child(customize_menu::render_customize_sidebar_button(
+                            customize_menu::CustomizeMenuState {
+                                open: self.sidebar_customize_menu_open,
+                                submenu_open: self.sidebar_show_submenu_open,
+                                show: self.cached_config.sidebar_show,
+                                all_expanded: self.all_workspaces_expanded(),
+                            },
+                            SIDEBAR_FOLDER_ICON_WIDTH,
+                            ui,
+                            cx,
+                        ))
+                        .child({
+                            // The header action is skinned as a rail row, not as its
+                            // own control: same hover tint and same continuous corner,
+                            // so it reads as part of the list it heads.
+                            let hover_bg = crate::app::constants::sidebar_tab_hover_background();
+                            squircle_skin(
+                                div()
+                                    .id("sidebar-new-workspace")
+                                    .size(px(28.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center(),
+                                "sidebar-new-workspace-group",
+                                ROW_RADIUS,
+                                None,
+                                Some(hover_bg),
+                            )
+                            .delayed_tooltip(move |_w, cx| {
+                                cx.new(|_| SidebarTooltip {
+                                    label: new_workspace_tooltip.clone().into(),
+                                })
+                                .into()
+                            })
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                                this.create_workspace_with_picker(window, cx);
+                            }))
+                            .child(
+                                svg()
+                                    .size(px(SIDEBAR_FOLDER_ICON_WIDTH))
+                                    .flex_none()
+                                    .path("icons/folder-plus.svg")
+                                    .text_color(ui.muted),
+                            )
+                        }),
+                ),
         );
 
         // Workspace list - scrollable area. Wheel-scroll comes from
@@ -806,6 +871,24 @@ impl PaneFlowApp {
             }
         }
         rows
+    }
+
+    /// Whether every workspace that has rows to show is unfolded.
+    ///
+    /// `None` when none of them has any: an empty shell shows no child row
+    /// whether it is folded or not, so counting it would offer a "Collapse
+    /// all" that visibly does nothing.
+    fn all_workspaces_expanded(&self) -> Option<bool> {
+        let mut rows_somewhere = false;
+        let mut all = true;
+        for ws in &self.workspaces {
+            if ws.is_empty_shell() {
+                continue;
+            }
+            rows_somewhere = true;
+            all &= ws.sidebar_expanded;
+        }
+        rows_somewhere.then_some(all)
     }
 
     fn render_workspace_rows(
@@ -1433,7 +1516,27 @@ impl PaneFlowApp {
                 }
             }));
 
-        let row = squircle_row(row_shell, tab_group, resting_bg, hovered_bg, title_row);
+        // The rail's optional second line (branch, diffstat). Built as a column
+        // only when that line exists, so with both switches off the row is the
+        // single-line row it has always been - same height, same geometry,
+        // nothing reserved.
+        let body = match self.render_tab_checkout_meta(
+            ws,
+            tab,
+            SIDEBAR_FOLDER_ICON_WIDTH + SIDEBAR_TITLE_ROW_GAP,
+            ui,
+        ) {
+            Some(meta) => div()
+                .flex()
+                .flex_col()
+                .gap(px(SIDEBAR_ROW_GAP))
+                .child(title_row)
+                .child(meta)
+                .into_any_element(),
+            None => title_row.into_any_element(),
+        };
+
+        let row = squircle_row(row_shell, tab_group, resting_bg, hovered_bg, body);
 
         div()
             .id(SharedString::from(format!("tab-drop-{tab_id}")))
@@ -1441,7 +1544,14 @@ impl PaneFlowApp {
             .flex_none()
             .flex()
             .flex_col()
+            // The indent hairline is absolute against this box, so it spans a
+            // row whether that row grew a second line or not.
+            .relative()
             .rounded(ROW_RADIUS)
+            .when(
+                self.cached_config.sidebar_show.indent_guide_enabled(),
+                |el| el.children(render_sidebar_indent_guide(ui, row_agent_status.is_some())),
+            )
             .child(row)
     }
 
@@ -1451,9 +1561,10 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        // Detected services only. Neither the git branch nor a diffstat is
-        // rendered in the rail: both crowded the row for little signal, and the
-        // Diff view is where change counts belong.
+        // Detected services only. The branch and the diffstat belong to the tab
+        // rows below (discussion #41): a workspace is one folder, so its branch
+        // is a near-constant line, while a tab bound to a worktree is precisely
+        // the thing a branch tells apart from its siblings.
         let service = sidebar_service_summary(&ws.active_ports, &ws.service_labels)?;
         let mut meta_row = div()
             .flex()
@@ -1468,96 +1579,278 @@ impl PaneFlowApp {
             .text_xs()
             .text_color(ui.muted);
 
-        let port = service.primary;
-        let workspace_id = ws.id;
-        let info = ws.service_labels.get(&port);
-        let is_frontend = info.is_some_and(|service| service.is_frontend);
-        let service_name = info
-            .and_then(|service| service.label.clone())
-            .unwrap_or_else(|| "Local service".to_string());
-        let service_tooltip: SharedString = format!("{service_name}  :{port}").into();
+        {
+            let port = service.primary;
+            let workspace_id = ws.id;
+            let info = ws.service_labels.get(&port);
+            let is_frontend = info.is_some_and(|service| service.is_frontend);
+            let service_name = info
+                .and_then(|service| service.label.clone())
+                .unwrap_or_else(|| "Local service".to_string());
+            let service_tooltip: SharedString = format!("{service_name}  :{port}").into();
 
-        if is_frontend {
-            let url = info
-                .and_then(|service| service.url.clone())
-                .unwrap_or_else(|| format!("http://localhost:{port}"));
-            meta_row = meta_row.child(
-                div()
-                    .id(SharedString::from(format!("port-{workspace_id}-{port}")))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(2.))
-                    .text_size(px(10.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ui.muted)
-                    .hover(move |style| style.text_color(ui.text))
-                    .delayed_tooltip({
-                        let label = service_tooltip.clone();
-                        move |_w, cx| {
-                            cx.new(|_| SidebarTooltip {
-                                label: label.clone(),
-                            })
-                            .into()
-                        }
-                    })
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                        this.open_workspace_service_url(&url, cx);
-                        cx.stop_propagation();
-                    }))
-                    .child(
-                        svg()
-                            .size(px(10.))
-                            .flex_none()
-                            .path("icons/world.svg")
-                            .text_color(ui.muted),
-                    )
-                    .child(format!(":{port}")),
-            );
-        } else {
-            meta_row = meta_row.child(
-                div()
-                    .id(SharedString::from(format!(
-                        "port-{workspace_id}-{port}-info"
-                    )))
-                    .text_size(px(10.))
-                    .text_color(ui.muted)
-                    .delayed_tooltip({
-                        let label = service_tooltip.clone();
-                        move |_w, cx| {
-                            cx.new(|_| SidebarTooltip {
-                                label: label.clone(),
-                            })
-                            .into()
-                        }
-                    })
-                    .child(format!(":{port}")),
-            );
-        }
-
-        if service.overflow > 0 {
-            let overflow = service.overflow;
-            meta_row = meta_row.child(
-                div()
-                    .id(SharedString::from(format!("ports-{workspace_id}-overflow")))
-                    .flex_none()
-                    .text_size(px(10.))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(ui.muted)
-                    .delayed_tooltip(move |_w, cx| {
-                        cx.new(|_| SidebarTooltip {
-                            label: format!(
-                                "{overflow} more services · Right-click workspace to view"
-                            )
-                            .into(),
+            if is_frontend {
+                let url = info
+                    .and_then(|service| service.url.clone())
+                    .unwrap_or_else(|| format!("http://localhost:{port}"));
+                meta_row = meta_row.child(
+                    div()
+                        .id(SharedString::from(format!("port-{workspace_id}-{port}")))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(2.))
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(ui.muted)
+                        .hover(move |style| style.text_color(ui.text))
+                        .delayed_tooltip({
+                            let label = service_tooltip.clone();
+                            move |_w, cx| {
+                                cx.new(|_| SidebarTooltip {
+                                    label: label.clone(),
+                                })
+                                .into()
+                            }
                         })
-                        .into()
-                    })
-                    .child(format!("+{overflow}")),
-            );
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.open_workspace_service_url(&url, cx);
+                            cx.stop_propagation();
+                        }))
+                        .child(
+                            svg()
+                                .size(px(10.))
+                                .flex_none()
+                                .path("icons/world.svg")
+                                .text_color(ui.muted),
+                        )
+                        .child(format!(":{port}")),
+                );
+            } else {
+                meta_row = meta_row.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "port-{workspace_id}-{port}-info"
+                        )))
+                        .text_size(px(10.))
+                        .text_color(ui.muted)
+                        .delayed_tooltip({
+                            let label = service_tooltip.clone();
+                            move |_w, cx| {
+                                cx.new(|_| SidebarTooltip {
+                                    label: label.clone(),
+                                })
+                                .into()
+                            }
+                        })
+                        .child(format!(":{port}")),
+                );
+            }
+
+            if service.overflow > 0 {
+                let overflow = service.overflow;
+                meta_row = meta_row.child(
+                    div()
+                        .id(SharedString::from(format!("ports-{workspace_id}-overflow")))
+                        .flex_none()
+                        .text_size(px(10.))
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(ui.muted)
+                        .delayed_tooltip(move |_w, cx| {
+                            cx.new(|_| SidebarTooltip {
+                                label: format!(
+                                    "{overflow} more services · Right-click workspace to view"
+                                )
+                                .into(),
+                            })
+                            .into()
+                        })
+                        .child(format!("+{overflow}")),
+                );
+            }
         }
 
         Some(meta_row.into_any_element())
+    }
+
+    /// The rail's optional git line: the branch on the left, the diffstat
+    /// pinned right, each behind its own `sidebar_show` switch. Both read what
+    /// the workspace already polls (`git_branch`, `git_stats`, refreshed off
+    /// the render thread by the bootstrap git watcher), so this starts no
+    /// subprocess of its own.
+    ///
+    /// `None` outside a repository, and `None` for a clean checkout with only
+    /// the diffstat on: the counts answer "how much has changed here", and when
+    /// the answer is nothing the question was never asked.
+    /// The checkout a session tab row reports on: its own worktree when the
+    /// tab is bound to one (discussion #41), otherwise its workspace's.
+    ///
+    /// The fallback is what makes the two switches useful before any tab is
+    /// bound: an unbound tab still works in a checkout, it just shares it with
+    /// its siblings. Binding is what makes the line differ between two tabs of
+    /// one workspace; the line itself does not wait for it.
+    ///
+    /// Reads state the off-thread git probes already cache
+    /// ([`crate::app::tab_worktree`]) or the workspace already holds; starts no
+    /// subprocess of its own.
+    /// The branch a tab row stands on, empty for a detached checkout. Keyed on
+    /// by the pull-request marker, which only means something for a branch.
+    fn tab_row_branch(&self, ws: &Workspace, tab: &Tab) -> String {
+        match tab.worktree.as_ref() {
+            Some(_) => self
+                .tab_checkout_git(tab)
+                .map(|git| git.branch.clone())
+                .unwrap_or_default(),
+            None => ws.git_branch.clone(),
+        }
+    }
+
+    fn tab_row_checkout(
+        &self,
+        ws: &Workspace,
+        tab: &Tab,
+    ) -> Option<(String, crate::workspace::GitDiffStats)> {
+        let label = |branch: &str, path: &std::path::Path| {
+            crate::workspace::worktree::checkout_label(Some(branch), path, &ws.worktree_root)
+        };
+        match tab.worktree.as_ref() {
+            Some(path) => {
+                let git = self.tab_checkout_git(tab)?;
+                git.is_repo
+                    .then(|| (label(&git.branch, path), git.stats.clone()))
+            }
+            None => ws.is_git_repo.then(|| {
+                (
+                    label(&ws.git_branch, &ws.worktree_root),
+                    ws.git_stats.clone(),
+                )
+            }),
+        }
+    }
+
+    /// The second line of a session tab row: the branch on the left, the
+    /// diffstat pinned right, each behind its own switch.
+    ///
+    /// `None` when both switches are off - the row is then the single-line row
+    /// it has always been, same height, nothing reserved - and when the tab
+    /// works outside a repository, where neither value exists.
+    fn render_tab_checkout_meta(
+        &self,
+        ws: &Workspace,
+        tab: &Tab,
+        indent: f32,
+        ui: crate::theme::UiColors,
+    ) -> Option<AnyElement> {
+        let show = self.cached_config.sidebar_show;
+        if !show.any_enabled() {
+            return None;
+        }
+        let (label, stats) = self.tab_row_checkout(ws, tab)?;
+        let draw_branch = show.branch_enabled() && !label.is_empty();
+        let draw_counts = tab_diffstat_visible(show, &stats);
+        if !draw_branch && !draw_counts {
+            return None;
+        }
+
+        // A branch already in review is marked by its own glyph rather than by
+        // an extra one: the icon is the row's only spare millimeter, and "this
+        // is a branch" is the least useful thing it can say once you know the
+        // line is a branch. Absent PR, absent marker - the switch turns on the
+        // lookup, not the icon.
+        let pr = show
+            .pr_enabled()
+            .then(|| self.tab_row_branch(ws, tab))
+            .and_then(|branch| {
+                let repo_root = ws.repo_root.as_ref()?;
+                (!branch.is_empty())
+                    .then(|| self.pull_request_for(repo_root, &branch))
+                    .flatten()
+            });
+
+        let branch = draw_branch.then(|| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(3.))
+                .flex_1()
+                .min_w_0()
+                .child(
+                    svg()
+                        .size(px(12.))
+                        .flex_none()
+                        .path(match pr {
+                            Some(_) => "icons/git-pull-request.svg",
+                            None => "icons/git-branch-sidebar.svg",
+                        })
+                        .text_color(match pr {
+                            Some(pr) => pr.state.color(ui),
+                            None => ui.muted,
+                        }),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_x_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        // Same size as the tab's name above it, not the 10 px
+                        // a meta line usually gets: the branch is what tells
+                        // two tabs of one project apart, so it reads as a
+                        // value and not as a caption.
+                        .text_sm()
+                        .text_color(ui.muted)
+                        .child(label),
+                )
+        });
+
+        let counts = draw_counts.then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(5.))
+                // A hair under the branch beside it, deliberately: digits have
+                // no descenders and almost no ascenders, so at one size they
+                // fill the line where the text does not and read as the bigger
+                // of the two. One step is the whole correction - at 11 px they
+                // stopped reading as the same line.
+                .text_size(px(12.))
+                .child(
+                    div()
+                        .text_color(ui.vc_added)
+                        .child(format!("+{}", stats.insertions)),
+                )
+                .child(
+                    div()
+                        .text_color(ui.vc_deleted)
+                        .child(format!("\u{2212}{}", stats.deletions)),
+                )
+        });
+
+        Some(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .justify_end()
+                .gap(px(6.))
+                // Room for the larger type: 14 px clipped the descenders once
+                // the line stopped being a caption.
+                .h(px(SIDEBAR_ROW_LINE_HEIGHT))
+                // Starts under the title, not under the row's leading edge: a
+                // branch beginning at the glyph column reads as a third level
+                // of the tree rather than as a second line of this row.
+                .pl(px(indent))
+                .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+                .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
+                .overflow_x_hidden()
+                .when_some(branch, |row, branch| row.child(branch))
+                .when_some(counts, |row, counts| row.child(counts))
+                .into_any_element(),
+        )
     }
 
     pub(crate) fn sidebar_list_wrapper(
@@ -2038,8 +2331,8 @@ mod tests {
         SIDEBAR_TAB_ICON_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WIDTH, SidebarAgentState,
         SidebarAgentSummary, SidebarDropSlot, SidebarRow, SidebarServiceSummary,
         folder_row_sessions, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
-        sidebar_row_shell, sidebar_service_summary, tab_display_title, tab_icon_cluster_split,
-        tab_row_sessions, visible_service_ports,
+        sidebar_row_shell, sidebar_service_summary, tab_diffstat_visible, tab_display_title,
+        tab_icon_cluster_split, tab_row_sessions, visible_service_ports,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
@@ -2053,6 +2346,37 @@ mod tests {
 
     fn session(state: AgentState) -> AgentSession {
         AgentSession::new(TerminalAgent::ClaudeCode, state)
+    }
+
+    fn show(diffstat: bool) -> paneflow_config::schema::SidebarShow {
+        paneflow_config::schema::SidebarShow {
+            branch: Some(false),
+            diffstat: Some(diffstat),
+            pr: Some(false),
+            indent_guide: Some(false),
+        }
+    }
+
+    fn dirty() -> crate::workspace::GitDiffStats {
+        crate::workspace::GitDiffStats {
+            files_changed: 3,
+            insertions: 142,
+            deletions: 38,
+        }
+    }
+
+    #[test]
+    fn the_diffstat_needs_both_a_switch_and_something_to_report() {
+        let clean = crate::workspace::GitDiffStats::default();
+        assert!(
+            !tab_diffstat_visible(show(false), &dirty()),
+            "the counts are opt-in even on a dirty checkout"
+        );
+        assert!(
+            !tab_diffstat_visible(show(true), &clean),
+            "a clean checkout prints its branch and stops"
+        );
+        assert!(tab_diffstat_visible(show(true), &dirty()));
     }
 
     #[test]

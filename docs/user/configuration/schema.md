@@ -39,6 +39,7 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `cell_width` | number or null | `0.6` | Multiplier, range `0.3` to `2.0`. |
 | `unfocused_pane_opacity` | number or null | `0.7` | Opacity of panes without focus when a workspace has more than one pane, range `0.15` to `1.0`. `1.0` disables the dim. |
 | `reduce_motion` | boolean or null | `false` | Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. |
+| `sidebar_show` | object or null | all off | What a session tab row shows beyond its name: `branch` (boolean) adds its git branch, `diffstat` (boolean) adds its insertion and deletion counts, `pr` (boolean) turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` (boolean) draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
 | `window_decorations` | string or null | `client` | `client` for Paneflow chrome, `server` for OS/compositor chrome. Read at startup. |
 | `window_backdrop` | string or null | `auto` | `auto`, `mica`, `blurred`, `acrylic`, `transparent`, `opaque`, or `off`. Read at startup. |
 | `windows_terminal_material` | boolean or null | `false` | Windows-only terminal background transparency for Mica/blur materials. |
@@ -260,6 +261,12 @@ unconditionally.
   "cell_width": 0.6,
   "unfocused_pane_opacity": 0.7,
   "reduce_motion": false,
+  "sidebar_show": {
+    "branch": false,
+    "diffstat": false,
+    "pr": false,
+    "indent_guide": false
+  },
   "window_decorations": "client",
   "window_backdrop": "auto",
   "windows_terminal_material": false,

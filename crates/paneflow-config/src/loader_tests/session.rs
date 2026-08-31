@@ -11,7 +11,28 @@ fn make_workspace(title: &str, cwd: &str, tabs: Vec<TabSession>) -> WorkspaceSes
         custom_buttons: vec![],
         expanded_paths: vec![],
         managed_worktrees: vec![],
+        sidebar_collapsed: false,
     }
+}
+
+#[test]
+fn a_folded_rail_row_survives_a_restart_and_an_older_file_stays_unfolded() {
+    // The whole point of folding ten folders is not having to fold them again
+    // on the next launch.
+    let mut ws = make_workspace("main", "/home/user/project", vec![]);
+    ws.sidebar_collapsed = true;
+    let json = serde_json::to_string(&ws).unwrap();
+    assert!(json.contains("sidebar_collapsed"));
+    let back: WorkspaceSession = serde_json::from_str(&json).unwrap();
+    assert!(back.sidebar_collapsed);
+
+    // Unfolded is the default and is not written, so a file from a user who
+    // never folds anything gains no key - and a file written before the field
+    // existed restores unfolded, as the rail has always come up.
+    let unfolded = serde_json::to_string(&make_workspace("main", "/p", vec![])).unwrap();
+    assert!(!unfolded.contains("sidebar_collapsed"));
+    let legacy: WorkspaceSession = serde_json::from_str(r#"{"title":"main","cwd":"/p"}"#).unwrap();
+    assert!(!legacy.sidebar_collapsed);
 }
 
 fn make_surface(cwd: &str) -> SurfaceDefinition {

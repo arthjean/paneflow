@@ -327,6 +327,13 @@ pub struct WorkspaceSession {
     /// Additive + optional like `expanded_paths`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub managed_worktrees: Vec<ManagedWorktreeDef>,
+    /// Whether the rail row of this workspace was unfolded at save time.
+    /// Additive and optional: absent in older files and, being written only
+    /// when folded, absent for every workspace of a user who never folds one.
+    /// The rail has always come up unfolded, and that stays the answer when
+    /// the key is missing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub sidebar_collapsed: bool,
 }
 
 /// Migrate a v1 `session.json` in place to the v2 tab shape (US-018).

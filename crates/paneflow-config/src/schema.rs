@@ -82,6 +82,12 @@ mod tests {
             macos_chrome_material: Some(true),
             unfocused_pane_opacity: Some(0.7),
             reduce_motion: Some(false),
+            sidebar_show: SidebarShow {
+                branch: Some(true),
+                diffstat: Some(true),
+                pr: Some(true),
+                indent_guide: Some(true),
+            },
             line_height: Some(1.2),
             cell_width: Some(0.6),
             font_family: Some("Geist Mono".to_string()),
@@ -156,6 +162,11 @@ mod tests {
             object_keys(&serialized),
             schema_top_level,
             "top-level PaneFlowConfig and public JSON Schema drifted"
+        );
+        assert_eq!(
+            object_keys(&serialized["sidebar_show"]),
+            object_keys(&schema["properties"]["sidebar_show"]["properties"]),
+            "SidebarShow and public JSON Schema drifted"
         );
         assert_eq!(
             object_keys(&serialized["terminal"]),
@@ -574,6 +585,48 @@ mod tests {
             Some("One Dark"),
             "siblings survive a malformed AI-access toggle"
         );
+    }
+
+    #[test]
+    fn sidebar_show_is_off_by_default_and_tolerant() {
+        // Both lines were taken out of the rail deliberately; an absent key
+        // must leave them out.
+        let cfg: PaneFlowConfig = serde_json::from_str(r#"{}"#).unwrap();
+        assert!(!cfg.sidebar_show.branch_enabled());
+        assert!(!cfg.sidebar_show.diffstat_enabled());
+        assert!(!cfg.sidebar_show.pr_enabled());
+        assert!(!cfg.sidebar_show.indent_guide_enabled());
+        assert!(!cfg.sidebar_show.any_enabled());
+
+        // Each line is its own switch: one on does not turn the other on.
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"branch": true}}"#).unwrap();
+        assert!(cfg.sidebar_show.branch_enabled());
+        assert!(!cfg.sidebar_show.diffstat_enabled());
+        assert!(cfg.sidebar_show.any_enabled());
+
+        // The pull-request marker replaces the branch icon rather than adding
+        // a line, so on its own it draws nothing.
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"sidebar_show": {"pr": true}}"#).unwrap();
+        assert!(cfg.sidebar_show.pr_enabled());
+        assert!(!cfg.sidebar_show.any_enabled());
+
+        // A malformed field costs that field, never its sibling and never the
+        // rest of the file.
+        let cfg: PaneFlowConfig = serde_json::from_str(
+            r#"{"theme": "One Dark", "sidebar_show": {"branch": "yes", "diffstat": true}}"#,
+        )
+        .unwrap();
+        assert!(!cfg.sidebar_show.branch_enabled());
+        assert!(cfg.sidebar_show.diffstat_enabled());
+        assert_eq!(cfg.theme.as_deref(), Some("One Dark"));
+
+        // A wholly malformed object costs the setting, not the file.
+        let cfg: PaneFlowConfig =
+            serde_json::from_str(r#"{"theme": "One Dark", "sidebar_show": "detailed"}"#).unwrap();
+        assert!(!cfg.sidebar_show.any_enabled());
+        assert_eq!(cfg.theme.as_deref(), Some("One Dark"));
     }
 
     #[test]

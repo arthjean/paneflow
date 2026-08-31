@@ -59,6 +59,10 @@ pub struct PaneFlowConfig {
     /// through `App::set_reduce_motion`, so it hot-reloads.
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub reduce_motion: Option<bool>,
+    /// What the workspaces rail shows beyond a row's name. See [`SidebarShow`].
+    /// Everything off is the rail as it ships.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub sidebar_show: SidebarShow,
     /// Terminal line height multiplier (default: 1.2, valid range: 1.0-2.5).
     #[serde(default, deserialize_with = "lenient_value_or_default")]
     pub line_height: Option<f32>,
@@ -294,6 +298,73 @@ pub struct PaneFlowConfig {
         deserialize_with = "lenient_value_or_default"
     )]
     pub tool_permissions: HashMap<String, ToolPermissionsEntry>,
+}
+
+/// What a tab row of the rail says beyond its name and its activity.
+///
+/// `4f8c982` took the git branch and the diffstat out of the rail because
+/// "both crowded the row for little signal, and the Diff view is where change
+/// counts belong". That holds for a workspace row - one folder, one branch, a
+/// near-constant line - and stops holding on a tab row, where a tab bound to a
+/// git worktree (discussion #41) is told apart from its siblings by exactly
+/// these two values. So they come back here, per line, opt-in, and on the tab
+/// rows rather than on the folder above them.
+///
+/// Both off is the rail as it ships: no second line is built at all, so a row
+/// keeps its geometry rather than reserving a height it does not use.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SidebarShow {
+    /// Show a session tab's branch: its bound worktree's, or its workspace's
+    /// when the tab is unbound. `None` is `false`.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub branch: Option<bool>,
+    /// Show that same checkout's insertion and deletion counts. `None` is
+    /// `false`.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub diffstat: Option<bool>,
+    /// Mark a branch that already has a pull request: its icon becomes the
+    /// pull-request glyph, in GitHub's color for the request's state. Needs
+    /// `gh`, and answers for GitHub remotes only. `None` is `false`.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub pr: Option<bool>,
+    /// Draw a hairline under a workspace's folder icon, running down its tab
+    /// rows, the way a tree view ties children to their parent. `None` is
+    /// `false`.
+    #[serde(default, deserialize_with = "lenient_value_or_default")]
+    pub indent_guide: Option<bool>,
+}
+
+impl SidebarShow {
+    /// Whether the branch line is on. Absent means off.
+    pub fn branch_enabled(&self) -> bool {
+        self.branch.unwrap_or(false)
+    }
+
+    /// Whether the diffstat is on. Absent means off.
+    pub fn diffstat_enabled(&self) -> bool {
+        self.diffstat.unwrap_or(false)
+    }
+
+    /// Whether the pull-request marker is on. Absent means off.
+    pub fn pr_enabled(&self) -> bool {
+        self.pr.unwrap_or(false)
+    }
+
+    /// Whether the rail draws its indent hairline. Absent means off.
+    pub fn indent_guide_enabled(&self) -> bool {
+        self.indent_guide.unwrap_or(false)
+    }
+
+    /// Whether a tab row draws a second line at all.
+    ///
+    /// Neither the pull-request marker nor the indent guide is in here: the
+    /// first replaces the branch icon rather than adding anything, and the
+    /// second draws beside the row instead of inside it. On their own, neither
+    /// gives a row a second line.
+    pub fn any_enabled(&self) -> bool {
+        self.branch_enabled() || self.diffstat_enabled()
+    }
 }
 
 impl PaneFlowConfig {

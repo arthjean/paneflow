@@ -1081,6 +1081,14 @@ struct PaneFlowApp {
     /// time: the picker names it while git works, and refuses to launch a pane
     /// that would otherwise start in the checkout being left behind.
     pub(crate) branch_checkout_pending: Option<String>,
+    /// Pull request of each branch the rail shows, behind the `PR` switch.
+    /// Read through `gh`, cached per (repository, branch).
+    pub(crate) pr_states: crate::app::pull_request::PrStates,
+    /// Whether the rail header's Customize Sidebar popover is up.
+    pub(crate) sidebar_customize_menu_open: bool,
+    /// Whether that popover's "Show" submenu is unfolded. Closing the parent
+    /// folds it, so the menu always reopens collapsed.
+    pub(crate) sidebar_show_submenu_open: bool,
     /// US-010: right-click menu on a sidebar tab row (Rename / Close).
     tab_menu_open: Option<TabContextMenu>,
     /// Pane header context menu (EP-002 US-007), or `None` when closed.
