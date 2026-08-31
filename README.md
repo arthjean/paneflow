@@ -4,6 +4,7 @@
 [![downloads](https://img.shields.io/github/downloads/arthjean/paneflow/total.svg?style=flat&label=downloads&colorA=000000&colorB=000000)](https://github.com/arthjean/paneflow/releases)
 [![license](https://img.shields.io/github/license/arthjean/paneflow?style=flat&label=license&colorA=000000&colorB=000000)](LICENSE)
 [![platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-000000?style=flat&colorA=000000&colorB=000000)](#install)
+[![discord](https://img.shields.io/badge/discord-join-000000?style=flat&colorA=000000&colorB=000000)](https://discord.gg/UqGM29Gvat)
 
 Your agents work in parallel, this keeps them in sight.
 
