@@ -413,6 +413,7 @@ impl PaneFlowApp {
                     tab_session.title.clone(),
                     restored_tab_title_source(tab_session, &ws_session.custom_buttons),
                     root,
+                    restored_tab_worktree(tab_session.worktree.as_deref()),
                 ));
             }
             let mut workspace =
@@ -845,6 +846,22 @@ fn rehydrate_managed_worktree(
         &def.branch,
         &def.teardown,
     )
+}
+
+/// Rehydrate a tab's worktree binding, dropping it when the checkout is gone.
+///
+/// A worktree can be removed between two runs - by `git worktree remove`, by
+/// another Paneflow session tearing down its own, or by hand. Restoring a
+/// binding to a directory that no longer exists would spawn every pane of that
+/// tab into a missing path; dropping it simply returns the tab to unbound,
+/// which is the state it can always fall back to.
+///
+/// Deliberately a plain `is_dir` and no canonicalization: this runs on the
+/// bootstrap path, and a stat is bounded where resolving symlinks across a dead
+/// network mount is not.
+fn restored_tab_worktree(path: Option<&str>) -> Option<PathBuf> {
+    let path = PathBuf::from(path.filter(|p| !p.is_empty())?);
+    path.is_dir().then_some(path)
 }
 
 fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {

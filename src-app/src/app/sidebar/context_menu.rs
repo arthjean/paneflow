@@ -424,12 +424,60 @@ impl PaneFlowApp {
             tab_idx,
             position,
         } = menu;
-        let can_reset_name = self
+        let tab = self
             .workspaces
             .get(ws_idx)
-            .and_then(|ws| ws.tabs().get(tab_idx))
-            .is_some_and(|tab| tab.title_is_user_owned());
-        let rows = if can_reset_name { 3. } else { 2. };
+            .and_then(|ws| ws.tabs().get(tab_idx));
+        let can_reset_name = tab.is_some_and(|tab| tab.title_is_user_owned());
+        let bound = tab.and_then(|tab| tab.worktree.clone());
+        // Discussion #41: the branches this tab can be moved to, one row each,
+        // exactly what the New pane picker offers - a branch with no worktree
+        // yet gets one when it is chosen. The repository's own branch is in
+        // there like any other, and picking it unbinds the tab.
+        let root = self
+            .workspaces
+            .get(ws_idx)
+            .and_then(|ws| ws.repo_root.clone())
+            .unwrap_or_default();
+        let listing = self.workspace_worktree_listing(ws_idx);
+        let on_branch = match bound.as_ref() {
+            Some(path) => listing
+                .iter()
+                .find(|entry| entry.path == *path)
+                .and_then(|entry| entry.branch.clone()),
+            None => Some(self.workspace_checkout_label(ws_idx)),
+        };
+        let mut branches: Vec<(Option<std::path::PathBuf>, String, bool)> = self
+            .workspace_branches(ws_idx)
+            .iter()
+            .map(|branch| {
+                let selected = on_branch.as_deref() == Some(branch.as_str());
+                (None, branch.clone(), selected)
+            })
+            .collect();
+        // A detached checkout is under no branch, and dropping it would strand
+        // a tab already bound to one.
+        branches.extend(
+            listing
+                .iter()
+                .filter(|entry| entry.branch.is_none() && entry.path != root)
+                .map(|entry| {
+                    let label =
+                        crate::workspace::worktree::checkout_label(None, &entry.path, &root);
+                    let selected = bound.as_deref() == Some(entry.path.as_path());
+                    (Some(entry.path.clone()), label, selected)
+                }),
+        );
+        // A single branch is where the tab already works: the section would
+        // only restate it.
+        let show_worktrees = branches.len() > 1;
+        let worktree_rows = if show_worktrees {
+            // The section header and its divider, plus one row per branch.
+            1. + branches.len() as f32
+        } else {
+            0.
+        };
+        let rows = if can_reset_name { 3. } else { 2. } + worktree_rows;
         let menu_height = px(8. + rows * 28.);
         let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
         let close_shortcut = self
@@ -482,6 +530,50 @@ impl PaneFlowApp {
                     cx.stop_propagation();
                 }),
             ))
+            .when(show_worktrees, |menu| {
+                let mut menu = menu.child(context_menu_divider(ui)).child(
+                    div()
+                        .px(px(8.))
+                        .pb(px(4.))
+                        .text_size(px(10.))
+                        .text_color(ui.muted)
+                        .child("Branch"),
+                );
+                for (detached, label, selected) in branches {
+                    let branch = label.clone();
+                    menu = menu.child(
+                        select_item(
+                            SharedString::from(format!("tab-branch-{label}")),
+                            selected,
+                            ui,
+                        )
+                        .cursor(CursorStyle::Arrow)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                            this.tab_menu_open = None;
+                            match detached.clone() {
+                                Some(path) => {
+                                    this.set_tab_worktree(ws_idx, tab_idx, Some(path), cx)
+                                }
+                                None => {
+                                    this.bind_tab_to_branch(ws_idx, tab_idx, branch.clone(), cx)
+                                }
+                            }
+                            cx.stop_propagation();
+                        }))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_x_hidden()
+                                .whitespace_nowrap()
+                                .text_ellipsis()
+                                .text_color(ui.text)
+                                .child(label),
+                        ),
+                    );
+                }
+                menu
+            })
             .into_any_element()
     }
 

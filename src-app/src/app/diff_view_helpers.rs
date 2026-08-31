@@ -76,9 +76,23 @@ impl PaneFlowApp {
         self.workspaces
             .get(self.active_idx)
             .map(|ws| {
+                // Discussion #41: the seed follows the active tab. A tab bound
+                // to a worktree reviews that checkout, so switching tab
+                // switches what Project scope shows - the workspace root is
+                // only the answer for an unbound tab.
+                let tab = ws.active_tab();
+                let (path, branch) = match tab.worktree.as_ref() {
+                    Some(worktree) => (
+                        worktree.clone(),
+                        self.tab_checkout_git(tab)
+                            .map(|git| git.branch.clone())
+                            .unwrap_or_default(),
+                    ),
+                    None => (ws.worktree_root.clone(), ws.git_branch.clone()),
+                };
                 vec![crate::diff::DiffWorktree {
-                    path: ws.worktree_root.clone(),
-                    branch: ws.git_branch.clone(),
+                    path,
+                    branch,
                     workspace_id: Some(ws.id),
                 }]
             })

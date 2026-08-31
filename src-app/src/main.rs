@@ -1072,6 +1072,15 @@ struct PaneFlowApp {
     theme_mode: ThemeMode,
     /// Workflow action menu currently open in the sidebar (`None` = closed).
     workspace_menu_open: Option<WorkspaceContextMenu>,
+    /// Git state of every checkout that is not a workspace root: the worktree
+    /// of each bound tab (discussion #41), plus each repository's worktree
+    /// list for the tab menu's picker. Filled by the same off-thread probes
+    /// that feed `Workspace::git_branch`.
+    pub(crate) worktree_states: crate::app::tab_worktree::WorktreeStates,
+    /// Branch whose worktree is being checked out right now, if any. One at a
+    /// time: the picker names it while git works, and refuses to launch a pane
+    /// that would otherwise start in the checkout being left behind.
+    pub(crate) branch_checkout_pending: Option<String>,
     /// US-010: right-click menu on a sidebar tab row (Rename / Close).
     tab_menu_open: Option<TabContextMenu>,
     /// Pane header context menu (EP-002 US-007), or `None` when closed.
