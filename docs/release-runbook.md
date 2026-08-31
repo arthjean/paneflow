@@ -304,10 +304,23 @@ docker run --rm -it ubuntu:22.04 bash -c '
 '
 
 # Fedora 40 - dnf-repo path
+#
+# There is no hosted `paneflow.repo` descriptor: `/etc/yum.repos.d/paneflow.repo`
+# is written by the RPM's own %post (packaging/rpm/postinst.sh) once a user has
+# installed the .rpm from a GitHub Release. Adding the stream by hand, as below,
+# is what `dnf config-manager --add-repo https://pkg.paneflow.dev/rpm/paneflow.repo`
+# looks like it should do; that URL 404s and always has.
 docker run --rm -it fedora:40 bash -c '
   set -euo pipefail
-  dnf install -y dnf-plugins-core
-  dnf config-manager --add-repo https://pkg.paneflow.dev/rpm/paneflow.repo
+  cat > /etc/yum.repos.d/paneflow.repo <<EOF
+[paneflow]
+name=Paneflow
+baseurl=https://pkg.paneflow.dev/rpm
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://pkg.paneflow.dev/gpg
+EOF
   rpm --import https://pkg.paneflow.dev/gpg
   dnf install -y paneflow
   paneflow --version
