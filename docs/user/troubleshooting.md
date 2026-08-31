@@ -13,7 +13,7 @@ none of these rows match, collect diagnostics before opening an issue.
 
 | Symptom | Platform | Confirm | First fix |
 | --- | --- | --- | --- |
-| GPU or renderer error on launch | Linux | `vulkaninfo --summary` | Install the Vulkan loader and Mesa/NVIDIA Vulkan driver. |
+| GPU or renderer error on launch | Linux | `vulkaninfo --summary`, or **Help > System Info** if Paneflow starts | Install the Vulkan loader and Mesa/NVIDIA Vulkan driver. |
 | Blank window under Wayland | Linux | `vulkaninfo --summary` lists no `VK_KHR_wayland_surface` | Try XWayland, then fix the Vulkan driver. |
 | `NoSupportedDeviceFound` on launch | Windows | `dxdiag` or GPU driver date | Update the GPU driver. Paneflow needs a DirectX 11 feature-level-10+ driver. |
 | Config change ignored | All | Validate `paneflow.json` | Fix the path or JSON syntax. |
@@ -214,10 +214,20 @@ does not match the release asset, download the MSI again from GitHub.
 
 ### What should I include in an issue?
 
+Start with **Help > System Info** in Paneflow. It opens a panel showing
+the Paneflow version and install format, the OS, the display server, the CPU,
+the GPU and its driver, the renderer, and the libghostty version, with a
+**Copy** button that puts the same block on the clipboard as Markdown. It
+contains no project path and no environment dump, so you can read it once and
+paste it into a public issue as is. The bug templates have a slot for it.
+
+If Paneflow does not start, fill the same fields in by hand: the templates
+list the command for each one.
+
 Use the platform template:
 
-- [Linux or macOS bug](https://github.com/arthjean/paneflow/issues/new?template=bug_report.md): OS, architecture, display server, install format, reproduction, and logs.
-- [Windows bug](https://github.com/arthjean/paneflow/issues/new?template=windows-bug-report.md): Windows build, CPU, GPU driver, install format, display environment, logs, and backtrace.
+- [Linux or macOS bug](https://github.com/arthjean/paneflow/issues/new?template=bug_report.md): system info block, reproduction, and logs.
+- [Windows bug](https://github.com/arthjean/paneflow/issues/new?template=windows-bug-report.md): system info block, architecture, install format, display environment, logs, and backtrace.
 
 For Linux or macOS:
 

@@ -59,6 +59,7 @@ mod runtime_paths;
 mod search;
 mod settings;
 mod sidebar_title;
+mod system_info;
 mod telemetry;
 mod terminal;
 pub mod theme;
@@ -1118,6 +1119,9 @@ struct PaneFlowApp {
     closed_panes: Vec<ClosedPaneRecord>,
     /// Whether the "About PaneFlow" dialog is visible.
     show_about_dialog: bool,
+    /// Issue #37: the System Info modal, absent when closed. `Collecting`
+    /// while the background probes run so the click feels instant.
+    system_info_dialog: Option<crate::app::system_info_dialog::SystemInfoDialog>,
     /// Whether the command-palette-style theme picker is visible.
     show_theme_picker: bool,
     /// Typeahead filter for the theme picker (case-insensitive substring).
@@ -1834,6 +1838,14 @@ impl Render for PaneFlowApp {
                     log::debug!("Edit > Select All dispatched (terminal select-all not yet wired)");
                 }),
             )
+            // Issue #37: Help > System Info. The collection needs the window
+            // (GPU adapter) and pushes its blocking probes to the background
+            // executor - see `crate::system_info`.
+            .on_action(
+                cx.listener(|this: &mut Self, _: &ShowSystemInfo, window, cx| {
+                    this.open_system_info_dialog(window, cx);
+                }),
+            )
             .on_action(cx.listener(|_this: &mut Self, _: &OpenHelp, _window, _cx| {
                 if let Err(e) =
                     crate::external_open::open_url("https://github.com/arthjean/paneflow#readme")
@@ -2207,6 +2219,10 @@ impl Render for PaneFlowApp {
 
         if self.show_about_dialog {
             app_content = app_content.child(self.render_about_dialog(cx));
+        }
+
+        if self.system_info_dialog.is_some() {
+            app_content = app_content.child(self.render_system_info_dialog(cx));
         }
 
         if let Some(menu) = self.workspace_menu_open

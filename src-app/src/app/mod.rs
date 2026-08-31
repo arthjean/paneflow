@@ -32,6 +32,7 @@ pub mod sessions_sidebar;
 pub mod settings;
 pub mod sidebar;
 pub mod sidebar_actions_menu;
+pub mod system_info_dialog;
 pub mod telemetry_events;
 pub mod theme_picker;
 pub mod workspace_ops;

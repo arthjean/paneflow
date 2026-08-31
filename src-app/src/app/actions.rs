@@ -86,6 +86,13 @@ actions!(
         Paste,
         SelectAll,
         OpenHelp,
+        // Issue #37 - Help > System Info. Opens a modal showing the
+        // bug-report block (version, install format, OS, display server, CPU,
+        // GPU, renderer, terminal engine) with a Copy button. Dispatched by
+        // the title-bar Help menu on every platform and by the native Help
+        // menu on macOS. Collection lives in `crate::system_info`, the modal
+        // in `crate::app::system_info_dialog`.
+        ShowSystemInfo,
         // US-022 (cmux port 2026-Q2) - markdown pane navigation. Scoped to
         // the `Markdown` key context (root) and `MarkdownSearch` (when the
         // find overlay is open). Defined as separate actions from terminal

@@ -142,7 +142,7 @@ fn is_loopback_host(host: &str) -> bool {
 /// compile-time `consts::ARCH` when no translation is detected or the probe
 /// is unavailable - which is always the case on Linux (no desktop emulation
 /// layer in this threat model).
-fn host_arch() -> &'static str {
+pub(crate) fn host_arch() -> &'static str {
     #[cfg(target_os = "macos")]
     {
         // An x86_64 binary under Rosetta 2 reports `consts::ARCH == "x86_64"`

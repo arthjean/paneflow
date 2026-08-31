@@ -24,8 +24,9 @@ const DOWNLOAD_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(15
 
 /// One-line summary of the install method for log messages - used by the
 /// auto-kickoff gate to keep diagnostic noise low when the running binary
-/// is not auto-updatable.
-fn install_method_label(method: &update::install_method::InstallMethod) -> &'static str {
+/// is not auto-updatable, and by the Help > System Info report
+/// (`crate::system_info`) as its install-format field.
+pub(crate) fn install_method_label(method: &update::install_method::InstallMethod) -> &'static str {
     match method {
         update::install_method::InstallMethod::AppImage { .. } => "appimage",
         update::install_method::InstallMethod::TarGz { .. } => "targz",

@@ -25,29 +25,35 @@ duplicate of a risk we already document.
 
 ## Environment
 
-<!--
-Privacy note: `systeminfo` includes your machine hostname and domain.
-Before pasting output below, scrub anything you'd rather not publish
- -  a hostname redaction is usually enough.
--->
+In Paneflow, open **Help > System Info**, press **Copy**, and paste the
+block here. It reports the version, install format, Windows edition and build,
+CPU, GPU and driver, renderer and terminal engine. It carries no hostname, no
+project path and no environment dump, unlike `systeminfo`.
 
-- **Windows version + build** (required - run `winver` or
-  `systeminfo | Select-String "OS Version"` in PowerShell; expected
-  shape `Windows 11 Pro 23H2 (build 22631.xxxx)` or
-  `Windows 10 Enterprise 1809 (build 17763.xxxx)`):
+<!-- paste the copied block here, replacing the placeholder list below -->
+
+- **Paneflow**:
+- **OS**:
+- **CPU**:
+- **GPU**:
+- **Renderer**:
+- **Terminal engine**:
+
+If Paneflow does not start at all, fill these in by hand instead - `winver`
+for the build, and in PowerShell:
+
+```powershell
+Get-CimInstance Win32_VideoController |
+  Select-Object Name, DriverVersion, DriverDate
+```
+
+(GPU driver dates matter for triaging `NoSupportedDeviceFound` and DX11
+render bugs against the upstream-risks catalog in `docs/WINDOWS.md`.)
+
 - **Architecture** (pick one):
   - [ ] x86_64 (Intel / AMD 64-bit - supported)
   - [ ] ARM64 (Snapdragon X, Surface Pro X - **not in v1**, file
     anyway, we may still accept the report for future reference)
-- **CPU** (e.g. `Intel Core i7-13700H`, `AMD Ryzen 7 7840U`):
-- **GPU + driver** - run in PowerShell:
-  ```powershell
-  Get-CimInstance Win32_VideoController |
-    Select-Object Name, DriverVersion, DriverDate
-  ```
-  (Useful for triaging `NoSupportedDeviceFound` and DX11-related
-  render bugs against the upstream-risks catalog in `docs/WINDOWS.md`.)
-- **PaneFlow version** (`paneflow --version`):
 - **Install format** (pick one):
   - [ ] Signed MSI from GitHub Release (`paneflow-*-x86_64-pc-windows-msvc.msi`)
   - [ ] Built from source (`cargo build --release --target x86_64-pc-windows-msvc`)

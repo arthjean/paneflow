@@ -8,13 +8,22 @@ assignees: []
 
 ## Environment
 
-- **OS + version**:
-- **Architecture**: x86_64 / aarch64 / other:
-- **Display server**: Wayland / X11 / macOS / other:
-- **Desktop environment or window manager**:
-- **Paneflow version** (`paneflow --version`):
-- **Install format**: .deb / .rpm / AppImage / tar.gz / DMG / built from source:
-- **Shell**: bash / zsh / fish / PowerShell / other:
+In Paneflow, open **Help > System Info**, press **Copy**, and paste the
+block here. It reports the version, install format, OS, display server, CPU,
+GPU, renderer and terminal engine, and contains no project path and no
+environment dump.
+
+<!-- paste the copied block here, replacing the placeholder list below -->
+
+- **Paneflow**:
+- **OS**:
+- **Display server**:
+- **CPU**:
+- **GPU**:
+- **Renderer**:
+- **Terminal engine**:
+
+- **Shell** (not collected automatically): bash / zsh / fish / PowerShell / other:
 
 ## Steps to reproduce
 

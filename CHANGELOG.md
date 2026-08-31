@@ -53,6 +53,14 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   keeps extending the selection, instead of stopping at the last visible row.
   Hold `Alt` while dragging for a rectangular (block) selection.
 
+- **Help > System Info** shows a bug report's environment section and copies
+  it with one button: Paneflow version and install format, OS, display server,
+  CPU, GPU and driver, renderer, and libghostty version. It says outright when
+  the GPU is a software rasterizer, which is the answer to most "why is it
+  slow" reports. The panel shows the block before you copy it, because it goes
+  into a public issue: no project path, no environment dump, and the bug
+  templates now have a slot for it.
+
 ### Changed
 
 - The Attention Queue moves from Ctrl+Shift+K to Ctrl+Shift+A (Cmd+Shift+A on

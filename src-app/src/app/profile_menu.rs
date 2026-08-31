@@ -172,6 +172,20 @@ impl PaneFlowApp {
                 cx.stop_propagation();
             })),
         );
+        // Issue #37: the reporter's first step when opening an issue. Sits
+        // under the documentation links and above the About divider, next to
+        // Troubleshooting - the page it completes. The trailing ellipsis
+        // follows the same convention as "Themes…" in the profile menu: the
+        // row opens a surface rather than acting immediately.
+        let system_info = menu_item(
+            "title-bar-help-system-info",
+            "System Info…",
+            Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.title_bar_help_menu_open = None;
+                this.open_system_info_dialog(window, cx);
+                cx.stop_propagation();
+            })),
+        );
         let about = menu_item(
             "title-bar-help-about",
             "About Paneflow",
@@ -200,6 +214,7 @@ impl PaneFlowApp {
                 .child(automations)
                 .child(review)
                 .child(troubleshooting)
+                .child(system_info)
                 .child(
                     div()
                         .mx(px(6.))

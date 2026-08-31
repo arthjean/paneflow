@@ -291,6 +291,16 @@ core-foundation = "0.10"
 raw-window-handle = "0.6"
 cocoa = "0.26"
 objc = "0.2"
+# Issue #37: macOS is the one target where GPUI's `Window::gpu_specs()` returns
+# `None`, so the Help > Copy System Info report reads the adapter from Metal
+# itself. Version 0.3 matches the one wgpu-hal already compiles on macOS, so
+# the resolver dedupes and this adds zero compile units. Only the `MTLDevice`
+# feature is enabled - it is what gates `MTLCopyAllDevices` and `NSArray`
+# indexing, and nothing else in the crate is used.
+objc2-metal = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "MTLDevice",
+] }
 
 # Windows: windows-sys powers the TerminateProcess path in TerminalState::drop
 # (US-004 - prd-windows-port.md). Feature set kept minimal on purpose: adding

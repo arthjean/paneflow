@@ -891,6 +891,7 @@ impl PaneFlowApp {
             swap_source: None,
             closed_panes: Vec::new(),
             show_about_dialog: false,
+            system_info_dialog: None,
             show_theme_picker: false,
             theme_picker_query: String::new(),
             theme_picker_selected_idx: 0,
@@ -1098,6 +1099,7 @@ pub(crate) fn install_macos_menu_bar(cx: &mut gpui::App) {
 
     use crate::{
         About, CloseWorkspace, Copy, NewWorkspace, NextWorkspace, OpenHelp, Paste, Quit, SelectAll,
+        ShowSystemInfo,
     };
 
     cx.set_menus(vec![
@@ -1122,7 +1124,13 @@ pub(crate) fn install_macos_menu_bar(cx: &mut gpui::App) {
         // points to an online doc/repo). Without one, Apple's HIG-conforming
         // users perceive the app as unfinished. "PaneFlow Help" dispatches
         // `OpenHelp` which opens the GitHub README in the default browser.
-        Menu::new("Help").items(vec![MenuItem::action("PaneFlow Help", OpenHelp)]),
+        Menu::new("Help").items(vec![
+            MenuItem::action("PaneFlow Help", OpenHelp),
+            MenuItem::separator(),
+            // Issue #37: the macOS mirror of the title-bar Help entry, so a
+            // reporter reaches it from the menu bar too.
+            MenuItem::action("System Info…", ShowSystemInfo),
+        ]),
     ]);
 }
 
@@ -1140,7 +1148,7 @@ pub(crate) fn install_macos_menu_bar(cx: &mut gpui::App) {
 pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
     use crate::{
         About, CloseWorkspace, Copy, NewWorkspace, NextWorkspace, OpenHelp, PaneFlowApp, Paste,
-        Quit, SelectAll, TerminalCopy, TerminalPaste,
+        Quit, SelectAll, ShowSystemInfo, TerminalCopy, TerminalPaste,
     };
 
     fn with_active_paneflow_window(
@@ -1195,6 +1203,12 @@ pub(crate) fn install_macos_menu_action_fallbacks(cx: &mut gpui::App) {
                 let next = (app.active_idx + 1) % app.workspaces.len();
                 app.select_workspace(next, window, cx);
             }
+        });
+    });
+
+    cx.on_action(|_: &ShowSystemInfo, cx| {
+        with_active_paneflow_window(cx, |app, window, cx| {
+            app.open_system_info_dialog(window, cx);
         });
     });
 

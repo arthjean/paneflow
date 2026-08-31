@@ -85,6 +85,18 @@ fn main() {
     // 1b. Ghostty is the only terminal backend. See `assert_ghostty_target_is_supported`.
     assert_ghostty_target_is_supported();
 
+    // 1c. Issue #37 - `system_info::metal_device_names` calls MTLCopyAllDevices
+    //     through objc2-metal, whose `extern` block for that symbol carries no
+    //     `#[link]` attribute of its own. Metal happens to be linked already by
+    //     wgpu-hal on every macOS build, but relying on another crate's link
+    //     line would turn a future renderer change into a link error here.
+    //     Declaring the framework costs nothing and keeps the dependency
+    //     explicit. Gated on the TARGET os, not on `cfg!`, which in a build
+    //     script describes the host and would miss a cross-compile.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        println!("cargo:rustc-link-lib=framework=Metal");
+    }
+
     // 2. US-008 - stage the AI-hook binaries into a dir that
     //    `assets::Bins` (rust-embed) will ingest.
     let target = std::env::var("TARGET").expect("cargo always sets TARGET for build scripts");
