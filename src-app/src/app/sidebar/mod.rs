@@ -11,7 +11,7 @@ pub(crate) mod context_menu;
 
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
-    Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, FontWeight,
+    Animation, AnimationExt, AnyElement, AppContext, ClickEvent, Context, CursorStyle, FontWeight,
     InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
     SharedString, Styled, Window, div, prelude::*, px, rgb, svg,
 };
@@ -285,6 +285,7 @@ fn sidebar_action_button(
     let active_bg = crate::app::constants::sidebar_tab_active_background();
     div()
         .id(id)
+        .cursor(CursorStyle::PointingHand)
         .flex_none()
         .size(px(SIDEBAR_ACTION_BUTTON_SIZE))
         .flex()
@@ -573,6 +574,9 @@ impl PaneFlowApp {
             .bg(ui.overlay)
             .px_1()
             .rounded_sm()
+            // The row underneath now asks for a pointing hand; a field being
+            // typed into must not inherit it.
+            .cursor(CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
             .child(self.rename_input.clone())
@@ -956,6 +960,13 @@ impl PaneFlowApp {
         let is_expanded = ws.sidebar_expanded;
 
         let row_shell = sidebar_row_shell()
+            // Every row in the rail is a click target - selecting a tab,
+            // opening or folding a workspace - so the pointer says so, the way
+            // the app's other rows already do (`pane_palette`,
+            // `surface_picker`). Set here and not on `sidebar_row_shell`:
+            // `.cursor()` asks GPUI for the view being rendered, and the layout
+            // tests measure a bare shell outside one.
+            .cursor(CursorStyle::PointingHand)
             .id(SharedString::from(format!("ws-{ws_id}")))
             .group(group_name.clone())
             .on_drag(
@@ -1370,6 +1381,13 @@ impl PaneFlowApp {
         );
 
         let row_shell = sidebar_row_shell()
+            // Every row in the rail is a click target - selecting a tab,
+            // opening or folding a workspace - so the pointer says so, the way
+            // the app's other rows already do (`pane_palette`,
+            // `surface_picker`). Set here and not on `sidebar_row_shell`:
+            // `.cursor()` asks GPUI for the view being rendered, and the layout
+            // tests measure a bare shell outside one.
+            .cursor(CursorStyle::PointingHand)
             .id(SharedString::from(format!("tab-row-{tab_id}")))
             .group(tab_group.clone())
             .on_drag(
