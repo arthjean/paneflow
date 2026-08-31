@@ -5,6 +5,8 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-31
+
 ### Added
 
 - Tabs name themselves. A tab opened from the preset picker used to sit in the
@@ -61,6 +63,25 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   into a public issue: no project path, no environment dump, and the bug
   templates now have a slot for it.
 
+- Settings > Shortcuts is nine collapsible groups (Panes, Workspaces, Tabs,
+  Terminal, Search, Diff, Markdown, Agents, Application) declared by the action
+  registry rather than implied by table order, with an expand and collapse all
+  control. A text filter matches the action description and the keystroke, and
+  since chords render as Apple HIG glyphs on macOS every entry also carries an
+  ASCII spelling covering both readings of `secondary`. A key-capture toggle
+  turns the next pressed chord into the filter, which answers "what already owns
+  this chord?". "Reset to defaults" now asks before rewriting every binding.
+
+- Agent status is reported without hooks. An organization can disable Claude
+  Code's hooks wholesale from managed settings (`disableAllHooks`,
+  `allowManagedHooksOnly`), after which the sidebar knew an agent was running
+  and nothing else. Two sources already reaching Paneflow are now read: the
+  pane's own OSC 9;4 and OSC 777 stream, and Claude Code's session registry at
+  `<CLAUDE_CONFIG_DIR|~/.claude>/sessions/<pid>.json`. `AgentStateSource` ranks
+  the three writers Terminal < SessionRegistry < Hook, so a weaker source never
+  talks over a live stronger one and takes over only after 20 s of its silence.
+  Nothing changes on a machine where hooks work.
+
 ### Changed
 
 - The Attention Queue moves from Ctrl+Shift+K to Ctrl+Shift+A (Cmd+Shift+A on
@@ -81,6 +102,37 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   0.16.0 on all three platforms. OSC 7 and the clipboard protocols are now
   decoded by libghostty itself instead of a Paneflow-side router; clipboard
   writes keep the same 100 KiB budget.
+
+- `read_pane` over the MCP bridge returns the screen, not just the scrollback.
+  `surface.read` returned the retained history, which stops at the viewport by
+  design, so a pane running a full-screen TUI (where every agent CLI lives)
+  read as empty. The response is now the history followed by the screen the
+  program is currently painting, read through libghostty's formatter so
+  soft-wrapped lines rejoin. The two halves do not overlap.
+
+- Clicking a `.md` row in the Files sidebar opens it in the diff dock's editor
+  as source, like every other file, instead of spawning a rendered markdown
+  pane. The dock's highlighter already carries the markdown grammars. The
+  markdown drag-to-pane gesture goes with it: a pane accepts a session drag and
+  a pane drag only. Rendered markdown panes still open from a terminal OSC path
+  click and still restore from a session.
+
+- The Files sidebar rail is scoped to the tab that opened it. It was mounted
+  outside any mode branch, so it survived into Review and Settings where its
+  rows open nothing, and a single app-level flag put it in front of every
+  sibling tab.
+
+- macOS: the native window material is dropped in fullscreen, which moves the
+  window onto its own Space with a black backdrop, leaving AppKit's
+  behind-window material nothing to sample and the blur a flat, dead tint.
+  Tiled and maximized windows stay in the desktop Space and keep a live blur.
+
+- macOS: `gpui_macos`'s text system is pinned to `error` in the default log
+  filter, since it emits per-glyph fallback warnings that flooded the default
+  `warn` level during normal rendering. `RUST_LOG=info` still overrides it.
+
+- Building from source now needs Rust 1.98.0, pinned in `rust-toolchain.toml`.
+  Shipped binaries are unaffected.
 
 ### Removed
 
@@ -134,6 +186,36 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   selection, IME and clipboard, focused when the rename opens: it commits on
   `Enter` or when the focus leaves it, cancels on `Escape`, and hands the focus
   back to the active pane. Refs #32.
+
+- Rebinding a shortcut was broken on every platform. A recorded chord was
+  persisted through `Keystroke::to_string()`, the `Display` impl, rather than
+  the `-`-separated syntax `Keystroke::parse` reads back, so a rebind stored a
+  chord no keypress could match while displacing the default it replaced. A
+  binding you rebound in an earlier release is still stored broken: rebind it
+  once to fix it.
+
+- A pane no longer inherits the host terminal's identity. `CommandBuilder` seeds
+  a pane's environment from Paneflow's own and removing a key from the assembled
+  map cannot unset an inherited name, so only an `env_remove` at the spawn
+  boundary fixes it. An inherited `WT_SESSION` makes Claude Code disable OSC 9;4
+  outright and an inherited `TMUX` makes it wrap notifications in multiplexer
+  passthrough libghostty does not unwrap, so launching Paneflow from Windows
+  Terminal or from inside tmux silently lost both channels in every pane. The
+  launching agent session's `CLAUDE_CODE_SESSION_ID` leaked the same way.
+
+- The detached diff dock is keyed on the tab, not the workspace. Two tabs of the
+  same folder shared one dock, so opening it in one tab opened it in its
+  sibling, with that sibling's tabs and last diff snapshot. Closing a background
+  tab also leaked the parked dock and the terminals it held.
+
+- The diff dock clamps its width to the room the main panel has. Opening a right
+  rail narrowed the panel under a dock sized for the wide one and the dock
+  pushed its right edge past the panel's clip. The stored width is now a
+  preference fitted into the live width, and nothing is written back, so the
+  dock returns to full width when the rail closes.
+
+- The mouse encoder no longer clears its motion deduplication on every event, so
+  a program in mouse-tracking mode stops receiving redundant motion reports.
 
 ## [0.9.0] - 2026-08-26
 
