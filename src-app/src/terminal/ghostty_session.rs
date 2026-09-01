@@ -2420,7 +2420,9 @@ fn run_runtime(
 
         // Turns a rate-limited or synchronized-output-held request into a
         // frame without a timer of its own.
-        if let Err(error) = publish_gate.poll(&inner, &mut terminal) {
+        if let Err(error) =
+            publish_gate.poll(&inner, &mut terminal, mailbox.pending_output_count() > 0)
+        {
             if !runtime_failed {
                 let _ = inner
                     .events_tx
@@ -2484,6 +2486,11 @@ fn run_runtime(
                     );
                     queue_service_output_ready(&inner);
                 }
+                // The loop is about to end, so nothing will come back to
+                // publish a change the gate deferred. `ChildExited` is the
+                // teardown barrier consumers wait on: everything the program
+                // wrote has to be on the grid before it goes out.
+                let _ = publish_gate.publish_now(&inner, &mut terminal);
                 let code = i32::try_from(status.exit_code()).unwrap_or(-1);
                 let signal = status.signal().map(str::to_owned);
                 if !child_cleaned {
@@ -2620,6 +2627,11 @@ fn run_runtime(
                     );
                     queue_service_output_ready(&inner);
                 }
+                // The loop is about to end, so nothing will come back to
+                // publish a change the gate deferred. `ChildExited` is the
+                // teardown barrier consumers wait on: everything the program
+                // wrote has to be on the grid before it goes out.
+                let _ = publish_gate.publish_now(&inner, &mut terminal);
                 if child_reaped {
                     child.disarm();
                 }
@@ -3036,9 +3048,10 @@ fn process_output_batch(
             recent_output_pending,
         );
         record_command_marks(inner, &raw_marks);
-        // Rate-limited and held back while the program is mid-redraw: the
-        // runtime loop's `poll` publishes it once both lift.
-        gate.request(inner, terminal)?;
+        // Rate-limited only while more output is already queued, and held back
+        // while the program is mid-redraw: the runtime loop's `poll` publishes
+        // it once both lift.
+        gate.request(inner, terminal, mailbox.pending_output_count() > 0)?;
         if service_output_ready {
             queue_service_output_ready(inner);
         }
@@ -3383,9 +3396,10 @@ impl PublishGate {
         &mut self,
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
+        output_backlog: bool,
     ) -> Result<(), String> {
         self.pending = true;
-        self.poll(inner, terminal)
+        self.poll(inner, terminal, output_backlog)
     }
 
     /// Publish a pending change once its holds have lifted.
@@ -3396,6 +3410,7 @@ impl PublishGate {
         &mut self,
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
+        output_backlog: bool,
     ) -> Result<(), String> {
         if !self.pending {
             return Ok(());
@@ -3405,7 +3420,7 @@ impl PublishGate {
         let synchronized_output = terminal
             .synchronized_output()
             .map_err(|error| error.to_string())?;
-        if !self.decide(synchronized_output, Instant::now()) {
+        if !self.decide(synchronized_output, output_backlog, Instant::now()) {
             return Ok(());
         }
         self.commit(inner, terminal)
@@ -3415,14 +3430,23 @@ impl PublishGate {
     ///
     /// The whole gating rule, with no terminal and no session attached, so it
     /// can be exercised against a synthetic clock.
-    fn decide(&mut self, synchronized_output: bool, now: Instant) -> bool {
+    ///
+    /// `output_backlog` says whether more PTY bytes are already queued behind
+    /// this change. The rate limit exists to stop a program that outruns the
+    /// display from being snapshotted for every frame it will never show, so
+    /// it applies only while that pressure is real. With the queue drained
+    /// there is nothing to coalesce with: holding the frame would just add
+    /// latency to the tail of a burst, and at the end of a program's life it
+    /// would drop its last output entirely, because the runtime loop exits
+    /// without ever coming back to publish it.
+    fn decide(&mut self, synchronized_output: bool, output_backlog: bool, now: Instant) -> bool {
         if !self.pending {
             return false;
         }
         if self.held_by_synchronized_output(synchronized_output, now) {
             return false;
         }
-        now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
+        !output_backlog || now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
     }
 
     /// How long the runtime loop may block before [`Self::poll`] has work.
@@ -4308,7 +4332,7 @@ mod tests {
         gate.pending = true;
         // Keystroke echo lands well past the interval: the rate limit must
         // never add latency to it.
-        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
+        assert!(gate.decide(false, true, origin + MIN_PUBLISH_INTERVAL));
     }
 
     #[test]
@@ -4318,14 +4342,14 @@ mod tests {
         gate.pending = true;
 
         let too_soon = origin + MIN_PUBLISH_INTERVAL - Duration::from_millis(1);
-        assert!(!gate.decide(false, too_soon));
+        assert!(!gate.decide(false, true, too_soon));
         // Still pending, so the loop shortens its block to the remaining gap.
         assert_eq!(
             gate.next_wake(too_soon),
             Some(Duration::from_millis(1)),
             "the loop must wake exactly when the interval expires"
         );
-        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
+        assert!(gate.decide(false, true, origin + MIN_PUBLISH_INTERVAL));
     }
 
     /// A pending change held by DEC 2026 must not spin the runtime loop: the
@@ -4339,7 +4363,7 @@ mod tests {
 
         // Far past the rate limit, so the naive answer would be zero.
         let opened = origin + MIN_PUBLISH_INTERVAL * 4;
-        assert!(!gate.decide(true, opened));
+        assert!(!gate.decide(true, true, opened));
         assert_eq!(
             gate.next_wake(opened),
             Some(SYNC_OUTPUT_MAX_HOLD),
@@ -4347,15 +4371,51 @@ mod tests {
         );
 
         let midway = opened + SYNC_OUTPUT_MAX_HOLD / 2;
-        assert!(!gate.decide(true, midway));
+        assert!(!gate.decide(true, true, midway));
         assert_eq!(gate.next_wake(midway), Some(SYNC_OUTPUT_MAX_HOLD / 2));
+    }
+
+    /// The rate limit exists to absorb a program that outruns the display. With
+    /// the output queue drained there is nothing left to coalesce with, so
+    /// holding the frame only adds latency to the tail of a burst.
+    ///
+    /// This is also a correctness rule, not just a latency one. The runtime
+    /// loop exits as soon as the child is reaped, so a change still deferred at
+    /// that point is one nothing will ever come back to publish: before this,
+    /// the last thing a program printed before exiting could be dropped.
+    #[test]
+    fn a_drained_output_queue_publishes_without_waiting_out_the_interval() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+
+        // Well inside the interval, so backlog pressure would hold it.
+        let too_soon = origin + MIN_PUBLISH_INTERVAL / 4;
+        assert!(
+            !gate.decide(false, true, too_soon),
+            "more output is queued behind it, so coalescing is worth the wait"
+        );
+        assert!(
+            gate.decide(false, false, too_soon),
+            "nothing is queued behind it, so there is nothing to coalesce with"
+        );
+    }
+
+    /// A drained queue lifts the rate limit, never the synchronized-output
+    /// hold: a torn frame is wrong however idle the PTY is.
+    #[test]
+    fn a_drained_output_queue_does_not_lift_the_synchronized_output_hold() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+        assert!(!gate.decide(true, false, origin + MIN_PUBLISH_INTERVAL * 4));
     }
 
     #[test]
     fn nothing_pending_means_nothing_to_wake_for() {
         let origin = Instant::now();
         let mut gate = gate_at(origin);
-        assert!(!gate.decide(false, origin + MIN_PUBLISH_INTERVAL * 10));
+        assert!(!gate.decide(false, true, origin + MIN_PUBLISH_INTERVAL * 10));
         assert_eq!(gate.next_wake(origin), None);
     }
 
@@ -4367,9 +4427,9 @@ mod tests {
 
         // Far past the rate limit, so only DEC 2026 can be holding it.
         let ready = origin + MIN_PUBLISH_INTERVAL * 4;
-        assert!(!gate.decide(true, ready));
+        assert!(!gate.decide(true, true, ready));
         // Closing the bracket releases the same frame on the next wake.
-        assert!(gate.decide(false, ready));
+        assert!(gate.decide(false, true, ready));
     }
 
     #[test]
@@ -4379,16 +4439,17 @@ mod tests {
         gate.pending = true;
 
         let opened = origin + MIN_PUBLISH_INTERVAL;
-        assert!(!gate.decide(true, opened), "hold opens here");
+        assert!(!gate.decide(true, true, opened), "hold opens here");
         assert!(
             !gate.decide(
+                true,
                 true,
                 opened + SYNC_OUTPUT_MAX_HOLD - Duration::from_millis(1)
             ),
             "still inside the budget"
         );
         assert!(
-            gate.decide(true, opened + SYNC_OUTPUT_MAX_HOLD),
+            gate.decide(true, true, opened + SYNC_OUTPUT_MAX_HOLD),
             "the mode is still set, but the hold has spent its budget"
         );
     }
@@ -4400,14 +4461,14 @@ mod tests {
         gate.pending = true;
 
         let first = origin + MIN_PUBLISH_INTERVAL;
-        assert!(!gate.decide(true, first), "first redraw opens a hold");
-        assert!(gate.decide(false, first), "and closing it publishes");
+        assert!(!gate.decide(true, true, first), "first redraw opens a hold");
+        assert!(gate.decide(false, true, first), "and closing it publishes");
 
         // A second redraw one full budget later must be held again, not
         // treated as a continuation of the first.
         gate.pending = true;
         let second = first + SYNC_OUTPUT_MAX_HOLD * 2;
-        assert!(!gate.decide(true, second));
+        assert!(!gate.decide(true, true, second));
     }
 
     #[test]

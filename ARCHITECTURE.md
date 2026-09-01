@@ -104,9 +104,16 @@ expensive half of an output batch, and `OUTPUT_BATCH_MAX_TIME` closes a batch
 every millisecond. The gate holds a publication back for two reasons: DEC mode
 2026 is set, meaning the program is mid-redraw and the frame would tear (the
 same check Ghostty's renderer makes in `src/renderer/generic.zig`), or the last
-frame is newer than `MIN_PUBLISH_INTERVAL`. A hold expires after
+frame is newer than `MIN_PUBLISH_INTERVAL` **and more output is already queued
+behind this one**. That second condition matters: the rate limit exists to
+absorb a program that outruns the display, so with the queue drained there is
+nothing to coalesce with, and holding the frame would add latency to the tail
+of every burst. It would also be a correctness bug, because the loop exits as
+soon as the child is reaped and a change still deferred at that point is one
+nothing comes back to publish. A DEC 2026 hold expires after
 `SYNC_OUTPUT_MAX_HOLD` so a program that opens a frame and dies cannot freeze
-the pane. Resizes, scrolls and other state the user waits on bypass both.
+the pane. Resizes, scrolls, other state the user waits on, and the last frame
+before `ChildExited` bypass both.
 Because a wakeup is queued only when a frame is actually published, this also
 stops the UI thread being woken for frames it would discard.
 
