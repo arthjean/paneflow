@@ -124,7 +124,81 @@ pub(crate) fn ensure_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     if min_lc <= 0.0 {
         return fg;
     }
+    contrast_cache_get_or_insert(fg, bg, min_lc)
+}
 
+/// Number of slots in the direct-mapped contrast cache.
+///
+/// A terminal grid holds tens of thousands of cells drawn from a handful of
+/// distinct (foreground, background) pairs, so a small table absorbs
+/// essentially all of the traffic. Direct-mapped rather than a `HashMap`
+/// because a collision here costs one recomputation, which is exactly what the
+/// uncached path already did, while a map would cost an allocation and
+/// unbounded growth over a long session.
+const CONTRAST_CACHE_SLOTS: usize = 128;
+
+#[derive(Clone, Copy)]
+struct ContrastEntry {
+    key: [u32; 9],
+    value: Hsla,
+}
+
+thread_local! {
+    /// Thread-local because the layout pass is single-threaded per window;
+    /// sharing it would trade `powf` calls for lock traffic on the hottest
+    /// loop in the renderer.
+    static CONTRAST_CACHE: std::cell::RefCell<[Option<ContrastEntry>; CONTRAST_CACHE_SLOTS]> =
+        const { std::cell::RefCell::new([None; CONTRAST_CACHE_SLOTS]) };
+}
+
+/// Exact bit pattern of the three inputs.
+///
+/// Compared for equality, never interpreted, so `-0.0` versus `0.0` and NaN
+/// only ever cost a miss.
+fn contrast_key(fg: Hsla, bg: Hsla, min_lc: f32) -> [u32; 9] {
+    [
+        fg.h.to_bits(),
+        fg.s.to_bits(),
+        fg.l.to_bits(),
+        fg.a.to_bits(),
+        bg.h.to_bits(),
+        bg.s.to_bits(),
+        bg.l.to_bits(),
+        bg.a.to_bits(),
+        min_lc.to_bits(),
+    ]
+}
+
+/// FNV-1a over the key, folded to a slot index.
+fn contrast_slot(key: &[u32; 9]) -> usize {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for word in key {
+        hash ^= u64::from(*word);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    (hash as usize) % CONTRAST_CACHE_SLOTS
+}
+
+fn contrast_cache_get_or_insert(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
+    let key = contrast_key(fg, bg, min_lc);
+    let slot = contrast_slot(&key);
+    CONTRAST_CACHE.with(|cache| {
+        if let Ok(cache) = cache.try_borrow()
+            && let Some(entry) = cache[slot].as_ref()
+            && entry.key == key
+        {
+            return entry.value;
+        }
+        let value = compute_minimum_contrast(fg, bg, min_lc);
+        if let Ok(mut cache) = cache.try_borrow_mut() {
+            cache[slot] = Some(ContrastEntry { key, value });
+        }
+        value
+    })
+}
+
+/// The uncached three-stage search. See [`ensure_minimum_contrast`].
+fn compute_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     if apca_contrast(fg, bg).abs() >= min_lc {
         return fg;
     }
@@ -301,6 +375,77 @@ pub(super) fn rgb_to_hsla(r: u8, g: u8, b: u8) -> Hsla {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cache is transparent or it is a rendering bug: every hit must
+    /// return exactly what the uncached search would have. Sweeps enough
+    /// distinct pairs to overflow `CONTRAST_CACHE_SLOTS`, so evictions and
+    /// index collisions are covered too.
+    #[test]
+    fn the_contrast_cache_never_changes_the_answer() {
+        let min_lc = 45.0;
+        let mut pairs = Vec::new();
+        for step in 0..(CONTRAST_CACHE_SLOTS * 3) {
+            let t = step as f32 / (CONTRAST_CACHE_SLOTS * 3) as f32;
+            let fg = Hsla {
+                h: t,
+                s: 0.6,
+                l: 0.5 + t * 0.4,
+                a: 1.0,
+            };
+            let bg = Hsla {
+                h: 1.0 - t,
+                s: 0.3,
+                l: 0.5 - t * 0.4,
+                a: 1.0,
+            };
+            pairs.push((fg, bg));
+        }
+
+        for (fg, bg) in &pairs {
+            let cached = ensure_minimum_contrast(*fg, *bg, min_lc);
+            let direct = compute_minimum_contrast(*fg, *bg, min_lc);
+            assert_eq!(
+                (cached.h, cached.s, cached.l, cached.a),
+                (direct.h, direct.s, direct.l, direct.a),
+                "cache diverged for fg={fg:?} bg={bg:?}"
+            );
+        }
+        // Second pass: now served from the table rather than computed.
+        for (fg, bg) in &pairs {
+            let cached = ensure_minimum_contrast(*fg, *bg, min_lc);
+            let direct = compute_minimum_contrast(*fg, *bg, min_lc);
+            assert_eq!(
+                (cached.h, cached.s, cached.l),
+                (direct.h, direct.s, direct.l)
+            );
+        }
+    }
+
+    /// `min_lc` is part of the key: two call sites asking for different
+    /// thresholds on the same colors must not share an entry.
+    #[test]
+    fn the_contrast_cache_keys_on_the_threshold_too() {
+        let fg = Hsla {
+            h: 0.1,
+            s: 0.5,
+            l: 0.52,
+            a: 1.0,
+        };
+        let bg = Hsla {
+            h: 0.1,
+            s: 0.5,
+            l: 0.48,
+            a: 1.0,
+        };
+        let lenient = ensure_minimum_contrast(fg, bg, 15.0);
+        let strict = ensure_minimum_contrast(fg, bg, 75.0);
+        assert_ne!(
+            (lenient.l, lenient.s),
+            (strict.l, strict.s),
+            "a stricter threshold must move the foreground further"
+        );
+        assert_eq!(strict.l, compute_minimum_contrast(fg, bg, 75.0).l);
+    }
 
     #[test]
     fn default_ground_colors_use_the_terminal_theme_slots() {
