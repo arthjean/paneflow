@@ -209,7 +209,15 @@ pub fn find_git_dir(cwd: &str) -> Option<std::path::PathBuf> {
 /// worktrees of the same repo produce an *identical* `repo_root`, since their
 /// `commondir` pointers (`../..`) both collapse to the same absolute path.
 fn canonicalize_or(path: &std::path::Path) -> std::path::PathBuf {
-    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+    // The verbatim prefix `canonicalize` adds on Windows has to come straight
+    // back off: `repo_root` and `worktree_root` are handed to git as arguments
+    // and compared against the paths git prints, and `\\?\C:\...` fails at both
+    // (`git worktree add` cannot create directories under it, and it never
+    // compares equal to git's `C:/...`). See
+    // [`crate::runtime_paths::strip_verbatim_prefix`].
+    crate::runtime_paths::strip_verbatim_prefix(
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
+    )
 }
 
 /// Lexically collapse `.`/`..` components without touching the filesystem.
@@ -375,6 +383,15 @@ pub fn detect_branch(cwd: &str) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What `canonicalize_or` is contracted to return: the canonical path with
+    /// the Windows verbatim prefix taken back off. A plain
+    /// `std::fs::canonicalize` would keep the `\\?\C:\...` spelling that the
+    /// production path deliberately drops, so every expectation built from a
+    /// `tempdir` goes through here. No-op on Unix.
+    fn canonical_expectation(path: &std::path::Path) -> std::path::PathBuf {
+        crate::runtime_paths::strip_verbatim_prefix(std::fs::canonicalize(path).unwrap())
+    }
 
     #[test]
     fn detect_branch_normal_branch() {
@@ -594,7 +611,7 @@ mod tests {
         let (repo_root, is_worktree) = resolve_repo_root(&git_dir);
         assert!(!is_worktree);
         // repo_root is the canonicalized parent of `.git` (the repo working dir).
-        assert_eq!(repo_root, Some(std::fs::canonicalize(dir.path()).unwrap()));
+        assert_eq!(repo_root, Some(canonical_expectation(dir.path())));
     }
 
     #[test]
@@ -613,7 +630,7 @@ mod tests {
         assert!(is_worktree);
         assert_eq!(
             repo_root,
-            Some(std::fs::canonicalize(dir.path().join("main")).unwrap())
+            Some(canonical_expectation(&dir.path().join("main")))
         );
     }
 
@@ -635,7 +652,7 @@ mod tests {
         assert!(is_worktree);
         assert_eq!(
             repo_root,
-            Some(std::fs::canonicalize(dir.path().join("main")).unwrap())
+            Some(canonical_expectation(&dir.path().join("main")))
         );
     }
 
@@ -661,7 +678,7 @@ mod tests {
             true,
         );
 
-        assert_eq!(root, std::fs::canonicalize(worktree_root).unwrap());
+        assert_eq!(root, canonical_expectation(&worktree_root));
     }
 
     #[test]

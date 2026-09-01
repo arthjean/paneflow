@@ -162,7 +162,8 @@ pub fn detect() -> InstallMethod {
     // `Prefix(Disk)`) never matches - so every MSI install would fall through
     // to `Unknown` and the updater would wrongly take the Linux `$HOME` tar.gz
     // path. Strip the verbatim prefix so the comparison lines up.
-    let canonical = strip_verbatim_prefix(std::fs::canonicalize(&exe).unwrap_or(exe));
+    let canonical =
+        crate::runtime_paths::strip_verbatim_prefix(std::fs::canonicalize(&exe).unwrap_or(exe));
 
     // US-039 - Windows MSI install detection. `ProgramFiles` is the only
     // supported root because the shipping WiX package is machine-wide.
@@ -356,31 +357,6 @@ fn windows_msi_install_path(
     program_files
         .map(|p| PathBuf::from(p).join("PaneFlow"))
         .filter(|candidate| canonical.starts_with(candidate))
-}
-
-/// Drop the Windows extended-length (`\\?\` or `\\?\UNC\`) prefix that
-/// `std::fs::canonicalize` prepends (rust-lang/rust#42869). Without this, a
-/// canonicalized `current_exe()` carries a `Prefix(VerbatimDisk)` component
-/// that never compares equal to the `Prefix(Disk)` of the non-verbatim
-/// `%ProgramFiles%` value in [`windows_msi_install_path`], so every MSI
-/// install is misdetected as `Unknown` (and the updater wrongly tries the
-/// Linux `$HOME` tar.gz path).
-///
-/// No-op for any path not in verbatim form - every Unix path, and any Windows
-/// path that was never canonicalized - so it is safe to call on all targets.
-/// Pure string logic, so the regression test runs on Linux CI.
-fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
-    // Decide on a borrowed view, then move `path` only in the fall-through:
-    // returning `path` from inside a `match path.to_str() { … }` arm would
-    // conflict with the `to_str()` borrow.
-    let stripped = path.to_str().and_then(|s| {
-        s.strip_prefix(r"\\?\UNC\")
-            // `\\?\UNC\server\share\…` → `\\server\share\…`
-            .map(|rest| PathBuf::from(format!(r"\\{rest}")))
-            // `\\?\C:\…` → `C:\…`
-            .or_else(|| s.strip_prefix(r"\\?\").map(PathBuf::from))
-    });
-    stripped.unwrap_or(path)
 }
 
 /// Infer the system package manager from distro-identifier files.
@@ -822,30 +798,6 @@ mod tests {
     }
 
     #[test]
-    fn strip_verbatim_prefix_disk_unc_and_passthrough() {
-        // `\\?\C:\…` (the form `std::fs::canonicalize` returns on Windows) → `C:\…`
-        assert_eq!(
-            strip_verbatim_prefix(PathBuf::from(r"\\?\C:\Program Files\PaneFlow\paneflow.exe")),
-            PathBuf::from(r"C:\Program Files\PaneFlow\paneflow.exe")
-        );
-        // `\\?\UNC\server\share\…` → `\\server\share\…`
-        assert_eq!(
-            strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share\paneflow.exe")),
-            PathBuf::from(r"\\server\share\paneflow.exe")
-        );
-        // Non-verbatim Windows path is left untouched.
-        assert_eq!(
-            strip_verbatim_prefix(PathBuf::from(r"C:\Program Files\PaneFlow\paneflow.exe")),
-            PathBuf::from(r"C:\Program Files\PaneFlow\paneflow.exe")
-        );
-        // Unix path is left untouched.
-        assert_eq!(
-            strip_verbatim_prefix(PathBuf::from("/usr/bin/paneflow")),
-            PathBuf::from("/usr/bin/paneflow")
-        );
-    }
-
-    #[test]
     fn windows_msi_detected_after_stripping_verbatim_canonical_prefix() {
         // Regression (US-039 follow-up): `std::fs::canonicalize` on Windows
         // yields the `\\?\` extended-length form, whose leading
@@ -858,8 +810,9 @@ mod tests {
         // Forward slashes in the tail (after the backslash `\\?\` prefix) so
         // `Path::starts_with` is component-based on Linux CI too - same
         // dual-representation trick the other Windows tests use.
-        let canonical =
-            strip_verbatim_prefix(PathBuf::from(r"\\?\C:/Program Files/PaneFlow/paneflow.exe"));
+        let canonical = crate::runtime_paths::strip_verbatim_prefix(PathBuf::from(
+            r"\\?\C:/Program Files/PaneFlow/paneflow.exe",
+        ));
         let r = classify(
             &canonical,
             None,

@@ -372,6 +372,96 @@ fn check_sun_path_fits(path: &std::path::Path) -> bool {
     }
 }
 
+/// Strip Windows verbatim prefixes from a canonical path.
+///
+/// `std::fs::canonicalize` returns `\\?\C:\...` on Windows. That spelling is
+/// fine for the Rust filesystem APIs that produced it, and even for `git -C`,
+/// but it breaks two things that matter here:
+///
+/// - `cmd.exe` treats it as an unsupported UNC cwd and silently falls back to
+///   `C:\Windows`;
+/// - git rewrites it to `//?/C:/...` and cannot create directories under it, so
+///   `git worktree add` fails with `could not create leading directories`.
+///
+/// It also does not compare equal to the forward-slash paths git prints
+/// (`git worktree list --porcelain`), while the stripped form does: Windows
+/// path comparison treats `/` and `\` as the same separator.
+///
+/// A third caller depends on the same normalization for a different reason:
+/// `update::install_method` compares the canonical `current_exe()` against the
+/// non-verbatim `%ProgramFiles%` env value, and `Path::starts_with`'s leading
+/// component (`Prefix(VerbatimDisk)` vs `Prefix(Disk)`) never matches.
+///
+/// So a path that leaves Paneflow for a subprocess, or that gets compared
+/// against one's output, carries the normal DOS/UNC spelling. No-op on
+/// non-verbatim and Unix paths, so it is safe to call on all targets. Pure
+/// string logic, so the regression tests run on Linux CI.
+pub fn strip_verbatim_prefix(path: PathBuf) -> PathBuf {
+    // Decide on a borrowed view, then move `path` only in the fall-through:
+    // returning `path` from inside a `match path.to_str() { … }` arm would
+    // conflict with the `to_str()` borrow.
+    let stripped = path.to_str().and_then(|s| {
+        s.strip_prefix(r"\\?\UNC\")
+            // `\\?\UNC\server\share\…` → `\\server\share\…`
+            .map(|rest| PathBuf::from(format!(r"\\{rest}")))
+            // `\\?\C:\…` → `C:\…`
+            .or_else(|| s.strip_prefix(r"\\?\").map(PathBuf::from))
+    });
+    stripped.unwrap_or(path)
+}
+
+#[cfg(test)]
+mod verbatim_prefix_tests {
+    use super::strip_verbatim_prefix;
+    use std::path::PathBuf;
+
+    #[test]
+    fn disk_unc_and_passthrough() {
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\C:\dev\paneflow")),
+            PathBuf::from(r"C:\dev\paneflow")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\UNC\server\share\paneflow")),
+            PathBuf::from(r"\\server\share\paneflow")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"C:\dev\paneflow")),
+            PathBuf::from(r"C:\dev\paneflow")
+        );
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from("/home/arthur/paneflow")),
+            PathBuf::from("/home/arthur/paneflow")
+        );
+    }
+
+    /// Only the `\\?\` prefix is matched, so a tail spelled with forward
+    /// slashes survives intact. `update::install_method`'s Windows tests rely
+    /// on it: they feed a mixed-separator path so `Path::starts_with` stays
+    /// component-based on Linux CI.
+    #[test]
+    fn a_forward_slash_tail_is_left_alone() {
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\C:/Program Files/PaneFlow/paneflow.exe")),
+            PathBuf::from("C:/Program Files/PaneFlow/paneflow.exe")
+        );
+    }
+
+    /// The reason `canonicalize_or` strips: a verbatim `repo_root` never
+    /// compares equal to the forward-slash path `git worktree list` prints, so
+    /// "is this checkout the repository's own?" answered `no` for every branch.
+    #[cfg(windows)]
+    #[test]
+    fn stripped_form_matches_what_git_prints() {
+        let from_git = PathBuf::from("C:/dev/paneflow");
+        assert_eq!(
+            strip_verbatim_prefix(PathBuf::from(r"\\?\C:\dev\paneflow")),
+            from_git
+        );
+        assert_ne!(PathBuf::from(r"\\?\C:\dev\paneflow"), from_git);
+    }
+}
+
 #[cfg(test)]
 mod socket_env_tests {
     use super::*;
