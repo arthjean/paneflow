@@ -208,6 +208,11 @@ pub struct SelectionRange {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Content {
     pub cells: Arc<[Cell]>,
+    /// One flag per row: whether that row's cells changed since the previous
+    /// snapshot. Every row is flagged when the whole grid was rebuilt, so a
+    /// consumer that mirrors the cells only has to convert the rows flagged
+    /// here.
+    pub dirty_rows: Arc<[bool]>,
     pub cursor: Cursor,
     pub selection: Option<SelectionRange>,
     pub cols: usize,

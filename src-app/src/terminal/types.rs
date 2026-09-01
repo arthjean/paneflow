@@ -483,7 +483,7 @@ pub enum HyperlinkSource {
 /// Fields are populated here (US-014) and consumed by hover/click (US-015/US-016).
 /// `Clone` (US-012): the press point's link is stashed on mouse-down so the
 /// open can fire on mouse-up only if no drag occurred.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct HyperlinkZone {
     pub uri: String,

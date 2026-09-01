@@ -831,7 +831,8 @@ impl TerminalView {
         // Cmd/Ctrl+hover: detect link under cursor for hyperlink rendering
         // (US-016 + US-019). OSC 8 takes priority over regex URL detection,
         // which takes priority over file-path detection.
-        if open_link_modifier_held(&event.modifiers) {
+        self.link_modifier_held = open_link_modifier_held(&event.modifiers);
+        if self.link_modifier_held {
             // Throttle: only re-scan the line when the hovered cell changed.
             // Without this, 60 fps of MouseMove with the modifier held = 60
             // regex scans / s and a Term lock per frame. The scan result is
@@ -878,21 +879,42 @@ impl TerminalView {
     /// `ctrl_hovered_link`. Shared by mouse-move (throttled by the caller) and
     /// the modifiers-changed handler (runs on Ctrl/Cmd press without a move).
     fn refresh_hovered_link(&mut self, hover_point: Point, cx: &mut Context<Self>) {
-        // OSC 8 explicit hyperlink on the hovered cell takes priority.
-        let osc8_link = self
-            .terminal
+        // Regex detection answers now, from the published snapshot. The OSC 8
+        // lookup needs the engine, so the runtime thread is asked and
+        // `apply_resolved_hover_link` applies its answer when it comes back:
+        // a runtime busy parsing a burst could otherwise hold the UI thread
+        // for up to a second per hover.
+        self.terminal
             .session_backend()
-            .osc8_hyperlink_at(hover_point);
+            .request_osc8_hyperlink_at(hover_point);
         let in_zone = |z: &HyperlinkZone| {
             hover_point.line == z.start.line
                 && hover_point.column >= z.start.column
                 && hover_point.column <= z.end.column
         };
-        self.ctrl_hovered_link = osc8_link.or_else(|| {
-            self.detect_links_at_hover()
-                .into_iter()
-                .find(|z| in_zone(z))
-        });
+        self.ctrl_hovered_link = self
+            .detect_links_at_hover()
+            .into_iter()
+            .find(|z| in_zone(z));
+        cx.notify();
+    }
+
+    /// Apply the runtime's answer to an OSC 8 lookup. An explicit hyperlink on
+    /// the hovered cell takes priority over regex detection, but only while
+    /// the pointer is still on that cell with the modifier held.
+    pub(super) fn apply_resolved_hover_link(
+        &mut self,
+        point: Point,
+        link: Option<HyperlinkZone>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(link) = link else {
+            return;
+        };
+        if !self.link_modifier_held || self.hovered_cell != Some(point) {
+            return;
+        }
+        self.ctrl_hovered_link = Some(link);
         cx.notify();
     }
 
@@ -906,7 +928,8 @@ impl TerminalView {
         // detection would otherwise not run until the mouse jiggles - making
         // the first Ctrl-click miss. Re-run detection on the last hovered cell
         // when the open-modifier becomes held, and clear on release.
-        if open_link_modifier_held(&event.modifiers) {
+        self.link_modifier_held = open_link_modifier_held(&event.modifiers);
+        if self.link_modifier_held {
             if let Some(point) = self.hovered_cell {
                 self.refresh_hovered_link(point, cx);
             }

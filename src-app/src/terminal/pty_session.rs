@@ -344,8 +344,10 @@ impl TerminalSessionBackend {
         self.ghostty.clear_selection();
     }
 
-    pub(crate) fn osc8_hyperlink_at(&self, point: Point) -> Option<HyperlinkZone> {
-        self.ghostty.hyperlink_at(point)
+    /// Start resolving the OSC 8 hyperlink under `point`; the answer lands in
+    /// [`TerminalState::take_resolved_hover_link`] on a later event batch.
+    pub(crate) fn request_osc8_hyperlink_at(&self, point: Point) -> bool {
+        self.ghostty.request_hyperlink_at(point)
     }
 
     pub(crate) fn line_text_at(&self, point: Point) -> Option<GridLineText> {
@@ -645,6 +647,8 @@ pub struct TerminalState {
     /// [`Self::take_shell_prompt_ready`].
     last_prompt_seq: u64,
     pub exited: Option<i32>,
+    /// Latest answer to a hover hyperlink lookup, until the view takes it.
+    resolved_hover_link: Option<(Point, Option<HyperlinkZone>)>,
     /// US-002: set true once any user input (keystroke, paste, mouse report,
     /// IME commit, user scroll) has been written via `write_to_pty`.
     /// Distinguishes a user-initiated exit (always close the pane) from a
@@ -1251,6 +1255,7 @@ impl TerminalState {
             exited: None,
             keyboard_input_sent: std::sync::atomic::AtomicBool::new(false),
             exit_signal: None,
+            resolved_hover_link: None,
             child_pid: 0,
             current_cwd: None,
             progress: None,
@@ -1346,6 +1351,19 @@ impl TerminalState {
     /// more, which is how the app reaps a finished agent's session without
     /// waiting for the periodic PID sweep. The first prompt of a fresh shell
     /// fires it too; the consumer is a no-op when the surface owns no session.
+    /// The latest answer to [`TerminalSessionBackend::request_osc8_hyperlink_at`],
+    /// once.
+    pub(crate) fn take_resolved_hover_link(&mut self) -> Option<(Point, Option<HyperlinkZone>)> {
+        self.resolved_hover_link.take()
+    }
+
+    /// PTY bytes the runtime has parsed so far; the benchmark uses it to tell
+    /// an idle shell from a chatty one.
+    #[cfg(test)]
+    pub(super) fn processed_output_bytes_for_test(&self) -> usize {
+        self.ghostty.processed_output_bytes_for_test()
+    }
+
     pub(crate) fn take_shell_prompt_ready(&mut self) -> bool {
         let seq = self
             .marks
@@ -1418,6 +1436,11 @@ impl TerminalState {
                 {
                     self.pty_guard = None;
                 }
+            }
+            GhosttyUiEvent::HyperlinkResolved { point, link } => {
+                // Only the latest answer matters: the pointer has moved on
+                // from any older one.
+                self.resolved_hover_link = Some((point, link));
             }
             GhosttyUiEvent::InputRejected(error) => {
                 log::warn!(target: "paneflow::terminal::ghostty", "{error}");

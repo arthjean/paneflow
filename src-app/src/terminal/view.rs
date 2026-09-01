@@ -342,6 +342,10 @@ pub struct TerminalView {
     pub(super) hovered_cell: Option<Point>,
     /// Active hyperlink under Ctrl+hover - drives underline rendering and Ctrl+click.
     pub(super) ctrl_hovered_link: Option<HyperlinkZone>,
+    /// Whether the open-link modifier was held at the last pointer or
+    /// modifier event, so an OSC 8 answer that arrives after a release is
+    /// dropped instead of underlining a link nobody is pointing at.
+    pub(super) link_modifier_held: bool,
     /// Last full-line link detection result. Avoids repeating canonicalize on
     /// every mouse move while the pointer stays on the same terminal line.
     pub(super) hover_link_cache: Option<HoverLinkCache>,
@@ -686,6 +690,9 @@ impl TerminalView {
                             for event in batch {
                                 view.terminal.process_backend_event(event);
                             }
+                            if let Some((point, link)) = view.terminal.take_resolved_hover_link() {
+                                view.apply_resolved_hover_link(point, link, cx);
+                            }
 
                             // Execute deferred clipboard operations (OSC 52)
                             let clipboard_ops =
@@ -873,6 +880,7 @@ impl TerminalView {
             ghostty_pending_text_key: None,
             hovered_cell: None,
             ctrl_hovered_link: None,
+            link_modifier_held: false,
             hover_link_cache: None,
             mouse_down_link: None,
             ime_marked_text: String::new(),

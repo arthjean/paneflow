@@ -69,9 +69,76 @@ const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
 /// How fast a drag held outside the viewport scrolls it. One line per tick at
 /// this rate is close to what Ghostty itself does, and slow enough that a
 /// pointer parked just past the edge stays readable.
-/// Longest a runtime loop blocks with nothing to do. Also the granularity of
+/// Longest a runtime loop blocks while something only a poll can notice is
+/// in flight: a drag held outside the viewport, a child exit, the drain
+/// window after one, or output that just stopped. Also the granularity of
 /// `advance_selection_autoscroll` and the Windows child-exit poll.
 const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
+/// Longest a runtime loop blocks once the pane has been quiet for
+/// `RUNTIME_QUIET_AFTER`. A child that exits while a grandchild keeps the PTY
+/// open is the one event nothing wakes the loop for, and noticing it a tenth
+/// of a second late is invisible, while a pane sitting at its prompt wakes
+/// ten times less.
+const RUNTIME_QUIET_TICK: Duration = Duration::from_millis(100);
+/// Silence after the last PTY output before the loop switches to
+/// `RUNTIME_QUIET_TICK`.
+const RUNTIME_QUIET_AFTER: Duration = Duration::from_secs(1);
+/// Longest a display-only runtime blocks. It has no child and publishes every
+/// write at once, so nothing needs it awake between messages.
+const DISPLAY_RUNTIME_TICK: Duration = Duration::from_secs(1);
+
+/// Runtime and display loop iterations across every session in the process.
+///
+/// Read by the terminal benchmarks to count idle wakeups: a loop that ticks
+/// while nothing happens shows up here as a steady rate, a loop that blocks
+/// until it has work does not.
+#[cfg(test)]
+pub(super) static RUNTIME_LOOP_ITERATIONS: AtomicU64 = AtomicU64::new(0);
+
+/// Loop iterations that blocked for `RUNTIME_QUIET_TICK`, and iterations
+/// that received a message rather than timing out. Benchmark diagnostics for
+/// the idle probes: they say whether an idle pane is quiet, and if not, why.
+#[cfg(test)]
+pub(super) static RUNTIME_LOOP_QUIET_WAITS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub(super) static RUNTIME_LOOP_MESSAGES: AtomicU64 = AtomicU64::new(0);
+/// Bit set of the reasons the loop stayed on the short tick: 1 winding
+/// down, 2 recent output lines pending, 4 output within `RUNTIME_QUIET_AFTER`,
+/// 8 a drag in flight.
+#[cfg(test)]
+pub(super) static RUNTIME_LOOP_ATTENTIVE_REASONS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+fn count_runtime_loop_iteration() {
+    RUNTIME_LOOP_ITERATIONS.fetch_add(1, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(super) static RUNTIME_LOOP_IDLE_WAITS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub(super) static RUNTIME_LOOP_GATE_WAITS: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+fn count_runtime_loop_wait(wait: Duration, received_message: bool) {
+    if wait == RUNTIME_QUIET_TICK {
+        RUNTIME_LOOP_QUIET_WAITS.fetch_add(1, Ordering::Relaxed);
+    } else if wait == RUNTIME_IDLE_TICK {
+        RUNTIME_LOOP_IDLE_WAITS.fetch_add(1, Ordering::Relaxed);
+    } else {
+        RUNTIME_LOOP_GATE_WAITS.fetch_add(1, Ordering::Relaxed);
+    }
+    if received_message {
+        RUNTIME_LOOP_MESSAGES.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn count_runtime_loop_wait(_wait: Duration, _received_message: bool) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn count_runtime_loop_iteration() {}
 
 /// Process-wide stamp handed to every published `Content`.
 ///
@@ -109,7 +176,16 @@ pub(crate) enum GhosttyUiEvent {
     Notification(Arc<UiEventState>),
     Clipboard(Arc<UiEventState>),
     ServiceOutputReady(Arc<UiEventState>),
-    ChildExited { code: i32, signal: Option<String> },
+    ChildExited {
+        code: i32,
+        signal: Option<String>,
+    },
+    /// The OSC 8 hyperlink under a hovered cell, or `None` when the cell
+    /// carries none. Answers [`RuntimeMessage::HyperlinkHover`].
+    HyperlinkResolved {
+        point: Point,
+        link: Option<HyperlinkZone>,
+    },
     InputRejected(String),
     RuntimeFailed(String),
 }
@@ -405,10 +481,10 @@ enum RuntimeMessage {
         reply: SyncSender<Result<Vec<(i32, String)>, String>>,
     },
     SelectionText(SyncSender<Result<Option<String>, String>>),
-    Hyperlink {
-        point: ghostty::Point,
-        reply: SyncSender<Result<Option<ghostty::Hyperlink>, String>>,
-    },
+    /// Resolve the OSC 8 hyperlink under a hovered cell. Answered with
+    /// [`GhosttyUiEvent::HyperlinkResolved`] rather than a reply channel, so
+    /// the UI thread never waits on the runtime for a hover.
+    HyperlinkHover(ghostty::Point),
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
     /// Capture the screen and its recent history as VT sequences, which keep
     /// the styling, modes, and cursor that plain text drops.
@@ -1676,39 +1752,32 @@ impl GhosttySession {
             .is_ok()
     }
 
-    pub(super) fn hyperlink_at(&self, point: Point) -> Option<HyperlinkZone> {
-        self.request(|reply| RuntimeMessage::Hyperlink {
-            point: ghostty_point(point),
-            reply,
-        })
-        .and_then(Result::ok)
-        .flatten()
-        .map(|link| HyperlinkZone {
-            uri: link.uri.clone(),
-            id: String::new(),
-            start: point,
-            end: point,
-            is_openable: super::element::is_url_scheme_openable(&link.uri),
-            source: HyperlinkSource::Osc8,
-            line: None,
-            col: None,
-        })
+    /// Ask the runtime which OSC 8 hyperlink sits under `point`. The answer
+    /// arrives as [`GhosttyUiEvent::HyperlinkResolved`]; nothing blocks here.
+    pub(super) fn request_hyperlink_at(&self, point: Point) -> bool {
+        self.inner
+            .mailbox
+            .try_send_control(RuntimeMessage::HyperlinkHover(ghostty_point(point)))
+            .is_ok()
     }
 
     pub(super) fn line_text_at(&self, point: Point) -> Option<GridLineText> {
         let state = self.inner.state.read();
-        let mut cells: Vec<_> = state
-            .content
+        let content = &state.content;
+        // Cells are row-major in viewport order, so a row is one slice; the
+        // first cell's coordinate confirms the layout before it is trusted.
+        let row = usize::try_from(point.line.0).ok()?;
+        let start = row.checked_mul(content.cols)?;
+        let cells = content
             .cells
-            .iter()
-            .filter(|cell| cell.point.line == point.line)
-            .collect();
-        cells.sort_by_key(|cell| cell.point.column);
-        if cells.is_empty() {
-            return None;
-        }
-        let mut text = String::new();
-        let mut char_to_column = Vec::new();
+            .get(start..start.checked_add(content.cols)?)
+            .filter(|cells| {
+                cells
+                    .first()
+                    .is_some_and(|cell| cell.point.line == point.line)
+            })?;
+        let mut text = String::with_capacity(cells.len());
+        let mut char_to_column = Vec::with_capacity(cells.len());
         for cell in cells {
             if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
                 continue;
@@ -2185,8 +2254,10 @@ fn run_runtime(
     let mut child_wait_failure_reported = false;
     let mut runtime_failed = false;
     let mut last_autoscroll = Instant::now();
+    let mut last_output_at = Instant::now();
 
     loop {
+        count_runtime_loop_iteration();
         advance_selection_autoscroll(
             &inner,
             &mut terminal,
@@ -2225,11 +2296,34 @@ fn run_runtime(
         // Floored at a millisecond: a deadline that has already passed means
         // the previous `poll` could not publish, and a zero-length block would
         // spin instead of yielding.
-        let wait = publish_gate
-            .next_wake(Instant::now())
-            .map_or(RUNTIME_IDLE_TICK, |wake| {
-                wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK)
-            });
+        // With nothing pending, the block is short only while a poll has
+        // something to notice; a pane that has been quiet for a while
+        // blocks for the quiet tick instead.
+        let wait = match publish_gate.next_wake(Instant::now()) {
+            Some(wake) => wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK),
+            None => {
+                #[cfg(unix)]
+                let winding_down = exit.is_some();
+                #[cfg(target_os = "windows")]
+                let winding_down = shutdown_requested || !lifecycle.is_running();
+                let recent_output = last_output_at.elapsed() < RUNTIME_QUIET_AFTER;
+                let drag_live = lock_gesture(&inner).applied.is_some();
+                let attentive = winding_down || recent_output_pending || recent_output || drag_live;
+                #[cfg(test)]
+                RUNTIME_LOOP_ATTENTIVE_REASONS.fetch_or(
+                    u64::from(winding_down)
+                        | u64::from(recent_output_pending) << 1
+                        | u64::from(recent_output) << 2
+                        | u64::from(drag_live) << 3,
+                    Ordering::Relaxed,
+                );
+                if attentive {
+                    RUNTIME_IDLE_TICK
+                } else {
+                    RUNTIME_QUIET_TICK
+                }
+            }
+        };
         let received = match mailbox.recv_timeout(wait) {
             Ok(message) => {
                 match handle_terminal_command(&inner, &mut terminal, &mut publish_gate, message) {
@@ -2239,8 +2333,10 @@ fn run_runtime(
             }
             Err(error) => Err(error),
         };
+        count_runtime_loop_wait(wait, received.is_ok());
         match received {
             Ok(Some(RuntimeMessage::Output(bytes))) => {
+                last_output_at = Instant::now();
                 if let Err(error) = process_output_batch(
                     &inner,
                     &mailbox,
@@ -2420,9 +2516,7 @@ fn run_runtime(
 
         // Turns a rate-limited or synchronized-output-held request into a
         // frame without a timer of its own.
-        if let Err(error) =
-            publish_gate.poll(&inner, &mut terminal, mailbox.pending_output_count() > 0)
-        {
+        if let Err(error) = publish_gate.poll(&inner, &mut terminal) {
             if !runtime_failed {
                 let _ = inner
                     .events_tx
@@ -2836,12 +2930,33 @@ fn handle_terminal_command(
         RuntimeMessage::SelectionText(reply) => {
             let _ = reply.send(terminal.selection_text().map_err(|error| error.to_string()));
         }
-        RuntimeMessage::Hyperlink { point, reply } => {
-            let _ = reply.send(
-                terminal
-                    .hyperlink_at(point)
-                    .map_err(|error| error.to_string()),
-            );
+        RuntimeMessage::HyperlinkHover(point) => {
+            let link = match terminal.hyperlink_at(point) {
+                Ok(link) => link,
+                Err(error) => {
+                    log::warn!(
+                        target: "paneflow::terminal::ghostty",
+                        "Ghostty hyperlink lookup failed: {error}"
+                    );
+                    None
+                }
+            };
+            let point = point_from_ghostty(point);
+            let _ = inner
+                .events_tx
+                .unbounded_send(GhosttyUiEvent::HyperlinkResolved {
+                    point,
+                    link: link.map(|link| HyperlinkZone {
+                        uri: link.uri.clone(),
+                        id: String::new(),
+                        start: point,
+                        end: point,
+                        is_openable: super::element::is_url_scheme_openable(&link.uri),
+                        source: HyperlinkSource::Osc8,
+                        line: None,
+                        col: None,
+                    }),
+                });
         }
         RuntimeMessage::ExtractScrollback(reply) => {
             let _ = reply.send(
@@ -2925,7 +3040,11 @@ fn run_display_runtime(
     }
 
     loop {
-        let message = match mailbox.recv_timeout(RUNTIME_IDLE_TICK) {
+        count_runtime_loop_iteration();
+        // Nothing here is timer-driven: every write publishes at once and no
+        // child can exit, so the block is only bounded to keep the loop
+        // observable.
+        let message = match mailbox.recv_timeout(DISPLAY_RUNTIME_TICK) {
             Ok(message) => message,
             Err(MailboxRecvError::Timeout) => continue,
             Err(MailboxRecvError::Disconnected) => break,
@@ -3048,10 +3167,10 @@ fn process_output_batch(
             recent_output_pending,
         );
         record_command_marks(inner, &raw_marks);
-        // Rate-limited only while more output is already queued, and held back
-        // while the program is mid-redraw: the runtime loop's `poll` publishes
-        // it once both lift.
-        gate.request(inner, terminal, mailbox.pending_output_count() > 0)?;
+        // Rate-limited against the previous frame and held back while the
+        // program is mid-redraw: the runtime loop's `poll` publishes it once
+        // both lift.
+        gate.request(inner, terminal)?;
         if service_output_ready {
             queue_service_output_ready(inner);
         }
@@ -3354,8 +3473,10 @@ fn handle_engine_events(
 /// mid-redraw and every frame in between would be torn, which is what
 /// Ghostty's renderer checks before it draws (`src/renderer/generic.zig`).
 /// `MIN_PUBLISH_INTERVAL` means the last frame is too recent to be worth
-/// another full snapshot. Neither applies to state the user is waiting on:
-/// [`PublishGate::publish_now`] bypasses both.
+/// another snapshot; the change waits for the interval to expire and the
+/// runtime loop wakes for it then. Neither applies to state the user is
+/// waiting on: [`PublishGate::publish_now`] bypasses both, and so does the
+/// last frame before the child's exit is announced.
 struct PublishGate {
     last_publish: Instant,
     /// A grid change is waiting for one of the two holds to lift.
@@ -3363,6 +3484,8 @@ struct PublishGate {
     /// When the current DEC 2026 hold started, so `SYNC_OUTPUT_MAX_HOLD` can
     /// expire it. `None` while no hold is open.
     sync_hold_since: Option<Instant>,
+    /// The cells every publish through this gate writes into.
+    mirror: CellMirror,
 }
 
 impl PublishGate {
@@ -3374,6 +3497,7 @@ impl PublishGate {
                 .unwrap_or_else(Instant::now),
             pending: false,
             sync_hold_since: None,
+            mirror: CellMirror::default(),
         }
     }
 
@@ -3396,10 +3520,9 @@ impl PublishGate {
         &mut self,
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
-        output_backlog: bool,
     ) -> Result<(), String> {
         self.pending = true;
-        self.poll(inner, terminal, output_backlog)
+        self.poll(inner, terminal)
     }
 
     /// Publish a pending change once its holds have lifted.
@@ -3410,7 +3533,6 @@ impl PublishGate {
         &mut self,
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
-        output_backlog: bool,
     ) -> Result<(), String> {
         if !self.pending {
             return Ok(());
@@ -3420,7 +3542,7 @@ impl PublishGate {
         let synchronized_output = terminal
             .synchronized_output()
             .map_err(|error| error.to_string())?;
-        if !self.decide(synchronized_output, output_backlog, Instant::now()) {
+        if !self.decide(synchronized_output, Instant::now()) {
             return Ok(());
         }
         self.commit(inner, terminal)
@@ -3431,22 +3553,23 @@ impl PublishGate {
     /// The whole gating rule, with no terminal and no session attached, so it
     /// can be exercised against a synthetic clock.
     ///
-    /// `output_backlog` says whether more PTY bytes are already queued behind
-    /// this change. The rate limit exists to stop a program that outruns the
-    /// display from being snapshotted for every frame it will never show, so
-    /// it applies only while that pressure is real. With the queue drained
-    /// there is nothing to coalesce with: holding the frame would just add
-    /// latency to the tail of a burst, and at the end of a program's life it
-    /// would drop its last output entirely, because the runtime loop exits
-    /// without ever coming back to publish it.
-    fn decide(&mut self, synchronized_output: bool, output_backlog: bool, now: Instant) -> bool {
+    /// The rate limit applies whether or not more PTY bytes are queued behind
+    /// the change. A program that prints a line every couple of milliseconds
+    /// never builds a backlog, the runtime parses each chunk long before the
+    /// next one lands, yet snapshotting after every chunk means hundreds of
+    /// frames per second that no display shows. A change that arrives inside
+    /// the interval is not dropped, only deferred: [`Self::next_wake`] tells
+    /// the runtime loop when to come back, and `poll` publishes it then. The
+    /// first change after an idle gap still publishes at once, so a keystroke
+    /// echo pays nothing.
+    fn decide(&mut self, synchronized_output: bool, now: Instant) -> bool {
         if !self.pending {
             return false;
         }
         if self.held_by_synchronized_output(synchronized_output, now) {
             return false;
         }
-        !output_backlog || now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
+        now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
     }
 
     /// How long the runtime loop may block before [`Self::poll`] has work.
@@ -3485,7 +3608,7 @@ impl PublishGate {
         inner: &SessionInner,
         terminal: &mut ghostty::DisplayTerminal,
     ) -> Result<(), String> {
-        update_shared_state(inner, terminal)?;
+        update_shared_state(inner, terminal, &mut self.mirror)?;
         self.last_publish = Instant::now();
         self.pending = false;
         queue_wakeup(inner);
@@ -3493,14 +3616,54 @@ impl PublishGate {
     }
 }
 
+/// Replay the gate against a synthetic clock: `chunks` grid changes arrive
+/// `interval` apart with the output queue drained after each one, and the
+/// runtime loop wakes at [`PublishGate::next_wake`] between arrivals. Returns
+/// how many of those changes became published frames.
+///
+/// This is the shape of a program that prints faster than a display refreshes
+/// but slower than the runtime can parse, which is what ConPTY delivers for
+/// almost any output. Benchmark input, so it only models the gate's decisions.
+#[cfg(test)]
+pub(super) fn simulate_gate_trickle(interval: Duration, chunks: usize) -> usize {
+    let origin = Instant::now();
+    let mut gate = PublishGate {
+        last_publish: origin,
+        pending: false,
+        sync_hold_since: None,
+        mirror: CellMirror::default(),
+    };
+    let mut published = 0usize;
+    for index in 0..chunks {
+        let arrived = origin + interval * (index as u32 + 1);
+        // A deferred change lands on its own deadline before the next chunk.
+        if let Some(wait) = gate.next_wake(arrived - interval)
+            && wait < interval
+            && gate.decide(false, arrived - interval + wait)
+        {
+            gate.last_publish = arrived - interval + wait;
+            gate.pending = false;
+            published += 1;
+        }
+        gate.pending = true;
+        if gate.decide(false, arrived) {
+            gate.last_publish = arrived;
+            gate.pending = false;
+            published += 1;
+        }
+    }
+    published
+}
+
 fn update_shared_state(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
+    mirror: &mut CellMirror,
 ) -> Result<(), String> {
-    let content = terminal.snapshot().map_err(|error| error.to_string())?;
+    let snapshot = terminal.snapshot().map_err(|error| error.to_string())?;
     let modes = terminal.modes().map_err(|error| error.to_string())?;
-    let metrics = grid_metrics_from_ghostty(&content);
-    let content = content_from_ghostty(content);
+    let metrics = grid_metrics_from_ghostty(&snapshot);
+    let content = mirror.publish(snapshot);
     let modes = modes_from_ghostty(modes);
     // Resolved here, on the runtime thread, so the render thread never walks
     // the placement iterator or copies a pixel.
@@ -3510,12 +3673,16 @@ fn update_shared_state(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .collect(terminal)
         .into();
-    *inner.state.write() = SharedState {
-        content,
-        modes,
-        metrics,
-        kitty,
-    };
+    let previous = std::mem::replace(
+        &mut *inner.state.write(),
+        SharedState {
+            content,
+            modes,
+            metrics,
+            kitty,
+        },
+    );
+    mirror.recycle(previous.content);
     Ok(())
 }
 
@@ -4120,13 +4287,58 @@ pub(super) fn modes_from_ghostty(modes: ghostty::Modes) -> Modes {
     result
 }
 
+/// Convert a whole snapshot, every cell from scratch.
+///
+/// The runtime publishes through [`CellMirror`], which only converts the rows
+/// the engine flagged and falls back to the same full conversion; this is
+/// what tests call to check the mirror against.
+#[cfg(test)]
 pub(super) fn content_from_ghostty(content: ghostty::Content) -> Content {
+    let cells = cells_from_ghostty(&content.cells);
+    let cursor = cursor_from_ghostty(&content);
+    Content {
+        generation: next_content_generation(),
+        cols: content.cols,
+        rows: content.rows,
+        cells,
+        cursor,
+        selection: content.selection.map(selection_range_from_ghostty),
+        display_offset: content.display_offset,
+        history_size: content.history_size,
+    }
+}
+
+fn cells_from_ghostty(cells: &[ghostty::Cell]) -> Arc<[Cell]> {
+    // A slice iterator reports its exact length, so this is one allocation
+    // written in place, not a `Vec` copied into the `Arc` afterwards.
+    cells.iter().map(cell_from_ghostty).collect()
+}
+
+fn cell_from_ghostty(cell: &ghostty::Cell) -> Cell {
+    Cell {
+        point: point_from_ghostty(cell.point),
+        c: cell.character,
+        fg: color_from_ghostty(cell.foreground, NamedColor::Foreground),
+        bg: color_from_ghostty(cell.background, NamedColor::Background),
+        flags: ghostty_cell_flags(cell),
+        zerowidth: cell.zerowidth.as_deref().map(<[_]>::to_vec),
+        hyperlink: cell.hyperlink,
+    }
+}
+
+fn cursor_from_ghostty(content: &ghostty::Content) -> RenderableCursor {
+    // Cells are stored row-major in viewport order, so the cell under the
+    // cursor has a known index. The coordinate check keeps the lookup honest
+    // against a snapshot whose cells were laid out differently.
     let cursor_viewport_line = content.cursor.point.line + content.display_offset as i32;
-    let cursor_cell = content.cells.iter().find(|cell| {
-        cell.point.line == cursor_viewport_line && cell.point.column == content.cursor.point.column
-    });
+    let column = content.cursor.point.column;
+    let cursor_cell = usize::try_from(cursor_viewport_line)
+        .ok()
+        .filter(|row| *row < content.rows && column < content.cols)
+        .and_then(|row| content.cells.get(row * content.cols + column))
+        .filter(|cell| cell.point.line == cursor_viewport_line && cell.point.column == column);
     let cursor_flags = cursor_cell.map_or(CellFlags::empty(), ghostty_cell_flags);
-    let cursor = RenderableCursor {
+    RenderableCursor {
         point: point_from_ghostty(content.cursor.point),
         shape: if content.cursor.visible {
             match content.cursor.shape {
@@ -4149,30 +4361,93 @@ pub(super) fn content_from_ghostty(content: ghostty::Content) -> Content {
         text: cursor_cell.map_or(' ', |cell| cell.character),
         bold: cursor_flags.contains(CellFlags::BOLD),
         italic: cursor_flags.contains(CellFlags::ITALIC),
-    };
-    let cells: Arc<[Cell]> = content
-        .cells
-        .iter()
-        .map(|cell| Cell {
-            point: point_from_ghostty(cell.point),
-            c: cell.character,
-            fg: color_from_ghostty(cell.foreground, NamedColor::Foreground),
-            bg: color_from_ghostty(cell.background, NamedColor::Background),
-            flags: ghostty_cell_flags(cell),
-            zerowidth: cell.zerowidth.as_deref().map(<[_]>::to_vec),
-            hyperlink: cell.hyperlink,
-        })
-        .collect::<Vec<_>>()
-        .into();
-    Content {
-        generation: next_content_generation(),
-        cols: content.cols,
-        rows: content.rows,
-        cells,
-        cursor,
-        selection: content.selection.map(selection_range_from_ghostty),
-        display_offset: content.display_offset,
-        history_size: content.history_size,
+    }
+}
+
+/// The neutral cells the runtime publishes, kept up to date row by row from
+/// the engine's dirty tracking instead of rebuilt from scratch every frame.
+///
+/// Two buffers alternate. The front one sits in `SharedState`, where the
+/// render thread reads it. The back one is the previous front: the publish
+/// that replaced it converted some rows, so the back buffer is missing
+/// exactly those rows, and the next publish brings it up to date by
+/// converting them together with whatever the engine flags next. A snapshot
+/// of a grid that only echoed a keystroke thus converts one row instead of
+/// every row of the pane.
+///
+/// When the render thread still holds the back buffer (it is mid-layout on
+/// the frame before last), or when the grid changed size, the publish
+/// converts every cell into a fresh buffer, which is what every publish did
+/// before. Either way the published cells are identical.
+#[derive(Default)]
+pub(super) struct CellMirror {
+    back: Arc<[Cell]>,
+    /// Rows `back` is missing relative to the engine.
+    back_stale: Vec<bool>,
+    /// Whether `back` was published by this mirror, so `back_stale` describes
+    /// it. False for the blank grid a session starts with.
+    back_valid: bool,
+    /// Rows the latest publish converted: what the buffer it replaced is
+    /// missing once it comes back through [`Self::recycle`].
+    last_dirty: Vec<bool>,
+    /// Addresses of the buffer in `SharedState` and of the one just
+    /// published, so `recycle` can tell the mirror's own buffer from a grid
+    /// another writer installed.
+    front_address: usize,
+    published_address: usize,
+}
+
+impl CellMirror {
+    /// Convert `snapshot` into the next published frame.
+    pub(super) fn publish(&mut self, snapshot: ghostty::Content) -> Content {
+        let cols = snapshot.cols;
+        let rows = snapshot.rows;
+        let reusable = self.back_valid
+            && !self.back.is_empty()
+            && self.back.len() == snapshot.cells.len()
+            && self.back_stale.len() == rows
+            && snapshot.dirty_rows.len() == rows;
+        let cells = match reusable.then(|| Arc::get_mut(&mut self.back)).flatten() {
+            Some(buffer) => {
+                for row in 0..rows {
+                    if !(snapshot.dirty_rows[row] || self.back_stale[row]) {
+                        continue;
+                    }
+                    let range = row * cols..(row + 1) * cols;
+                    for (target, source) in
+                        buffer[range.clone()].iter_mut().zip(&snapshot.cells[range])
+                    {
+                        *target = cell_from_ghostty(source);
+                    }
+                }
+                std::mem::take(&mut self.back)
+            }
+            None => cells_from_ghostty(&snapshot.cells),
+        };
+        self.back_valid = false;
+        self.last_dirty.clear();
+        self.last_dirty.extend_from_slice(&snapshot.dirty_rows);
+        self.published_address = cells.as_ptr().addr();
+        Content {
+            generation: next_content_generation(),
+            cols,
+            rows,
+            cells,
+            cursor: cursor_from_ghostty(&snapshot),
+            selection: snapshot.selection.map(selection_range_from_ghostty),
+            display_offset: snapshot.display_offset,
+            history_size: snapshot.history_size,
+        }
+    }
+
+    /// Take back the frame the latest publish replaced in `SharedState`.
+    pub(super) fn recycle(&mut self, previous: Content) {
+        let own =
+            !previous.cells.is_empty() && previous.cells.as_ptr().addr() == self.front_address;
+        self.back = previous.cells;
+        self.back_valid = own;
+        std::mem::swap(&mut self.back_stale, &mut self.last_dirty);
+        self.front_address = self.published_address;
     }
 }
 
@@ -4322,6 +4597,7 @@ mod tests {
             last_publish: origin,
             pending: false,
             sync_hold_since: None,
+            mirror: CellMirror::default(),
         }
     }
 
@@ -4332,7 +4608,7 @@ mod tests {
         gate.pending = true;
         // Keystroke echo lands well past the interval: the rate limit must
         // never add latency to it.
-        assert!(gate.decide(false, true, origin + MIN_PUBLISH_INTERVAL));
+        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
     }
 
     #[test]
@@ -4342,14 +4618,14 @@ mod tests {
         gate.pending = true;
 
         let too_soon = origin + MIN_PUBLISH_INTERVAL - Duration::from_millis(1);
-        assert!(!gate.decide(false, true, too_soon));
+        assert!(!gate.decide(false, too_soon));
         // Still pending, so the loop shortens its block to the remaining gap.
         assert_eq!(
             gate.next_wake(too_soon),
             Some(Duration::from_millis(1)),
             "the loop must wake exactly when the interval expires"
         );
-        assert!(gate.decide(false, true, origin + MIN_PUBLISH_INTERVAL));
+        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
     }
 
     /// A pending change held by DEC 2026 must not spin the runtime loop: the
@@ -4363,7 +4639,7 @@ mod tests {
 
         // Far past the rate limit, so the naive answer would be zero.
         let opened = origin + MIN_PUBLISH_INTERVAL * 4;
-        assert!(!gate.decide(true, true, opened));
+        assert!(!gate.decide(true, opened));
         assert_eq!(
             gate.next_wake(opened),
             Some(SYNC_OUTPUT_MAX_HOLD),
@@ -4371,51 +4647,49 @@ mod tests {
         );
 
         let midway = opened + SYNC_OUTPUT_MAX_HOLD / 2;
-        assert!(!gate.decide(true, true, midway));
+        assert!(!gate.decide(true, midway));
         assert_eq!(gate.next_wake(midway), Some(SYNC_OUTPUT_MAX_HOLD / 2));
     }
 
-    /// The rate limit exists to absorb a program that outruns the display. With
-    /// the output queue drained there is nothing left to coalesce with, so
-    /// holding the frame only adds latency to the tail of a burst.
-    ///
-    /// This is also a correctness rule, not just a latency one. The runtime
-    /// loop exits as soon as the child is reaped, so a change still deferred at
-    /// that point is one nothing will ever come back to publish: before this,
-    /// the last thing a program printed before exiting could be dropped.
+    /// Output that trickles in faster than the interval but never queues up
+    /// (a line every two milliseconds, which is what ConPTY delivers for most
+    /// programs) is coalesced the same way a backlog is: the frame is
+    /// deferred to the interval's end, never dropped.
     #[test]
-    fn a_drained_output_queue_publishes_without_waiting_out_the_interval() {
+    fn a_trickle_inside_the_interval_is_deferred_to_its_deadline_not_dropped() {
         let origin = Instant::now();
         let mut gate = gate_at(origin);
         gate.pending = true;
 
-        // Well inside the interval, so backlog pressure would hold it.
         let too_soon = origin + MIN_PUBLISH_INTERVAL / 4;
-        assert!(
-            !gate.decide(false, true, too_soon),
-            "more output is queued behind it, so coalescing is worth the wait"
+        assert!(!gate.decide(false, too_soon), "inside the interval, held");
+        assert_eq!(
+            gate.next_wake(too_soon),
+            Some(MIN_PUBLISH_INTERVAL - MIN_PUBLISH_INTERVAL / 4),
+            "the loop wakes when the interval expires"
         );
-        assert!(
-            gate.decide(false, false, too_soon),
-            "nothing is queued behind it, so there is nothing to coalesce with"
-        );
+        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
     }
 
-    /// A drained queue lifts the rate limit, never the synchronized-output
-    /// hold: a torn frame is wrong however idle the PTY is.
+    /// One frame per interval, whatever the arrival rate: a 500 Hz trickle
+    /// becomes a stream at the interval's rate, with nothing lost.
     #[test]
-    fn a_drained_output_queue_does_not_lift_the_synchronized_output_hold() {
-        let origin = Instant::now();
-        let mut gate = gate_at(origin);
-        gate.pending = true;
-        assert!(!gate.decide(true, false, origin + MIN_PUBLISH_INTERVAL * 4));
+    fn a_trickle_publishes_once_per_interval() {
+        let interval = Duration::from_millis(2);
+        let chunks = 1000;
+        let published = simulate_gate_trickle(interval, chunks);
+        let expected = (interval * chunks as u32).as_nanos() / MIN_PUBLISH_INTERVAL.as_nanos();
+        assert!(
+            (published as u128).abs_diff(expected) <= 1,
+            "{published} frames for {chunks} chunks, expected about {expected}"
+        );
     }
 
     #[test]
     fn nothing_pending_means_nothing_to_wake_for() {
         let origin = Instant::now();
         let mut gate = gate_at(origin);
-        assert!(!gate.decide(false, true, origin + MIN_PUBLISH_INTERVAL * 10));
+        assert!(!gate.decide(false, origin + MIN_PUBLISH_INTERVAL * 10));
         assert_eq!(gate.next_wake(origin), None);
     }
 
@@ -4427,9 +4701,9 @@ mod tests {
 
         // Far past the rate limit, so only DEC 2026 can be holding it.
         let ready = origin + MIN_PUBLISH_INTERVAL * 4;
-        assert!(!gate.decide(true, true, ready));
+        assert!(!gate.decide(true, ready));
         // Closing the bracket releases the same frame on the next wake.
-        assert!(gate.decide(false, true, ready));
+        assert!(gate.decide(false, ready));
     }
 
     #[test]
@@ -4439,17 +4713,16 @@ mod tests {
         gate.pending = true;
 
         let opened = origin + MIN_PUBLISH_INTERVAL;
-        assert!(!gate.decide(true, true, opened), "hold opens here");
+        assert!(!gate.decide(true, opened), "hold opens here");
         assert!(
             !gate.decide(
-                true,
                 true,
                 opened + SYNC_OUTPUT_MAX_HOLD - Duration::from_millis(1)
             ),
             "still inside the budget"
         );
         assert!(
-            gate.decide(true, true, opened + SYNC_OUTPUT_MAX_HOLD),
+            gate.decide(true, opened + SYNC_OUTPUT_MAX_HOLD),
             "the mode is still set, but the hold has spent its budget"
         );
     }
@@ -4461,14 +4734,14 @@ mod tests {
         gate.pending = true;
 
         let first = origin + MIN_PUBLISH_INTERVAL;
-        assert!(!gate.decide(true, true, first), "first redraw opens a hold");
-        assert!(gate.decide(false, true, first), "and closing it publishes");
+        assert!(!gate.decide(true, first), "first redraw opens a hold");
+        assert!(gate.decide(false, first), "and closing it publishes");
 
         // A second redraw one full budget later must be held again, not
         // treated as a continuation of the first.
         gate.pending = true;
         let second = first + SYNC_OUTPUT_MAX_HOLD * 2;
-        assert!(!gate.decide(true, true, second));
+        assert!(!gate.decide(true, second));
     }
 
     #[test]
@@ -4766,6 +5039,7 @@ mod tests {
     fn content_conversion_preserves_snapshot_grid_dimensions() {
         let content = content_from_ghostty(ghostty::Content {
             cells: Vec::<ghostty::Cell>::new().into(),
+            dirty_rows: Vec::new().into(),
             cursor: ghostty::Cursor {
                 point: ghostty::Point::new(0, 0),
                 shape: ghostty::CursorShape::Block,
@@ -4783,9 +5057,90 @@ mod tests {
         assert_eq!((content.cols, content.rows), (80, 24));
     }
 
+    /// The mirror converts only the rows the engine flags and alternates two
+    /// buffers, so every frame it publishes must equal a full conversion of
+    /// the same snapshot, through partial redraws, a clear, and a scroll.
+    #[test]
+    fn the_cell_mirror_matches_a_full_conversion_across_partial_frames() {
+        let size = ghostty::WindowSize::new(40, 8, 8, 16).expect("valid grid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
+                .expect("libghostty initializes");
+        let mut mirror = CellMirror::default();
+        let mut front = blank_content(40, 8);
+        let mut addresses = Vec::new();
+        let frames: [&[u8]; 7] = [
+            b"\x1b[31mfirst\x1b[0m line\r\n",
+            b"second line\r\n",
+            b"\x1b[3;1Hedited row three",
+            b"\x1b[7;5H\x1b[1mbold\x1b[0m",
+            b"\x1b[1;1H\x1b[2Jcleared",
+            b"\x1b[8;1H\r\n\r\n\r\nscrolled",
+            b"\xf0\x9f\x98\x80\xe2\x80\x8d\xf0\x9f\x92\xbb tail",
+        ];
+        for (index, bytes) in frames.iter().enumerate() {
+            terminal.feed(bytes).expect("frame parses");
+            let snapshot = terminal.snapshot().expect("snapshot");
+            let expected = content_from_ghostty(snapshot.clone());
+            let published = mirror.publish(snapshot);
+            assert_eq!(
+                format!("{:?}", published.cells),
+                format!("{:?}", expected.cells),
+                "frame {index}"
+            );
+            assert_eq!(
+                published.cursor.point, expected.cursor.point,
+                "frame {index}"
+            );
+            assert_eq!(published.cursor.text, expected.cursor.text, "frame {index}");
+            addresses.push(published.cells.as_ptr().addr());
+            let previous = std::mem::replace(&mut front, published);
+            mirror.recycle(previous);
+        }
+        // From the third frame on, each publish writes into the buffer it
+        // published two frames earlier instead of allocating.
+        assert_eq!(addresses[2], addresses[0]);
+        assert_eq!(addresses[3], addresses[1]);
+        assert_eq!(addresses[6], addresses[4]);
+    }
+
+    /// A frame nobody else holds is reused, one the render thread still holds
+    /// is left alone: the publish then converts into a fresh buffer.
+    #[test]
+    fn the_cell_mirror_falls_back_to_a_fresh_buffer_while_the_renderer_holds_the_old_one() {
+        let size = ghostty::WindowSize::new(20, 4, 8, 16).expect("valid grid");
+        let mut terminal =
+            ghostty::DisplayTerminal::new(size, 100, ghostty::TerminalAppearance::default())
+                .expect("libghostty initializes");
+        let mut mirror = CellMirror::default();
+        let mut front = blank_content(20, 4);
+        let mut publish = |terminal: &mut ghostty::DisplayTerminal, front: &mut Content| {
+            terminal.feed(b"x").expect("frame parses");
+            let published = mirror.publish(terminal.snapshot().expect("snapshot"));
+            let previous = std::mem::replace(front, published);
+            mirror.recycle(previous);
+            front.cells.clone()
+        };
+        let first = publish(&mut terminal, &mut front);
+        let second_address = publish(&mut terminal, &mut front).as_ptr().addr();
+        // `first` is still alive here, like a layout pass in flight, so the
+        // third frame cannot be written into it.
+        let third = publish(&mut terminal, &mut front);
+        assert!(!Arc::ptr_eq(&first, &third));
+        let third_address = third.as_ptr().addr();
+        drop(first);
+        drop(third);
+        // Nothing holds the second and third buffers any more: reused in turn.
+        let fourth_address = publish(&mut terminal, &mut front).as_ptr().addr();
+        assert_eq!(fourth_address, second_address);
+        let fifth_address = publish(&mut terminal, &mut front).as_ptr().addr();
+        assert_eq!(fifth_address, third_address);
+    }
+
     fn empty_ghostty_content(cols: usize, rows: usize) -> ghostty::Content {
         ghostty::Content {
             cells: Vec::<ghostty::Cell>::new().into(),
+            dirty_rows: Vec::new().into(),
             cursor: ghostty::Cursor {
                 point: ghostty::Point::new(0, 0),
                 shape: ghostty::CursorShape::Block,

@@ -13,6 +13,8 @@ use crate::{Cell, Content, GhosttyError, Point, Result, Scroll, SelectionRange};
 #[derive(Default)]
 pub(crate) struct SnapshotCache {
     cells: Arc<[Cell]>,
+    /// Rows the last refresh rewrote, cleared to all-false by a clean frame.
+    dirty_rows: Vec<bool>,
     selection: Option<SelectionRange>,
     cols: usize,
     rows: usize,
@@ -74,6 +76,8 @@ impl DisplayTerminal {
         if full_refresh || dirty == sys::GhosttyRenderStateDirty_GHOSTTY_RENDER_STATE_DIRTY_PARTIAL
         {
             self.refresh_snapshot_cache(cols, rows, cell_count, full_refresh)?;
+        } else {
+            self.snapshot_cache.dirty_rows.fill(false);
         }
         if !self.snapshot_cache.matches(cols, rows, cell_count) {
             return Err(GhosttyError::AbiMismatch(
@@ -92,6 +96,7 @@ impl DisplayTerminal {
         }
 
         let cells = self.snapshot_cache.cells.clone();
+        let dirty_rows: Arc<[bool]> = self.snapshot_cache.dirty_rows.as_slice().into();
         let selection = self
             .snapshot_cache
             .selection
@@ -116,6 +121,7 @@ impl DisplayTerminal {
             .transpose()?;
         Ok(Content {
             cells,
+            dirty_rows,
             cursor: self.cursor(display_offset)?,
             selection,
             cols,
@@ -149,10 +155,22 @@ impl DisplayTerminal {
         cell_count: usize,
         full_refresh: bool,
     ) -> Result<()> {
-        let mut rebuilt_cells = full_refresh.then(|| {
+        // A full refresh of an unchanged grid size writes over the cached
+        // cells when nothing else holds them, the same way a partial refresh
+        // does, instead of allocating a fresh array for every scrolled frame.
+        // The consumer drops its previous snapshot before asking for the
+        // next one, so this is the common case.
+        let in_place = full_refresh
+            && self.snapshot_cache.cols == cols
+            && self.snapshot_cache.rows == rows
+            && self.snapshot_cache.cells.len() == cell_count
+            && Arc::get_mut(&mut self.snapshot_cache.cells).is_some();
+        let mut rebuilt_cells = (full_refresh && !in_place).then(|| {
             self.snapshot_cache.valid = false;
             Vec::with_capacity(cell_count)
         });
+        self.snapshot_cache.dirty_rows.clear();
+        self.snapshot_cache.dirty_rows.resize(rows, false);
 
         let iterator = render_row_iterator(self.render_state.raw(), self.row_iterator.raw())?;
 
@@ -186,6 +204,7 @@ impl DisplayTerminal {
                 selection_end = Some(Point::new(line, end));
             }
             if full_refresh || row.dirty {
+                self.snapshot_cache.dirty_rows[row_index] = true;
                 let mut column = 0usize;
                 while unsafe { sys::ghostty_render_state_row_cells_next(row.cells) } {
                     if column >= cols {
@@ -260,6 +279,7 @@ impl DisplayTerminal {
             }
             self.snapshot_cache = SnapshotCache {
                 cells: cells.into(),
+                dirty_rows: std::mem::take(&mut self.snapshot_cache.dirty_rows),
                 selection,
                 cols,
                 rows,
@@ -267,6 +287,7 @@ impl DisplayTerminal {
             };
         } else {
             self.snapshot_cache.selection = selection;
+            self.snapshot_cache.valid = true;
         }
         Ok(())
     }

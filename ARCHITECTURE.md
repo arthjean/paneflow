@@ -104,16 +104,26 @@ expensive half of an output batch, and `OUTPUT_BATCH_MAX_TIME` closes a batch
 every millisecond. The gate holds a publication back for two reasons: DEC mode
 2026 is set, meaning the program is mid-redraw and the frame would tear (the
 same check Ghostty's renderer makes in `src/renderer/generic.zig`), or the last
-frame is newer than `MIN_PUBLISH_INTERVAL` **and more output is already queued
-behind this one**. That second condition matters: the rate limit exists to
-absorb a program that outruns the display, so with the queue drained there is
-nothing to coalesce with, and holding the frame would add latency to the tail
-of every burst. It would also be a correctness bug, because the loop exits as
-soon as the child is reaped and a change still deferred at that point is one
-nothing comes back to publish. A DEC 2026 hold expires after
-`SYNC_OUTPUT_MAX_HOLD` so a program that opens a frame and dies cannot freeze
-the pane. Resizes, scrolls, other state the user waits on, and the last frame
-before `ChildExited` bypass both.
+frame is newer than `MIN_PUBLISH_INTERVAL`. A held change is deferred, never
+dropped: `PublishGate::next_wake` shortens the runtime loop's block to the
+interval's end, and the loop's `poll` publishes it then. The rate limit applies
+whether or not more output is queued behind the change, because a program that
+prints a line every couple of milliseconds (which is what ConPTY delivers for
+most output) never builds a backlog yet would otherwise be snapshotted hundreds
+of times a second for frames no display shows. The first change after an idle
+gap always publishes at once, so a keystroke echo pays nothing. A DEC 2026 hold
+expires after `SYNC_OUTPUT_MAX_HOLD` so a program that opens a frame and dies
+cannot freeze the pane. Resizes, scrolls, other state the user waits on, and
+the last frame before `ChildExited` bypass both, which is also what keeps a
+deferred change from being lost when the loop exits.
+The conversion behind a publish is incremental: the binding reports which rows
+changed since the previous snapshot (`Content::dirty_rows`), and `CellMirror`
+converts only those, alternating two cell buffers so the one the render thread
+reads is never the one being written. A keystroke echo converts one row; a
+full-viewport scroll converts every row in place without allocating.
+With nothing pending, the runtime loop blocks for `RUNTIME_QUIET_TICK` once a
+pane has been silent for a second, and drops back to `RUNTIME_IDLE_TICK` while
+output flows, a drag is held, or a child is winding down.
 Because a wakeup is queued only when a frame is actually published, this also
 stops the UI thread being woken for frames it would discard.
 
