@@ -231,7 +231,7 @@ fn selection_marker_color() -> Hsla {
 // Layout types
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct CellDimensions {
     pub cell_width: Pixels,
     pub line_height: Pixels,
@@ -606,6 +606,49 @@ struct CellStyle {
 }
 
 // ---------------------------------------------------------------------------
+// Layout memoization
+// ---------------------------------------------------------------------------
+
+/// Everything `layout_from_snapshot` reads, reduced to something comparable.
+///
+/// The grid itself collapses to `content_generation`: the runtime stamps every
+/// published frame, so one integer stands in for the cells, the cursor, the
+/// selection, the scroll offset, and the grid size. The rest are the render
+/// inputs the view recomputes each frame and that the snapshot cannot know
+/// about.
+#[derive(Clone, PartialEq)]
+pub(crate) struct LayoutCacheKey {
+    content_generation: u64,
+    theme_generation: u64,
+    bounds: Bounds<Pixels>,
+    first_visible_row: i32,
+    last_visible_row: i32,
+    dimensions: CellDimensions,
+    base_font: Font,
+    cursor_visible: bool,
+    focused: bool,
+    copy_mode_cursor: Option<CopyModeCursorState>,
+    search_highlights: Vec<SearchHighlight>,
+    exited: Option<i32>,
+    exit_signal: Option<String>,
+    default_cursor_shape: CursorShape,
+    cursor_color_override: Option<Hsla>,
+    integrated_glyphs_enabled: bool,
+    color_emoji_enabled: bool,
+}
+
+/// One pane's memoized layout.
+///
+/// GPUI re-renders the whole element tree whenever any view in it is dirty:
+/// `Window::mark_view_dirty` walks the ancestor path, the root re-renders, and
+/// `refreshing` then defeats the per-view element cache for every descendant.
+/// In a workspace of parallel agents that means one pane's output pays for a
+/// full re-layout of every other pane, sixty times a second, with nothing
+/// changed in any of them. This is the shortcut: an untouched pane compares a
+/// key and clones an `Arc`.
+pub(crate) type SharedLayoutCache = Arc<Mutex<Option<(LayoutCacheKey, Arc<LayoutState>)>>>;
+
+// ---------------------------------------------------------------------------
 // TerminalElement
 // ---------------------------------------------------------------------------
 
@@ -661,6 +704,8 @@ pub struct TerminalElement {
     /// Timestamp of the keystroke that triggered this render, for latency measurement.
     #[cfg(debug_assertions)]
     last_keystroke_at: Option<std::time::Instant>,
+    /// Memoized layout for this pane, shared with the view across frames.
+    layout_cache: SharedLayoutCache,
 }
 
 impl TerminalElement {
@@ -688,6 +733,7 @@ impl TerminalElement {
         color_emoji_enabled: bool,
         frame_metrics: TerminalFrameMetrics,
         alt_screen: bool,
+        layout_cache: SharedLayoutCache,
         #[cfg(debug_assertions)] last_keystroke_at: Option<std::time::Instant>,
     ) -> Self {
         Self {
@@ -713,6 +759,7 @@ impl TerminalElement {
             color_emoji_enabled,
             frame_metrics,
             alt_screen,
+            layout_cache,
             #[cfg(debug_assertions)]
             last_keystroke_at,
         }
@@ -723,7 +770,7 @@ impl TerminalElement {
         bounds: Bounds<Pixels>,
         window: &mut Window,
         _cx: &mut App,
-    ) -> LayoutState {
+    ) -> Arc<LayoutState> {
         let dims = self.frame_metrics.dimensions;
         let theme = crate::theme::active_theme();
 
@@ -831,9 +878,44 @@ impl TerminalElement {
         let copy_mode_cursor =
             focused_copy_mode_cursor(self.copy_mode_cursor.as_ref(), self.focused);
 
+        // Everything above this point is either cheap (an `RwLock` read and an
+        // `Arc` clone for the snapshot) or load-bearing side effects the cache
+        // must not skip: the resize notification and the initial-clear latch.
+        // What follows is the expensive part, so that is what gets memoized.
+        let key = LayoutCacheKey {
+            content_generation: content.generation,
+            theme_generation: crate::theme::theme_generation(),
+            bounds,
+            first_visible_row,
+            last_visible_row,
+            dimensions: dims,
+            base_font: self.frame_metrics.base_font.clone(),
+            cursor_visible: self.cursor_visible,
+            focused: self.focused,
+            copy_mode_cursor: self.copy_mode_cursor.clone(),
+            search_highlights: self.search_highlights.clone(),
+            exited: self.exited,
+            exit_signal: self.exit_signal.clone(),
+            default_cursor_shape: self.default_cursor_shape,
+            cursor_color_override: self.cursor_color_override,
+            integrated_glyphs_enabled: self.integrated_glyphs_enabled,
+            color_emoji_enabled: self.color_emoji_enabled,
+        };
+        {
+            let cache = self
+                .layout_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some((cached_key, cached_layout)) = cache.as_ref()
+                && *cached_key == key
+            {
+                return cached_layout.clone();
+            }
+        }
+
         let cells = content.cells;
 
-        layout_from_snapshot(LayoutInputs {
+        let layout = Arc::new(layout_from_snapshot(LayoutInputs {
             cells,
             cursor: cursor_snapshot,
             selection_range,
@@ -852,7 +934,12 @@ impl TerminalElement {
             exit_signal: self.exit_signal.clone(),
             integrated_glyphs_enabled: self.integrated_glyphs_enabled,
             color_emoji_enabled: self.color_emoji_enabled,
-        })
+        }));
+        *self
+            .layout_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((key, layout.clone()));
+        layout
     }
 }
 
@@ -1517,7 +1604,7 @@ impl TerminalElement {
 
 impl Element for TerminalElement {
     type RequestLayoutState = ();
-    type PrepaintState = Option<LayoutState>;
+    type PrepaintState = Option<Arc<LayoutState>>;
 
     fn id(&self) -> Option<ElementId> {
         None

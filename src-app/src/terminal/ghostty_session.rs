@@ -47,9 +47,47 @@ const MAX_QUEUED_INPUT_BYTES: usize = NFR_005_MAX_QUEUED_INPUT_BYTES;
 const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
+/// Shortest gap between two grid publications driven by PTY output.
+///
+/// Publishing costs a full libghostty snapshot plus a full conversion into the
+/// neutral `Content`, and `OUTPUT_BATCH_MAX_TIME` closes a batch every
+/// millisecond, so an unthrottled runtime pays for roughly sixteen frames per
+/// frame the display actually shows. Ghostty and Ghostling both publish once
+/// per displayed frame; the runtime thread cannot see the vblank, so the same
+/// budget is expressed as a rate. 8 ms is 125 Hz, past every shipping display
+/// and well past what a terminal needs. The gate only ever *delays* a
+/// publication that follows a recent one: the first request after an idle gap
+/// still goes out immediately, so keystroke echo keeps its latency.
+const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
+/// How long a DEC 2026 (synchronized output) hold may suppress publication.
+///
+/// Ghostty resets the mode itself after a second (`sync_reset_ms` in
+/// `src/termio/Thread.zig`). Paneflow never touches the terminal's mode, it
+/// only stops honoring the hold, so it can give up far sooner: a program that
+/// opens a frame and dies must not freeze the pane.
+const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
 /// How fast a drag held outside the viewport scrolls it. One line per tick at
 /// this rate is close to what Ghostty itself does, and slow enough that a
 /// pointer parked just past the edge stays readable.
+/// Longest a runtime loop blocks with nothing to do. Also the granularity of
+/// `advance_selection_autoscroll` and the Windows child-exit poll.
+const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
+
+/// Process-wide stamp handed to every published `Content`.
+///
+/// Global rather than per-session so a pane whose backend was replaced can
+/// never draw a stale layout the previous session left in the renderer's
+/// cache: the new session's first frame is numbered above every frame the old
+/// one ever published. A u64 at one frame per millisecond per pane outlives
+/// any machine this runs on.
+static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Claim the next grid stamp.
+fn next_content_generation() -> u64 {
+    CONTENT_GENERATION
+        .fetch_add(1, Ordering::Relaxed)
+        .wrapping_add(1)
+}
 const SELECTION_AUTOSCROLL_INTERVAL: Duration = Duration::from_millis(30);
 const FINAL_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(unix)]
@@ -1970,7 +2008,8 @@ fn run_runtime(
         }
     };
     configure_embedder_options(&mut terminal, max_scrollback);
-    if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
+    let mut publish_gate = PublishGate::new();
+    if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {
         let _ = startup_tx.send(StartupReport::InitializationFailed(anyhow::anyhow!(error)));
         return;
     }
@@ -2148,7 +2187,12 @@ fn run_runtime(
     let mut last_autoscroll = Instant::now();
 
     loop {
-        advance_selection_autoscroll(&inner, &mut terminal, &mut last_autoscroll);
+        advance_selection_autoscroll(
+            &inner,
+            &mut terminal,
+            &mut publish_gate,
+            &mut last_autoscroll,
+        );
         if inner.shutdown_sent.load(Ordering::Acquire) {
             #[cfg(unix)]
             {
@@ -2175,11 +2219,24 @@ fn run_runtime(
                 &mut master,
             );
         }
-        let received = match mailbox.recv_timeout(Duration::from_millis(10)) {
-            Ok(message) => match handle_terminal_command(&inner, &mut terminal, message) {
-                CommandOutcome::Handled => Ok(None),
-                CommandOutcome::Unhandled(message) => Ok(Some(message)),
-            },
+        // A pending publication shortens the block, so a change that the rate
+        // limit deferred lands on its own deadline rather than on the next
+        // idle tick.
+        // Floored at a millisecond: a deadline that has already passed means
+        // the previous `poll` could not publish, and a zero-length block would
+        // spin instead of yielding.
+        let wait = publish_gate
+            .next_wake(Instant::now())
+            .map_or(RUNTIME_IDLE_TICK, |wake| {
+                wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK)
+            });
+        let received = match mailbox.recv_timeout(wait) {
+            Ok(message) => {
+                match handle_terminal_command(&inner, &mut terminal, &mut publish_gate, message) {
+                    CommandOutcome::Handled => Ok(None),
+                    CommandOutcome::Unhandled(message) => Ok(Some(message)),
+                }
+            }
             Err(error) => Err(error),
         };
         match received {
@@ -2193,6 +2250,7 @@ fn run_runtime(
                     &mut service_output_tail,
                     &mut last_recent_output_refresh,
                     &mut recent_output_pending,
+                    &mut publish_gate,
                     bytes,
                 ) {
                     if !runtime_failed {
@@ -2305,11 +2363,7 @@ fn run_runtime(
                                 .resize(pty_size(size))
                                 .map_err(|error| error.to_string())
                         })
-                        .and_then(|()| {
-                            update_shared_state(&inner, &mut terminal)?;
-                            queue_wakeup(&inner);
-                            Ok(())
-                        });
+                        .and_then(|()| publish_gate.publish_now(&inner, &mut terminal));
                     let resize_succeeded = match resized {
                         Ok(()) => true,
                         Err(error) => {
@@ -2362,6 +2416,17 @@ fn run_runtime(
                 }
             }
             Err(MailboxRecvError::Timeout) => {}
+        }
+
+        // Turns a rate-limited or synchronized-output-held request into a
+        // frame without a timer of its own.
+        if let Err(error) = publish_gate.poll(&inner, &mut terminal) {
+            if !runtime_failed {
+                let _ = inner
+                    .events_tx
+                    .unbounded_send(GhosttyUiEvent::RuntimeFailed(error));
+            }
+            runtime_failed = true;
         }
 
         if refresh_recent_output_lines(
@@ -2433,7 +2498,7 @@ fn run_runtime(
         #[cfg(target_os = "windows")]
         {
             if runtime_failed && lifecycle.is_running() {
-                let _ = refresh_shared_state(&inner, &mut terminal);
+                let _ = publish_gate.publish_now(&inner, &mut terminal);
                 shutdown_requested = true;
             }
             if lifecycle.is_running() {
@@ -2583,12 +2648,13 @@ enum CommandOutcome {
 fn handle_terminal_command(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
+    gate: &mut PublishGate,
     message: RuntimeMessage,
 ) -> CommandOutcome {
     match message {
         RuntimeMessage::Scroll(scroll) => {
             terminal.scroll(scroll);
-            if let Err(error) = refresh_shared_state(inner, terminal) {
+            if let Err(error) = gate.publish_now(inner, terminal) {
                 log::warn!(target: "paneflow::terminal::ghostty", "Ghostty scroll failed: {error}");
             }
         }
@@ -2596,7 +2662,7 @@ fn handle_terminal_command(
             let result = terminal
                 .scroll_to_viewport_row(row)
                 .map_err(|error| error.to_string())
-                .and_then(|()| refresh_shared_state(inner, terminal));
+                .and_then(|()| gate.publish_now(inner, terminal));
             if let Err(error) = result {
                 log::warn!(
                     target: "paneflow::terminal::ghostty",
@@ -2712,7 +2778,7 @@ fn handle_terminal_command(
                     "Ghostty scrollback clear failed: {error}"
                 );
             }
-            let _ = refresh_shared_state(inner, terminal);
+            let _ = gate.publish_now(inner, terminal);
         }
         RuntimeMessage::SetDefaultCursor { shape, blink } => {
             if let Err(error) = terminal.set_default_cursor(shape, blink) {
@@ -2784,7 +2850,7 @@ fn handle_terminal_command(
         }
         RuntimeMessage::RestoreScrollback { text, reply } => {
             let _ = terminal.restore_scrollback(&text);
-            let _ = refresh_shared_state(inner, terminal);
+            let _ = gate.publish_now(inner, terminal);
             let _ = reply.send(());
         }
         other => return CommandOutcome::Unhandled(other),
@@ -2797,13 +2863,14 @@ fn handle_terminal_command(
 fn feed_display_output(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
+    gate: &mut PublishGate,
     bytes: &[u8],
 ) -> Result<(), String> {
     terminal
         .feed(bytes)
         .map_err(|error| format!("Ghostty VT feed failed: {error}"))?;
     handle_engine_events(inner, terminal, &mut None)?;
-    refresh_shared_state(inner, terminal)
+    gate.publish_now(inner, terminal)
 }
 
 /// Runtime loop for a session that owns a grid but no PTY and no child.
@@ -2836,7 +2903,8 @@ fn run_display_runtime(
         }
     };
     configure_embedder_options(&mut terminal, max_scrollback);
-    if let Err(error) = refresh_shared_state(&inner, &mut terminal) {
+    let mut publish_gate = PublishGate::new();
+    if let Err(error) = publish_gate.publish_now(&inner, &mut terminal) {
         let _ = startup_tx.send(Err(error));
         return;
     }
@@ -2845,19 +2913,21 @@ fn run_display_runtime(
     }
 
     loop {
-        let message = match mailbox.recv_timeout(Duration::from_millis(10)) {
+        let message = match mailbox.recv_timeout(RUNTIME_IDLE_TICK) {
             Ok(message) => message,
             Err(MailboxRecvError::Timeout) => continue,
             Err(MailboxRecvError::Disconnected) => break,
         };
         let CommandOutcome::Unhandled(message) =
-            handle_terminal_command(&inner, &mut terminal, message)
+            handle_terminal_command(&inner, &mut terminal, &mut publish_gate, message)
         else {
             continue;
         };
         match message {
             RuntimeMessage::WriteOutput { bytes, reply } => {
-                if let Err(error) = feed_display_output(&inner, &mut terminal, &bytes) {
+                if let Err(error) =
+                    feed_display_output(&inner, &mut terminal, &mut publish_gate, &bytes)
+                {
                     log::warn!(
                         target: "paneflow::terminal::ghostty",
                         "Ghostty display feed failed: {error}"
@@ -2880,7 +2950,7 @@ fn run_display_runtime(
                                 .clear_screen_and_scrollback()
                                 .map_err(|error| error.to_string())?;
                         }
-                        refresh_shared_state(&inner, &mut terminal)
+                        publish_gate.publish_now(&inner, &mut terminal)
                     });
                 if let Err(error) = &resized {
                     log::warn!(
@@ -2918,6 +2988,7 @@ fn process_output_batch(
     service_output_tail: &mut ServiceOutputTail,
     last_recent_output_refresh: &mut Option<Instant>,
     recent_output_pending: &mut bool,
+    gate: &mut PublishGate,
     first: Vec<u8>,
 ) -> Result<(), String> {
     let started = Instant::now();
@@ -2964,9 +3035,10 @@ fn process_output_batch(
             last_recent_output_refresh,
             recent_output_pending,
         );
-        update_shared_state(inner, terminal)?;
         record_command_marks(inner, &raw_marks);
-        queue_wakeup(inner);
+        // Rate-limited and held back while the program is mid-redraw: the
+        // runtime loop's `poll` publishes it once both lift.
+        gate.request(inner, terminal)?;
         if service_output_ready {
             queue_service_output_ready(inner);
         }
@@ -3263,13 +3335,138 @@ fn handle_engine_events(
     Ok(())
 }
 
-fn refresh_shared_state(
-    inner: &SessionInner,
-    terminal: &mut ghostty::DisplayTerminal,
-) -> Result<(), String> {
-    update_shared_state(inner, terminal)?;
-    queue_wakeup(inner);
-    Ok(())
+/// Decides when a grid change becomes a published frame.
+///
+/// Two things hold a publication back. A DEC 2026 hold means the program is
+/// mid-redraw and every frame in between would be torn, which is what
+/// Ghostty's renderer checks before it draws (`src/renderer/generic.zig`).
+/// `MIN_PUBLISH_INTERVAL` means the last frame is too recent to be worth
+/// another full snapshot. Neither applies to state the user is waiting on:
+/// [`PublishGate::publish_now`] bypasses both.
+struct PublishGate {
+    last_publish: Instant,
+    /// A grid change is waiting for one of the two holds to lift.
+    pending: bool,
+    /// When the current DEC 2026 hold started, so `SYNC_OUTPUT_MAX_HOLD` can
+    /// expire it. `None` while no hold is open.
+    sync_hold_since: Option<Instant>,
+}
+
+impl PublishGate {
+    fn new() -> Self {
+        Self {
+            // Backdated so the very first request publishes immediately.
+            last_publish: Instant::now()
+                .checked_sub(MIN_PUBLISH_INTERVAL)
+                .unwrap_or_else(Instant::now),
+            pending: false,
+            sync_hold_since: None,
+        }
+    }
+
+    /// Publish immediately, whatever the rate limit and the DEC 2026 hold say.
+    ///
+    /// For state the user is directly waiting on: a resize, a scroll, a
+    /// scrollback clear, the first frame of a session. These are rare and
+    /// their latency is visible, so they never queue behind the rate limit.
+    fn publish_now(
+        &mut self,
+        inner: &SessionInner,
+        terminal: &mut ghostty::DisplayTerminal,
+    ) -> Result<(), String> {
+        self.sync_hold_since = None;
+        self.commit(inner, terminal)
+    }
+
+    /// Record a grid change and publish it if nothing holds it back.
+    fn request(
+        &mut self,
+        inner: &SessionInner,
+        terminal: &mut ghostty::DisplayTerminal,
+    ) -> Result<(), String> {
+        self.pending = true;
+        self.poll(inner, terminal)
+    }
+
+    /// Publish a pending change once its holds have lifted.
+    ///
+    /// The runtime loop calls this every wake, which is what turns a delayed
+    /// request into a frame without a timer of its own.
+    fn poll(
+        &mut self,
+        inner: &SessionInner,
+        terminal: &mut ghostty::DisplayTerminal,
+    ) -> Result<(), String> {
+        if !self.pending {
+            return Ok(());
+        }
+        // One FFI crossing per wake, against a full snapshot saved every time
+        // a TUI is mid-redraw.
+        let synchronized_output = terminal
+            .synchronized_output()
+            .map_err(|error| error.to_string())?;
+        if !self.decide(synchronized_output, Instant::now()) {
+            return Ok(());
+        }
+        self.commit(inner, terminal)
+    }
+
+    /// Whether the pending change may be published now.
+    ///
+    /// The whole gating rule, with no terminal and no session attached, so it
+    /// can be exercised against a synthetic clock.
+    fn decide(&mut self, synchronized_output: bool, now: Instant) -> bool {
+        if !self.pending {
+            return false;
+        }
+        if self.held_by_synchronized_output(synchronized_output, now) {
+            return false;
+        }
+        now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
+    }
+
+    /// How long the runtime loop may block before [`Self::poll`] has work.
+    ///
+    /// `None` when nothing is pending. An open DEC 2026 hold reports its own
+    /// deadline rather than the rate-limit gap: the rate limit has usually
+    /// already elapsed by then, and reporting zero would spin the loop for the
+    /// length of the redraw. The closing bracket arrives as PTY bytes, which
+    /// wake the loop on their own well before this deadline.
+    fn next_wake(&self, now: Instant) -> Option<Duration> {
+        if !self.pending {
+            return None;
+        }
+        if let Some(opened_at) = self.sync_hold_since {
+            return Some(SYNC_OUTPUT_MAX_HOLD.saturating_sub(now.duration_since(opened_at)));
+        }
+        Some(MIN_PUBLISH_INTERVAL.saturating_sub(now.duration_since(self.last_publish)))
+    }
+
+    /// Whether DEC 2026 is set and its hold has not yet timed out.
+    ///
+    /// The hold opens on the first wake that observes the mode and closes as
+    /// soon as the mode clears, so a program that brackets every redraw gets a
+    /// fresh `SYNC_OUTPUT_MAX_HOLD` budget for each one.
+    fn held_by_synchronized_output(&mut self, synchronized_output: bool, now: Instant) -> bool {
+        if !synchronized_output {
+            self.sync_hold_since = None;
+            return false;
+        }
+        let opened_at = *self.sync_hold_since.get_or_insert(now);
+        now.duration_since(opened_at) < SYNC_OUTPUT_MAX_HOLD
+    }
+
+    fn commit(
+        &mut self,
+        inner: &SessionInner,
+        terminal: &mut ghostty::DisplayTerminal,
+    ) -> Result<(), String> {
+        update_shared_state(inner, terminal)?;
+        self.last_publish = Instant::now();
+        self.pending = false;
+        queue_wakeup(inner);
+        Ok(())
+    }
 }
 
 fn update_shared_state(
@@ -3304,6 +3501,7 @@ fn update_shared_selection(inner: &SessionInner, selection: Option<SelectionRang
         return;
     }
     state.content.selection = selection;
+    state.content.generation = next_content_generation();
     drop(state);
     queue_wakeup(inner);
 }
@@ -3721,6 +3919,7 @@ fn window_size(size: TerminalWindowSize) -> ghostty::Result<ghostty::WindowSize>
 fn advance_selection_autoscroll(
     inner: &Arc<SessionInner>,
     terminal: &mut ghostty::DisplayTerminal,
+    gate: &mut PublishGate,
     last_tick: &mut Instant,
 ) {
     // `applied` is only set while a drag is live, so this costs one atomic
@@ -3766,7 +3965,7 @@ fn advance_selection_autoscroll(
         // The viewport moved, so the whole grid has to be republished, not
         // just the selection.
         Ok(_) => {
-            if let Err(error) = refresh_shared_state(inner, terminal) {
+            if let Err(error) = gate.publish_now(inner, terminal) {
                 log::warn!(
                     target: "paneflow::terminal::ghostty",
                     "Ghostty selection autoscroll refresh failed: {error}"
@@ -3942,6 +4141,7 @@ pub(super) fn content_from_ghostty(content: ghostty::Content) -> Content {
         .collect::<Vec<_>>()
         .into();
     Content {
+        generation: next_content_generation(),
         cols: content.cols,
         rows: content.rows,
         cells,
@@ -4037,6 +4237,7 @@ fn blank_content(cols: usize, rows: usize) -> Content {
         .collect::<Vec<_>>()
         .into();
     Content {
+        generation: next_content_generation(),
         cols,
         rows,
         cells,
@@ -4089,6 +4290,124 @@ mod tests {
     fn nfr_005_terminal_queue_caps_stay_below_budget() {
         assert_eq!(OUTPUT_POOL_BYTES, 128 * 1024);
         assert_eq!(MAX_QUEUED_INPUT_BYTES, 1024 * 1024);
+    }
+
+    /// A gate whose clock starts at `origin`, with no publication yet made.
+    fn gate_at(origin: Instant) -> PublishGate {
+        PublishGate {
+            last_publish: origin,
+            pending: false,
+            sync_hold_since: None,
+        }
+    }
+
+    #[test]
+    fn the_first_change_after_an_idle_gap_publishes_without_waiting() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+        // Keystroke echo lands well past the interval: the rate limit must
+        // never add latency to it.
+        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
+    }
+
+    #[test]
+    fn a_change_too_soon_after_the_last_frame_waits_out_the_interval() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+
+        let too_soon = origin + MIN_PUBLISH_INTERVAL - Duration::from_millis(1);
+        assert!(!gate.decide(false, too_soon));
+        // Still pending, so the loop shortens its block to the remaining gap.
+        assert_eq!(
+            gate.next_wake(too_soon),
+            Some(Duration::from_millis(1)),
+            "the loop must wake exactly when the interval expires"
+        );
+        assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
+    }
+
+    /// A pending change held by DEC 2026 must not spin the runtime loop: the
+    /// rate limit has long since elapsed by then, so `next_wake` has to report
+    /// the hold's deadline instead of zero.
+    #[test]
+    fn a_synchronized_output_hold_parks_the_loop_instead_of_spinning_it() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+
+        // Far past the rate limit, so the naive answer would be zero.
+        let opened = origin + MIN_PUBLISH_INTERVAL * 4;
+        assert!(!gate.decide(true, opened));
+        assert_eq!(
+            gate.next_wake(opened),
+            Some(SYNC_OUTPUT_MAX_HOLD),
+            "the hold's own deadline is the next useful wake"
+        );
+
+        let midway = opened + SYNC_OUTPUT_MAX_HOLD / 2;
+        assert!(!gate.decide(true, midway));
+        assert_eq!(gate.next_wake(midway), Some(SYNC_OUTPUT_MAX_HOLD / 2));
+    }
+
+    #[test]
+    fn nothing_pending_means_nothing_to_wake_for() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        assert!(!gate.decide(false, origin + MIN_PUBLISH_INTERVAL * 10));
+        assert_eq!(gate.next_wake(origin), None);
+    }
+
+    #[test]
+    fn synchronized_output_holds_a_frame_the_rate_limit_would_have_allowed() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+
+        // Far past the rate limit, so only DEC 2026 can be holding it.
+        let ready = origin + MIN_PUBLISH_INTERVAL * 4;
+        assert!(!gate.decide(true, ready));
+        // Closing the bracket releases the same frame on the next wake.
+        assert!(gate.decide(false, ready));
+    }
+
+    #[test]
+    fn a_synchronized_output_hold_expires_so_a_stalled_program_cannot_freeze_the_pane() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+
+        let opened = origin + MIN_PUBLISH_INTERVAL;
+        assert!(!gate.decide(true, opened), "hold opens here");
+        assert!(
+            !gate.decide(
+                true,
+                opened + SYNC_OUTPUT_MAX_HOLD - Duration::from_millis(1)
+            ),
+            "still inside the budget"
+        );
+        assert!(
+            gate.decide(true, opened + SYNC_OUTPUT_MAX_HOLD),
+            "the mode is still set, but the hold has spent its budget"
+        );
+    }
+
+    #[test]
+    fn each_bracketed_redraw_gets_its_own_hold_budget() {
+        let origin = Instant::now();
+        let mut gate = gate_at(origin);
+        gate.pending = true;
+
+        let first = origin + MIN_PUBLISH_INTERVAL;
+        assert!(!gate.decide(true, first), "first redraw opens a hold");
+        assert!(gate.decide(false, first), "and closing it publishes");
+
+        // A second redraw one full budget later must be held again, not
+        // treated as a continuation of the first.
+        gate.pending = true;
+        let second = first + SYNC_OUTPUT_MAX_HOLD * 2;
+        assert!(!gate.decide(true, second));
     }
 
     #[test]
@@ -4401,6 +4720,74 @@ mod tests {
         });
 
         assert_eq!((content.cols, content.rows), (80, 24));
+    }
+
+    fn empty_ghostty_content(cols: usize, rows: usize) -> ghostty::Content {
+        ghostty::Content {
+            cells: Vec::<ghostty::Cell>::new().into(),
+            cursor: ghostty::Cursor {
+                point: ghostty::Point::new(0, 0),
+                shape: ghostty::CursorShape::Block,
+                visible: true,
+                blinking: false,
+                wide_tail: false,
+            },
+            selection: None,
+            cols,
+            rows,
+            display_offset: 0,
+            history_size: 0,
+        }
+    }
+
+    /// The renderer memoizes a pane's layout on `Content::generation` alone,
+    /// so two frames must never share a stamp even when their grids are
+    /// byte-identical: a cursor blink or a selection is a new frame.
+    #[test]
+    fn every_published_grid_gets_its_own_generation() {
+        let first = content_from_ghostty(empty_ghostty_content(80, 24));
+        let second = content_from_ghostty(empty_ghostty_content(80, 24));
+        let blank = blank_content(80, 24);
+
+        assert_ne!(first.generation, 0, "0 is reserved for unstamped content");
+        assert!(
+            first.generation < second.generation,
+            "stamps must advance, got {} then {}",
+            first.generation,
+            second.generation
+        );
+        assert!(
+            second.generation < blank.generation,
+            "a blank grid is a frame too"
+        );
+    }
+
+    /// The selection is published in place, without a snapshot. Skipping the
+    /// stamp there would leave the renderer showing the previous selection
+    /// until unrelated output happened to arrive.
+    #[test]
+    fn republishing_only_the_selection_still_advances_the_generation() {
+        let (session, _pending, _events_rx) =
+            GhosttySession::pending(TerminalWindowSize::new(80, 24, 8, 16));
+        let before = session.inner.state.read().content.generation;
+
+        let selection = Some(SelectionRange {
+            start: Point::new(0, 0),
+            end: Point::new(0, 4),
+            is_block: false,
+        });
+        update_shared_selection(&session.inner, selection);
+
+        let after = session.inner.state.read().content.generation;
+        assert!(
+            after > before,
+            "expected a new stamp, got {before} then {after}"
+        );
+
+        // An identical selection is not a new frame and must not invalidate
+        // every pane's memoized layout.
+        update_shared_selection(&session.inner, selection);
+        assert_eq!(session.inner.state.read().content.generation, after);
     }
 
     #[test]

@@ -20,6 +20,35 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   Below them, Expand all / Collapse all, and the fold state of each workspace
   row now survives a restart.
 
+### Changed
+
+- The terminal is markedly faster and more responsive, most visibly on Windows.
+  Four things were doing redundant work. The runtime thread rebuilt and
+  published a full grid snapshot for every output batch, up to a thousand a
+  second, where a display shows at most a couple of hundred; it now publishes
+  at most one frame per 8 ms, and still publishes the first change after any
+  idle gap immediately so keystroke echo is untouched. Programs that bracket a
+  screen redraw with synchronized output (DEC 2026) had those half-drawn frames
+  published and painted; they are now skipped at the source, the way Ghostty
+  itself does it, which removed the reason Windows and macOS were holding every
+  wakeup for an extra event-batch window before drawing. A pane whose grid had
+  not changed was still fully re-laid-out whenever any other pane produced
+  output, so a workspace of parallel agents paid for every pane on every frame;
+  each pane now reuses its layout until something in it actually changes. And
+  the per-cell contrast correction, which costs a handful of transcendental
+  operations per cell, is memoized on the colors instead of recomputed for
+  every cell of every frame. On the project's eight-pane render benchmark this
+  is 32% off the median input-to-frame time, 26% off its 95th percentile and
+  35% off total CPU, in exchange for roughly 1.6 MB of retained layout per open
+  pane.
+
+- Windows holds the process timer resolution at 1 ms while the window is open.
+  Windows delivers timer expirations on a 15.6 ms clock tick unless a process
+  asks for better, and since Windows 10 2004 that default is per-process. Every
+  short timeout in the terminal pipeline was silently rounded up to it, which
+  capped the update rate and added up to 15 ms of latency to output that had
+  already been parsed.
+
 ### Fixed
 
 - Quitting an agent leaves you in your own shell. A pane opened for an agent

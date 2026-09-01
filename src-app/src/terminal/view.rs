@@ -82,10 +82,20 @@ fn classify_ghostty_start_error(error: GhosttyStartError) -> GhosttyStartFailure
     }
 }
 
-/// Linux renders the leading engine wakeup immediately, which is the
-/// low-latency path. Windows holds it until the batch closes, because ConPTY
-/// can split or normalize the synchronized-output sequence around TUI redraws.
-const RENDER_WAKEUP_IMMEDIATELY: bool = cfg!(target_os = "linux");
+/// Every platform renders the leading engine wakeup immediately.
+///
+/// This was Linux-only until the runtime learned to honor DEC 2026: Windows
+/// and macOS held the leading wakeup until the batch window closed, because
+/// ConPTY can split or normalize a synchronized-output sequence around a TUI
+/// redraw and a mid-redraw frame tears. `PublishGate` in
+/// `terminal/ghostty_session.rs` now suppresses those frames at the source,
+/// the way Ghostty's renderer does, so the delay bought nothing and cost the
+/// whole batch window in latency. On Windows that window is far worse than it
+/// looks: `smol::Timer` resolves through `GetQueuedCompletionStatusEx`, whose
+/// timeout rounds up to the system timer tick, so the 4 ms below really fires
+/// at ~15.6 ms unless something holds a `timeBeginPeriod(1)` (see
+/// `app::win_timer`).
+const RENDER_WAKEUP_IMMEDIATELY: bool = true;
 
 /// Set by the first pane that fails to start the engine, so a broken artifact
 /// costs one error line per process rather than one per pane (FR-05).
@@ -245,6 +255,10 @@ pub struct TerminalView {
     /// Element origin in window coordinates - set by TerminalElement::paint(),
     /// read by mouse handlers for pixel→grid conversion.
     pub(super) element_origin: Arc<Mutex<gpui::Point<gpui::Pixels>>>,
+    /// Memoized terminal layout, kept across frames so a pane whose grid did
+    /// not change is not re-laid-out when a sibling pane's output dirties the
+    /// window. See `TerminalElement::build_layout`.
+    layout_cache: crate::terminal::element::SharedLayoutCache,
     /// US-015: painted scrollbar geometry - set by TerminalElement::paint(),
     /// read by the mouse handlers to hit-test click-to-jump / drag.
     pub(super) scrollbar_metrics: Arc<Mutex<Option<super::element::ScrollbarMetrics>>>,
@@ -826,6 +840,7 @@ impl TerminalView {
             cell_width: gpui::px(8.0),
             line_height: gpui::px(16.0),
             element_origin: Arc::new(Mutex::new(gpui::Point::default())),
+            layout_cache: Arc::new(Mutex::new(None)),
             scrollbar_metrics: Arc::new(Mutex::new(None)),
             scrollbar_drag: None,
             scroll_remainder: 0.0,
@@ -1628,6 +1643,7 @@ impl Render for TerminalView {
             self.color_emoji_enabled,
             frame_metrics,
             alt_screen,
+            self.layout_cache.clone(),
             #[cfg(debug_assertions)]
             keystroke_at,
         );

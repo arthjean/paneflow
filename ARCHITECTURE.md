@@ -84,16 +84,47 @@ KeyDownEvent
   → Ghostty structured input
   → backend writer → PTY → shell / agent CLI
   → output bytes → libghostty-vt engine
+  → PublishGate → owned neutral Content in SharedState
   → TerminalBackendEvent → sync() → cx.notify()
-  → TerminalSessionBackend::render_content() → owned neutral Content
-  → TerminalElement::prepaint()
+  → TerminalSessionBackend::render_content() → Arc clone of that Content
+  → TerminalElement::prepaint()  - memoized on Content::generation
   → TerminalElement::paint()     - quads + shaped glyph runs
   → GPU (Vulkan on Linux, Metal on macOS, DirectX on Windows)
 ```
 
-The first Ghostty wakeup on Linux can render immediately. Windows wakeups are
-coalesced into the 4 ms event batch, because ConPTY delivers output in much
-coarser chunks than a POSIX PTY.
+The leading Ghostty wakeup renders immediately on every platform.
+
+Two gates decide how much of that pipeline actually runs, and both exist
+because the natural rate of each stage is far above the rate a display can
+show.
+
+**`PublishGate` (`terminal/ghostty_session.rs`), on the runtime thread.**
+Snapshotting the grid and converting it into the neutral `Content` is the
+expensive half of an output batch, and `OUTPUT_BATCH_MAX_TIME` closes a batch
+every millisecond. The gate holds a publication back for two reasons: DEC mode
+2026 is set, meaning the program is mid-redraw and the frame would tear (the
+same check Ghostty's renderer makes in `src/renderer/generic.zig`), or the last
+frame is newer than `MIN_PUBLISH_INTERVAL`. A hold expires after
+`SYNC_OUTPUT_MAX_HOLD` so a program that opens a frame and dies cannot freeze
+the pane. Resizes, scrolls and other state the user waits on bypass both.
+Because a wakeup is queued only when a frame is actually published, this also
+stops the UI thread being woken for frames it would discard.
+
+**The layout memo (`terminal/element/`), on the render thread.** GPUI marks a
+notifying view's whole ancestor path dirty, and re-rendering an ancestor sets
+`refreshing`, which defeats the per-view element cache for every descendant.
+In a workspace of parallel agents that means one pane's output pays for a full
+re-layout of every other pane. `TerminalElement::build_layout` therefore keys
+a memoized `LayoutState` on `Content::generation` plus the render inputs the
+snapshot cannot know about, so an untouched pane compares a key and clones an
+`Arc` instead of walking its grid again. The memo holds exactly one layout per
+pane, so it cannot grow without bound, but it does keep roughly 1.6 MB alive
+per open pane that would previously have been freed at the end of each frame.
+
+On Windows both budgets depend on the process holding a `timeBeginPeriod(1)`
+for the lifetime of the GUI (`app::win_timer`): without it every millisecond
+timeout in the pipeline, including the event batch window and the mailbox idle
+tick, rounds up to the default 15.6 ms clock tick.
 
 `TerminalElement` (`src-app/src/terminal/element/`) is the one place Paneflow
 implements GPUI's low-level `Element` trait directly instead of composing

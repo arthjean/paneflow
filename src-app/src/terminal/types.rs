@@ -429,6 +429,12 @@ pub struct RenderableCursor {
 /// reaching for the grid itself. Mirror of Zed's `TerminalContent`.
 #[derive(Clone, Debug)]
 pub struct Content {
+    /// Process-wide monotonic stamp, bumped every time a session publishes a
+    /// new grid. Two `Content` values with the same stamp are the same frame,
+    /// which is what lets the renderer skip rebuilding a layout it already
+    /// has. Never reused across sessions, so a restarted pane cannot collide
+    /// with the cache entry its predecessor left behind.
+    pub generation: u64,
     /// Grid dimensions owned by this exact snapshot. Ghostty applies host
     /// resizes on its runtime thread, so these can briefly differ from the
     /// latest GPUI bounds while the resize transaction is in flight.
@@ -446,6 +452,7 @@ pub struct Content {
 // ---------------------------------------------------------------------------
 
 /// A search match highlight to be painted by TerminalElement.
+#[derive(Clone, PartialEq, Eq)]
 pub struct SearchHighlight {
     pub start: Point,
     pub end: Point,
@@ -497,6 +504,7 @@ pub struct HyperlinkZone {
 }
 
 /// Copy mode cursor state for rendering.
+#[derive(Clone, PartialEq, Eq)]
 pub struct CopyModeCursorState {
     /// Grid-coordinate line of the copy cursor (current/end of selection)
     pub grid_line: i32,
