@@ -370,6 +370,135 @@ impl PaneFlowApp {
             .collect();
         self.worktree_states.retain_live(&live);
     }
+
+    /// Remove the checkout a tab is bound to, unbinding every tab that works in
+    /// it.
+    ///
+    /// The counterpart of [`Self::bind_tab_to_branch`], and the reason
+    /// `<repo>.worktrees/` no longer grows for the life of the project: a
+    /// checkout the sidebar created is deliberately NOT a
+    /// [`crate::workspace::worktree::ManagedWorktree`]
+    /// ([`crate::workspace::worktree::prepare_branch_checkout`]), so nothing
+    /// else ever tears it down.
+    ///
+    /// It keeps the US-009 invariants that
+    /// [`crate::workspace::worktree::teardown_all`] holds for orchestration's
+    /// own worktrees, for the same reasons: the BRANCH IS NEVER DELETED, a
+    /// checkout holding uncommitted work is never removed, and a directory
+    /// without Paneflow's owner marker belongs to somebody else. Unlike
+    /// teardown, this is a gesture the user made, so a refusal is a toast
+    /// rather than a log line nobody reads.
+    ///
+    /// The git work runs through `smol::unblock` (three subprocesses, one of
+    /// them deleting a tree) and the workspace is re-resolved by id afterwards,
+    /// because indices do not survive an await.
+    pub(crate) fn remove_tab_worktree(
+        &mut self,
+        ws_idx: usize,
+        tab_idx: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws) = self.workspaces.get(ws_idx) else {
+            return;
+        };
+        let Some(repo_root) = ws.repo_root.clone() else {
+            return;
+        };
+        let Some(path) = ws.tabs().get(tab_idx).and_then(|tab| tab.worktree.clone()) else {
+            return;
+        };
+        let ws_id = ws.id;
+        // A checkout that is itself an open workspace is somebody's cwd right
+        // now. `is_clean` still proves no work would be lost, but the panes over
+        // there would be left standing in a directory that no longer exists -
+        // so this is a refusal, not a warning.
+        if self.workspaces.iter().any(|ws| ws.worktree_root == path) {
+            self.show_toast(
+                format!("{} is open as a workspace - close it first", path.display()),
+                cx,
+            );
+            return;
+        }
+        cx.spawn(
+            async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                let (probe_root, probe_path) = (repo_root.clone(), path.clone());
+                let removed =
+                    smol::unblock(move || remove_checkout(&probe_root, &probe_path)).await;
+                let _ = cx.update(|cx| {
+                    this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
+                        match removed {
+                            Ok(()) => app.forget_removed_worktree(ws_id, &repo_root, &path, cx),
+                            Err(message) => app.show_toast(message, cx),
+                        }
+                        cx.notify();
+                    })
+                });
+            },
+        )
+        .detach();
+    }
+
+    /// Drop every trace of a checkout that is gone: unbind the tabs that worked
+    /// in it, forget its cached git state, refresh what the picker offers, and
+    /// make the Worktree-scope diff recount its columns.
+    ///
+    /// Tabs are collected by index first: [`Self::set_tab_worktree`] takes
+    /// `&mut self`, and it is the one place a binding is allowed to change, so
+    /// the unbind goes through it rather than writing the field here.
+    fn forget_removed_worktree(
+        &mut self,
+        ws_id: u64,
+        repo_root: &std::path::Path,
+        path: &std::path::Path,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ws_idx) = self.workspaces.iter().position(|ws| ws.id == ws_id) else {
+            return;
+        };
+        let orphaned: Vec<usize> = self.workspaces[ws_idx]
+            .tabs()
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| tab.worktree.as_deref() == Some(path))
+            .map(|(idx, _)| idx)
+            .collect();
+        for tab_idx in orphaned {
+            self.set_tab_worktree(ws_idx, tab_idx, None, cx);
+        }
+        self.prune_worktree_states();
+        self.spawn_worktree_listing(ws_idx, cx);
+        self.invalidate_worktree_diff_cache(repo_root, cx);
+    }
+}
+
+/// The blocking half of [`PaneFlowApp::remove_tab_worktree`]: refuse what is not
+/// ours or not clean, then remove the directory and drop the ref that named it.
+///
+/// The owner marker is checked first and is also what keeps a workspace root
+/// safe here, marker-less by construction - though a tab never carries one,
+/// since binding to the repository's own branch unbinds instead
+/// ([`PaneFlowApp::bind_tab_to_branch`]).
+fn remove_checkout(repo_root: &std::path::Path, path: &std::path::Path) -> Result<(), String> {
+    use crate::workspace::worktree;
+    if !worktree::has_owner_marker(path) {
+        return Err(format!(
+            "{} was not created by Paneflow - remove it with git worktree remove",
+            path.display()
+        ));
+    }
+    // `is_clean` reports an error rather than "clean" when it cannot prove
+    // cleanliness, and that error propagates: never delete what we cannot read.
+    if !worktree::is_clean(path)? {
+        return Err(format!(
+            "{} has uncommitted changes - commit or discard them first",
+            path.display()
+        ));
+    }
+    worktree::remove_worktree(repo_root, path)?;
+    // The directory is gone; drop the administrative entry with it, so a later
+    // `worktree add` for the same branch is not refused by a stale record.
+    let _ = worktree::prune(repo_root);
+    Ok(())
 }
 
 #[cfg(test)]

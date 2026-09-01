@@ -430,6 +430,7 @@ impl PaneFlowApp {
             .and_then(|ws| ws.tabs().get(tab_idx));
         let can_reset_name = tab.is_some_and(|tab| tab.title_is_user_owned());
         let bound = tab.and_then(|tab| tab.worktree.clone());
+        let is_bound = bound.is_some();
         // Discussion #41: the branches this tab can be moved to, one row each,
         // exactly what the New pane picker offers - a branch with no worktree
         // yet gets one when it is chosen. The repository's own branch is in
@@ -477,12 +478,31 @@ impl PaneFlowApp {
         } else {
             0.
         };
-        let rows = if can_reset_name { 3. } else { 2. } + worktree_rows;
+        // The removal entry and its divider, sized like the Branch section
+        // header above (divider folded into the row it introduces).
+        let remove_rows = if is_bound { 1. } else { 0. };
+        let rows = if can_reset_name { 3. } else { 2. } + worktree_rows + remove_rows;
         let menu_height = px(8. + rows * 28.);
         let menu_pos = clamped_context_menu_position(position, px(248.), menu_height, window);
         let close_shortcut = self
             .shortcut_for_action("close_tab")
             .map(|key| SharedString::from(key.to_string()));
+        // Only a bound tab has a checkout to remove. Built here rather than
+        // inside the `when_some` below because `render_select_menu_item` needs
+        // `self`, exactly like every other item in this menu.
+        let remove_worktree_item = is_bound.then(|| {
+            self.render_select_menu_item(
+                "tab-context-remove-worktree".into(),
+                "Remove worktree",
+                None,
+                ui,
+                cx.listener(move |this, _: &ClickEvent, _window, cx| {
+                    this.tab_menu_open = None;
+                    this.remove_tab_worktree(ws_idx, tab_idx, cx);
+                    cx.stop_propagation();
+                }),
+            )
+        });
 
         select_menu("tab-context-menu", ui)
             .occlude()
@@ -573,6 +593,9 @@ impl PaneFlowApp {
                     );
                 }
                 menu
+            })
+            .when_some(remove_worktree_item, |menu, item| {
+                menu.child(context_menu_divider(ui)).child(item)
             })
             .into_any_element()
     }

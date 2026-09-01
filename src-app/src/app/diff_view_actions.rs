@@ -313,6 +313,48 @@ impl PaneFlowApp {
         }
     }
 
+    /// Drop this repo's cached Worktree-scope hosts so the next rebuild re-runs
+    /// on-disk discovery.
+    ///
+    /// [`DiffViewKey`] hashes the worktrees the *seed* carried, and the seed is
+    /// the open workspaces only ([`Self::collect_diff_worktrees`]). Creating or
+    /// removing a checkout behind a tab therefore leaves the key identical: the
+    /// warm resume would keep rendering the old column set, and the change would
+    /// only surface after a scope toggle or a restart. Discovery runs on a miss
+    /// ([`Self::spawn_worktree_discovery`]), so forcing the miss is what makes a
+    /// new column appear and a removed one leave.
+    pub(crate) fn invalidate_worktree_diff_cache(
+        &mut self,
+        repo_root: &Path,
+        cx: &mut Context<Self>,
+    ) {
+        let stale: Vec<DiffViewKey> = self
+            .diff_mode
+            .diff_view_cache
+            .keys()
+            .filter(|key| key.scope == DiffScope::Worktree && key.repo_root == repo_root)
+            .cloned()
+            .collect();
+        if stale.is_empty() {
+            return;
+        }
+        let was_displayed = self
+            .diff_mode
+            .diff_view_key
+            .as_ref()
+            .is_some_and(|key| stale.contains(key));
+        for key in stale {
+            self.diff_mode.diff_view_cache.remove(&key);
+        }
+        // Only a host on screen has to be re-mounted now. The others simply miss
+        // the cache the next time their scope is selected, and outside Diff mode
+        // the displayed host is already parked - `rebuild_diff_view` runs on
+        // mode entry and overwrites the dangling key then.
+        if was_displayed && self.mode == AppMode::Diff {
+            self.rebuild_diff_view(cx);
+        }
+    }
+
     /// US-013: off the main thread, enumerate the repo's on-disk worktrees and
     /// append any not already open as workspaces (dedup by a case-safe
     /// normalized path) to the live `DiffView` *in place* via `add_columns` -
