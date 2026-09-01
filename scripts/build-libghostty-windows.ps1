@@ -5,7 +5,11 @@ param(
     [string]$Zig = "zig",
     [string]$ZigSourceArchive = $env:PANEFLOW_ZIG_SOURCE_ARCHIVE,
     [string]$EvidenceDir = $env:EVIDENCE_DIR,
-    [switch]$VerifyReproducible
+    [switch]$VerifyReproducible,
+    # Only for minting a new reviewed archive: it downgrades the manifest hash
+    # gates to warnings so the recipe can be re-pinned deliberately. Matches
+    # scripts/build-libghostty-linux.sh and scripts/build-libghostty-macos.sh.
+    [switch]$AllowHashDrift
 )
 
 Set-StrictMode -Version Latest
@@ -1115,7 +1119,13 @@ try {
 
     $actualArchiveSha = Get-Sha256 (Join-Path $first $ArchivePath)
     if ($actualArchiveSha -ne $ExpectedArchiveSha) {
-        throw "canonical Windows archive hash differs from manifest; expected $ExpectedArchiveSha, got $actualArchiveSha"
+        $message = "canonical Windows archive hash differs from manifest; expected $ExpectedArchiveSha, got $actualArchiveSha"
+        if ($AllowHashDrift) {
+            Write-Warning $message
+        }
+        else {
+            throw $message
+        }
     }
     foreach ($metadata in @(
         @{ Path = "build-info.txt"; Expected = $ExpectedBuildInfoSha },
@@ -1125,7 +1135,13 @@ try {
         $metadataPath = Join-Path $first $metadata.Path
         $metadataSha = Get-Sha256 $metadataPath
         if ($metadataSha -ne $metadata.Expected) {
-            throw "canonical Windows metadata hash differs for $($metadata.Path); expected $($metadata.Expected), got $metadataSha"
+            $message = "canonical Windows metadata hash differs for $($metadata.Path); expected $($metadata.Expected), got $metadataSha"
+            if ($AllowHashDrift) {
+                Write-Warning $message
+            }
+            else {
+                throw $message
+            }
         }
     }
 

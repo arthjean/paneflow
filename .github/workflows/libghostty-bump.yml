@@ -1,0 +1,561 @@
+name: libghostty bump
+
+# Re-pins native/libghostty/manifest.toml onto a newer Ghostty commit and opens
+# a pull request carrying the four rebuilt archives.
+#
+# The build recipes read source_sha, header_sha256, bindings_sha256, and their
+# own archive hashes from the manifest and refuse to run against a checkout that
+# does not match, so the order here is fixed: stage the manifest, regenerate the
+# bindings, then build every target against the staged manifest with
+# --allow-hash-drift, and only then write the hashes the builds produced.
+#
+# Nothing here merges. The pull request goes through the ordinary
+# libghostty-{linux,macos,windows} gates, and those runs start in an
+# approval-required state because a GITHUB_TOKEN opened the pull request.
+# Reproducibility is proven here rather than there: a pull request lane only
+# checks the committed archive against the manifest hash, which a bump commit
+# writes itself, so a bump that did not prove itself would be circular.
+
+on:
+  schedule:
+    # Weekly rather than nightly: at Ghostty's merge rate this picks up the same
+    # commits with a fraction of the review load.
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Ghostty commit to pin (default: upstream main HEAD)"
+        required: false
+        type: string
+      dry_run:
+        description: "Build and verify without opening a pull request"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: libghostty-bump
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  GHOSTTY_REPOSITORY: ghostty-org/ghostty
+
+jobs:
+  resolve:
+    name: Resolve target commit and stage the manifest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    outputs:
+      needed: ${{ steps.target.outputs.needed }}
+      source_sha: ${{ steps.target.outputs.source_sha }}
+      short_sha: ${{ steps.target.outputs.short_sha }}
+      current_sha: ${{ steps.target.outputs.current_sha }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Resolve the target Ghostty commit
+        id: target
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha }}
+        run: |
+          manifest_string() {
+            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
+          }
+          current="$(manifest_string source_sha)"
+          if [ -n "$REQUESTED_SHA" ]; then
+            case "$REQUESTED_SHA" in
+              *[!0-9a-f]*) echo "::error::source_sha must be a full lowercase hex commit id"; exit 1 ;;
+            esac
+            target="$REQUESTED_SHA"
+          else
+            target="$(git ls-remote "https://github.com/${GHOSTTY_REPOSITORY}.git" HEAD | cut -f1)"
+          fi
+          if [ "${#target}" -ne 40 ]; then
+            echo "::error::could not resolve a full Ghostty commit id (got '$target')"
+            exit 1
+          fi
+          {
+            echo "current_sha=$current"
+            echo "source_sha=$target"
+            echo "short_sha=$(printf '%s' "$target" | cut -c1-8)"
+          } >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$target" ]; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "already pinned to $target"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "bumping $current -> $target"
+          fi
+
+      - name: Checkout the target Ghostty source
+        if: steps.target.outputs.needed == 'true'
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ steps.target.outputs.source_sha }}
+          path: .ghostty-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      # Both preflights below cost seconds and guard hours. A Zig bump needs new
+      # distribution URLs and checksums, and a moved formatter.zig needs the
+      # Windows patch rebased by hand. Neither is something this workflow may
+      # decide on its own, and neither should surface as a Windows job failing
+      # forty minutes in.
+      - name: Preflight the pins this workflow cannot move
+        if: steps.target.outputs.needed == 'true'
+        env:
+          SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+        run: |
+          manifest_string() {
+            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
+          }
+          normalized_sha256() {
+            perl -0pe 's/\r\n/\n/g; s/\r/\n/g' "$1" | sha256sum | awk '{print $1}'
+          }
+
+          pinned_zig="$(manifest_string zig_version)"
+          upstream_zig="$(
+            sed -nE 's/^[[:space:]]*\.minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+              "$SOURCE_DIR/build.zig.zon" | head -1
+          )"
+          if [ -z "$upstream_zig" ]; then
+            echo "::error::could not read minimum_zig_version from the target build.zig.zon"
+            exit 1
+          fi
+          if [ "$pinned_zig" != "$upstream_zig" ]; then
+            echo "::error::this commit needs Zig $upstream_zig but the manifest pins $pinned_zig. A Zig bump also moves windows_zig_archive_url, its checksums, windows_zig_image_base, and windows_zig_dll_characteristics, so re-pin Zig by hand first."
+            exit 1
+          fi
+
+          patch_target="$(manifest_string windows_source_patch_target)"
+          expected_input="$(manifest_string windows_source_patch_input_sha256)"
+          actual_input="$(normalized_sha256 "$SOURCE_DIR/$patch_target")"
+          if [ "$actual_input" != "$expected_input" ]; then
+            echo "::error::$patch_target moved upstream, so native/libghostty/patches/windows-formatter-determinism.patch no longer applies to it. Rebase the patch, then re-pin windows_source_patch_sha256, windows_source_patch_input_sha256, and windows_source_patch_output_sha256 by hand."
+            exit 1
+          fi
+          echo "Zig $pinned_zig and the Windows formatter patch both still apply"
+
+      - name: Stage the manifest onto the target commit
+        if: steps.target.outputs.needed == 'true'
+        env:
+          SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+          SOURCE_SHA: ${{ steps.target.outputs.source_sha }}
+          SHORT_SHA: ${{ steps.target.outputs.short_sha }}
+        run: |
+          manifest_string() {
+            sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
+          }
+
+          header_path="$(manifest_string header_path)"
+          header_sha="$(sha256sum "$SOURCE_DIR/$header_path" | awk '{print $1}')"
+          epoch="$(git -C "$SOURCE_DIR" show -s --format=%ct HEAD)"
+          app_version="$(
+            sed -nE 's/^[[:space:]]*\.version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
+              "$SOURCE_DIR/build.zig.zon" | head -1
+          )"
+          if [ -z "$app_version" ]; then
+            echo "::error::could not read .version from the target build.zig.zon"
+            exit 1
+          fi
+
+          # The canonical build roots carry the short commit id, and their
+          # *length* is part of the macOS recipe: debug sections embed absolute
+          # paths, and llvm-strip leaves a hole whose size follows that length.
+          # A same-width short id keeps the recipe intact.
+          old_short="$(manifest_string source_sha | cut -c1-8)"
+          macos_root="$(manifest_string macos_canonical_source_path)"
+          windows_root="$(manifest_string windows_canonical_source_path)"
+          api_version="$(manifest_string api_version)"
+          short_app_sha="$(printf '%s' "$SOURCE_SHA" | cut -c1-9)"
+
+          scripts/repin-libghostty-manifest.sh \
+            --set "source_sha=$SOURCE_SHA" \
+            --set "ghostty_app_version=${app_version}+${short_app_sha}" \
+            --set "header_sha256=$header_sha" \
+            --set "windows_source_date_epoch=$epoch" \
+            --set "macos_canonical_source_path=${macos_root%$old_short}$SHORT_SHA" \
+            --set "windows_canonical_source_path=${windows_root%$old_short}$SHORT_SHA" \
+            --set-license "libghostty-vt:version=${api_version}-dev@$SOURCE_SHA"
+
+          git --no-pager diff -- native/libghostty/manifest.toml
+
+      - name: Upload the staged manifest
+        if: steps.target.outputs.needed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-bump-manifest
+          path: native/libghostty/manifest.toml
+          retention-days: 5
+          if-no-files-found: error
+
+  bindings:
+    name: Regenerate bindings
+    needs: resolve
+    if: needs.resolve.outputs.needed == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-bump-manifest
+          path: native/libghostty
+
+      - name: Checkout the target Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          path: .ghostty-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+          components: rustfmt
+
+      - name: Install pinned bindgen
+        run: cargo install bindgen-cli --version 0.72.1 --locked
+
+      - name: Regenerate bindings from the target header
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+        run: |
+          output="$(scripts/generate-libghostty-bindings.sh --write)"
+          printf '%s\n' "$output"
+          sha="$(printf '%s\n' "$output" | sed -n 's/^bindings_sha256=//p')"
+          if [ -z "$sha" ]; then
+            echo "::error::the bindings generator did not report a hash"
+            exit 1
+          fi
+          scripts/repin-libghostty-manifest.sh --set "bindings_sha256=$sha"
+
+      - name: Upload the staged manifest and bindings
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-bump-staged
+          path: |
+            native/libghostty/manifest.toml
+            native/libghostty/bindings.rs
+          retention-days: 5
+          if-no-files-found: error
+
+  linux:
+    name: Rebuild ${{ matrix.target }}
+    needs: [resolve, bindings]
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runs-on: ubuntu-22.04
+          - target: aarch64-unknown-linux-gnu
+            runs-on: ubuntu-22.04-arm
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-bump-staged
+          path: native/libghostty
+
+      - name: Checkout the target Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          path: .ghostty-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: "0.16.0"
+
+      - uses: ./.github/actions/linux-build-deps
+        with:
+          extra-packages: binutils elfutils
+
+      - name: Build and prove reproducibility
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+        run: |
+          scripts/ci-retry-network.sh \
+            scripts/build-libghostty-linux.sh \
+            --target "${{ matrix.target }}" \
+            --verify-reproducible \
+            --allow-hash-drift
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-bump-${{ matrix.target }}
+          path: target/libghostty/${{ matrix.target }}
+          retention-days: 5
+          if-no-files-found: error
+
+  macos:
+    name: Rebuild aarch64-apple-darwin
+    needs: [resolve, bindings]
+    # Cross-built on Linux on purpose: Ghostty only takes the Apple libtool
+    # combine path when the build host is Darwin, and the reviewed recipe
+    # normalizes the zig ar -M combine that a Linux host keeps.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-bump-staged
+          path: native/libghostty
+
+      - name: Checkout the target Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          path: .ghostty-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: "0.16.0"
+
+      # llvm-strip and llvm-ar come from the repository's own pinned Rust
+      # toolchain, so macos_llvm_version moves only when that toolchain moves.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+          components: llvm-tools
+
+      - name: Build and prove reproducibility
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+        run: |
+          scripts/ci-retry-network.sh \
+            scripts/build-libghostty-macos.sh \
+            --verify-reproducible \
+            --allow-hash-drift
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-bump-aarch64-apple-darwin
+          path: target/libghostty/aarch64-apple-darwin
+          retention-days: 5
+          if-no-files-found: error
+
+  windows:
+    name: Rebuild x86_64-pc-windows-msvc
+    needs: [resolve, bindings]
+    runs-on: windows-2022
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-bump-staged
+          path: native/libghostty
+
+      - name: Checkout the target Ghostty source
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: ghostty-org/ghostty
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          path: .ghostty-source
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the manifest-pinned Windows toolchain
+        id: toolchain
+        uses: ./.github/actions/libghostty-windows-toolchain
+
+      - name: Build and prove reproducibility
+        env:
+          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
+          EVIDENCE_DIR: ${{ runner.temp }}\libghostty-bump-evidence
+        run: |
+          & .\scripts\build-libghostty-windows.ps1 `
+            -Zig "${{ steps.toolchain.outputs.zig }}" `
+            -ZigSourceArchive "${{ steps.toolchain.outputs.zig-source-archive }}" `
+            -VerifyReproducible `
+            -AllowHashDrift
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: libghostty-bump-x86_64-pc-windows-msvc
+          path: target/libghostty/x86_64-pc-windows-msvc
+          retention-days: 5
+          if-no-files-found: error
+
+  assemble:
+    name: Re-pin the archives and open the pull request
+    needs: [resolve, bindings, linux, macos, windows]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libghostty-bump-staged
+          path: native/libghostty
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: libghostty-bump-*
+          path: ${{ runner.temp }}/rebuilt
+
+      - name: Publish the rebuilt archives and re-pin their hashes
+        env:
+          REBUILT: ${{ runner.temp }}/rebuilt
+        run: |
+          for target in \
+            x86_64-unknown-linux-gnu \
+            aarch64-unknown-linux-gnu \
+            aarch64-apple-darwin \
+            x86_64-pc-windows-msvc
+          do
+            src="$REBUILT/libghostty-bump-$target"
+            dst="native/libghostty/prebuilt/$target"
+            if [ ! -d "$src" ]; then
+              echo "::error::missing rebuilt tree for $target"
+              exit 1
+            fi
+
+            rm -rf "$dst"
+            mkdir -p "$dst"
+            # Copy exactly what a reviewed prebuilt tree carries. build.zig.zon
+            # and the reproducibility evidence stay out of the repository.
+            for entry in bindings.rs build-info.txt headers.sha256 symbols.txt include lib; do
+              if [ -e "$src/$entry" ]; then
+                cp -r "$src/$entry" "$dst/$entry"
+              fi
+            done
+            if [ ! -d "$dst/lib" ]; then
+              echo "::error::$target produced no lib/ directory"
+              exit 1
+            fi
+
+            archive_path="$(
+              awk -v t="$target" '
+                $0 == "[targets.\"" t "\"]" { inside = 1; next }
+                inside && /^\[/ { exit }
+                inside && /^archive_path = "/ {
+                  sub(/^archive_path = "/, ""); sub(/"$/, ""); print; exit
+                }
+              ' native/libghostty/manifest.toml
+            )"
+            archive_sha="$(sha256sum "$dst/$archive_path" | awk '{print $1}')"
+            scripts/repin-libghostty-manifest.sh \
+              --set-target "$target:archive_sha256=$archive_sha"
+
+            if [ "$target" = "x86_64-pc-windows-msvc" ]; then
+              scripts/repin-libghostty-manifest.sh \
+                --set-target "$target:build_info_sha256=$(sha256sum "$dst/build-info.txt" | awk '{print $1}')" \
+                --set-target "$target:headers_index_sha256=$(sha256sum "$dst/headers.sha256" | awk '{print $1}')" \
+                --set-target "$target:symbols_sha256=$(sha256sum "$dst/symbols.txt" | awk '{print $1}')"
+            fi
+            echo "$target: $archive_sha"
+          done
+
+      # The consumer crate re-derives every hash it links against, so building
+      # it here is the cheapest end-to-end check that the re-pinned manifest and
+      # the published trees agree before a human is asked to look.
+      - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: "1.98.0"
+
+      - name: Verify the re-pinned repository artifact
+        run: cargo build -p paneflow-libghostty-sys --locked
+
+      - name: Open the pull request
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
+          CURRENT_SHA: ${{ needs.resolve.outputs.current_sha }}
+        run: |
+          branch="bot/libghostty-$SHORT_SHA"
+          # Never overwrite an existing bump branch. A human rebasing the
+          # Windows patch or fixing a binding break works on exactly this
+          # branch, and a re-run must not throw that away.
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            echo "::error::$branch already exists. Delete it, or finish the bump that is already open."
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add native/libghostty
+          if git diff --cached --quiet; then
+            echo "::error::the bump produced no change to commit"
+            exit 1
+          fi
+          git commit -m "chore(libghostty): re-pin libghostty-vt to $SHORT_SHA"
+          git push origin "$branch"
+
+          {
+            echo "Re-pins libghostty-vt from \`$CURRENT_SHA\` to \`$SOURCE_SHA\`."
+            echo
+            echo "Upstream range: https://github.com/${GHOSTTY_REPOSITORY}/compare/${CURRENT_SHA}...${SOURCE_SHA}"
+            echo
+            echo "Every archive here was rebuilt from the pinned source and proven"
+            echo "reproducible in the run that opened this pull request, on all four"
+            echo "reviewed targets. The libghostty lanes below only check a committed"
+            echo "archive against its manifest hash, and a bump commit writes that hash"
+            echo "itself, so this run is the reproducibility evidence."
+            echo
+            echo "Before merging:"
+            echo
+            echo "- Approve the workflow runs on this pull request. They start held"
+            echo "  because a \`GITHUB_TOKEN\` opened it."
+            echo "- Read the upstream range for VT behavior changes. Green gates prove"
+            echo "  the build, the static link, and archive integrity. They do not prove"
+            echo "  the rendering."
+            echo "- Run Paneflow once on this branch."
+          } > "$RUNNER_TEMP/pr-body.md"
+
+          gh pr create \
+            --title "chore(libghostty): re-pin libghostty-vt to $SHORT_SHA" \
+            --body-file "$RUNNER_TEMP/pr-body.md" \
+            --base main \
+            --head "$branch"
+
+      - name: Report the dry run
+        if: ${{ inputs.dry_run }}
+        run: |
+          {
+            echo "### libghostty bump dry run"
+            echo
+            echo "Target commit \`${{ needs.resolve.outputs.source_sha }}\` built and verified on every target. No pull request was opened."
+          } >> "$GITHUB_STEP_SUMMARY"
+          git --no-pager diff --stat

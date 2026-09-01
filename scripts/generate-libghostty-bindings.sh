@@ -5,6 +5,22 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 MANIFEST="$ROOT/native/libghostty/manifest.toml"
 SOURCE_DIR="${PANEFLOW_GHOSTTY_SOURCE_DIR:-}"
 BINDGEN_VERSION="0.72.1"
+WRITE=0
+
+while (($#)); do
+  case "$1" in
+    --write)
+      # Only for a deliberate bump: the default mode is a gate that fails on
+      # any drift, which is what every workflow but the bump wants.
+      WRITE=1
+      shift
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      exit 2
+      ;;
+  esac
+done
 
 manifest_string() {
   sed -n "s/^$1 = \"\(.*\)\"$/\1/p" "$MANIFEST"
@@ -81,9 +97,21 @@ sed -i 's/::core::ffi::/core::ffi::/g' "$OUTPUT"
 sed -i 's/^pub type \(Ghostty[A-Za-z0-9_]*\) = core::ffi::c_uint;$/pub type \1 = core::ffi::c_int;/' "$OUTPUT"
 rustfmt --edition 2024 "$OUTPUT"
 
-if ! cmp -s "$OUTPUT" "$ROOT/$(manifest_string bindings_path)"; then
-  diff -u "$ROOT/$(manifest_string bindings_path)" "$OUTPUT" || true
+BINDINGS="$ROOT/$(manifest_string bindings_path)"
+if ! cmp -s "$OUTPUT" "$BINDINGS"; then
+  diff -u "$BINDINGS" "$OUTPUT" || true
+  if ((WRITE)); then
+    cat "$OUTPUT" > "$BINDINGS"
+    echo "libghostty bindings regenerated from the pinned header with bindgen $BINDGEN_VERSION"
+    echo "bindings_sha256=$(sha256sum "$BINDINGS" | awk '{print $1}')"
+    exit 0
+  fi
   echo "libghostty bindings differ from the pinned header; review and commit the regeneration" >&2
   exit 1
 fi
 echo "libghostty bindings match the pinned header and bindgen $BINDGEN_VERSION"
+if ((WRITE)); then
+  # A bump that lands on an unchanged header still has to re-pin the manifest,
+  # so emit the hash on both paths rather than only after a rewrite.
+  echo "bindings_sha256=$(sha256sum "$BINDINGS" | awk '{print $1}')"
+fi

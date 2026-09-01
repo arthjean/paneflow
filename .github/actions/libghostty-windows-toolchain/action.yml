@@ -1,0 +1,131 @@
+name: libghostty Windows toolchain
+description: >-
+  Installs the manifest-pinned Zig distribution, MSVC toolset, Windows SDK, and
+  LLVM normalization tools that the Windows libghostty recipe requires. Reads
+  every pin from native/libghostty/manifest.toml in the checked-out workspace,
+  so a staged bump manifest is honored without passing versions separately.
+
+outputs:
+  zig:
+    description: Absolute path to the pinned zig.exe
+    value: ${{ steps.zig.outputs.zig }}
+  zig-source-archive:
+    description: Absolute path to the pinned Zig source archive
+    value: ${{ steps.zig.outputs.source-archive }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install manifest-pinned Zig distribution
+      id: zig
+      shell: pwsh
+      run: |
+        $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
+        . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
+
+        $zigVersion = Get-ManifestString 'zig_version'
+        $archiveUrl = Get-ManifestString 'windows_zig_archive_url'
+        $expectedArchiveSha = Get-ManifestString 'windows_zig_archive_sha256'
+        $sourceArchiveUrl = Get-ManifestString 'windows_zig_source_archive_url'
+        $expectedSourceArchiveSha = Get-ManifestString 'windows_zig_source_archive_sha256'
+        $toolRoot = Join-Path $env:RUNNER_TEMP "paneflow-zig-$zigVersion"
+        $archive = "$toolRoot.zip"
+        $sourceArchive = "$toolRoot-source.tar.xz"
+        if ((Test-Path -LiteralPath $toolRoot) -or
+            (Test-Path -LiteralPath $archive) -or
+            (Test-Path -LiteralPath $sourceArchive)) {
+          throw "refusing to replace an existing Zig tool path: $toolRoot"
+        }
+        Invoke-WebRequest -Uri $archiveUrl -OutFile $archive
+        $actualArchiveSha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualArchiveSha -ne $expectedArchiveSha) {
+          throw "Zig distribution checksum mismatch: expected $expectedArchiveSha, got $actualArchiveSha"
+        }
+        Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot
+        $zig = Join-Path $toolRoot "zig-x86_64-windows-$zigVersion\zig.exe"
+        if (-not (Test-Path -LiteralPath $zig -PathType Leaf)) {
+          throw "Zig distribution did not contain the expected executable: $zig"
+        }
+        Invoke-WebRequest -Uri $sourceArchiveUrl -OutFile $sourceArchive
+        $actualSourceArchiveSha = (Get-FileHash -LiteralPath $sourceArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSourceArchiveSha -ne $expectedSourceArchiveSha) {
+          throw "Zig source archive checksum mismatch: expected $expectedSourceArchiveSha, got $actualSourceArchiveSha"
+        }
+        "zig=$zig" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+        "source-archive=$sourceArchive" | Out-File -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+    - name: Install manifest-pinned MSVC toolset and Windows SDK
+      shell: pwsh
+      env:
+        MSVC_COMPONENT: Microsoft.VisualStudio.Component.VC.14.38.17.8.x86.x64
+        WINDOWS_SDK_COMPONENT: Microsoft.VisualStudio.Component.Windows11SDK.26100
+        LLVM_COMPONENT: Microsoft.VisualStudio.Component.VC.Llvm.Clang
+      run: |
+        $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
+        . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
+
+        $installerRoot = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+        $vswhere = Join-Path $installerRoot 'vswhere.exe'
+        $setup = Join-Path $installerRoot 'setup.exe'
+        $installationPath = (& $vswhere -latest -products * -property installationPath | Select-Object -First 1)
+        if ([string]::IsNullOrWhiteSpace($installationPath)) {
+          throw 'Visual Studio 2022 is not installed on the runner.'
+        }
+
+        $requiredComponents = @($env:MSVC_COMPONENT, $env:WINDOWS_SDK_COMPONENT, $env:LLVM_COMPONENT)
+        $missingComponents = @(
+          foreach ($component in $requiredComponents) {
+            $installedAt = (& $vswhere -latest -products * -requires $component -property installationPath | Select-Object -First 1)
+            if ([string]::IsNullOrWhiteSpace($installedAt)) {
+              $component
+            }
+          }
+        )
+
+        if ($missingComponents.Count -gt 0) {
+          if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
+            throw "Visual Studio Installer was not found at $setup."
+          }
+
+          $arguments = @(
+            'modify',
+            '--installPath', "`"$installationPath`"",
+            '--quiet',
+            '--norestart'
+          )
+          foreach ($component in $missingComponents) {
+            $arguments += @('--add', $component)
+          }
+
+          Write-Host "Installing Visual Studio components: $($missingComponents -join ', ')"
+          $process = Start-Process -FilePath $setup -ArgumentList $arguments -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 3010)) {
+            throw "Visual Studio Installer exited with code $($process.ExitCode)."
+          }
+        }
+
+        $msvcToolset = Get-ManifestString 'windows_msvc_toolset'
+        $windowsSdk = Get-ManifestString 'windows_sdk'
+        $msvcPath = Join-Path $installationPath "VC\Tools\MSVC\$msvcToolset"
+        $sdkPath = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\Lib\$windowsSdk"
+        if (-not (Test-Path -LiteralPath $msvcPath -PathType Container)) {
+          throw "The manifest-pinned MSVC toolset was not found at $msvcPath."
+        }
+        if (-not (Test-Path -LiteralPath $sdkPath -PathType Container)) {
+          throw "The manifest-pinned Windows SDK was not found at $sdkPath."
+        }
+
+        # The archive normalization recipe is LLVM-version-sensitive, and the
+        # build script hard-fails on any other version. Surface that as a
+        # labelled preflight failure rather than an opaque llvm-objcopy error
+        # 40 minutes into the rebuild.
+        $expectedLlvm = Get-ManifestString 'windows_llvm_version'
+        $llvmObjcopy = Join-Path $installationPath 'VC\Tools\Llvm\x64\bin\llvm-objcopy.exe'
+        if (-not (Test-Path -LiteralPath $llvmObjcopy -PathType Leaf)) {
+          throw "The LLVM normalization tools were not found at $llvmObjcopy."
+        }
+        $llvmVersion = @(& $llvmObjcopy --version)
+        if ($LASTEXITCODE -ne 0 -or -not ($llvmVersion -match "LLVM version $([regex]::Escape($expectedLlvm))")) {
+          throw "libghostty requires LLVM normalization tools $expectedLlvm; this runner carries: $($llvmVersion -join ' ')"
+        }
+        Write-Host "LLVM normalization tools: $expectedLlvm at $llvmObjcopy"
