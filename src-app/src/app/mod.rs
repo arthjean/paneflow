@@ -37,4 +37,5 @@ pub mod system_info_dialog;
 pub mod tab_worktree;
 pub mod telemetry_events;
 pub mod theme_picker;
+pub mod win_timer;
 pub mod workspace_ops;

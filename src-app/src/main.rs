@@ -2845,6 +2845,12 @@ fn main() {
         log::warn!("paneflow: Windows app identity setup failed: {err}");
     }
 
+    // Held for the whole GUI run: every short timeout in the terminal loops
+    // (the wakeup batch window, the runtime idle tick, the publish rate limit)
+    // otherwise rounds up to Windows' default 15.6 ms clock tick. No-op
+    // elsewhere. See `app::win_timer`.
+    let _timer_resolution = app::win_timer::high_resolution_timer();
+
     application()
         .with_assets(assets::Assets)
         .run(|cx: &mut App| {

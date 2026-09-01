@@ -313,6 +313,10 @@ raw-window-handle = "0.6"
 windows-sys = { version = "0.59", features = [
     "Win32_System_Threading",
     "Win32_Foundation",
+    # `timeBeginPeriod` / `timeEndPeriod`: hold the process timer resolution at
+    # 1 ms for the GUI's lifetime so the terminal loops' millisecond timeouts
+    # are not rounded up to the default 15.6 ms tick (see `app::win_timer`).
+    "Win32_Media",
     # Native fixed-pitch font discovery for the Terminal settings picker.
     "Win32_Graphics_Gdi",
     "Win32_System_Diagnostics",
