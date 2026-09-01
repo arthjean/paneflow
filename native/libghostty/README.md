@@ -165,6 +165,36 @@ a rebuild. `paneflow-libghostty-sys/build.rs` selects this directory only for
 or incoherent metadata with an actionable rebuild command, and emits only
 static plus reviewed system link directives.
 
+## Bumping the pinned source
+
+`.github/workflows/libghostty-bump.yml` performs the re-pin. It runs weekly and
+on demand (`workflow_dispatch` accepts an explicit `source_sha`, and a `dry_run`
+input builds everything without opening a pull request). It stages the manifest
+onto the target commit, regenerates the bindings, rebuilds all four reviewed
+targets with `--verify-reproducible --allow-hash-drift`, writes the hashes those
+builds produced, and opens a pull request. Nothing merges on its own.
+
+Reproducibility is proven in the bump run itself, not on the resulting pull
+request: a pull request lane only checks a committed archive against its
+manifest hash, and a bump commit writes that hash, so the pull request alone
+would be circular evidence.
+
+Two pins the workflow deliberately refuses to move, both checked in seconds
+before any build starts:
+
+- **Zig.** A commit whose `minimum_zig_version` moved also needs a new
+  distribution URL, its checksums, `windows_zig_image_base`, and
+  `windows_zig_dll_characteristics`. Re-pin Zig by hand first.
+- **The Windows formatter patch.** `patches/windows-formatter-determinism.patch`
+  is pinned to the exact bytes of its target file. When upstream touches
+  `src/terminal/formatter.zig`, rebase the patch and re-pin
+  `windows_source_patch_sha256`, `windows_source_patch_input_sha256`, and
+  `windows_source_patch_output_sha256`.
+
+`scripts/repin-libghostty-manifest.sh` performs the manifest edits and is the
+supported way to re-pin a field by hand. Every edit requires the key to already
+exist, so a renamed field fails the bump instead of adding a dead entry.
+
 ## ABI and licensing
 
 `paneflow-libghostty-sys` is the only raw ABI surface. The safe wrapper owns
