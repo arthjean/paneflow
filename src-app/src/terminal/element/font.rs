@@ -127,22 +127,34 @@ static INSTALLED_MONO_FONTS: LazyLock<HashSet<String>> =
 // ---------------------------------------------------------------------------
 
 struct CachedFontConfig {
+    settings: FontSettings,
     family: String,
-    size: f32,
-    line_height: f32,
-    cell_width: f32,
     font_weight_key: &'static str,
-    font_weight: FontWeight,
     /// US-008: render ligatures when `true`. Hot-reload comes for free
     /// via the surrounding 500 ms cache: editing `paneflow.json` is
     /// picked up on the next `cached_font_config()` call without any
     /// extra wiring.
     ligatures: bool,
-    /// Sanitized user `font_fallbacks` (trimmed, empties dropped, `None`
-    /// when absent/all-empty). Hot-reloaded via the same 500 ms cache as
-    /// `family`/`size`/`ligatures`.
-    fallbacks: Option<Vec<String>>,
+    /// Modification time of the config file the settings were read from,
+    /// so the periodic check is a `stat` rather than a parse.
+    mtime: Option<std::time::SystemTime>,
     last_check: std::time::Instant,
+}
+
+/// The resolved font settings the renderer reads for every pane on every
+/// frame.
+///
+/// Cheap to clone: the `Font` holds shared strings and shared feature lists,
+/// so a clone is a few reference-count bumps and no allocation.
+#[derive(Clone)]
+pub(super) struct FontSettings {
+    pub(super) font: Font,
+    /// Points, before any per-pane override.
+    pub(super) size: f32,
+    /// Multiplier of the rendered size that gives the row stride.
+    pub(super) line_height: f32,
+    /// Multiplier of the rendered size that gives the column stride.
+    pub(super) cell_width: f32,
 }
 
 /// Normalize a configured `font_fallbacks` list before it reaches GPUI:
@@ -282,28 +294,31 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
     candidate.to_string()
 }
 
-/// Read font config, cached for 500ms (same pattern as theme cache).
-pub(super) fn cached_font_config() -> (String, f32, f32, f32, FontWeight, bool, Option<Vec<String>>)
-{
+/// Read font config, cached and re-validated against the config file's
+/// modification time every 500 ms (same pattern as the theme cache).
+///
+/// Runs on the render thread, so the periodic check is one `stat`; the
+/// config is parsed again only when the file changed or is missing.
+pub(super) fn cached_font_config() -> FontSettings {
     use std::time::{Duration, Instant};
     const CHECK_INTERVAL: Duration = Duration::from_millis(500);
 
     let mut cache = FONT_CONFIG_CACHE.lock().unwrap_or_else(|e| e.into_inner());
 
-    if let Some(ref c) = *cache
-        && c.last_check.elapsed() < CHECK_INTERVAL
-    {
-        return (
-            c.family.clone(),
-            c.size,
-            c.line_height,
-            c.cell_width,
-            c.font_weight,
-            c.ligatures,
-            c.fallbacks.clone(),
-        );
+    if let Some(c) = cache.as_mut() {
+        if c.last_check.elapsed() < CHECK_INTERVAL {
+            return c.settings.clone();
+        }
+        let mtime = crate::theme::config_mtime();
+        if mtime.is_some() && mtime == c.mtime {
+            c.last_check = Instant::now();
+            return c.settings.clone();
+        }
     }
 
+    // Read before the parse, so a write that lands between the two is seen
+    // by the next check instead of being masked by a newer stamp.
+    let mtime = crate::theme::config_mtime();
     let config = paneflow_config::loader::load_config();
 
     let family = resolve_font_family(config.font_family.as_deref());
@@ -368,7 +383,7 @@ pub(super) fn cached_font_config() -> (String, f32, f32, f32, FontWeight, bool, 
         .unwrap_or(false);
 
     // User-configured fallback families (Nerd Font for icon glyphs, …),
-    // sanitized to `None` when absent/all-empty so `base_font` keeps GPUI's
+    // sanitized to `None` when absent/all-empty so the font keeps GPUI's
     // built-in stack in that case.
     let fallbacks = sanitize_font_fallbacks(config.font_fallbacks.as_ref());
 
@@ -380,9 +395,9 @@ pub(super) fn cached_font_config() -> (String, f32, f32, f32, FontWeight, bool, 
     // adding a hot-path log on every render.
     let font_changed = cache.as_ref().is_none_or(|prev| {
         prev.family != family
-            || (prev.size - size).abs() > f32::EPSILON
-            || (prev.line_height - line_height).abs() > f32::EPSILON
-            || (prev.cell_width - cell_width).abs() > f32::EPSILON
+            || (prev.settings.size - size).abs() > f32::EPSILON
+            || (prev.settings.line_height - line_height).abs() > f32::EPSILON
+            || (prev.settings.cell_width - cell_width).abs() > f32::EPSILON
             || prev.font_weight_key != font_weight_key
             || prev.ligatures != ligatures
     });
@@ -394,31 +409,29 @@ pub(super) fn cached_font_config() -> (String, f32, f32, f32, FontWeight, bool, 
         );
     }
 
-    *cache = Some(CachedFontConfig {
-        family: family.clone(),
+    let settings = FontSettings {
+        font: build_font(&family, font_weight, ligatures, fallbacks),
         size,
         line_height,
         cell_width,
+    };
+    *cache = Some(CachedFontConfig {
+        settings: settings.clone(),
+        family,
         font_weight_key,
-        font_weight,
         ligatures,
-        fallbacks: fallbacks.clone(),
+        mtime,
         last_check: Instant::now(),
     });
-
-    (
-        family,
-        size,
-        line_height,
-        cell_width,
-        font_weight,
-        ligatures,
-        fallbacks,
-    )
+    settings
 }
 
-pub(super) fn base_font() -> Font {
-    let (family, _, _, _, font_weight, ligatures, fallbacks) = cached_font_config();
+fn build_font(
+    family: &str,
+    weight: FontWeight,
+    ligatures: bool,
+    fallbacks: Option<Vec<String>>,
+) -> Font {
     // US-008: when the user opts into ligatures, hand GPUI the font's
     // native feature set untouched. Default behavior (and explicit
     // `ligatures: false`) keeps the historical `disable_ligatures()`
@@ -429,7 +442,7 @@ pub(super) fn base_font() -> Font {
         FontFeatures::disable_ligatures()
     };
     Font {
-        family: SharedString::from(family),
+        family: SharedString::from(family.to_owned()),
         features,
         // `None` matches Zed's terminal Font default
         // (zed/crates/terminal_view/src/terminal_element.rs:908-912) and is
@@ -438,9 +451,17 @@ pub(super) fn base_font() -> Font {
         // `cached_font_config`). See the long-form rationale on the removed
         // `FONT_FALLBACKS` static above for why we never hardcode a chain.
         fallbacks: fallbacks.map(FontFallbacks::from_fonts),
-        weight: font_weight,
+        weight,
         style: FontStyle::Normal,
     }
+}
+
+/// The base terminal font, resolved once per config change and shared. The
+/// renderer reads it through `resolve_frame_metrics`; the benchmark reads it
+/// alone.
+#[cfg(test)]
+pub(crate) fn base_font() -> Font {
+    cached_font_config().font
 }
 
 /// EP-006 US-019: bounds shared by the global config validation, the
@@ -463,26 +484,10 @@ pub fn sanitize_font_override(raw: f32) -> Option<f32> {
     Some(raw.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE))
 }
 
-/// Effective terminal font size. Config and per-pane overrides are stored in
-/// points to match OS terminal settings; GPUI expects logical pixels.
-/// `size_override` is EP-006 US-019's per-pane zoom: `Some(pt)` wins over the
-/// global config; `None` falls back to the cached global (config + 500 ms
-/// cache). The override is
-/// already clamped to [8.0, 32.0] at every write site (action handler +
-/// session ingress), so no re-validation here.
-pub(super) fn font_size(size_override: Option<f32>) -> Pixels {
-    if let Some(s) = size_override {
-        return font_points_to_pixels(s);
-    }
-    let (_, size, _, _, _, _, _) = cached_font_config();
-    font_points_to_pixels(size)
-}
-
 /// EP-006 US-019: the global (non-overridden) font size in points - the zoom
 /// handlers' baseline for a pane that has no override yet.
 pub fn global_font_size() -> f32 {
-    let (_, size, _, _, _, _, _) = cached_font_config();
-    size
+    cached_font_config().size
 }
 
 pub fn resolve_frame_metrics(
@@ -490,8 +495,13 @@ pub fn resolve_frame_metrics(
     _cx: &mut App,
     size_override: Option<f32>,
 ) -> TerminalFrameMetrics {
-    let font = base_font();
-    let font_size = font_size(size_override);
+    // One cache read per frame. Config and per-pane overrides are stored in
+    // points to match OS terminal settings; GPUI expects logical pixels. The
+    // override (EP-006 US-019's per-pane zoom) is already clamped to
+    // [8.0, 32.0] at every write site, so no re-validation here.
+    let settings = cached_font_config();
+    let font = settings.font;
+    let font_size = font_points_to_pixels(size_override.unwrap_or(settings.size));
     let font_id = window.text_system().resolve_font(&font);
 
     // DIAGNOSTIC A - fires once per process. Surfaces whether GPUI's
@@ -539,9 +549,8 @@ pub fn resolve_frame_metrics(
     // Cell width and line height are config-derived terminal strides, not
     // measured glyph advances. They scale with the effective rendered size so
     // Windows Terminal-style multipliers stay comparable across font changes.
-    let (_, _, line_multiplier, cell_multiplier, _, _, _) = cached_font_config();
-    let cell_width_raw = px(font_size.as_f32() * cell_multiplier);
-    let line_height_raw = px(font_size.as_f32() * line_multiplier);
+    let cell_width_raw = px(font_size.as_f32() * settings.cell_width);
+    let line_height_raw = px(font_size.as_f32() * settings.line_height);
 
     // US-002: snap raw font measurements to integer pixels via `.round()`
     // (WezTerm convention - minimizes layout-area drift on fractional

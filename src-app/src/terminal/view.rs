@@ -809,7 +809,13 @@ impl TerminalView {
                     );
                     if new_visible != view.cursor_visible {
                         view.cursor_visible = new_visible;
-                        cx.notify();
+                        // Only the focused pane draws a cursor, so only it has
+                        // a frame to repaint. The phase is tracked either way,
+                        // so a pane that gains focus shows the current phase
+                        // rather than the one it last painted.
+                        if view.was_focused {
+                            cx.notify();
+                        }
                     }
                 },
             )

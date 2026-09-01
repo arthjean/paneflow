@@ -38,23 +38,40 @@ impl LayoutTree {
     /// GPUI has no window-level focus-changed hook here); every write is
     /// idempotent, so a steady frame does nothing at all.
     pub fn sync_unfocused_dim(&self, window: &Window, cx: &mut App) {
-        let leaves = self.collect_leaves();
-        let focused = leaves
-            .iter()
-            .position(|pane| pane.read(cx).focus_handle(cx).is_focused(window));
-        match dim_policy(leaves.len(), focused) {
+        // Visited in place: this runs every frame, so it must not clone the
+        // leaf list just to walk it.
+        let mut count = 0usize;
+        let mut focused = None;
+        self.for_each_leaf(&mut |pane| {
+            if focused.is_none() && pane.read(cx).focus_handle(cx).is_focused(window) {
+                focused = Some(count);
+            }
+            count += 1;
+        });
+        match dim_policy(count, focused) {
             DimPolicy::Keep => {}
             DimPolicy::ClearAll => {
-                for pane in &leaves {
+                self.for_each_leaf(&mut |pane| {
                     pane.update(cx, |pane, cx| pane.set_dimmed(false, cx));
-                }
+                });
             }
             DimPolicy::DimAllExcept(idx) => {
-                for (i, pane) in leaves.iter().enumerate() {
-                    pane.update(cx, |pane, cx| pane.set_dimmed(i != idx, cx));
-                }
+                let mut index = 0usize;
+                self.for_each_leaf(&mut |pane| {
+                    pane.update(cx, |pane, cx| pane.set_dimmed(index != idx, cx));
+                    index += 1;
+                });
             }
         }
+    }
+
+    /// Visit every leaf pane in left-to-right (top-to-bottom) order without
+    /// materializing the list.
+    pub fn for_each_leaf(&self, visit: &mut impl FnMut(&Entity<Pane>)) {
+        self.any_leaf(&mut |pane| {
+            visit(pane);
+            false
+        });
     }
 
     /// Count the number of leaf (terminal) panes in the tree.
