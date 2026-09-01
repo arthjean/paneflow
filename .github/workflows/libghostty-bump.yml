@@ -366,6 +366,11 @@ jobs:
       - name: Build and prove reproducibility
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
+          # The build script resolves llvm-strip through `rustc --print
+          # sysroot`, and the directory `rust-toolchain.toml` outranks the
+          # toolchain the step above made default. Only RUSTUP_TOOLCHAIN wins,
+          # the same way libghostty-macos.yml pins its own rebuild lane.
+          RUSTUP_TOOLCHAIN: ${{ steps.llvm.outputs.rust }}
         run: |
           scripts/ci-retry-network.sh \
             scripts/build-libghostty-macos.sh \
