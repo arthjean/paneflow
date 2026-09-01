@@ -136,7 +136,10 @@ changes: visual smoke jobs exist but are not exhaustive.
 
 Performance claims need evidence: a heaptrack diff for a memory claim, a
 `cargo flamegraph` profile for a CPU claim. Do not ship a perf number you did
-not measure.
+not measure. For the terminal pipeline, `scripts/bench-terminal.sh` (or
+`.ps1`) runs the reproducible suite in `src-app/src/terminal/perf_bench.rs`
+and prints a comparison against `bench/baseline.json`; see
+[bench/README.md](bench/README.md).
 
 `tasks/` is a local, untracked scratch area for PRDs and story status files. It
 is not part of the repository, so never reference it from a tracked document and

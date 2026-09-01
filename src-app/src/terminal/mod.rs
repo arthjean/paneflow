@@ -16,6 +16,8 @@ mod ghostty_stress;
 mod input;
 pub mod kitty;
 mod marks;
+#[cfg(test)]
+mod perf_bench;
 #[cfg(all(test, target_os = "linux"))]
 mod portable_pty_probe;
 mod pty_session;
