@@ -144,8 +144,11 @@ impl PrStates {
 /// for the session. `Ok(None)` is a real answer: no pull request here.
 fn lookup(repo_root: &std::path::Path, branch: &str) -> Result<Option<PullRequest>, ()> {
     let mut cmd = std::process::Command::new("gh");
-    cmd.arg("-C")
-        .arg(repo_root)
+    // `gh` has no global directory flag - `-C` is rejected outright ("unknown
+    // shorthand flag: 'C'"), which used to fail every lookup and blacklist the
+    // repository for the session. It resolves the repository from the working
+    // directory instead.
+    cmd.current_dir(repo_root)
         .args([
             "pr",
             "list",
@@ -166,6 +169,14 @@ fn lookup(repo_root: &std::path::Path, branch: &str) -> Result<Option<PullReques
         .env("NO_COLOR", "1");
     let out = paneflow_process::run_with_timeout(cmd, DEADLINE, STDOUT_CAP).map_err(|_| ())?;
     if !out.status.success() {
+        // The only trace of a repository being dropped for the session: the
+        // caller turns this `Err` into a silent blacklist entry, so without a
+        // line here a wrong invocation looks exactly like "no GitHub remote".
+        log::debug!(
+            "gh pr list failed in {}: {}",
+            repo_root.display(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
         return Err(());
     }
     let parsed: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|_| ())?;
