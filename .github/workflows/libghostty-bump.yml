@@ -340,11 +340,27 @@ jobs:
         with:
           version: "0.16.0"
 
-      # llvm-strip and llvm-ar come from the repository's own pinned Rust
-      # toolchain, so macos_llvm_version moves only when that toolchain moves.
+      # llvm-strip and llvm-ar have to be exactly the ones that normalized the
+      # committed archive: the recipe is LLVM-version-sensitive and the build
+      # script refuses any other version. That toolchain is the one
+      # macos_llvm_version names, and it is deliberately NOT
+      # rust-toolchain.toml's channel, so derive it from the manifest rather
+      # than duplicate a pin that a workspace bump would silently invalidate.
+      - name: Resolve the toolchain macos_llvm_version names
+        id: llvm
+        run: |
+          llvm="$(sed -n 's/^macos_llvm_version = "\(.*\)"$/\1/p' native/libghostty/manifest.toml)"
+          rust="$(printf '%s' "$llvm" | sed -n 's/^.*-rust-\(.*\)-stable$/\1/p')"
+          if [ -z "$rust" ]; then
+            echo "::error::could not read a Rust toolchain out of macos_llvm_version '$llvm'"
+            exit 1
+          fi
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          echo "macos_llvm_version $llvm needs Rust $rust"
+
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:
-          toolchain: "1.98.0"
+          toolchain: ${{ steps.llvm.outputs.rust }}
           components: llvm-tools
 
       - name: Build and prove reproducibility
