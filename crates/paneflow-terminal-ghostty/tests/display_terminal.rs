@@ -25,6 +25,34 @@ fn terminal(cols: usize, rows: usize) -> DisplayTerminal {
     .unwrap()
 }
 
+#[allow(
+    clippy::unwrap_used,
+    reason = "test fixture setup must fail immediately"
+)]
+#[test]
+fn synchronized_output_tracks_the_dec_2026_bracket() {
+    let mut terminal = terminal(16, 4);
+    assert!(
+        !terminal.synchronized_output().unwrap(),
+        "a fresh terminal is not mid-redraw"
+    );
+
+    terminal.feed(b"[?2026h").unwrap();
+    assert!(
+        terminal.synchronized_output().unwrap(),
+        "BSU must be observable, or the publish gate cannot suppress torn frames"
+    );
+
+    terminal.feed(b"redraw in progress").unwrap();
+    assert!(terminal.synchronized_output().unwrap());
+
+    terminal.feed(b"[?2026l").unwrap();
+    assert!(
+        !terminal.synchronized_output().unwrap(),
+        "ESU must clear it"
+    );
+}
+
 #[test]
 fn feed_produces_owned_snapshot_and_ordered_effects() {
     let mut terminal = terminal(16, 4);

@@ -164,6 +164,16 @@ impl DisplayTerminal {
         self.snapshot_cache.invalidate();
     }
 
+    /// Whether DEC mode 2026 (synchronized output) is currently set.
+    ///
+    /// A program brackets a screen redraw with `CSI ? 2026 h` / `CSI ? 2026 l`
+    /// so a consumer can skip the frames in between instead of publishing a
+    /// half-drawn grid. Reading it on its own costs one FFI crossing, where
+    /// [`Self::modes`] costs thirteen.
+    pub fn synchronized_output(&self) -> Result<bool> {
+        self.mode(2026)
+    }
+
     fn mode(&self, dec_mode: u16) -> Result<bool> {
         // `GhosttyMode` packs the ANSI flag in bit 15, so a DEC private mode
         // number is already its own mode identifier.

@@ -32,6 +32,10 @@ impl DisplayTerminal {
         Err(GhosttyError::UnsupportedPlatform)
     }
 
+    pub fn synchronized_output(&self) -> Result<bool> {
+        Err(GhosttyError::UnsupportedPlatform)
+    }
+
     pub fn scroll(&mut self, _: Scroll) {}
 
     pub fn scroll_to_viewport_row(&mut self, _: usize) -> Result<()> {
