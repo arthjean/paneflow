@@ -20,6 +20,35 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   Below them, Expand all / Collapse all, and the fold state of each workspace
   row now survives a restart.
 
+### Fixed
+
+- Quitting an agent leaves you in your own shell. A pane opened for an agent
+  started PowerShell with `-NoProfile`, so the shell you got back after the
+  agent exited had none of your prompt, aliases, functions or PSReadLine
+  setup: it showed a bare `PS C:\dev\project>` and read as if Paneflow had
+  launched something other than PowerShell. Windows was the only platform doing
+  this, since the zsh, bash and fish paths always loaded the user's rc files.
+  It also defeated Paneflow's own prompt integration, which dot-sources after
+  `$PROFILE` specifically to wrap a prompt you defined rather than replace it.
+  An agent pane now starts the same way as any other, and the `Clear-Host`
+  already prefixed to the agent command keeps the TUI's first frame clean.
+
+- The shell picked in Settings > General is honored on Windows. Choosing
+  PowerShell stored a bare `pwsh.exe`, which was only ever resolved through
+  `PATH`; an app launched from Explorer inherits whatever environment Explorer
+  was started with, so a stale or truncated `PATH` silently rejected the choice
+  and let the fallback chain pick another shell, occasionally the Command
+  Prompt. Each named shell now also resolves from its absolute install
+  location, the way the unconfigured fallback already did, and Windows
+  PowerShell 5.1 is found under System32 even when its own `PATH` entry is
+  missing. Picking PowerShell no longer gets you Windows PowerShell, or the
+  other way round: the exact shell you chose is the one that launches.
+
+  PowerShell 7 discovery is resolved once per run instead of once per pane, so
+  restoring a many-pane workspace no longer re-walks `ProgramFiles` and `PATH`
+  for every pane while the disk is busy. `RUST_LOG=info` now reports the shell
+  each pane actually launched next to the configured value.
+
 ## [0.10.0] - 2026-08-31
 
 ### Added

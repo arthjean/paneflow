@@ -10,8 +10,6 @@
 
 use std::collections::HashMap;
 
-use paneflow_config::schema::TerminalSurfaceProfile;
-
 /// zsh: ZDOTDIR-based injection. Our `.zshenv` restores the original ZDOTDIR
 /// so all other dotfiles (`.zshrc`, `.zprofile`) load from `$HOME` as usual.
 ///
@@ -253,13 +251,15 @@ __paneflow_path_prepend
 /// `portable-pty`'s `CommandBuilder::new`.
 ///
 /// Unix chain: configured (if executable) → `$SHELL` → `/bin/sh`.
-/// Windows chain: configured (if present, resolved via PATH when it has no
-/// separators) → PowerShell 7 (`pwsh.exe`) → Windows PowerShell 5.1
-/// (`powershell.exe`) → `%ComSpec%` → `C:\Windows\System32\cmd.exe` → bare
-/// `"cmd.exe"` (last-ditch). PowerShell is preferred over `cmd.exe` so a fresh
-/// Windows install lands on a modern shell (rich prompt, ANSI colors, working
-/// `clear`) instead of the legacy console - mirrors Zed's
-/// `get_windows_system_shell` (`crates/util/src/shell.rs`).
+/// Windows chain: configured (if present; a bare name is resolved via PATH,
+/// then via the well-known absolute location for that exact shell - see
+/// [`well_known_shell_dir_lookup`]) → PowerShell 7 (`pwsh.exe`) → Windows
+/// PowerShell 5.1 (`powershell.exe`, PATH then its System32 home) →
+/// `%ComSpec%` → `%SystemRoot%\System32\cmd.exe` → bare `"cmd.exe"`
+/// (last-ditch). PowerShell is preferred over `cmd.exe` so a fresh Windows
+/// install lands on a modern shell (rich prompt, ANSI colors, working `clear`)
+/// instead of the legacy console - mirrors Zed's `get_windows_system_shell`
+/// (`crates/util/src/shell.rs`).
 pub(super) fn resolve_default_shell(configured: Option<&str>) -> String {
     if let Some(path) = configured {
         if let Some(resolved) = configured_shell_if_usable(path) {
@@ -397,13 +397,26 @@ fn git_bash_candidates_from_git_exe(git: &std::path::Path) -> Vec<std::path::Pat
     candidates
 }
 
-/// Probe a small set of well-known Unix install directories for a bare shell
-/// name that the PATH search (`which`) missed. Covers the Homebrew prefixes
-/// (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel) plus the
-/// system dirs, so a configured `"pwsh"` / `"fish"` / etc. resolves even when a
-/// GUI-launched process inherited a minimal PATH. Returns `None` on Windows,
-/// where the configured-bare-name case is already served by `which` +
-/// `find_windows_powershell`. The executable-bit check is left to the caller.
+/// Probe a small set of well-known install directories for a bare shell name
+/// that the PATH search (`which`) missed, so a configured `"pwsh"` / `"fish"` /
+/// etc. resolves even when a GUI-launched process inherited a minimal PATH.
+/// The executable-bit check is left to the caller.
+///
+/// Unix covers the Homebrew prefixes (`/opt/homebrew/bin` on Apple Silicon,
+/// `/usr/local/bin` on Intel) plus the system dirs.
+///
+/// Windows maps the bare name onto the same absolute locations the
+/// *unconfigured* fallback probes, honoring the exact shell the user picked:
+/// `pwsh` never silently becomes Windows PowerShell 5.1, and `powershell` never
+/// silently becomes pwsh 7. This arm used to return `None`, on the claim that
+/// `which` + `find_windows_powershell` already served the configured-bare-name
+/// case. They do not: `find_windows_powershell` is only reachable from
+/// `resolve_default_shell_fallback`, i.e. *after* the configured entry has been
+/// rejected. So an explicit Settings choice (the dropdown persists bare
+/// `"pwsh.exe"` / `"powershell.exe"`) was strictly less robust than "System
+/// default" whenever `PATH` was stale - an Explorer-launched process that
+/// predates the shell's install, or a `PATH` long enough to be truncated - and
+/// the user's pick was silently swapped for another shell.
 fn well_known_shell_dir_lookup(name: &str) -> Option<std::path::PathBuf> {
     #[cfg(unix)]
     {
@@ -414,8 +427,15 @@ fn well_known_shell_dir_lookup(name: &str) -> Option<std::path::PathBuf> {
     }
     #[cfg(windows)]
     {
-        let _ = name;
-        None
+        // Bound before the `match`: edition 2024 drops a scrutinee temporary
+        // before the arms run, so the lowercased name needs to outlive it.
+        let lower = name.to_ascii_lowercase();
+        match lower.trim_end_matches(".exe") {
+            "pwsh" => find_windows_pwsh(),
+            "powershell" => windows_powershell_v1_path(),
+            "cmd" => windows_cmd_path(),
+            _ => None,
+        }
     }
 }
 
@@ -452,36 +472,78 @@ fn resolve_default_shell_fallback() -> String {
     if let Some(powershell) = find_windows_powershell() {
         return powershell;
     }
-    // No PowerShell found - fall back to cmd.exe. %ComSpec% is the Windows
-    // convention for "the command interpreter", respected by every console app.
-    if let Ok(com_spec) = std::env::var("ComSpec")
-        && std::path::Path::new(&com_spec).is_file()
-    {
-        return com_spec;
-    }
-    // Canonical cmd.exe location (works on every supported Windows since
-    // 10 1809; we pin the 64-bit System32 path - WOW64 users still see
-    // cmd.exe there via redirection).
-    const CMD_FALLBACK: &str = r"C:\Windows\System32\cmd.exe";
-    if std::path::Path::new(CMD_FALLBACK).is_file() {
-        return CMD_FALLBACK.to_string();
+    // No PowerShell found - fall back to cmd.exe (%ComSpec%, then the canonical
+    // System32 path).
+    if let Some(cmd) = windows_cmd_path() {
+        return cmd.to_string_lossy().into_owned();
     }
     // Last-ditch: return bare "cmd.exe" and let the spawner search PATH.
     log::error!(
         "Windows shell fallback chain exhausted: no pwsh.exe/powershell.exe found, \
-         and %ComSpec% / C:\\Windows\\System32\\cmd.exe both unavailable. Falling \
+         and %ComSpec% / %SystemRoot%\\System32\\cmd.exe both unavailable. Falling \
          back to bare 'cmd.exe'; PTY spawn will surface a clear error if even this \
          is missing."
     );
     "cmd.exe".to_string()
 }
 
+/// The absolute home of Windows PowerShell 5.1. Probed because
+/// `which("powershell.exe")` only finds it when
+/// `%SystemRoot%\System32\WindowsPowerShell\v1.0` is on `PATH`, which is its own
+/// entry and can drop out of a stale or truncated environment. Zed's
+/// `get_windows_system_shell` ends its chain on the same absolute path before
+/// giving up on cmd.exe (`crates/gpui_util/src/lib.rs`); without it, a machine
+/// with a healthy PowerShell install can still land on the legacy console.
+#[cfg(windows)]
+fn windows_powershell_v1_path() -> Option<std::path::PathBuf> {
+    let exe = windows_system32_dir().join(r"WindowsPowerShell\v1.0\powershell.exe");
+    exe.is_file().then_some(exe)
+}
+
+/// `%ComSpec%` - the Windows convention for "the command interpreter",
+/// respected by every console app - then the canonical 64-bit `cmd.exe`. WOW64
+/// callers still see cmd.exe under System32 via redirection.
+#[cfg(windows)]
+fn windows_cmd_path() -> Option<std::path::PathBuf> {
+    if let Some(com_spec) = std::env::var_os("ComSpec") {
+        let path = std::path::PathBuf::from(com_spec);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let exe = windows_system32_dir().join("cmd.exe");
+    exe.is_file().then_some(exe)
+}
+
+/// `%SystemRoot%\System32`, defaulting to the canonical location when the env
+/// var is missing (a GUI launch can inherit a surprisingly bare environment).
+#[cfg(windows)]
+fn windows_system32_dir() -> std::path::PathBuf {
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into());
+    std::path::PathBuf::from(root).join("System32")
+}
+
 /// Locate a PowerShell executable, preferring PowerShell 7+ (`pwsh.exe`) over
 /// the bundled Windows PowerShell 5.1 (`powershell.exe`). Mirrors the search
 /// order of Zed's `get_windows_system_shell` so PaneFlow lands on the same
 /// modern shell users expect (rich prompt, ANSI colors, working `clear`)
-/// rather than cmd.exe. `pwsh.exe` is frequently NOT on `PATH`, so the
-/// well-known install locations are probed before the `PATH` search.
+/// rather than cmd.exe.
+///
+/// Order (short-circuits on the first hit): every [`find_windows_pwsh`]
+/// location, then `powershell.exe` on `PATH`, then Windows PowerShell 5.1 at
+/// its absolute System32 home.
+#[cfg(windows)]
+fn find_windows_powershell() -> Option<String> {
+    find_windows_pwsh()
+        .or_else(|| which::which("powershell.exe").ok())
+        .or_else(windows_powershell_v1_path)
+        .map(|path| path.to_string_lossy().trim().to_owned())
+}
+
+/// Locate PowerShell 7+ (`pwsh.exe`) only, never degrading to Windows
+/// PowerShell 5.1 - callers that want that degradation compose it themselves.
+/// `pwsh.exe` is frequently NOT on `PATH`, so the well-known install locations
+/// are probed before the `PATH` search.
 ///
 /// Order (short-circuits on the first hit):
 /// 1. `pwsh.exe` under `%ProgramFiles%\PowerShell\<n>` (highest major version)
@@ -489,10 +551,24 @@ fn resolve_default_shell_fallback() -> String {
 /// 3. `pwsh.exe` from the MSIX/Store install (`%LOCALAPPDATA%\…\WindowsApps`)
 /// 4. `pwsh.exe` from a scoop shim
 /// 5. `pwsh.exe` anywhere on `PATH`
-/// 6. `powershell.exe` (Windows PowerShell 5.1) on `PATH`
+///
+/// A successful probe is memoized process-wide, as Zed does with its
+/// `LazyLock` (`crates/gpui_util/src/lib.rs`). Every spawn resolves the shell
+/// on the render thread (`TerminalState::resolve_spawn_params_with_profile`),
+/// so without this an N-pane restore ran N sets of `read_dir` + `PATH` walks
+/// while the boot-time git scanners and file watchers were saturating the
+/// disk, which is exactly the contention window where a transient failure
+/// makes the whole chain fall through to cmd.exe. A *failed* probe is
+/// deliberately not cached: the answer must be allowed to change once the
+/// machine settles.
 #[cfg(windows)]
-fn find_windows_powershell() -> Option<String> {
+fn find_windows_pwsh() -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
+
+    static CACHED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    if let Some(cached) = CACHED.get() {
+        return Some(cached.clone());
+    }
 
     // Newest `pwsh.exe` under a `<ProgramFiles>\PowerShell` install. The
     // directory names are the major version (`7`, `6`, …); the highest wins.
@@ -536,13 +612,12 @@ fn find_windows_powershell() -> Option<String> {
         exe.exists().then_some(exe)
     }
 
-    find_pwsh_in_program_files("ProgramFiles")
+    let found = find_pwsh_in_program_files("ProgramFiles")
         .or_else(|| find_pwsh_in_program_files("ProgramFiles(x86)"))
         .or_else(find_pwsh_in_msix)
         .or_else(find_pwsh_in_scoop)
-        .or_else(|| which::which("pwsh.exe").ok())
-        .or_else(|| which::which("powershell.exe").ok())
-        .map(|path| path.to_string_lossy().trim().to_owned())
+        .or_else(|| which::which("pwsh.exe").ok())?;
+    Some(CACHED.get_or_init(|| found).clone())
 }
 
 /// Build a command that clears the terminal before launching an interactive
@@ -613,7 +688,6 @@ fn to_shell_path(p: &std::path::Path) -> String {
 pub(super) fn setup_shell_integration(
     shell: &str,
     env: &mut HashMap<String, String>,
-    profile: TerminalSurfaceProfile,
 ) -> Vec<String> {
     let Some(base) = crate::runtime_paths::shell_integration_dir() else {
         return vec![];
@@ -704,7 +778,7 @@ pub(super) fn setup_shell_integration(
             // quoted PowerShell string). Guards against pathological
             // usernames without breaking the common case.
             let escaped = initfile.display().to_string().replace('\'', "''");
-            powershell_startup_args(profile, format!(". '{escaped}'"))
+            powershell_startup_args(format!(". '{escaped}'"))
         }
         // US-012 AC-5 - cmd.exe has no scripting hook for per-prompt
         // actions (its `$PROMPT` env var controls only the displayed
@@ -767,13 +841,26 @@ fn wsl_startup_args(bashrc: String, zdotdir: String, fish_init: String) -> Vec<S
     ]
 }
 
-fn powershell_startup_args(profile: TerminalSurfaceProfile, init_command: String) -> Vec<String> {
-    let mut args = Vec::new();
-    if matches!(profile, TerminalSurfaceProfile::Agent) {
-        args.push("-NoProfile".into());
-    }
-    args.extend(["-NoExit".into(), "-Command".into(), init_command]);
-    args
+/// Start pwsh so it loads the user's `$PROFILE`, on every surface including an
+/// agent one.
+///
+/// Agent surfaces used to add `-NoProfile`, to keep a chatty profile from
+/// writing over the frame an agent TUI is about to draw. That traded a
+/// permanent defect for a transient one. An agent pane is only an agent pane
+/// while the agent runs: quit it and what remains is an interactive shell, and
+/// with `-NoProfile` that shell has none of the user's prompt, aliases,
+/// functions, or PSReadLine configuration. Ours was the only platform doing
+/// this - the zsh, bash, fish and wsl arms never consulted the surface profile
+/// at all, so the same agent pane kept its `.zshrc` on Linux and macOS. And it
+/// contradicted this module's own OSC 7 design, which dot-sources the
+/// integration script *after* `$PROFILE` precisely so a user-defined `prompt`
+/// can be wrapped rather than replaced; `-NoProfile` left nothing to wrap.
+///
+/// The first-frame concern is already handled: `clear_then` prefixes the agent
+/// command with `Clear-Host`, so a profile's banner is wiped whether or not it
+/// ran.
+fn powershell_startup_args(init_command: String) -> Vec<String> {
+    vec!["-NoExit".into(), "-Command".into(), init_command]
 }
 
 fn quote_fish_arg(arg: &str) -> String {
@@ -795,7 +882,6 @@ fn quote_fish_arg(arg: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{clear_then_for_shell, powershell_startup_args, wsl_startup_args};
-    use paneflow_config::schema::TerminalSurfaceProfile;
 
     // (B) Unix well-known-dir shell lookup: a bare name not on PATH still
     // resolves from a standard install dir (the macOS pwsh-under-Homebrew gap),
@@ -990,14 +1076,16 @@ mod tests {
         assert!(super::PWSH_OSC7.contains(")]133;A"));
     }
 
+    /// Agent surfaces once passed `-NoProfile`, which left the shell the user
+    /// gets back after quitting the agent stripped of their prompt, aliases and
+    /// PSReadLine setup. Nothing may reintroduce it: pwsh must start the same
+    /// way for every surface, and it must load `$PROFILE` so the OSC 7 script
+    /// dot-sourced afterwards can wrap a user-defined `prompt` instead of
+    /// replacing it.
     #[test]
-    fn powershell_agent_profile_skips_user_profile_noise() {
+    fn powershell_startup_always_loads_the_user_profile() {
         assert_eq!(
-            powershell_startup_args(TerminalSurfaceProfile::Agent, "init".into()),
-            vec!["-NoProfile", "-NoExit", "-Command", "init"]
-        );
-        assert_eq!(
-            powershell_startup_args(TerminalSurfaceProfile::Normal, "init".into()),
+            powershell_startup_args("init".into()),
             vec!["-NoExit", "-Command", "init"]
         );
     }
@@ -1088,5 +1176,69 @@ mod windows_shell_tests {
             Some(git_bash.to_ascii_lowercase()),
             "bare bash.exe must resolve to Git Bash before Windows' WSL bash launcher"
         );
+    }
+
+    /// Windows PowerShell 5.1 ships with the OS, so its absolute System32 home
+    /// must always resolve. This is the probe that keeps a machine with a
+    /// truncated or stale `PATH` off cmd.exe: `which("powershell.exe")` needs
+    /// `%SystemRoot%\System32\WindowsPowerShell\v1.0` to be a `PATH` entry of
+    /// its own, and that entry can be missing while the binary is right there.
+    #[test]
+    fn windows_powershell_51_resolves_without_path() {
+        let found = windows_powershell_v1_path();
+        assert!(
+            found
+                .as_deref()
+                .is_some_and(|p| p.is_file() && p.ends_with("powershell.exe")),
+            "Windows PowerShell 5.1 must resolve from its absolute System32 home, got {found:?}"
+        );
+    }
+
+    /// The configured-bare-name regression guard. The Settings dropdown
+    /// persists bare `"pwsh.exe"` / `"powershell.exe"` / `"cmd.exe"`, so the
+    /// well-known lookup must answer for each of them, and must answer with the
+    /// *exact* shell asked for: `pwsh` never degrades to Windows PowerShell
+    /// 5.1 here, and `powershell` never silently becomes pwsh 7. Degrading is
+    /// the unconfigured fallback's job, not the configured path's.
+    #[test]
+    fn well_known_lookup_resolves_the_exact_windows_shell_requested() {
+        if let Some(pwsh) = well_known_shell_dir_lookup("pwsh.exe") {
+            let lower = pwsh.to_string_lossy().to_ascii_lowercase();
+            assert!(
+                lower.ends_with(r"\pwsh.exe"),
+                "a configured `pwsh.exe` must resolve to pwsh, got {lower}"
+            );
+        }
+
+        let powershell = well_known_shell_dir_lookup("powershell");
+        let lower = powershell
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_ascii_lowercase());
+        assert!(
+            lower
+                .as_deref()
+                .is_some_and(|p| p.ends_with(r"windowspowershell\v1.0\powershell.exe")),
+            "a configured `powershell` must resolve to Windows PowerShell 5.1, got {lower:?}"
+        );
+
+        let cmd = well_known_shell_dir_lookup("cmd.exe");
+        assert!(
+            cmd.as_deref()
+                .is_some_and(|p| p.is_file() && p.ends_with("cmd.exe")),
+            "a configured `cmd.exe` must resolve, got {cmd:?}"
+        );
+
+        assert!(
+            well_known_shell_dir_lookup("definitely-not-a-real-shell-xyz").is_none(),
+            "an unknown bare name must not resolve to some other shell"
+        );
+    }
+
+    /// The pwsh probe memoizes its success, so repeated spawns must keep
+    /// answering the same path rather than re-walking `ProgramFiles` + `PATH`
+    /// once per pane.
+    #[test]
+    fn pwsh_discovery_is_stable_across_calls() {
+        assert_eq!(find_windows_pwsh(), find_windows_pwsh());
     }
 }

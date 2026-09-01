@@ -1107,7 +1107,17 @@ impl TerminalState {
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            resolve_default_shell(configured)
+            let resolved = resolve_default_shell(configured);
+            // The configured value and what actually got launched are the two
+            // facts needed to tell "my shell setting is ignored" apart from "my
+            // shell is just slow to start". `resolve_default_shell` only warns
+            // on the rejection path, which says nothing when resolution
+            // succeeded but picked something else than expected.
+            log::info!(
+                target: "paneflow::terminal::backend",
+                "Terminal shell resolved: {resolved:?} (default_shell={configured:?})"
+            );
+            resolved
         };
         let shell_quoting = ShellQuoting::for_shell(&shell);
         // US-014: layer the per-surface `user_env` on top of the global
@@ -1126,7 +1136,7 @@ impl TerminalState {
         // EP-003 US-007: clean opt-out - with `shell_integration: false` no
         // rc snippet is written or wired and the shell starts untouched.
         let extra_args = if config.shell_integration.unwrap_or(true) {
-            setup_shell_integration(&shell, &mut env, profile)
+            setup_shell_integration(&shell, &mut env)
         } else {
             vec![]
         };
