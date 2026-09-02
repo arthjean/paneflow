@@ -749,7 +749,7 @@ impl Pane {
                 | TerminalEvent::FontZoomChanged
                 | TerminalEvent::FleetSearchRequested { .. }
                 | TerminalEvent::AgentProgressChanged { .. }
-                | TerminalEvent::AgentAttention { .. }
+                | TerminalEvent::ProgramNotification { .. }
                 | TerminalEvent::ShellPromptReady => {}
             }
         })

@@ -716,25 +716,15 @@ impl TerminalView {
                             }
 
                             // Desktop notifications the program asked for
-                            // with OSC 9 or OSC 777.
-                            let notifications =
-                                std::mem::take(&mut view.terminal.pending_notifications);
-                            if !notifications.is_empty() {
-                                let pane_title = view.terminal.title.clone();
-                                for notification in notifications {
-                                    cx.emit(TerminalEvent::AgentAttention {
-                                        title: notification.title.clone(),
-                                        body: notification.body.clone(),
-                                    });
-                                    crate::agents::notifications::fire_program_notification(
-                                        crate::agents::notifications::program_notification(
-                                            notification.title,
-                                            notification.body,
-                                            &pane_title,
-                                        ),
-                                        cx.background_executor().clone(),
-                                    );
-                                }
+                            // with OSC 9 or OSC 777. Delivered by the app,
+                            // which knows whether this pane is on screen.
+                            for notification in
+                                std::mem::take(&mut view.terminal.pending_notifications)
+                            {
+                                cx.emit(TerminalEvent::ProgramNotification {
+                                    title: notification.title,
+                                    body: notification.body,
+                                });
                             }
 
                             // OSC 10/11/12 color queries are now handled
@@ -1259,11 +1249,12 @@ pub enum TerminalEvent {
     /// itself - no hook involved. Emitted only on a change, never per report.
     AgentProgressChanged { busy: bool },
     /// The program in this pane asked for the user's attention through OSC 9
-    /// or OSC 777. Already routed to a desktop notification; the receiver
-    /// (`PaneFlowApp`) additionally reads it as agent state when the pane is
-    /// running an agent, because that is the one thing Claude Code still says
-    /// out loud when its hooks are switched off.
-    AgentAttention { title: String, body: String },
+    /// or OSC 777. The receiver (`PaneFlowApp`) turns it into a desktop
+    /// notification unless the pane is on screen, and additionally reads it
+    /// as agent state when the pane is running an agent, because that is the
+    /// one thing Claude Code still says out loud when its hooks are switched
+    /// off.
+    ProgramNotification { title: String, body: String },
 }
 
 impl EventEmitter<TerminalEvent> for TerminalView {}

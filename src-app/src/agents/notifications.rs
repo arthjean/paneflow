@@ -123,16 +123,24 @@ pub(crate) fn program_notification(
 
 /// Fire a notification the running program asked for.
 ///
-/// Unlike the agent notifications this gates only on window focus. The
-/// `notify_when_agent_waiting` setting is about Paneflow deciding to
-/// interrupt on an agent's behalf; a program that emitted OSC 9 asked for
-/// this itself, and silently dropping it would break every `notify-send`
-/// style workflow.
+/// Unlike the agent notifications this ignores `notify_when_agent_waiting`:
+/// that setting is about Paneflow deciding to interrupt on an agent's behalf,
+/// and a program that emitted OSC 9 asked for this itself, so silently
+/// dropping it would break every `notify-send` style workflow.
+///
+/// The one gate is `seen`: whether the pane that asked is the one under the
+/// user's eye (window active, its workspace and tab on screen -
+/// `PaneFlowApp::surfaces_under_user_eye`). A notification from a pane the
+/// user is looking at is noise; one from another workspace is the whole
+/// point, even while the Paneflow window is active. cmux draws the line in
+/// the same place (`TerminalNotificationDeliveryDecision`: app focused AND
+/// active tab AND focused surface suppresses the banner).
 pub(crate) fn fire_program_notification(
     notification: DesktopNotification,
+    seen: bool,
     executor: BackgroundExecutor,
 ) {
-    if window_active() {
+    if seen {
         return;
     }
     executor
@@ -143,16 +151,23 @@ pub(crate) fn fire_program_notification(
 }
 
 /// Fire a best-effort desktop notification without blocking the GPUI thread.
+///
+/// `seen` is whether the pane the agent lives in is under the user's eye,
+/// the same test [`fire_program_notification`] takes and the completion dot
+/// keys on (`PaneFlowApp::surfaces_under_user_eye`). An agent asking for
+/// permission in a workspace the user is not looking at notifies even while
+/// the Paneflow window is active; the one on screen never does.
 pub(crate) fn fire_desktop_notification(
     notification: DesktopNotification,
     config: &PaneFlowConfig,
+    seen: bool,
     executor: BackgroundExecutor,
 ) {
     let gate = config.agent_panel.as_ref().map_or(
         NotifyWhenAgentWaiting::Never,
         AgentPanelConfig::resolved_notify_when_agent_waiting,
     );
-    if !should_fire_desktop_notification(gate, window_active()) {
+    if !should_fire_desktop_notification(gate, seen) {
         return;
     }
 
@@ -163,15 +178,10 @@ pub(crate) fn fire_desktop_notification(
         .detach();
 }
 
-pub(crate) fn should_fire_desktop_notification(
-    gate: NotifyWhenAgentWaiting,
-    window_active: bool,
-) -> bool {
+pub(crate) fn should_fire_desktop_notification(gate: NotifyWhenAgentWaiting, seen: bool) -> bool {
     match gate {
         NotifyWhenAgentWaiting::Never => false,
-        NotifyWhenAgentWaiting::PrimaryScreen | NotifyWhenAgentWaiting::AllScreens => {
-            !window_active
-        }
+        NotifyWhenAgentWaiting::PrimaryScreen | NotifyWhenAgentWaiting::AllScreens => !seen,
     }
 }
 
@@ -312,18 +322,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn notification_gate_honors_never_and_window_focus() {
+    fn notification_gate_honors_never_and_the_pane_under_the_users_eye() {
         assert!(!should_fire_desktop_notification(
             NotifyWhenAgentWaiting::Never,
             false
         ));
         assert!(
             !should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, true),
-            "active Paneflow window suppresses OS notifications"
+            "the pane on screen never notifies"
         );
         assert!(
             should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, false),
-            "inactive Paneflow window notifies"
+            "a pane in another workspace, tab or an inactive window notifies"
         );
         assert!(should_fire_desktop_notification(
             NotifyWhenAgentWaiting::AllScreens,
