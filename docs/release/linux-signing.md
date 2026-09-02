@@ -5,8 +5,7 @@ End-user runbook for verifying that a downloaded Paneflow Linux artifact
 the Paneflow release pipeline and has not been tampered with in
 transit.
 
-This document is **user-facing**. The maintainer runbook for generating,
-rotating, and storing the signing key lives at `docs/release-signing.md`.
+This document is **user-facing** and covers verification only.
 
 ---
 
@@ -71,9 +70,8 @@ curl -fsSL https://pkg.paneflow.dev/gpg \
 
 > **Note on key locations.** A second copy of the public key lives at
 > `packaging/paneflow-release.asc` for historical reasons - it is the
-> path the maintainer runbook (`docs/release-signing.md`) and the
-> `pkg.paneflow.dev` repo-publish workflow operate against. Both files
-> are byte-identical and must stay in sync; users should prefer
+> path the `pkg.paneflow.dev` repo-publish workflow operates against. Both
+> files are byte-identical and must stay in sync; users should prefer
 > `keys/paneflow-release.asc` for clarity, but either works.
 
 ## 2. Import the public key (one-time per workstation)
@@ -312,8 +310,6 @@ do not install the package.
 
 ## 9. References
 
-- [`docs/release-signing.md`](../release-signing.md) - maintainer-side
-  key generation, secret rotation, R2 publishing.
 - [`docs/release/macos-signing.md`](macos-signing.md) - equivalent
   runbook for macOS signing & notarization.
 - [`docs/release/windows-signing.md`](windows-signing.md) - equivalent

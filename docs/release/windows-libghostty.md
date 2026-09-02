@@ -1,9 +1,8 @@
 # Windows libghostty qualification
 
 This runbook qualifies the statically linked libghostty-vt engine on Windows.
-It complements `docs/WINDOWS-SMOKE-TEST.md`: the existing runbook covers the
-general PaneFlow installer and UI, while this document owns the terminal-engine
-quality gates.
+It owns the terminal-engine quality gates, not the general PaneFlow installer
+and UI checks.
 
 Ghostty is the only terminal engine. The Windows x64 MSVC build links the
 pinned archive unconditionally, and there is no rollback backend and no

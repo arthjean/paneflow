@@ -13,7 +13,7 @@ the workflow lands the deferred signing step) the `.tar.gz` and
 - **Fingerprint:** `9809 948F 4433 CF93 DD13  2944 9A25 2F0C 183F 2711`
 - **User ID:** `PaneFlow Release <paneflow-release@paneflow.dev>`
 - **Algorithm / size:** RSA 4096
-- **Expires:** 2028-04-19 (rotation tracked in `docs/release-signing.md`)
+- **Expires:** 2028-04-19
 
 **For verification instructions, read
 [`docs/release/linux-signing.md`](../docs/release/linux-signing.md)
@@ -29,9 +29,8 @@ The duplication exists for two distinct audiences:
 
 - `keys/` - end-user-discoverable path referenced by
   `docs/release/linux-signing.md` and `README.md`.
-- `packaging/` - maintainer-canonical path referenced by
-  `docs/release-signing.md` and the `pkg.paneflow.dev` repo-publish
-  workflow.
+- `packaging/` - maintainer-canonical path referenced by the
+  `pkg.paneflow.dev` repo-publish workflow.
 
 **Both files MUST stay in sync.** A maintainer rotating the key under
 the operator runbook should update both paths in the same commit.

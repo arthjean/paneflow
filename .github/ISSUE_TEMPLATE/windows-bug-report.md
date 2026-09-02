@@ -8,19 +8,17 @@ assignees: []
 
 <!--
 Thanks for filing a Windows-specific report. PaneFlow's Windows build
-ships from the `windows-2022` GitHub-hosted CI runner; the smoke-test
-checklist at `docs/WINDOWS-SMOKE-TEST.md` covers only 10 scenarios
-across Windows 10 1809 and Windows 11, so bugs that surface outside
-that matrix are especially valuable.
+ships from the `windows-2022` GitHub-hosted CI runner and is smoke-tested
+on a handful of scenarios across Windows 10 1809 and Windows 11, so bugs
+that surface outside that matrix are especially valuable.
 
 If the bug reproduces on Linux or macOS too, use the generic bug
 template instead so it can be triaged by anyone rather than waiting
 on someone with a Windows box.
 
-For context on known v1 limitations + upstream risks we already
-track (IME panic, ConPTY Ctrl+C, RDP init, devcontainer freeze, GPU
-driver floor), skim `docs/WINDOWS.md` first - your report may be a
-duplicate of a risk we already document.
+Known v1 limitations and upstream risks already tracked: IME panic,
+ConPTY Ctrl+C, RDP init, devcontainer freeze, GPU driver floor. Search
+existing issues first - your report may be a duplicate.
 -->
 
 ## Environment
@@ -48,7 +46,7 @@ Get-CimInstance Win32_VideoController |
 ```
 
 (GPU driver dates matter for triaging `NoSupportedDeviceFound` and DX11
-render bugs against the upstream-risks catalog in `docs/WINDOWS.md`.)
+render bugs.)
 
 - **Architecture** (pick one):
   - [ ] x86_64 (Intel / AMD 64-bit - supported)
@@ -59,8 +57,7 @@ render bugs against the upstream-risks catalog in `docs/WINDOWS.md`.)
   - [ ] Built from source (`cargo build --release --target x86_64-pc-windows-msvc`)
 - **Display environment** (pick one):
   - [ ] Local desktop session
-  - [ ] Remote Desktop (RDP) - known-upstream risk, see
-    `docs/WINDOWS.md` §4 "RDP initialization broken"
+  - [ ] Remote Desktop (RDP) - known-upstream risk (RDP initialization)
   - [ ] Nested via WSL2 / devcontainer - known-upstream risk
   - [ ] HiDPI or multi-monitor setup (specify scaling % and monitor count)
 

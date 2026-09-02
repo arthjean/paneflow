@@ -189,8 +189,7 @@ jobs:
           # memory/project_macos_signing.md AND either (a) queue-SLA
           # improvement at GitHub Actions or (b) a matrix-strategy
           # refactor of the `Publish` job's `needs:` to not block on
-          # best-effort legs. See docs/release-runbook.md §"Supported
-          # release targets" for the authoritative status list.
+          # best-effort legs.
           # Historical Windows closure context: Windows was absent from
           # the matrix while Trusted Signing was not provisioned because
           # an unsigned MSI would trigger SmartScreen and fail winget
@@ -539,8 +538,7 @@ jobs:
           # artifacts (option_env! in update/signature.rs). PUBLIC keys →
           # repository *variables*, never secrets. Two slots (current + next)
           # for zero-downtime rotation; an unset var resolves to "" which
-          # the verifier treats as "no key in this slot". See
-          # docs/self-update-signing.md.
+          # the verifier treats as "no key in this slot".
           PANEFLOW_MINISIGN_PUBKEY: ${{ vars.PANEFLOW_MINISIGN_PUBKEY }}
           PANEFLOW_MINISIGN_PUBKEY_NEXT: ${{ vars.PANEFLOW_MINISIGN_PUBKEY_NEXT }}
           TARGET: ${{ matrix.target }}
@@ -676,7 +674,7 @@ jobs:
           # --- Fail-fast: secrets present? -----------------------------
           if [ -z "${GPG_PRIVATE_KEY:-}" ] || [ -z "${GPG_KEY_ID:-}" ]; then
             echo "::error title=GPG signing::GPG signing failed: key not loaded"
-            echo "::error::GPG_PRIVATE_KEY and/or GPG_KEY_ID secrets are not populated. See docs/release-signing.md." >&2
+            echo "::error::GPG_PRIVATE_KEY and/or GPG_KEY_ID secrets are not populated." >&2
             exit 1
           fi
           # Require the full 40-char fingerprint. Short 16-char key IDs
