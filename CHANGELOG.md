@@ -33,6 +33,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   them to their cell, borrowing the empty cell after them when there is one
   (Ghostty's Nerd Font rule). Configs naming `JetBrainsMono Nerd Font Mono`
   or `JetBrainsMono NFM` keep resolving to the bundled family.
+- SGR bold uses the Bold face rather than SemiBold, and SGR faint halves the
+  foreground opacity (it used to keep 70%).
+- The APCA contrast floor applied to the theme's ANSI colors is off by
+  default and configurable as `terminal.minimum_contrast` (Zed's floor is
+  `45`). Themes render their colors as designed.
 
 ## [0.11.0] - 2026-09-02
 

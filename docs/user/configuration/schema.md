@@ -100,6 +100,7 @@ CLI binary.
 | `terminal.cursor_blink` | string or null | `terminal_controlled` | `on`, `off`, or `terminal_controlled`. |
 | `terminal.env` | object or null | none | Environment variables injected into new terminals. Protected keys are filtered at PTY spawn. |
 | `terminal.scroll_multiplier` | number or null | `1.0` | Mouse-wheel multiplier outside mouse-reporting and alternate-screen modes. |
+| `terminal.minimum_contrast` | number or null | `0.0` | Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the theme's ANSI colors only. `0` leaves theme colors untouched; Zed uses `45`. Range `0` to `90`. Hot-reloaded. |
 
 ```json
 {
@@ -290,7 +291,8 @@ unconditionally.
     "cursor_shape": "block",
     "cursor_blink": "terminal_controlled",
     "env": {},
-    "scroll_multiplier": 1.0
+    "scroll_multiplier": 1.0,
+    "minimum_contrast": 0.0
   },
   "telemetry": { "enabled": null },
   "agent_panel": {

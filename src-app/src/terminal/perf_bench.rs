@@ -279,6 +279,7 @@ fn layout(content: &Content, cols: usize, rows: usize, theme: &crate::theme::Ter
         exit_signal: None,
         integrated_glyphs_enabled: true,
         color_emoji_enabled: true,
+        minimum_contrast: 0.0,
     });
     std::hint::black_box(state);
 }

@@ -763,6 +763,10 @@ impl Pane {
             .terminal
             .as_ref()
             .is_none_or(|terminal| terminal.resolved_color_emoji());
+        let minimum_contrast = config
+            .terminal
+            .as_ref()
+            .map_or(0.0, |terminal| terminal.resolved_minimum_contrast());
         let cursor_color_override = config
             .terminal
             .as_ref()
@@ -771,6 +775,7 @@ impl Pane {
         terminal.update(cx, |terminal, cx| {
             terminal.set_integrated_glyphs_enabled(integrated_glyphs_enabled, cx);
             terminal.set_color_emoji_enabled(color_emoji_enabled, cx);
+            terminal.set_minimum_contrast(minimum_contrast, cx);
             terminal.set_cursor_color_override(cursor_color_override, cx);
         });
     }

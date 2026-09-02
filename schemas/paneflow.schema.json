@@ -252,6 +252,13 @@
           "minimum": 0.1,
           "maximum": 10.0,
           "default": 1.0
+        },
+        "minimum_contrast": {
+          "type": ["number", "null"],
+          "description": "Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the theme's ANSI colors only. 0 leaves theme colors untouched. Hot-reloaded.",
+          "minimum": 0.0,
+          "maximum": 90.0,
+          "default": 0.0
         }
       }
     },

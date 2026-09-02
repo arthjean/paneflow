@@ -219,6 +219,13 @@ pub struct TerminalConfig {
     /// constructed, so existing terminals keep their current scroll feel.
     #[serde(default, deserialize_with = "lenient_opt_f32")]
     pub scroll_multiplier: Option<f32>,
+    /// Minimum APCA lightness contrast (`Lc`) the renderer enforces between a
+    /// cell's text and its background, on the theme's ANSI colors only.
+    /// `None` or `0` leave the theme's colors exactly as they are, like
+    /// Ghostty's `minimum-contrast` default. Clamped to `[0, 90]`. Zed's
+    /// floor is `45`. Hot-reloaded.
+    #[serde(default, deserialize_with = "lenient_opt_f32")]
+    pub minimum_contrast: Option<f32>,
 }
 
 impl TerminalConfig {
@@ -243,12 +250,26 @@ impl TerminalConfig {
     /// Upper bound: beyond 10× a single tick jumps multiple screens.
     pub const MAX_SCROLL_MULTIPLIER: f32 = 10.0;
 
+    /// Upper bound of `minimum_contrast`: APCA Lc 90 is the ceiling of
+    /// "body text" contrast; above it the search degenerates to black/white.
+    pub const MAX_MINIMUM_CONTRAST: f32 = 90.0;
+
     pub fn resolved_integrated_glyphs(&self) -> bool {
         self.integrated_glyphs.unwrap_or(true)
     }
 
     pub fn resolved_color_emoji(&self) -> bool {
         self.color_emoji.unwrap_or(true)
+    }
+
+    /// Resolve `minimum_contrast` to an APCA Lc floor: `0` (off) by default,
+    /// non-finite values dropped, otherwise clamped to `[0, 90]`.
+    pub fn resolved_minimum_contrast(&self) -> f32 {
+        let raw = self.minimum_contrast.unwrap_or(0.0);
+        if !raw.is_finite() {
+            return 0.0;
+        }
+        raw.clamp(0.0, Self::MAX_MINIMUM_CONTRAST)
     }
 
     pub fn normalized_cursor_color(&self) -> Option<String> {

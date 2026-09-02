@@ -85,6 +85,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             cursor_blink: None,
             env: None,
             scroll_multiplier: None,
+            minimum_contrast: None,
         })
     );
     assert_eq!(
@@ -99,6 +100,7 @@ fn test_terminal_ligatures_default_when_block_empty() {
             cursor_blink: None,
             env: None,
             scroll_multiplier: None,
+            minimum_contrast: None,
         })
     );
 }
@@ -118,6 +120,7 @@ fn test_terminal_ligatures_true() {
             cursor_blink: None,
             env: None,
             scroll_multiplier: None,
+            minimum_contrast: None,
         })
     );
 
@@ -143,6 +146,7 @@ fn test_terminal_ligatures_false() {
             cursor_blink: None,
             env: None,
             scroll_multiplier: None,
+            minimum_contrast: None,
         })
     );
 }
@@ -172,6 +176,7 @@ fn test_terminal_integrated_glyphs_default_on_and_false_opt_out() {
             cursor_blink: None,
             env: None,
             scroll_multiplier: None,
+            minimum_contrast: None,
         })
     );
     assert!(
@@ -209,6 +214,7 @@ fn test_terminal_color_emoji_default_on_and_false_opt_out() {
             cursor_blink: None,
             env: None,
             scroll_multiplier: None,
+            minimum_contrast: None,
         })
     );
     assert!(
@@ -243,6 +249,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         cursor_blink: None,
         env: None,
         scroll_multiplier: None,
+        minimum_contrast: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),
@@ -258,6 +265,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         cursor_blink: None,
         env: None,
         scroll_multiplier: None,
+        minimum_contrast: None,
     };
     assert_eq!(
         tc.resolved_scrollback_lines(),
@@ -336,6 +344,55 @@ fn test_scroll_multiplier_resolver_default_and_clamp() {
         .resolved_scroll_multiplier(),
         2.5,
         "in range → unchanged"
+    );
+}
+
+#[test]
+fn test_minimum_contrast_resolver_default_clamp_and_non_finite() {
+    assert_eq!(
+        TerminalConfig::default().resolved_minimum_contrast(),
+        0.0,
+        "absent → off"
+    );
+    assert_eq!(
+        TerminalConfig {
+            minimum_contrast: Some(45.0),
+            ..Default::default()
+        }
+        .resolved_minimum_contrast(),
+        45.0
+    );
+    assert_eq!(
+        TerminalConfig {
+            minimum_contrast: Some(-3.0),
+            ..Default::default()
+        }
+        .resolved_minimum_contrast(),
+        0.0,
+        "negative → off"
+    );
+    assert_eq!(
+        TerminalConfig {
+            minimum_contrast: Some(500.0),
+            ..Default::default()
+        }
+        .resolved_minimum_contrast(),
+        TerminalConfig::MAX_MINIMUM_CONTRAST,
+        "above max → clamped"
+    );
+    assert_eq!(
+        TerminalConfig {
+            minimum_contrast: Some(f32::NAN),
+            ..Default::default()
+        }
+        .resolved_minimum_contrast(),
+        0.0,
+        "NaN → off"
+    );
+    let parsed: TerminalConfig = serde_json::from_str(r#"{"minimum_contrast": "45"}"#).unwrap();
+    assert_eq!(
+        parsed.minimum_contrast, None,
+        "lenient parse drops a string"
     );
 }
 

@@ -35,20 +35,14 @@ pub(super) mod selection;
 pub(super) mod sprites;
 pub(super) mod text;
 
-/// Convert terminal intensity into a distinct display weight.
+/// Convert terminal intensity into a display weight.
 ///
-/// SGR 1 must remain visibly distinct from regular terminal text. A single
-/// 100-point step turns the default 400 face into Medium 500, which is too
-/// subtle at terminal sizes. Keep at least a 200-point separation, use the
-/// bundled SemiBold face as the floor, and never reduce an already-heavy base.
+/// SGR 1 selects the real Bold face, as Ghostty does, unless the configured
+/// base weight is already bold or heavier, which is never reduced.
 fn display_font_for_intensity(font: &Font, base_weight: FontWeight) -> Font {
     let mut display_font = font.clone();
-    if font.weight == FontWeight::BOLD {
-        display_font.weight = if base_weight.0 >= FontWeight::BOLD.0 {
-            base_weight
-        } else {
-            FontWeight((base_weight.0 + 200.0).clamp(FontWeight::SEMIBOLD.0, FontWeight::BOLD.0))
-        };
+    if font.weight == FontWeight::BOLD && base_weight.0 >= FontWeight::BOLD.0 {
+        display_font.weight = base_weight;
     }
     display_font
 }
@@ -69,13 +63,13 @@ mod tests {
     }
 
     #[test]
-    fn ansi_bold_uses_semibold_from_normal() {
+    fn ansi_bold_uses_the_bold_face_from_normal() {
         let display = display_font_for_intensity(&font(FontWeight::BOLD), FontWeight::NORMAL);
-        assert_eq!(display.weight, FontWeight::SEMIBOLD);
+        assert_eq!(display.weight, FontWeight::BOLD);
     }
 
     #[test]
-    fn ansi_bold_uses_bold_from_medium() {
+    fn ansi_bold_uses_the_bold_face_from_medium() {
         let display = display_font_for_intensity(&font(FontWeight::BOLD), FontWeight::MEDIUM);
         assert_eq!(display.weight, FontWeight::BOLD);
     }

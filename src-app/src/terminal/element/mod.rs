@@ -565,6 +565,8 @@ pub(crate) struct LayoutInputs<'a> {
     pub exit_signal: Option<String>,
     pub integrated_glyphs_enabled: bool,
     pub color_emoji_enabled: bool,
+    /// APCA Lc floor for text against its cell background, `0` to disable.
+    pub minimum_contrast: f32,
 }
 
 pub struct LayoutState {
@@ -653,6 +655,7 @@ pub(crate) struct LayoutCacheKey {
     cursor_color_override: Option<Hsla>,
     integrated_glyphs_enabled: bool,
     color_emoji_enabled: bool,
+    minimum_contrast: f32,
 }
 
 /// One pane's memoized layout.
@@ -715,6 +718,9 @@ pub struct TerminalElement {
     integrated_glyphs_enabled: bool,
     /// When enabled, emoji glyphs are rendered through GPUI's color path.
     color_emoji_enabled: bool,
+    /// APCA Lc floor between a cell's text and its background; `0` leaves
+    /// the theme's colors untouched.
+    minimum_contrast: f32,
     /// Font and cell metrics resolved once by the view for this frame.
     frame_metrics: TerminalFrameMetrics,
     /// True while the terminal is in DEC alternate screen.
@@ -749,6 +755,7 @@ impl TerminalElement {
         cursor_color_override: Option<Hsla>,
         integrated_glyphs_enabled: bool,
         color_emoji_enabled: bool,
+        minimum_contrast: f32,
         frame_metrics: TerminalFrameMetrics,
         alt_screen: bool,
         layout_cache: SharedLayoutCache,
@@ -775,6 +782,7 @@ impl TerminalElement {
             cursor_color_override,
             integrated_glyphs_enabled,
             color_emoji_enabled,
+            minimum_contrast,
             frame_metrics,
             alt_screen,
             layout_cache,
@@ -916,6 +924,7 @@ impl TerminalElement {
             cursor_color_override: self.cursor_color_override,
             integrated_glyphs_enabled: self.integrated_glyphs_enabled,
             color_emoji_enabled: self.color_emoji_enabled,
+            minimum_contrast: self.minimum_contrast,
         };
         {
             let cache = self
@@ -950,6 +959,7 @@ impl TerminalElement {
             exit_signal: self.exit_signal.clone(),
             integrated_glyphs_enabled: self.integrated_glyphs_enabled,
             color_emoji_enabled: self.color_emoji_enabled,
+            minimum_contrast: self.minimum_contrast,
         }));
         *self
             .layout_cache
@@ -988,6 +998,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         exit_signal,
         integrated_glyphs_enabled,
         color_emoji_enabled,
+        minimum_contrast,
     } = inputs;
 
     // The terminal never fills its own bounds. Its host pane card carries the
@@ -1094,12 +1105,13 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         let mut fg = convert_color(raw_fg, theme);
         let bg = terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme);
 
-        // DIM/faint (SGR 2): reduce foreground opacity (applied after INVERSE)
+        // DIM/faint (SGR 2): half the foreground opacity, Ghostty's
+        // `faint-opacity` default (applied after INVERSE).
         if flags.contains(CellFlags::DIM) {
-            fg.a *= 0.7;
+            fg.a *= 0.5;
         }
 
-        // Enforce minimum foreground/background contrast.
+        // Enforce a minimum foreground/background contrast when configured.
         // Skip when:
         //  - the character is decorative (box-drawing, Powerline, blocks),
         //    where APCA adjustment would destroy the intended visual shape.
@@ -1114,8 +1126,8 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         //    theme background (e.g. `\e[38;5;0m` on a dark theme).
         //    Mirrors Zed `terminal::is_app_chosen_exact_color` (PR #54565).
         let skip_contrast = matches!(raw_fg, Color::Spec(_) | Color::Indexed(16..=255));
-        if !is_decorative_character(*c) && !skip_contrast {
-            fg = ensure_minimum_contrast(fg, bg, MIN_APCA_CONTRAST);
+        if minimum_contrast > 0.0 && !is_decorative_character(*c) && !skip_contrast {
+            fg = ensure_minimum_contrast(fg, bg, minimum_contrast);
         }
 
         // US-007: cells inside the selection rect get the precomputed
@@ -2492,6 +2504,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled,
             color_emoji_enabled: true,
+            minimum_contrast: MIN_APCA_CONTRAST,
         })
     }
 
@@ -2520,6 +2533,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
+            minimum_contrast: MIN_APCA_CONTRAST,
         })
     }
 
@@ -2960,6 +2974,48 @@ mod golden_frame_tests {
     }
 
     #[test]
+    fn dim_halves_the_foreground_alpha() {
+        let state = run(text_row(0, "dim", default_fg(), CellFlags::DIM), None, None);
+        let bright = run(
+            text_row(0, "dim", default_fg(), CellFlags::empty()),
+            None,
+            None,
+        );
+        assert!(
+            (state.batched_runs[0].color.a - bright.batched_runs[0].color.a * 0.5).abs() < 1e-6
+        );
+    }
+
+    #[test]
+    fn contrast_floor_off_leaves_theme_colors_untouched() {
+        let theme = crate::theme::paneflow_dark();
+        let low = Color::Named(NamedColor::Black);
+        let cells = vec![cell(0, 0, 'a', low, default_bg(), CellFlags::empty())];
+        let state = layout_from_snapshot(LayoutInputs {
+            cells: cells.into(),
+            cursor: None,
+            selection_range: None,
+            copy_mode_cursor: None,
+            search_highlights: &[],
+            display_offset: 0,
+            history_size: 0,
+            desired_cols: COLS,
+            desired_rows: ROWS,
+            first_visible_row: 0,
+            last_visible_row: ROWS as i32,
+            dims: test_dims(),
+            base_font: test_font(),
+            theme: &theme,
+            exited: None,
+            exit_signal: None,
+            integrated_glyphs_enabled: true,
+            color_emoji_enabled: true,
+            minimum_contrast: 0.0,
+        });
+        assert_eq!(state.batched_runs[0].color, convert_color(low, &theme));
+    }
+
+    #[test]
     fn shell_cursor_is_hidden_when_scrolled_away_from_live_edge() {
         let theme = crate::theme::paneflow_dark();
         let state = layout_from_snapshot(LayoutInputs {
@@ -2981,6 +3037,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
+            minimum_contrast: 0.0,
         });
 
         assert!(
@@ -3164,6 +3221,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
+            minimum_contrast: 0.0,
         });
         assert_eq!(state.batched_runs.len(), 1, "row 2 is culled");
         assert_eq!(state.batched_runs[0].text, "a");
@@ -3235,6 +3293,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
+            minimum_contrast: 0.0,
         });
 
         assert_eq!(state.background_color.a, 0.0);
@@ -3318,6 +3377,7 @@ mod golden_frame_tests {
             exit_signal: None,
             integrated_glyphs_enabled: true,
             color_emoji_enabled: true,
+            minimum_contrast: 0.0,
         });
 
         assert!(

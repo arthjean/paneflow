@@ -318,6 +318,8 @@ pub struct TerminalView {
     pub(super) integrated_glyphs_enabled: bool,
     /// Renderer switch: emoji glyphs use GPUI's platform color-emoji path.
     pub(super) color_emoji_enabled: bool,
+    /// APCA Lc floor between a cell's text and its background, `0` off.
+    pub(super) minimum_contrast: f32,
     /// Whether copy mode (keyboard-driven selection) is active
     pub(super) copy_mode_active: bool,
     /// Copy mode cursor position in grid coordinates
@@ -432,6 +434,13 @@ impl TerminalView {
     pub(crate) fn set_color_emoji_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.color_emoji_enabled != enabled {
             self.color_emoji_enabled = enabled;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_minimum_contrast(&mut self, minimum_contrast: f32, cx: &mut Context<Self>) {
+        if self.minimum_contrast != minimum_contrast {
+            self.minimum_contrast = minimum_contrast;
             cx.notify();
         }
     }
@@ -844,6 +853,7 @@ impl TerminalView {
         );
         let integrated_glyphs_enabled = terminal_config.resolved_integrated_glyphs();
         let color_emoji_enabled = terminal_config.resolved_color_emoji();
+        let minimum_contrast = terminal_config.resolved_minimum_contrast();
 
         Self {
             terminal,
@@ -877,6 +887,7 @@ impl TerminalView {
             scroll_multiplier,
             integrated_glyphs_enabled,
             color_emoji_enabled,
+            minimum_contrast,
             copy_mode_active: false,
             copy_cursor: Point::new(0, 0),
             copy_mode_frozen_offset: 0,
@@ -1655,6 +1666,7 @@ impl Render for TerminalView {
             self.cursor_color_override,
             self.integrated_glyphs_enabled,
             self.color_emoji_enabled,
+            self.minimum_contrast,
             frame_metrics,
             alt_screen,
             self.layout_cache.clone(),

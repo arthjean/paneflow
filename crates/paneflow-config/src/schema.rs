@@ -133,6 +133,7 @@ mod tests {
                 cursor_blink: Some(CursorBlinkConfig::TerminalControlled),
                 env: Some(HashMap::new()),
                 scroll_multiplier: Some(1.0),
+                minimum_contrast: Some(0.0),
             }),
             agent_panel: Some(AgentPanelConfig {
                 max_content_width: Some(760),
