@@ -431,16 +431,26 @@ pub(crate) fn progress_lifecycle_event(busy: bool) -> AgentLifecycleEvent {
 /// The lifecycle event an OSC 9 / OSC 777 notification implies, or `None`
 /// when the notification says nothing about the agent's state.
 ///
-/// A desktop notification is a program asking for the user, which is what
-/// [`WaitingForInput`](crate::ai_types::AgentState::WaitingForInput) means -
-/// Claude Code sends exactly three ("Claude needs your permission", "Claude
-/// Code needs your input", "Claude is waiting for your input") and all three
-/// are the user's turn. The body is kept as the session's message so the
-/// sidebar and the attention queue say what is being asked.
+/// OSC 9 is a general-purpose channel with no type tag, so the text is all
+/// there is to classify on, and it is classified the way cmux's fallback
+/// does (`CLI/AgentHookNotificationPolicy.swift`): a notification that reads
+/// as a request for permission, approval or input is the user's turn, which
+/// is what [`WaitingForInput`](crate::ai_types::AgentState::WaitingForInput)
+/// means. Claude Code's "Claude needs your permission" and "Claude Code needs
+/// your input" both land there, with the text kept as the session's message
+/// so the sidebar and the attention queue say what is being asked.
 ///
-/// Empty notifications are dropped: a bare bell carries no claim, and
-/// promoting it would let any `notify-send` in a pane running an agent light
-/// up the attention queue.
+/// The one Claude Code text that mentions input without asking for it is the
+/// `idle_prompt`, "Claude is waiting for your input": it fires a fixed delay
+/// after a turn ENDED with nothing pending, so it is the same fact as
+/// `ai.stop`. The hook already drops that notification type
+/// (`paneflow-ai-hook::event`); here it maps to
+/// [`Idle`](AgentLifecycleEvent::Idle), which cannot open a row and cannot
+/// raise the attention queue.
+///
+/// Everything else is dropped. A bare bell, a `notify-send` from a build, an
+/// agent announcing that a task completed: none of it is a question, and
+/// promoting it lit the bell for things nobody had to act on.
 ///
 /// The text arrives already sanitized - `ghostty_session::sanitized_notification`
 /// strips bidi and zero-width controls and bounds the length at the engine
@@ -451,9 +461,33 @@ pub(crate) fn notification_lifecycle_event(title: &str, body: &str) -> Option<Ag
     } else {
         body.trim()
     };
-    (!message.is_empty()).then(|| AgentLifecycleEvent::Notification {
+    if message.is_empty() {
+        return None;
+    }
+    if is_turn_ended_notification(message) {
+        return Some(AgentLifecycleEvent::Idle);
+    }
+    reads_as_a_request(message).then(|| AgentLifecycleEvent::Notification {
         message: Some(message.to_owned()),
     })
+}
+
+/// Claude Code's `idle_prompt` text, matched loosely so a trailing period or
+/// a case change in a future release does not turn it back into a question.
+fn is_turn_ended_notification(message: &str) -> bool {
+    message
+        .trim_end_matches('.')
+        .eq_ignore_ascii_case("Claude is waiting for your input")
+}
+
+/// Whether a notification's wording asks the user for something. Keyword
+/// match on purpose: the channel carries no type, and every CLI phrases its
+/// prompts around one of these words.
+fn reads_as_a_request(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    ["permission", "approv", "input", "confirm"]
+        .iter()
+        .any(|needle| lower.contains(needle))
 }
 
 #[cfg(test)]
@@ -524,10 +558,31 @@ mod tests {
         // OSC 9 carries a single string, which libghostty reports as the
         // title with an empty body.
         assert_eq!(
-            notification_lifecycle_event("Claude is waiting for your input", ""),
+            notification_lifecycle_event("Claude Code needs your input", ""),
             Some(AgentLifecycleEvent::Notification {
-                message: Some("Claude is waiting for your input".into())
+                message: Some("Claude Code needs your input".into())
             })
+        );
+    }
+
+    #[test]
+    fn the_idle_prompt_is_a_turn_that_ended_not_a_question() {
+        // The failure this prevents: a finished turn showing the bell and the
+        // attention queue a minute after the agent went quiet.
+        for text in [
+            "Claude is waiting for your input",
+            "Claude is waiting for your input.",
+            "claude is waiting for your input",
+        ] {
+            assert_eq!(
+                notification_lifecycle_event(text, ""),
+                Some(AgentLifecycleEvent::Idle),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            notification_lifecycle_event("Claude Code", "Claude is waiting for your input"),
+            Some(AgentLifecycleEvent::Idle)
         );
     }
 
@@ -535,5 +590,24 @@ mod tests {
     fn an_empty_notification_is_not_an_agent_asking_for_something() {
         assert_eq!(notification_lifecycle_event("", ""), None);
         assert_eq!(notification_lifecycle_event("   ", "\n\t"), None);
+    }
+
+    #[test]
+    fn a_notification_that_asks_for_nothing_says_nothing() {
+        // The failure this prevents: a build's `notify-send`, or an agent
+        // announcing a completed task, lighting the bell.
+        for text in [
+            "Build finished",
+            "Task completed",
+            "Codex turn done",
+            "ding",
+        ] {
+            assert_eq!(notification_lifecycle_event(text, ""), None, "{text:?}");
+        }
+        // Other CLIs phrase their prompts the same way.
+        assert!(matches!(
+            notification_lifecycle_event("Codex", "Approval required to run a command"),
+            Some(AgentLifecycleEvent::Notification { .. })
+        ));
     }
 }

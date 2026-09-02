@@ -353,7 +353,7 @@ pub fn reduce_lifecycle_event(event: AgentLifecycleEvent) -> SessionTransition {
             message: FieldUpdate::Keep,
             last_result: FieldUpdate::Keep,
         },
-        // The question itself is stored: the peek overlay and the desktop
+        // The question itself is stored: the sidebar, the attention queue and the desktop
         // notification surface it. UNTRUSTED text, display only.
         AgentLifecycleEvent::Notification { message } => SessionTransition {
             state: AgentState::WaitingForInput,

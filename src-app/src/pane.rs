@@ -120,18 +120,6 @@ fn pane_card_background(
     }
 }
 
-/// First line of an agent question, bounded for the collapsed peek badge
-/// (US-020, orchestration-v2). Pure - unit-tested below.
-fn peek_badge_line(message: &str) -> String {
-    const BADGE_MAX_CHARS: usize = 80;
-    let first = message.lines().next().unwrap_or("").trim();
-    let mut line: String = first.chars().take(BADGE_MAX_CHARS).collect();
-    if first.chars().count() > BADGE_MAX_CHARS {
-        line.push('…');
-    }
-    line
-}
-
 /// Height of the header's content row.
 const HEADER_CONTENT_HEIGHT: f32 = 28.0;
 /// Header height derived from the shared content inset. Centering the content
@@ -305,7 +293,8 @@ pub struct Pane {
     /// chars, UNTRUSTED display-only text; empty when none was captured).
     /// Pushed by `PaneFlowApp::sync_attention` recomputed from the session
     /// truth on every transition, never mutated locally. Drives the attention
-    /// ring, the header dot and the peek overlay.
+    /// ring and the header dot; the text itself is surfaced by the sidebar
+    /// and the attention queue, never painted over the pane.
     attention: Option<String>,
     /// EP-004 US-010 (cli-cockpit): this pane's terminal has an agent session
     /// in `Errored` (the agent binary exited non-zero). Pushed by
@@ -318,8 +307,6 @@ pub struct Pane {
     /// fan-out, cleared 4 s later or when the fleet overlay closes. FR-11: the
     /// LOWEST-priority header adornment - first to yield its slot.
     search_hits: Option<usize>,
-    /// US-020: the peek badge is hovered - render the full question panel.
-    peek_expanded: bool,
     /// Set to true when the workspace is zoomed on this pane.
     pub zoomed: bool,
     /// Workspace ID for spawning new terminals with correct env vars.
@@ -424,7 +411,6 @@ impl Pane {
             attention: None,
             errored: false,
             search_hits: None,
-            peek_expanded: false,
             zoomed: false,
             workspace_id,
             header_hover_motion: std::collections::HashMap::new(),
@@ -453,9 +439,6 @@ impl Pane {
     /// `PaneFlowApp::sync_attention` - repaints only on change.
     pub fn set_attention(&mut self, attention: Option<String>, cx: &mut Context<Self>) {
         if self.attention != attention {
-            if attention.is_none() {
-                self.peek_expanded = false;
-            }
             self.attention = attention;
             cx.notify();
         }
@@ -679,53 +662,6 @@ impl Pane {
             )
             .with_priority(4)
             .into_any_element(),
-        )
-    }
-
-    /// US-020 (orchestration-v2): a compact badge on the pane showing the
-    /// waiting agent's question without stealing focus; hover expands to the
-    /// full message (≤512 chars, plain inert text - no links, no ANSI).
-    /// Top-right under the pane header so the agent's prompt line stays visible.
-    fn render_peek_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let question = self.attention.clone()?;
-        let ui = pane_colors();
-        let full = if question.is_empty() {
-            "waiting for input".to_string()
-        } else {
-            question
-        };
-        let shown = if self.peek_expanded {
-            full
-        } else {
-            peek_badge_line(&full)
-        };
-        Some(
-            div()
-                .id(SharedString::from(format!(
-                    "peek-{}",
-                    cx.entity().entity_id().as_u64()
-                )))
-                .absolute()
-                .top(px(PANE_HEADER_HEIGHT + 6.0))
-                .right_2()
-                .max_w(px(420.0))
-                .overflow_hidden()
-                .bg(ui.overlay)
-                .border_1()
-                .border_color(ui.vc_conflict.opacity(0.6))
-                .rounded_md()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(ui.text)
-                .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                    if this.peek_expanded != *hovered {
-                        this.peek_expanded = *hovered;
-                        cx.notify();
-                    }
-                }))
-                .child(shown)
-                .into_any_element(),
         )
     }
 
@@ -1745,7 +1681,7 @@ impl Render for Pane {
         // Unfocused-pane dim (Ghostty `unfocused-split-opacity`, rebuilt as a
         // single layer instead of one per apprt): a plain compositing quad over
         // this pane's content, never a renderer or GPU effect. It sits inside
-        // `content`, so the pane header, the US-018 attention glow, the peek badge,
+        // `content`, so the pane header, the US-018 attention glow,
         // the broadcast stripe and the Composer all stay at full contrast - the
         // dim only ever touches terminal/markdown/diff output. It carries no
         // `id` and no handlers, so GPUI inserts no hitbox for it and it cannot
@@ -1975,7 +1911,6 @@ impl Render for Pane {
         // the others. This stays: it signals "agent needs you", not focus.
         let has_attention = self.attention.is_some();
         let attention_color = pane_colors().vc_conflict;
-        let peek = self.render_peek_overlay(cx);
         let composer = self.render_composer_overlay(cx);
         let card_radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
@@ -1994,7 +1929,6 @@ impl Render for Pane {
             // themes whose shell and terminal colors coincide.
             .child(squircle_fill(card_radius, card_background))
             .child(content)
-            .children(peek)
             // EP-001 US-002: broadcast-group stripe - a DISTINCT left-edge
             // element; the pane border slot above stays the attention glow's
             // (Files NOT to Modify). Absolutely positioned so it never
@@ -2052,8 +1986,7 @@ mod tests {
     use paneflow_terminal_ghostty::{ProgressReport, ProgressState};
 
     use super::{
-        MAX_SURFACE_TITLE_LEN, pane_card_background, peek_badge_line, progress_chip_label,
-        truncate_surface_title,
+        MAX_SURFACE_TITLE_LEN, pane_card_background, progress_chip_label, truncate_surface_title,
     };
 
     #[test]
@@ -2091,22 +2024,6 @@ mod tests {
         assert_eq!(material.a, 0.0);
         #[cfg(not(target_os = "windows"))]
         assert_eq!(material, theme.background);
-    }
-
-    #[test]
-    fn peek_badge_takes_first_line_bounded() {
-        assert_eq!(
-            peek_badge_line("Allow `cargo test`?\ndetails…"),
-            "Allow `cargo test`?"
-        );
-        let long = "x".repeat(120);
-        let badge = peek_badge_line(&long);
-        assert_eq!(badge.chars().count(), 81, "80 chars + ellipsis");
-        assert!(badge.ends_with('…'));
-        assert_eq!(peek_badge_line(""), "");
-        // Multibyte safety: counts chars, not bytes.
-        let accents = "é".repeat(100);
-        assert!(peek_badge_line(&accents).ends_with('…'));
     }
 
     #[test]

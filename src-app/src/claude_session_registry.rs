@@ -104,16 +104,41 @@ impl ClaudeSessionRecord {
     /// Claude Code draws (idle prompt, background shell task) is not one the
     /// sidebar makes, and reporting it as idle would clear the spinner while
     /// a `Bash` tool call is still running.
+    ///
+    /// `waiting` is only a request when the AGENT opened the wait. Claude Code
+    /// (2.1.258, `KBe`/`g_o` in the bundle) computes `waitingFor` in this
+    /// order: `"input needed"` (a queued elicitation), the title of the dialog
+    /// on top (permission, plan approval, …), `"worker request"`,
+    /// `"sandbox request"`, and last `"dialog open"` when the USER is inside
+    /// a local slash command (`/resume`, `/model`, `/config`) with no response
+    /// streaming. That last one is the user's own UI, not the agent asking
+    /// for anything, and promoting it lit the sidebar bell every time
+    /// `/resume` was typed. It reads as the idle prompt it sits on. cmux draws
+    /// the same line: only `permission_prompt` and a real question raise its
+    /// "Needs input" pill.
     pub fn lifecycle_event(&self) -> AgentLifecycleEvent {
         match self.status {
             ClaudeSessionStatus::Busy | ClaudeSessionStatus::Shell => AgentLifecycleEvent::Working,
+            ClaudeSessionStatus::Waiting if self.is_user_opened_dialog() => {
+                AgentLifecycleEvent::Idle
+            }
             ClaudeSessionStatus::Waiting => AgentLifecycleEvent::Notification {
                 message: self.waiting_for.clone(),
             },
             ClaudeSessionStatus::Idle => AgentLifecycleEvent::Idle,
         }
     }
+
+    fn is_user_opened_dialog(&self) -> bool {
+        self.waiting_for
+            .as_deref()
+            .is_some_and(|reason| reason.eq_ignore_ascii_case(USER_DIALOG_REASON))
+    }
 }
+
+/// The `waitingFor` Claude Code writes while the user sits in a slash-command
+/// dialog. Matched exactly: every other reason is the agent's.
+const USER_DIALOG_REASON: &str = "dialog open";
 
 /// Raw record shape. Every field is optional so a forward-compatible schema
 /// change degrades to "less information" instead of "no information".
@@ -283,6 +308,41 @@ mod tests {
             AgentLifecycleEvent::Notification {
                 message: Some("input needed".into())
             }
+        );
+        // The agent's own waits, whatever the dialog is titled.
+        for reason in [
+            "sandbox request",
+            "worker request",
+            "goal proposal",
+            "Permission",
+        ] {
+            assert_eq!(
+                event("waiting", reason),
+                AgentLifecycleEvent::Notification {
+                    message: Some(reason.into())
+                },
+                "{reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_slash_command_dialog_is_the_users_wait_not_the_agents() {
+        // The failure this prevents: typing `/resume` raising the sidebar
+        // bell as if Claude Code had asked for something.
+        let event = |waiting: &str| {
+            let body = format!(r#"{{"status":"waiting","waitingFor":"{waiting}"}}"#);
+            parse_record(body.as_bytes(), 7)
+                .expect("known status parses")
+                .lifecycle_event()
+        };
+        assert_eq!(event("dialog open"), AgentLifecycleEvent::Idle);
+        assert_eq!(event("Dialog Open"), AgentLifecycleEvent::Idle);
+        // A blank reason is still a wait this source cannot explain, and it
+        // stays a request rather than being guessed idle.
+        assert_eq!(
+            event(""),
+            AgentLifecycleEvent::Notification { message: None }
         );
     }
 
