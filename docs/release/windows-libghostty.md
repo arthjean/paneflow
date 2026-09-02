@@ -12,25 +12,21 @@ shell at all.
 
 ## Automated evidence
 
-The `libghostty Windows` workflow has two independent lanes:
+The `libghostty Windows` workflow has one lane, `consumer-qualification`. It
+fetches the published archive into
+`native/libghostty/prebuilt/x86_64-pc-windows-msvc` (see
+`native/libghostty/README.md`), removes `PANEFLOW_LIBGHOSTTY_DIR`, and runs the
+release performance gates, 100-host startup gate, eight-pane GPUI
+input-to-paint P95 gate, 200-cycle lifecycle stress, 32-pane stress and PE
+import inspection. It gates every pull request that touches a libghostty
+input.
 
-1. `native-rebuild` checks out the pinned Ghostty commit, selects the manifest
-   MSVC, Windows SDK, LLVM and Zig versions, performs two clean builds, and
-   uploads the archive, symbols, header inventory, build-info, hashes, notices,
-   SBOM and provenance.
-2. `consumer-qualification` removes `PANEFLOW_LIBGHOSTTY_DIR`, consumes only
-   `native/libghostty/prebuilt/x86_64-pc-windows-msvc`, and runs the release
-   performance gates, 100-host startup gate, eight-pane GPUI input-to-paint P95
-   gate, 200-cycle lifecycle stress, 32-pane stress and PE import inspection.
-
-The two lanes run on different events, as they do on macOS. Lane 2 gates every
-pull request that touches a libghostty input. Lane 1 runs only on the nightly
-schedule and on `workflow_dispatch`, because three reproducibility passes is a
-multi-hour job and a pull request does not need it: `paneflow-libghostty-sys`
-already asserts the committed archive against `manifest.archive_sha256` on
-every cargo invocation. **Before re-pinning the archive, dispatch lane 1 by
-hand and wait for it to pass.** Merging a re-pin without that run means nothing
-has rebuilt the archive from source.
+There is no rebuild-and-compare lane on Windows. Clean upstream builds are not
+bit-for-bit reproducible on this target, so the archive is built once by
+`libghostty-bump.yml`, published as a `libghostty-vt-<sha>` pre-release, and
+attested there; `paneflow-libghostty-sys` asserts that published archive
+against `manifest.archive_sha256` on every cargo invocation, and
+`gh attestation verify` proves which workflow run built it.
 
 Run the same consumer gates locally from an x64 MSVC developer shell:
 

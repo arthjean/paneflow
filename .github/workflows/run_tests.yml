@@ -95,6 +95,7 @@ jobs:
               - 'scripts/*libghostty*'
             ci:
               - '.github/workflows/**'
+              - '.github/actions/**'
               - 'scripts/**'
             security:
               - '**/Cargo.toml'
@@ -163,6 +164,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
 
@@ -194,6 +196,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
 
@@ -221,6 +224,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
 
@@ -446,6 +450,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
 
       # US-003 - fail fast if the runner image drifts away from a full Xcode
       # install. The macos-14 hosted image ships Xcode 15+ with the Metal
@@ -773,6 +778,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
 
       # Load VS 2022 Build Tools env: cl.exe, link.exe, lib.exe on PATH,
       # INCLUDE/LIB/LIBPATH set. Required by AC-2's `where cl.exe link.exe`.
@@ -1115,6 +1121,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
 
       - uses: ./.github/actions/linux-build-deps
 

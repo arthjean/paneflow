@@ -1,0 +1,16 @@
+name: Fetch libghostty archives
+description: >-
+  Place the reviewed libghostty-vt archives under native/libghostty/prebuilt
+  by downloading them from the GitHub Release that
+  native/libghostty/manifest.toml names, each verified against the manifest's
+  archive_sha256. Git does not track the archives, so every job that runs
+  cargo against the workspace needs this step after checkout; all four targets
+  are fetched because the sys crate's tests validate the Linux x86_64 and
+  macOS trees on every host. Cargo itself performs no downloads.
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch the manifest-pinned libghostty archives
+      shell: bash
+      run: scripts/fetch-libghostty.sh

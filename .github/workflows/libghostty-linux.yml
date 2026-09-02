@@ -51,6 +51,7 @@ jobs:
         with:
           filters: |
             native:
+              - '.github/actions/fetch-libghostty/action.yml'
               - '.github/actions/linux-build-deps/action.yml'
               - '.github/workflows/libghostty-linux.yml'
               - '.github/workflows/release.yml'
@@ -180,26 +181,28 @@ jobs:
 
       # `--verify-reproducible` above only proves build-1 == build-2, and the
       # script now also pins the result to `manifest.archive_sha256`. This step
-      # closes the last link: it proves the archive committed under
-      # native/libghostty/prebuilt - the one every release actually links,
-      # because run_tests.yml and release.yml leave PANEFLOW_LIBGHOSTTY_DIR
-      # unset - is byte-identical to what the recipe produces. Mirrors
-      # `libghostty-macos.yml::Compare against the committed prebuilt archive`.
-      - name: Compare against the committed prebuilt archive
+      # closes the last link: it proves the archive published on the pinned
+      # GitHub Release - the one every release actually links, because
+      # run_tests.yml and release.yml leave PANEFLOW_LIBGHOSTTY_DIR unset - is
+      # byte-identical to what the recipe produces. Mirrors
+      # `libghostty-macos.yml::Compare against the published archive`.
+      - uses: ./.github/actions/fetch-libghostty
+
+      - name: Compare against the published archive
         env:
           TARGET: ${{ matrix.target }}
         run: |
           rebuilt="target/libghostty/$TARGET/lib/libghostty-vt.a"
-          committed="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
-          for path in "$rebuilt" "$committed"; do
+          published="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
+          for path in "$rebuilt" "$published"; do
             [ -f "$path" ] || { echo "::error::missing archive $path"; exit 1; }
           done
-          if ! cmp "$rebuilt" "$committed"; then
-            echo "::error::the committed $TARGET archive is not the one scripts/build-libghostty-linux.sh produces"
-            sha256sum "$rebuilt" "$committed"
+          if ! cmp "$rebuilt" "$published"; then
+            echo "::error::the published $TARGET archive is not the one scripts/build-libghostty-linux.sh produces"
+            sha256sum "$rebuilt" "$published"
             exit 1
           fi
-          sha256sum "$committed"
+          sha256sum "$published"
 
       - name: Debug tests with native backend
         run: >-

@@ -88,3 +88,7 @@ LOG_*.text
 # Local-only diff/render audit reports (same class as /ULTRON/ above): generated
 # tool output with finding-level detail, kept out of the public repo.
 /.paneflow-audit/
+
+# libghostty-vt archives: fetched from the GitHub Release named by
+# native/libghostty/manifest.toml (scripts/fetch-libghostty.sh), never tracked.
+/native/libghostty/prebuilt/*/lib/

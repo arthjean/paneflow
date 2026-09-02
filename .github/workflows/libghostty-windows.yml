@@ -44,6 +44,7 @@ jobs:
         with:
           filters: |
             native:
+              - '.github/actions/fetch-libghostty/action.yml'
               - '.github/workflows/libghostty-windows.yml'
               - '.github/workflows/release.yml'
               - '.github/workflows/run_tests.yml'
@@ -58,292 +59,15 @@ jobs:
               - 'src-app/Cargo.toml'
               - 'src-app/src/terminal/**'
 
-  native-rebuild:
-    name: Rebuild pinned native archive
-    # Six clean ReleaseFast builds at -j1, preceded by the extraction of the
-    # 19660 file Zig source library, and it ran on every push and PR touching
-    # the `native` paths. This is the tradeoff `libghostty-macos.yml` already
-    # resolved for its own 3 h rebuild: what a PR actually needs to know is
-    # that the committed archive is intact, which `paneflow-libghostty-sys`
-    # asserts against `manifest.archive_sha256` on every cargo invocation in
-    # `consumer-qualification` and in `run_tests.yml::windows_check`. The full
-    # reproducibility proof runs nightly and on demand, and must be run by hand
-    # before re-pinning the archive.
-    if: >-
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch'
-    runs-on: windows-2022
-    timeout-minutes: 120
-    defaults:
-      run:
-        shell: pwsh
-    steps:
-      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-
-      - name: Checkout pinned Ghostty source
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          repository: ghostty-org/ghostty
-          ref: ${{ env.GHOSTTY_SHA }}
-          path: .ghostty-source
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify workflow pins match the manifest
-        run: |
-          $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
-          . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
-          foreach ($pin in @(
-            @{ Key = 'source_sha'; Value = $env:GHOSTTY_SHA },
-            @{ Key = 'zig_version'; Value = $env:ZIG_VERSION }
-          )) {
-            $actual = Get-ManifestString $pin.Key
-            if ($actual -ne $pin.Value) {
-              throw "workflow pin $($pin.Key) is '$($pin.Value)' but the manifest says '$actual'"
-            }
-          }
-          Write-Host 'workflow pins match native/libghostty/manifest.toml'
-
-      - name: Install manifest-pinned Zig distribution
-        run: |
-          $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
-          . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
-
-          $archiveUrl = Get-ManifestString 'windows_zig_archive_url'
-          $expectedArchiveSha = Get-ManifestString 'windows_zig_archive_sha256'
-          $sourceArchiveUrl = Get-ManifestString 'windows_zig_source_archive_url'
-          $expectedSourceArchiveSha = Get-ManifestString 'windows_zig_source_archive_sha256'
-          $toolRoot = Join-Path $env:RUNNER_TEMP "paneflow-zig-$env:ZIG_VERSION"
-          $archive = "$toolRoot.zip"
-          $sourceArchive = "$toolRoot-source.tar.xz"
-          if ((Test-Path -LiteralPath $toolRoot) -or
-              (Test-Path -LiteralPath $archive) -or
-              (Test-Path -LiteralPath $sourceArchive)) {
-            throw "refusing to replace an existing Zig tool path: $toolRoot"
-          }
-          Invoke-WebRequest -Uri $archiveUrl -OutFile $archive
-          $actualArchiveSha = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualArchiveSha -ne $expectedArchiveSha) {
-            throw "Zig distribution checksum mismatch: expected $expectedArchiveSha, got $actualArchiveSha"
-          }
-          Expand-Archive -LiteralPath $archive -DestinationPath $toolRoot
-          $zig = Join-Path $toolRoot "zig-x86_64-windows-$env:ZIG_VERSION\zig.exe"
-          if (-not (Test-Path -LiteralPath $zig -PathType Leaf)) {
-            throw "Zig distribution did not contain the expected executable: $zig"
-          }
-          Invoke-WebRequest -Uri $sourceArchiveUrl -OutFile $sourceArchive
-          $actualSourceArchiveSha = (Get-FileHash -LiteralPath $sourceArchive -Algorithm SHA256).Hash.ToLowerInvariant()
-          if ($actualSourceArchiveSha -ne $expectedSourceArchiveSha) {
-            throw "Zig source archive checksum mismatch: expected $expectedSourceArchiveSha, got $actualSourceArchiveSha"
-          }
-          "PANEFLOW_ZIG=$zig" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
-          "PANEFLOW_ZIG_SOURCE_ARCHIVE=$sourceArchive" | Out-File -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Install manifest-pinned MSVC toolset and Windows SDK
-        env:
-          MSVC_COMPONENT: Microsoft.VisualStudio.Component.VC.14.38.17.8.x86.x64
-          WINDOWS_SDK_COMPONENT: Microsoft.VisualStudio.Component.Windows11SDK.26100
-          LLVM_COMPONENT: Microsoft.VisualStudio.Component.VC.Llvm.Clang
-        run: |
-          $installerRoot = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
-          $vswhere = Join-Path $installerRoot 'vswhere.exe'
-          $setup = Join-Path $installerRoot 'setup.exe'
-          $installationPath = (& $vswhere -latest -products * -property installationPath | Select-Object -First 1)
-          if ([string]::IsNullOrWhiteSpace($installationPath)) {
-            throw 'Visual Studio 2022 is not installed on the runner.'
-          }
-
-          $requiredComponents = @($env:MSVC_COMPONENT, $env:WINDOWS_SDK_COMPONENT, $env:LLVM_COMPONENT)
-          $missingComponents = @(
-            foreach ($component in $requiredComponents) {
-              $installedAt = (& $vswhere -latest -products * -requires $component -property installationPath | Select-Object -First 1)
-              if ([string]::IsNullOrWhiteSpace($installedAt)) {
-                $component
-              }
-            }
-          )
-
-          if ($missingComponents.Count -gt 0) {
-            if (-not (Test-Path -LiteralPath $setup -PathType Leaf)) {
-              throw "Visual Studio Installer was not found at $setup."
-            }
-
-            $arguments = @(
-              'modify',
-              '--installPath', "`"$installationPath`"",
-              '--quiet',
-              '--norestart'
-            )
-            foreach ($component in $missingComponents) {
-              $arguments += @('--add', $component)
-            }
-
-            Write-Host "Installing Visual Studio components: $($missingComponents -join ', ')"
-            $process = Start-Process -FilePath $setup -ArgumentList $arguments -Wait -PassThru
-            if ($process.ExitCode -notin @(0, 3010)) {
-              throw "Visual Studio Installer exited with code $($process.ExitCode)."
-            }
-          }
-
-          $msvcPath = Join-Path $installationPath 'VC\Tools\MSVC\14.38.33130'
-          $sdkPath = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib\10.0.26100.0'
-          if (-not (Test-Path -LiteralPath $msvcPath -PathType Container)) {
-            throw "The manifest-pinned MSVC toolset was not found at $msvcPath."
-          }
-          if (-not (Test-Path -LiteralPath $sdkPath -PathType Container)) {
-            throw "The manifest-pinned Windows SDK was not found at $sdkPath."
-          }
-
-          # The archive normalization recipe is LLVM-version-sensitive, and the
-          # build script hard-fails on any other version. Surface that as a
-          # labelled preflight failure rather than an opaque llvm-objcopy error
-          # 40 minutes into the rebuild.
-          $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
-          . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
-          $expectedLlvm = Get-ManifestString 'windows_llvm_version'
-          $llvmObjcopy = Join-Path $installationPath 'VC\Tools\Llvm\x64\bin\llvm-objcopy.exe'
-          if (-not (Test-Path -LiteralPath $llvmObjcopy -PathType Leaf)) {
-            throw "The LLVM normalization tools were not found at $llvmObjcopy."
-          }
-          $llvmVersion = @(& $llvmObjcopy --version)
-          if ($LASTEXITCODE -ne 0 -or -not ($llvmVersion -match "LLVM version $([regex]::Escape($expectedLlvm))")) {
-            throw "libghostty requires LLVM normalization tools $expectedLlvm; this runner carries: $($llvmVersion -join ' ')"
-          }
-          Write-Host "LLVM normalization tools: $expectedLlvm at $llvmObjcopy"
-
-      # The rebuild deliberately has no native object cache. The canonical
-      # source/cache paths are part of the reproducibility contract, and each
-      # pass performs two independent clean builds before publication.
-      #
-      # The pass count is event-scoped. A pull request pays one pass, which
-      # still proves the archive hash against the manifest and still catches a
-      # divergence between two clean builds; on this exact pin two clean builds
-      # cost 7m33s (run 33154407103, 2026-08-28). The three-pass soak that
-      # 47d3baf introduced costs six clean builds and has never once completed:
-      # it hit the 90 minute wall on every execution from 2026-08-28 onward, on
-      # main and on branches alike, so it belongs on the nightly lane where a
-      # long soak is affordable and no PR is blocked behind it.
-      - name: Rebuild and compare canonical archives
-        env:
-          PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
-          EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
-          REPRO_PASSES: "3"
-        run: |
-          New-Item -ItemType Directory -Force -Path $env:EVIDENCE_DIR | Out-Null
-          $passes = [int]$env:REPRO_PASSES
-          if ($passes -lt 1 -or $passes -gt 3) {
-            throw "REPRO_PASSES must be between 1 and 3, got '$env:REPRO_PASSES'"
-          }
-          Write-Host "running $passes reproducibility pass(es) for $env:GITHUB_EVENT_NAME"
-
-          # Same narrow retry as scripts/ci-retry-network.sh on the Unix lanes.
-          # Zig fetches the 16 build.zig.zon dependencies from two hosts on
-          # every clean build, twice per reproducibility pass, with no cache.
-          # Only a transport failure is retried; an archive hash mismatch or a
-          # reproducibility divergence still fails on the first attempt.
-          $transient = 'unable to connect to server|TemporaryNameServerFailure|UnknownHostName|' +
-            'HostLacksNetworkAddresses|NameServerFailure|ConnectionRefused|ConnectionResetByPeer|' +
-            'ConnectionTimedOut|NetworkUnreachable|TlsInitializationFailed|unexpected EOF|' +
-            'TemporaryFailure|error: unable to fetch|502 Bad Gateway|503 Service Unavailable'
-          $canonicalLog = Join-Path $env:EVIDENCE_DIR 'native-rebuild.log'
-          $attempts = 3
-
-          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
-            $log = Join-Path $env:EVIDENCE_DIR "native-rebuild-attempt-$attempt.log"
-            Write-Host "native rebuild attempt $attempt/$attempts"
-            $failure = $null
-            # Reset first: `$LASTEXITCODE` can otherwise carry a stale value
-            # from an unrelated native command earlier in the job.
-            $global:LASTEXITCODE = 0
-            try {
-              for ($reproPass = 1; $reproPass -le $passes; $reproPass++) {
-                $stamp = [DateTime]::UtcNow.ToString("HH:mm:ss")
-                Write-Host "[${stamp}Z] reproducibility pass $reproPass/$passes"
-                $passEvidence = Join-Path $env:EVIDENCE_DIR "reproducibility-pass-$reproPass"
-                & ./scripts/build-libghostty-windows.ps1 `
-                  -SourceDir $env:PANEFLOW_GHOSTTY_SOURCE_DIR `
-                  -Zig $env:PANEFLOW_ZIG `
-                  -OutputDir "target\libghostty\$env:TARGET" `
-                  -EvidenceDir $passEvidence `
-                  -VerifyReproducible *>&1 | Tee-Object -FilePath $log -Append
-                if ($LASTEXITCODE -ne 0) {
-                  $failure = "reproducibility pass $reproPass exited with code $LASTEXITCODE"
-                  break
-                }
-              }
-            }
-            catch {
-              $failure = $_.Exception.Message
-            }
-
-            Copy-Item -LiteralPath $log -Destination $canonicalLog -Force -ErrorAction SilentlyContinue
-
-            if (-not $failure) {
-              if ($attempt -gt 1) {
-                Write-Host "succeeded on attempt $attempt after a transient network failure"
-              }
-              break
-            }
-
-            $output = if (Test-Path -LiteralPath $log) { Get-Content -LiteralPath $log -Raw } else { '' }
-            if (-not (($output -match $transient) -or ($failure -match $transient))) {
-              throw "native rebuild failed with no transient network signature: $failure"
-            }
-            if ($attempt -eq $attempts) {
-              throw "native rebuild still failing on a transient network error after $attempts attempts: $failure"
-            }
-            $delay = $attempt * 20
-            Write-Warning "transient network failure ($failure); retrying in ${delay}s"
-            Start-Sleep -Seconds $delay
-          }
-
-      - name: Verify repository consumer inputs and publish provenance
-        env:
-          EVIDENCE_DIR: ${{ runner.temp }}\libghostty-native-evidence
-        run: |
-          $prepared = "target\libghostty\$env:TARGET"
-          $ManifestPath = Join-Path $PWD 'native\libghostty\manifest.toml'
-          . (Join-Path $PWD 'scripts\libghostty-manifest.ps1')
-          $archiveRelativePath = Get-ManifestTargetString $env:TARGET 'archive_path'
-          $archivePath = Join-Path $prepared $archiveRelativePath
-          $report = Join-Path $env:EVIDENCE_DIR 'repository-provenance.json'
-          & ./scripts/verify-libghostty-windows.ps1 -ReportPath $report
-          $repositoryProvenance = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
-
-          Copy-Item -LiteralPath 'native\libghostty\manifest.toml' -Destination $env:EVIDENCE_DIR
-          Copy-Item -LiteralPath 'native\libghostty\THIRD_PARTY_NOTICES.md' -Destination $env:EVIDENCE_DIR
-          Copy-Item -LiteralPath 'native\libghostty\sbom.cdx.json' -Destination $env:EVIDENCE_DIR
-          Copy-Item -LiteralPath '.ghostty-source\build.zig.zon' -Destination $env:EVIDENCE_DIR
-
-          $native = [ordered]@{
-            schema_version = 1
-            commit = $env:GITHUB_SHA
-            source_sha = $env:GHOSTTY_SHA
-            zig_version = $env:ZIG_VERSION
-            zig_codegen = $repositoryProvenance.zig_codegen
-            target = $env:TARGET
-            profile = $env:NATIVE_PROFILE
-            archive_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
-            build_info_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\build-info.txt").Hash.ToLowerInvariant()
-            symbols_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\symbols.txt").Hash.ToLowerInvariant()
-            headers_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath "$prepared\headers.sha256").Hash.ToLowerInvariant()
-            source_manifest_sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath '.ghostty-source\build.zig.zon').Hash.ToLowerInvariant()
-          }
-          $native | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $env:EVIDENCE_DIR 'native-provenance.json') -Encoding utf8
-
-      - name: Upload native evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: libghostty-windows-native-${{ github.sha }}
-          path: |
-            target/libghostty/x86_64-pc-windows-msvc
-            ${{ runner.temp }}/libghostty-native-evidence
-          if-no-files-found: error
-          retention-days: 30
-
+  # There is no rebuild-and-compare lane on Windows any more. Clean upstream
+  # builds are not bit-for-bit reproducible on this target, and the source
+  # patch that used to force them to be was retired: it had to be rebased
+  # against every upstream change to `src/terminal/formatter.zig`. The archive
+  # is built once, in `libghostty-bump.yml`, and its provenance is the
+  # build-provenance attestation that run publishes alongside the release
+  # asset (`gh attestation verify`). What a PR needs is that the published
+  # archive is intact, which `paneflow-libghostty-sys` asserts against
+  # `manifest.archive_sha256` on every cargo invocation below.
   consumer-qualification:
     needs: changes
     if: >-
@@ -366,6 +90,8 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+
+      - uses: ./.github/actions/fetch-libghostty
 
       - name: Setup MSVC developer environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -407,25 +133,21 @@ jobs:
   validation-summary:
     name: libghostty Windows validation
     if: always()
-    needs: [changes, native-rebuild, consumer-qualification]
+    needs: [changes, consumer-qualification]
     runs-on: ubuntu-22.04
     steps:
-      - name: Require native and consumer lanes
+      - name: Require the consumer lane
         env:
-          # Fail-closed in both directions, and now per lane, because the two
-          # lanes no longer run on the same events: a lane that was supposed to
-          # run must be green, and a lane that was not must have actually
-          # skipped. `skipped` is never silently accepted, which is the hole
-          # that let this workflow report success for two days while
-          # `native-rebuild` was timing out on every real execution.
-          NATIVE_EXPECTED: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-          NATIVE: ${{ needs.native-rebuild.result }}
+          # Fail-closed in both directions: a lane that was supposed to run
+          # must be green, and a lane that was not must have actually skipped.
+          # `skipped` is never silently accepted, which is the hole that once
+          # let this workflow report success while a lane was timing out on
+          # every real execution.
           CONSUMER_EXPECTED: ${{ needs.changes.outputs.native == 'true' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           CONSUMER: ${{ needs.consumer-qualification.result }}
         run: |
           status=0
           for lane in \
-            "native-rebuild:$NATIVE_EXPECTED:$NATIVE" \
             "consumer-qualification:$CONSUMER_EXPECTED:$CONSUMER"; do
             name="${lane%%:*}"
             rest="${lane#*:}"
