@@ -1,9 +1,3 @@
-//! Backend-neutral OSC 133 command marks.
-//!
-//! The scanner runs on the existing PTY reader path. It owns only fixed-size
-//! state, accepts BEL and ST terminators, and drops malformed or oversized
-//! payloads without allocating.
-
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -25,11 +19,9 @@ pub struct RawMark {
 #[derive(Debug, Clone, Copy)]
 pub struct CommandMark {
     pub kind: MarkKind,
-    /// Retained for OSC 133 exit-dot rendering and structured command export.
     #[allow(dead_code)]
     pub exit_code: Option<i32>,
     pub abs_line: i64,
-    /// Retained for command duration rendering and structured command export.
     #[allow(dead_code)]
     pub at: Instant,
 }
@@ -54,13 +46,6 @@ impl MarkRing {
         self.marks.push_back(mark);
     }
 
-    /// Monotone count of OSC 133 prompt starts seen on this surface.
-    ///
-    /// It is a sequence, not a population: ring eviction and
-    /// [`Self::retain_at_or_below`] never move it back. A consumer keeps its
-    /// own watermark and treats any change as "the shell is back at its
-    /// prompt", which is proof that no foreground command - agent CLI
-    /// included - still owns the terminal.
     pub fn prompt_start_seq(&self) -> u64 {
         self.prompt_starts
     }
@@ -69,7 +54,6 @@ impl MarkRing {
         self.marks.retain(|mark| mark.abs_line <= max_abs_line);
     }
 
-    /// Exposes complete marks to OSC 133 exit-dot rendering and command export.
     #[allow(dead_code)]
     pub fn iter(&self) -> impl Iterator<Item = &CommandMark> {
         self.marks.iter()

@@ -1,22 +1,5 @@
-//! Per-file horizontal scroll for the diff body.
-//!
-//! The unified diff pipeline (refactor `ee1a042`) dropped the dock's bespoke
-//! per-file horizontal scroll when it moved to the direct-paint
-//! [`super::element::DiffElement`]. This restores it as shared geometry:
-//! unified view keeps one horizontal offset per file, while split view keeps
-//! detached left/right offsets per file, each bounded by [`max_h_scroll`]. The
-//! element offsets each file side's code by its own slot; the two hosts (Agents
-//! dock and Review column) clamp the wheel/drag against the same bound, and
-//! render the scrollbar.
-//!
-//! The cell-advance estimate is intentionally coarse - it only *bounds* the
-//! scroll, never lays out glyphs - so a few px of slop just lets a sliver of
-//! trailing whitespace scroll into view rather than clipping a line short.
-
 use super::rows::FileSpan;
 
-/// Estimated advance width of one monospace cell at the panel's 12px code text
-/// (~0.6em). The small margin keeps the longest line fully reachable.
 pub(crate) const DIFF_CHAR_WIDTH: f32 = 7.5;
 pub(crate) const H_SCROLLBAR_TRACK_HEIGHT: f32 = 6.0;
 pub(crate) const H_SCROLLBAR_PAD_X: f32 = 12.0;
@@ -36,9 +19,6 @@ pub(crate) struct HScrollbarSegment {
     pub offset: f32,
 }
 
-/// Estimated visible width (px) of the code text column for the current mode.
-/// Unified subtracts the fixed prefix (hunk bar + line-number gutter + pads);
-/// split halves the panel and subtracts one gutter per side. Coarse on purpose.
 pub(crate) fn h_text_viewport(split: bool, panel_width: f32) -> f32 {
     if split {
         (panel_width - 1.0) / 2.0 - 55.0
@@ -47,16 +27,11 @@ pub(crate) fn h_text_viewport(split: bool, panel_width: f32) -> f32 {
     }
 }
 
-/// Max horizontal scroll (px) for a file whose widest line is `max_chars`, in
-/// the current mode + panel width. Zero when everything fits, so a short file
-/// never overscrolls into empty space.
 pub(crate) fn max_h_scroll(max_chars: usize, split: bool, panel_width: f32) -> f32 {
     let content_w = max_chars as f32 * DIFF_CHAR_WIDTH + 12.0;
     (content_w - h_text_viewport(split, panel_width)).max(0.0)
 }
 
-/// File index owning display row `row` - `partition_point` on the per-file
-/// header rows (ascending). `None` for an empty span set.
 pub(crate) fn file_at_row(spans: &[FileSpan], row: usize) -> Option<usize> {
     if spans.is_empty() {
         return None;
@@ -123,9 +98,6 @@ pub(crate) fn file_side_offset(
         .clamp(0.0, max)
 }
 
-/// Clamp + store `value` as file `idx`'s offset, bounded to its own
-/// `max_h_scroll`. In split mode the left and right halves intentionally write
-/// different slots.
 pub(crate) fn set_file_side_offset(
     offsets: &mut Vec<f32>,
     spans: &[FileSpan],
@@ -340,10 +312,8 @@ mod tests {
 
     #[test]
     fn max_h_scroll_zero_when_fits_then_grows() {
-        // Short lines fit the text column → no scroll; a long line overflows.
         assert_eq!(max_h_scroll(10, false, 600.0), 0.0);
         assert!(max_h_scroll(400, false, 600.0) > 0.0);
-        // Narrower panel → more overflow for the same line.
         assert!(max_h_scroll(120, false, 300.0) > max_h_scroll(120, false, 600.0));
     }
 
@@ -361,14 +331,11 @@ mod tests {
     fn set_file_side_offset_clamps_and_resizes() {
         let spans = [span(0, 400), span(10, 5)];
         let mut offsets = Vec::new();
-        // File 0 (long line) clamps to its positive max; resized to 2 slots.
         set_file_side_offset(&mut offsets, &spans, 0, false, 1_000_000.0, false, 600.0);
         assert_eq!(offsets.len(), 2);
         assert!(offsets[0] > 0.0 && offsets[0] <= max_h_scroll(400, false, 600.0));
-        // File 1 (short line) can't scroll -> pinned at 0.
         set_file_side_offset(&mut offsets, &spans, 1, false, 500.0, false, 600.0);
         assert_eq!(offsets[1], 0.0);
-        // Negative candidate clamps up to 0.
         set_file_side_offset(&mut offsets, &spans, 0, false, -50.0, false, 600.0);
         assert_eq!(offsets[0], 0.0);
     }

@@ -11,10 +11,6 @@ fn test_default_config() {
 
 #[test]
 fn test_config_path_is_some() {
-    // On most systems dirs::config_dir() succeeds. The subdir varies
-    // by build profile (`paneflow` in release, `paneflow-dev` in
-    // debug -- see `APP_SUBDIR`) so tests assert against the const,
-    // not a hardcoded `paneflow` literal.
     let path = config_path();
     assert!(path.is_some());
     let p = path.unwrap();
@@ -47,11 +43,6 @@ fn test_non_object_root_is_a_typed_parse_error() {
 
 #[test]
 fn test_unknown_terminal_enum_falls_back_not_wipes_config() {
-    // Regression guard: a typo in a terminal enum (`"squiggle"`,
-    // `"blinky"`) must fall back to that enum's default WITHOUT discarding
-    // the rest of the config. Before the custom `Deserialize`, serde hard-
-    // errored here and `parse_and_validate` returned `default()` for the
-    // whole file -- theme, shell, and shortcuts all silently lost.
     let json = r#"{
         "theme": "One Dark",
         "default_shell": "/bin/zsh",
@@ -59,11 +50,9 @@ fn test_unknown_terminal_enum_falls_back_not_wipes_config() {
     }"#;
     let config = parse_and_validate(json);
 
-    // The surrounding config survives the bad enum values.
     assert_eq!(config.theme.as_deref(), Some("One Dark"));
     assert_eq!(config.default_shell.as_deref(), Some("/bin/zsh"));
 
-    // Each unrecognised enum value resolves to its documented default.
     let term = config
         .terminal
         .expect("terminal block must survive unknown enum values");

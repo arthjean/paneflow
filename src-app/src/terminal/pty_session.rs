@@ -1,13 +1,3 @@
-//! `TerminalState` and its PTY lifecycle - spawn, notifier wiring, event
-//! processing, OSC channel drains, CWD resolution, scrollback I/O, and the
-//! drop-time force-kill path.
-//!
-//! Cross-platform: POSIX syscalls (`libc::kill`, `proc_pidinfo`) are behind
-//! `#[cfg(unix)]` / `#[cfg(target_os = "macos")]`; Windows paths use
-//! `windows-sys` (`TerminateProcess`, `WaitForSingleObject`).
-//!
-//! Extracted from `terminal.rs` per US-012 of the src-app refactor PRD.
-
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::io;
@@ -31,30 +21,7 @@ use crate::limits::MAX_OSC52_BYTES;
 use paneflow_config::schema::{TerminalConfig, TerminalSurfaceProfile};
 use paneflow_terminal_ghostty::Scroll as GhosttyScroll;
 
-/// Default scrollback history length, in lines. Paneflow keeps this standard
-/// for predictable terminal memory use. `TermConfig::default()` is `0`, which
-/// disables scrollback entirely. Overridable via
-/// `terminal.scrollback_lines` in `paneflow.json` - see
-/// [`paneflow_config::TerminalConfig::resolved_scrollback_lines`].
 const DEFAULT_SCROLLBACK_LINES: usize = TerminalConfig::DEFAULT_SCROLLBACK_LINES;
-/// Identity and credential markers Claude Code exports into the processes it
-/// spawns. A pane that inherits them makes the agent running inside it believe
-/// it is a *nested child* of the Claude Code session that launched Paneflow.
-///
-/// The consequence is silent and expensive: on inheriting
-/// `CLAUDE_CODE_CHILD_SESSION` the agent turns transcript saving off, so its
-/// conversation never lands in `~/.claude/projects/<slug>/<uuid>.jsonl`. The
-/// thread then has no session file to come back to, and reopening it after a
-/// restart starts an empty conversation instead of resuming - the failure only
-/// announces itself as one dim line at the bottom of the agent's own TUI.
-///
-/// The messaging socket/token pair is stripped for a second reason: it is a
-/// live credential for the launching session's IPC channel, and no agent
-/// spawned in a pane has any business holding it.
-///
-/// A pane must always look like a fresh terminal, never like a continuation of
-/// whatever spawned Paneflow. Inheriting is the only way these reach the child
-/// - Paneflow itself namespaces everything it sets under `PANEFLOW_*`.
 const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
     "CLAUDECODE",
     "CLAUDE_CODE_CHILD_SESSION",
@@ -64,30 +31,6 @@ const INHERITED_AGENT_SESSION_ENV: &[&str] = &[
     "CLAUDE_CODE_MESSAGING_SOCKET",
     "CLAUDE_CODE_MESSAGING_TOKEN",
 ];
-/// Host-terminal identity markers Paneflow inherits from whatever launched it.
-///
-/// A pane must look like a Paneflow surface, never like the terminal that
-/// happened to start Paneflow. These are how TUI programs answer "which
-/// emulator am I talking to", and Paneflow already owns the answer through
-/// `TERM` / `TERM_PROGRAM` / `TERM_PROGRAM_VERSION`. Leaving a stale one in
-/// place makes the child believe something else entirely, and two agent CLIs
-/// change their wire behavior on exactly these bytes:
-///
-/// - `WT_SESSION`: Claude Code disables its OSC 9;4 progress reporting
-///   outright when it is set, so a Paneflow launched from Windows Terminal
-///   silently loses the progress channel in *every* pane.
-/// - `TMUX` / `STY` / `ZELLIJ`: Claude Code and Codex both wrap their OSC
-///   notifications in multiplexer passthrough (`ESC P tmux ; ESC …`), which
-///   libghostty does not unwrap - the notification is swallowed whole.
-/// - `KITTY_WINDOW_ID` / `TERMINAL_EMULATOR` / `VTE_VERSION` / `ConEmu*`:
-///   same class of capability probe, no known agent-visible breakage today,
-///   dropped for the same reason - the answer they give is about a terminal
-///   that is not rendering this pane.
-///
-/// `ConEmu*` is matched by prefix (`ConEmuANSI`, `ConEmuPID`, `ConEmuTask`,
-/// `ConEmuBuild`, …). Matching is ASCII-case-insensitive because these arrive
-/// by INHERITANCE, in whatever casing the host set them (`ConEmuANSI` is
-/// mixed-case by definition), not through the upper-cased user-env merge.
 const INHERITED_HOST_TERMINAL_ENV: &[&str] = &[
     "WT_SESSION",
     "WT_PROFILE_ID",
@@ -111,9 +54,6 @@ const CONEMU_ENV_PREFIX: &str = "conemu";
 const MAX_PENDING_CLIPBOARD_OPS: usize = 8;
 const MAX_PENDING_NOTIFICATIONS: usize = 8;
 
-/// Read the user's configured scrollback length, clamped to the
-/// [`paneflow_config::TerminalConfig`] allowed range. Falls back to
-/// [`DEFAULT_SCROLLBACK_LINES`] when no `terminal` block exists.
 fn resolved_scrollback_lines(profile: TerminalSurfaceProfile) -> usize {
     paneflow_config::loader::load_config()
         .terminal
@@ -124,15 +64,11 @@ fn resolved_scrollback_lines(profile: TerminalSurfaceProfile) -> usize {
         .resolved_scrollback_lines_for_profile(profile)
 }
 
-/// Cloneable renderer-facing session facade. The concrete Ghostty handles stay
-/// private to this backend module; GPUI receives only Paneflow-owned commands
-/// and snapshots.
 #[derive(Clone)]
 pub(crate) struct TerminalSessionBackend {
     ghostty: GhosttySession,
 }
 
-/// A UI-facing event published by the terminal engine.
 pub(crate) struct TerminalBackendEvent(GhosttyUiEvent);
 
 impl TerminalBackendEvent {
@@ -141,7 +77,6 @@ impl TerminalBackendEvent {
     }
 }
 
-/// The event stream a view polls, taken once from [`TerminalState`].
 pub(crate) struct TerminalBackendEvents(Option<UnboundedReceiver<GhosttyUiEvent>>);
 
 impl futures::Stream for TerminalBackendEvents {
@@ -158,8 +93,6 @@ impl futures::Stream for TerminalBackendEvents {
             std::task::Poll::Ready(Some(event)) => {
                 std::task::Poll::Ready(Some(TerminalBackendEvent(event)))
             }
-            // A closed engine channel must not end the view's stream: the
-            // surface stays mounted so the exit overlay remains visible.
             std::task::Poll::Ready(None) | std::task::Poll::Pending => std::task::Poll::Pending,
         }
     }
@@ -171,8 +104,6 @@ impl futures::stream::FusedStream for TerminalBackendEvents {
     }
 }
 
-/// The runtime handle produced alongside a not-yet-started terminal, handed to
-/// the background half of a spawn.
 pub(crate) struct PendingTerminalBackend {
     pub(super) ghostty: GhosttyRuntimePending,
 }
@@ -207,8 +138,6 @@ impl TerminalSessionBackend {
         Self { ghostty }
     }
 
-    /// Resize and snapshot in one runtime round-trip, then return owned neutral
-    /// content. No engine handle or borrowed grid data crosses this call.
     pub(crate) fn render_content(
         &self,
         window_size: TerminalWindowSize,
@@ -216,9 +145,6 @@ impl TerminalSessionBackend {
         last_visible_row: i32,
         clear_on_resize: bool,
     ) -> (Content, bool) {
-        // The render thread pays for this call once per pane per frame, and the
-        // Ghostty state lock is held inside it. Time the whole round-trip so the
-        // eight-pane performance gate keeps a lock-contention signal.
         #[cfg(test)]
         let snapshot_started_at = RENDER_CONTENT_TIMING_ENABLED
             .load(std::sync::atomic::Ordering::Acquire)
@@ -274,9 +200,6 @@ impl TerminalSessionBackend {
     }
 
     fn scroll(&self, scroll: GhosttyScroll) -> bool {
-        // Shared metrics can lag commands already accepted by the worker.
-        // Queue every non-zero gesture and let Ghostty's live viewport perform
-        // the authoritative boundary clamp in FIFO order.
         if matches!(scroll, GhosttyScroll::Delta(0)) {
             return false;
         }
@@ -294,7 +217,6 @@ impl TerminalSessionBackend {
         self.ghostty.scroll_to_viewport_row(row)
     }
 
-    /// Where the grid sits right now, as one snapshot for a pointer event.
     pub(crate) fn selection_geometry(
         &self,
         cell_width: f32,
@@ -344,8 +266,6 @@ impl TerminalSessionBackend {
         self.ghostty.clear_selection();
     }
 
-    /// Start resolving the OSC 8 hyperlink under `point`; the answer lands in
-    /// [`TerminalState::take_resolved_hover_link`] on a later event batch.
     pub(crate) fn request_osc8_hyperlink_at(&self, point: Point) -> bool {
         self.ghostty.request_hyperlink_at(point)
     }
@@ -361,10 +281,6 @@ impl TerminalSessionBackend {
         let line = (current.line.0 + dy).clamp(metrics.topmost_line.0, metrics.bottommost_line.0);
         let next = Point::new(line, column);
         if extend {
-            // The keyboard has no pointer geometry, so the cursor drives the
-            // gesture through a synthetic one-pixel-per-cell grid: geometry is
-            // only ever read to arbitrate half-cells and viewport exits, and a
-            // keyboard extend does neither.
             let geometry = self.selection_geometry(1.0, 1.0);
             if self.ghostty.selection_range().is_none() {
                 self.ghostty
@@ -407,8 +323,6 @@ impl TerminalSessionBackend {
         self.ghostty.set_default_cursor(shape, blink)
     }
 
-    /// Kitty graphics placements for the published frame, already resolved
-    /// and uploaded by the session runtime.
     pub(crate) fn kitty_placements(
         &self,
     ) -> std::sync::Arc<[crate::terminal::kitty::KittyPlacement]> {
@@ -427,21 +341,12 @@ impl TerminalSessionBackend {
     }
 }
 
-// ---------------------------------------------------------------------------
-// OSC 52 clipboard mode
-// ---------------------------------------------------------------------------
-
-/// Controls OSC 52 clipboard access. Default: CopyOnly (write-only).
-/// Read path (CopyPaste) is a security risk - clipboard exfiltration.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Osc52Mode {
     Disabled,
     CopyOnly,
     CopyPaste,
 }
-// ---------------------------------------------------------------------------
-// Terminal state
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GhosttyBuildDiagnostics {
@@ -584,10 +489,6 @@ impl PendingTerminalInput {
         }
     }
 
-    /// Control events (key and mouse *releases*, focus reports) may use the
-    /// whole queue; text-bearing input stops one reserve short. A flood of
-    /// typing or a huge paste therefore can never starve the events that
-    /// unstick a held modifier or end a drag.
     fn queue_limit(&self) -> usize {
         match self {
             Self::Raw(_) | Self::Paste { .. } => {
@@ -630,178 +531,52 @@ pub(super) enum BackendInputResult {
 }
 
 pub struct TerminalState {
-    /// The libghostty engine: VT parser, grid, PTY, and child process. Built
-    /// display-only by [`build_display_only`](Self::build_display_only), then
-    /// either started against a real child ([`GhosttySession::start`]) or kept
-    /// as a pure grid ([`GhosttySession::start_display`]) for restored
-    /// scrollback and the spawn-failure pane.
     ghostty: GhosttySession,
-    /// UI event stream published by the engine, taken once by the view
-    /// through [`take_backend_events`](Self::take_backend_events).
     ghostty_events_rx: Option<UnboundedReceiver<GhosttyUiEvent>>,
-    /// Set when a spawn failed, so the surface can report *why* the pane holds
-    /// an error instead of a shell.
     backend_failure: Option<TerminalBackendFailureDiagnostics>,
     pub(crate) marks: SharedMarkRing,
-    /// Watermark over [`super::marks::MarkRing::prompt_start_seq`], read by
-    /// [`Self::take_shell_prompt_ready`].
     last_prompt_seq: u64,
     pub exited: Option<i32>,
-    /// Latest answer to a hover hyperlink lookup, until the view takes it.
     resolved_hover_link: Option<(Point, Option<HyperlinkZone>)>,
-    /// US-002: set true once any user input (keystroke, paste, mouse report,
-    /// IME commit, user scroll) has been written via `write_to_pty`.
-    /// Distinguishes a user-initiated exit (always close the pane) from a
-    /// spawn/launch failure (keep the pane open so the exit overlay is
-    /// visible). Atomic because `write_to_pty` takes `&self`. Mirrors Zed's
-    /// keyboard_input_sent (crates/terminal/src/terminal.rs:2572-2576).
     keyboard_input_sent: std::sync::atomic::AtomicBool,
-    /// EP-002 US-005: numeric signal + name if the child was terminated by a
-    /// signal (crash), formatted "N (Name)" e.g. "11 (Segmentation fault)".
-    /// `None` for a normal code exit. The engine resolves both from the
-    /// child's wait status and publishes them with `ChildExited`. Rendered by
-    /// the exit overlay to flag a crash.
     pub exit_signal: Option<String>,
-    /// PID of the shell child process, used for port detection.
     pub child_pid: u32,
-    /// Terminal title set via OSC 0/2 escape sequences (e.g. shell prompt, Claude Code).
     pub title: String,
-    /// Current working directory of the shell process. EP-002 US-007: the
-    /// engine decodes OSC 7 and publishes it as a UI event; Unix/macOS also
-    /// refresh from the process table via `cwd_now()`.
     pub current_cwd: Option<String>,
-    /// Latest OSC 9;4 progress report the running program published. Returns
-    /// to `None` as soon as the program asks for the indicator to be removed
-    /// or the child exits.
     pub progress: Option<paneflow_terminal_ghostty::ProgressReport>,
-    /// User-assigned custom name (US-013). When `Some`, it overrides the
-    /// auto-derived surface name in `surface.list` / MCP / the sidebar, and is
-    /// persisted to `session.json`. `None` falls back to derivation.
     pub custom_name: Option<String>,
-    /// EP-005 US-013: agent CLI detected in this terminal's PTY subtree by
-    /// the per-pane scan - PID-authoritative, never the spoofable OSC
-    /// title. Drives the tab identity pill; persisted to `session.json`
-    /// as the agent's stable `tag()`.
     pub detected_agent: Option<crate::agent_launcher::TerminalAgent>,
-    /// US-013: `false` while `detected_agent` is a declared or
-    /// session-restored "last known" value awaiting its first scan
-    /// confirmation; flipped `true` (or the agent cleared) by every scan
-    /// deposit.
     pub agent_confirmed: bool,
-    /// Deadline protecting a *launch-declared* `detected_agent` from being
-    /// cleared by a scan that ran before the CLI process existed.
-    ///
-    /// Paneflow knows which agent a launch is about to run (cmux's declared
-    /// `SessionAgent`), so the surface carries its identity from frame zero -
-    /// but the shell still needs a moment to start and `exec` the binary, and
-    /// the first scan lands inside that window with an empty subtree. Without
-    /// a grace period the deposit would clear the declaration and the logo
-    /// would flicker off then back on.
-    ///
-    /// Set by [`TerminalView::declare_agent`] only. A restored "last known"
-    /// value leaves it `None` and is still cleared by the first scan, because
-    /// nothing is being launched there. Cleared as soon as any scan resolves
-    /// the surface either way.
     pub agent_declared_until: Option<std::time::Instant>,
-    /// EP-005 US-014: LISTEN ports attributed to this terminal's PTY
-    /// subtree by the per-pane scan, each with the clickable frontend URL
-    /// when the workspace's `service_labels` knows one. Sorted by port,
-    /// deduplicated, and kept as live resource state rather than persisted.
     pub detected_ports: Vec<(u16, Option<String>)>,
-    /// US-014: ports whose service URL was announced in THIS terminal
-    /// while the LISTEN socket belongs to another pane's subtree -
-    /// `(port, owner pane display name)`. Info-level heuristic; known
-    /// false positives (proxies, port-forwards, re-announcements) are
-    /// tolerated in v1.
     pub port_conflicts: Vec<(u16, String)>,
-    /// US-014: ports announced by service URLs detected in this terminal's
-    /// own output (untrusted text - used only to cross-check against the
-    /// scan's LISTEN attribution, never to open anything). Bounded.
     pub announced_ports: Vec<u16>,
-    /// EP-006 US-019: per-pane font-size override in points. `None` follows
-    /// the global config (and live global changes); `Some` is clamped to
-    /// [8.0, 32.0] at every write site (zoom actions, session ingress) and
-    /// wins over the global. Persisted to `session.json`.
     pub font_size_override: Option<f32>,
-    /// OSC 52 clipboard access mode (default: copy-only for security).
     pub osc52_mode: Osc52Mode,
-    /// OSC 52 is accepted only while this terminal owns focus. Updated from
-    /// the GPUI focus transition before any focus protocol report is queued.
     terminal_focused: bool,
-    /// Shared with the engine so focus and policy are checked when OSC 52 is
-    /// emitted, before the asynchronous UI event queue.
     clipboard_gate: Arc<ClipboardGate>,
-    /// Shell syntax used when Paneflow inserts OS file paths into the PTY.
     pub(super) shell_quoting: ShellQuoting,
-    /// Clipboard payloads deferred from sync() - drained in the poll loop
-    /// where cx is available for the clipboard write.
     pub(super) pending_clipboard_ops: Vec<String>,
-    /// Desktop notifications the running program asked for with OSC 9 or
-    /// OSC 777, drained by the view, which is where the config gate and the
-    /// background executor live.
     pub(super) pending_notifications: Vec<ProgramNotification>,
-    /// Foreground command cached by the off-thread pane process scanner.
-    /// `surface.list` reads this synchronously, so it must never perform
-    /// process-table I/O on the GPUI thread.
     pub cached_foreground_command: Option<String>,
     #[cfg(all(unix, not(test)))]
     pty_guard: Option<crate::agents::parent_guard::PtyGuardHandle>,
-    /// Whether the terminal wants the cursor to blink.
     pub cursor_blinking: bool,
-    /// Set when PTY output has been processed (Wakeup event received).
-    /// Cleared after cx.notify() triggers a repaint.
     pub dirty: bool,
-    /// US-010 (cli-agent-orchestration): monotonic count of processed
-    /// PTY-output events. Never reset. `workspace.up` polls this as a
-    /// readiness signal for prompt prefill - it is the only screen-agnostic
-    /// "the agent produced output" signal available: `dirty` is cleared on
-    /// every repaint, and `extract_scrollback` misses content painted on the
-    /// alternate screen (where TUI agents live).
     pub output_generation: u64,
-    /// Leading-edge throttle for ActivityBurst/service-scan emission
-    /// (view.rs): when the last burst was emitted for this terminal.
     pub(super) last_activity_burst: Option<std::time::Instant>,
-    /// EP-002 US-007: throttle counter for the proc-based CWD refresh in
-    /// `sync_channels`, the fallback for shells that never emit OSC 7.
     cwd_poll_ticks: u32,
-    /// Ports already reported via ServiceDetected (dedup guard).
-    /// Cleared on ChildExit so a restarted server is re-detected.
-    /// U-052: a `HashSet` bounds membership to O(1) and the structure to a
-    /// flat per-distinct-port cost, vs. the old `Vec` whose linear `.contains`
-    /// and unbounded growth scaled with every detected service.
     reported_ports: std::collections::HashSet<u16>,
-    /// Timestamp of the most recent keystroke, used by latency probes
-    /// to measure total keystroke-to-pixel time. Debug builds only.
-    /// Note: on rapid keystrokes before a render frame, earlier timestamps are overwritten.
     #[cfg(debug_assertions)]
     pub(crate) last_keystroke_at: Option<std::time::Instant>,
-    /// US-012: input written while the engine has no child yet (the PTY opens
-    /// on a background thread and the session is promoted later). Without this
-    /// queue an auto-launch command issued the instant a terminal mounts - or
-    /// a keystroke typed in the brief pre-promotion window - would be lost.
-    /// [`promote_ghostty`](Self::promote_ghostty) flushes it in order.
-    /// `Mutex` (not `RefCell`) keeps `TerminalState` `Send` and matches the
-    /// crate's interior-mutability idiom; the lock is uncontended (main thread
-    /// only).
     pending_input: std::sync::Mutex<VecDeque<PendingTerminalInput>>,
 }
 
-/// Cap on input buffered before the engine owns a child. Generous for a launch
-/// command plus a burst of typing, tight enough that a terminal that never
-/// promotes (spawn failure) cannot accumulate input without bound.
 const MAX_PENDING_INPUT_BYTES: usize = 1024 * 1024;
 const INPUT_CONTROL_RESERVE_BYTES: usize = 64 * 1024;
 
-/// Scrollback budget for the display-only grid that renders a spawn failure.
-/// The pane holds one error message, so it never needs history - and reading
-/// the user's configured length here would put file I/O on the render thread.
 const SPAWN_FAILURE_SCROLLBACK_LINES: usize = 256;
 
-/// The cheap, render-thread-safe half of a spawn: resolved shell, assembled
-/// child env, cwd, and grid size. Produced by
-/// [`TerminalState::resolve_spawn_params`] and consumed by
-/// [`GhosttySession::start`], which may run on a background thread. All fields
-/// are `Send`.
 #[derive(Clone)]
 pub(super) struct SpawnParams {
     pub(super) shell: String,
@@ -814,23 +589,14 @@ pub(super) struct SpawnParams {
     pub(super) profile: TerminalSurfaceProfile,
 }
 
-/// Foreground (main-thread) signal mask, captured so an off-thread PTY spawn
-/// (US-012) doesn't hand the child the background executor's mask (which blocks
-/// SIGINT/SIGTSTP and would break Ctrl-C / Ctrl-Z). Unix-only - a ZST on
-/// Windows.
 #[cfg(unix)]
 pub type ForegroundSignalMask = libc::sigset_t;
 #[cfg(not(unix))]
 pub type ForegroundSignalMask = ();
 
-/// Capture the calling thread's signal mask. Call on the main thread before
-/// scheduling an off-thread spawn; thread the result through to
-/// [`GhosttySession::start`].
 pub(super) fn capture_foreground_signal_mask() -> Option<ForegroundSignalMask> {
     #[cfg(unix)]
     {
-        // SAFETY: `pthread_sigmask` with a null `set` only reads the current
-        // mask into `oldset`; nothing is changed.
         unsafe {
             let mut oldset: libc::sigset_t = std::mem::zeroed();
             if libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), &mut oldset) == 0 {
@@ -846,16 +612,11 @@ pub(super) fn capture_foreground_signal_mask() -> Option<ForegroundSignalMask> {
     }
 }
 
-/// Install `mask` on the current thread, returning the previous mask to restore.
-/// Brackets the child fork so it inherits the foreground signal disposition
-/// even when the spawn runs on a background thread (US-012).
 #[cfg(unix)]
 pub(super) fn apply_thread_signal_mask(
     mask: Option<ForegroundSignalMask>,
 ) -> Option<libc::sigset_t> {
     let fg = mask?;
-    // SAFETY: set this thread's mask to the captured foreground mask, saving the
-    // previous one into `saved` for `restore_thread_signal_mask`.
     unsafe {
         let mut saved: libc::sigset_t = std::mem::zeroed();
         if libc::pthread_sigmask(libc::SIG_SETMASK, &fg, &mut saved) == 0 {
@@ -866,11 +627,9 @@ pub(super) fn apply_thread_signal_mask(
     }
 }
 
-/// Restore a thread mask saved by [`apply_thread_signal_mask`].
 #[cfg(unix)]
 pub(super) fn restore_thread_signal_mask(saved: Option<libc::sigset_t>) {
     if let Some(saved) = saved {
-        // SAFETY: restore the previously-saved mask on this thread.
         unsafe {
             libc::pthread_sigmask(libc::SIG_SETMASK, &saved, std::ptr::null_mut());
         }
@@ -882,7 +641,6 @@ impl TerminalState {
         TerminalSessionBackend::new(self.ghostty.clone())
     }
 
-    /// Clone of the engine handle, for the background half of a spawn.
     pub(super) fn ghostty_session(&self) -> GhosttySession {
         self.ghostty.clone()
     }
@@ -906,10 +664,6 @@ impl TerminalState {
         self.ghostty.resize(size);
     }
 
-    /// Install the child produced by [`GhosttySession::start`] and switch the
-    /// surface to interactive defaults. The grid is unchanged - the engine was
-    /// already rendering into it - so this only opens the write side and lets
-    /// `Drop` reach the child.
     pub(super) fn promote_ghostty(&mut self, spawned: SpawnedGhostty) {
         self.ghostty.promote();
         self.child_pid = spawned.child_pid;
@@ -950,13 +704,6 @@ impl TerminalState {
         }
     }
 
-    /// Turn the surface into a static error pane after a failed spawn.
-    ///
-    /// [`GhosttySession::start`] consumes its runtime handle, and a failure
-    /// leaves the runtime thread returned and the mailbox closed - that session
-    /// can no longer render anything. A fresh display-only session takes its
-    /// place so the message is visible, and the diagnostics explain why the
-    /// pane holds text instead of a shell.
     pub(super) fn report_spawn_failure(
         &mut self,
         failure: TerminalBackendFailureDiagnostics,
@@ -999,22 +746,6 @@ impl TerminalState {
         }
     }
 
-    /// Spawn a real PTY-backed terminal synchronously. Resolves the shell + env
-    /// ([`resolve_spawn_params`]), builds a display-only session
-    /// ([`new_pending`]), starts the engine against a child
-    /// ([`GhosttySession::start`]), and promotes it
-    /// ([`promote_ghostty`](Self::promote_ghostty)). The off-thread path
-    /// (`TerminalView::with_cwd_and_env`, US-012) runs the same steps but
-    /// spreads the blocking one across the background executor with a
-    /// `signal_mask` so the render thread never blocks on the spawn.
-    ///
-    /// `signal_mask` is `None` on the synchronous main-thread path (the
-    /// foreground mask is already active); the off-thread path passes the
-    /// captured foreground mask so the child still gets correct Ctrl-C.
-    ///
-    /// The production GUI path spawns off-thread; this synchronous composition
-    /// is the reference path, exercised end-to-end by the live PTY smoke tests
-    /// and available to any future non-GUI (headless) caller.
     #[allow(dead_code)]
     pub fn new(
         working_directory: Option<std::path::PathBuf>,
@@ -1068,10 +799,6 @@ impl TerminalState {
         Ok(state)
     }
 
-    /// Resolve the shell, the merged + assembled child env, the cwd, and the
-    /// grid size - the cheap, render-thread-safe half of a spawn. Factored out
-    /// of `new` so the off-thread path (US-012) runs the *blocking* half
-    /// ([`GhosttySession::start`]) on the background executor.
     #[allow(dead_code)]
     pub(super) fn resolve_spawn_params(
         working_directory: Option<std::path::PathBuf>,
@@ -1098,12 +825,6 @@ impl TerminalState {
         user_env: Option<std::collections::HashMap<String, String>>,
         profile: TerminalSurfaceProfile,
     ) -> SpawnParams {
-        // Fallback chain handled by `resolve_default_shell` (US-006):
-        // Unix:    config → $SHELL → /bin/sh
-        // Windows: config → pwsh.exe → powershell.exe → %ComSpec% →
-        //          C:\Windows\System32\cmd.exe → bare "cmd.exe"
-        //          (PowerShell preferred so we don't default to the legacy
-        //          cmd.exe console - mirrors Zed's get_windows_system_shell)
         let config = paneflow_config::loader::load_config();
         let shell = {
             let configured = config
@@ -1112,11 +833,6 @@ impl TerminalState {
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let resolved = resolve_default_shell(configured);
-            // The configured value and what actually got launched are the two
-            // facts needed to tell "my shell setting is ignored" apart from "my
-            // shell is just slow to start". `resolve_default_shell` only warns
-            // on the rejection path, which says nothing when resolution
-            // succeeded but picked something else than expected.
             log::info!(
                 target: "paneflow::terminal::backend",
                 "Terminal shell resolved: {resolved:?} (default_shell={configured:?})"
@@ -1124,8 +840,6 @@ impl TerminalState {
             resolved
         };
         let shell_quoting = ShellQuoting::for_shell(&shell);
-        // US-014: layer the per-surface `user_env` on top of the global
-        // `terminal.env` default (surface wins on key collision).
         let global_env = config.terminal.as_ref().and_then(|t| t.env.clone());
         let merged_env = match (global_env, user_env) {
             (None, None) => None,
@@ -1137,26 +851,15 @@ impl TerminalState {
             }
         };
         let mut env = std::collections::HashMap::new();
-        // EP-003 US-007: clean opt-out - with `shell_integration: false` no
-        // rc snippet is written or wired and the shell starts untouched.
         let extra_args = if config.shell_integration.unwrap_or(true) {
             setup_shell_integration(&shell, &mut env)
         } else {
             vec![]
         };
-        // Assemble the child environment (identity vars, TERM, AI-hook PATH
-        // prepend, user-env merge with protected keys). Pure function so the env
-        // contract stays unit-testable (the mockable `PtyBackend::spawn` seam is
-        // gone - EP-002 US-004).
         let mut env = assemble_pty_env(env, workspace_id, surface_id, merged_env);
-        // Keep terminal.env and identity propagation independent from shell
-        // integration: opting out disables rc hooks, not the terminal env contract.
         if is_wsl_shell(&shell) {
             augment_wslenv(&mut env);
         }
-        // U-026 + issue #11: when no cwd is explicit, avoid inheriting a GUI
-        // launch cwd that is the filesystem root. Explicit root cwd requests
-        // still arrive through `working_directory` and are preserved.
         let cwd = working_directory.unwrap_or_else(crate::launch_cwd::implicit_launch_cwd);
         let (cols, rows) = initial_size.unwrap_or((120, 40));
         SpawnParams {
@@ -1171,10 +874,6 @@ impl TerminalState {
         }
     }
 
-    /// Build a terminal whose engine exists but has not been started yet, so a
-    /// background spawn can start the same session against a real child and
-    /// [`promote_ghostty`](Self::promote_ghostty) it (US-012). The returned
-    /// opaque pending handle is what [`GhosttySession::start`] consumes.
     #[allow(dead_code)]
     pub(super) fn new_pending(cols: usize, rows: usize) -> (Self, PendingTerminalBackend) {
         Self::new_pending_with_profile(cols, rows, TerminalSurfaceProfile::Normal)
@@ -1202,10 +901,6 @@ impl TerminalState {
         Self::build_display_only(cols, rows, shell_quoting)
     }
 
-    /// Create a display-only terminal with no PTY and no child process.
-    /// Content is rendered via `write_output()`, which feeds bytes straight
-    /// into the grid. The terminal supports full ANSI rendering but does not
-    /// accept keyboard input. Used by tests and by the spawn-failure pane.
     #[allow(dead_code)]
     pub fn new_display_only(rows: usize, cols: usize) -> Self {
         Self::new_display_only_with_profile(rows, cols, TerminalSurfaceProfile::Normal)
@@ -1231,10 +926,6 @@ impl TerminalState {
         state
     }
 
-    /// Shared constructor for the not-yet-started state. Returns the terminal
-    /// plus the opaque runtime handle its engine still needs, so either
-    /// [`GhosttySession::start`] (real child) or
-    /// [`GhosttySession::start_display`] (grid only) can bring it up.
     fn build_display_only(
         cols: usize,
         rows: usize,
@@ -1295,13 +986,8 @@ impl TerminalState {
         )
     }
 
-    /// Write ANSI-formatted content to a display-only terminal.
-    /// Converts bare `\n` to `\r\n` (since there is no PTY to perform CR insertion).
-    /// Note: callers must not split a `\r\n` pair across two calls (the second call
-    /// would insert an extra `\r`, producing `\r\r\n`). Prefer complete chunks.
     #[allow(dead_code)]
     pub fn write_output(&self, bytes: &[u8]) {
-        // Convert \n to \r\n - bare LF without preceding CR needs CR insertion
         let mut converted = Vec::with_capacity(bytes.len());
         let mut prev = 0u8;
         for &b in bytes {
@@ -1314,8 +1000,6 @@ impl TerminalState {
         self.ghostty.write_output(&converted);
     }
 
-    /// Drain the CWD fallback, then drain any pending engine events.
-    /// Sets `dirty = true` when PTY output was processed.
     #[allow(dead_code)]
     pub fn sync(&mut self) {
         self.sync_channels();
@@ -1327,12 +1011,6 @@ impl TerminalState {
         }
     }
 
-    /// Refresh the shell CWD from the process table (EP-002 US-007).
-    ///
-    /// The engine decodes OSC 7 itself and publishes it as a UI event.
-    /// Unix/macOS additionally refresh from process-table state via
-    /// `cwd_now()`, for shells that never emit the sequence. The fallback is
-    /// throttled so we don't `readlink` on every poll tick.
     pub fn sync_channels(&mut self) {
         self.cwd_poll_ticks = self.cwd_poll_ticks.wrapping_add(1);
         if self.cwd_poll_ticks.is_multiple_of(25)
@@ -1342,23 +1020,10 @@ impl TerminalState {
         }
     }
 
-    /// Whether the shell returned to its prompt since the last call.
-    ///
-    /// Reads the OSC 133 `PromptStart` sequence the engine's mark scanner
-    /// already maintains, so it costs one mutex read per sync tick.
-    ///
-    /// A prompt is proof that no foreground command owns the terminal any
-    /// more, which is how the app reaps a finished agent's session without
-    /// waiting for the periodic PID sweep. The first prompt of a fresh shell
-    /// fires it too; the consumer is a no-op when the surface owns no session.
-    /// The latest answer to [`TerminalSessionBackend::request_osc8_hyperlink_at`],
-    /// once.
     pub(crate) fn take_resolved_hover_link(&mut self) -> Option<(Point, Option<HyperlinkZone>)> {
         self.resolved_hover_link.take()
     }
 
-    /// PTY bytes the runtime has parsed so far; the benchmark uses it to tell
-    /// an idle shell from a chatty one.
     #[cfg(test)]
     pub(super) fn processed_output_bytes_for_test(&self) -> usize {
         self.ghostty.processed_output_bytes_for_test()
@@ -1380,9 +1045,6 @@ impl TerminalState {
             GhosttyUiEvent::Wakeup(events) => {
                 events.acknowledge_wakeup();
                 self.dirty = true;
-                // US-010: advance the readiness signal `workspace.up` polls.
-                // Saturating (not wrapping) so the count is monotone for the
-                // lifetime of a pane; u64 never realistically saturates.
                 self.output_generation = self.output_generation.saturating_add(1);
             }
             GhosttyUiEvent::Title(events) => {
@@ -1438,8 +1100,6 @@ impl TerminalState {
                 }
             }
             GhosttyUiEvent::HyperlinkResolved { point, link } => {
-                // Only the latest answer matters: the pointer has moved on
-                // from any older one.
                 self.resolved_hover_link = Some((point, link));
             }
             GhosttyUiEvent::InputRejected(error) => {
@@ -1455,9 +1115,6 @@ impl TerminalState {
         }
     }
 
-    /// Gate an OSC 52 store: the pane must own focus, the policy must allow
-    /// writes, and the payload is capped to prevent a memory DoS from a
-    /// malicious program (`crate::limits`).
     fn deliver_clipboard_text(&mut self, text: String) {
         if self.terminal_focused
             && self.osc52_mode != Osc52Mode::Disabled
@@ -1474,18 +1131,11 @@ impl TerminalState {
         self.pending_clipboard_ops.push(text);
     }
 
-    /// Read the shell's CWD from the OS on demand.
-    /// Fallback for shells that don't emit OSC 7 - used at split time.
     #[cfg(target_os = "linux")]
     pub fn cwd_now(&self) -> Option<std::path::PathBuf> {
-        // US-034: once the child has exited, `child_pid` is stale and the OS
-        // may have reused it for an unrelated process - reading
-        // `/proc/<pid>/cwd` would silently return a third party's CWD. Bail.
         if self.exited.is_some() {
             return None;
         }
-        // Display-only terminal (no real PTY): `child_pid` is 0 → `/proc/0/cwd`
-        // doesn't exist. Bail explicitly to match the macOS/Windows guards.
         if self.child_pid == 0 {
             return None;
         }
@@ -1493,26 +1143,16 @@ impl TerminalState {
         std::fs::read_link(&proc_path).ok()
     }
 
-    /// macOS implementation of `cwd_now`: read the PTY child shell's current
-    /// working directory from the kernel via
-    /// `proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &buf, size)`.
     #[cfg(target_os = "macos")]
     pub fn cwd_now(&self) -> Option<std::path::PathBuf> {
         use std::ffi::CStr;
         use std::mem::MaybeUninit;
         use std::os::raw::c_void;
 
-        // US-034: after exit, `child_pid` may have been reused - `proc_pidinfo`
-        // would return an unrelated process's CWD. Bail.
         if self.exited.is_some() {
             return None;
         }
 
-        // Display-only terminal (no real PTY) or a child whose pid hasn't been
-        // resolved yet: `child_pid` is 0. Bail before the FFI - `proc_pidinfo(0,
-        // …)` targets the kernel swapper (pid 0), fails with EPERM, and would
-        // spam a misleading "shell may have exited" warning on every poll tick.
-        // Mirrors the `foreground_command` guards on every platform.
         if self.child_pid == 0 {
             return None;
         }
@@ -1521,10 +1161,6 @@ impl TerminalState {
         let mut info = MaybeUninit::<libc::proc_vnodepathinfo>::zeroed();
         let size = std::mem::size_of::<libc::proc_vnodepathinfo>() as libc::c_int;
 
-        // SAFETY: `info` is a stack-allocated MaybeUninit zeroed above; we
-        // only read from it if the syscall reports the full struct size
-        // was written. Zeroing first leaves it in a defined state on any
-        // partial-write error path.
         let written = unsafe {
             libc::proc_pidinfo(
                 pid,
@@ -1550,14 +1186,9 @@ impl TerminalState {
             return None;
         }
 
-        // SAFETY: `written == size` implies the kernel fully populated the
-        // buffer with a valid `proc_vnodepathinfo`.
         let info = unsafe { info.assume_init() };
 
         let ptr = info.pvi_cdir.vip_path.as_ptr() as *const libc::c_char;
-        // SAFETY: the kernel guarantees `vip_path` holds a NUL-terminated
-        // C string not exceeding `MAXPATHLEN` bytes when the syscall
-        // succeeds with full size.
         let cstr = unsafe { CStr::from_ptr(ptr) };
         match cstr.to_str() {
             Ok(s) if !s.is_empty() => Some(std::path::PathBuf::from(s)),
@@ -1565,24 +1196,17 @@ impl TerminalState {
         }
     }
 
-    /// Stub for other non-Linux platforms (Windows, BSDs).
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     pub fn cwd_now(&self) -> Option<std::path::PathBuf> {
         None
     }
 
-    /// Scan the most recent terminal output for server/service patterns.
-    /// Returns newly detected services (deduped against previously reported
-    /// ports). The engine materializes the lines on its own thread, so the
-    /// render thread never touches the grid here.
     pub fn scan_output(&mut self) -> Vec<ServiceInfo> {
         let lines = self.ghostty.recent_output_lines();
         self.detect_services_in_lines(&lines)
     }
 
     fn detect_services_in_lines(&mut self, lines: &[String]) -> Vec<ServiceInfo> {
-        // Detect framework from ALL lines (context-wide), not just the port line.
-        // Next.js prints "▲ Next.js 16.1.6" on one line and "localhost:3000" on another.
         let all_text = lines.join(" ");
         let (global_label, global_is_frontend) = detect_framework(&all_text);
 
@@ -1604,11 +1228,6 @@ impl TerminalState {
     }
 
     pub fn write_to_pty(&self, input: impl Into<Cow<'static, [u8]>>) {
-        // US-002: any path through write_to_pty is genuine user input
-        // (keystroke, paste, mouse report, IME commit, user scroll). Mark the
-        // session user-initiated so a later exit closes the pane. Automated
-        // protocol writes (focus reports, search RIS reset, OSC responses)
-        // deliberately go through `write_to_pty_silent`.
         self.keyboard_input_sent
             .store(true, std::sync::atomic::Ordering::Relaxed);
         self.notify_or_buffer(input.into());
@@ -1701,12 +1320,6 @@ impl TerminalState {
         )
     }
 
-    /// Send input to the engine, or queue it while the engine still has no
-    /// child (US-012 pre-promotion window): the launch command an auto-launched
-    /// agent issues the instant it mounts, plus any keystroke typed before the
-    /// off-thread spawn resolved. [`promote_ghostty`](Self::promote_ghostty)
-    /// flushes the queue in order. Bounded by [`MAX_PENDING_INPUT_BYTES`] so a
-    /// never-promoted terminal can't grow it without bound.
     fn notify_or_buffer(&self, input: Cow<'static, [u8]>) {
         if input.is_empty() {
             return;
@@ -1714,69 +1327,34 @@ impl TerminalState {
         self.dispatch_ghostty_input(PendingTerminalInput::Raw(input), false);
     }
 
-    /// US-002: write to the PTY WITHOUT marking the session user-initiated.
-    /// For automated protocol writes (DEC 1004 focus in/out reports, search
-    /// RIS reset) that must not flip `keyboard_input_sent` - otherwise a
-    /// failed-spawn pane that merely gains focus would wrongly close on exit.
     pub fn write_to_pty_silent(&self, input: impl Into<Cow<'static, [u8]>>) {
         self.notify_or_buffer(input.into());
     }
 
-    /// US-002: whether a child exit should close the pane. A user-initiated
-    /// session (any input was sent) always closes; otherwise only a clean exit
-    /// (code 0) closes - a non-zero exit with no input is a spawn/launch
-    /// failure and stays open so the exit overlay shows the code. Mirrors Zed's
-    /// discriminator (crates/terminal/src/terminal.rs:2572-2576).
     pub fn should_close_on_exit(&self) -> bool {
         self.keyboard_input_sent
             .load(std::sync::atomic::Ordering::Relaxed)
             || self.exited == Some(0)
     }
 
-    /// Extract terminal history as plain text (ANSI stripped) for session
-    /// persistence. The active viewport is deliberately excluded so restoring a
-    /// session cannot replay the previous visible frame ahead of fresh shell
-    /// output. Caps at 4000 lines and 400,000 characters. Returns None if
-    /// history is empty.
     pub fn extract_scrollback(&self) -> Option<String> {
         self.ghostty.extract_scrollback()
     }
 
-    /// The active screen as plain text, trailing blank lines trimmed.
-    ///
-    /// [`Self::extract_scrollback`] deliberately stops at the viewport, so it
-    /// returns nothing at all for a full-screen TUI, which is where the agent
-    /// CLIs live. This is the other half of reading a pane.
     pub fn screen_text(&self) -> Option<String> {
         let text = self.ghostty.screen_text()?;
         let trimmed = text.trim_end_matches(['\n', ' ']);
         (!trimmed.is_empty()).then(|| trimmed.to_owned())
     }
 
-    /// Capture the screen and its recent history as VT sequences.
-    ///
-    /// Unlike [`Self::extract_scrollback`] this keeps the styling, the modes,
-    /// and the cursor, so a restored pane looks like the one that was closed
-    /// rather than like a transcript of it. The bytes are produced by
-    /// libghostty's own formatter over this process's terminal.
     pub fn capture_replay(&self) -> Option<Vec<u8>> {
         self.ghostty.capture_replay()
     }
 
-    /// Best-effort foreground command of this surface, cached by the off-thread
-    /// pane process scanner. Returns the shell command while idle or the current
-    /// child approximation while busy. `None` means callers fall back to the OSC
-    /// title.
     pub fn foreground_command(&self) -> Option<String> {
         self.cached_foreground_command.clone()
     }
 
-    /// Search the scrollback for `pattern` (plain-text, case-insensitive) and
-    /// return matching lines as `(grid_line, text)` pairs, deduped by line and
-    /// capped at `max_matches`. The bool is `true` when the cap truncated the
-    /// result. Backs the `surface.search` IPC method (US-004). The engine
-    /// performs the search and the matched-line extraction atomically on its
-    /// runtime thread.
     pub fn search_scrollback(
         &self,
         pattern: &str,
@@ -1788,17 +1366,6 @@ impl TerminalState {
         self.ghostty.search_scrollback(pattern, max_matches)
     }
 
-    /// EP-005 US-014: remember a port announced by a service URL in this
-    /// terminal's output, for the collision cross-check against the scan's
-    /// LISTEN attribution. The source text is UNTRUSTED terminal output, so
-    /// the list is bounded: a flood of fake announcements can at most fill
-    /// 16 slots (oldest kept - the legitimate dev-server line is printed
-    /// once at startup, i.e. first).
-    /// Drop announce-dedup state for ports that are no longer LISTEN
-    /// anywhere in the workspace. Without this, `reported_ports` was only
-    /// cleared on ChildExit - a dev server restarted inside a live shell
-    /// (nodemon, plain re-run) re-printed its banner but could never re-fire
-    /// `ServiceDetected`, leaving the sidebar chip stale until the pane died.
     pub fn retain_reported_ports(&mut self, live: &[u16]) {
         self.reported_ports.retain(|p| live.contains(p));
     }
@@ -1811,57 +1378,23 @@ impl TerminalState {
         }
     }
 
-    /// Feed saved scrollback text back into the grid. Called during session
-    /// restore, before the shell has produced output.
-    ///
-    /// The engine enforces the "plain, ANSI stripped" invariant on its side: a
-    /// tampered or imported `session.json` can carry raw VT bytes in
-    /// `surface.scrollback`, and feeding them verbatim would allow single-line
-    /// title-spoof / OSC 8 clickable-link injection into the restored grid.
     pub fn restore_scrollback(&self, text: &str) {
         self.ghostty.restore_scrollback(text);
     }
 
-    /// Replay bytes produced by [`Self::capture_replay`] in this process.
-    ///
-    /// These go into the grid verbatim, escapes included, which is the whole
-    /// point: the styling has to survive. That makes this the wrong entry
-    /// point for anything read from disk or from a config file, where
-    /// [`Self::restore_scrollback`] and its ANSI stripping is the only safe
-    /// path. Only pass bytes this process captured from its own terminal.
     pub fn restore_replay(&self, bytes: &[u8]) {
         self.ghostty.write_output(bytes);
     }
 }
 
-/// Compute the PaneFlow IPC socket path, delegating to `runtime_paths` so
-/// the fallback chain stays in sync with `ipc::socket_path`.
 fn paneflow_socket_path() -> Option<String> {
     crate::runtime_paths::socket_path().map(|p| p.display().to_string())
 }
 
-/// US-009 - extract the embedded AI-hook binaries into the user's cache
-/// dir, then expose that dir via `PANEFLOW_BIN_DIR` and prepend it to
-/// the child shell's `PATH`.
-///
-/// Silent-fail: any error (extraction IO failure, unresolvable
-/// `cache_dir`) is logged at `warn` and then swallowed so the terminal
-/// opens normally without the AI-hook loader for this session. PRD
-/// constraint C4 mandates the terminal must never fail to open because
-/// of AI-hook wiring.
-///
-/// Factored out of `TerminalState::new` so the helper is independently
-/// testable - the extraction side-effect lives in `ai_hooks::extract`
-/// (already unit-tested in US-008); this glue only layers the env
-/// mutations on top of a returned `PathBuf`.
 fn inject_ai_hook_env(env: &mut std::collections::HashMap<String, String>) {
     let bin_dir = match crate::ai_hooks::extract::ensure_binaries_extracted() {
         Ok(p) => p,
         Err(e) => {
-            // `{e:#}` emits the full anyhow context chain (each
-            // `.with_context()` frame) rather than just the outermost
-            // message - crucial for diagnosing cache-dir permission
-            // errors that arrive with a useful inner IO error.
             log::warn!(
                 "paneflow: AI-hook binary extraction failed ({e:#}); sidebar loader will not activate for this terminal session"
             );
@@ -1869,10 +1402,6 @@ fn inject_ai_hook_env(env: &mut std::collections::HashMap<String, String>) {
         }
     };
 
-    // `PANEFLOW_BIN_DIR` is the source-of-truth the shim uses for its
-    // self-exclusion PATH walk (US-004). Set it even in the unlikely
-    // event the PATH-prepend below fails, so the shim can still
-    // identify its own dir if a later code path routes into it.
     env.insert("PANEFLOW_BIN_DIR".into(), bin_dir.display().to_string());
 
     prepend_bin_dir_to_path(env, &bin_dir);
@@ -1888,34 +1417,16 @@ fn reassert_paneflow_bin_dir_first(env: &mut std::collections::HashMap<String, S
     prepend_bin_dir_to_path(env, std::path::Path::new(&bin_dir));
 }
 
-/// Prepend `bin_dir` to `env["PATH"]` (or to the process `PATH` if the
-/// env map does not yet carry one). Cross-platform: uses
-/// `std::env::join_paths`, which emits `:` on Unix and `;` on Windows.
-///
-/// If join-paths fails (e.g. a `PATH` entry contains a platform
-/// separator byte - invalid but physically possible), logs a warning
-/// and leaves the env map unchanged. Better "no prepend" than "broken
-/// PATH".
 fn prepend_bin_dir_to_path(
     env: &mut std::collections::HashMap<String, String>,
     bin_dir: &std::path::Path,
 ) {
-    // Order of precedence: explicit map entry first, then process env.
-    // `setup_shell_integration` (shell.rs) does not set PATH, so in
-    // practice this always falls through to the process PATH - but the
-    // explicit-map branch makes the helper reusable and keeps tests
-    // decoupled from the process environment.
     let existing: Option<std::ffi::OsString> = env
         .get("PATH")
         .map(std::ffi::OsString::from)
         .or_else(|| std::env::var_os("PATH"));
 
     let mut components: Vec<std::path::PathBuf> = vec![bin_dir.to_path_buf()];
-    // Guard against an empty `PATH` string: on Unix, `split_paths("")`
-    // yields a single `PathBuf::from("")` which `execvp` resolves as the
-    // current working directory - that would silently put `.` on the
-    // child's PATH (a classic shell-injection surface). Treat empty and
-    // absent identically.
     if let Some(existing) = existing.as_deref()
         && !existing.is_empty()
     {
@@ -1924,15 +1435,6 @@ fn prepend_bin_dir_to_path(
 
     match std::env::join_paths(components) {
         Ok(joined) => {
-            // `join_paths` always produces valid UTF-8 when all inputs
-            // were UTF-8 PathBufs + an OsString PATH - on all three
-            // supported OSes, PATH is conventionally UTF-8 so the
-            // `to_string_lossy` round-trip is safe. If a real-world PATH
-            // entry contains non-UTF-8 bytes, we lose those in the
-            // lossy conversion - but the env map is keyed on
-            // `HashMap<String, String>` to begin with, so this is a
-            // pre-existing constraint inherited from
-            // `PtyBackend::spawn`, not introduced here.
             env.insert("PATH".into(), joined.to_string_lossy().into_owned());
         }
         Err(e) => {
@@ -1944,22 +1446,10 @@ fn prepend_bin_dir_to_path(
     }
 }
 
-/// True if `key` names a dynamic-loader-influencing environment variable that
-/// an untrusted source (an imported `session.json` surface env, or the global
-/// `terminal.env` config) must NOT be allowed to inject into a spawned child:
-/// `LD_PRELOAD` / `LD_LIBRARY_PATH` / `LD_AUDIT` and any `LD_*` on Linux, plus
-/// any `DYLD_*` on macOS. Letting these through is an RCE vector - the operator
-/// treats imported sessions as untrusted, and the child is always the
-/// configured shell. The match is case-sensitive on purpose: the unix loaders
-/// only honour the exact upper-case spelling, so a lower-case `ld_preload` is
-/// inert and need not be dropped. On Windows these names are meaningless, so the
-/// check is a harmless no-op there (the caller has already upper-cased `key`).
 fn is_loader_influencing_env_key(key: &str) -> bool {
     key.starts_with("LD_") || key.starts_with("DYLD_")
 }
 
-/// True if `key` is one of the launching agent session's identity/credential
-/// markers - see [`INHERITED_AGENT_SESSION_ENV`].
 fn is_inherited_agent_session_env_key(key: &str) -> bool {
     INHERITED_AGENT_SESSION_ENV.contains(&key)
 }
@@ -1968,9 +1458,6 @@ fn is_forbidden_child_env_key(key: &str) -> bool {
     is_inherited_agent_session_env_key(key) || is_loader_influencing_env_key(key)
 }
 
-/// True if `key` names a host-terminal identity marker - see
-/// [`INHERITED_HOST_TERMINAL_ENV`]. Pure, so the list is unit-tested without
-/// touching the process environment.
 pub(super) fn is_inherited_host_terminal_env_key(key: &str) -> bool {
     INHERITED_HOST_TERMINAL_ENV
         .iter()
@@ -1979,21 +1466,6 @@ pub(super) fn is_inherited_host_terminal_env_key(key: &str) -> bool {
             && key[..CONEMU_ENV_PREFIX.len()].eq_ignore_ascii_case(CONEMU_ENV_PREFIX)
 }
 
-/// The names Paneflow inherited that must not reach a pane: host-terminal
-/// identity markers, plus the launching agent session's own markers.
-///
-/// `portable_pty::CommandBuilder` seeds itself from `std::env::vars_os()` and
-/// Paneflow only layers overrides on top, so removing a key from the assembled
-/// env map cannot unset an INHERITED variable - only an explicit
-/// `env_remove` at the spawn boundary can. That is why
-/// [`assemble_pty_env`]'s `retain` is not enough on its own for
-/// [`INHERITED_AGENT_SESSION_ENV`]: it stops a merge from reintroducing a
-/// marker, it cannot unset one Paneflow was started with. Enumerating the real
-/// environment is also what lets the `ConEmu*` prefix rule resolve to concrete
-/// names to remove.
-///
-/// Non-UTF-8 names are left alone: none of the targets can be spelled that way,
-/// and guessing at a lossy comparison would risk unsetting an unrelated var.
 pub(super) fn inherited_env_keys_to_strip() -> Vec<std::ffi::OsString> {
     std::env::vars_os()
         .map(|(key, _)| key)
@@ -2005,12 +1477,6 @@ pub(super) fn inherited_env_keys_to_strip() -> Vec<std::ffi::OsString> {
         .collect()
 }
 
-/// True if `key` is a well-formed environment variable name safe to insert into
-/// a child env block: non-empty and free of `=` and NUL, which would otherwise
-/// corrupt the name/value framing. Charset is intentionally NOT restricted to a
-/// strict POSIX set - legitimate user vars (e.g. `ANTHROPIC_API_KEY`) are
-/// already all-caps `[A-Z0-9_]`, and over-restricting would silently drop valid
-/// keys.
 fn is_valid_env_name(key: &str) -> bool {
     !key.is_empty() && !key.contains('=') && !key.contains('\0')
 }
@@ -2087,14 +1553,6 @@ fn augment_wslenv(env: &mut std::collections::HashMap<String, String>) {
     }
 }
 
-/// True for an OSC 0/2 title that is merely an absolute path to an `.exe` - the
-/// self-title Windows shells (`pwsh.exe`, `powershell.exe`, `cmd.exe`) emit at
-/// startup before the user's profile runs. Such a title is never a human-facing
-/// surface label, so callers drop it and keep the previous (or default) name.
-/// Matches nothing on a Unix title (a backslash path is not absolute there, and
-/// a `/usr/bin/pwsh` title has no `.exe` extension), so it is a Windows-targeted
-/// filter with no false positives on real labels (e.g. `Claude Code`) or on a
-/// prompt that sets the title to a bare cwd (no `.exe`).
 fn is_executable_path_title(title: &str) -> bool {
     let p = std::path::Path::new(title);
     p.is_absolute()
@@ -2108,38 +1566,23 @@ mod title_filter_tests {
 
     #[test]
     fn drops_shell_self_path_title_but_keeps_human_labels() {
-        // The exact pwsh self-title that leaked into the sidebar / tabs.
         assert!(is_executable_path_title(
             r"C:\Program Files\PowerShell\7\pwsh.exe"
         ));
         assert!(is_executable_path_title(r"C:\Windows\System32\cmd.exe"));
-        // Real labels and cwd-as-title prompts must survive.
         assert!(!is_executable_path_title("Claude Code"));
         assert!(!is_executable_path_title(r"C:\dev\paneflow"));
         assert!(!is_executable_path_title(""));
-        // A bare relative name is not an absolute path → kept (only the
-        // absolute self-path is the offender).
         assert!(!is_executable_path_title("pwsh.exe"));
     }
 }
 
-/// Assemble the child PTY environment: PaneFlow identity vars, explicit TERM /
-/// locale / terminal-program identification, the AI-hook PATH prepend, and the
-/// user-env merge (a user var wins on collision EXCEPT the protected keys
-/// PaneFlow owns and `PANEFLOW_BIN_DIR` is re-prepended after any user PATH).
-/// Pure except for `inject_ai_hook_env` staging the shim
-/// binaries, so the env contract stays unit-testable now that the mockable
-/// `PtyBackend::spawn` seam is gone (EP-002 US-004). Mirrors Zed's
-/// `insert_zed_terminal_env`.
 fn assemble_pty_env(
     mut env: std::collections::HashMap<String, String>,
     workspace_id: u64,
     surface_id: u64,
     user_env: Option<std::collections::HashMap<String, String>>,
 ) -> std::collections::HashMap<String, String> {
-    // PaneFlow identity vars (AI-hook + MCP bridge integration).
-    // `0` is reserved for detached terminals such as discovered worktree Review
-    // terminals. Do not advertise a fake workspace id to the IPC hook.
     if workspace_id != 0 {
         env.insert("PANEFLOW_WORKSPACE_ID".into(), workspace_id.to_string());
     }
@@ -2148,9 +1591,6 @@ fn assemble_pty_env(
         env.insert("PANEFLOW_SOCKET_PATH".into(), socket_path);
     }
 
-    // Propagate the opt-in hook-diagnostic log path explicitly so the whole
-    // chain (shell → shim → agent → ai-hook) appends to the same file even if
-    // a PTY backend ever clears the inherited env. No-op when unset.
     if let Some(log_path) = std::env::var_os("PANEFLOW_HOOK_LOG")
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string_lossy().into_owned())
@@ -2158,15 +1598,12 @@ fn assemble_pty_env(
         env.insert("PANEFLOW_HOOK_LOG".into(), log_path);
     }
 
-    // Explicit TERM so TUI apps detect capabilities correctly.
     env.insert("TERM".into(), "xterm-256color".into());
 
-    // Ensure a UTF-8 locale in minimal environments (containers, etc.).
     if std::env::var("LANG").map_or(true, |v| v.is_empty()) {
         env.insert("LANG".into(), "en_US.UTF-8".into());
     }
 
-    // Standard terminal identification for capability detection.
     env.insert("TERM_PROGRAM".into(), "paneflow".into());
     env.insert(
         "TERM_PROGRAM_VERSION".into(),
@@ -2174,24 +1611,10 @@ fn assemble_pty_env(
     );
     env.insert("COLORTERM".into(), "truecolor".into());
 
-    // Reset SHLVL so the child shell starts fresh at 1. The child inherits the
-    // parent environment (no `env_clear`), so the value Paneflow itself
-    // inherited (typically >= 2 when launched from a terminal) has to be
-    // actively overridden; otherwise nested-shell prompt detection breaks
-    // (oh-my-zsh subshell banner, fish $SHLVL gating). "0" makes the shell
-    // initialize it to 1.
     env.insert("SHLVL".into(), "0".into());
 
-    // Cross-platform AI-hook PATH-prepend: stage the embedded shim binaries and
-    // prepend their dir to `$PATH` so `claude`/`codex` route through the shim.
-    // Silent-fail (the terminal still opens). Sets `PANEFLOW_BIN_DIR`.
     inject_ai_hook_env(&mut env);
 
-    // Merge user-supplied env on top, EXCEPT the protected keys PaneFlow owns:
-    // TERM/COLORTERM/TERM_PROGRAM drive capability detection; SHLVL is reset so
-    // shells start fresh; the PANEFLOW_* identity vars are how the MCP bridge
-    // and the AI-hook shim find PaneFlow - letting a user clobber them would
-    // silently break those features.
     if let Some(user_vars) = user_env {
         const PROTECTED: &[&str] = &[
             "TERM",
@@ -2205,18 +1628,8 @@ fn assemble_pty_env(
             "PANEFLOW_BIN_DIR",
         ];
         for (k, v) in user_vars {
-            // Windows env names are case-insensitive; normalise so a user
-            // `Path` cannot shadow inherited `PATH` and the protected-key check
-            // is not bypassed by casing.
             #[cfg(windows)]
             let k = k.to_uppercase();
-            // Reject malformed env names (empty / `=` / NUL) and drop
-            // dynamic-loader-influencing keys (LD_* / DYLD_*) outright: an
-            // imported `session.json` surface env or the global `terminal.env`
-            // is untrusted, and these inject a bundled `.so` into the spawned
-            // shell (RCE). `PATH` is deliberately still mergeable here (a
-            // documented US-014 use case), but PANEFLOW_BIN_DIR is re-prepended
-            // after the merge so agent commands still route through the shim.
             if !is_valid_env_name(&k) || is_forbidden_child_env_key(&k) {
                 continue;
             }
@@ -2227,8 +1640,6 @@ fn assemble_pty_env(
         }
     }
 
-    // Runs after the user/session merge so neither an inherited value nor a
-    // hand-written `terminal.env` entry can put these back.
     env.retain(|k, _| !is_inherited_agent_session_env_key(k));
     reassert_paneflow_bin_dir_first(&mut env);
 
@@ -2237,10 +1648,6 @@ fn assemble_pty_env(
 
 impl Drop for TerminalState {
     fn drop(&mut self) {
-        // The engine owns the PTY and the child, so teardown belongs to its
-        // runtime thread: `shutdown` runs the full ladder there (SIGTERM then
-        // SIGKILL on the child's process group on Unix, process-tree
-        // termination on Windows) without blocking the render thread.
         self.ghostty.shutdown();
         self.child_pid = 0;
     }
@@ -2250,8 +1657,6 @@ impl Drop for TerminalState {
 pub(super) const WINDOWS_PROCESS_TREE_TERMINATION_BUDGET: std::time::Duration =
     std::time::Duration::from_secs(5);
 
-/// Metadata-only outcome of one pane-scoped Windows process-tree cleanup.
-/// Counts describe Win32 operations, never process command lines or arguments.
 #[cfg(windows)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct WindowsProcessTreeTerminationResult {
@@ -2272,31 +1677,25 @@ fn windows_process_entries() -> io::Result<Vec<(u32, u32)>> {
         TH32CS_SNAPPROCESS,
     };
 
-    // SAFETY: Win32 call; the returned snapshot handle is closed below.
     let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snap == INVALID_HANDLE_VALUE {
         return Err(io::Error::last_os_error());
     }
 
-    // Collect (pid, parent_pid) for every process in the snapshot.
     let mut entries: Vec<(u32, u32)> = Vec::with_capacity(256);
     let mut entry: PROCESSENTRY32W = unsafe { mem::zeroed() };
     entry.dwSize = mem::size_of::<PROCESSENTRY32W>() as u32;
-    // SAFETY: `snap` is valid; `entry` is correctly sized and zeroed.
     if unsafe { Process32FirstW(snap, &mut entry) } == 0 {
         let error = io::Error::last_os_error();
-        // SAFETY: `snap` is a valid handle obtained above.
         unsafe { CloseHandle(snap) };
         return Err(error);
     }
     loop {
         entries.push((entry.th32ProcessID, entry.th32ParentProcessID));
-        // SAFETY: same invariants; iterates until the snapshot is exhausted.
         if unsafe { Process32NextW(snap, &mut entry) } == 0 {
             break;
         }
     }
-    // SAFETY: `snap` is a valid handle obtained above.
     unsafe { CloseHandle(snap) };
     Ok(entries)
 }
@@ -2344,13 +1743,8 @@ fn windows_process_tree_targets(
     targets
 }
 
-/// Convert an absolute-deadline remainder to the largest Win32 millisecond
-/// wait that cannot exceed it. A sub-millisecond remainder is intentionally
-/// unusable: rounding up would break the single global budget.
 #[cfg(windows)]
 fn windows_wait_timeout_ms(remaining: std::time::Duration) -> Option<u32> {
-    // `u32::MAX` is Win32's INFINITE sentinel, so the largest finite wait is
-    // one millisecond below it.
     const MAX_FINITE_WAIT_MS: u32 = u32::MAX - 1;
     let milliseconds = remaining.as_millis().min(u128::from(MAX_FINITE_WAIT_MS)) as u32;
     (milliseconds != 0).then_some(milliseconds)
@@ -2365,7 +1759,6 @@ struct WindowsTerminationHandle {
 #[cfg(windows)]
 impl Drop for WindowsTerminationHandle {
     fn drop(&mut self) {
-        // SAFETY: this guard owns one non-null OpenProcess handle.
         unsafe {
             windows_sys::Win32::Foundation::CloseHandle(self.handle);
         }
@@ -2381,13 +1774,8 @@ fn request_windows_pid_termination(
     use windows_sys::Win32::System::Threading::{
         OpenProcess, PROCESS_TERMINATE, TerminateProcess, WaitForSingleObject,
     };
-    // SYNCHRONIZE access right is required for WaitForSingleObject on the
-    // returned handle; PROCESS_TERMINATE alone makes WaitForSingleObject
-    // return WAIT_FAILED. Value mirrors winnt.h (0x0010_0000). Declared
-    // locally to avoid pulling the Win32_Storage_FileSystem feature flag.
     const SYNCHRONIZE: u32 = 0x0010_0000;
 
-    // SAFETY: the returned handle is immediately wrapped in an owning guard.
     let handle = unsafe { OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid) };
     if handle.is_null() {
         let os_error = io::Error::last_os_error().raw_os_error();
@@ -2399,9 +1787,6 @@ fn request_windows_pid_termination(
     }
     let process = WindowsTerminationHandle { pid, handle };
 
-    // The process can still exit during the 100ms grace window. Confirm that
-    // state before requesting a hard kill so an ordinary exit is not a failure.
-    // SAFETY: `process` owns a valid synchronizable process handle.
     match unsafe { WaitForSingleObject(process.handle, 0) } {
         WAIT_OBJECT_0 => {
             result.already_exited = result.already_exited.saturating_add(1);
@@ -2423,12 +1808,8 @@ fn request_windows_pid_termination(
         }
     }
 
-    // SAFETY: `process.handle` carries PROCESS_TERMINATE access for this PID.
     if unsafe { TerminateProcess(process.handle, 1) } == 0 {
         let terminate_error = io::Error::last_os_error().raw_os_error();
-        // A process may exit between the zero-timeout precheck and this call.
-        // Treat that confirmed race as an ordinary already-exited outcome.
-        // SAFETY: `process` still owns the same valid synchronizable handle.
         let exited = unsafe { WaitForSingleObject(process.handle, 0) } == WAIT_OBJECT_0;
         if exited {
             result.already_exited = result.already_exited.saturating_add(1);
@@ -2465,12 +1846,8 @@ fn wait_for_windows_terminations(
         return;
     }
 
-    // Observe every process once without blocking before allowing one slow PID
-    // to consume the shared deadline. All TerminateProcess requests have
-    // already been issued, so this pass only improves result accuracy.
     let mut pending = Vec::with_capacity(handles.len());
     for process in handles {
-        // SAFETY: every guard owns a valid synchronizable process handle.
         match unsafe { WaitForSingleObject(process.handle, 0) } {
             WAIT_OBJECT_0 => {}
             WAIT_TIMEOUT => pending.push(process),
@@ -2503,14 +1880,9 @@ fn wait_for_windows_terminations(
             break;
         };
 
-        // SAFETY: `process` owns a valid synchronizable process handle, and
-        // `timeout_ms` is finite and no larger than the deadline remainder.
         match unsafe { WaitForSingleObject(process.handle, timeout_ms) } {
             WAIT_OBJECT_0 => {}
             WAIT_TIMEOUT => {
-                // This PID consumed every usable whole millisecond. The rest
-                // have already received TerminateProcess, but cannot be waited
-                // independently without exceeding the one shared deadline.
                 result.deadline_exhausted = true;
                 result.timed_out = result
                     .timed_out
@@ -2536,13 +1908,6 @@ fn wait_for_windows_terminations(
     }
 }
 
-/// Best-effort hard cleanup for one Windows pane process tree.
-///
-/// Descendants discovered from each pane-rooted snapshot are targeted in
-/// postorder, and the root is targeted exactly once after the first snapshot.
-/// Every blocking wait shares the caller-supplied absolute `deadline`; later
-/// PIDs never receive a fresh per-process timeout. Snapshot, OpenProcess, and
-/// wait failures are recorded while cleanup continues where possible.
 #[cfg(windows)]
 pub(super) fn terminate_windows_process_tree(
     root_pid: u32,
@@ -2557,9 +1922,6 @@ pub(super) fn terminate_windows_process_tree(
     let mut targeted = std::collections::HashSet::new();
     let mut handles = Vec::new();
     for pass in 0..KILL_PASSES {
-        // Always run the first pass so an expired deadline still issues the
-        // root hard-kill request. The deadline bounds every blocking wait and
-        // prevents optional race-catching snapshots from extending cleanup.
         if pass > 0 && std::time::Instant::now() >= deadline {
             result.deadline_exhausted = true;
             break;
@@ -2588,8 +1950,6 @@ pub(super) fn terminate_windows_process_tree(
             }
         }
 
-        // A successful follow-up snapshot with no descendants proves there is
-        // nothing left to discover. A failed snapshot gets one final retry.
         if pass > 0 && !snapshot_failed && !had_descendants {
             break;
         }
@@ -2622,8 +1982,6 @@ mod tests {
 
     #[test]
     fn new_pending_terminal_has_no_child_until_promoted() {
-        // US-012: a pending terminal carries no child until the off-thread
-        // start resolves and `promote_ghostty` swaps the runtime in.
         let (state, _pending) = TerminalState::new_pending(80, 24);
         assert_eq!(state.child_pid, 0);
     }
@@ -2680,7 +2038,6 @@ mod tests {
         assert_eq!(diagnostics.target_triple, env!("PANEFLOW_TARGET_TRIPLE"));
         #[cfg(all(target_os = "windows", target_arch = "x86_64", target_env = "msvc"))]
         assert_eq!(diagnostics.target_triple, "x86_64-pc-windows-msvc");
-        // US-018 AC1: a macOS bug report must state the triple it came from.
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         assert_eq!(diagnostics.target_triple, "aarch64-apple-darwin");
     }
@@ -2703,11 +2060,6 @@ mod tests {
 
     #[test]
     fn write_to_pty_buffers_input_while_display_only() {
-        // US-012 regression: the launch pad's agent picker writes the
-        // launch command the instant a terminal mounts - before the off-thread
-        // fork promotes the PTY. The display-only notifier drops writes, so
-        // without this queue the command (e.g. `claude`) is lost and the
-        // terminal opens to a bare shell. `write_to_pty` must buffer instead.
         let (state, _events_tx) = TerminalState::new_pending(80, 24);
         state.write_to_pty(b"claude\r".to_vec());
         let queued = state.pending_input.lock().expect("pending_input lock");
@@ -2719,8 +2071,6 @@ mod tests {
 
     #[test]
     fn pending_input_is_bounded() {
-        // A terminal that never promotes (spawn failure) must not accumulate
-        // input without bound: writes past the cap are dropped, not queued.
         let (state, _events_tx) = TerminalState::new_pending(80, 24);
         let chunk = vec![b'x'; 8 * 1024];
         for _ in 0..(MAX_PENDING_INPUT_BYTES / chunk.len() + 2) {
@@ -2794,8 +2144,6 @@ mod tests {
 
     #[test]
     fn structured_input_is_queued_in_order_before_promotion() {
-        // US-012: keys, mouse reports, focus events and pastes issued before
-        // the off-thread start resolves are queued, in order, rather than lost.
         let (state, _pending) = TerminalState::new_pending(80, 24);
 
         assert_eq!(
@@ -2828,8 +2176,6 @@ mod tests {
 
     #[test]
     fn resolve_spawn_params_honors_initial_size() {
-        // US-012: the cheap, render-thread-safe half of a spawn picks up the
-        // requested grid size (and the 120x40 default when unspecified).
         let p = TerminalState::resolve_spawn_params(None, 1, 1, Some((100, 30)), None);
         assert_eq!((p.cols, p.rows), (100, 30));
         let d = TerminalState::resolve_spawn_params(None, 1, 1, None, None);
@@ -2839,8 +2185,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn capture_foreground_signal_mask_succeeds_on_unix() {
-        // US-012: the foreground mask snapshot must succeed on the main thread
-        // so the off-thread spawn can hand it to the child (Ctrl-C parity).
         assert!(capture_foreground_signal_mask().is_some());
     }
 
@@ -2872,8 +2216,6 @@ mod tests {
 
     #[test]
     fn prepend_inserts_bin_dir_even_when_env_path_absent() {
-        // AC: "If env map has no PATH, helper still sets PATH so the
-        // child inherits the shim dir rather than silently no-op."
         let mut env: HashMap<String, String> = HashMap::new();
         let bin_dir = PathBuf::from("/tmp/paneflow-bins");
         prepend_bin_dir_to_path(&mut env, &bin_dir);
@@ -2889,10 +2231,6 @@ mod tests {
 
     #[test]
     fn prepend_uses_platform_separator() {
-        // Round-trip invariant: split_paths(join_paths(X)) == X. This
-        // implicitly tests that `;` on Windows / `:` on Unix is handled
-        // correctly - we do not assert the raw bytes because that
-        // would hardcode per-OS expectations.
         let mut env: HashMap<String, String> = HashMap::new();
         let sep = platform_sep();
         env.insert("PATH".into(), format!("/a{sep}/b{sep}/c"));
@@ -2915,10 +2253,6 @@ mod tests {
 
     #[test]
     fn prepend_treats_empty_path_as_absent() {
-        // An empty `PATH` is not absent - `split_paths("")` on Unix
-        // yields one `PathBuf::from("")` component that `execvp`
-        // resolves as the CWD. We must NOT inherit that phantom entry
-        // onto the child's PATH (shell-injection surface).
         let mut env: HashMap<String, String> = HashMap::new();
         env.insert("PATH".into(), String::new());
         let bin_dir = PathBuf::from("/z");
@@ -2937,16 +2271,8 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // US-003 - exit-status correctness (real code, first-write-wins).
-    // -----------------------------------------------------------------
-
     #[test]
     fn child_exit_records_real_code_not_sentinel() {
-        // US-003 AC: a real child exit code must round-trip into `exited`,
-        // not the -1 fallback. The engine's runtime thread already decoded the
-        // platform `ExitStatus` into this event, so the assertion is on the
-        // state transition, not on the per-OS status encoding.
         let mut state = TerminalState::new_display_only(24, 80);
         assert!(state.exited.is_none(), "fresh terminal has no exit code");
 
@@ -2963,9 +2289,6 @@ mod tests {
 
     #[test]
     fn exit_fallback_does_not_clobber_real_child_exit_code() {
-        // US-003 AC: first-write-wins. A runtime failure reported after a
-        // real child exit (the engine can publish both when the mailbox tears
-        // down) must never overwrite the code already recorded.
         let mut state = TerminalState::new_display_only(24, 80);
 
         state.process_ghostty_event(GhosttyUiEvent::ChildExited {
@@ -2982,13 +2305,8 @@ mod tests {
         );
     }
 
-    // -----------------------------------------------------------------
-    // US-002 - keep pane open on launch failure (keyboard_input_sent).
-    // -----------------------------------------------------------------
-
     #[test]
     fn close_on_exit_discriminator_covers_both_branches() {
-        // US-002 AC: clean exit (code 0) closes even with no input.
         let mut clean = TerminalState::new_display_only(24, 80);
         clean.exited = Some(0);
         assert!(
@@ -2996,8 +2314,6 @@ mod tests {
             "US-002: a clean exit (code 0) must close the pane"
         );
 
-        // Non-zero exit with NO user input = spawn/launch failure → stays open
-        // so the exit overlay can render the code.
         let mut failed = TerminalState::new_display_only(24, 80);
         failed.exited = Some(127);
         assert!(
@@ -3005,7 +2321,6 @@ mod tests {
             "US-002: a non-zero exit with no input must keep the pane open"
         );
 
-        // ...but once the user has interacted, ANY exit closes.
         failed.write_to_pty(b"x".as_slice());
         assert!(
             failed.should_close_on_exit(),
@@ -3015,9 +2330,6 @@ mod tests {
 
     #[test]
     fn write_to_pty_marks_user_input_but_fresh_state_does_not() {
-        // US-002: a fresh terminal has not received user input; write_to_pty
-        // flips the flag. (Automated writes use notifier.notify and are tested
-        // implicitly by the discriminator staying false here.)
         let state = TerminalState::new_display_only(24, 80);
         assert!(
             !state
@@ -3033,12 +2345,6 @@ mod tests {
             "write_to_pty must mark the session user-initiated"
         );
     }
-
-    // -----------------------------------------------------------------
-    // Env assembly contract. There is no mockable spawn seam: the engine
-    // opens the PTY itself, so the env the child inherits is asserted directly
-    // against the pure `assemble_pty_env`.
-    // -----------------------------------------------------------------
 
     #[test]
     fn wslenv_merge_preserves_existing_entries_and_deduplicates() {
@@ -3111,8 +2417,6 @@ mod tests {
 
     #[test]
     fn pty_spawn_injects_paneflow_bin_dir_and_prepends_path() {
-        // Skip where the cache dir is unresolvable - the helper silent-fails
-        // (correct behavior), but then there's nothing to assert on.
         if dirs::cache_dir().is_none() {
             eprintln!("skip: dirs::cache_dir() unresolvable in this environment");
             return;
@@ -3156,7 +2460,6 @@ mod tests {
         );
     }
 
-    // US-014: user-supplied env vars are merged into the child PTY env.
     #[test]
     fn user_env_is_merged_into_pty_env() {
         let mut user = HashMap::new();
@@ -3198,7 +2501,6 @@ mod tests {
         );
     }
 
-    // US-014: TERM/COLORTERM are protected and cannot be overridden by user env.
     #[test]
     fn protected_keys_cannot_be_overridden_by_user_env() {
         let mut user = HashMap::new();
@@ -3242,9 +2544,6 @@ mod tests {
         );
     }
 
-    // f010: dynamic-loader env vars from an untrusted source (imported
-    // session.json surface env / global config env) must never reach the child
-    // shell - letting LD_PRELOAD/LD_*/DYLD_* through is an RCE vector.
     #[test]
     fn loader_influencing_env_vars_are_dropped() {
         let mut user = HashMap::new();
@@ -3305,18 +2604,10 @@ mod tests {
 
     #[test]
     fn inherited_agent_session_markers_are_dropped_from_child_env() {
-        // Launching Paneflow from inside an agent session (or from an IDE
-        // terminal that carries these) otherwise leaks the parent session's
-        // identity into every pane. `CLAUDE_CODE_CHILD_SESSION` in particular
-        // makes the agent disable transcript saving, so its conversation never
-        // reaches `~/.claude/projects` and the thread cannot be resumed after a
-        // restart.
         let mut base = HashMap::new();
         let mut user = HashMap::new();
         for key in INHERITED_AGENT_SESSION_ENV {
             base.insert((*key).to_string(), "inherited".to_string());
-            // Also offered through `terminal.env`: the strip runs after the
-            // merge, so a hand-written config cannot reinstate them either.
             user.insert((*key).to_string(), "from-config".to_string());
         }
         user.insert("KEEP_ME".to_string(), "yes".to_string());
@@ -3339,8 +2630,6 @@ mod tests {
 
     #[test]
     fn host_terminal_markers_are_recognized_whatever_their_casing() {
-        // These arrive by inheritance in the host's own casing, so the match
-        // cannot be the exact-name check the user-env merge relies on.
         for key in INHERITED_HOST_TERMINAL_ENV {
             assert!(
                 is_inherited_host_terminal_env_key(key),
@@ -3351,7 +2640,6 @@ mod tests {
                 "{key} must be recognized case-insensitively"
             );
         }
-        // ConEmu ships a whole family and only sets some of them.
         for key in ["ConEmuANSI", "ConEmuPID", "ConEmuTask", "CONEMUBUILD"] {
             assert!(
                 is_inherited_host_terminal_env_key(key),
@@ -3362,9 +2650,6 @@ mod tests {
 
     #[test]
     fn host_terminal_matcher_does_not_swallow_unrelated_names() {
-        // The prefix rule is the risky half: it must not reach a var that
-        // merely starts with the same letters, and the bare prefix names no
-        // real variable.
         for key in [
             "conemu",
             "CONEMU",
@@ -3385,10 +2670,6 @@ mod tests {
 
     #[test]
     fn the_strip_list_covers_both_families_it_claims_to() {
-        // `inherited_env_keys_to_strip` reads the real process env, so what is
-        // pinned here is its predicate: an agent-session marker must be
-        // removed at the spawn boundary too, not only filtered out of the
-        // assembled map - a `retain` cannot unset an INHERITED variable.
         for key in INHERITED_AGENT_SESSION_ENV {
             assert!(
                 is_inherited_agent_session_env_key(key) || is_inherited_host_terminal_env_key(key),
@@ -3404,10 +2685,6 @@ mod tests {
 
     #[test]
     fn host_terminal_markers_are_not_smuggled_through_the_assembled_env() {
-        // The removal itself happens at the spawn boundary (`env_remove`),
-        // because the assembled map only carries overrides. What this pins is
-        // the other half of the contract: `assemble_pty_env` must not be the
-        // thing that PUTS one back, and the keys Paneflow owns are untouched.
         let env = assemble_pty_env(HashMap::new(), 1, 1, None);
         for key in env.keys() {
             assert!(
@@ -3421,8 +2698,6 @@ mod tests {
         );
     }
 
-    // US-019: foreground_command degrades gracefully (no panic, None) on a
-    // display-only terminal (child_pid == 0, no real PTY) on every platform.
     #[test]
     fn foreground_command_none_for_display_only() {
         let state = TerminalState::new_display_only(24, 80);
@@ -3432,9 +2707,6 @@ mod tests {
         );
     }
 
-    // `scan_output` reads the tail the engine materializes from live PTY
-    // output, which a display-only grid never produces. These two tests cover
-    // the detection logic itself, so they hand the lines over directly.
     #[test]
     fn scan_output_uses_multiline_framework_context() {
         let mut state = TerminalState::new_display_only(24, 80);
@@ -3499,10 +2771,6 @@ mod tests {
         assert!(all[2].1.contains("third needle"));
     }
 
-    // A display-only terminal (child_pid == 0, no real PTY) must resolve no CWD
-    // and, critically, must NOT reach the platform process-table FFI: on macOS
-    // `proc_pidinfo(0, …)` targets the kernel swapper, fails with EPERM, and
-    // would spam a misleading "shell may have exited" warning on every poll.
     #[test]
     fn cwd_now_none_for_display_only() {
         let state = TerminalState::new_display_only(24, 80);
@@ -3545,10 +2813,6 @@ mod tests {
         assert_eq!(state.pending_clipboard_ops.len(), 1);
     }
 
-    /// A tampered `session.json` line can carry live VT bytes: an OSC 8
-    /// clickable-link injection, an OSC 0 title spoof, a raw CSI, an ESC
-    /// introducer, a NUL, and a C1 control. The engine sanitizes on the way
-    /// in, so none of them reach the grid as a live sequence.
     #[test]
     fn restore_scrollback_strips_escape_and_osc_injection() {
         let hostile = "\x1b]8;;https://evil.example/\x07click\x1b]8;;\x07\
@@ -3577,9 +2841,6 @@ mod tests {
         );
     }
 
-    /// Extraction drains terminal history while excluding the active viewport
-    /// rows, so a restore cannot replay the previous visible frame ahead of
-    /// fresh shell output.
     #[test]
     fn extract_scrollback_drains_history_only() {
         let state = TerminalState::new_display_only(3, 80);
@@ -3656,10 +2917,6 @@ mod tests {
 
     #[test]
     fn output_generation_advances_on_pty_output() {
-        // US-010: `workspace.up` polls `output_generation` as its prefill
-        // readiness signal. A fresh terminal has produced nothing (0); the
-        // counter must advance once the shell emits output (Wakeup events
-        // drained by `sync`), proving the signal tracks real PTY activity.
         let mut state = TerminalState::new(None, 1, 1, Some((80, 24)), None, None)
             .expect("spawn a PTY-backed terminal");
         assert_eq!(
@@ -3670,11 +2927,6 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(250));
         state.write_to_pty_silent(b"echo PANEFLOW_GEN_OK\n".to_vec());
 
-        // Up to 12s. This test runs on every OS, and PowerShell (the Windows
-        // default shell) can cold-start slowly on a loaded CI runner before
-        // emitting its banner - output_generation only advances once the PTY
-        // produces any output. The loop breaks immediately on success, so the
-        // larger budget only costs wall-time when the signal never arrives.
         let mut advanced = false;
         for _ in 0..240 {
             std::thread::sleep(std::time::Duration::from_millis(50));

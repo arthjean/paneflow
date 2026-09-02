@@ -1,35 +1,12 @@
-//! Settings lifecycle + persistence + key handlers for `PaneFlowApp`.
-//!
-//! The settings *UI* - the Codex-style nav rail, the content panel, and the
-//! per-section bodies - lives in `crate::settings` (`chrome` + `tabs::*`). This
-//! module owns the glue on `PaneFlowApp`:
-//! - [`PaneFlowApp::open_settings_window`] / [`PaneFlowApp::close_settings`] -
-//!   toggle the embedded settings (set/clear `settings_section`).
-//! - [`PaneFlowApp::persist_setting`] - the shared cache-mutate + repaint +
-//!   off-thread write used by every settings control.
-//! - [`PaneFlowApp::handle_settings_key_down`] /
-//!   [`PaneFlowApp::handle_shortcut_recording`] - key routing for the font-picker
-//!   typeahead, Escape handling, and shortcut capture.
-
 use gpui::{Context, KeyDownEvent, ScrollHandle, Window};
 
 use crate::{PaneFlowApp, SettingsSection, config_writer, keybindings};
 
 impl PaneFlowApp {
-    /// Open the embedded settings (Codex-style). The Settings button and the
-    /// title-bar / macOS menu route here; it sets `settings_section`, and
-    /// `main.rs` then swaps the left rail for the settings nav and the content
-    /// area for the section panel. The name is kept for call-site compatibility
-    /// there is no separate settings *window* anymore.
     pub(crate) fn open_settings_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_settings_at(SettingsSection::General, window, cx);
     }
 
-    /// Open Settings directly on `section`.
-    ///
-    /// EP-005 US-017: the preset palette's "Manage presets..." entry lands on
-    /// the page that owns the selected preset's source, so the user does not
-    /// have to find it again after seeing it in the palette.
     pub(crate) fn open_settings_at(
         &mut self,
         section: SettingsSection,
@@ -47,63 +24,33 @@ impl PaneFlowApp {
         self.font_dropdown_open = false;
         self.font_search.clear();
         self.theme_dropdown_open = false;
-        // Clear any stale nav search so the landing row is always visible (a
-        // leftover query could filter the nav to a section that doesn't match
-        // the displayed page).
         self.clear_settings_search(cx);
         if section == SettingsSection::Shortcuts {
-            // The page is virtualized, so its rows have to exist before the
-            // first frame renders. `select_settings_section` does the same for
-            // the nav path; this is the deep-link one.
             self.rebuild_shortcut_rows(cx);
         }
-        // Warm the MCP bridge status off-thread so the MCP page can render its
-        // button label without ever doing config I/O during a frame.
         self.refresh_mcp_status(cx);
         self.settings_focus.focus(window, cx);
         cx.notify();
     }
 
-    /// Arm or disarm the Shortcuts page's key-capture mode.
-    ///
-    /// Arming clears the field so the next chord lands in an empty box; the
-    /// captured chord is then just the field's value, which keeps a single
-    /// visible filter state instead of a hidden second one.
-    ///
-    /// Disarming deliberately leaves the field alone. Clicking a row to rebind
-    /// disarms capture, and wiping the query there would drop the filter that
-    /// put the row on screen - re-collapsing its section and scrolling the
-    /// now-armed row out of sight.
     pub(crate) fn set_shortcut_capture(&mut self, active: bool, cx: &mut Context<Self>) {
         let changed = self.shortcut_capture_active != active;
         self.shortcut_capture_active = active;
         if active {
-            // Clearing the field notifies, and the observer on it rebuilds the
-            // filtered rows - no explicit rebuild needed on this arm.
             self.shortcut_search_input.update(cx, |input, cx| {
                 input.clear(cx);
             });
             self.recording_shortcut_idx = None;
         } else if changed {
-            // Leaving capture flips the match rule from "this exact chord" back
-            // to substring, so the visible rows change while the query does not
-            // - nothing else would tell the page to re-filter. Guarded on
-            // `changed` because every row click disarms capture on the way to
-            // recording, and an unconditional rebuild would re-seed the list
-            // (and scroll it) under the row the user just clicked.
             self.rebuild_shortcut_rows(cx);
         }
     }
 
-    /// Clear the Shortcuts-page filter and leave capture mode. The explicit
-    /// "start over" action, unlike [`Self::set_shortcut_capture`].
     pub(crate) fn clear_shortcut_filters(&mut self, cx: &mut Context<Self>) {
         self.shortcut_capture_active = false;
         self.shortcut_search_input.update(cx, |input, cx| {
             input.clear(cx);
         });
-        // Both halves of the filter moved at once, and the field's observer
-        // only knows about one of them.
         self.rebuild_shortcut_rows(cx);
     }
 
@@ -128,26 +75,17 @@ impl PaneFlowApp {
         }
     }
 
-    /// Drop stale scroll geometry when the settings surface is remounted,
-    /// changes page, or the window is resized. GPUI repopulates the handle from
-    /// the next `track_scroll` layout pass.
     pub(crate) fn reset_settings_scroll(&mut self) {
         self.settings_scroll = ScrollHandle::new();
         self.settings_drag = None;
     }
 
-    /// Reset the nav search box. Shared by open/close so a reopened settings
-    /// page always shows the full, unfiltered section list.
     fn clear_settings_search(&mut self, cx: &mut Context<Self>) {
         self.settings_search_input.update(cx, |inp, cx| {
             inp.clear(cx);
         });
     }
 
-    /// Apply a settings-control change. Mutates the render cache in memory for
-    /// instant feedback, repaints, then persists the field to disk off the GPUI
-    /// main thread (`smol::unblock`). `nested` routes into the `terminal` block;
-    /// a `Null` value clears the field.
     pub(crate) fn persist_setting(
         &mut self,
         nested: bool,
@@ -204,16 +142,10 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// The shell only binds when a PTY spawns, so a live terminal keeps the
-    /// one it was started with. Say so rather than restarting anything under
-    /// the user: a running session is work in progress.
     pub(crate) fn handle_default_shell_changed(&mut self, cx: &mut Context<Self>) {
         self.show_toast("Shell updated. New terminals will use it.", cx);
     }
 
-    /// Apply an Agents-panel-scoped settings change. This keeps
-    /// `agent_panel` writes as narrow read-modify-writes so profile settings
-    /// and future sibling fields survive notification toggles.
     pub(crate) fn persist_agent_panel_setting(
         &mut self,
         key: &'static str,
@@ -245,7 +177,6 @@ impl PaneFlowApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Font dropdown typeahead (Terminal page).
         if self.font_dropdown_open {
             let key = event.keystroke.key.as_str();
             match key {
@@ -272,10 +203,6 @@ impl PaneFlowApp {
             return;
         }
 
-        // Escape: close an open Terminal-page dropdown first, otherwise leave
-        // settings. Escape during shortcut recording or key capture never gets
-        // here - `intercept_shortcut_keystroke` consumes it upstream, before
-        // GPUI matches any binding.
         if event.keystroke.key == "escape" && self.recording_shortcut_idx.is_none() {
             if self.terminal_dropdown.is_some() {
                 self.terminal_dropdown = None;
@@ -290,18 +217,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// App-wide keystroke interceptor for the Shortcuts settings page.
-    ///
-    /// Registered through `App::intercept_keystrokes`, which is the *only*
-    /// hook that runs before GPUI matches a key binding. A `on_key_down` (or
-    /// even `capture_key_down`) listener is too late: when a binding matches
-    /// and its action is handled, `dispatch_key_event` returns without ever
-    /// calling `finish_dispatch_key_event`, so no key listener fires at all.
-    /// That is why pressing Cmd+Q to search for - or rebind - the Quit
-    /// shortcut used to quit the app instead.
-    ///
-    /// Returns `true` when the chord was consumed, in which case the caller
-    /// must call `cx.stop_propagation()` to suppress the action.
     pub(crate) fn intercept_shortcut_keystroke(
         &mut self,
         keystroke: &gpui::Keystroke,
@@ -311,12 +226,10 @@ impl PaneFlowApp {
         if self.settings_section != Some(SettingsSection::Shortcuts) {
             return false;
         }
-        // Modifiers held on the way to a real chord are not a chord.
         if keybindings::is_bare_modifier(keystroke) {
             return false;
         }
 
-        // Rebind recording takes precedence: the row is already armed.
         if self.recording_shortcut_idx.is_some() {
             self.handle_shortcut_recording(keystroke, window, cx);
             cx.notify();
@@ -333,11 +246,6 @@ impl PaneFlowApp {
             return true;
         }
 
-        // The chord goes straight into the search field: seeing what was
-        // pressed is the whole point, and it keeps one visible filter state
-        // rather than a hidden second one.
-        // Same reason: format_keystroke expects the `-`-separated spelling, and
-        // double-formatting a glyph string leaves it unmatchable.
         let formatted = keybindings::format_keystroke(&keystroke.unparse());
         self.shortcut_search_input.update(cx, |input, cx| {
             input.set_value(formatted, cx);
@@ -356,32 +264,22 @@ impl PaneFlowApp {
             return;
         };
 
-        // Ignore bare modifier presses (Shift alone, Ctrl alone, etc.)
         if keybindings::is_bare_modifier(keystroke) {
             return;
         }
 
-        // Escape cancels recording.
         if keystroke.key == "escape" {
             self.recording_shortcut_idx = None;
             cx.notify();
             return;
         }
 
-        // Resolve the action by the row's stable identity, NOT by indexing
-        // `DEFAULTS` (the displayed list chains macOS-only defaults, skips
-        // unbound rows, and appends user-only actions, so a positional index
-        // would rebind the wrong action and corrupt `paneflow.json`).
         let Some(action_name) = self.effective_shortcuts.get(idx).map(|e| e.action_name) else {
             self.recording_shortcut_idx = None;
             cx.notify();
             return;
         };
 
-        // `unparse` is the parseable form (`cmd-shift-d`). `to_string` is the
-        // Display impl - Apple glyphs on macOS, `❖` for Super on Linux - which
-        // `Keystroke::parse` cannot read back. Saving that wrote a chord no
-        // keypress could ever match while displacing the original default.
         let new_key = keystroke.unparse();
         if !config_writer::save_shortcut_checked(&new_key, action_name) {
             self.recording_shortcut_idx = None;
@@ -390,13 +288,10 @@ impl PaneFlowApp {
             return;
         }
 
-        // Re-apply keybindings from the updated config.
         let config = paneflow_config::loader::load_config();
         keybindings::apply_keybindings(cx, &config.shortcuts);
         self.effective_shortcuts = keybindings::effective_shortcuts(&config.shortcuts);
         self.recording_shortcut_idx = None;
-        // The rows carry indices into `effective_shortcuts` and render its key
-        // text, so they are stale the moment it is replaced.
         self.rebuild_shortcut_rows(cx);
         cx.notify();
     }

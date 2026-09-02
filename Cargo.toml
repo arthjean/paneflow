@@ -77,6 +77,7 @@ todo = "warn"
 unwrap_used = "warn"
 expect_used = "warn"
 unwrap_in_result = "warn"
+missing_safety_doc = "allow"
 
 # Required by GPUI - these forks must stay in sync with the pinned Zed rev
 # in src-app/Cargo.toml. When bumping GPUI rev, verify these still resolve.

@@ -208,10 +208,6 @@ pub struct SelectionRange {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Content {
     pub cells: Arc<[Cell]>,
-    /// One flag per row: whether that row's cells changed since the previous
-    /// snapshot. Every row is flagged when the whole grid was rebuilt, so a
-    /// consumer that mirrors the cells only has to convert the rows flagged
-    /// here.
     pub dirty_rows: Arc<[bool]>,
     pub cursor: Cursor,
     pub selection: Option<SelectionRange>,
@@ -260,16 +256,9 @@ pub struct Hyperlink {
 pub enum Scroll {
     Top,
     Bottom,
-    /// Relative viewport motion in viewport coordinates: positive
-    /// moves up into history, negative moves down toward the live bottom.
     Delta(i32),
 }
 
-/// Progress state a running program reported through OSC 9;4.
-///
-/// The variants mirror the ConEmu protocol libghostty decodes: a program
-/// either asks for the indicator to be removed or describes the shape it
-/// wants shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProgressState {
     Remove,
@@ -279,10 +268,6 @@ pub enum ProgressState {
     Pause,
 }
 
-/// One OSC 9;4 progress report.
-///
-/// `percent` is `None` when the program omitted a percentage, which the
-/// protocol allows for every state except `Set`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProgressReport {
     pub state: ProgressState,
@@ -297,19 +282,10 @@ pub enum BackendEvent {
     Title(String),
     WorkingDirectory(String),
     Progress(ProgressReport),
-    /// A desktop notification asked for with OSC 9 or OSC 777.
-    ///
-    /// OSC 9 carries only a body, so `title` is empty for it.
     DesktopNotification {
         title: String,
         body: String,
     },
-    /// A sequence libghostty parsed but does not implement.
-    ///
-    /// Diagnostics only: reported only once capture is enabled with
-    /// [`crate::DisplayTerminal::capture_unknown_sequences`], and never acted
-    /// on. `content` is the sequence payload with its non-printable bytes
-    /// escaped, and `truncated` says the capture limit cut it short.
     UnknownSequence {
         content: String,
         truncated: bool,

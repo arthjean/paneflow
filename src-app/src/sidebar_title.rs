@@ -1,46 +1,9 @@
-//! Normalization of CLI-written titles before they reach the sidebar.
-//!
-//! Coding agents bake status decoration into the OSC / session titles they
-//! emit (a leading `●` while answering, a `✓` or a zero-width character once
-//! done). Every title that ends up on a sidebar row goes through
-//! [`clean_sidebar_title`] first, so a label is what the human wrote and
-//! nothing else.
-
-/// Longest title a sidebar row keeps; the rest is elided with `…`.
 const MAX_SIDEBAR_TITLE_CHARS: usize = 240;
 
-/// Words a tab title keeps from the prompt that opened the session.
-///
-/// Enough to tell "fix the flaky worktree test" from "add the release
-/// checksum job", short enough that a rail full of them stays scannable.
 const PROMPT_TITLE_WORDS: usize = 6;
 
-/// And a character ceiling for those words, since six of them can still be
-/// six identifiers. Well under [`MAX_SIDEBAR_TITLE_CHARS`]: this one is about
-/// what a person reads at a glance, not about bounding a buffer.
 const PROMPT_TITLE_MAX_CHARS: usize = 48;
 
-/// Strip leading decoration glyphs and invisible characters that CLI
-/// agents (Claude Code, Codex, OpenCode, Pi, Amp) bake into their
-/// session / OSC titles to indicate status. Without this:
-/// - During response: "● Project overview" sits in the sidebar with
-///   a literal dot in front of the label.
-/// - After response: a completion glyph (`✓`, `⚡`, …) or a
-///   zero-width character (`U+200B`, `U+FEFF`, …) takes its place
-///   and shows as a phantom margin -- `trim()` doesn't strip these
-///   because they aren't whitespace per the Unicode standard, yet
-///   most fonts render them with non-zero advance width.
-///
-/// Implementation strategy: whitelist what *can* legitimately lead a
-/// human-written title (letters, digits, common opening punctuation)
-/// and strip everything else from the front in one pass. That covers
-/// the entire CLI-status-decoration family in a future-proof way --
-/// new spinner glyphs or completion icons get caught without code
-/// changes. Trailing whitespace is also normalized.
-///
-/// Returns `None` when nothing meaningful remains after stripping
-/// (the caller treats that the same as an empty title -- the row
-/// keeps its previous label rather than flashing blank).
 pub fn clean_sidebar_title(raw: &str) -> Option<String> {
     let normalized: String = raw
         .chars()
@@ -88,55 +51,45 @@ fn is_title_invisible_or_control(c: char) -> bool {
         )
 }
 
-/// Whitelist of characters that can legitimately *start* a sidebar
-/// title written by a human. Everything else (CLI status
-/// glyphs, emoji, zero-width characters, format/control codepoints)
-/// is treated as decoration and stripped by [`clean_sidebar_title`].
 fn is_title_meaningful_lead(c: char) -> bool {
     c.is_alphanumeric()
         || matches!(
             c,
-            // Quotes -- ASCII + Unicode opening forms
-            '"' | '\'' | '`'
-            | '\u{201C}' | '\u{201D}'  // "" curly double
-            | '\u{2018}' | '\u{2019}'  // '' curly single
-            | '\u{00AB}' | '\u{00BB}'  // « » guillemets
-            // Opening brackets / parens
-            | '(' | '[' | '{'
-            // Common title leads (hashtag, mention, code identifier)
-            | '#' | '@' | '_'
-            // Path / namespace separators
-            | '/' | '\\' | '~' | '.'
-            // Math / numeric leads
-            | '-' | '+' | '=' | '$'
-            | '\u{2013}' | '\u{2014}'  // - -
-            | '\u{2212}'               // − minus sign
-            // Currency
-            | '\u{00A3}' | '\u{00A5}' | '\u{20AC}' // £ ¥ €
+            '"' | '\''
+                | '`'
+                | '\u{201C}'
+                | '\u{201D}'
+                | '\u{2018}'
+                | '\u{2019}'
+                | '\u{00AB}'
+                | '\u{00BB}'
+                | '('
+                | '['
+                | '{'
+                | '#'
+                | '@'
+                | '_'
+                | '/'
+                | '\\'
+                | '~'
+                | '.'
+                | '-'
+                | '+'
+                | '='
+                | '$'
+                | '\u{2013}'
+                | '\u{2014}'
+                | '\u{2212}'
+                | '\u{00A3}'
+                | '\u{00A5}'
+                | '\u{20AC}'
         )
 }
 
-/// A tab title made from the first prompt of a session.
-///
-/// The opening words of what was asked, which is what tells one agent tab
-/// from another - the alternative being a rail of identical "Claude Code"
-/// rows. Deliberately not a summary: no model runs here, so naming costs
-/// nothing and cannot be slow, wrong, or unavailable.
-///
-/// `prompt` is UNTRUSTED text from the agent's hook payload. It goes through
-/// the same [`clean_sidebar_title`] every other CLI-written label does, which
-/// neutralizes control and bidi characters, folds the newlines a pasted
-/// prompt carries, and strips leading decoration.
-///
-/// Returns `None` when nothing usable remains - the caller leaves the tab's
-/// current title alone rather than blanking it.
 pub fn tab_title_from_prompt(prompt: &str) -> Option<String> {
     let cleaned = clean_sidebar_title(prompt)?;
     let mut title = String::new();
     for word in cleaned.split_whitespace().take(PROMPT_TITLE_WORDS) {
-        // Keep whole words: a title cut mid-identifier reads as corruption
-        // rather than as an abbreviation. The first word is kept whatever its
-        // length, so a single very long one still names the tab.
         if !title.is_empty()
             && title.chars().count() + 1 + word.chars().count() > PROMPT_TITLE_MAX_CHARS
         {
@@ -196,8 +149,6 @@ mod tests {
         );
     }
 
-    /// A pasted prompt arrives with newlines and indentation; a tab row is one
-    /// line.
     #[test]
     fn a_multiline_prompt_becomes_one_line() {
         let title = tab_title_from_prompt("update the changelog\n\n  - add EP-004\n  - bump")
@@ -206,7 +157,6 @@ mod tests {
         assert!(!title.contains('\n'));
     }
 
-    /// Six words can still be six identifiers, and a rail is not a paragraph.
     #[test]
     fn a_prompt_title_stays_within_its_character_budget() {
         let title = tab_title_from_prompt(
@@ -223,8 +173,6 @@ mod tests {
         );
     }
 
-    /// One word longer than the whole budget still names the tab - refusing
-    /// would leave the row on its "Tab 3" fallback for no good reason.
     #[test]
     fn a_single_overlong_word_is_elided_rather_than_dropped() {
         let word = "x".repeat(PROMPT_TITLE_MAX_CHARS + 20);
@@ -233,8 +181,6 @@ mod tests {
         assert!(title.ends_with('…'));
     }
 
-    /// The prompt is untrusted text on its way to a label: the same
-    /// neutralization every other CLI-written title gets.
     #[test]
     fn a_prompt_title_is_sanitized_like_any_other_label() {
         let title =

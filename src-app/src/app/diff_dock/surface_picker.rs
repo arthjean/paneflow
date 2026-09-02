@@ -1,20 +1,3 @@
-//! The side dock's surface picker: what the dock shows the first time it is
-//! opened, before the user has said what they want in it.
-//!
-//! The pane header's dock button used to drop straight into the git diff, which
-//! made "open the side panel" and "review changes" the same gesture even when
-//! the user wanted a shell or a file. The picker separates the two: opening the
-//! dock asks, and the answer is remembered for the workspace that gave it, so
-//! only that project's first open costs a click (Cursor / Codex both behave this
-//! way). The dock is detached per workspace ([`crate::app::cli_diff_dock`]), so
-//! the next project starts from the same question rather than inheriting an
-//! answer given for another repository.
-//!
-//! Three surfaces, matching the tabs the dock can actually host
-//! ([`super::model::DiffDockTab`]): Changes, Terminal, File. Nothing here opens
-//! a surface itself - each card routes to the exact entry point the tab strip's
-//! `+` menu uses, so the two doors into the dock cannot drift apart.
-
 use gpui::{
     AnyElement, ClickEvent, Context, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, StatefulInteractiveElement, Styled, Window, div, px, rgb, svg,
@@ -24,28 +7,13 @@ use super::render::render_diff_header_icon_button;
 use crate::PaneFlowApp;
 use crate::settings::components::with_alpha;
 
-/// Card side. Two cards plus their gap must clear the dock's minimum width
-/// (`DIFF_DOCK_PANEL_MIN_WIDTH`, 360 px) with the grid's own padding, which is
-/// what the guard test below pins.
 const CARD_WIDTH: f32 = 122.0;
 const CARD_HEIGHT: f32 = 98.0;
 const CARD_GAP: f32 = 12.0;
-/// Circular corner, not the cockpit's superellipse: the picker matches Cursor's
-/// own surface chooser, whose cards are plain rounded rectangles.
 const CARD_RADIUS: f32 = 10.0;
-/// Glyph-to-label distance inside a card.
 const CARD_ICON_GAP: f32 = 8.0;
-/// Padding around the wrapping grid, so a card never touches the dock edge.
 const GRID_PADDING: f32 = 16.0;
 
-/// The picker's ink: border, glyph, label.
-///
-/// Dark themes spend three literal greys rather than `ui.border` / `ui.muted` /
-/// `ui.text`, all of which sit a step brighter. The picker is a one-shot empty
-/// state, not cockpit chrome - it should recede until the pointer is over a
-/// card, which is exactly the register Cursor's own chooser is drawn in, and
-/// these are its measured values lifted by the four levels our background sits
-/// above theirs. Light themes take the tokens.
 fn card_ink(ui: crate::theme::UiColors) -> (Hsla, Hsla, Hsla) {
     if ui.base.l > 0.5 {
         (ui.border, ui.muted, ui.text)
@@ -58,7 +26,6 @@ fn card_ink(ui: crate::theme::UiColors) -> (Hsla, Hsla, Hsla) {
     }
 }
 
-/// One surface the dock can be opened onto.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum DiffDockSurface {
     Changes,
@@ -67,9 +34,6 @@ pub(crate) enum DiffDockSurface {
 }
 
 impl PaneFlowApp {
-    /// Answer the picker: dismiss it, remember that this workspace has chosen
-    /// once (so its later opens restore the last tab instead of asking again),
-    /// then route to the surface.
     pub(crate) fn choose_diff_dock_surface(
         &mut self,
         surface: DiffDockSurface,
@@ -79,21 +43,14 @@ impl PaneFlowApp {
         self.diff_dock.picker = false;
         self.diff_dock.picked = true;
         match surface {
-            // `Changes` is the permanent tab 0, so choosing it opens nothing -
-            // it just selects the tab the dismissed picker was covering.
             DiffDockSurface::Changes => self.select_diff_tab(0, cx),
             DiffDockSurface::Terminal => self.open_diff_terminal_tab(window, cx),
-            // Same as the `+` menu's File row: the Files tree is the picker, and
-            // a row there opens the document as a dock tab.
             DiffDockSurface::File => self.open_diff_file_picker(window, cx),
         }
         cx.notify();
     }
 }
 
-/// The picker's header: the same 40 px band the tab strip occupies, carrying
-/// only the dock's close button. Without it the picker would be a dead end -
-/// there is no tab strip to close the dock from while it is up.
 pub(super) fn render_diff_picker_header(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
@@ -117,9 +74,6 @@ pub(super) fn render_diff_picker_header(
         .into_any_element()
 }
 
-/// The card grid, centered in the dock body. Wraps rather than fixing a column
-/// count: at the dock's minimum width two cards fit per row, and a widened dock
-/// puts all three on one line.
 pub(super) fn render_diff_surface_picker(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
@@ -166,9 +120,6 @@ pub(super) fn render_diff_surface_picker(
         .into_any_element()
 }
 
-/// One card: glyph over label in a hairline rounded rectangle, no resting fill.
-/// That is the silhouette Cursor's picker uses, down to the 122x98 box, the
-/// 10 px circular corner and the flat neutral ink ([`card_ink`]).
 fn card(
     id: &'static str,
     icon: &'static str,
@@ -215,10 +166,6 @@ mod tests {
 
     #[test]
     fn two_cards_fit_the_narrowest_dock() {
-        // The grid wraps, so the layout only holds while at least two cards
-        // still fit the dock at its minimum width. One card per row would read
-        // as a list that forgot its labels, and a card clipped by the dock edge
-        // would swallow half its own hit target.
         let two_cards = 2. * CARD_WIDTH + CARD_GAP + 2. * GRID_PADDING;
         assert!(
             two_cards <= DIFF_DOCK_PANEL_MIN_WIDTH,

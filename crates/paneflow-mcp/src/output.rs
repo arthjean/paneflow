@@ -1,6 +1,3 @@
-/// Strip characters that could break out of a double-quoted XML-like
-/// attribute. Attributes are metadata only; terminal body bytes are preserved
-/// except for the explicit closing-sentinel neutralization below.
 pub fn sanitize_attr(value: &str) -> String {
     value
         .chars()
@@ -12,7 +9,6 @@ pub fn source_attr(label: &str) -> String {
     format!("source=\"{}\"", sanitize_attr(label))
 }
 
-/// Per-call fence id seeded from the OS-randomized `RandomState`.
 fn fence_id() -> String {
     use std::hash::{BuildHasher, Hasher};
     let value = std::collections::hash_map::RandomState::new()
@@ -28,9 +24,6 @@ fn neutralize_sentinel(body: &str) -> String {
     )
 }
 
-/// Wrap terminal text in an explicit untrusted marker. The body cannot forge
-/// the real closing sentinel because literal closers are neutralized and the
-/// actual pair carries a per-call id.
 pub fn wrap_untrusted(header_attrs: &str, body: &str) -> String {
     let id = fence_id();
     let body = neutralize_sentinel(body);

@@ -1,18 +1,10 @@
-//! Default keybinding tables (cross-platform + macOS-only layer).
-
-/// A default keybinding entry: keystroke string, action name, GPUI context filter.
 pub(super) struct DefaultBinding {
     pub(super) key: &'static str,
     pub(super) action_name: &'static str,
     pub(super) context: Option<&'static str>,
 }
 
-/// All default keybindings. Order matches the original registration order.
 pub(super) const DEFAULTS: &[DefaultBinding] = &[
-    // US-009: app-global split/workspace bindings use the `secondary`
-    // modifier so GPUI resolves to `cmd` on macOS and `ctrl` on Linux/Windows.
-    // `secondary` keeps Linux on Ctrl+Shift+… (no user-visible regression)
-    // while giving macOS users the expected Cmd+Shift+… shortcuts.
     DefaultBinding {
         key: "secondary-shift-d",
         action_name: "split_horizontally",
@@ -38,18 +30,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "close_workspace",
         context: None,
     },
-    // Ctrl+Q on Linux and Windows, Cmd+Q on macOS, where it also populates the
-    // "⌘Q" glyph next to the Quit PaneFlow menu item. Global context so the
-    // menu picks it up whether or not a terminal pane holds focus.
-    //
-    // This one deliberately shadows the shell. Bare Ctrl+Q is XON in a POSIX
-    // terminal (`IXON` is on by default, so Ctrl+S freezes output and Ctrl+Q
-    // resumes it), and readline's `quoted-insert` for anyone running
-    // `stty -ixon`. GPUI stops dispatching a keystroke once a binding handles
-    // it, so the PTY never sees this chord again. That is the IDE convention
-    // (Zed and VS Code both take Ctrl+Q on Linux) rather than the terminal one
-    // (GNOME Terminal and Ghostty leave it alone and quit on Ctrl+Shift+Q,
-    // which is `close_workspace` here). Paneflow follows the IDE side.
     DefaultBinding {
         key: "secondary-q",
         action_name: "quit",
@@ -110,9 +90,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "focus_down",
         context: None,
     },
-    // US-019 (orchestration-v2): cycle to the next pane whose agent waits
-    // for input, cross-workspace. `secondary-shift-j` is unclaimed (the
-    // taken set: d/e/w/n/q/t/z/=/s/a/g).
     DefaultBinding {
         key: "secondary-shift-j",
         action_name: "jump_next_waiting",
@@ -178,10 +155,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "close_tab",
         context: None,
     },
-    // US-020 (prd-cli-tab-hierarchy): cycle the active workspace's tabs.
-    // `secondary-]` / `secondary-[` are unclaimed (the taken set above:
-    // d/e/w/n/q/t/z/=/s/a/g plus digits), and `secondary-tab` keeps its
-    // existing meaning - next *workspace*, not next tab.
     DefaultBinding {
         key: "secondary-]",
         action_name: "next_tab",
@@ -222,22 +195,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "jump_next_prompt",
         context: Some("Terminal"),
     },
-    // Terminal recovery. Both actions existed and worked but had no default on
-    // any platform and no menu entry, so they were unreachable until someone
-    // bound them by hand in Settings > Shortcuts.
-    //
-    // `secondary-shift-k` is the Linux and Windows chord for this: kitty
-    // (`clear_terminal scroll`) and Ghostty both use Ctrl+Shift+K. macOS spells
-    // it ⌘K with no shift (iTerm2 "Clear Buffer", Terminal.app, Ghostty), so
-    // that spelling is added separately in `MACOS_ONLY_DEFAULTS` and this entry
-    // is the ⌘⇧K alias there. It cost `open_attention_queue` its original slot;
-    // the queue moved to `secondary-shift-a` because it is reachable from the
-    // UI and clearing the scrollback is not. FR-12 still holds: Ctrl+K
-    // kill-line is BARE ctrl, not ctrl+shift.
-    //
-    // `secondary-shift-r` follows iTerm2's ⌘R "Reset". It is distinct from
-    // `alt-r` (toggle_search_regex, Search context) and `ctrl-alt-r`
-    // (reveal_workspace_in_file_manager).
     DefaultBinding {
         key: "secondary-shift-k",
         action_name: "clear_scroll_history",
@@ -313,17 +270,11 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "toggle_search_regex",
         context: Some("Search"),
     },
-    // EP-006 US-018 - fan the open search out to every pane (fleet grep).
-    // Search context only, so no terminal chord is shadowed.
     DefaultBinding {
         key: "alt-f",
         action_name: "toggle_fleet_search",
         context: Some("Search"),
     },
-    // EP-006 US-019 - per-pane font zoom. These DO shadow readline's
-    // C-- (undo) / C-0 (digit-argument) in the focused terminal: the
-    // PRD's documented, remappable exception (Hard Constraint clavier),
-    // matching the zoom convention of gnome-terminal/Ghostty on Linux.
     DefaultBinding {
         key: "secondary-=",
         action_name: "font_size_increase",
@@ -339,8 +290,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "font_size_reset",
         context: Some("Terminal"),
     },
-    // US-022 - markdown pane navigation. Same chord vocabulary as the
-    // terminal pane so muscle memory transfers cleanly between pane types.
     DefaultBinding {
         key: "shift-pageup",
         action_name: "markdown_scroll_page_up",
@@ -376,33 +325,21 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "markdown_find_dismiss",
         context: Some("MarkdownSearch"),
     },
-    // US-003 (prd-git-diff-mode-2026-Q3.md): `secondary-shift-g` is
-    // Ctrl+Shift+G on Linux/Windows and Cmd+Shift+G on macOS. Toggles
-    // the dedicated Git Diff mode (AppMode::Diff).
     DefaultBinding {
         key: "secondary-shift-g",
         action_name: "open_diff_view",
         context: None,
     },
-    // Files right-sidebar toggle. Uses `secondary-alt-f` instead of
-    // `secondary-shift-f` so it never shadows the terminal search chord
-    // (`ctrl-shift-f` on Linux/Windows).
     DefaultBinding {
         key: "secondary-alt-f",
         action_name: "toggle_files_sidebar",
         context: None,
     },
-    // US-003 (prd-ai-in-diff-2026-Q3.md): copy the hunk under the cursor as a
-    // unified diff, only while the Git Diff view holds focus. Same chord as the
-    // terminal / markdown copies - disambiguated by the `DiffView` context.
     DefaultBinding {
         key: "ctrl-shift-c",
         action_name: "copy_diff_hunk",
         context: Some("DiffView"),
     },
-    // EP-003 US-009 (review redesign): keyboard-first review loop.
-    // Bare keys, scoped away from terminals and text widgets so focus children
-    // of the DiffView do not lose a keystroke.
     DefaultBinding {
         key: "]",
         action_name: "diff_next_hunk",
@@ -428,12 +365,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "diff_dismiss",
         context: Some("DiffView && !Terminal && !TextInput && !PaneflowTextArea"),
     },
-    // EP-005 US-018 (prd-file-editor-2026-Q3): the two chords the diff dock's
-    // `+` menu already advertises on its rows. `secondary-g` / `secondary-j`
-    // were free (only their `shift` variants were taken), and the context keeps
-    // them off shells, where bare Ctrl+G is BEL and Ctrl+J is LF. `CodeEditor`
-    // is excluded for the same reason: it is a text surface, and it is the very
-    // surface these chords open, so a caret inside it must keep its keystrokes.
     DefaultBinding {
         key: "secondary-g",
         action_name: "diff_new_file_tab",
@@ -444,11 +375,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "diff_new_terminal_tab",
         context: Some("!Terminal && !TextInput && !PaneflowTextArea && !CodeEditor"),
     },
-    // EP-001 (CLI Cockpit): Composer + broadcast
-    // groups. All three are unclaimed `secondary-shift-…` slots (taken set
-    // before this block: d/e/w/n/q/j/t/z/=/s/a/g) and none shadows a common
-    // shell/readline/TUI chord (FR-12) - Ctrl+Shift+Space/B/M mean nothing to
-    // readline, vim or nano. Remappable like every entry in this table.
     DefaultBinding {
         key: "secondary-shift-space",
         action_name: "open_composer",
@@ -464,11 +390,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
         action_name: "open_broadcast_groups",
         context: None,
     },
-    // EP-002 (cli-cockpit): Attention Queue + Launch Pad. The queue used to sit
-    // on `secondary-shift-k`, which the terminal convention wants for
-    // `clear_scroll_history` (see that binding above); `a` for "attention" is
-    // the mnemonic and shadows no shell/readline/TUI chord, same FR-12 test as
-    // `secondary-shift-l`.
     DefaultBinding {
         key: "secondary-shift-a",
         action_name: "open_attention_queue",
@@ -481,14 +402,6 @@ pub(super) const DEFAULTS: &[DefaultBinding] = &[
     },
 ];
 
-/// Platform-specific default bindings layered on top of [`DEFAULTS`].
-///
-/// US-010 binds `cmd-c` / `cmd-v` to terminal copy/paste on macOS so muscle
-/// memory from iTerm2 / Terminal.app / WezTerm works, and `cmd-k` clears the
-/// scrollback for the same reason. Kept empty on Linux (AC5) because Linux
-/// keyboards don't have a `cmd` key by default. The existing `ctrl-shift-c/v`
-/// Terminal bindings stay intact on both platforms - these are purely
-/// additive.
 #[cfg(target_os = "macos")]
 pub(super) const MACOS_ONLY_DEFAULTS: &[DefaultBinding] = &[
     DefaultBinding {
@@ -501,9 +414,6 @@ pub(super) const MACOS_ONLY_DEFAULTS: &[DefaultBinding] = &[
         action_name: "terminal_paste",
         context: Some("Terminal"),
     },
-    // ⌘K is the macOS spelling of "clear the scrollback" (iTerm2 "Clear
-    // Buffer", Terminal.app, Ghostty). The cross-platform `secondary-shift-k`
-    // entry stays as the ⌘⇧K alias; both reach the same action.
     DefaultBinding {
         key: "cmd-k",
         action_name: "clear_scroll_history",
@@ -547,11 +457,8 @@ mod tests {
         }
     }
 
-    // -- US-009 ---------------------------------------------------------
-
     #[test]
     fn us009_migrated_defaults_use_secondary() {
-        // AC1: the seven migrated actions must carry a `secondary-` prefix.
         let migrated = [
             "split_horizontally",
             "split_vertically",
@@ -584,8 +491,6 @@ mod tests {
 
     #[test]
     fn us009_terminal_copy_paste_untouched() {
-        // AC4: terminal copy/paste must keep `ctrl-shift-c/v` so Linux users
-        // retain the terminal-standard bindings and Ctrl+C stays SIGINT-safe.
         let copy = DEFAULTS
             .iter()
             .find(|d| d.action_name == "terminal_copy")
@@ -600,8 +505,6 @@ mod tests {
         assert_eq!(paste.key, "ctrl-shift-v");
         assert_eq!(paste.context, Some("Terminal"));
     }
-
-    // -- US-010 ---------------------------------------------------------
 
     #[cfg(target_os = "macos")]
     #[test]
@@ -620,8 +523,6 @@ mod tests {
         assert_eq!(paste.action_name, "terminal_paste");
         assert_eq!(paste.context, Some("Terminal"));
 
-        // Base DEFAULTS still hold the ctrl-shift-c/v entries - the macOS
-        // bindings are ADDITIVE, not replacements.
         assert!(
             DEFAULTS
                 .iter()
@@ -646,9 +547,6 @@ mod tests {
 
     #[test]
     fn us010_ctrl_c_never_bound_to_terminal_copy() {
-        // AC4: plain `ctrl-c` (without shift) must never reach terminal_copy
-        // on any platform - the PTY needs to receive it so running
-        // processes still get SIGINT.
         let leaked_actions: Vec<&'static str> = DEFAULTS
             .iter()
             .chain(MACOS_ONLY_DEFAULTS.iter())
@@ -660,8 +558,6 @@ mod tests {
             "ctrl-c must not appear in defaults (SIGINT safety); bound to: {leaked_actions:?}"
         );
     }
-
-    // -- US-012 ---------------------------------------------------------
 
     #[test]
     fn us012_secondary_q_bound_to_quit_on_every_platform() {
@@ -678,8 +574,6 @@ mod tests {
 
     #[test]
     fn us012_quit_is_not_also_a_platform_default() {
-        // `secondary` already resolves to cmd on macOS, so a second `cmd-q`
-        // entry would be a duplicate binding for the same action.
         assert!(MACOS_ONLY_DEFAULTS.iter().all(|d| d.action_name != "quit"));
     }
 }

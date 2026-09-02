@@ -1,16 +1,3 @@
-//! Custom GPUI `Element` for the diff body - virtualized, direct-paint.
-//!
-//! Replaces the per-row `div`+`StyledText` `uniform_list`, which re-ran Taffy
-//! flex layout AND line shaping for every visible row on every frame (~300
-//! Taffy nodes/frame across 3 split columns) and scrolled choppily in debug
-//! builds. This element is modeled on Paneflow's `TerminalElement` (which is
-//! the same approach Zed's `EditorElement` uses): it reports its full content
-//! height and is hosted inside an `overflow_y_scroll` div, computes the visible
-//! window from `window.content_mask()` (pixel math, no flex), shapes ONLY the
-//! visible lines via the frame-cached `text_system().shape_line`, and paints
-//! background quads + glyphs directly. Row data (`DisplayRow`/`SplitRow`) is
-//! built off-thread and consumed unchanged - zero changes to `rows.rs`.
-
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -31,8 +18,8 @@ use super::rows::{
     DisplayRow, FileSpan, HalfCell, HeaderParts, ROW_HEIGHT, RowKind, RowPalette, SplitRow,
 };
 
-const PAD: f32 = 6.0; // compact text inset
-const STAT_GAP: f32 = 16.0; // min gap between the path region and the right-aligned diffstat (US-006)
+const PAD: f32 = 6.0;
+const STAT_GAP: f32 = 16.0;
 const FILE_HEADER_ICON_X: f32 = 16.0;
 const FILE_HEADER_ICON_SLOT_W: f32 = 20.0;
 const FILE_HEADER_ICON_SIZE: f32 = 17.0;
@@ -41,15 +28,12 @@ const FILE_HEADER_RUST_ICON_SIZE: f32 = 20.0;
 const FILE_HEADER_PATH_X: f32 = 42.0;
 const FILE_HEADER_STAT_PAD_R: f32 = 14.0;
 const FILE_HEADER_SEPARATOR_H: f32 = 2.0;
-const HALF_PAD: f32 = 4.0; // split half-cell left padding (after the bar)
-const GUTTER_W: f32 = 36.0; // single line-number column FLOOR width (widened per max digits)
-const NUM_GAP: f32 = 6.0; // right padding inside the gutter (number → code gap)
-const GUTTER_PAD_L: f32 = 8.0; // left breathing room inside the derived gutter
-/// Pinned sticky file-header height. Slimmer than the inline 40px header card
-/// so the floating context bar stays unobtrusive while scrolling a file.
+const HALF_PAD: f32 = 4.0;
+const GUTTER_W: f32 = 36.0;
+const NUM_GAP: f32 = 6.0;
+const GUTTER_PAD_L: f32 = 8.0;
 const STICKY_HEADER_HEIGHT: f32 = 24.0;
-// Zed's gutter diff-hunk strip width: floor(0.275 * line_height) = 4px at ROW_HEIGHT 18.
-const BAR_W: f32 = 4.0; // colored hunk-indicator bar
+const BAR_W: f32 = 4.0;
 const DELETED_BAR_DASH_H: f32 = 1.0;
 const DELETED_BAR_DASH_STEP: f32 = 2.0;
 const FOLD_RADIUS: f32 = 6.0;
@@ -61,25 +45,13 @@ const FOLD_CHEVRON_OFFSET: f32 = 4.0;
 const PHANTOM_HATCH_SPACING: f32 = 8.0;
 const PHANTOM_HATCH_STROKE: f32 = 1.0;
 const SPLIT_DIVIDER_W: f32 = 3.0;
-const PAD2: f32 = 6.0; // gap between the hunk bar and the line-number gutter
+const PAD2: f32 = 6.0;
 
-/// The row source for one column - either unified or side-by-side.
-///
-/// Each variant carries its precomputed cumulative row offsets (`offsets[i]` =
-/// top of row `i`, `offsets[len]` = total content height) and widest line
-/// number. Both are derived ONCE off the per-frame path - in
-/// [`super::view::Column::recompute_display`] - and shared as an `Rc`, so
-/// `request_layout` / `prepaint` never re-walk every row (previously two O(N)
-/// `Vec<f32>` allocations per column per frame).
 pub enum DiffBody {
     Unified {
         rows: Rc<Vec<DisplayRow>>,
         offsets: Rc<Vec<f32>>,
         max_line_no: u32,
-        /// Per-file horizontal-scroll spans (widest line per file) + live
-        /// per-file horizontal offsets (px), lockstep with `rows`. The element
-        /// shifts each file's code left by its own offset; everything else
-        /// (gutter, headers, sticky bar) stays pinned.
         spans: Rc<Vec<FileSpan>>,
         h_offsets: Rc<Vec<f32>>,
     },
@@ -87,10 +59,6 @@ pub enum DiffBody {
         rows: Rc<Vec<SplitRow>>,
         offsets: Rc<Vec<f32>>,
         max_line_no: u32,
-        /// Per-file horizontal-scroll spans plus live split-side horizontal
-        /// offsets (px), lockstep with `rows`. The element shifts each file
-        /// half's code left by its own offset; everything else (gutter, headers,
-        /// sticky bar) stays pinned.
         spans: Rc<Vec<FileSpan>>,
         h_offsets: Rc<Vec<f32>>,
     },
@@ -104,9 +72,6 @@ impl DiffBody {
         }
     }
 
-    /// Widest line number anywhere in the body (across both sides), used to size
-    /// the gutter so wide line numbers never clip past its left edge. Precomputed
-    /// at build time; `0` for an empty body.
     fn max_line_no(&self) -> u32 {
         match self {
             DiffBody::Unified { max_line_no, .. } | DiffBody::Split { max_line_no, .. } => {
@@ -115,23 +80,18 @@ impl DiffBody {
         }
     }
 
-    /// Cheap clone of the shared cumulative-offset vector (length `len + 1`).
-    /// Returned as an owned `Rc` so the caller can mutate other `self` fields
-    /// (e.g. `gutter_w`) without holding a borrow of `self.body`.
     fn offsets_rc(&self) -> Rc<Vec<f32>> {
         match self {
             DiffBody::Unified { offsets, .. } | DiffBody::Split { offsets, .. } => offsets.clone(),
         }
     }
 
-    /// Per-file scroll spans (widest line + header row per file).
     fn spans_rc(&self) -> Rc<Vec<FileSpan>> {
         match self {
             DiffBody::Unified { spans, .. } | DiffBody::Split { spans, .. } => spans.clone(),
         }
     }
 
-    /// Live horizontal offsets (px), indexed by mode/file/side.
     fn h_offsets_rc(&self) -> Rc<Vec<f32>> {
         match self {
             DiffBody::Unified { h_offsets, .. } | DiffBody::Split { h_offsets, .. } => {
@@ -141,7 +101,6 @@ impl DiffBody {
     }
 }
 
-/// One solid rectangle to paint (row / cell background, divider, word-diff bg).
 struct Quad {
     bounds: Bounds<Pixels>,
     color: Hsla,
@@ -153,8 +112,6 @@ struct RoundedQuad {
     corners: Corners<Pixels>,
 }
 
-/// One shaped text fragment to paint at `origin`, optionally clipped to `clip`
-/// (used to keep a split half's long line from bleeding past its column).
 struct Glyphs {
     origin: Point<Pixels>,
     line: ShapedLine,
@@ -177,7 +134,6 @@ struct ImagePaint {
     image: Arc<RenderImage>,
 }
 
-/// Prepaint output: the fully-resolved draw lists for the visible window only.
 pub struct DiffPrepaint {
     quads: Vec<Quad>,
     rounded_quads: Vec<RoundedQuad>,
@@ -185,9 +141,6 @@ pub struct DiffPrepaint {
     glyphs: Vec<Glyphs>,
     hatches: Vec<HatchPath>,
     scrollbars: Vec<RoundedQuad>,
-    /// Pinned sticky-header draw list, painted AFTER the body (and after
-    /// `glyphs`) so it floats over the scrolling rows. Empty when the viewport
-    /// top sits above the first file's inline header (nothing to pin yet).
     sticky_quads: Vec<Quad>,
     sticky_images: Vec<ImagePaint>,
     sticky_glyphs: Vec<Glyphs>,
@@ -199,18 +152,11 @@ pub struct DiffElement {
     font: Font,
     font_size: Pixels,
     line_height: Pixels,
-    /// Gutter column width, derived each prepaint from the body's widest line
-    /// number (floor [`GUTTER_W`]). A field so the layout helpers read one
-    /// resolved value instead of threading it through every signature.
     gutter_w: Pixels,
 }
 
 impl DiffElement {
     pub fn new(body: DiffBody, palette: RowPalette) -> Self {
-        // The mono family is constant (always the embedded default) and a fresh
-        // `DiffElement` is built every frame, so resolve it once per thread and
-        // clone the cheap `SharedString` handle instead of re-resolving + heap-
-        // allocating a family string on every render.
         thread_local! {
             static MONO_FAMILY: SharedString =
                 crate::terminal::element::resolve_font_family(None).into();
@@ -232,9 +178,6 @@ impl DiffElement {
         }
     }
 
-    /// Split a line into `TextRun`s: the syntax runs carry their own color, the
-    /// gaps fall back to `default`. With syntax off, `syntax` is empty → one
-    /// run. The run lengths sum to `text.len()`, which `shape_line` requires.
     fn text_runs(
         &self,
         text: &str,
@@ -259,7 +202,7 @@ impl DiffElement {
             let start = r.start.min(len);
             let end = r.end.min(len);
             if start < ix || start >= end {
-                continue; // defensive: skip malformed/overlapping ranges
+                continue;
             }
             if start > ix {
                 runs.push(run(start - ix, default));
@@ -273,7 +216,6 @@ impl DiffElement {
         runs
     }
 
-    /// Shape a styled line (main text column).
     fn shape(
         &self,
         window: &mut Window,
@@ -301,8 +243,6 @@ impl DiffElement {
             .shape_line(text.clone(), self.font_size, &runs, None)
     }
 
-    /// Shape a single line in a specific font weight (EP-002 US-006: the
-    /// semibold basename segment of a file header). One run, one color.
     fn shape_weighted(
         &self,
         window: &mut Window,
@@ -392,10 +332,6 @@ impl DiffElement {
         });
     }
 
-    /// Paint a compact changed-file row: file-type icon, muted directory
-    /// prefix, emphasized basename, right-aligned diffstat, and trailing
-    /// actions. Drives BOTH the inline file header and the pinned sticky bar so
-    /// the two never drift.
     #[allow(clippy::too_many_arguments)]
     fn paint_file_header(
         &self,
@@ -414,7 +350,6 @@ impl DiffElement {
         let p = &self.palette;
         let lh = self.line_height;
         let bounds = Bounds::new(origin, size(width, row_h));
-        // Card / sticky background.
         quads.push(Quad {
             bounds,
             color: if sticky {
@@ -423,9 +358,6 @@ impl DiffElement {
                 p.header_bg
             },
         });
-        // A sticky bar floats with a bottom separator; an inline card is
-        // divided from the row above it by a top separator. The separator uses
-        // the diff body background so it reads as spacing between surfaces.
         let sep_h = px(FILE_HEADER_SEPARATOR_H);
         let sep_y = if sticky {
             origin.y + row_h - sep_h
@@ -442,7 +374,6 @@ impl DiffElement {
 
         let ty = origin.y + (row_h - lh) / 2.0;
 
-        // Right-aligned diffstat: "+N" (added, green) then "-N" (deleted, red).
         let stat_text = format!("+{} -{}", parts.added, parts.removed);
         let split = stat_text.find(" -").unwrap_or(stat_text.len());
         let stat_runs = [(0..split, p.add_fg), (split..stat_text.len(), p.del_fg)];
@@ -457,10 +388,6 @@ impl DiffElement {
             clip: Some(bounds),
         });
 
-        // Path region [path_x, region_right). The basename is emphasized and
-        // NEVER truncated; the directory prefix is muted and gives way first -
-        // trailing-aligned into its shrunken slot so the immediate parent dir
-        // survives the clip.
         let region_right = (stat_x - px(STAT_GAP)).max(path_x);
         let avail = (region_right - path_x).max(px(0.));
         let base_line =
@@ -485,7 +412,7 @@ impl DiffElement {
             });
         } else {
             let base_x = path_x + dir_avail;
-            let dir_origin_x = base_x - dw; // overflows left; masked by the clip
+            let dir_origin_x = base_x - dw;
             glyphs.push(Glyphs {
                 origin: point(dir_origin_x, ty),
                 line: dir_line,
@@ -499,7 +426,6 @@ impl DiffElement {
         }
     }
 
-    /// Shape a single-color string (gutter numbers, signs, headers).
     fn shape_plain(&self, window: &mut Window, text: SharedString, color: Hsla) -> ShapedLine {
         let runs = [TextRun {
             len: text.len(),
@@ -769,7 +695,6 @@ impl DiffElement {
         }
     }
 
-    /// Emit draw commands for one unified row at top-left `origin`.
     #[allow(clippy::too_many_arguments)]
     fn layout_unified(
         &self,
@@ -793,13 +718,10 @@ impl DiffElement {
 
         match row.kind {
             RowKind::FileHeader => match &row.header {
-                // EP-002 US-006: structured header (icon + path + diffstat).
-                // Always present for header rows.
                 Some(parts) => self.paint_file_header(
                     window, cx, parts, origin, width, row_h, collapsed, false, quads, images,
                     glyphs,
                 ),
-                // Defensive fallback for the impossible header-less case.
                 None => {
                     quads.push(Quad {
                         bounds: row_bounds,
@@ -836,9 +758,6 @@ impl DiffElement {
                 );
             }
             RowKind::Context | RowKind::Added | RowKind::Removed => {
-                // (row-bg wash, gutter tint, opaque hunk-bar color). EP-002
-                // US-007: context now gets a faint document wash instead of the
-                // bare window background.
                 let (bg, gutter_bg, bar_color) = match row.kind {
                     RowKind::Added => (Some(p.add_bg), p.add_gutter_bg, Some(p.add_bar)),
                     RowKind::Removed => (Some(p.del_bg), p.del_gutter_bg, Some(p.del_bar)),
@@ -850,19 +769,13 @@ impl DiffElement {
                         color: bg,
                     });
                 }
-                // EP-002 US-007: gutter rail - a slightly stronger tint over the
-                // line-number column (incl. the hunk-bar lane) so the gutter
-                // reads as a structural rail on every content row.
                 quads.push(Quad {
                     bounds: Bounds::new(origin, size(px(BAR_W + PAD2) + self.gutter_w, row_h)),
                     color: gutter_bg,
                 });
-                // Zed-style colored hunk-indicator bar at the far left.
                 if let Some(c) = bar_color {
                     Self::push_hunk_bar(origin, lh, c, row.kind == RowKind::Removed, quads);
                 }
-                // One line-number gutter (Zed shows a single merged display-row
-                // number: new line for adds/context, old line for deletes).
                 let line_no = row.new_no.or(row.old_no);
                 let num_color = match row.kind {
                     RowKind::Added => p.gutter_add,
@@ -877,10 +790,6 @@ impl DiffElement {
                     num_color,
                     glyphs,
                 );
-                // Text - no +/- sign column (the bar + wash convey status). The
-                // code shifts left by this file's horizontal offset; the gutter
-                // (painted above) stays pinned and the clip holds the shifted
-                // text inside the code column.
                 let text_x = origin.x + px(BAR_W + PAD2) + self.gutter_w;
                 let code_x = text_x - h_offset;
                 if !row.text.is_empty() {
@@ -898,7 +807,6 @@ impl DiffElement {
         }
     }
 
-    /// Emit draw commands for one split row at top-left `origin`.
     #[allow(clippy::too_many_arguments)]
     fn layout_split(
         &self,
@@ -922,7 +830,6 @@ impl DiffElement {
         let row_bounds = Bounds::new(origin, size(width, row_h));
 
         match row {
-            // EP-002 US-006: same structured header as the unified view.
             SplitRow::Header(parts) => {
                 self.paint_file_header(
                     window, cx, parts, origin, width, row_h, collapsed, false, quads, images,
@@ -986,7 +893,6 @@ impl DiffElement {
                     glyphs,
                     hatches,
                 );
-                // Divider.
                 quads.push(Quad {
                     bounds: Bounds::new(point(origin.x + half_w, origin.y), size(divider_w, lh)),
                     color: p.context_bg,
@@ -1005,7 +911,6 @@ impl DiffElement {
         }
     }
 
-    /// One half-cell of a split row, occupying `[origin.x, origin.x + width)`.
     #[allow(clippy::too_many_arguments)]
     fn layout_half(
         &self,
@@ -1025,7 +930,6 @@ impl DiffElement {
             CellKind::Added => (Some(p.add_bg), p.add_gutter_bg, Some(p.add_bar)),
             CellKind::Removed => (Some(p.del_bg), p.del_gutter_bg, Some(p.del_bar)),
             CellKind::Phantom => (Some(p.phantom_bg), p.gutter_bg, None),
-            // EP-002 US-007: faint document wash on unchanged code.
             CellKind::Context => (Some(p.context_bg), p.gutter_bg, None),
         };
         if let Some(bg) = bg {
@@ -1041,14 +945,12 @@ impl DiffElement {
                 Bounds::new(point(hatch_x, origin.y), size(hatch_w, lh)),
                 hatches,
             );
-            return; // empty gap: no hunk bar, number, or code text
+            return;
         }
-        // EP-002 US-007: gutter rail over this half's line-number column.
         quads.push(Quad {
             bounds: Bounds::new(origin, size(px(BAR_W + HALF_PAD) + self.gutter_w, lh)),
             color: gutter_bg,
         });
-        // Zed-style colored hunk-indicator bar at the half's left edge.
         if let Some(c) = bar_color {
             Self::push_hunk_bar(origin, lh, c, cell.kind == CellKind::Removed, quads);
         }
@@ -1091,10 +993,6 @@ impl DiffElement {
     ) {
         let Some(n) = n else { return };
         let line = self.shape_plain(window, n.to_string().into(), color);
-        // Right-align within the derived gutter column [x, x + gutter_w) (Zed
-        // places line numbers flush-right with a small gap before the code),
-        // clamped so very wide numbers don't underflow past the gutter's left
-        // edge.
         let right_x = (x + self.gutter_w - px(NUM_GAP) - line.width()).max(x);
         glyphs.push(Glyphs {
             origin: point(right_x, y),
@@ -1125,9 +1023,6 @@ impl Element for DiffElement {
     ) -> (LayoutId, ()) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        // Full content height (sum of variable row heights) - the hosting
-        // `overflow_y_scroll` div clips/scrolls. Reads the precomputed offsets
-        // (no per-frame walk).
         let h = px(self.body.offsets_rc().last().copied().unwrap_or(0.0));
         style.size.height = Length::Definite(h.into());
         (window.request_layout(style, [], cx), ())
@@ -1144,22 +1039,15 @@ impl Element for DiffElement {
     ) -> Self::PrepaintState {
         let row_count = self.body.len();
 
-        // Variable-height layout: cumulative top offsets per row (precomputed,
-        // shared). Cull against them (binary search) instead of a uniform line
-        // height.
         let offsets = self.body.offsets_rc();
         let mask = window.content_mask();
         let vtop = f32::from(mask.bounds.origin.y - bounds.origin.y).max(0.0);
         let vbot = vtop + f32::from(mask.bounds.size.height);
-        // First row whose top is at/above the viewport top; last row (exclusive)
-        // whose top is still above the viewport bottom.
         let first = offsets
             .partition_point(|&o| o <= vtop)
             .saturating_sub(1)
             .min(row_count);
         let last = offsets.partition_point(|&o| o < vbot).min(row_count);
-        // Diagnostic: fires only if the clip rect did NOT bound the visible
-        // window (i.e. content_mask == full content height) → culling broken.
         if last.saturating_sub(first) > 200 {
             log::warn!(
                 "diff element: visible {first}..{last} = {} of {row_count} rows - culling off?",
@@ -1167,13 +1055,7 @@ impl Element for DiffElement {
             );
         }
 
-        // Derive the gutter width from the body's widest line number so 5-digit
-        // line numbers in large files never clip past the gutter's left edge.
-        // One shaped digit gives the exact monospace advance.
         let digits = {
-            // Count decimal digits by integer division - robust across libm
-            // implementations, unlike `log10().floor()` whose rounding can be
-            // off-by-one at exact powers of ten (log10(1000) may be 2.9999998).
             let mut n = self.body.max_line_no().max(1);
             let mut count = 0usize;
             while n > 0 {
@@ -1188,8 +1070,6 @@ impl Element for DiffElement {
         );
         self.gutter_w = px((GUTTER_PAD_L + digits as f32 * digit_w + NUM_GAP).max(GUTTER_W));
 
-        // Per-file horizontal scroll inputs (spans + live offsets), read once so
-        // the shaping loop offsets each file's code without re-borrowing `body`.
         let spans = self.body.spans_rc();
         let h_offsets = self.body.h_offsets_rc();
         let width = bounds.size.width;
@@ -1205,16 +1085,12 @@ impl Element for DiffElement {
         let mut sticky_images = Vec::with_capacity(1);
         let mut sticky_glyphs = Vec::with_capacity(3);
 
-        // Clone the Rc so the borrow of `self.body` doesn't conflict with the
-        // `&mut self` shaping calls below.
         match &self.body {
             DiffBody::Unified { rows, .. } => {
                 let rows = rows.clone();
                 for i in first..last {
                     let origin = point(bounds.origin.x, bounds.origin.y + px(offsets[i]));
                     let row_h = px(offsets[i + 1] - offsets[i]);
-                    // A file is folded when the row after its header is another
-                    // header (or EOF) - collapsed files emit a header-only row.
                     let collapsed = rows
                         .get(i + 1)
                         .is_none_or(|r| r.kind == RowKind::FileHeader);
@@ -1239,7 +1115,6 @@ impl Element for DiffElement {
                         &mut hatches,
                     );
                 }
-                // Pinned sticky header for the file under the viewport top.
                 let cur = spans
                     .partition_point(|span| span.header_row <= first)
                     .checked_sub(1)
@@ -1249,8 +1124,6 @@ impl Element for DiffElement {
                 if let Some((file_idx, hidx)) = cur
                     && offsets[hidx] < vtop
                 {
-                    // Next file header within the slide-up band → push the sticky
-                    // up so the incoming file's inline header displaces it.
                     let nh = spans.get(file_idx + 1).map(|span| span.header_row);
                     let mut sticky_y = mask.bounds.origin.y;
                     if let Some(nh) = nh {
@@ -1325,7 +1198,6 @@ impl Element for DiffElement {
                         &mut hatches,
                     );
                 }
-                // Pinned sticky header for the file under the viewport top.
                 let cur = spans
                     .partition_point(|span| span.header_row <= first)
                     .checked_sub(1)
@@ -1459,8 +1331,6 @@ impl Element for DiffElement {
                         .paint(g.origin, lh, TextAlign::Left, None, window, cx);
                 }
             }
-            // Sticky header floats above the scrolled body: paint its quads then
-            // glyphs LAST so they overlay the rows that scroll underneath.
             for q in &layout.sticky_quads {
                 window.paint_quad(fill(q.bounds, q.color));
             }

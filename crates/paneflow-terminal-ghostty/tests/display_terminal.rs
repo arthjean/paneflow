@@ -312,8 +312,6 @@ fn search_selection_links_and_scrollback_use_fresh_owned_data() {
         Some("https://example.com".into())
     );
 
-    // Push `first` and `second` into real history while keeping the newer
-    // lines in the active viewport.
     terminal
         .feed(b"\r\nthird\r\nfourth\r\nfifth\r\nsixth")
         .unwrap();
@@ -407,15 +405,11 @@ fn absolute_scroll_rows_rebase_on_the_live_viewport() {
     let history_size = terminal.snapshot().unwrap().history_size;
     assert!(history_size >= 2, "fixture needs at least two history rows");
 
-    // Do not snapshot between these commands. Each row must be converted from
-    // Ghostty's live viewport, not from the UI snapshot captured above.
     for row in [0, 1, history_size] {
         terminal.scroll_to_viewport_row(row).unwrap();
     }
     assert_eq!(terminal.snapshot().unwrap().display_offset, 0);
 
-    // Row coordinates stay pinned to the old content when output extends the
-    // history between two drag targets.
     terminal.scroll_to_viewport_row(1).unwrap();
     terminal.feed(b"\r\nnew").unwrap();
     terminal.scroll_to_viewport_row(1).unwrap();

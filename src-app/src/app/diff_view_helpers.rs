@@ -1,6 +1,3 @@
-//! Multi-worktree diff open handlers + worktree collection helpers,
-//! extracted from `event_handlers.rs` (US-055 code-motion).
-
 use gpui::{AppContext, Context, Window};
 
 use crate::PaneFlowApp;
@@ -22,9 +19,6 @@ fn push_unique_worktree(
 }
 
 impl PaneFlowApp {
-    /// US-003 (prd-multi-worktree-diff) - action handler: open the
-    /// multi-worktree diff view for the *active* workspace's repo. A no-op
-    /// when the active workspace has no resolved `repo_root` (not a git repo).
     pub(crate) fn handle_open_multi_diff(
         &mut self,
         _: &crate::app::actions::OpenMultiDiff,
@@ -41,13 +35,6 @@ impl PaneFlowApp {
         self.open_multi_diff_for_repo(repo_root, window, cx);
     }
 
-    /// Gather the sibling-worktree seed for a repo: one [`crate::diff::DiffWorktree`]
-    /// per open workspace whose `repo_root` matches. US-005 of
-    /// prd-git-diff-mode-2026-Q3.md extracted this from `open_multi_diff_for_repo`
-    /// so the dedicated Diff mode (`rebuild_diff_view`) and the workspace-tab
-    /// path share one source of truth. Pure in-memory read; git metadata was resolved
-    /// when the workspace was created, so this is safe to call on the main
-    /// thread.
     pub(crate) fn collect_diff_worktrees(
         &self,
         repo_root: &std::path::Path,
@@ -70,16 +57,10 @@ impl PaneFlowApp {
         worktrees
     }
 
-    /// US-011: the active workspace as a single-element worktree seed (Project
-    /// scope). Empty when there is no active workspace. Pure in-memory read.
     pub(crate) fn collect_project_worktrees(&self) -> Vec<crate::diff::DiffWorktree> {
         self.workspaces
             .get(self.active_idx)
             .map(|ws| {
-                // Discussion #41: the seed follows the active tab. A tab bound
-                // to a worktree reviews that checkout, so switching tab
-                // switches what Project scope shows - the workspace root is
-                // only the answer for an unbound tab.
                 let tab = ws.active_tab();
                 let (path, branch) = match tab.worktree.as_ref() {
                     Some(worktree) => (
@@ -99,9 +80,6 @@ impl PaneFlowApp {
             .unwrap_or_default()
     }
 
-    /// US-014: every open workspace grouped by canonicalized `repo_root`
-    /// (Multi-project scope). `BTreeMap` keying gives stable repo ordering;
-    /// workspaces with no resolved repo are skipped. Pure in-memory read.
     pub(crate) fn collect_multiproject_groups(&self) -> Vec<crate::diff::RepoGroup> {
         use std::collections::BTreeMap;
         let mut map: BTreeMap<
@@ -137,16 +115,12 @@ impl PaneFlowApp {
         map.into_values().map(|(group, _)| group).collect()
     }
 
-    /// EP-002 US-007: the diff opens as its own workspace tab. A pane holds a
-    /// single surface, so hosting the diff inside an existing pane would evict
-    /// whatever runs there.
     pub(crate) fn open_multi_diff_for_repo(
         &mut self,
         repo_root: std::path::PathBuf,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Gather sibling worktrees across all workspaces sharing this repo.
         let worktrees = self.collect_diff_worktrees(&repo_root);
 
         let ws_idx = self.active_idx;
@@ -165,8 +139,6 @@ impl PaneFlowApp {
     }
 }
 
-/// US-013: normalize a worktree path for dedup so the same checkout only gets
-/// one diff column even when several workspaces/panes point at it.
 fn norm_path(p: &std::path::Path) -> String {
     let resolved = normalize_lexically(p);
     let s = resolved.to_string_lossy().into_owned();

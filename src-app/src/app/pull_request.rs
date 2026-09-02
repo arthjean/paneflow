@@ -1,16 +1,3 @@
-//! Whether a branch shown in the rail already has a pull request.
-//!
-//! The rail's other optional lines read files: `HEAD` for the branch, a
-//! `git diff` for the counts. This one is a network answer, so it is cached
-//! per `(repository, branch)`, refreshed on the same 30 s tick that refreshes
-//! the git state, and only ever fetched while the `PR` switch is on.
-//!
-//! `gh` rather than `api.github.com` directly: it already holds the user's
-//! credentials, follows GitHub Enterprise hosts, and resolves which repository
-//! a directory belongs to. The cost is that this is GitHub-only - a GitLab or
-//! Gitea checkout simply never gets an icon, which is also what happens when
-//! `gh` is missing or logged out.
-
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -18,15 +5,10 @@ use gpui::{Context, Hsla, Rgba};
 
 use crate::PaneFlowApp;
 
-/// How long a lookup stays good. Long enough that opening and closing tabs
-/// does not re-query, short enough that a PR opened from the terminal shows up
-/// while you are still in the same sitting.
 const TTL: Duration = Duration::from_secs(300);
-/// Wall-clock bound for one `gh` call, well under the 30 s tick.
 const DEADLINE: Duration = Duration::from_secs(15);
 const STDOUT_CAP: u64 = 256 * 1024;
 
-/// A branch's pull request, in GitHub's own vocabulary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PrState {
     Draft,
@@ -36,12 +18,6 @@ pub(crate) enum PrState {
 }
 
 impl PrState {
-    /// GitHub's status colors, in Primer's light and dark values.
-    ///
-    /// Borrowed rather than mapped onto Paneflow's own palette: these four
-    /// colors are what a pull request means to anyone who has used GitHub, and
-    /// a green "merged" or a purple "open" would read as a different state
-    /// rather than as a house style.
     pub(crate) fn color(self, ui: crate::theme::UiColors) -> Hsla {
         let light = ui.surface.l > 0.5;
         let hex = match (self, light) {
@@ -63,7 +39,6 @@ impl PrState {
     }
 }
 
-/// The pull request a branch is carried by, as the rail needs it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PullRequest {
     pub number: u64,
@@ -71,23 +46,14 @@ pub(crate) struct PullRequest {
 }
 
 struct Cached {
-    /// `None` means "asked, and this branch has no pull request" - a real
-    /// answer worth caching, not a missing one.
     value: Option<PullRequest>,
     at: Instant,
 }
 
-/// Pull requests by `(repository root, branch)`.
 #[derive(Default)]
 pub(crate) struct PrStates {
     entries: HashMap<(String, String), Cached>,
-    /// Lookups in flight, so a 30 s tick landing on a slow `gh` does not stack
-    /// a second call on the same branch.
     inflight: HashSet<(String, String)>,
-    /// Repositories `gh` cannot answer for: not installed, logged out, or not
-    /// a GitHub remote. Asked once, never again this session - the answer does
-    /// not change under us, and retrying every tick would spend a subprocess
-    /// per repository forever.
     unavailable: HashSet<String>,
 }
 
@@ -102,8 +68,6 @@ impl PrStates {
             .and_then(|cached| cached.value)
     }
 
-    /// Whether this branch is worth asking about right now: not already in
-    /// flight, not answered recently, and in a repository `gh` can speak for.
     fn is_stale(&self, repo_root: &str, branch: &str) -> bool {
         if self.unavailable.contains(repo_root) {
             return false;
@@ -137,17 +101,8 @@ impl PrStates {
     }
 }
 
-/// Read the pull request of one branch. Blocking: the caller runs it through
-/// `smol::unblock`.
-///
-/// `Err` means `gh` could not answer at all - the repository is then dropped
-/// for the session. `Ok(None)` is a real answer: no pull request here.
 fn lookup(repo_root: &std::path::Path, branch: &str) -> Result<Option<PullRequest>, ()> {
     let mut cmd = std::process::Command::new("gh");
-    // `gh` has no global directory flag - `-C` is rejected outright ("unknown
-    // shorthand flag: 'C'"), which used to fail every lookup and blacklist the
-    // repository for the session. It resolves the repository from the working
-    // directory instead.
     cmd.current_dir(repo_root)
         .args([
             "pr",
@@ -158,20 +113,13 @@ fn lookup(repo_root: &std::path::Path, branch: &str) -> Result<Option<PullReques
             "all",
             "--json",
             "number,state,isDraft",
-            // A branch can carry a history of closed attempts under one open
-            // pull request; take enough of them to pick the one that counts.
             "--limit",
             "10",
         ])
-        // `gh` prints a survey/update notice on a tty and reads config from
-        // the environment; neither matters here, but a pager would hang.
         .env("GH_PAGER", "")
         .env("NO_COLOR", "1");
     let out = paneflow_process::run_with_timeout(cmd, DEADLINE, STDOUT_CAP).map_err(|_| ())?;
     if !out.status.success() {
-        // The only trace of a repository being dropped for the session: the
-        // caller turns this `Err` into a silent blacklist entry, so without a
-        // line here a wrong invocation looks exactly like "no GitHub remote".
         log::debug!(
             "gh pr list failed in {}: {}",
             repo_root.display(),
@@ -183,11 +131,6 @@ fn lookup(repo_root: &std::path::Path, branch: &str) -> Result<Option<PullReques
     Ok(pick(parsed.as_array().map_or(&[], Vec::as_slice)))
 }
 
-/// The pull request that describes the branch, out of everything `gh` returned.
-///
-/// Open beats merged beats closed: a branch whose old attempt was closed and
-/// whose current one is open is, to the person looking at the rail, open. Ties
-/// go to the highest number, which is the most recent.
 fn pick(rows: &[serde_json::Value]) -> Option<PullRequest> {
     rows.iter()
         .filter_map(|row| {
@@ -214,7 +157,6 @@ fn pick(rows: &[serde_json::Value]) -> Option<PullRequest> {
 }
 
 impl PaneFlowApp {
-    /// The pull request of a branch, if one has been read.
     pub(crate) fn pull_request_for(
         &self,
         repo_root: &std::path::Path,
@@ -223,8 +165,6 @@ impl PaneFlowApp {
         self.pr_states.get(&repo_root.to_string_lossy(), branch)
     }
 
-    /// Every `(repository, branch)` the rail is currently showing: each
-    /// workspace's own branch, plus the branch of every bound tab.
     fn pr_probe_targets(&self) -> Vec<(std::path::PathBuf, String)> {
         let mut seen = HashSet::new();
         let mut out = Vec::new();
@@ -252,9 +192,6 @@ impl PaneFlowApp {
         out
     }
 
-    /// Refresh the pull requests of every branch the rail shows, off the render
-    /// thread. A no-op while the switch is off: nothing is drawn from it, so
-    /// nothing justifies the calls.
     pub(crate) fn refresh_pull_requests(&mut self, cx: &mut Context<Self>) {
         if !self.cached_config.sidebar_show.pr_enabled() {
             return;
@@ -309,9 +246,6 @@ mod tests {
 
     #[test]
     fn an_open_pull_request_outranks_a_closed_attempt() {
-        // The rail answers "is this branch in review?", so a branch whose
-        // first attempt was closed and whose second is open reads as open,
-        // whatever order `gh` listed them in.
         let picked = pick(&[row(12, "OPEN", false), row(40, "CLOSED", false)]).unwrap();
         assert_eq!(picked.number, 12);
         assert_eq!(picked.state, PrState::Open);

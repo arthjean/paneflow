@@ -1,5 +1,3 @@
-//! Keyboard handling for the docked Files sidebar.
-
 use std::path::{Path, PathBuf};
 
 use gpui::{App, Context, KeyDownEvent, Window};
@@ -17,15 +15,10 @@ impl PaneFlowApp {
         )
     }
 
-    /// The US-020 needle, pre-lowered for the matchers. Empty means "no filter,
-    /// render the tree".
     pub(super) fn files_filter_lowered(&self, cx: &App) -> String {
         self.files_filter_input.read(cx).value().to_lowercase()
     }
 
-    /// Paths of the rows the sidebar is currently painting, in render order.
-    /// Filter-aware, so selection and keyboard navigation address the *visible*
-    /// list in both modes.
     fn files_rendered_rows(&self, cx: &App) -> Vec<(PathBuf, bool)> {
         let lowered = self.files_filter_lowered(cx);
         if lowered.is_empty() {
@@ -64,9 +57,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// US-020: drop the filter and hand focus back to the tree. Returns whether
-    /// there was anything to clear, so Escape can fall through to closing the
-    /// sidebar when the field is already empty.
     pub(super) fn clear_files_filter(
         &mut self,
         window: &mut Window,
@@ -92,8 +82,6 @@ impl PaneFlowApp {
         let rows = self.files_rendered_rows(cx);
         let len = rows.len();
         match event.keystroke.key.as_str() {
-            // US-020: Escape empties the field first; a second Escape (or one on
-            // an already-empty field) closes the sidebar as before.
             "escape" => {
                 if !self.clear_files_filter(window, cx) {
                     self.close_files_sidebar(cx);
@@ -124,8 +112,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Keyboard twin of the row click (US-019): directories toggle, every file
-    /// opens in the diff dock.
     fn activate_files_path(
         &mut self,
         path: PathBuf,

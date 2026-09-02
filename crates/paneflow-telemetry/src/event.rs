@@ -1,18 +1,7 @@
-//! Closed telemetry event schema.
-//!
-//! Consumers choose one constructor and closed categorical values. Versions are
-//! parsed and normalized before they can enter an event.
-
 use serde_json::{json, Map, Value};
 
-/// Defense-in-depth bound for one queued event's serialized property payload.
 pub(crate) const MAX_EVENT_BYTES: usize = 16 * 1024;
 
-/// Low-cardinality release version safe for telemetry.
-///
-/// Valid SemVer prerelease and build metadata can contain hostnames or user
-/// names. The telemetry representation deliberately keeps only
-/// `major.minor.patch`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TelemetryVersion(String);
 
@@ -198,10 +187,6 @@ impl UpdateAssetFormat {
     }
 }
 
-/// One auditable PaneFlow telemetry event.
-///
-/// Fields stay private so adding a property requires changing this canonical
-/// schema rather than inserting an ad-hoc JSON value at a call site.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TelemetryEvent {
     name: &'static str,
@@ -329,7 +314,6 @@ impl TelemetryEvent {
         Self::new("telemetry_reenabled", Map::new())
     }
 
-    /// Stable event name used on the PostHog wire.
     pub(crate) fn name(&self) -> &'static str {
         self.name
     }

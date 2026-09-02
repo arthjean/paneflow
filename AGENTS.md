@@ -113,8 +113,7 @@ the two you did.
   instance, is deliberately confined to `paneflow-mcp-install`.
 - **GPUI is pinned to an exact upstream Zed revision** across four `rev` values
   in `src-app/Cargo.toml`, and `gpui_platform` must keep
-  `features = ["font-kit"]` or macOS renders empty glyph bitmaps. See
-  [docs/gpui-notes.md](docs/gpui-notes.md) before bumping.
+  `features = ["font-kit"]` or macOS renders empty glyph bitmaps.
 - The project is GPL-3.0-or-later. Keep packaging metadata in sync with the root
   `LICENSE` and `Cargo.toml`.
 
@@ -145,6 +144,18 @@ and prints a comparison against `bench/baseline.json`; see
 is not part of the repository, so never reference it from a tracked document and
 never assume another agent can read it.
 
+## No comments in source code
+
+Rust, shell, PowerShell, and the shim's TypeScript assets carry no comments.
+Agent-written comments drift from the code they describe, so intent goes into
+names, types, tests, and the documents listed below. The only exceptions are
+things a tool reads: shebangs, `# shellcheck` directives, `#Requires`,
+PowerShell comment-based help, and the three-line install notice at the top of
+`crates/paneflow-shim/assets/*.ts`. Text a tool consumes stays code, so clap
+help lives in `#[command(about = ...)]` and `#[arg(help = ...)]` attributes,
+never in `///`. Generated bindings under `native/libghostty/` keep whatever
+bindgen emits.
+
 ## Commits and pull requests
 
 Use `type(scope): description`, with the story ID when the work maps to a
@@ -165,12 +176,10 @@ changes.
 | Topic | File |
 |---|---|
 | Module layout, thread model, keystroke-to-pixel path, agent lifecycle, IPC, self-update | [ARCHITECTURE.md](ARCHITECTURE.md) |
-| GPUI patterns, scroll and wheel gotchas, styling, dependency pin bumps | [docs/gpui-notes.md](docs/gpui-notes.md) |
-| MCP bridge setup and per-agent config | [docs/mcp-bridge.md](docs/mcp-bridge.md) |
-| Agent hook mechanics | [docs/hooks.md](docs/hooks.md) |
-| Rendering diagnostics | [docs/debugging-rendering.md](docs/debugging-rendering.md) |
-| Release, signing, and packaging runbooks | [docs/release-runbook.md](docs/release-runbook.md), [docs/release-signing.md](docs/release-signing.md), [docs/self-update-signing.md](docs/self-update-signing.md), [docs/pkg-repo-runbook.md](docs/pkg-repo-runbook.md) |
-| Windows port status and smoke test | [docs/WINDOWS.md](docs/WINDOWS.md), [docs/WINDOWS-SMOKE-TEST.md](docs/WINDOWS-SMOKE-TEST.md) |
+| Per-platform signing runbooks | [docs/release/linux-signing.md](docs/release/linux-signing.md), [docs/release/macos-signing.md](docs/release/macos-signing.md), [docs/release/windows-signing.md](docs/release/windows-signing.md) |
+| libghostty engine build and qualification per platform | [docs/release/libghostty-linux.md](docs/release/libghostty-linux.md), [docs/release/macos-libghostty.md](docs/release/macos-libghostty.md), [docs/release/windows-libghostty.md](docs/release/windows-libghostty.md) |
+| Rust toolchain pin | [docs/release/rustfmt.md](docs/release/rustfmt.md) |
+| Public user docs, a mirror of paneflow.dev/docs synced from the site repo | [docs/user/](docs/user/README.md) |
 
 User configuration lives at `~/.config/paneflow/paneflow.json` on Linux, with
 `%APPDATA%` and macOS equivalents resolved through

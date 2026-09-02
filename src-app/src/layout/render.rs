@@ -1,6 +1,3 @@
-//! `LayoutTree::render` - recursive GPUI flex rendering with drag-to-resize
-//! divider handlers and per-frame container-size capture.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -16,13 +13,6 @@ use super::tree::{
 
 pub(crate) type ResizeEndCallback = Rc<dyn Fn(&mut App)>;
 
-/// EP-005: the half a pending split would create, drawn in place of the real
-/// pane it will be carved out of. The preset picker stands there until a preset
-/// is picked, so the user sees exactly where the new pane lands - inside the
-/// tree, at the target's slot, not against the whole grid.
-///
-/// `element` is consumed by the matching leaf: an `AnyElement` is not `Clone`,
-/// and exactly one leaf can match.
 pub(crate) struct SplitPreview {
     pub(crate) target: Entity<crate::pane::Pane>,
     pub(crate) direction: SplitDirection,
@@ -52,8 +42,6 @@ fn with_debug_selector_for_test(div: gpui::Div, selector: String) -> gpui::Div {
 }
 
 impl LayoutTree {
-    /// Render the layout tree recursively as nested GPUI flex divs, with an
-    /// optional pending-split preview injected at the leaf it targets (EP-005).
     #[allow(clippy::only_used_in_recursion)]
     pub(crate) fn render_with_preview(
         &self,
@@ -64,9 +52,6 @@ impl LayoutTree {
     ) -> AnyElement {
         match self {
             LayoutTree::Leaf(pane) => {
-                // The preview splits this leaf the way the real split will:
-                // same axis, same halves, same divider gap - so the picker
-                // appears exactly where the new pane is about to be.
                 if let Some(preview) = preview.filter(|preview| preview.target == *pane)
                     && let Some(element) = preview.element.borrow_mut().take()
                 {
@@ -82,8 +67,6 @@ impl LayoutTree {
                             .min_h(px(MIN_PANE_SIZE))
                             .overflow_hidden()
                     };
-                    // Inert gap: the real divider only exists once the split
-                    // does, but the spacing must already match.
                     let gap = match dir {
                         SplitDirection::Horizontal => {
                             div().h(px(DIVIDER_PX)).w_full().flex_shrink_0()
@@ -114,9 +97,6 @@ impl LayoutTree {
             } => {
                 let dir = *direction;
 
-                // Build container with drag tracking.
-                // Pre-compute per-child constraints (max yieldable pixels) so the
-                // drag closure can clamp based on nested subtree minimums.
                 let drag_move = drag.clone();
                 let size_for_drag = container_size.clone();
                 let child_ratios: Vec<Rc<Cell<f32>>> =
@@ -172,10 +152,6 @@ impl LayoutTree {
                                 r.set(new_after);
                             }
 
-                            // Request a repaint so the new ratios take effect immediately.
-                            // GPUI only auto-refreshes on mouse_move when cx.has_active_drag()
-                            // (i.e., GPUI-managed drags). Our Cell-based drag needs an explicit
-                            // refresh to avoid waiting for the next terminal poll cycle.
                             window.refresh();
                         }
                     },
@@ -200,9 +176,6 @@ impl LayoutTree {
                     SplitDirection::Vertical => container.flex_row(),
                 };
 
-                // Capture actual container bounds each frame via canvas prepaint.
-                // The canvas fills the container (absolute + size_full) so it
-                // receives the parent's bounds without affecting flex layout.
                 let size_capture = container_size.clone();
                 let drag_cancel = drag.clone();
                 let resize_end_for_cancel = on_resize_end.clone();
@@ -215,7 +188,6 @@ impl LayoutTree {
                             };
                             let prev = size_capture.get();
                             size_capture.set(main_axis);
-                            // Cancel drag if container was resized (window resize)
                             if prev > 0.0 && (prev - main_axis).abs() > 1.0 {
                                 finish_drag(&drag_cancel, resize_end_for_cancel.as_ref(), cx);
                             }
@@ -226,19 +198,13 @@ impl LayoutTree {
                     .size_full(),
                 );
 
-                // Render children with dividers between adjacent pairs
                 for (i, child) in children.iter().enumerate() {
                     if i > 0 {
-                        // Divider between children[i-1] and children[i]
                         let drag_for_div = drag.clone();
                         let divider_idx = i - 1;
                         let ratio_before = children[divider_idx].ratio.clone();
                         let ratio_after = child.ratio.clone();
 
-                        // The band paints nothing: panes are cards and the gap
-                        // between them exposes the window shell. It still
-                        // reserves DIVIDER_PX on the main axis and keeps the
-                        // resize cursor plus the drag hitbox.
                         let divider_hit_margin = (DIVIDER_PX - DIVIDER_HIT_PX) / 2.0;
                         let divider = match dir {
                             SplitDirection::Horizontal => div()
@@ -527,8 +493,6 @@ mod tests {
         let wall = wall_start.elapsed();
         let cpu = process_cpu_time().saturating_sub(cpu_start);
         let rss_end = resident_set_bytes();
-        // `collect_unseen` yields both draw and present events; the benchmark
-        // measures draw pacing, so present submissions are dropped here.
         let frame_timings = frame_collector
             .collect_unseen()
             .into_iter()
@@ -539,10 +503,6 @@ mod tests {
             .collect::<Vec<_>>();
         drop(frame_trace);
         let traced_frame_samples = frame_timings.len();
-        // Every target-window draw paints all eight panes, but a draw with no
-        // observed invalidation carries no dirty-to-draw duration. Count the
-        // draws for the paint invariant and keep the timed subset for the
-        // pacing percentiles.
         let target_window_draws = frame_timings
             .iter()
             .filter(|timing| timing.window_id == target_window_id)

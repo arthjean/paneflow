@@ -1,9 +1,3 @@
-//! Linux compositor-backdrop capability isolation.
-//!
-//! PaneFlow deliberately ships opaque Linux chrome. The Wayland and X11
-//! implementations remain isolated here so capability work can resume without
-//! leaking platform APIs through the app shell.
-
 use std::{
     cell::RefCell,
     ffi::c_void,
@@ -76,8 +70,6 @@ fn native_backdrop_enabled() -> bool {
     false
 }
 
-/// Applies PaneFlow's Linux backdrop policy, clearing any retained material and
-/// restoring the correct opaque or CSD-compatible surface appearance.
 pub(crate) fn apply_subtle_chrome_material(window: &mut Window) {
     if !native_backdrop_enabled() {
         BACKDROP.with(|slot| {
@@ -110,8 +102,6 @@ fn ensure_backdrop(window: &Window) {
     });
 }
 
-/// Refreshes the surface appearance after resize. Capability-specific code is
-/// retained below but remains dormant while Linux chrome is intentionally solid.
 pub(crate) fn refresh_blur_region(window: &mut Window) {
     if !native_backdrop_enabled() {
         BACKDROP.with(|slot| {
@@ -146,7 +136,6 @@ pub(crate) fn refresh_blur_region(window: &mut Window) {
     });
 }
 
-/// Releases guest Wayland/X11 resources before GPUI tears down its display.
 pub(crate) fn clear_subtle_chrome_material() {
     BACKDROP.with(|slot| {
         slot.borrow_mut().take();

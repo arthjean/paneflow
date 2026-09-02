@@ -13,7 +13,6 @@ use crate::{Cell, Content, GhosttyError, Point, Result, Scroll, SelectionRange};
 #[derive(Default)]
 pub(crate) struct SnapshotCache {
     cells: Arc<[Cell]>,
-    /// Rows the last refresh rewrote, cleared to all-false by a clean frame.
     dirty_rows: Vec<bool>,
     selection: Option<SelectionRange>,
     cols: usize,
@@ -33,17 +32,10 @@ impl SnapshotCache {
 
 impl DisplayTerminal {
     pub fn snapshot(&mut self) -> Result<Content> {
-        // Split into its two phases rather than calling
-        // `ghostty_render_state_update`: only the begin phase touches the
-        // terminal, so a future caller that shares the terminal with an IO
-        // thread can hold its lock across that call alone.
-        // SAFETY: both handles are owned by `self`.
         let result = unsafe {
             sys::ghostty_render_state_begin_update(self.render_state.raw(), self.terminal.raw())
         };
         check("render_state_begin_update", result)?;
-        // SAFETY: the render state is owned by `self` and a begin phase just
-        // completed.
         let result = unsafe { sys::ghostty_render_state_end_update(self.render_state.raw()) };
         check("render_state_end_update", result)?;
         let (history_size, display_offset) = self.scrollbar_position()?;
@@ -85,10 +77,6 @@ impl DisplayTerminal {
             ));
         }
         if full_refresh {
-            // The whole frame was rebuilt, so consume every dirty bit at
-            // once. A partial pass cleared its rows as it went and only the
-            // global flag is left.
-            // SAFETY: the render state is owned by `self`.
             let result = unsafe { sys::ghostty_render_state_clean(self.render_state.raw()) };
             check("render_state_clean", result)?;
         } else {
@@ -131,9 +119,6 @@ impl DisplayTerminal {
         })
     }
 
-    /// Move to a viewport row measured from the top of the scrollable area.
-    /// This matches Ghostty's scrollbar offset space, so output that extends
-    /// history cannot move an in-progress scrollbar gesture to newer content.
     pub fn scroll_to_viewport_row(&mut self, row: usize) -> Result<()> {
         let (history_size, current) = self.scrollbar_position()?;
         let target = history_size.saturating_sub(row.min(history_size));
@@ -155,11 +140,6 @@ impl DisplayTerminal {
         cell_count: usize,
         full_refresh: bool,
     ) -> Result<()> {
-        // A full refresh of an unchanged grid size writes over the cached
-        // cells when nothing else holds them, the same way a partial refresh
-        // does, instead of allocating a fresh array for every scrolled frame.
-        // The consumer drops its previous snapshot before asking for the
-        // next one, so this is the common case.
         let in_place = full_refresh
             && self.snapshot_cache.cols == cols
             && self.snapshot_cache.rows == rows
@@ -237,13 +217,8 @@ impl DisplayTerminal {
                 }
             }
 
-            // A full refresh clears everything in one call after the loop
-            // through `ghostty_render_state_clean`; a partial pass has to
-            // clear the rows it actually consumed, one at a time.
             if !full_refresh && row.dirty {
                 let clean = false;
-                // SAFETY: the option takes a `bool*` that outlives the call
-                // and `iterator` is positioned on a live row.
                 let result = unsafe {
                     sys::ghostty_render_state_row_set(
                         iterator,

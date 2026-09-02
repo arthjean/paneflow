@@ -1,9 +1,3 @@
-//! External URL opening helpers.
-//!
-//! Windows keeps Paneflow and its children inside a kill-on-close Job Object so
-//! agent CLIs and PTYs cannot outlive the app. Browser launches are the explicit
-//! exception: they are user-owned once opened and must survive Paneflow exit.
-
 #[cfg(target_os = "windows")]
 use std::process::{Command, Stdio};
 

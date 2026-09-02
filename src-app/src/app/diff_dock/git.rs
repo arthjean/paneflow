@@ -1,11 +1,3 @@
-//! Off-thread HEAD-relative diff build for the Agents dock.
-//!
-//! Shells the shared git pipeline ([`crate::diff::compute_head_diff`]) and turns
-//! the result into the shared row models (unified + split) with syntax
-//! highlighting, off the GPUI main thread. The product of this module is an
-//! [`DiffDockBuilt`] that [`super::model::DiffDockData::apply_built`] wraps in
-//! `Rc`s back on the main thread.
-
 use std::path::Path;
 
 use crate::diff::{
@@ -15,9 +7,6 @@ use crate::diff::{
 };
 use crate::workspace::GitDiffStats;
 
-/// Off-thread build result: the full (uncollapsed) display rows + anchors for
-/// both view modes, plus the per-panel summary. Built in `smol::unblock` and
-/// moved back to the main thread to seed an [`super::model::DiffDockData`].
 pub(super) struct DiffDockBuilt {
     pub(super) unified: Vec<DisplayRow>,
     pub(super) anchors_unified: Vec<(String, usize)>,
@@ -33,9 +22,6 @@ pub(super) struct DiffDockBuilt {
     pub(super) fingerprint: u64,
 }
 
-/// Off-thread builder: shell the HEAD-relative diff and turn it into both shared
-/// row models with syntax highlighting. Mirrors the Review view's warm inactive
-/// mode, but eagerly returns both modes so the Agents toggle is instant.
 pub(super) fn build_diff_dock(
     cwd: &str,
     theme: crate::theme::TerminalTheme,
@@ -47,9 +33,6 @@ pub(super) fn build_diff_dock(
     }
     let syntax = DiffSyntax::from_theme(&theme);
     let row_caches = build_file_row_caches(&diff.files, Some(&syntax));
-    // File path → header row index, in file order, so a body click can resolve
-    // which file's header was hit (collapse toggle). Header rows are emitted one
-    // per file in `diff.files` order, so zipping realigns them.
     let (unified, _) = build_display_rows_with_caches(&diff.files, &row_caches);
     let anchors_unified: Vec<(String, usize)> = diff
         .files

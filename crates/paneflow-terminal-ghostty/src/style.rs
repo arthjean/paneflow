@@ -1,50 +1,34 @@
-//! Terminal cell styles as libghostty reports them.
-//!
-//! [`Style`] keeps the raw `GhosttyStyle` so `ghostty_style_is_default` stays
-//! authoritative about what "default" means, while the accessors hand out the
-//! crate's neutral colors and flags.
-
 use paneflow_libghostty_sys as sys;
 
 use crate::snapshot_ffi::underline;
 use crate::{CellFlags, Color, GhosttyError, Result};
 
-/// A terminal cell style: colors plus text decoration flags.
 #[derive(Clone, Copy)]
 pub struct Style(sys::GhosttyStyle);
 
 impl Style {
-    /// Wrap a style libghostty produced, for example through a grid ref.
     #[must_use]
     pub(crate) fn from_raw(raw: sys::GhosttyStyle) -> Self {
         Self(raw)
     }
 
-    /// Whether every color is unset and every flag is off.
     #[must_use]
     pub fn is_default(&self) -> bool {
-        // SAFETY: `self.0` is a live, fully initialized style: either
-        // libghostty filled it or `Style::default` did.
         unsafe { sys::ghostty_style_is_default(&raw const self.0) }
     }
 
-    /// The foreground color, or [`Color::Default`] when unset.
     pub fn foreground(&self) -> Result<Color> {
         style_color(self.0.fg_color)
     }
 
-    /// The background color, or [`Color::Default`] when unset.
     pub fn background(&self) -> Result<Color> {
         style_color(self.0.bg_color)
     }
 
-    /// The explicit underline color, or [`Color::Default`] when the underline
-    /// follows the foreground.
     pub fn underline_color(&self) -> Result<Color> {
         style_color(self.0.underline_color)
     }
 
-    /// The decoration flags, including the underline shape.
     pub fn flags(&self) -> Result<CellFlags> {
         Ok(CellFlags {
             bold: self.0.bold,
@@ -58,7 +42,6 @@ impl Style {
         })
     }
 
-    /// Whether the style requests blinking text.
     #[must_use]
     pub fn blink(&self) -> bool {
         self.0.blink
@@ -68,8 +51,6 @@ impl Style {
 impl Default for Style {
     fn default() -> Self {
         let mut raw = std::mem::MaybeUninit::<sys::GhosttyStyle>::uninit();
-        // SAFETY: `ghostty_style_default` fully initializes the struct it is
-        // handed, including the leading `size` field.
         let raw = unsafe {
             sys::ghostty_style_default(raw.as_mut_ptr());
             raw.assume_init()
@@ -103,17 +84,12 @@ impl PartialEq for Style {
 
 impl Eq for Style {}
 
-/// Map a `GhosttyStyleColor` tagged union onto the crate's neutral color.
-///
-/// Palette entries stay indexed so Paneflow's own theme resolves them.
 pub(crate) fn style_color(color: sys::GhosttyStyleColor) -> Result<Color> {
     match color.tag {
         sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_NONE => Ok(Color::Default),
-        // SAFETY: the tag selects the active union field.
         sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_PALETTE => {
             Ok(Color::Palette(unsafe { color.value.palette }))
         }
-        // SAFETY: the tag selects the active union field.
         sys::GhosttyStyleColorTag_GHOSTTY_STYLE_COLOR_RGB => {
             Ok(Color::Rgb(unsafe { color.value.rgb }.into()))
         }

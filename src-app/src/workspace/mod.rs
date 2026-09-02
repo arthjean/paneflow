@@ -1,13 +1,3 @@
-//! Workspace - a named collection of terminal panes with a split layout.
-//!
-//! Module layout (US-030 of the src-app refactor PRD):
-//! - [`git`] - git metadata probing (branch, diff stats, `.git` dir lookup)
-//! - [`ports`] - cross-platform TCP listening-port detection
-//!
-//! The [`Workspace`] struct and its constructors live in this `mod.rs`; git
-//! and port helpers are re-exported so external callers keep the flat
-//! `crate::workspace::*` API.
-
 mod git;
 pub mod pid_resolve;
 mod ports;
@@ -23,14 +13,8 @@ pub(crate) use ports::PortEntry;
 pub use ports::{PaneScan, scan_panes};
 pub use tab::Tab;
 
-/// Hard cap on open workspaces (US-054: single source for the bound previously
-/// re-declared as a local `const` at every create/IPC site).
 pub(crate) const MAX_WORKSPACES: usize = 20;
 
-/// Hard cap on tabs inside a single workspace (US-001, prd-cli-tab-hierarchy).
-/// Declared next to [`MAX_WORKSPACES`] and exported by the same path so every
-/// create site shares one value, as `MAX_PANES` already does for leaves.
-// Enforced by `Workspace::open_tab`; the UI create sites land with US-010.
 pub(crate) const MAX_TABS_PER_WORKSPACE: usize = 32;
 
 use gpui::{App, Entity, Window};
@@ -43,38 +27,18 @@ use crate::pane::Pane;
 
 use self::git::parse_head;
 
-/// Monotonic workspace ID counter. Each workspace gets a unique ID at construction.
 static NEXT_WORKSPACE_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub fn next_workspace_id() -> u64 {
     NEXT_WORKSPACE_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Runtime-only notification state for completed agent turns, keyed by the
-/// surface that finished.
-///
-/// A natural `ai.stop` marks the completion unread only while the surface that
-/// produced it is not the one the user is looking at. It survives the transient
-/// `AgentState::Finished` session auto-clear until that surface's tab becomes
-/// visible.
-///
-/// The key is `Option<u64>` on purpose: it is the same partition the sidebar
-/// already draws between a tab row and its folder row. A completion whose
-/// surface resolved keys on it and lands on that tab's row; one that could not
-/// be attributed keys `None` and stays on the folder row, which is the only row
-/// entitled to speak for it. Mirrors `folder_row_sessions`/`tab_row_sessions`.
 #[derive(Debug, Default)]
 pub(crate) struct AgentCompletionNotification {
     unread: std::collections::HashSet<Option<u64>>,
 }
 
 impl AgentCompletionNotification {
-    /// Record one finished turn. `seen` means the surface was under the user's
-    /// eyes as it finished, which both suppresses the mark and clears any
-    /// earlier one for that same surface.
-    ///
-    /// Per-surface, so a turn the user watched in one tab no longer erases an
-    /// unread completion sitting in a sibling tab - the old single flag did.
     pub(crate) fn record_finished(&mut self, seen: bool, surface_id: Option<u64>) {
         if seen {
             self.unread.remove(&surface_id);
@@ -83,14 +47,6 @@ impl AgentCompletionNotification {
         }
     }
 
-    /// Answer the marks the user just saw, and drop the ones nothing can
-    /// answer any more.
-    ///
-    /// A mark survives only while its surface is still `live` and was not among
-    /// the `seen` ones. Two things follow, both needed: closing the tab that
-    /// held a completion retires its mark instead of stranding it on the folder
-    /// row forever, and an unattributed mark clears on the first look, which is
-    /// the only chance it will ever get.
     pub(crate) fn acknowledge(
         &mut self,
         seen: &std::collections::HashSet<u64>,
@@ -100,18 +56,14 @@ impl AgentCompletionNotification {
             .retain(|key| key.is_some_and(|id| live.contains(&id) && !seen.contains(&id)));
     }
 
-    /// Any unread completion at all - what a collapsed folder row speaks for.
     pub(crate) fn is_unread(&self) -> bool {
         !self.unread.is_empty()
     }
 
-    /// Unread completions no tab row can claim - what an expanded folder row
-    /// keeps, so folding hides no state.
     pub(crate) fn has_unattributed_unread(&self) -> bool {
         self.unread.contains(&None)
     }
 
-    /// Unread completions belonging to one tab's surfaces.
     pub(crate) fn is_unread_for(&self, surfaces: &std::collections::HashSet<u64>) -> bool {
         self.unread
             .iter()
@@ -120,114 +72,37 @@ impl AgentCompletionNotification {
 }
 
 pub struct Workspace {
-    /// Unique workspace identifier, assigned at construction.
     pub id: u64,
     pub title: String,
-    /// Working directory at creation time. Does not update when the shell `cd`s.
     pub cwd: String,
-    /// Working compositions of this workspace. Each tab owns the layout tree
-    /// (and the zoom `saved_layout`) the workspace used to own directly.
-    ///
-    /// Invariant (FR-01): never empty. The field is private so no caller can
-    /// drain it; [`Workspace::close_tab`] substitutes an empty tab rather than
-    /// leaving zero.
     tabs: Vec<Tab>,
-    /// Index into [`Workspace::tabs`] of the visible tab. Kept in range by
-    /// every mutation; readers go through [`Workspace::active_tab`].
     active_tab_idx: usize,
-    /// Cached git diff stats, refreshed by a background poller.
     pub git_stats: GitDiffStats,
-    /// Current git branch name. Empty string when not a git repo or branch unknown.
     pub git_branch: String,
-    /// Whether this workspace's CWD is inside a git repository.
     pub is_git_repo: bool,
-    /// Resolved `.git` directory path (for file watcher). `None` if not a git repo.
     pub git_dir: Option<std::path::PathBuf>,
-    /// Working directory of the shared repository (parent of the *main* `.git`),
-    /// canonicalized. Sibling worktrees of one repo share an identical value -
-    /// the invariant the sidebar uses to group them. `None` when not a git repo.
     pub repo_root: Option<std::path::PathBuf>,
-    /// Whether this workspace's CWD is a *linked* git worktree (as opposed to
-    /// the repo's main checkout). Linked worktrees carry a `commondir` file.
-    // Read by EP-002 (US-005) to target git operations at the worktree root and
-    // by EP-004 column labeling; stored at construction in EP-001 (US-001).
     #[allow(dead_code)]
     pub is_worktree: bool,
-    /// Concrete worktree checkout root resolved at workspace construction.
-    /// Review UI reads this directly so rebuilding columns stays in-memory.
     pub worktree_root: std::path::PathBuf,
-    /// Active TCP listening ports from workspace terminal processes.
     pub active_ports: Vec<u16>,
-    /// Generation counter for event-driven port scans - the cancellation
-    /// belt for workspace close/reuse (superseded scans check it to abort).
     pub port_scan_generation: u64,
-    /// True while a scan ladder (debounce + retries) is in flight for this
-    /// workspace - ActivityBursts arriving meanwhile are absorbed instead of
-    /// superseding the pending scan (under sustained output, the old
-    /// generation-bump-per-burst starved the 500ms debounce indefinitely).
     pub port_scan_pending: bool,
-    /// Service metadata for `active_ports` chips, fed from BOTH sides:
-    /// OS-side argv classification (authoritative for `is_frontend`, with a
-    /// synthesized localhost URL) and PTY-output detection (enrichment -
-    /// exact URL with path, backend labels). Keyed by port number; pruned
-    /// when ports are removed from `active_ports`.
     pub service_labels: std::collections::HashMap<u16, crate::terminal::ServiceInfo>,
-    /// Registered AI agent sessions for this workspace, keyed by PID. A
-    /// workspace can hold many concurrent sessions (e.g., two Claude
-    /// Codes + one Codex) - the sidebar aggregates them per tool with
-    /// `ai_types::aggregate_by_tool`. Cleaned up by the stale-PID sweep
-    /// in `event_handlers::sweep_stale_pids`.
     pub agent_sessions: std::collections::HashMap<u32, AgentSession>,
-    /// Persistent-in-session completion notification shown as a blue dot in
-    /// the Workspaces sidebar until the user interacts with this workspace.
     pub(crate) agent_completion_notification: AgentCompletionNotification,
-    /// AI agent process basenames detected by walking the workspace's
-    /// PTY descendants (Linux `/proc/<pid>/comm`, macOS `libproc::name`).
-    /// Independent of the optional IPC hook handshake -- this is what
-    /// the sidebar pastille reads so the "session active" signal works
-    /// even when Claude Code is launched without the Paneflow shim.
-    /// Refreshed by the per-pane `scan_panes` walk (EP-005 US-012) - the
-    /// union of every pane's detected agents; the recognition vocabulary
-    /// is `TerminalAgent::ALL` binaries (16), unified from the historical
-    /// 3-name `AI_PROCESS_NAMES` list.
     pub detected_agents: std::collections::HashSet<String>,
-    /// User-defined tab-bar buttons for this workspace.
-    /// Rendered after the 2 built-in defaults (Claude / Codex).
     pub custom_buttons: Vec<ButtonCommand>,
-    /// Absolute directory paths expanded in the Files tree sidebar, held
-    /// per-workspace so reopening the sidebar (within a session or after a
-    /// restart) restores the same expansion (PRD files-tree US-007). Excludes
-    /// the implicit root. Persisted as workspace-relative paths in
-    /// `session.json`; the sidebar's visibility itself is never persisted.
     pub files_expanded: Vec<std::path::PathBuf>,
-    /// Git worktrees Paneflow created for this workspace's panes via
-    /// `paneflow up` (`worktree = "branch"`, EP-002 orchestration-v2). Torn
-    /// down - clean ones only, branch never deleted - when the workspace
-    /// closes; persisted in `session.json` so a crash keeps the ownership
-    /// record. Empty for every workspace not built by `up` with worktrees.
     pub managed_worktrees: Vec<worktree::ManagedWorktree>,
-    /// US-008: whether the sidebar folder row for this workspace shows its
-    /// tab children. Session-only, exactly like the Files sidebar expansion
-    /// state - it is never written to `session.json`, so a restart starts
-    /// every workspace expanded.
     pub sidebar_expanded: bool,
 }
 
 impl Workspace {
-    /// US-013: shared private factory for the three public constructors (kills
-    /// the verbatim triplication). Resolves the *cheap* git metadata - `.git`
-    /// dir, branch (`parse_head`), repo root - synchronously, since those are
-    /// direct `.git/HEAD` file reads, not subprocesses. `git_stats` is left at
-    /// its `default()` (0/0): the `git diff --shortstat` subprocess is the
-    /// blocking call, deferred off the render thread by
-    /// [`crate::PaneFlowApp::spawn_initial_git_stats`] right after creation.
     fn build(id: u64, title: String, cwd: String, root: LayoutTree) -> Self {
         Self::build_with_tab(id, title, cwd, Tab::new(String::new(), Some(root)))
     }
 
-    /// Same factory, one level lower: it takes the workspace's single starting
-    /// tab instead of a layout tree, so a workspace can also be born empty
-    /// (`Tab::empty()`) without duplicating the git-metadata resolution.
     fn build_with_tab(id: u64, title: String, cwd: String, tab: Tab) -> Self {
         let git_dir = find_git_dir(&cwd);
         let (git_branch, is_git_repo) = match &git_dir {
@@ -267,13 +142,11 @@ impl Workspace {
         }
     }
 
-    /// Create a workspace with a pre-allocated ID (use `next_workspace_id()` to obtain one).
     pub fn with_id(id: u64, title: impl Into<String>, pane: Entity<Pane>) -> Self {
         let cwd = launch_cwd::implicit_launch_cwd().display().to_string();
         Self::build(id, title.into(), cwd, LayoutTree::Leaf(pane))
     }
 
-    /// Create a workspace with a pre-allocated ID and explicit CWD.
     pub fn with_cwd_and_id(
         id: u64,
         title: impl Into<String>,
@@ -288,14 +161,6 @@ impl Workspace {
         )
     }
 
-    /// Create an empty workspace with a pre-allocated ID and explicit CWD: a
-    /// folder holding a single empty tab, therefore no pane and no PTY.
-    ///
-    /// This is what "new workspace" means since EP-003: opening a project must
-    /// not spawn a shell the user did not ask for. The workspace stays in the
-    /// state the model already had a name for - the one a workspace falls back
-    /// to when its last pane is closed (FR-01) - so nothing downstream needs a
-    /// new special case.
     pub fn empty_with_cwd_and_id(
         id: u64,
         title: impl Into<String>,
@@ -304,12 +169,6 @@ impl Workspace {
         Self::build_with_tab(id, title.into(), cwd.display().to_string(), Tab::empty())
     }
 
-    /// Create a workspace with a pre-allocated ID and layout tree.
-    /// Test-only since `workspace.up` started building its tabs itself: every
-    /// production path either restores a set of tabs
-    /// ([`Self::restored_with_id`]) or goes through the workspace constructors
-    /// above. Kept because a one-tab workspace is what most tests want to
-    /// assert against.
     #[cfg(test)]
     pub fn with_layout_and_id(
         id: u64,
@@ -320,13 +179,6 @@ impl Workspace {
         Self::build(id, title.into(), cwd.display().to_string(), root)
     }
 
-    /// US-018: rebuild a workspace from a restored session, tabs included.
-    ///
-    /// The session boundary is the only caller that legitimately supplies more
-    /// than one starting tab. `tabs` is capped at [`MAX_TABS_PER_WORKSPACE`]
-    /// (the read-cap half of the pairing `open_tab` enforces on the write
-    /// side) and an empty list degrades to a single [`Tab::empty`], so the
-    /// FR-01 invariant holds whatever the file said.
     pub fn restored_with_id(
         id: u64,
         title: impl Into<String>,
@@ -353,67 +205,44 @@ impl Workspace {
         ws
     }
 
-    // --- Tab access (US-001) -------------------------------------------
-    //
-    // `tabs` is private: callers reach a tab through these accessors, so the
-    // "at least one tab" invariant cannot be observed broken.
-
-    /// Every tab of this workspace, in display order. Never empty.
     pub fn tabs(&self) -> &[Tab] {
         &self.tabs
     }
 
-    /// Number of tabs. Always >= 1.
     pub fn tab_count(&self) -> usize {
         self.tabs.len()
     }
 
-    /// Index of the visible tab, clamped into range.
     pub fn active_tab_idx(&self) -> usize {
         self.active_tab_idx.min(self.tabs.len().saturating_sub(1))
     }
 
-    /// The visible tab: the one every layout operation applies to.
     pub fn active_tab(&self) -> &Tab {
         let idx = self.active_tab_idx();
         debug_assert!(!self.tabs.is_empty(), "workspace must keep one tab");
         &self.tabs[idx]
     }
 
-    /// Mutable access to the visible tab.
     pub fn active_tab_mut(&mut self) -> &mut Tab {
         let idx = self.active_tab_idx();
         debug_assert!(!self.tabs.is_empty(), "workspace must keep one tab");
         &mut self.tabs[idx]
     }
 
-    /// Mutable access to an arbitrary tab, for operations targeting a tab that
-    /// is not the visible one (a `surface_id` resolved into a background tab).
     pub fn tab_mut(&mut self, idx: usize) -> Option<&mut Tab> {
         self.tabs.get_mut(idx)
     }
 
-    /// Make `idx` the visible tab. Out-of-range indices are ignored.
     pub fn set_active_tab(&mut self, idx: usize) {
         if idx < self.tabs.len() {
             self.active_tab_idx = idx;
         }
     }
 
-    /// Index of the tab owning `pane`, zoom-saved trees included.
     pub fn tab_index_containing_pane(&self, pane: &Entity<Pane>) -> Option<usize> {
         self.tabs.iter().position(|tab| tab.contains_pane(pane))
     }
 
-    /// Whether this workspace is an empty folder: one unnamed tab holding no
-    /// pane at all. True for a freshly created workspace and for one whose
-    /// last pane was closed, and false as soon as a tab is opened, named, or
-    /// filled.
-    ///
-    /// The placeholder tab exists only to honour FR-01 ("a workspace always
-    /// keeps one tab"); it is not a tab the user asked for, so the sidebar
-    /// renders no child row for it and [`Workspace::open_tab`] fills it in
-    /// place instead of leaving it behind.
     pub fn is_empty_shell(&self) -> bool {
         match self.tabs.as_slice() {
             [tab] => tab.title().is_empty() && tab.root.is_none() && tab.saved_layout.is_none(),
@@ -421,15 +250,8 @@ impl Workspace {
         }
     }
 
-    /// Make `tab` the active tab. It replaces the placeholder of an empty
-    /// workspace and is appended otherwise. Returns `false` - without mutating
-    /// anything - when the workspace already holds [`MAX_TABS_PER_WORKSPACE`]
-    /// tabs.
     pub fn open_tab(&mut self, tab: Tab) -> bool {
         if self.is_empty_shell() {
-            // Filling the placeholder rather than pushing past it: otherwise
-            // the first tab of a new workspace would land at index 1, behind a
-            // permanent empty sibling nobody created.
             self.tabs[0] = tab;
             self.active_tab_idx = 0;
             return true;
@@ -446,15 +268,10 @@ impl Workspace {
         true
     }
 
-    /// Whether this workspace can take one more tab. Checked *before* a tab
-    /// is detached from its source workspace (US-011) so a refused move
-    /// leaves the dragged tab - and its live terminals - exactly where it was.
     pub fn can_open_tab(&self) -> bool {
         self.tabs.len() < MAX_TABS_PER_WORKSPACE
     }
 
-    /// Move the tab at `from` so it ends up at `to`, keeping the same tab
-    /// visible across the reorder (US-011). Out-of-range indices are ignored.
     pub fn reorder_tab(&mut self, from: usize, to: usize) {
         if from >= self.tabs.len() || to > self.tabs.len() || from == to {
             return;
@@ -468,8 +285,6 @@ impl Workspace {
         }
     }
 
-    /// Remove the tab at `idx` and return it. Closing the last tab leaves an
-    /// empty tab behind instead of an empty workspace (FR-01).
     pub fn close_tab(&mut self, idx: usize) -> Option<Tab> {
         if idx >= self.tabs.len() {
             return None;
@@ -486,8 +301,6 @@ impl Workspace {
         Some(removed)
     }
 
-    // --- Layout, delegated to the active tab (US-002 / US-003) ----------
-
     pub fn is_zoomed(&self) -> bool {
         self.active_tab().is_zoomed()
     }
@@ -496,8 +309,6 @@ impl Workspace {
         self.active_tab_mut().exit_zoom(cx)
     }
 
-    /// Total leaf panes across every tab of this workspace. Per-tab caps read
-    /// [`Tab::pane_count`] instead (`MAX_PANES` bounds a tab, not a workspace).
     pub fn pane_count(&self) -> usize {
         self.tabs.iter().map(Tab::pane_count).sum()
     }
@@ -518,35 +329,18 @@ impl Workspace {
         panes
     }
 
-    /// Focus the first pane of the *visible* tab. Deliberately not a
-    /// whole-workspace walk: focus can only land on a rendered pane, so
-    /// background tabs are out of reach by construction.
     pub fn focus_first(&self, window: &mut Window, cx: &mut App) {
         self.active_tab().focus_first(window, cx);
     }
 
-    /// Serialize the visible tab's layout to a `LayoutNode`. Per-tab
-    /// serialization is [`Tab::serialize`]; the session writer switches to the
-    /// full tab list with the v2 schema (US-018).
     pub fn serialize_layout(&self, cx: &App) -> Option<LayoutNode> {
         self.active_tab().serialize(cx)
     }
 
-    /// US-018: serialize every tab for session persistence, without terminal
-    /// output - that must remain local to the process that produced it.
-    ///
-    /// This is what `session.json` v2 stores: the whole tab list, not just the
-    /// tab that happened to be visible at save time.
-    /// The tab holding `pane`, or `None` when no tab of this workspace does.
-    /// Used to resolve which checkout a pane belongs to: with a tab bound to a
-    /// worktree, that is the tab's, not the workspace's.
     pub fn tab_for_pane(&self, pane: &gpui::Entity<Pane>) -> Option<&Tab> {
         self.tabs.iter().find(|tab| tab.contains_pane(pane))
     }
 
-    /// The worktree of every tab bound to one, as absolute path strings.
-    /// Feeds the git probe set: a bound tab needs its own branch and diffstat,
-    /// which the workspace's own fields cannot answer.
     pub fn bound_tab_worktrees(&self) -> Vec<String> {
         self.tabs
             .iter()
@@ -572,10 +366,6 @@ impl Workspace {
 }
 
 impl Workspace {
-    /// US-015: push a refreshed [`PaneFlowConfig`] to every `Pane` in the
-    /// workspace's layout so the tab bar re-renders against the new config
-    /// without a per-frame `load_config()`. Called from
-    /// `PaneFlowApp::process_config_changes` on every ConfigWatcher reload.
     pub fn propagate_config(&self, config: &paneflow_config::schema::PaneFlowConfig, cx: &mut App) {
         for tab in &self.tabs {
             if let Some(root) = &tab.root {
@@ -684,7 +474,6 @@ mod tests {
         let pane = ws.active_tab().root.as_ref().unwrap().first_leaf().unwrap();
         let first_tab = ws.active_tab_idx();
 
-        // Zoom the first tab: root keeps the zoomed leaf, saved_layout the tree.
         let full = ws.active_tab_mut().root.take().unwrap();
         ws.active_tab_mut().saved_layout = Some(full);
         ws.active_tab_mut().root = Some(LayoutTree::Leaf(pane));
@@ -699,8 +488,6 @@ mod tests {
 
     #[gpui::test]
     fn reorder_tab_keeps_the_same_tab_visible(cx: &mut TestAppContext) {
-        // US-011: reordering is a view operation - the tab you were looking at
-        // stays the one you look at, wherever it lands.
         let cx = cx.add_empty_window();
         let mut ws = test_workspace(cx);
         assert!(ws.open_tab(Tab::new("second", None)));
@@ -717,7 +504,6 @@ mod tests {
         assert_eq!(ws.active_tab().id, ids[0]);
         assert_eq!(ws.active_tab_idx(), 2);
 
-        // Out-of-range and no-op moves mutate nothing.
         ws.reorder_tab(2, 2);
         ws.reorder_tab(9, 0);
         assert_eq!(
@@ -729,8 +515,6 @@ mod tests {
 
     #[gpui::test]
     fn can_open_tab_reports_the_cap_before_a_move_detaches_anything(cx: &mut TestAppContext) {
-        // US-011: a cross-workspace move asks this *before* removing the tab
-        // from its source, so a refused move never kills a live terminal.
         let cx = cx.add_empty_window();
         let mut ws = test_workspace(cx);
         assert!(ws.can_open_tab());
@@ -808,11 +592,8 @@ mod tests {
         let both = HashSet::from([7u64, 8]);
         assert!(notification.is_unread_for(&owning_tab));
         assert!(!notification.is_unread_for(&sibling_tab));
-        // Nothing for the expanded folder row to keep: a tab row speaks for it.
         assert!(!notification.has_unattributed_unread());
 
-        // Looking at the sibling leaves the mark where it belongs. The single
-        // workspace-wide flag this replaced cleared it here, losing the signal.
         notification.acknowledge(&sibling_tab, &both);
         assert!(notification.is_unread_for(&owning_tab));
 
@@ -825,12 +606,10 @@ mod tests {
         let mut notification = AgentCompletionNotification::default();
         notification.record_finished(false, None);
 
-        // No tab row can claim it, so the folder keeps it even when expanded.
         assert!(notification.has_unattributed_unread());
         assert!(notification.is_unread());
         assert!(!notification.is_unread_for(&HashSet::from([7u64])));
 
-        // Making any tab visible is the only chance it gets to be seen.
         notification.acknowledge(&HashSet::from([7u64]), &HashSet::from([7u64]));
         assert!(!notification.is_unread());
     }
@@ -840,9 +619,6 @@ mod tests {
         let mut notification = AgentCompletionNotification::default();
         notification.record_finished(false, Some(7));
 
-        // Surface 7's tab is gone, so no tab row can ever claim its mark and
-        // no look at it is possible. Left in, it would pin the dot on the
-        // collapsed folder row for the rest of the session.
         let live = HashSet::from([8u64]);
         notification.acknowledge(&live, &live);
         assert!(!notification.is_unread());

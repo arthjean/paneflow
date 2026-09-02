@@ -1,30 +1,8 @@
-//! No-clobber config-merge primitives (EP-002 US-006).
-//!
-//! Two formats, two rules:
-//! - **JSON** (Claude Code, Gemini) is merged via `serde_json::Value`, so
-//!   unknown keys and sibling MCP servers are preserved semantically.
-//! - **JSONC** (opencode) is parsed here and surgically edited through
-//!   `paneflow-agent-config`, preserving comments and surrounding formatting.
-//! - **TOML** (Codex) is edited via `toml_edit::DocumentMut`, which
-//!   preserves comments and key order. Only `[<table>.paneflow]` is
-//!   upserted.
-//!
-//! Both `read_*_or_default` helpers treat a **missing** file as an empty
-//! skeleton (so a fresh install creates it) but a **present-but-invalid**
-//! file as an error (so we never overwrite a config we could not parse -
-//! the user repairs it by hand). This is the no-clobber guarantee.
-
 use std::path::Path;
 
 use anyhow::{Context, Result};
 use paneflow_agent_config::jsonc;
 
-// ---------------------------------------------------------------------------
-// JSON
-// ---------------------------------------------------------------------------
-
-/// Read + parse a JSON config. Missing file → empty object skeleton.
-/// Present but unparseable → `Err` (caller must abort, never clobber).
 pub fn read_json_or_default(path: &Path) -> Result<serde_json::Value> {
     match std::fs::read(path) {
         Ok(bytes) => parse_json_or_jsonc(path, &bytes),
@@ -62,14 +40,6 @@ fn parse_json_or_jsonc(path: &Path, bytes: &[u8]) -> Result<serde_json::Value> {
     }
 }
 
-/// Upsert `root[container_key][entry_name] = entry_value`, creating the
-/// container object if needed. Returns `true` iff the document changed
-/// (the entry was absent or differed); `false` is a no-op (idempotent).
-///
-/// Sibling entries under `container_key`, and every other top-level key,
-/// are left untouched. Errors only if `root` (or an existing
-/// `container_key`) is present but not a JSON object - overwriting a
-/// non-object there would be a clobber.
 pub fn merge_json_entry(
     root: &mut serde_json::Value,
     container_key: &str,
@@ -94,8 +64,6 @@ pub fn merge_json_entry(
     Ok(true)
 }
 
-/// Remove `root[container_key][entry_name]`. Returns `true` iff something
-/// was removed. Leaves siblings and the container itself in place.
 pub fn remove_json_entry(
     root: &mut serde_json::Value,
     container_key: &str,
@@ -107,25 +75,12 @@ pub fn remove_json_entry(
         .is_some_and(|container| container.remove(entry_name).is_some())
 }
 
-/// Serialize a JSON config back to bytes: pretty-printed, trailing newline
-/// (matches what editors and `claude mcp add` leave behind).
-///
-/// US-038: returns `Result` and propagates a serialization error instead of
-/// the old `unwrap_or_else(|_| "{}")` fallback, which would have silently
-/// written an empty object over the user's real MCP servers (a no-clobber
-/// violation) if a parsed `Value` ever failed to re-serialize.
 pub fn json_to_bytes(root: &serde_json::Value) -> Result<Vec<u8>, serde_json::Error> {
     let mut s = serde_json::to_string_pretty(root)?;
     s.push('\n');
     Ok(s.into_bytes())
 }
 
-// ---------------------------------------------------------------------------
-// TOML
-// ---------------------------------------------------------------------------
-
-/// Read + parse a TOML config. Missing file → empty document. Present but
-/// unparseable → `Err` (no-clobber).
 pub fn read_toml_or_default(path: &Path) -> Result<toml_edit::DocumentMut> {
     match std::fs::read_to_string(path) {
         Ok(text) => text.parse::<toml_edit::DocumentMut>().with_context(|| {
@@ -140,10 +95,6 @@ pub fn read_toml_or_default(path: &Path) -> Result<toml_edit::DocumentMut> {
     }
 }
 
-/// Upsert `[<table_path>.<name>]` with `command = <command>` and
-/// `args = [...]`, preserving the rest of the document (comments, key
-/// order, sibling tables). Returns `true` iff the serialized document
-/// changed.
 pub fn upsert_toml_entry(
     doc: &mut toml_edit::DocumentMut,
     table_path: &str,
@@ -155,14 +106,9 @@ pub fn upsert_toml_entry(
 
     let before = doc.to_string();
 
-    // Auto-vivify the parent table only when absent; an existing parent is
-    // reused untouched so we never strip a user's `[mcp_servers]` header or
-    // its other entries.
     let parent = match doc.entry(table_path) {
         toml_edit::Entry::Vacant(v) => {
             let mut t = Table::new();
-            // Render as `[mcp_servers.paneflow]` rather than emitting a
-            // bare `[mcp_servers]` header for a freshly created parent.
             t.set_implicit(true);
             v.insert(Item::Table(t))
         }
@@ -184,7 +130,6 @@ pub fn upsert_toml_entry(
     Ok(doc.to_string() != before)
 }
 
-/// Remove `[<table_path>.<name>]`. Returns `true` iff the document changed.
 pub fn remove_toml_entry(doc: &mut toml_edit::DocumentMut, table_path: &str, name: &str) -> bool {
     let Some(parent) = doc
         .get_mut(table_path)
@@ -195,15 +140,10 @@ pub fn remove_toml_entry(doc: &mut toml_edit::DocumentMut, table_path: &str, nam
     parent.remove(name).is_some()
 }
 
-/// Serialize a TOML document back to bytes.
 #[must_use]
 pub fn toml_to_bytes(doc: &toml_edit::DocumentMut) -> Vec<u8> {
     doc.to_string().into_bytes()
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -223,7 +163,6 @@ mod tests {
         let changed =
             merge_json_entry(&mut root, "mcpServers", "paneflow", paneflow_entry()).unwrap();
         assert!(changed);
-        // Sibling server and unrelated top-level key preserved.
         assert_eq!(root["mcpServers"]["other"]["command"], json!("x"));
         assert_eq!(root["theme"], json!("dark"));
         assert_eq!(root["mcpServers"]["paneflow"], paneflow_entry());
@@ -259,7 +198,6 @@ mod tests {
         assert!(remove_json_entry(&mut root, "mcpServers", "paneflow"));
         assert!(root["mcpServers"].get("paneflow").is_none());
         assert_eq!(root["mcpServers"]["other"]["command"], json!("x"));
-        // Removing again is a no-op.
         assert!(!remove_json_entry(&mut root, "mcpServers", "paneflow"));
     }
 

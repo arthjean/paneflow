@@ -20,7 +20,6 @@ impl fmt::Display for JsoncError {
 
 impl std::error::Error for JsoncError {}
 
-/// Parse JSONC while accepting comments and trailing commas.
 pub fn parse(input: &str) -> Result<Value, JsoncError> {
     Parser::new(input).parse_document()?;
     let without_comments = strip_comments(input)?;
@@ -29,10 +28,6 @@ pub fn parse(input: &str) -> Result<Value, JsoncError> {
         .map_err(|error| JsoncError::invalid(format!("invalid JSONC: {error}")))
 }
 
-/// Upsert one nested object member without reserializing the surrounding file.
-///
-/// `Ok(None)` means the semantic value was already current. Otherwise only the
-/// target value, or the minimum insertion needed for it, changes in the source.
 pub fn upsert_entry(
     input: &str,
     container_key: &str,
@@ -79,7 +74,6 @@ pub fn upsert_entry(
     Ok(Some(updated))
 }
 
-/// Remove one nested object member without reserializing the surrounding file.
 pub fn remove_entry(
     input: &str,
     container_key: &str,

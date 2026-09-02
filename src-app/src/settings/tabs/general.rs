@@ -1,27 +1,3 @@
-//! "General" settings page - the default landing section.
-//!
-//! Hosts two top-level preferences, each rendered with the shared Codex-style
-//! select primitives (`components::select_*`):
-//! - **Default editor** (`external_editor`) - the app used to open files and
-//!   folders (Auto-detect / Zed / Cursor / Windsurf / VS Code / Visual Studio /
-//!   System), each with its brand logo.
-//! - **Shell in the integrated terminal** (`default_shell`) - a curated set of
-//!   platform shells. Empty = fall back to `$SHELL` / the platform default.
-//!
-//! Above them sit the two agent-trust sections moved off the AI Agent page,
-//! because they gate what an agent may do to the machine and to its peer panes
-//! rather than which launcher buttons show up:
-//! - **Permissions** - the Claude Code full-access guard.
-//! - **AI access** - free-access mode plus its injection fence (EP-003 US-009).
-//!
-//! **Notifications** closes the page. It had a section of its own until it was
-//! down to a single toggle, which is not a page.
-//!
-//! Both selects persist through [`PaneFlowApp::persist_setting`] (cache-mutate,
-//! repaint, off-thread write). Only one select is open at a time, tracked by
-//! [`crate::GeneralDropdown`]; the menu closes on select, on click-outside, on
-//! the trigger, on Escape, and on a tab change.
-
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, IntoElement, MouseButton, ParentElement,
     SharedString, Styled, div, prelude::*, px,
@@ -36,8 +12,6 @@ use crate::settings::components::{
     select_menu, select_trigger, setting_card, setting_text, toggle_row, toggle_row_with,
 };
 
-/// One select option: display label, optional leading logo, the JSON value
-/// written to config when picked, and whether it is the current selection.
 type SelectOption = (String, Option<Logo>, Value, bool);
 
 impl PaneFlowApp {
@@ -45,9 +19,6 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let config = &self.cached_config;
 
-        // ── Default editor (external_editor) ────────────────────────────
-        // "auto" is the default when unset. Each preset carries its brand logo
-        // (see `editor_icon`).
         let editor_value = config
             .external_editor
             .clone()
@@ -81,10 +52,6 @@ impl PaneFlowApp {
             cx,
         );
 
-        // ── Shell in the integrated terminal (default_shell) ────────────
-        // Order mirrors `terminal::shell`'s resolver preference. Any other value
-        // still works via config; the trigger shows the raw value when it does
-        // not match a preset, or "System default" when unset.
         #[cfg(target_os = "windows")]
         let shells: Vec<(&str, String)> = vec![
             ("PowerShell", "pwsh.exe".to_string()),
@@ -160,10 +127,6 @@ impl PaneFlowApp {
             .child(self.render_notifications_section(ui, cx))
     }
 
-    /// Notifications: OS-native agent alerts. One toggle, flattened off its own
-    /// page - the config value is an enum (`NotifyWhenAgentWaiting`) nested
-    /// under `agent_panel`, so the row drives it through `toggle_row_with`
-    /// rather than the plain-bool `toggle_row`.
     fn render_notifications_section(
         &self,
         ui: crate::theme::UiColors,
@@ -172,8 +135,6 @@ impl PaneFlowApp {
         let enabled = self.cached_config.agent_panel.as_ref().is_some_and(|p| {
             p.resolved_notify_when_agent_waiting() != NotifyWhenAgentWaiting::Never
         });
-        // "Never" is the off state; "PrimaryScreen" is the only on state the
-        // toggle offers. A user who wants another screen edits paneflow.json.
         let target = if enabled {
             Value::String("Never".to_string())
         } else {
@@ -205,12 +166,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// Permissions: the Claude Code full-access guard. Worded like Codex's own
-    /// Permissions section - state the default first, then what the mode gives
-    /// up - because the row is a one-click way to hand an agent the machine.
-    ///
-    /// One row, not Codex's two: Paneflow has no config key behind "default
-    /// permissions", and a toggle that writes nothing would read as a setting.
     fn render_permissions_section(
         &self,
         ui: crate::theme::UiColors,
@@ -239,15 +194,11 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// EP-003 US-009: AI access (free-access mode + injection fence). The fence
-    /// sub-toggle only appears once free-access is on: with the mode off,
-    /// `surface.read` is always fenced and there is nothing to relax.
     fn render_ai_access_section(
         &self,
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Defaults: unrestricted OFF, fence ON.
         let unrestricted = self.cached_config.ai_unrestricted_enabled();
         let fence = self.cached_config.ai_injection_fence_enabled();
 
@@ -274,8 +225,6 @@ impl PaneFlowApp {
                 ui,
                 cx,
             ));
-            // AC #3: once the fence is OFF, surface the active risk in red so
-            // the trade-off is explicit and impossible to miss.
             if !fence {
                 access_card = access_card.child(hairline(ui)).child(
                     div()
@@ -300,10 +249,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// One General-page setting row: label/description on the left, a Codex-style
-    /// select on the right (shared `components::select_*` primitives). `options`
-    /// are `(label, leading_logo, json_value, is_selected)`. Both fields this
-    /// drives are top-level, so the write is always un-nested.
     #[allow(clippy::too_many_arguments)]
     fn general_select_row(
         &self,
@@ -315,14 +260,10 @@ impl PaneFlowApp {
         options: Vec<SelectOption>,
         config_key: &'static str,
         ui: crate::theme::UiColors,
-        // Concrete `AnyElement` (not `impl IntoElement`) so the value does not
-        // capture `cx`'s borrow under edition-2024 RPIT - otherwise the two
-        // `let` rows above would hold overlapping `&mut cx` borrows.
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let is_open = self.general_dropdown == Some(which);
 
-        // Value cluster: optional leading logo + truncating label.
         let mut value = div()
             .flex()
             .flex_row()
@@ -342,9 +283,6 @@ impl PaneFlowApp {
                 .child(current_label),
         );
 
-        // Decide open/close from the render-time `is_open` snapshot, not the
-        // live state: the menu's `on_mouse_down_out` fires on this same press and
-        // may have already cleared the state, so a live toggle would re-open.
         let mut trigger =
             select_trigger(SharedString::from(format!("general-dd-{config_key}")), ui)
                 .on_mouse_down(
@@ -364,8 +302,6 @@ impl PaneFlowApp {
                 SharedString::from(format!("general-dd-list-{config_key}")),
                 ui,
             )
-            // Guard on `which` so opening the *other* select does not
-            // close it via this menu's out-handler (shared state).
             .on_mouse_down_out(cx.listener(move |this, _, _w, cx| {
                 if this.general_dropdown == Some(which) {
                     this.general_dropdown = None;
@@ -409,10 +345,6 @@ impl PaneFlowApp {
     }
 }
 
-/// Per-editor leading logo for the Default-editor select. Brand-color logos
-/// (Zed / VS Code / Visual Studio) are PNGs rendered in full color; Cursor and
-/// Windsurf ship as monochrome `currentColor` SVGs that follow the theme.
-/// `auto` / `system` have no logo.
 pub(crate) const EDITOR_PRESETS: &[(&str, &str)] = &[
     ("Auto-detect", "auto"),
     ("Zed", "zed"),
@@ -434,10 +366,6 @@ pub(crate) fn editor_icon(value: &str) -> Option<Logo> {
     }
 }
 
-/// Case-insensitive comparison for shell presets. Bare configured names match
-/// by basename (`bash.exe` should still select Git Bash), while two explicit
-/// paths must point at the same executable (`C:\Windows\System32\bash.exe`
-/// should not be presented as Git Bash).
 fn shell_preset_eq(stored: &str, chip: &str) -> bool {
     fn has_separator(s: &str) -> bool {
         s.contains(['/', '\\'])

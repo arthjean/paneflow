@@ -1,20 +1,9 @@
-//! Read surface of the CLI: `ls` / `read` / `search` (US-004).
-//!
-//! Thin wrappers over the existing `surface.list` / `surface.read` /
-//! `surface.search` IPC methods. Introspection (`ls`, `search`) emits JSON by
-//! default for scripts; `read` prints the scrollback text (wrapped in the
-//! anti-injection `<untrusted_terminal_output>` fence when the
-//! `ai_injection_fence` setting is on, the default; pass `--raw` to bypass it
-//! for a human piping into `grep`) and only wraps it in the
-//! `{text, lines, total_lines, eof}` envelope under `--json`.
-
 use paneflow_ipc_client::IpcTransport;
 use serde_json::{Value, json};
 
 use super::selector::resolve_target;
 use super::{CliError, EXIT_OK};
 
-/// `paneflow ls [--human]` - list terminal surfaces.
 pub fn ls(client: &impl IpcTransport, human: bool) -> Result<i32, CliError> {
     let result = super::reject_legacy_error(
         client
@@ -29,7 +18,6 @@ pub fn ls(client: &impl IpcTransport, human: bool) -> Result<i32, CliError> {
     Ok(EXIT_OK)
 }
 
-/// `paneflow read <target> [--lines N] [--offset N] [--json] [--raw]`.
 pub fn read(
     client: &impl IpcTransport,
     target: &str,
@@ -46,9 +34,6 @@ pub fn read(
     if let Some(offset) = offset {
         params["offset"] = json!(offset);
     }
-    // EP-003 US-011 (agent-control-plane): surface.read fences its output as
-    // untrusted by default (the `ai_injection_fence` setting). `--raw` forces
-    // the historical unwrapped output for a human piping into `grep` etc.
     if raw {
         params["fenced"] = json!(false);
     }
@@ -60,15 +45,12 @@ pub fn read(
     if json_out {
         super::print_json(&result)?;
     } else {
-        // Raw scrollback: print verbatim (it carries its own newlines). No
-        // trailing newline is appended so the output round-trips exactly.
         let text = result.get("text").and_then(Value::as_str).unwrap_or("");
         print!("{text}");
     }
     Ok(EXIT_OK)
 }
 
-/// `paneflow search <target> <pattern> [--max N] [--human]`.
 pub fn search(
     client: &impl IpcTransport,
     target: &str,
@@ -120,9 +102,6 @@ fn print_surfaces_table(result: &Value) {
     }
 }
 
-/// `paneflow ps [--json]` - list running agents across the fleet (EP-001
-/// US-001). Defaults to a human table (like Unix `ps`); `--json` emits the
-/// `{agents:[…]}` envelope for scripts.
 pub fn ps(client: &impl IpcTransport, json_out: bool) -> Result<i32, CliError> {
     let result = super::reject_legacy_error(
         client
@@ -137,8 +116,6 @@ pub fn ps(client: &impl IpcTransport, json_out: bool) -> Result<i32, CliError> {
     Ok(EXIT_OK)
 }
 
-/// `paneflow status <target> [--json]` - read one surface's agent state (EP-001
-/// US-002). Defaults to a one-line summary; `--json` emits the full envelope.
 pub fn status(client: &impl IpcTransport, target: &str, json_out: bool) -> Result<i32, CliError> {
     let surface_id = resolve_target(client, target)?;
     let result = super::reject_legacy_error(

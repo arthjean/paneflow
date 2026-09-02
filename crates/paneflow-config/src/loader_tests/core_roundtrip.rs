@@ -74,7 +74,6 @@ fn test_serialization_roundtrip() {
 
 #[test]
 fn test_nary_layout_roundtrip() {
-    // Build a 6-pane N-ary layout: 3 panes horizontal on top, 3 on bottom.
     let make_pane = |name: &str| LayoutNode::Pane {
         surfaces: vec![SurfaceDefinition {
             surface_type: Some("terminal".to_string()),
@@ -102,7 +101,6 @@ fn test_nary_layout_roundtrip() {
         children: vec![top_row, bottom_row],
     };
 
-    // Serialize to JSON and back.
     let json = serde_json::to_string_pretty(&root).unwrap();
     let deserialized: LayoutNode = serde_json::from_str(&json).unwrap();
     assert_eq!(root, deserialized);
@@ -110,7 +108,6 @@ fn test_nary_layout_roundtrip() {
 
 #[test]
 fn test_legacy_binary_still_works() {
-    // Legacy format with single `ratio` field (no `ratios`).
     let json = r#"{
         "type": "split",
         "direction": "horizontal",
@@ -143,7 +140,6 @@ fn test_layout_node_leaf_count() {
     };
     assert_eq!(single.leaf_count(), 1);
 
-    // 3-child flat split = 3 leaves
     let flat = LayoutNode::Split {
         direction: "vertical".to_string(),
         ratio: None,
@@ -162,7 +158,6 @@ fn test_layout_node_leaf_count() {
     };
     assert_eq!(flat.leaf_count(), 3);
 
-    // Nested: 2 rows of 3 = 6 leaves
     let nested = LayoutNode::Split {
         direction: "horizontal".to_string(),
         ratio: None,
@@ -216,8 +211,6 @@ fn test_resolved_ratios_legacy_binary() {
 
 #[test]
 fn test_resolved_ratios_rejects_nan_and_negative() {
-    // US-056: a corrupt session.json can carry NaN/negative/out-of-range
-    // ratios. They must be clamped, normalized, and never propagate.
     let node = LayoutNode::Split {
         direction: "vertical".to_string(),
         ratio: None,
@@ -236,11 +229,6 @@ fn test_resolved_ratios_rejects_nan_and_negative() {
     };
     let rs = node.resolved_ratios();
     assert_eq!(rs.len(), 3);
-    // EP-010 review: post-US-057-parity invariant. NaN/negative are floored,
-    // 2.0 is clamped to 1.0; every ratio is finite and in `[0.01, 1.0]`. The
-    // post-normalize re-clamp (matching `validate_layout`) keeps the floor,
-    // so the sum is ~1.0 but not exactly - the renderer re-normalizes at
-    // paint. Assert the floor + a sane sum band, not `== 1.0`.
     assert!(rs
         .iter()
         .all(|&r| r.is_finite() && (0.01 - 1e-9..=1.0).contains(&r)));
@@ -253,12 +241,6 @@ fn test_resolved_ratios_rejects_nan_and_negative() {
 
 #[test]
 fn test_resolved_ratios_floor_respected_after_normalize() {
-    // EP-010 review: the SESSION path (`resolved_ratios` -> `sanitize_ratios`)
-    // must honour the 0.01 floor AFTER normalize, matching the config path
-    // (`validate_layout`, see `test_per_child_ratios_floor_respected_after_normalize`).
-    // `[1.0, 0.005]` clamps to `[1.0, 0.01]` (sum 1.01); normalizing alone
-    // would push the second child to ~0.0099 - below the floor. The
-    // post-normalize re-clamp must pull it back to 0.01.
     let node = LayoutNode::Split {
         direction: "vertical".to_string(),
         ratio: None,
@@ -282,12 +264,10 @@ fn test_resolved_ratios_floor_respected_after_normalize() {
 
 #[test]
 fn test_resolved_ratios_length_mismatch_falls_back() {
-    // US-056: a ratios array whose length disagrees with the child count
-    // is unrecoverable -> equal shares, never a panic or stale mapping.
     let node = LayoutNode::Split {
         direction: "horizontal".to_string(),
         ratio: None,
-        ratios: Some(vec![0.9]), // 1 ratio, 2 children
+        ratios: Some(vec![0.9]),
         children: vec![
             LayoutNode::Pane {
                 surfaces: vec![Default::default()],

@@ -11,7 +11,6 @@ pub fn config_dir() -> Option<std::path::PathBuf> {
     dirs::config_dir()
 }
 
-/// Read a UTF-8 configuration file without conflating absence with failure.
 pub fn read_optional_text(path: &Path) -> Result<Option<String>> {
     match std::fs::read_to_string(path) {
         Ok(content) => Ok(Some(content)),

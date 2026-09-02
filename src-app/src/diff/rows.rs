@@ -1,13 +1,3 @@
-//! Unified diff display-row model + per-row rendering (US-006,
-//! prd-multi-worktree-diff-2026-Q3.md).
-//!
-//! `build_display_rows` reconstructs a standard unified diff (context / removed
-//! / added lines, with file headers) as a flat row list consumed by the custom
-//! virtualized `super::element::DiffElement`, which culls to the visible window
-//! using the precomputed per-row offsets (file headers are taller; other rows
-//! use the compact line height). Side-by-side rendering (LHS/RHS with phantom
-//! rows) is EP-003 (US-008/US-009); this is the EP-002 unified view.
-
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -18,21 +8,12 @@ use super::syntax::DiffSyntax;
 
 const MAX_FULL_SPLIT_ALIGN_LINES: usize = 20_000;
 
-/// Content row height (CSS px) - compact, one diff line.
 pub const ROW_HEIGHT: f32 = 18.0;
 
-/// File-header row height. Taller than a content line so each file reads as a
-/// padded, breathing "card" header (Zed buffer-subheader feel) while content
-/// lines stay compact. The custom element lays rows out at variable heights
-/// keyed off [`display_row_height`] / [`split_row_height`].
 pub const FILE_HEADER_HEIGHT: f32 = 32.0;
 
-/// Collapsed unchanged-region row height. This row is a compact control, not a
-/// normal code line, so it needs room for the rounded surface and fold icon.
 pub const FOLD_ROW_HEIGHT: f32 = 32.0;
 
-/// Laid-out height of one unified row: a padded card for file headers, the
-/// compact line height for everything else.
 pub fn display_row_height(row: &DisplayRow) -> f32 {
     match row.kind {
         RowKind::FileHeader => FILE_HEADER_HEIGHT,
@@ -41,7 +22,6 @@ pub fn display_row_height(row: &DisplayRow) -> f32 {
     }
 }
 
-/// Side-by-side analog of [`display_row_height`].
 pub fn split_row_height(row: &SplitRow) -> f32 {
     match row {
         SplitRow::Header(_) => FILE_HEADER_HEIGHT,
@@ -50,10 +30,6 @@ pub fn split_row_height(row: &SplitRow) -> f32 {
     }
 }
 
-/// Cumulative top offsets (px) for a unified row set: `offsets[i]` is the top of
-/// row `i`, `offsets[len]` the total content height. Precomputed off the render
-/// path (in `Column::recompute_display`) and shared with `DiffElement`, which
-/// culls + lays out against it instead of re-walking every row each frame.
 pub fn unified_offsets(rows: &[DisplayRow]) -> Vec<f32> {
     let mut acc = 0.0;
     let mut out = Vec::with_capacity(rows.len() + 1);
@@ -65,7 +41,6 @@ pub fn unified_offsets(rows: &[DisplayRow]) -> Vec<f32> {
     out
 }
 
-/// Side-by-side analog of [`unified_offsets`].
 pub fn split_offsets(rows: &[SplitRow]) -> Vec<f32> {
     let mut acc = 0.0;
     let mut out = Vec::with_capacity(rows.len() + 1);
@@ -77,11 +52,6 @@ pub fn split_offsets(rows: &[SplitRow]) -> Vec<f32> {
     out
 }
 
-/// Cumulative top offsets (px) of each hunk's first changed row in a unified row
-/// set. A "hunk start" is a change row (Added/Removed) whose predecessor is not
-/// a change, so consecutive removed+added lines count as one hunk. Precomputed
-/// in `Column::recompute_display` (US-046) so the toolbar's hunk counter and
-/// hunk-nav read it per frame instead of re-walking every row.
 pub fn unified_hunk_tops(rows: &[DisplayRow]) -> Vec<f32> {
     let mut tops = Vec::new();
     let mut acc = 0.0f32;
@@ -97,7 +67,6 @@ pub fn unified_hunk_tops(rows: &[DisplayRow]) -> Vec<f32> {
     tops
 }
 
-/// Side-by-side analog of [`unified_hunk_tops`].
 pub fn split_hunk_tops(rows: &[SplitRow]) -> Vec<f32> {
     let mut tops = Vec::new();
     let mut acc = 0.0f32;
@@ -118,8 +87,6 @@ pub fn split_hunk_tops(rows: &[SplitRow]) -> Vec<f32> {
     tops
 }
 
-/// Widest line number across a unified row set (both sides); `0` when empty.
-/// Used to size the line-number gutter once at build time.
 pub fn unified_max_line_no(rows: &[DisplayRow]) -> u32 {
     rows.iter()
         .map(|r| r.new_no.unwrap_or(0).max(r.old_no.unwrap_or(0)))
@@ -127,7 +94,6 @@ pub fn unified_max_line_no(rows: &[DisplayRow]) -> u32 {
         .unwrap_or(0)
 }
 
-/// Side-by-side analog of [`unified_max_line_no`].
 pub fn split_max_line_no(rows: &[SplitRow]) -> u32 {
     rows.iter()
         .map(|r| match r {
@@ -138,26 +104,13 @@ pub fn split_max_line_no(rows: &[SplitRow]) -> u32 {
         .unwrap_or(0)
 }
 
-/// One file's extent in a display-row set: the index of its `FileHeader` row
-/// and the width (in monospace cells) of its widest code line. The widest-line
-/// width drives the file's horizontal-scroll bound; split rows additionally
-/// store the right-side width. These spans are precomputed off the render path
-/// (in `recompute_display` / `DiffDockData::recompute`) and shared with
-/// `DiffElement`, which offsets each file side's code by its own scroll
-/// position instead of re-measuring every row per frame. Widths count `char`s
-/// (not bytes), matching the monospace-cell estimate the element scrolls by;
-/// they are `0` for a collapsed file (header only) or a binary/fold-only file.
 #[derive(Clone, Copy)]
 pub struct FileSpan {
     pub header_row: usize,
-    /// Unified width, or split-left width when `right_max_chars` is `Some`.
     pub max_chars: usize,
-    /// Split-right width. `None` means the span belongs to unified mode.
     pub right_max_chars: Option<usize>,
 }
 
-/// Per-file spans for a unified row set, one entry per `FileHeader` in file
-/// order (so `partition_point` on `header_row` maps any row back to its file).
 pub fn unified_file_spans(rows: &[DisplayRow]) -> Vec<FileSpan> {
     let mut spans: Vec<FileSpan> = Vec::new();
     for (i, r) in rows.iter().enumerate() {
@@ -172,16 +125,12 @@ pub fn unified_file_spans(rows: &[DisplayRow]) -> Vec<FileSpan> {
                     span.max_chars = span.max_chars.max(r.text.chars().count());
                 }
             }
-            // Folds, binary notes and the truncation row never scroll.
             RowKind::Fold | RowKind::Binary | RowKind::Truncated => {}
         }
     }
     spans
 }
 
-/// Side-by-side analog of [`unified_file_spans`]. Each `Pair` row contributes
-/// to the matching half's width, so split horizontal scroll can clamp left and
-/// right independently.
 pub fn split_file_spans(rows: &[SplitRow]) -> Vec<FileSpan> {
     let mut spans: Vec<FileSpan> = Vec::new();
     for (i, r) in rows.iter().enumerate() {
@@ -204,17 +153,10 @@ pub fn split_file_spans(rows: &[SplitRow]) -> Vec<FileSpan> {
     spans
 }
 
-/// Cap on rendered rows across a whole column. Beyond this the column shows a
-/// truncation notice instead of freezing the frame on a pathological diff.
 pub const MAX_DISPLAY_ROWS: usize = 10_000;
 
-/// Unchanged lines kept on each side of a hunk before the middle is collapsed
-/// into a [`RowKind::Fold`] marker (mirrors Zed's default diff context).
 pub const CONTEXT_LINES: u32 = 3;
 
-/// Per-file caches shared by unified/split row builders for one diff snapshot.
-/// The Review view keeps these next to `files_full` so the inactive mode and
-/// later fold expansions reuse the syntax pass instead of recomputing it.
 #[derive(Clone, Default)]
 pub struct FileRowCache {
     syn_old: Vec<Vec<(Range<usize>, Hsla)>>,
@@ -229,7 +171,6 @@ pub enum RowKind {
     Removed,
     Binary,
     Truncated,
-    /// Collapsed run of unchanged lines between/around hunks (Zed-style fold).
     Fold,
 }
 
@@ -239,26 +180,12 @@ pub struct DisplayRow {
     pub text: SharedString,
     pub old_no: Option<u32>,
     pub new_no: Option<u32>,
-    /// Per-token foreground syntax runs (US-017), computed off-thread; empty
-    /// when syntax highlighting is disabled or the line is plain.
     pub syntax_runs: Vec<(Range<usize>, Hsla)>,
-    /// EP-002 US-006: typed file-header segments for [`RowKind::FileHeader`]
-    /// rows (`None` for every other kind). Decomposes the header into directory
-    /// prefix + basename + diffstat so the element paints each as its own typed
-    /// run instead of one fused monospace string.
     pub header: Option<HeaderParts>,
-    /// Stable identity for a collapsed unchanged region. Present only on
-    /// [`RowKind::Fold`] rows, and used by the Review view to toggle that region
-    /// open without recomputing the git diff.
     pub fold_key: Option<SharedString>,
-    /// Source range behind a fold marker. Hidden rows are rebuilt lazily from
-    /// `FileDiff` + `FileRowCache` on expansion; the marker stays visible so
-    /// clicking it again closes the region.
     pub fold_base_start: Option<u32>,
     pub fold_new_start: Option<u32>,
     pub fold_count: u32,
-    /// Legacy eager payload. New builders leave this empty so initial Review
-    /// paint does not materialize thousands of hidden context rows.
     pub folded_rows: Vec<DisplayRow>,
 }
 
@@ -272,27 +199,14 @@ pub struct FoldBlock<T> {
     pub rows: Vec<T>,
 }
 
-/// EP-002 US-006: the file-header row, split into typed segments at build time
-/// (off the render path) so [`super::element::DiffElement`] paints a structured
-/// header - file-type icon, muted directory prefix, emphasized basename,
-/// right-aligned green/red diffstat, and trailing actions - instead of one
-/// undifferentiated mono string. Shared by the Review view and the diff
-/// dock.
 #[derive(Clone)]
 pub struct HeaderParts {
-    /// Directory portion including the trailing `/`, or `""` at the repo root.
-    /// The element truncates HERE under width pressure, never on the basename.
     pub dir_prefix: SharedString,
-    /// File basename (a rename shows `old → new`). Never truncated.
     pub basename: SharedString,
     pub added: u32,
     pub removed: u32,
 }
 
-/// Split a display path into `(dir_prefix_with_trailing_slash, basename)`.
-/// For a rename (`"old → new"`) the last `/` lands inside the new path, so the
-/// new file's basename is emphasized and the `old → newdir/` lead falls into the
-/// muted directory prefix - readable, allocation-cheap, never panics.
 fn split_header_path(shown_path: &str) -> (String, String) {
     match shown_path.rfind('/') {
         Some(i) => (
@@ -303,49 +217,27 @@ fn split_header_path(shown_path: &str) -> (String, String) {
     }
 }
 
-/// Diff colors, snapshotted once per render and copied into the (`'static`)
-/// `super::element::DiffElement`, which owns its row data for the frame.
 #[derive(Clone, Copy)]
 pub struct RowPalette {
     pub text: Hsla,
     pub muted: Hsla,
     pub header_bg: Hsla,
-    /// Background of the pinned sticky file header that tracks the viewport top
-    /// while a file's hunks scroll under it. Opaque + slightly elevated so it
-    /// reads as floating above the scrolling body.
     pub sticky_header_bg: Hsla,
     pub add_bg: Hsla,
     pub del_bg: Hsla,
     pub add_fg: Hsla,
     pub del_fg: Hsla,
-    /// Gutter line-number tint for changed lines - added/removed numbers read in
-    /// a status hue instead of flat `muted`, so the eye finds the changed lines
-    /// from the gutter alone (GitHub / Zed behaviour). Context numbers stay
-    /// `muted`.
     pub gutter_add: Hsla,
     pub gutter_del: Hsla,
-    /// File-type icon accent used by the compact file-list headers.
     pub file_icon_hot: Hsla,
-    /// Opaque hunk-indicator bar colors. Zed blends the raw `version_control_*`
-    /// color with the editor background before painting the gutter strip so it
-    /// reads solid; we pre-blend once in `view.rs::palette()`.
     pub add_bar: Hsla,
     pub del_bar: Hsla,
-    /// Background for balancing phantom cells in the side-by-side view.
     pub phantom_bg: Hsla,
     pub phantom_hatch: Hsla,
-    /// EP-002 US-007: faint document wash on context (unchanged) code so the
-    /// diff body reads as a surface, not the bare window background.
     pub context_bg: Hsla,
-    /// EP-002 US-007: persistent line-number-rail tint, painted over every
-    /// content row's gutter region so the gutter reads as a structural column.
     pub gutter_bg: Hsla,
     pub add_gutter_bg: Hsla,
     pub del_gutter_bg: Hsla,
-    /// EP-003 US-009: wash behind the code editor's current line. Derived from
-    /// `ui.text` at low alpha rather than added as a theme slot, so the six
-    /// bundled theme files keep their current shape and a user theme cannot
-    /// forget to define it.
     pub cursor_line_bg: Hsla,
 }
 
@@ -475,9 +367,6 @@ where
     }
 }
 
-/// File extension (lowercased) used to pick a tree-sitter grammar. Shared with
-/// the file editor's highlight driver (prd-file-editor-2026-Q3, US-004) so both
-/// surfaces resolve the same grammar for the same path.
 pub(crate) fn file_ext(path: &str) -> String {
     std::path::Path::new(path)
         .extension()
@@ -486,8 +375,6 @@ pub(crate) fn file_ext(path: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// Per-line syntax runs for one side of a file, or an empty vec when syntax
-/// highlighting is off / the file is binary. Indexed to match `str::lines()`.
 fn side_syntax(
     syntax: Option<&DiffSyntax>,
     file: &FileDiff,
@@ -522,61 +409,32 @@ pub fn build_file_row_caches(files: &[FileDiff], syntax: Option<&DiffSyntax>) ->
         .collect()
 }
 
-/// Resolve a [`RowPalette`] from the active theme's UI colors. The single color
-/// source for [`super::element::DiffElement`], shared by the Review view
-/// ([`super::view`]) and the diff dock ([`crate::app::diff_dock`]) so
-/// both render with identical washes.
 pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
     let diff = ui.diff_colors();
     RowPalette {
         text: ui.text,
         muted: ui.muted,
-        // EP-002 US-005: file card at the `surface` tier (one step off the
-        // `base` body), so each file reads as an elevated card over the body.
         header_bg: ui.surface,
-        // EP-002 US-005/US-008: the sticky bar is the file header pinned to the
-        // viewport top; it must read as FLOATING above the inline card, not
-        // identical to it. A faint text-tint lift shifts it off `surface` on
-        // both themes (lighter on dark, defined on light); the bottom hairline
-        // the element paints completes the "floating layer" read.
         sticky_header_bg: ui.surface.blend(ui.text.opacity(0.06)),
         add_bg: diff.added_background,
         del_bg: diff.deleted_background,
         add_fg: diff.added,
         del_fg: diff.deleted,
-        // Gutter numbers for changed lines use the sampled colors directly to
-        // match the reference diff gutters.
         gutter_add: diff.added,
         gutter_del: diff.deleted,
         file_icon_hot: ui.vc_conflict,
-        // Zed paints the gutter hunk strip as `editor_background.blend(version_control_*)`
-        // so it reads solid; pre-blend against the diff body surface (`ui.base`,
-        // what context lines sit on) so the bar is opaque, not faint at the wash alpha.
         add_bar: ui.base.blend(diff.added),
         del_bar: ui.base.blend(diff.deleted),
-        // Empty split-side cells: base fill plus subtle diagonal hatches.
         phantom_bg: ui.base,
         phantom_hatch: ui.surface,
-        // EP-002 US-007: intra-line word emphasis. Light keeps the theme's 0.40
-        // `vc_word_*` alpha; dark drops to 0.28 - 0.40 read too hot over the
-        // Codex-sampled dark line wash.
-        // Neutral rows and phantom gutters sit on the editor background; the
-        // colored add/delete washes carry the visual hierarchy.
         context_bg: ui.base,
         gutter_bg: ui.base,
         add_gutter_bg: diff.added_gutter_background,
         del_gutter_bg: diff.deleted_gutter_background,
-        // EP-003 US-009: the current-line wash has to survive both themes with
-        // one alpha. 0.05 of the foreground reads as a lift on dark and as a
-        // shade on light, and stays under every diff wash so a changed line
-        // keeps its status color when the caret sits on it.
         cursor_line_bg: ui.text.opacity(0.05),
     }
 }
 
-/// Build the flat, virtualization-ready row list for a column's files. Returns
-/// the rows plus the number of content lines dropped by the `MAX_DISPLAY_ROWS`
-/// cap (0 when nothing was truncated).
 #[cfg(test)]
 pub fn build_display_rows(
     files: &[FileDiff],
@@ -652,8 +510,8 @@ pub fn build_display_rows_with_caches(
         };
         let syn_old = &cache.syn_old;
         let syn_new = &cache.syn_new;
-        let mut bc = 0u32; // base cursor (next unconsumed base row)
-        let mut nc = 0u32; // new cursor (next unconsumed new row)
+        let mut bc = 0u32;
+        let mut nc = 0u32;
 
         let push = |row: DisplayRow, rows: &mut Vec<DisplayRow>, dropped: &mut usize| {
             if rows.len() >= MAX_DISPLAY_ROWS {
@@ -663,7 +521,6 @@ pub fn build_display_rows_with_caches(
             }
         };
 
-        // One equal/context line at (base `bi`, new `ni`).
         let ctx = |bi: u32, ni: u32| {
             content_row(
                 &new_lines,
@@ -680,9 +537,6 @@ pub fn build_display_rows_with_caches(
 
         let mut first_gap = true;
         for h in &file.hunks {
-            // Equal region before this hunk: keep CONTEXT_LINES bordering the
-            // hunk and collapse the middle. The very first gap has no preceding
-            // hunk, so it shows no lead context (Zed folds the top of the file).
             let gap = h.new_row_range.start - nc;
             let lead = if first_gap { 0 } else { CONTEXT_LINES.min(gap) };
             let trail = CONTEXT_LINES.min(gap - lead);
@@ -729,8 +583,6 @@ pub fn build_display_rows_with_caches(
             nc = h.new_row_range.end;
             first_gap = false;
         }
-        // Trailing equal region after the last hunk: keep CONTEXT_LINES, collapse
-        // the rest down to EOF.
         let tail = new_lines.len() as u32 - nc;
         let lead = CONTEXT_LINES.min(tail);
         for k in 0..lead {
@@ -748,11 +600,8 @@ pub fn build_display_rows_with_caches(
     (rows, dropped)
 }
 
-// ── Side-by-side (split) rows (US-009) ──────────────────────────────────────
-
 use super::align::{AlignedRow, Cell, CellKind, align_rows};
 
-/// One resolved half (left=base or right=new) of a side-by-side row.
 #[derive(Clone)]
 pub struct HalfCell {
     pub kind: CellKind,
@@ -761,21 +610,12 @@ pub struct HalfCell {
     pub syntax_runs: Vec<(Range<usize>, Hsla)>,
 }
 
-/// A row of the side-by-side view. `Pair` holds both halves so the two sides
-/// share one row (and therefore one scroll offset - US-011 sync scroll is free).
 #[derive(Clone)]
 pub enum SplitRow {
-    /// File-section header. EP-002 US-006: carries the same typed
-    /// [`HeaderParts`] as the unified [`DisplayRow::header`] so split + unified
-    /// paint identical structured headers.
     Header(HeaderParts),
     Note(SharedString),
-    /// Collapsed run of unchanged lines (Zed-style fold), spanning both halves.
     Fold(FoldBlock<SplitRow>),
-    Pair {
-        left: HalfCell,
-        right: HalfCell,
-    },
+    Pair { left: HalfCell, right: HalfCell },
 }
 
 fn resolve_half(cell: Cell, lines: &[&str], syntax: &[Vec<(Range<usize>, Hsla)>]) -> HalfCell {
@@ -975,9 +815,6 @@ fn build_split_rows_from_hunk_windows(
     emit_fold(bc, nc, remaining, rows, dropped);
 }
 
-/// Build the side-by-side row list for a column's files (US-009). Aligns each
-/// file with [`align_rows`] and resolves cells to text. Honors the same
-/// `MAX_DISPLAY_ROWS` cap as the unified builder.
 #[cfg(test)]
 pub fn build_split_rows(files: &[FileDiff], syntax: Option<&DiffSyntax>) -> (Vec<SplitRow>, usize) {
     let caches = build_file_row_caches(files, syntax);
@@ -1041,9 +878,6 @@ pub fn build_split_rows_with_caches(
             continue;
         }
         let aligned = align_rows(&file.hunks, base_lines.len() as u32, new_lines.len() as u32);
-        // Collapse runs of unchanged (context-on-both-sides) aligned rows the
-        // same way the unified builder does: keep CONTEXT_LINES bordering each
-        // change, fold the middle (and the file head/tail) into one marker.
         let emit_pair = |a: &AlignedRow, rows: &mut Vec<SplitRow>, dropped: &mut usize| {
             if rows.len() >= MAX_DISPLAY_ROWS {
                 *dropped += 1;
@@ -1095,9 +929,6 @@ pub fn build_split_rows_with_caches(
                     CONTEXT_LINES.min(run - lead)
                 };
                 let hidden = run - lead - trail;
-                // US-058: lead/hidden/trail partition `run = j - i`, so every
-                // `i + off` below is < j <= total. The `.get()` guards make that
-                // fail-safe (no release panic) if the arithmetic ever drifts.
                 for k in 0..lead as usize {
                     debug_assert!(i + k < total, "lead index out of bounds");
                     if let Some(a) = aligned.get(i + k) {
@@ -1130,11 +961,6 @@ pub fn build_split_rows_with_caches(
     (rows, dropped)
 }
 
-/// Filter a unified row set by a per-file collapse set: a collapsed file keeps
-/// only its header row, an expanded file keeps its full segment. `anchors` maps
-/// each file path to its header row index (file order). Returns the filtered
-/// rows plus rebuilt anchors (header index in the output). Shared by the Review
-/// view ([`super::view`]) and the diff dock ([`crate::app::diff_dock`]).
 pub fn apply_collapse_unified(
     rows: &[DisplayRow],
     anchors: &[(String, usize)],
@@ -1161,7 +987,6 @@ pub fn apply_collapse_unified(
     (out, out_anchors)
 }
 
-/// Split-view counterpart of [`apply_collapse_unified`].
 pub fn apply_collapse_split(
     rows: &[SplitRow],
     anchors: &[(String, usize)],
@@ -1377,8 +1202,6 @@ mod tests {
 
     #[test]
     fn split_header_path_separates_dir_from_basename() {
-        // EP-002 US-006: the directory prefix keeps its trailing slash and the
-        // basename is the last segment - root files have an empty prefix.
         assert_eq!(
             split_header_path("src/app/view.rs"),
             ("src/app/".to_string(), "view.rs".to_string())
@@ -1387,9 +1210,6 @@ mod tests {
             split_header_path("Cargo.toml"),
             (String::new(), "Cargo.toml".to_string())
         );
-        // A rename ("old → new"): the last `/` is in the new path, so the new
-        // file's basename is emphasized and the arrow lead falls into the
-        // (muted) directory prefix.
         assert_eq!(
             split_header_path("old/a.rs → new/b.rs"),
             ("old/a.rs → new/".to_string(), "b.rs".to_string())
@@ -1398,9 +1218,6 @@ mod tests {
 
     #[test]
     fn file_header_row_carries_typed_segments() {
-        // EP-002 US-006: build_display_rows must populate the structured header
-        // for the file-header row (split path + diffstat), so the element
-        // paints typed segments instead of re-parsing a fused string.
         let file = FileDiff {
             path: "src/diff/rows.rs".into(),
             change: FileChange::Modified,
@@ -1424,9 +1241,6 @@ mod tests {
 
     #[test]
     fn unified_collapses_distant_context_into_fold() {
-        // One change on line 0, then 29 unchanged lines. The trailing context
-        // must collapse to CONTEXT_LINES kept + a single Fold marker, instead
-        // of dumping the whole file (the pre-fold behaviour).
         let mut base = String::from("OLD\n");
         let mut new = String::from("NEW\n");
         for i in 1..30 {
@@ -1457,7 +1271,6 @@ mod tests {
         let ctx = rows.iter().filter(|r| r.kind == RowKind::Context).count();
         assert_eq!(ctx, CONTEXT_LINES as usize, "only bordering context kept");
 
-        // 30-line file → folded output is a handful of rows, not 1 + 30.
         assert!(rows.len() < 10, "folded row count {} too large", rows.len());
     }
 
@@ -1509,11 +1322,8 @@ mod tests {
 
     #[test]
     fn unified_hunk_tops_marks_each_hunk_start_at_its_row_offset() {
-        // US-046: the cached hunk tops MUST equal the precomputed row offset of
-        // every hunk-start row (a change row whose predecessor is not a change).
-        // Guards against the offsets and hunk_tops computations drifting apart.
         let base = "a\nb\nc\nd\ne\n".to_string();
-        let new = "a\nB\nc\nd\nE\n".to_string(); // two separate single-line edits
+        let new = "a\nB\nc\nd\nE\n".to_string();
         let hunks = crate::diff::engine::compute_hunks(&base, &new);
         let file = FileDiff {
             path: "a.txt".into(),
@@ -1543,14 +1353,8 @@ mod tests {
 
     #[test]
     fn split_hunk_tops_marks_each_hunk_start_at_its_row_offset() {
-        // US-046 (EP-008 review): the split analog of the unified drift guard.
-        // `split_hunk_tops` walks the rows with its own accumulator; it MUST
-        // agree with the `split_offsets` prefix sum at every hunk-start row, or
-        // side-by-side hunk-nav jumps to the wrong pixel. Catches a future
-        // divergence between `split_row_height` and the hunk-tops walk that the
-        // unified guard would NOT surface (the two heights are separate fns).
         let base = "a\nb\nc\nd\ne\n".to_string();
-        let new = "a\nB\nc\nd\nE\n".to_string(); // two separate single-line edits
+        let new = "a\nB\nc\nd\nE\n".to_string();
         let hunks = crate::diff::engine::compute_hunks(&base, &new);
         let file = FileDiff {
             path: "a.txt".into(),
@@ -1588,8 +1392,6 @@ mod tests {
 
     #[test]
     fn split_collapses_distant_context_into_fold() {
-        // Same fixture as the unified test: side-by-side must collapse the
-        // unchanged tail too, instead of dumping every aligned row.
         let mut base = String::from("OLD\n");
         let mut new = String::from("NEW\n");
         for i in 1..30 {
@@ -1619,7 +1421,6 @@ mod tests {
             .iter()
             .filter(|r| matches!(r, SplitRow::Pair { .. }))
             .count();
-        // 1 changed pair + 3 trailing context pairs kept; the rest folded.
         assert_eq!(pairs, 1 + CONTEXT_LINES as usize);
         assert!(rows.len() < 10, "folded row count {} too large", rows.len());
     }
@@ -1755,9 +1556,6 @@ mod tests {
 
     #[test]
     fn split_large_files_use_hunk_windows_instead_of_full_alignment() {
-        // A side-by-side diff over a huge file should keep only the hunk window
-        // and folds. This guards the fast path that avoids aligning every
-        // unchanged line before folding it away.
         let line_count = (MAX_FULL_SPLIT_ALIGN_LINES / 2) + 50;
         let changed = (line_count / 2) as u32;
         let mut base = String::new();

@@ -74,16 +74,6 @@ impl ArtifactBundle {
         self.has_windows_inventory()
     }
 
-    /// Whether this bundle carries the Windows-only inventory.
-    ///
-    /// Windows is the only platform whose prepared tree ships
-    /// `headers.sha256` and `symbols.txt`, is enumerated in full, and whose
-    /// `build-info.txt` is itself hash-pinned in the manifest, which is why
-    /// its recorded archive digest must match the manifest even for a
-    /// `PANEFLOW_LIBGHOSTTY_DIR` override.
-    ///
-    /// The match is exhaustive on purpose: a new platform has to state its own
-    /// answer here rather than being misrouted into the Windows inventory.
     fn has_windows_inventory(&self) -> bool {
         match self.platform {
             NativePlatform::Linux | NativePlatform::Macos => false,
@@ -558,12 +548,6 @@ mod tests {
         validates_the_reviewed_bundle("x86_64-unknown-linux-gnu")
     }
 
-    /// The committed macOS tree is validated on every host, not only on Darwin.
-    ///
-    /// `ArtifactBundle::validate` is pure path and checksum work, so a Linux
-    /// developer editing `native/libghostty/prebuilt/aarch64-apple-darwin/`
-    /// gets the same failure the macOS build script would raise, instead of
-    /// waiting for the `macos_check` job.
     #[test]
     fn validates_the_reviewed_macos_bundle_as_one_unit() -> BuildResult<()> {
         validates_the_reviewed_bundle(MACOS_TARGET)
@@ -581,10 +565,6 @@ mod tests {
         bundle.validate(&contract, "replace reviewed fixture")
     }
 
-    /// A macOS bundle laid out exactly as `scripts/build-libghostty-macos.sh`
-    /// writes it, paired with the manifest that declares its target.
-    ///
-    /// Returns the manifest source and the ten `build-info.txt` entries.
     fn macos_fixture(root: &Path) -> BuildResult<(String, Vec<(String, String)>)> {
         const HEADER: &str = "#define GHOSTTY_VT 1\n";
         const BINDINGS: &str = "// generated bindings\n";
@@ -635,11 +615,6 @@ mod tests {
         Ok(())
     }
 
-    /// Read a top-level string value out of the reviewed manifest.
-    ///
-    /// The build-info fixture has to agree with the pinned manifest, so reading
-    /// the pin instead of restating it keeps the fixture correct across a pin
-    /// bump.
     fn manifest_value(source: &str, key: &str) -> String {
         let prefix = format!("{key} = \"");
         source

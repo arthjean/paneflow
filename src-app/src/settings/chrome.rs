@@ -1,20 +1,3 @@
-//! Codex-style embedded settings chrome for `PaneFlowApp`.
-//!
-//! Two entry points, wired into the main window's `Render` impl (`main.rs`):
-//! - [`PaneFlowApp::render_settings_nav`] - the grouped left-rail navigation
-//!   (fixed header + search box + iconed sections), rendered in the sidebar
-//!   slot in place of the mode rail while settings are open.
-//! - [`PaneFlowApp::render_settings_content_panel`] - the right panel: a big
-//!   page title plus the scrollable section body.
-//!
-//! Section bodies live in `settings::tabs::*`; this file owns the nav, the
-//! panel shell, the scroll wrapper, and the section → title/body dispatch.
-//!
-//! Replaces the old standalone `SettingsWindow` (a separate GPUI window) and
-//! the legacy inline `render_settings_page` (a nested mini-sidebar inside the
-//! content area). One source of truth now: settings render inline, and the
-//! app's own left rail becomes the settings nav.
-
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString, Styled,
@@ -25,41 +8,24 @@ use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, SettingsSection};
 
-/// Width of the settings nav rail. Pinned to [`SIDEBAR_WIDTH`] so every rail
-/// in the app measures the same and the title-bar brand slot never shifts
-/// when Settings opens. Raw `f32`, wrapped in `px()` at the use site, so it
-/// can feed `sidebar_px` directly.
 pub(crate) const SETTINGS_NAV_WIDTH: f32 = crate::SIDEBAR_WIDTH;
 
-/// Content-panel background - `ui.base` (`#181818`), the same opaque surface the
-/// Review / Agents content panels use. Deliberately *lighter* than the `#141414`
-/// rail/chrome so the rail-side corner masks (which paint the `#141414` chrome
-/// tint over the panel's square corner) actually read as rounded - a content
-/// fill equal to the mask color would show no rounding at all. The nav rail
-/// stays transparent over the shared inset-card layer, using the same
-/// platform-aware material treatment as Agents / Review.
 pub(crate) fn settings_chrome_bg() -> gpui::Hsla {
     crate::theme::ui_colors().base
 }
 
-/// One selectable section row in the nav.
 struct NavItem {
     section: SettingsSection,
     label: &'static str,
     icon: &'static str,
-    /// Extra lowercase search terms (the controls living on the page) so the
-    /// nav search box finds a section by its *content*, not just its label -
-    /// e.g. typing "theme", "cursor", or "shell" surfaces the right page.
     keywords: &'static [&'static str],
 }
 
-/// A labelled group of nav rows (Codex's "Personnel" / "Intégrations" …).
 struct NavGroup {
     label: &'static str,
     items: &'static [NavItem],
 }
 
-/// The Codex-style grouped taxonomy. Render order = declaration order.
 const NAV_GROUPS: &[NavGroup] = &[
     NavGroup {
         label: "Personal",
@@ -148,7 +114,6 @@ const NAV_GROUPS: &[NavGroup] = &[
     },
 ];
 
-/// Human page title shown as the content H1.
 pub(crate) fn section_title(section: SettingsSection) -> &'static str {
     match section {
         SettingsSection::General => "General",
@@ -162,7 +127,6 @@ pub(crate) fn section_title(section: SettingsSection) -> &'static str {
 }
 
 impl PaneFlowApp {
-    /// The grouped settings navigation rail (sidebar slot while settings open).
     pub(crate) fn render_settings_nav(
         &self,
         window: &Window,
@@ -172,15 +136,10 @@ impl PaneFlowApp {
         let theme = crate::theme::active_theme();
         let active = self.settings_section.unwrap_or(SettingsSection::General);
         let query = self.settings_search_input.read(cx).value().to_lowercase();
-        // One tint for both states: the open section rests on exactly the fill
-        // a hovered row lifts to, so pointing at a row previews the selection
-        // instead of showing a second, brighter one.
         let row_background = crate::app::constants::sidebar_tab_hover_background();
 
-        // ── Search box ──────────────────────────────────────────────────
         let search = self.render_settings_search(ui, window, cx);
 
-        // ── Section list (scrollable, filtered by the search query) ─────
         let mut list = div()
             .id("settings-nav-list")
             .flex_1()
@@ -220,14 +179,6 @@ impl PaneFlowApp {
             for it in items {
                 let section = it.section;
                 let is_active = section == active;
-                // Every section row renders in full-strength text (white) at one
-                // weight, active or not: the pill fill alone marks the open
-                // section, so nothing about the label reflows when it changes.
-                //
-                // The fill is the rail's continuous-corner skin, not a rounded
-                // rect with an animated tint: the settings nav is a rail like
-                // the workspace one, so it borrows the same silhouette and the
-                // same instant hover.
                 let row = squircle_skin(
                     div()
                         .id(SharedString::from(format!("settings-nav-{}", it.label)))
@@ -298,10 +249,6 @@ impl PaneFlowApp {
             .flex_shrink_0()
             .flex()
             .flex_col()
-            // Same platform-aware rail treatment as the Agents / Review
-            // sidebars: optional native material on Windows, platform default
-            // on macOS, and a blur veil on Linux when the compositor advertises
-            // it. Keeps the settings rail visually identical to the other rails.
             .bg(crate::app::constants::cockpit_chrome_background(
                 theme.title_bar_background,
                 window.is_window_active(),
@@ -312,17 +259,11 @@ impl PaneFlowApp {
             .child(list)
     }
 
-    /// The nav search field - a real single-line `TextInput` (cursor, arrow
-    /// keys, clipboard, mouse selection), read from `value()` at render to
-    /// filter the section list. Mirrors the cockpit-sidebar filter recipe.
     fn render_settings_search(
         &self,
         ui: crate::theme::UiColors,
         _window: &Window,
         cx: &mut Context<Self>,
-        // Returns a concrete `AnyElement` (not `impl IntoElement`) so the
-        // value does not capture `cx`'s borrow under edition-2024 RPIT - the
-        // nav loop reborrows `cx` for its per-row `on_click` listeners.
     ) -> AnyElement {
         let show_clear = !self.settings_search_input.read(cx).value().is_empty();
         crate::ui_primitives::filter_pill(
@@ -337,10 +278,6 @@ impl PaneFlowApp {
                 });
             }),
         )
-        // Two-stage Escape (keyboard parity with the header close action):
-        // clear the query if any, otherwise close settings outright.
-        // Cursor movement / Delete / Ctrl+A,C,V,X / mouse selection are
-        // handled inside the focused TextInput.
         .on_key_down(cx.listener(|this, ev: &KeyDownEvent, _window, cx| {
             if ev.keystroke.key == "escape" {
                 if this.settings_search_input.read(cx).value().is_empty() {
@@ -354,7 +291,6 @@ impl PaneFlowApp {
                 cx.stop_propagation();
             }
         }))
-        // Clicking outside drops focus so the caret disappears.
         .on_mouse_down_out(cx.listener(|this, _, window, cx| {
             if this
                 .settings_search_input
@@ -369,17 +305,6 @@ impl PaneFlowApp {
         .into_any_element()
     }
 
-    /// The right content panel: the section H1 title + the section body.
-    ///
-    /// Two shells, chosen by [`SettingsSection::owns_its_scroll`]. Most pages
-    /// are short forms that ride the page-level scroll container
-    /// ([`Self::render_settings_scroll`]). Shortcuts is not: it is ~90 rows,
-    /// and rendering them all every frame is what made the page lag, so it
-    /// virtualizes its own list and needs a *fixed* viewport to virtualize
-    /// against - a page-level scroll container would hand it unbounded height
-    /// and defeat the whole thing. Zed splits its settings window the same way
-    /// (`crates/settings_ui/src/settings_ui.rs`: sub-pages use
-    /// `overflow_y_scroll`, the long page uses `gpui::list`).
     pub(crate) fn render_settings_content_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let section = self.settings_section.unwrap_or(SettingsSection::General);
@@ -431,7 +356,6 @@ impl PaneFlowApp {
             SettingsSection::AiAgent => self.render_ai_agent_content(cx).into_any_element(),
             SettingsSection::McpServers => self.render_mcp_servers_content(cx).into_any_element(),
             SettingsSection::Workspaces => self.render_workspaces_content(cx).into_any_element(),
-            // Handled above; a page that owns its scroll never reaches here.
             SettingsSection::Shortcuts => gpui::Empty.into_any_element(),
         };
 
@@ -445,9 +369,6 @@ impl PaneFlowApp {
         shell.child(self.render_settings_scroll(column, cx))
     }
 
-    /// Geometry shared by the page-level scroll container and the pages that
-    /// scroll themselves: the centered max-width reading column, at the same
-    /// left/right offset either way so switching sections never shifts it.
     pub(crate) fn settings_reading_column(&self) -> gpui::Div {
         div()
             .w_full()
@@ -459,10 +380,6 @@ impl PaneFlowApp {
             .pt(px(28.))
     }
 
-    /// Scrollable content area + visible scrollbar overlay. Centers a
-    /// max-width reading column (Codex's settings content is a centered
-    /// column, not full-bleed). Drag state lives on `PaneFlowApp`
-    /// (`settings_scroll` / `settings_drag`).
     fn render_settings_scroll(
         &self,
         content: AnyElement,
@@ -518,11 +435,6 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .min_h_0()
-            // No `on_scroll_wheel` here: GPUI's own scroll listener already
-            // notifies, and only when the offset actually moved
-            // (`div.rs`, `paint_scroll_listener`). A blanket notify repainted
-            // the whole app on every wheel event, including the ones that hit
-            // a scroll end and changed nothing.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _, cx| {
                 if let Some(drag) = this.settings_drag
                     && let Some(off) =
@@ -545,10 +457,6 @@ impl PaneFlowApp {
             .when_some(bar, |d, sb| d.child(sb))
     }
 
-    /// Switch the active settings section, resetting any per-page ephemeral UI
-    /// (font picker, terminal dropdowns, in-progress shortcut recording) so a
-    /// popover never lingers across a nav change. Warms the MCP status when
-    /// the MCP page is opened.
     pub(crate) fn select_settings_section(
         &mut self,
         section: SettingsSection,
@@ -569,17 +477,9 @@ impl PaneFlowApp {
             let config = paneflow_config::loader::load_config();
             crate::keybindings::apply_keybindings(cx, &config.shortcuts);
         }
-        // Shortcuts-page ephemeral state. The armed "Reset" confirmation is the
-        // one that matters: left standing across a nav round-trip, it turns a
-        // stray click into "every binding erased, no undo". The capture mode
-        // and the filter are cleared for the same reason - a page that comes
-        // back silently swallowing keystrokes reads as broken.
         self.shortcut_reset_pending = false;
         self.clear_shortcut_filters(cx);
         if section == SettingsSection::Shortcuts {
-            // The page is virtualized: its rows have to exist before the first
-            // frame renders, and `effective_shortcuts` may have changed since
-            // the page was last open.
             self.rebuild_shortcut_rows(cx);
         }
         if section == SettingsSection::McpServers {

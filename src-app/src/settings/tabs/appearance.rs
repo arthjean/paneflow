@@ -1,5 +1,3 @@
-//! "Appearance" settings tab - theme mode, presets, and appearance preferences.
-
 use gpui::{
     ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, SharedString, Styled, div, prelude::*, px, svg,
@@ -13,34 +11,17 @@ use crate::settings::components::{
 };
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-/// Height of the three Light/Dark/System mockup tiles. Sized so a 700px-wide
-/// settings column (three `flex_1` tiles, 12px gutters) keeps a ~1.55:1 tile.
 const THEME_MODE_TILE_HEIGHT: f32 = 134.;
 const THEME_MODE_TILE_RADIUS: f32 = 10.;
-/// Ring width of a mode tile (`border_2`). The mockup inside rounds its own
-/// full-bleed fills to the tile radius minus this, because GPUI's
-/// `overflow_hidden` masks children to a plain *rectangle*: a corner radius on
-/// the frame styles the frame's own quad only, and an opaque child painted
-/// edge-to-edge squares the corners straight back off. Visible on the light
-/// halves, where the fill contrasts with the page; the dark tile only hid it.
 const THEME_MODE_TILE_BORDER: f32 = 2.;
 const THEME_PREVIEW_CORNER_RADIUS: f32 = 8.;
 
-/// Preview row geometry, mirroring `DiffElement`'s split-cell layout: a 4px
-/// hunk bar, 4px of pad, then the line-number gutter. The panel floors its
-/// gutter at 36px so five-digit line numbers fit; a five-line sample needs one
-/// digit, so the preview narrows it and keeps the rest identical.
 const PREVIEW_BAR_W: f32 = 4.;
 const PREVIEW_BAR_PAD: f32 = 4.;
 const PREVIEW_GUTTER_W: f32 = 24.;
-/// Right padding inside the gutter (number -> code gap), `element.rs::NUM_GAP`.
 const PREVIEW_NUM_GAP: f32 = 6.;
-/// Rows 2..4 of the five-line sample: the changed block.
 const PREVIEW_CHANGED: std::ops::RangeInclusive<usize> = 1..=3;
 
-/// Which slice of the window mockup a tile paints. `System` splits down the
-/// middle: a light `Left` half against a dark `Right` half, the way Codex
-/// renders its system tile.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MockupHalf {
     Full,
@@ -62,9 +43,6 @@ impl PaneFlowApp {
         let header = section_header_with_action(ui, "Theme", reset_btn);
         let preset = self.current_theme_preset();
 
-        // Light / Dark / System as full-bleed window mockups instead of a
-        // segmented control: the tile shows what the mode does to the chrome,
-        // painted with *this preset's* two variants.
         let modes: [(crate::ThemeMode, &str, &str); 3] = [
             (crate::ThemeMode::System, "System", "theme-mode-system"),
             (crate::ThemeMode::Light, "Light", "theme-mode-light"),
@@ -209,9 +187,6 @@ impl PaneFlowApp {
         content
     }
 
-    /// One Light/Dark/System tile: a full-bleed window mockup framed by a 2px
-    /// ring. The ring is always painted (transparent-ish at rest) so selecting
-    /// a mode never reflows the row.
     fn render_theme_mode_tile(
         &self,
         mode: crate::ThemeMode,
@@ -301,11 +276,6 @@ impl PaneFlowApp {
             )
     }
 
-    /// The preset select. Replaces the old preset tile grid: the mode tiles
-    /// above already carry the visual weight, so the identity picker is a
-    /// one-line control listing every [`crate::theme::ThemePreset`]. Picking a
-    /// preset keeps the current Light/Dark/System mode - the two axes are
-    /// orthogonal, so the swatch previews the variant that mode resolves to.
     fn render_theme_preset_select(
         &self,
         current: &crate::theme::ThemePreset,
@@ -318,9 +288,6 @@ impl PaneFlowApp {
                 && crate::theme::theme_name_is_light(&self.current_theme_name()));
         let current_name = current.name;
 
-        // Decide open/close from the render-time snapshot, not the live state:
-        // the menu's `on_mouse_down_out` fires on this same press and may have
-        // already cleared it, so a live toggle would re-open the menu.
         let mut trigger = select_trigger("theme-preset-select", ui)
             .on_mouse_down(
                 MouseButton::Left,
@@ -411,7 +378,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// Apply a Light/Dark/System selection from the Themes page.
     pub(crate) fn apply_theme_mode(
         &mut self,
         mode: crate::ThemeMode,
@@ -463,9 +429,6 @@ fn theme_preview_palette(name: &str) -> ThemePreview {
     }
 }
 
-/// The theme's own base + accent as a 20px "Aa" chip, so a row of theme names
-/// reads as a row of palettes. Painted from `ui_colors_with`, not from a
-/// hand-kept table, so a new entry in `THEMES` needs no change here.
 fn theme_swatch(name: &str) -> impl IntoElement {
     let p = theme_preview_palette(name);
     div()
@@ -485,7 +448,6 @@ fn theme_swatch(name: &str) -> impl IntoElement {
         .child("Aa")
 }
 
-/// A rounded placeholder bar inside a mockup (nav item, text run).
 fn mock_bar(width: f32, height: f32, color: Hsla) -> gpui::Div {
     div()
         .w(px(width))
@@ -495,17 +457,10 @@ fn mock_bar(width: f32, height: f32, color: Hsla) -> gpui::Div {
         .bg(color)
 }
 
-/// The window mockup painted inside a Light/Dark/System tile: a rail on the
-/// left, a raised panel on the right that bleeds off the bottom edge. `half`
-/// selects the slice, so the System tile can butt a light left half against a
-/// dark right half and read as one continuous window.
 fn theme_mode_mockup(p: ThemePreview, half: MockupHalf) -> impl IntoElement {
     let show_rail = half != MockupHalf::Right;
-    // Inner radius: concentric with the ring rather than equal to it.
     let radius = px(THEME_MODE_TILE_RADIUS - THEME_MODE_TILE_BORDER);
     let mut root = div().size_full().flex().flex_row().bg(p.base);
-    // A System half owns only the outer corners of its own side; the seam edge
-    // stays square so the two halves meet as one continuous window.
     root = match half {
         MockupHalf::Full => root.rounded(radius),
         MockupHalf::Left => root.rounded_l(radius),
@@ -519,8 +474,6 @@ fn theme_mode_mockup(p: ThemePreview, half: MockupHalf) -> impl IntoElement {
                 .flex_none()
                 .h_full()
                 .bg(p.surface)
-                // The rail is opaque and sits on the tile's left edge, so it
-                // has to carry the same corners the root just took.
                 .rounded_l(radius)
                 .pt(px(16.))
                 .px(px(9.))
@@ -534,8 +487,6 @@ fn theme_mode_mockup(p: ThemePreview, half: MockupHalf) -> impl IntoElement {
         );
     }
 
-    // The panel keeps a gutter on the outer edges only: the seam edge runs
-    // flush so the two System halves meet without a visible gap.
     let (pad_left, pad_right) = match half {
         MockupHalf::Full => (10., 12.),
         MockupHalf::Left => (10., 0.),
@@ -580,9 +531,6 @@ fn theme_mode_mockup(p: ThemePreview, half: MockupHalf) -> impl IntoElement {
     )
 }
 
-/// Which syntax slot paints one token of the preview snippet. The sample is
-/// hand-tokenized instead of run through `diff::highlighter`, so repainting the
-/// settings page costs no tree-sitter parse.
 #[derive(Clone, Copy)]
 enum PreviewTok {
     Keyword,
@@ -612,8 +560,6 @@ impl PreviewTok {
 
 type PreviewLine = &'static [(&'static str, PreviewTok)];
 
-/// The sample: a Rust const the theme itself could plausibly be written as,
-/// edited on three lines so both diff sides carry a full hunk.
 const PREVIEW_HEAD: PreviewLine = &[
     ("const ", PreviewTok::Keyword),
     ("THEME_PREVIEW", PreviewTok::Constant),
@@ -668,16 +614,9 @@ const PREVIEW_NEW: [PreviewLine; 3] = [
     ],
 ];
 
-/// Live sample under the mode tiles, painted as the split diff the Review dock
-/// renders: same `RowPalette`, same 18px rows at 12px mono, same bar + gutter
-/// geometry. Every color comes from the active theme, so switching a mode or a
-/// preset repaints it in place - this is the surface the theme's syntax palette
-/// and diff washes actually drive.
 fn render_theme_diff_preview(ui: crate::theme::UiColors) -> impl IntoElement {
     let p = crate::diff::palette(ui);
     let syntax = crate::theme::active_theme().syntax;
-    // The diff surface is always drawn in the default mono family (see
-    // `DiffElement::new`), never the terminal's configured font.
     let font = SharedString::from(crate::terminal::element::resolve_font_family(None));
 
     div()
@@ -690,8 +629,6 @@ fn render_theme_diff_preview(ui: crate::theme::UiColors) -> impl IntoElement {
         .p(px(6.))
         .flex()
         .flex_row()
-        // The seam is body background showing between the two washes, the way
-        // the split view separates its halves.
         .gap(px(6.))
         .font_family(font)
         .text_size(px(12.))
@@ -699,8 +636,6 @@ fn render_theme_diff_preview(ui: crate::theme::UiColors) -> impl IntoElement {
         .child(preview_diff_column(true, p, syntax))
 }
 
-/// One half of the split preview: `added` paints the new side (green wash,
-/// added bar), otherwise the base side (red wash, deleted bar).
 fn preview_diff_column(
     added: bool,
     p: crate::diff::RowPalette,
@@ -750,8 +685,6 @@ fn preview_diff_column(
                 .whitespace_nowrap()
                 .bg(if changed { wash } else { p.context_bg })
                 .child(
-                    // Gutter rail: the tint spans the bar lane too, and the bar
-                    // is painted over it - `element.rs` paint order.
                     div()
                         .w(px(PREVIEW_BAR_W + PREVIEW_BAR_PAD + PREVIEW_GUTTER_W))
                         .h_full()

@@ -1,9 +1,3 @@
-//! Consent-gated PostHog capture client.
-//!
-//! Network I/O is blocking and runtime-neutral. Call [`TelemetryClient::poll_flush`]
-//! from a background task. Shutdown may call [`TelemetryClient::flush_blocking`]
-//! with an explicit deadline. Failed batches are logged at DEBUG and dropped.
-
 use std::collections::VecDeque;
 use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
 use std::time::{Duration, Instant};
@@ -13,15 +7,10 @@ use uuid::Uuid;
 
 use crate::event::TelemetryEvent;
 
-/// A full queue triggers a flush on the next scheduler poll.
 pub(crate) const BATCH_MAX: usize = 10;
-/// Defense-in-depth bound on queued event count.
 pub(crate) const QUEUE_MAX: usize = 1_000;
-/// Hard bound on serialized property bytes retained in memory.
 pub(crate) const QUEUE_MAX_BYTES: usize = 512 * 1024;
-/// Maximum age of the oldest queued event before a scheduler poll flushes it.
 pub(crate) const BATCH_MAX_AGE: Duration = Duration::from_secs(30);
-/// Default transport deadline for background flushes.
 const HTTP_TIMEOUT: Duration = Duration::from_secs(5);
 
 const KILL_SWITCH_VARS: [&str; 3] = ["PANEFLOW_NO_TELEMETRY", "DO_NOT_TRACK", "NO_TELEMETRY"];
@@ -66,7 +55,6 @@ struct Endpoint {
     distinct_id: String,
 }
 
-/// Explicit application consent state.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TelemetryConsent {
     #[default]
@@ -85,14 +73,9 @@ impl TelemetryConsent {
     }
 }
 
-/// Thread-safe telemetry handle. Disabled and active states share the same
-/// no-op capture surface, while construction and runtime state remain private.
 pub struct TelemetryClient {
     endpoint: Option<Endpoint>,
     state: Mutex<RuntimeState>,
-    /// A read guard spans each network request. Deactivation marks the state
-    /// disabled first, then takes the write guard so it cannot return while an
-    /// older handle can still begin or finish an HTTP request.
     send_gate: RwLock<()>,
 }
 
@@ -103,7 +86,6 @@ impl Default for TelemetryClient {
 }
 
 impl TelemetryClient {
-    /// Build a disabled client with no endpoint or identifier state.
     pub fn disabled() -> Self {
         Self {
             endpoint: None,
@@ -112,9 +94,6 @@ impl TelemetryClient {
         }
     }
 
-    /// Resolve consent and kill switches once, then lazily create the anonymous
-    /// identifier only when capture is allowed. The returned boolean is the
-    /// identifier factory's `is_first_run` value, or `false` when disabled.
     pub fn from_consent<F>(
         consent: TelemetryConsent,
         api_key: &str,
@@ -169,7 +148,6 @@ impl TelemetryClient {
         }
     }
 
-    /// Queue one canonical event. Invalid or oversized payloads are dropped.
     pub fn capture(&self, event: TelemetryEvent) {
         let Some(encoded_len) = event.encoded_len_if_safe() else {
             log::debug!(
@@ -198,7 +176,6 @@ impl TelemetryClient {
         queue.events.push_back(Event { name, properties });
     }
 
-    /// Scheduler hook. Call periodically from a background task.
     pub fn poll_flush(&self) {
         let Some(endpoint) = &self.endpoint else {
             return;
@@ -221,8 +198,6 @@ impl TelemetryClient {
         post_batch(endpoint, &batch, HTTP_TIMEOUT);
     }
 
-    /// Drain pending events and perform one blocking POST bounded by `timeout`.
-    /// A zero timeout drops the drained batch without starting a request.
     pub fn flush_blocking(&self, timeout: Duration) {
         let Some(endpoint) = &self.endpoint else {
             return;
@@ -248,16 +223,11 @@ impl TelemetryClient {
         post_batch(endpoint, &batch, timeout.min(HTTP_TIMEOUT));
     }
 
-    /// Permanently disable capture and discard queued events without waiting
-    /// for a request that was already in flight.
     pub fn disable(&self) {
         let mut state = self.lock_state();
         *state = RuntimeState::Disabled;
     }
 
-    /// Disable this handle, then wait for any request already in flight to
-    /// finish before returning. Run this from a background task when a live
-    /// request could make waiting visible to the caller.
     pub fn deactivate(&self) {
         self.disable();
         let _send_guard = self

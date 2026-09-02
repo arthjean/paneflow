@@ -1,59 +1,21 @@
-//! Cross-platform "open this source file at line:col" - invoked when the
-//! user Cmd/Ctrl-clicks a `path:42:7` style reference in a terminal pane.
-//!
-//! Strategy (in order):
-//! 1. `$VISUAL` then `$EDITOR` env. The string is parsed as a shell command
-//!    (binary + flags) so users running `EDITOR="code --wait"` get their
-//!    pre-set flags carried over. If the binary is one of the well-known
-//!    editors with a documented line:col syntax (code/zed/subl/cursor/
-//!    nvim/vim/helix/emacs), the right argv is appended.
-//! 2. Probed fallback chain - `code`, `cursor`, `zed`, `subl`, `nvim`,
-//!    `vim`, `hx`, `emacs` (in that order). First binary found on `PATH`
-//!    wins.
-//! 3. Last-resort: `open::that(path)` so the OS launcher (`xdg-open` /
-//!    `open` / `start`) hands the file to its registered handler. Loses
-//!    the line/col target but always does something useful.
-//!
-//! Platform notes:
-//! - Linux/macOS: editor names are looked up via `which` on `$PATH`.
-//! - Windows: same. `code.cmd` is the common shim under `%LocalAppData%
-//!   \Programs\Microsoft VS Code\bin`, which `which` resolves correctly
-//!   when that dir is on `Path`.
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use paneflow_process::spawn_detached;
 
-/// Family of recognised editor binaries, each with a distinct argv shape
-/// for "open at line and column".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EditorKind {
-    /// VS Code / Cursor / Codium clones - `code -g path:line:col`
     VsCodeLike,
-    /// Zed - `zed path:line:col` (no flag needed; the colon syntax is
-    /// recognised since 0.130).
     Zed,
-    /// Sublime Text - `subl path:line:col`
     Sublime,
-    /// Neovim / Vim - `nvim +line path` (col not natively supported as
-    /// argv; we drop it). Could be extended with `+call cursor(L, C)`
-    /// but that gets messy across remote/server modes.
     VimFamily,
-    /// Helix - `hx path:line:col`
     Helix,
-    /// Emacs - `emacs +line:col path` (line and optional col separated
-    /// by `:`)
     Emacs,
-    /// Unknown binary - invoke with bare `path` only (no location).
     Unknown,
 }
 
 impl EditorKind {
     fn from_binary_name(name: &str) -> Self {
-        // Strip the directory portion and any `.exe` / `.cmd` suffix so the
-        // matcher is OS-agnostic - `which code.cmd` on Windows still maps
-        // to `VsCodeLike`.
         let base = Path::new(name)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -70,8 +32,6 @@ impl EditorKind {
         }
     }
 
-    /// Build the argv tail that opens `path` at `line` / `col` for this
-    /// editor family. Caller prepends the editor binary itself.
     fn argv_for(self, path: &Path, line: Option<u32>, col: Option<u32>) -> Vec<String> {
         let path_str = path.to_string_lossy().into_owned();
         match self {
@@ -81,7 +41,6 @@ impl EditorKind {
                 args
             }
             Self::Zed | Self::Sublime | Self::Helix => {
-                // Bare positional, colon syntax recognised by the editor.
                 vec![format_path_line_col(&path_str, line, col)]
             }
             Self::VimFamily => {
@@ -117,10 +76,6 @@ fn format_path_line_col(path: &str, line: Option<u32>, col: Option<u32>) -> Stri
     }
 }
 
-/// Parse a shell-style env value into (binary, leading-flags). Splits on
-/// whitespace outside quotes; the first token is the binary, the rest are
-/// extra flags the user pre-configured (e.g. `EDITOR="code --wait"`).
-/// Returns `None` when the value is empty after trim.
 fn parse_env_editor(value: &str) -> Option<(String, Vec<String>)> {
     let mut parts = split_editor_command_line(value).into_iter();
     let bin = parts.next()?;
@@ -186,9 +141,6 @@ fn resolve_editor_command(command: &str) -> PathBuf {
     }
 }
 
-/// Ordered probe list for the fallback chain when no `$VISUAL`/`$EDITOR`
-/// is set. Order matters: GUI editors first (more likely the user's
-/// daily driver), then terminal editors.
 const FALLBACK_PROBES: &[&str] = &[
     "code",
     "cursor",
@@ -202,14 +154,7 @@ const FALLBACK_PROBES: &[&str] = &[
     "emacs",
 ];
 
-/// Open `path` in the user's preferred editor at the given location.
-/// Spawns the editor process detached - does not wait for it to exit.
-///
-/// Errors are logged at `warn` level and swallowed so a misconfigured
-/// editor never panics the renderer. The boolean return signals only
-/// whether something was actually spawned (useful for tests).
 pub fn open_at_location(path: &Path, line: Option<u32>, col: Option<u32>) -> bool {
-    // 1. $VISUAL → $EDITOR
     for var in &["VISUAL", "EDITOR"] {
         if let Ok(value) = std::env::var(var)
             && let Some((bin, extra_args)) = parse_env_editor(&value)
@@ -225,7 +170,6 @@ pub fn open_at_location(path: &Path, line: Option<u32>, col: Option<u32>) -> boo
         }
     }
 
-    // 2. Fallback probe
     for probe in FALLBACK_PROBES {
         let found = resolve_editor_command(probe);
         if found == PathBuf::from(probe) {
@@ -238,7 +182,6 @@ pub fn open_at_location(path: &Path, line: Option<u32>, col: Option<u32>) -> boo
         }
     }
 
-    // 3. Last-resort: OS handler (loses line/col).
     log::warn!(
         "editor: no $VISUAL/$EDITOR and none of {:?} on PATH - falling back to OS handler",
         FALLBACK_PROBES
@@ -386,7 +329,6 @@ mod tests {
         assert_eq!(format_path_line_col("x.rs", None, None), "x.rs");
         assert_eq!(format_path_line_col("x.rs", Some(1), None), "x.rs:1");
         assert_eq!(format_path_line_col("x.rs", Some(1), Some(2)), "x.rs:1:2");
-        // No line + col is invalid: col is dropped silently.
         assert_eq!(format_path_line_col("x.rs", None, Some(7)), "x.rs");
     }
 }

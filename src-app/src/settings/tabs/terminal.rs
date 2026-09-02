@@ -1,30 +1,3 @@
-//! "Terminal" settings tab (US-016) - the small set of terminal preferences
-//! worth keeping in the primary Settings UI: cursor shape, font
-//! family, font size, font weight, line height, cell width, and Windows terminal
-//! material.
-//!
-//! Controls map to config like so:
-//! - **cursor_shape** -> enum/preset dropdown persisted into the `terminal`
-//!   block via [`config_writer::save_terminal_field`].
-//! - **cursor_color** -> swatch picker persisted into the `terminal` block via
-//!   [`config_writer::save_terminal_field`].
-//! - **font_family** -> searchable monospace-font dropdown, persisted as a
-//!   top-level field via [`config_writer::save_config_value`].
-//! - **font_size / line_height / cell_width** -> `−`/`+` steppers that clamp
-//!   by construction, persisted as top-level fields via
-//!   [`config_writer::save_config_value`].
-//! - **font_weight** -> preset dropdown persisted as a top-level field via
-//!   [`config_writer::save_config_value`].
-//! - **integrated_glyphs** -> toggle persisted into the `terminal` block via
-//!   [`config_writer::save_terminal_field`].
-//! - **color_emoji** -> toggle persisted into the `terminal` block via
-//!   [`config_writer::save_terminal_field`].
-//! - **windows_terminal_material** -> Windows-only top-level toggle persisted
-//!   via [`config_writer::save_config_value`].
-//!
-//! Other advanced terminal knobs remain supported in `paneflow.json`, but are
-//! intentionally not mirrored here to keep Settings focused.
-
 use gpui::{
     ClickEvent, Context, CursorStyle, Hsla, InteractiveElement, IntoElement, MouseButton,
     ParentElement, Rgba, SharedString, Styled, div, prelude::*, px,
@@ -88,12 +61,10 @@ fn hex_string_from_hsla(color: Hsla) -> String {
 
 impl PaneFlowApp {
     pub(crate) fn render_terminal_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // US-016: read the cached config (no per-frame `load_config()`).
         let config = &self.cached_config;
         let ui = crate::theme::ui_colors();
         let terminal = config.terminal.clone().unwrap_or_default();
 
-        // ── current values ──────────────────────────────────────────────
         let shape = terminal.cursor_shape.unwrap_or_default();
         let integrated_glyphs = terminal.resolved_integrated_glyphs();
         let color_emoji = terminal.resolved_color_emoji();
@@ -172,7 +143,6 @@ impl PaneFlowApp {
             .map(|(label, key)| ((*label).to_string(), json!(*key), *key == font_weight_key))
             .collect();
 
-        // ── Cursor ──────────────────────────────────────────────────────
         let cursor_card = setting_card(ui)
             .child(self.terminal_enum_row(
                 TerminalDropdown::CursorShape,
@@ -194,7 +164,6 @@ impl PaneFlowApp {
                 cx,
             ));
 
-        // ── Display ─────────────────────────────────────────────────────
         let display_card = setting_card(ui)
             .child(self.terminal_font_family_row(current_font, ui, cx))
             .child(hairline(ui))
@@ -620,10 +589,6 @@ impl PaneFlowApp {
         row.into_any_element()
     }
 
-    /// One settings row: label/description on the left, a Codex-style select on
-    /// the right (shared `components::select_*` primitives). `options` are
-    /// `(label, json_value_to_write, is_selected)`. `nested` routes the write to
-    /// the `terminal` block vs. a top-level key.
     #[allow(clippy::too_many_arguments)]
     fn terminal_enum_row(
         &self,
@@ -639,9 +604,6 @@ impl PaneFlowApp {
     ) -> gpui::AnyElement {
         let is_open = self.terminal_dropdown == Some(which);
 
-        // Decide open/close from the render-time `is_open` snapshot, not the live
-        // state: the menu's `on_mouse_down_out` fires on the same press and may
-        // have already cleared it, so a live toggle would re-open (see general.rs).
         let trigger_hover_bg = lighter_control_hover(ui.subtle);
         let mut trigger = select_trigger_with_hover(
             SharedString::from(format!("term-dd-{config_key}")),
@@ -747,10 +709,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// A `−`/`+` numeric stepper row for a top-level float field. The value is
-    /// clamped to `[min, max]` on every step and rounded to `decimals` places
-    /// before being written, so it can never go out of range and never writes
-    /// a float-precision-noisy value.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn settings_stepper_row(
         &self,
@@ -772,7 +730,6 @@ impl PaneFlowApp {
         let at_max = value >= max - f64::EPSILON;
 
         let dec = cx.listener(move |this, _: &ClickEvent, _w, cx| {
-            // US-016: cache-mutate + notify + off-thread persist.
             this.persist_setting(false, config_key, json!(round(value - step)), cx);
         });
         let inc = cx.listener(move |this, _: &ClickEvent, _w, cx| {

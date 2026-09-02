@@ -68,11 +68,6 @@ fn character_key(character: char) -> sys::GhosttyKey {
     }
 }
 
-/// Distance from the first character of a contiguous ASCII key range.
-///
-/// Callers reach this through an ASCII range pattern, so the difference always
-/// fits; an out-of-range character falls back to the unidentified key, whose
-/// discriminant is zero.
 fn ascii_offset(character: char, first: char) -> sys::GhosttyKey {
     sys::GhosttyKey::try_from(u32::from(character).saturating_sub(u32::from(first)))
         .unwrap_or(sys::GhosttyKey_GHOSTTY_KEY_UNIDENTIFIED)
@@ -90,10 +85,6 @@ pub(crate) fn mouse_button(button: MouseButton) -> sys::GhosttyMouseButton {
     sys::GhosttyMouseButton_GHOSTTY_MOUSE_BUTTON_LEFT + sys::GhosttyMouseButton::from(button as u8)
 }
 
-/// Recover the neutral key from a libghostty key code.
-///
-/// The forward table is the authority; this walks the ranges it produces
-/// rather than duplicating the mapping, so the two cannot drift apart.
 pub(crate) fn key_from_code(code: sys::GhosttyKey) -> Key {
     const NAMED: &[Key] = &[
         Key::Enter,
@@ -141,7 +132,6 @@ pub(crate) fn key_from_code(code: sys::GhosttyKey) -> Key {
         .map_or(Key::Unidentified, Key::Character)
 }
 
-/// Recover the neutral mouse button from a libghostty button code.
 pub(crate) fn mouse_button_from_code(code: sys::GhosttyMouseButton) -> Option<MouseButton> {
     const BUTTONS: &[MouseButton] = &[
         MouseButton::Left,

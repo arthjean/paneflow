@@ -1,13 +1,6 @@
 // Paneflow status bridge for Pi - INSTALLED AND REMOVED AUTOMATICALLY by
 // paneflow-shim around each `pi` session started inside a Paneflow terminal.
 // Safe to delete; do not edit (changes are overwritten).
-//
-// Reports lifecycle to the Paneflow sidebar by connecting to Paneflow's IPC
-// endpoint (PANEFLOW_SOCKET_PATH) and writing a single JSON-RPC frame, then
-// closing - NO `paneflow-ai-hook` subprocess. On Windows, repeatedly spawning
-// `paneflow-ai-hook.exe` from the agent fails to start (0xC0000142) and pops
-// error dialogs; a direct socket write avoids all of that. Inert outside a
-// Paneflow PTY (the env vars are absent there).
 
 import net from "node:net";
 
@@ -33,7 +26,6 @@ export default function (pi) {
         conn.end(frame);
       });
     } catch {
-      // Status reporting must never break the session.
     }
   };
   pi.on("agent_start", () => send("ai.prompt_submit", { hook_payload: {} }));

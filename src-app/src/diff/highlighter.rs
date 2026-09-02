@@ -1,35 +1,3 @@
-//! Tree-sitter syntax highlighting for diff lines.
-//!
-//! Engine introduced by `prd-diff-syntax-highlight-2026-Q3.md`; language
-//! coverage + the Markdown inline pass added by
-//! `prd-diff-syntax-palette-2026-Q3.md` (EP-002).
-//!
-//! The same engine Zed uses. Unlike the old syntect pass (0.3-2.8 s/file → the
-//! reason highlighting shipped gated), a tree-sitter parse is ms-scale, so we
-//! highlight each side once at build time (off the GPUI thread, inside
-//! `view.rs`'s `smol::unblock`) and bucket the captures into per-line runs.
-//! Very large sides skip parsing and render monochrome; unknown extensions /
-//! parse failures do the same.
-//!
-//! Grammars bridge through `tree-sitter-language` 0.1 (`LANGUAGE: LanguageFn`);
-//! core `tree-sitter` 0.26 is already a transitive workspace dep via the Zed
-//! fork. Markdown runs TWO passes over the same text - the block grammar
-//! (`HIGHLIGHT_QUERY_BLOCK`: headings / fences / list markers) and the inline
-//! grammar (`HIGHLIGHT_QUERY_INLINE`: emphasis / links / inline code) - merged
-//! by `resolve_runs` so nested inline captures keep their specific colors.
-//!
-//! **Reuse contract (prd-file-editor-2026-Q3, US-004).** The file editor's
-//! incremental driver (`app/diff_dock/code/highlight.rs`) must color a file
-//! exactly like this module colors its diff, so it consumes the same grammars
-//! ([`grammar_for_ext`], [`markdown_inline_grammar`]), the same size cutoff
-//! ([`MAX_HIGHLIGHT_BYTES`]) and the same overlap resolution
-//! ([`resolve_runs`]) instead of holding a second copy of the grammar table.
-//! Those five items are `pub(crate)` for that reason alone - the parse driven
-//! here is still the diff's own, and the editor never calls [`highlight_lines`]
-//! outside its parity test. Nothing in this module's behavior may change to
-//! suit the editor: a divergence between the two surfaces is the one failure
-//! US-004 does not tolerate.
-
 use std::ops::Range;
 use std::sync::OnceLock;
 
@@ -39,19 +7,13 @@ use tree_sitter::{Language, Parser, Query, QueryCursor};
 
 use super::syntax::DiffSyntax;
 
-/// Full-file tree-sitter parsing above this size is more likely to hurt Review
-/// responsiveness than help readability. The diff still renders normally.
 pub(crate) const MAX_HIGHLIGHT_BYTES: usize = 300_000;
 
-/// A resolved grammar: its `Language` + parsed highlights `Query`, interned
-/// once per process (`Query::new` is not cheap).
 pub(crate) struct Grammar {
     pub(crate) language: Language,
     pub(crate) query: Query,
 }
 
-/// Resolve + intern the grammar for a file extension; `None` for unknown
-/// extensions (→ monochrome fallback).
 pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
     macro_rules! grammar {
         ($cell:ident, $lang:expr, $query:expr) => {{
@@ -106,7 +68,6 @@ pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
             tree_sitter_md::LANGUAGE,
             tree_sitter_md::HIGHLIGHT_QUERY_BLOCK
         ),
-        // EP-002 / US-003 (P1): Go, YAML, CSS, HTML.
         "go" => grammar!(
             GO,
             tree_sitter_go::LANGUAGE,
@@ -127,14 +88,7 @@ pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
             tree_sitter_html::LANGUAGE,
             tree_sitter_html::HIGHLIGHTS_QUERY
         ),
-        // EP-002 / US-005 (P2): C, C++, Java, Ruby. NOTE: tree-sitter-c and
-        // tree-sitter-cpp expose `HIGHLIGHT_QUERY` (singular), unlike every
-        // other grammar's `HIGHLIGHTS_QUERY`.
         "c" | "h" => grammar!(C, tree_sitter_c::LANGUAGE, tree_sitter_c::HIGHLIGHT_QUERY),
-        // tree-sitter-cpp ships a thin overlay query (`; inherits: c`) that
-        // colors only C++-specific constructs; the C++ grammar is a superset
-        // of C, so we layer the C base highlights underneath it (concatenation
-        // = the `inherits` semantics) for full keyword/type/fn/string coverage.
         "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => grammar!(
             CPP,
             tree_sitter_cpp::LANGUAGE,
@@ -158,10 +112,6 @@ pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
     }
 }
 
-/// The Markdown *inline* grammar (US-004) - a second pass over the same text
-/// that colors emphasis / links / inline code the block grammar leaves grey.
-/// Interned once; `None` if its query fails to compile (→ block-only fallback,
-/// still graceful).
 pub(crate) fn markdown_inline_grammar() -> Option<&'static Grammar> {
     static MD_INLINE: OnceLock<Option<Grammar>> = OnceLock::new();
     MD_INLINE
@@ -173,9 +123,6 @@ pub(crate) fn markdown_inline_grammar() -> Option<&'static Grammar> {
         .as_ref()
 }
 
-/// Per-line foreground runs (line-relative byte ranges), indexed like
-/// `str::lines()` so the index lines up with the diff row builder. Empty inner
-/// vecs for unknown grammars / parse failures.
 pub fn highlight_lines(
     text: &str,
     ext: &str,
@@ -185,9 +132,6 @@ pub fn highlight_lines(
         return text.lines().map(|_| Vec::new()).collect();
     }
 
-    // Byte range of each line, matching `str::lines()` exactly (the slices are
-    // substrings of `text`, so pointer subtraction gives the offset; `len()`
-    // excludes the trailing `\n` / `\r\n`).
     let line_ranges: Vec<Range<usize>> = text
         .lines()
         .map(|l| {
@@ -202,9 +146,6 @@ pub fn highlight_lines(
     };
     apply_grammar(grammar, text, syntax, &line_ranges, &mut out);
 
-    // US-004: Markdown gets a second inline pass merged into the same runs.
-    // `resolve_runs` (below) collapses block/inline overlaps while preserving
-    // more specific nested ranges.
     if matches!(ext, "md" | "markdown" | "mdx")
         && let Some(inline) = markdown_inline_grammar()
     {
@@ -217,9 +158,6 @@ pub fn highlight_lines(
     out
 }
 
-/// Parse `text` with `grammar`, resolve each capture to a palette color, and
-/// bucket the colored spans into per-line runs. A `set_language` / parse
-/// failure is a graceful no-op (leaves `out` as-is → monochrome).
 fn apply_grammar(
     grammar: &Grammar,
     text: &str,
@@ -238,7 +176,6 @@ fn apply_grammar(
     let names = grammar.query.capture_names();
     let mut cursor = QueryCursor::new();
     let mut caps = cursor.captures(&grammar.query, tree.root_node(), text.as_bytes());
-    // `QueryCursor::captures` is a StreamingIterator in tree-sitter >= 0.25.
     while let Some((mat, idx)) = caps.next() {
         let cap = mat.captures[*idx];
         let name = names[cap.index as usize];
@@ -255,9 +192,6 @@ fn apply_grammar(
     }
 }
 
-/// Split a capture's byte span across the lines it covers, pushing
-/// line-relative runs. Binary-searches for the first overlapping line; most
-/// captures touch a single line.
 fn bucket_capture(
     cstart: usize,
     cend: usize,
@@ -283,10 +217,6 @@ fn bucket_capture(
     }
 }
 
-/// Sort + de-overlap one line's runs into the ascending, non-overlapping list
-/// `element.rs::text_runs` expects. Smaller ranges are treated as more specific:
-/// they keep their bytes, and wider overlapping captures keep only uncovered
-/// fragments. This is also what merges the Markdown block + inline passes.
 pub(crate) fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
     if runs.len() < 2 {
         return;
@@ -356,7 +286,6 @@ mod tests {
             !lines[0].is_empty(),
             "expected colored runs for recognized rust code"
         );
-        // Runs are byte-ranged within the line, sorted, non-overlapping.
         for w in lines[0].windows(2) {
             assert!(w[0].0.end <= w[1].0.start);
         }
@@ -371,20 +300,16 @@ mod tests {
 
     #[test]
     fn unknown_extension_returns_empty_runs_without_panic() {
-        // US-006 AC #1: unknown ext → one empty run-list per line (monochrome).
         let syn = DiffSyntax::from_theme(&paneflow_dark());
         let lines = highlight_lines("plain text line\nsecond", "xyz", &syn);
         assert_eq!(lines.len(), 2);
         assert!(lines.iter().all(|r| r.is_empty()));
     }
 
-    /// True if at least one line carries a colored run.
     fn has_color(lines: &[Vec<(Range<usize>, Hsla)>]) -> bool {
         lines.iter().any(|r| !r.is_empty())
     }
 
-    /// Number of pairwise-distinct colors across all lines (`Hsla` is neither
-    /// `Eq` nor `Hash`, so no `HashSet`).
     fn distinct_colors(lines: &[Vec<(Range<usize>, Hsla)>]) -> usize {
         let mut seen: Vec<Hsla> = Vec::new();
         for line in lines {
@@ -399,7 +324,6 @@ mod tests {
 
     #[test]
     fn new_p1_grammars_produce_colored_runs() {
-        // US-003 AC #2: Go / YAML / CSS / HTML each color their core families.
         let syn = DiffSyntax::from_theme(&paneflow_dark());
         let cases: &[(&str, &str)] = &[
             (
@@ -418,7 +342,6 @@ mod tests {
 
     #[test]
     fn new_p2_grammars_produce_colored_runs() {
-        // US-005 AC #2: C / C++ / Java / Ruby each color keyword/type/fn/string.
         let syn = DiffSyntax::from_theme(&paneflow_dark());
         let cases: &[(&str, &str)] = &[
             (
@@ -443,9 +366,6 @@ mod tests {
 
     #[test]
     fn markdown_block_and_inline_passes_color_richly() {
-        // US-004 AC #2/#4: heading + fenced code + inline link + list marker
-        // each colored; the inline pass adds emphasis/link color the block
-        // grammar leaves grey, so the doc shows several distinct colors.
         let syn = DiffSyntax::from_theme(&paneflow_dark());
         let doc = "# Heading\n\nSome **bold** text and a [link](https://paneflow.dev).\n\n- first item\n- second item\n\n```rust\nfn x() {}\n```\n";
         let lines = highlight_lines(doc, "md", &syn);
@@ -455,8 +375,6 @@ mod tests {
             "expected ≥3 distinct markdown colors (heading/code/link/marker), got {}",
             distinct_colors(&lines)
         );
-        // Runs stay sorted + non-overlapping after the block+inline merge
-        // (US-004 AC #3: no double-coloring / artifact from overlap).
         for line in &lines {
             for w in line.windows(2) {
                 assert!(
@@ -486,8 +404,6 @@ mod tests {
 
     #[test]
     fn malformed_and_empty_inputs_never_panic() {
-        // US-003 AC #4 / US-006: empty + garbage input of every supported new
-        // type yields no panic (and 0 or N empty run-lists).
         let syn = DiffSyntax::from_theme(&paneflow_dark());
         let exts = [
             "go", "yaml", "yml", "css", "html", "c", "cpp", "java", "rb", "md",
@@ -501,12 +417,6 @@ mod tests {
 
     #[test]
     fn malformed_query_compiles_to_none_not_panic() {
-        // US-006 AC #2 (simulated query-compile failure): the interning step
-        // turns a failed `Query::new` into a `None` grammar via `.ok()?`, which
-        // `highlight_lines` already treats as monochrome (see
-        // `unknown_extension_returns_empty_runs_without_panic`). We can't inject
-        // a bad query into the static table, so we lock the contract on the
-        // same fallible call directly.
         let language: Language = tree_sitter_rust::LANGUAGE.into();
         let bad = Query::new(&language, "(this is not a valid query");
         assert!(

@@ -1,24 +1,9 @@
-//! Target selector for the `paneflow` CLI (US-003).
-//!
-//! Resolves a `<target>` argument to a concrete `surface_id` by querying
-//! `surface.list` once and filtering client-side, so `read`/`search`/`send`
-//! address a pane uniformly by its id, its name, the process running in it
-//! (`cmdline:<substr>`), or its working directory (`cwd:<path>`) - with one
-//! place that produces the ambiguity / no-match errors.
-//!
-//! Cross-platform note: `cmdline:` matches the `cmd` field of `surface.list`,
-//! which is the full foreground argv on Linux but only the executable basename
-//! on macOS/Windows (see `pty_session::foreground_command`). `cwd:` and `name`
-//! are the portable selectors when argv is unavailable (US-015 documents this).
-
 use paneflow_ipc_client::IpcTransport;
 use serde::Deserialize;
 use serde_json::json;
 
 use super::CliError;
 
-/// One entry of the `surface.list` response. Lenient by design: every field
-/// but `surface_id` is optional so a future server field can't break parsing.
 #[derive(Debug, Deserialize)]
 pub struct Surface {
     pub surface_id: u64,
@@ -59,7 +44,6 @@ fn parse_selector(raw: &str) -> Result<Selector<'_>, CliError> {
     Ok(Selector::Name(raw))
 }
 
-/// Fetch terminal surfaces via `surface.list`.
 pub fn fetch_surfaces(client: &impl IpcTransport) -> Result<Vec<Surface>, CliError> {
     let result = client
         .call("surface.list", json!({}))
@@ -69,15 +53,11 @@ pub fn fetch_surfaces(client: &impl IpcTransport) -> Result<Vec<Surface>, CliErr
         .map_err(|e| CliError::runtime(format!("malformed surface.list response: {e}")))
 }
 
-/// Resolve a `<target>` string to a `surface_id` against the live surface list.
 pub fn resolve_target(client: &impl IpcTransport, target: &str) -> Result<u64, CliError> {
     let surfaces = fetch_surfaces(client)?;
     resolve(parse_selector(target)?, &surfaces)
 }
 
-/// All `surface_id`s matching the selector (for `wait --any/--all`, US-014).
-/// Errors only when nothing matches; never errors on ambiguity (the caller
-/// wants the whole set).
 pub fn resolve_all(client: &impl IpcTransport, target: &str) -> Result<Vec<u64>, CliError> {
     let surfaces = fetch_surfaces(client)?;
     let selector = parse_selector(target)?;
@@ -98,8 +78,6 @@ fn resolve(selector: Selector<'_>, surfaces: &[Surface]) -> Result<u64, CliError
     pick_unique(&matches_for(&selector, surfaces), &label)
 }
 
-/// Every surface matching a selector. Shared by the unique-resolution path
-/// (`resolve` -> `pick_unique`) and the all-matches path (`resolve_all`).
 fn matches_for<'s>(selector: &Selector<'_>, surfaces: &'s [Surface]) -> Vec<&'s Surface> {
     match selector {
         Selector::Id(id) => surfaces.iter().filter(|s| s.surface_id == *id).collect(),
@@ -147,8 +125,6 @@ fn normalize_path_selector(raw: &str) -> String {
 }
 
 fn matches_by_name<'s>(name: &str, surfaces: &'s [Surface]) -> Vec<&'s Surface> {
-    // Exact (case-insensitive) wins over prefix, so a pane named "claude" stays
-    // reachable even when "claude-2" exists.
     let exact: Vec<&Surface> = surfaces
         .iter()
         .filter(|s| {
@@ -180,8 +156,6 @@ fn selector_label(selector: &Selector<'_>) -> String {
     }
 }
 
-/// Exactly-one or a dedicated target error. An ambiguous match lists the
-/// candidates (id + name) rather than silently picking one (US-003 AC).
 fn pick_unique(matches: &[&Surface], target: &str) -> Result<u64, CliError> {
     match matches {
         [] => Err(CliError::target(format!(
@@ -265,7 +239,6 @@ mod tests {
 
     #[test]
     fn exact_name_wins_over_prefix() {
-        // "claude" is also a prefix of "claude-2", but the exact match resolves.
         assert_eq!(resolve(Selector::Name("claude"), &fixtures()).unwrap(), 12);
     }
 
@@ -284,7 +257,6 @@ mod tests {
 
     #[test]
     fn cwd_prefix_can_be_ambiguous() {
-        // Two panes under /home/a/proj-backend.
         let err = resolve(Selector::Cwd("/home/a/proj-backend"), &fixtures()).unwrap_err();
         assert!(err.message.contains("ambiguous"), "got: {}", err.message);
     }
@@ -317,8 +289,6 @@ mod tests {
 
     #[test]
     fn matches_for_returns_every_match() {
-        // The all-matches path (resolve_all / wait --any|--all) keeps every
-        // candidate rather than erroring on ambiguity.
         let surfaces = fixtures();
         let m = matches_for(&Selector::Cmdline("claude"), &surfaces);
         let ids: Vec<u64> = m.iter().map(|s| s.surface_id).collect();
@@ -327,8 +297,6 @@ mod tests {
 
     #[test]
     fn cmdline_matches_basename_only_cmd() {
-        // macOS/Windows expose `cmd` as the executable basename (no argv), so a
-        // `cmdline:` selector must still match it (US-015 cross-platform).
         let surfaces = vec![surface(5, "agent", "claude", "/tmp")];
         assert_eq!(resolve(Selector::Cmdline("claude"), &surfaces).unwrap(), 5);
     }

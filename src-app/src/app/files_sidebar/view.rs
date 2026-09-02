@@ -1,7 +1,3 @@
-//! Files sidebar presentation: header (title + US-020 filter pill) + scrollable
-//! body. The per-row render lives in `row.rs`; this file stays under the
-//! 250-line component budget.
-
 use std::cell::Cell;
 
 use gpui::{
@@ -53,7 +49,6 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Title = the workspace folder's final component (the tree root name).
         let title: SharedString = self
             .files_tree
             .root
@@ -68,8 +63,6 @@ impl PaneFlowApp {
             .items_center()
             .justify_between()
             .gap(px(8.))
-            // Quiet header - no divider (Codex: separation by spacing, not
-            // borders). 36px matches the unified chrome row height.
             .h(px(36.))
             .flex_none()
             .px(px(12.))
@@ -121,12 +114,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// US-020: the type-to-filter field, on the shared [`filter_pill`]
-    /// primitive so it reads as the same system as the Agents and Settings
-    /// search fields. Escape empties it and hands focus back to the tree; the
-    /// unbound keys bubble out of the focused `TextInput` to this container.
-    ///
-    /// [`filter_pill`]: crate::ui_primitives::filter_pill
     fn files_filter_row(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> AnyElement {
         let is_empty = self.files_filter_input.read(cx).value().is_empty();
         div()
@@ -147,10 +134,6 @@ impl PaneFlowApp {
                 )
                 .w_full()
                 .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
-                    // Only swallow the Escape that actually cleared something.
-                    // On an already-empty field it keeps bubbling to the
-                    // sidebar container, which closes the sidebar - the
-                    // two-stage Escape the Settings search field already ships.
                     if ev.keystroke.key.as_str() == "escape" && this.clear_files_filter(window, cx)
                     {
                         cx.stop_propagation();
@@ -167,8 +150,6 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let canary = FilesSidebarRenderTimeCanary::new();
 
-        // US-020: a live needle swaps the tree for a flat, path-matched list.
-        // The fold state is untouched - clearing the field restores it exactly.
         let lowered = self.files_filter_lowered(cx);
         if !lowered.is_empty() {
             let matches =
@@ -224,8 +205,6 @@ impl PaneFlowApp {
             .flex_col()
             .flex_1()
             .py(px(4.))
-            // US-003: vertical scroll only - long names ellipsize, never scroll
-            // horizontally.
             .overflow_x_hidden()
             .overflow_y_scroll()
             .track_scroll(&self.files_tree_scroll)

@@ -1,9 +1,3 @@
-//! Persistent user-scope agent notification hooks.
-//!
-//! Claude hook shape, command rendering, detection, and reconciliation live in
-//! `paneflow-agent-config`, shared with the project-local shim. This module owns
-//! only user-scope path resolution, safe persistence, and CLI presentation.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 

@@ -1,11 +1,3 @@
-//! Git-metadata probing for workspace CWDs: branch detection, diff stats, and
-//! worktree-aware `.git` lookup. All functions are pure (no shared mutable
-//! state) and cross-platform - git subprocesses are bounded and non-interactive,
-//! while branch detection reads `.git/HEAD` directly.
-//!
-//! Extracted from `workspace.rs` per US-030 of the src-app refactor PRD.
-
-/// Git diff statistics for a workspace directory.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct GitDiffStats {
     pub files_changed: usize,
@@ -13,13 +5,8 @@ pub struct GitDiffStats {
     pub deletions: usize,
 }
 
-/// Wall-clock deadline for `git diff --shortstat` (U-035). A healthy repo
-/// answers in well under a second; this bounds a dead/slow network mount or a
-/// `.git/config` external helper that hangs.
 const GIT_DIFF_STAT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// stdout cap for `git diff --shortstat` - the command emits a single summary
-/// line, so 256 KiB is far beyond any real output while bounding a hijacked git.
 const GIT_DIFF_STAT_STDOUT_CAP: u64 = 256 * 1024;
 
 const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -28,11 +15,6 @@ const GIT_DIFF_STAT_UNTRACKED_PATH_CAP: usize = 1000;
 const GIT_DIFF_STAT_FILE_BYTES_CAP: u64 = 512 * 1024;
 
 impl GitDiffStats {
-    /// Run a HEAD-relative diff stat in the given directory and parse the result.
-    /// This matches the diff dock semantics: staged + unstaged tracked
-    /// changes against `HEAD`, plus untracked files. On spawn failure, timeout, or
-    /// nonzero git exit this returns the empty (`is_empty()`) default - the
-    /// "stats unavailable" state the badge renders.
     pub fn from_cwd(cwd: &str) -> Self {
         let base = git_stdout(cwd, &["rev-parse", "--verify", "HEAD"])
             .map(|out| String::from_utf8_lossy(&out).trim().to_string())
@@ -49,8 +31,6 @@ impl GitDiffStats {
         stats
     }
 
-    /// Parse `git diff --shortstat` output, e.g.:
-    /// " 3 files changed, 42 insertions(+), 7 deletions(-)"
     fn parse_shortstat(text: &str) -> Self {
         let mut files_changed = 0usize;
         let mut insertions = 0usize;
@@ -111,8 +91,6 @@ fn git_stdout(cwd: &str, args: &[&str]) -> Option<Vec<u8>> {
     let mut cmd = std::process::Command::new("git");
     cmd.args(args)
         .current_dir(cwd)
-        // U-035: a hung credential/helper prompt would otherwise pin the
-        // blocking-pool task. With no terminal git fails fast instead.
         .env("GIT_TERMINAL_PROMPT", "0");
     let output =
         paneflow_process::run_with_timeout(cmd, GIT_DIFF_STAT_DEADLINE, GIT_DIFF_STAT_STDOUT_CAP)
@@ -159,8 +137,6 @@ fn text_line_count(text: &str) -> usize {
     }
 }
 
-/// Read up to `limit` bytes from a file, returning the content as a `String`.
-/// Prevents unbounded reads from malicious or corrupted files.
 pub(super) fn read_capped(path: &std::path::Path, limit: u64) -> std::io::Result<String> {
     use std::io::Read;
     let file = std::fs::File::open(path)?;
@@ -169,11 +145,6 @@ pub(super) fn read_capped(path: &std::path::Path, limit: u64) -> std::io::Result
     Ok(content)
 }
 
-/// Find the `.git` directory for a working directory.
-///
-/// Walks up from `cwd` to find the nearest `.git` entry. For worktrees (`.git`
-/// is a file), follows the `gitdir:` pointer to return the actual git metadata
-/// directory where `HEAD` and `index` reside.
 pub fn find_git_dir(cwd: &str) -> Option<std::path::PathBuf> {
     let mut search_dir = std::path::Path::new(cwd);
     let git_path = loop {
@@ -185,7 +156,6 @@ pub fn find_git_dir(cwd: &str) -> Option<std::path::PathBuf> {
     };
 
     if git_path.is_file() {
-        // Worktree: .git is a file containing "gitdir: <path>"
         let content = read_capped(&git_path, 512).ok()?;
         let gitdir = content.trim().strip_prefix("gitdir: ")?.to_owned();
         let gitdir_path = if std::path::Path::new(&gitdir).is_absolute() {
@@ -204,31 +174,12 @@ pub fn find_git_dir(cwd: &str) -> Option<std::path::PathBuf> {
     }
 }
 
-/// Canonicalize a path, falling back to the input when it cannot be resolved
-/// (e.g. the path does not exist). Canonicalization is what lets two sibling
-/// worktrees of the same repo produce an *identical* `repo_root`, since their
-/// `commondir` pointers (`../..`) both collapse to the same absolute path.
 fn canonicalize_or(path: &std::path::Path) -> std::path::PathBuf {
-    // The verbatim prefix `canonicalize` adds on Windows has to come straight
-    // back off: `repo_root` and `worktree_root` are handed to git as arguments
-    // and compared against the paths git prints, and `\\?\C:\...` fails at both
-    // (`git worktree add` cannot create directories under it, and it never
-    // compares equal to git's `C:/...`). See
-    // [`crate::runtime_paths::strip_verbatim_prefix`].
     crate::runtime_paths::strip_verbatim_prefix(
         std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
     )
 }
 
-/// Lexically collapse `.`/`..` components without touching the filesystem.
-///
-/// US-056: a relative `commondir` (`../..`) joined onto a worktree git dir
-/// yields a path littered with `..`. When the target exists `canonicalize_or`
-/// resolves them, but on a missing/unresolvable path it returns the raw form -
-/// so two sibling worktrees would *not* collapse to the same `repo_root`.
-/// Normalizing first guarantees the best-effort fallback still collapses them.
-/// This mirrors the component walk `canonicalize` performs, minus symlink
-/// resolution (a leading `..` with nothing to pop is preserved verbatim).
 fn normalize_lexically(path: &std::path::Path) -> std::path::PathBuf {
     use std::path::Component;
     let mut stack: Vec<Component> = Vec::new();
@@ -251,14 +202,6 @@ fn normalize_lexically(path: &std::path::Path) -> std::path::PathBuf {
     out
 }
 
-/// Resolve the shared (main) `.git` directory for a given worktree git dir.
-///
-/// For a linked worktree, `git_dir` is `<main>/.git/worktrees/<name>` and holds
-/// a `commondir` file pointing - usually relatively, e.g. `../..` - at the
-/// shared `<main>/.git`. For a normal checkout, `git_dir` is already the main
-/// `.git` and no `commondir` file exists, so it is returned as-is. An absolute
-/// `commondir` is honored verbatim (no double-join). Result is canonicalized
-/// when the path exists, otherwise returned best-effort (never panics).
 pub fn resolve_main_git_dir(git_dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let commondir_file = git_dir.join("commondir");
     let main_git_dir = if commondir_file.is_file() {
@@ -279,16 +222,6 @@ pub fn resolve_main_git_dir(git_dir: &std::path::Path) -> Option<std::path::Path
     Some(canonicalize_or(&main_git_dir))
 }
 
-/// Resolve `(repo_root, is_worktree)` from a working directory's git dir.
-///
-/// - `repo_root`: the working directory of the shared repository (parent of the
-///   main `.git`), canonicalized so sibling worktrees of one repo yield an
-///   identical value - the key invariant for grouping siblings.
-/// - `is_worktree`: true when `git_dir` is a *linked* worktree (it carries a
-///   `commondir` file). The main checkout of a repo is not a worktree.
-///
-/// Never panics: a bare repo, a missing `commondir`, or an unresolvable path
-/// degrades to a best-effort `repo_root` (possibly `None`).
 pub fn resolve_repo_root(git_dir: &std::path::Path) -> (Option<std::path::PathBuf>, bool) {
     let is_worktree = git_dir.join("commondir").is_file();
     let repo_root = resolve_main_git_dir(git_dir)
@@ -296,9 +229,6 @@ pub fn resolve_repo_root(git_dir: &std::path::Path) -> (Option<std::path::PathBu
     (repo_root, is_worktree)
 }
 
-/// Resolve the concrete worktree root for a workspace at construction time.
-/// This lets UI code reuse stored metadata instead of reading `.git/worktrees`
-/// files while rebuilding Review columns.
 pub fn resolve_worktree_root(
     cwd: &str,
     git_dir: Option<&std::path::Path>,
@@ -330,11 +260,6 @@ pub fn resolve_worktree_root(
         .unwrap_or_else(|| std::path::PathBuf::from(cwd))
 }
 
-/// Parse branch name from a known `.git` directory's `HEAD` file.
-///
-/// Returns `(branch_name, true)`. On read failure returns `("", true)` -
-/// the directory is a git repo but the branch is unknown.
-/// Only `refs/heads/` branches are resolved; tags and remote refs return empty.
 pub(super) fn parse_head(git_dir: &std::path::Path) -> (String, bool) {
     let head_path = git_dir.join("HEAD");
     let content = match read_capped(&head_path, 512) {
@@ -344,35 +269,17 @@ pub(super) fn parse_head(git_dir: &std::path::Path) -> (String, bool) {
     let content = content.trim();
 
     if let Some(branch) = content.strip_prefix("ref: refs/heads/") {
-        // `content.trim()` only strips edge whitespace, so a crafted `.git/HEAD`
-        // like `ref: refs/heads/main\n<payload>\n` leaves the interior `\n`/ESC
-        // intact after `strip_prefix`. git resolves HEAD on its line-oriented
-        // read, so the repo still diffs as `main` while this remainder carries
-        // smuggled bytes into every `git_branch` consumer (sidebar, and the diff
-        // review prompt that is written verbatim into a PTY with no bracketed
-        // paste). Drop all control chars at this trust boundary: `is_control()`
-        // covers C0 (incl. `\n`/`\r`/ESC 0x1b), DEL (0x7f), and C1 (0x80-0x9f).
-        // Pure string filtering - identical on Linux, macOS, and Windows.
         (branch.chars().filter(|c| !c.is_control()).collect(), true)
     } else if content.chars().all(|c| c.is_ascii_hexdigit())
         && (content.len() == 40 || content.len() == 64)
     {
-        // Detached HEAD - raw SHA-1 (40 chars) or SHA-256 (64 chars)
         let short = &content[..7];
         (format!("({short})"), true)
     } else {
-        // Unrecognized format (tag ref, remote ref, corrupted) - git repo but branch unknown
         (String::new(), true)
     }
 }
 
-/// Detect the current git branch for a working directory.
-///
-/// Walks up from `cwd` to find `.git`, reads `HEAD` directly (no subprocess).
-/// Returns `(branch_name, is_git_repo)`.
-/// - Normal branch: `("main", true)`
-/// - Detached HEAD: `("(abc1234)", true)`
-/// - Not a git repo: `("", false)`
 pub fn detect_branch(cwd: &str) -> (String, bool) {
     match find_git_dir(cwd) {
         Some(git_dir) => parse_head(&git_dir),
@@ -384,11 +291,6 @@ pub fn detect_branch(cwd: &str) -> (String, bool) {
 mod tests {
     use super::*;
 
-    /// What `canonicalize_or` is contracted to return: the canonical path with
-    /// the Windows verbatim prefix taken back off. A plain
-    /// `std::fs::canonicalize` would keep the `\\?\C:\...` spelling that the
-    /// production path deliberately drops, so every expectation built from a
-    /// `tempdir` goes through here. No-op on Unix.
     fn canonical_expectation(path: &std::path::Path) -> std::path::PathBuf {
         crate::runtime_paths::strip_verbatim_prefix(std::fs::canonicalize(path).unwrap())
     }
@@ -440,7 +342,6 @@ mod tests {
     #[test]
     fn detect_branch_not_a_git_repo() {
         let dir = tempfile::tempdir().unwrap();
-        // No .git directory
 
         let (branch, is_repo) = detect_branch(dir.path().to_str().unwrap());
         assert_eq!(branch, "");
@@ -450,7 +351,6 @@ mod tests {
     #[test]
     fn detect_branch_worktree_file() {
         let dir = tempfile::tempdir().unwrap();
-        // Simulate a worktree: .git is a file pointing to a gitdir
         let worktree_git_dir = dir.path().join("worktree_git");
         std::fs::create_dir(&worktree_git_dir).unwrap();
         std::fs::write(worktree_git_dir.join("HEAD"), "ref: refs/heads/wt-branch\n").unwrap();
@@ -478,7 +378,6 @@ mod tests {
     #[test]
     fn detect_branch_worktree_relative_path() {
         let dir = tempfile::tempdir().unwrap();
-        // Simulate a worktree with a relative gitdir path
         let worktree_git_dir = dir
             .path()
             .join("main_repo")
@@ -494,7 +393,6 @@ mod tests {
 
         let work_dir = dir.path().join("wt1");
         std::fs::create_dir(&work_dir).unwrap();
-        // Relative path from work_dir/.git to the worktree git dir
         std::fs::write(
             work_dir.join(".git"),
             "gitdir: ../main_repo/.git/worktrees/wt1\n",
@@ -513,7 +411,6 @@ mod tests {
         std::fs::create_dir(&git_dir).unwrap();
         std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/develop\n").unwrap();
 
-        // Create a subdirectory without its own .git
         let sub_dir = dir.path().join("src").join("module");
         std::fs::create_dir_all(&sub_dir).unwrap();
 
@@ -524,11 +421,6 @@ mod tests {
 
     #[test]
     fn detect_branch_strips_control_chars_from_malicious_head() {
-        // A crafted `.git/HEAD` smuggles a newline + ESC payload after a valid
-        // ref line. git itself resolves HEAD to `main` (line-oriented read), so
-        // the repo still diffs and the Review button is reachable - but the
-        // returned branch must never carry the injected `\n`/ESC bytes into the
-        // PTY-bound review prompt or the sidebar.
         let dir = tempfile::tempdir().unwrap();
         let git_dir = dir.path().join(".git");
         std::fs::create_dir(&git_dir).unwrap();
@@ -544,8 +436,6 @@ mod tests {
         assert!(!branch.contains('\r'), "carriage return must be stripped");
         assert!(!branch.contains('\x1b'), "ESC must be stripped");
         assert!(branch.chars().all(|c| !c.is_control()));
-        // Edge `trim()` already removed the trailing payload bytes after the
-        // final `\n`; the interior smuggled line collapses onto `main`.
         assert!(branch.starts_with("main"));
     }
 
@@ -610,20 +500,16 @@ mod tests {
 
         let (repo_root, is_worktree) = resolve_repo_root(&git_dir);
         assert!(!is_worktree);
-        // repo_root is the canonicalized parent of `.git` (the repo working dir).
         assert_eq!(repo_root, Some(canonical_expectation(dir.path())));
     }
 
     #[test]
     fn resolve_repo_root_worktree_relative_commondir() {
         let dir = tempfile::tempdir().unwrap();
-        // Main repo at <root>/main, its .git at <root>/main/.git
         let main_git = dir.path().join("main").join(".git");
         std::fs::create_dir_all(&main_git).unwrap();
-        // Linked worktree git dir at <root>/main/.git/worktrees/wt1
         let wt_git = main_git.join("worktrees").join("wt1");
         std::fs::create_dir_all(&wt_git).unwrap();
-        // commondir points back to the main .git relatively: ../..
         std::fs::write(wt_git.join("commondir"), "../..\n").unwrap();
 
         let (repo_root, is_worktree) = resolve_repo_root(&wt_git);
@@ -641,7 +527,6 @@ mod tests {
         std::fs::create_dir_all(&main_git).unwrap();
         let wt_git = main_git.join("worktrees").join("wt2");
         std::fs::create_dir_all(&wt_git).unwrap();
-        // Absolute commondir must be honored verbatim (no double-join).
         std::fs::write(
             wt_git.join("commondir"),
             format!("{}\n", main_git.display()),
@@ -683,7 +568,6 @@ mod tests {
 
     #[test]
     fn resolve_repo_root_siblings_match() {
-        // Two sibling worktrees of the same repo must produce an identical repo_root.
         let dir = tempfile::tempdir().unwrap();
         let main_git = dir.path().join("main").join(".git");
         std::fs::create_dir_all(&main_git).unwrap();
@@ -702,15 +586,11 @@ mod tests {
 
     #[test]
     fn normalize_lexically_collapses_dotdot() {
-        // US-056: a relative commondir on a non-existent worktree must still
-        // collapse `..` lexically so sibling worktrees resolve to the same
-        // repo_root even when canonicalize can't (target missing on disk).
         let wt_git = std::path::Path::new("/nonexistent/main/.git/worktrees/wt1");
         assert_eq!(
             normalize_lexically(&wt_git.join("../..")),
             std::path::PathBuf::from("/nonexistent/main/.git")
         );
-        // A leading `..` with nothing to pop is preserved verbatim.
         assert_eq!(
             normalize_lexically(std::path::Path::new("../foo/./bar")),
             std::path::PathBuf::from("../foo/bar")
@@ -721,7 +601,6 @@ mod tests {
     fn resolve_repo_root_missing_dir() {
         let (repo_root, is_worktree) = resolve_repo_root(std::path::Path::new("/nonexistent/.git"));
         assert!(!is_worktree);
-        // Non-existent path: canonicalize fails, parent is still derivable.
         assert_eq!(repo_root, Some(std::path::PathBuf::from("/nonexistent")));
     }
 
@@ -734,7 +613,6 @@ mod tests {
         assert_eq!(stats.deletions, 7);
         assert!(!stats.is_empty());
 
-        // Singular "1 file changed" with only a deletion still parses the count.
         let single = GitDiffStats::parse_shortstat(" 1 file changed, 2 deletions(-)");
         assert_eq!(single.files_changed, 1);
         assert_eq!(single.insertions, 0);
@@ -743,9 +621,6 @@ mod tests {
 
     #[test]
     fn from_cwd_on_non_repo_yields_unavailable_default() {
-        // U-035: a non-git directory makes `git diff --shortstat` exit nonzero,
-        // and the bounded run must fall back to the empty (`is_empty()`) default
-        // - the "stats unavailable" badge state - rather than panic or hang.
         let dir = tempfile::tempdir().unwrap();
         let stats = GitDiffStats::from_cwd(dir.path().to_str().unwrap());
         assert!(

@@ -62,9 +62,6 @@ fn test_split_ratio_clamped_high() {
 
 #[test]
 fn test_per_child_ratios_floor_respected_after_normalize() {
-    // US-057: clamp -> normalize can push a value back below the 0.01 floor.
-    // The re-clamp must restore it. ratios [100.0, 0.001] -> clamp
-    // [1.0, 0.01] -> normalize ~[0.990, 0.0099] (2nd below floor) -> re-clamp.
     let mut node = LayoutNode::Split {
         direction: "vertical".to_string(),
         ratio: None,
@@ -93,7 +90,6 @@ fn test_per_child_ratios_floor_respected_after_normalize() {
 
 #[test]
 fn test_split_nary_children_accepted() {
-    // 3+ children are valid in N-ary layout.
     let json = r#"{
         "commands": [{
             "name": "test",
@@ -231,15 +227,12 @@ fn test_nested_split_validation() {
     let config = parse_and_validate(json);
     let ws = config.commands[0].workspace().unwrap();
     match ws.layout.as_ref().unwrap() {
-        LayoutNode::Split { children, .. } => {
-            // Inner split should have ratio clamped to 0.1.
-            match &children[0] {
-                LayoutNode::Split { ratio, .. } => {
-                    assert!((ratio.unwrap() - 0.1).abs() < f64::EPSILON);
-                }
-                _ => panic!("expected nested split"),
+        LayoutNode::Split { children, .. } => match &children[0] {
+            LayoutNode::Split { ratio, .. } => {
+                assert!((ratio.unwrap() - 0.1).abs() < f64::EPSILON);
             }
-        }
+            _ => panic!("expected nested split"),
+        },
         _ => panic!("expected split"),
     }
 }

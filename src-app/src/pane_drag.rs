@@ -1,21 +1,3 @@
-//! Drag-and-drop primitives for panes (PRD `prd-pane-drag-drop-2026-Q3.md`,
-//! PRD `prd-cli-tab-hierarchy-2026-Q3.md` EP-002).
-//!
-//! Holds the payloads carried by GPUI's managed drag API (an agent session
-//! dragged out of the sessions sidebar, a pane dragged by its own header) and
-//! the [`DragPreview`] ghost entity rendered under the cursor, plus the edge
-//! geometry shared by every drop-to-split target ([`DropEdge`],
-//! [`compute_drop_edge`], [`split_rect`]). The Files sidebar carries no drag:
-//! every file opens in the dock editor from a click.
-//!
-//! EP-002 US-007 removed the pane-level tab strip, and with it the cross-pane
-//! tab move: a pane holds exactly one surface, so the only placement gestures
-//! left are "split this pane toward an edge" and "open in a new workspace tab"
-//! (the center band). Wiring lives in `Pane::render`.
-//!
-//! Mirrors the in-repo `WorkspaceDrag` / `WorkspaceDragPreview` precedent
-//! (`app/drag.rs`, `sidebar/mod.rs`) - same GPUI commit, identical API shape.
-
 use gpui::{
     Context, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled, Window, div, px,
     svg,
@@ -31,15 +13,6 @@ pub struct SessionDrag {
     pub icon: SharedString,
 }
 
-/// Drag payload for a pane dragged by its own header to a new position inside
-/// its workspace tab (PRD `prd-pane-drag-drop-2026-Q3.md`). Dropping it on
-/// another pane of the same tab swaps the two - the gesture reorders an
-/// existing layout, it never creates or destroys a pane, so it carries no
-/// edge semantics and its placeholder always covers the whole target pane.
-///
-/// The payload carries the source pane's `EntityId` (as `u64`) rather than an
-/// index: the layout tree re-renders during the drag, so only an identity can
-/// re-resolve the right pane at drop time.
 #[derive(Clone)]
 pub struct PaneDrag {
     pub pane_id: u64,
@@ -47,8 +20,6 @@ pub struct PaneDrag {
     pub icon: SharedString,
 }
 
-/// Floating ghost rendered under the cursor during a drag - a compact chip
-/// (leading icon + label) mirroring the dragged row.
 pub struct DragPreview {
     pub title: SharedString,
     pub icon: SharedString,
@@ -83,9 +54,6 @@ impl Render for DragPreview {
     }
 }
 
-/// Which edge of a pane a drop is aimed at. Resolved from the cursor by
-/// [`compute_drop_edge`]; `None` (the center band) is not an edge but "open in
-/// a new workspace tab" (EP-002 US-007).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DropEdge {
     Up,
@@ -95,11 +63,6 @@ pub enum DropEdge {
 }
 
 impl DropEdge {
-    /// Map a drop edge to the 2-way [`crate::layout::SplitDirection`] plus
-    /// whether the new pane swaps to the "before" position. `split_at_pane`
-    /// always inserts *after* the target, so the leading edges (Up/Left) swap
-    /// the moved/duplicated pane onto the correct side. Single source for the
-    /// drop-to-split handlers (DropSplit / dropped session).
     pub fn to_split(self) -> (crate::layout::SplitDirection, bool) {
         match self {
             DropEdge::Up => (crate::layout::SplitDirection::Horizontal, true),
@@ -110,20 +73,8 @@ impl DropEdge {
     }
 }
 
-/// Fraction of a pane's *smaller* dimension that counts as an edge band for
-/// drop-to-split (Zed's `drop_target_size` default). Cursor inside any edge
-/// band → split toward the nearest edge; the center 60% → new workspace tab.
 pub const SPLIT_EDGE_BAND: f32 = 0.20;
 
-/// Resolve a cursor position (relative to a pane's content bounds) to a split
-/// edge, using `band` as the fraction of the smaller dimension for each edge
-/// strip. The nearest edge wins by min-distance; a cursor in the center
-/// (outside every band) returns `None` = new workspace tab. Ported from Zed's
-/// `handle_drag_move` (`crates/workspace/src/pane.rs`), adapted to compute in
-/// `f32` (GPUI `Pixels` isn't `Ord`) and to Paneflow's [`DropEdge`].
-///
-/// `width`/`height` are the content size; `x`/`y` the cursor offset from the
-/// content's top-left. Correct for non-square panes (uses both dimensions).
 pub fn compute_drop_edge(width: f32, height: f32, x: f32, y: f32, band: f32) -> Option<DropEdge> {
     if width <= 0.0 || height <= 0.0 {
         return None;
@@ -133,7 +84,6 @@ pub fn compute_drop_edge(width: f32, height: f32, x: f32, y: f32, band: f32) -> 
     if !in_band {
         return None;
     }
-    // Distance from the cursor to each edge; the closest edge wins.
     let candidates = [
         (DropEdge::Up, y),
         (DropEdge::Right, width - x),
@@ -146,12 +96,6 @@ pub fn compute_drop_edge(width: f32, height: f32, x: f32, y: f32, band: f32) -> 
         .map(|(edge, _)| edge)
 }
 
-/// The blue preview overlay's target rectangle `(x, y, w, h)` (content-local
-/// pixels) for a given drop direction over a pane of size `width`×`height`.
-/// `None` (center / new workspace tab) fills the whole pane; each edge fills the
-/// corresponding half. Used to drive the overlay's glide animation (US-008):
-/// lerping between two of these rects as the cursor crosses band boundaries is
-/// what makes the preview slide instead of snapping.
 pub fn split_rect(dir: Option<DropEdge>, width: f32, height: f32) -> (f32, f32, f32, f32) {
     let (hw, hh) = (width * 0.5, height * 0.5);
     match dir {
@@ -168,7 +112,6 @@ mod tests {
     use super::*;
     #[test]
     fn drop_edge_center_is_none() {
-        // 1000x800, 20% band → 160px strips; center is new workspace tab.
         assert_eq!(compute_drop_edge(1000., 800., 500., 400., 0.20), None);
     }
 
@@ -194,8 +137,6 @@ mod tests {
 
     #[test]
     fn drop_edge_non_square_uses_smaller_dimension() {
-        // Tall pane 200x1000 → band = 200*0.2 = 40px. A cursor near the right
-        // edge resolves to Right even though the pane is far taller than wide.
         assert_eq!(
             compute_drop_edge(200., 1000., 180., 500., 0.20),
             Some(DropEdge::Right)

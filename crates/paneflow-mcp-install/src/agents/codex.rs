@@ -1,13 +1,3 @@
-//! Codex writer (EP-003 US-008).
-//!
-//! The writer uses a format-preserving `toml_edit` upsert of
-//! `[mcp_servers.paneflow]` in `~/.codex/config.toml`, keeping comments and
-//! sibling tables intact through one atomic, fully tested mutation path.
-//!
-//! **Volatility:** Codex's config schema moves fast (verified 2026:
-//! `[mcp_servers.<name>]` with `command`/`args`). Re-verify that table shape
-//! if registration regresses.
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -51,8 +41,6 @@ impl AgentConfigWriter for Codex {
     }
 
     fn presence(&self) -> Presence {
-        // Detect via the config dir too: `~/.codex/` existing is a strong
-        // signal even before `config.toml` is created.
         let mut paths: Vec<PathBuf> = Vec::new();
         if let Some(cfg) = &self.config_path {
             paths.push(cfg.clone());
@@ -99,7 +87,6 @@ mod tests {
         let txt = std::fs::read_to_string(&p).unwrap();
         assert!(txt.contains("paneflow"));
         assert!(txt.contains("/data/paneflow-mcp"));
-        // Re-parse to confirm the table path.
         let doc = txt.parse::<toml_edit::DocumentMut>().unwrap();
         assert_eq!(
             doc["mcp_servers"]["paneflow"]["command"].as_str(),
@@ -159,9 +146,6 @@ mod tests {
 
     #[test]
     fn uninstall_malformed_config_is_error() {
-        // US-021: symmetric with the Claude Code writer - a present-but-
-        // unparseable config is corruption, surfaced loudly, not swallowed
-        // as NothingToRemove.
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("config.toml");
         std::fs::write(&p, b"this = = broken").unwrap();

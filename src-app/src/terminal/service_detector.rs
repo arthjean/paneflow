@@ -1,12 +1,3 @@
-//! Detect local dev-server metadata (port, URL, framework label) from a
-//! single line of PTY output.
-//!
-//! Called by `TerminalState::scan_output` after each output batch.  The
-//! returned `ServiceInfo` is surfaced in the workspace sidebar.
-//!
-//! Keep the matchers string-based and allocation-light: this runs on every
-//! terminal write batch, on the GPUI main thread.
-
 use std::collections::VecDeque;
 
 const SERVICE_TAIL_MAX_LINES: usize = 100;
@@ -14,12 +5,6 @@ const SERVICE_TAIL_MAX_LINE_BYTES: usize = 8 * 1024;
 const SERVICE_TAIL_MAX_TOTAL_BYTES: usize = 64 * 1024;
 const TAB_WIDTH: usize = 8;
 
-/// Bounded, ANSI-aware tail of raw PTY output used by the Ghostty backend.
-///
-/// Keeping this beside service detection makes the hot runtime path independent
-/// from Ghostty's per-cell grid FFI. The VTE parser owns partial UTF-8 and escape
-/// state across reads, while the performer retains only text that the detector
-/// can inspect.
 #[derive(Default)]
 pub(super) struct ServiceOutputTail {
     parser: ServiceOutputParser,
@@ -49,9 +34,6 @@ enum ServiceOutputParseState {
     StringEscape,
 }
 
-/// Fixed-size ANSI text extractor. It intentionally ignores cursor-oriented
-/// CSI semantics, but bounds every parser state independently from untrusted
-/// PTY input, including unterminated OSC/DCS strings.
 #[derive(Default)]
 struct ServiceOutputParser {
     state: ServiceOutputParseState,
@@ -260,33 +242,19 @@ impl ServiceOutputPerformer {
     }
 }
 
-/// Metadata about a detected service (server listening on a port).
-/// Enriches the bare port number from the OS port scan (`workspace::ports`;
-/// Linux `/proc/net/tcp`, macOS libproc, Windows IP Helper) with human-readable info.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServiceInfo {
     pub port: u16,
     pub url: Option<String>,
     pub label: Option<String>,
-    /// True for frontend dev servers (Next.js, Vite, Nuxt) - clickable in sidebar.
     pub is_frontend: bool,
 }
 
-/// Parse a terminal output line for local server URL patterns.
-/// Derived from VS Code's UrlFinder - anchors on localhost/127.0.0.1/0.0.0.0.
 pub(super) fn parse_service_line(line: &str) -> Option<ServiceInfo> {
     let port = extract_local_port(line)?;
     if port == 0 {
         return None;
     }
-    // Security (EP-005 review): the URL feeds `open::that` behind a single
-    // click (sidebar chip + tab port badge). The PORT anchor above proves a
-    // loopback service exists on the line, but `extract_url` independently
-    // grabs the first http(s) token - a hostile pane printing
-    // `localhost:5173 http://evil.example` would otherwise arm a clickable
-    // badge to an attacker URL. Only keep a loopback URL; anything else
-    // degrades to a synthesized localhost URL so legitimate frontends stay
-    // clickable.
     let url = extract_url(line)
         .and_then(|u| normalize_loopback_url(&u, port))
         .or_else(|| Some(format!("http://localhost:{port}")));
@@ -299,9 +267,6 @@ pub(super) fn parse_service_line(line: &str) -> Option<ServiceInfo> {
     })
 }
 
-/// Whether a URL's host is a loopback/unspecified local address. Tiny
-/// scheme-then-host parse - no URL crate; conservative `false` on anything
-/// unrecognized (the caller then substitutes a synthesized localhost URL).
 #[cfg(test)]
 fn is_loopback_url(url: &str) -> bool {
     normalize_loopback_url(url, 0).is_some()
@@ -355,9 +320,6 @@ fn is_loopback_host(host: &str) -> bool {
             .is_some_and(|tail| tail.split('.').all(|seg| seg.parse::<u8>().is_ok()))
 }
 
-/// Extract a port number from localhost:PORT, 127.0.0.1:PORT, 0.0.0.0:PORT,
-/// or [::1]:PORT patterns.
-/// Also handles Python's `http.server` format: "HTTP on 127.0.0.1 port 8000".
 fn extract_local_port(line: &str) -> Option<u16> {
     for anchor in ["localhost:", "127.0.0.1:", "0.0.0.0:", "[::1]:"] {
         if let Some(idx) = line.find(anchor) {
@@ -368,7 +330,6 @@ fn extract_local_port(line: &str) -> Option<u16> {
             }
         }
     }
-    // Python http.server: "HTTP on 127.0.0.1 port 8000"
     if let Some(idx) = line.find(" port ")
         && (line.contains("127.0.0.1") || line.contains("0.0.0.0") || line.contains("[::1]"))
     {
@@ -381,7 +342,6 @@ fn extract_local_port(line: &str) -> Option<u16> {
     None
 }
 
-/// Extract a full URL (http:// or https://) from a terminal line.
 fn extract_url(line: &str) -> Option<String> {
     for scheme in ["https://", "http://"] {
         if let Some(start) = line.find(scheme) {
@@ -397,11 +357,7 @@ fn extract_url(line: &str) -> Option<String> {
     None
 }
 
-/// Detect the framework/server name from keywords in the terminal line.
-/// Returns `(label, is_frontend)` - frontend frameworks get clickable URLs in the sidebar.
-/// Uses word-boundary matching to avoid false positives (e.g. "origin" matching "gin").
 pub(super) fn detect_framework(line: &str) -> (Option<String>, bool) {
-    // (keyword, display_label, is_frontend)
     const FRAMEWORKS: &[(&str, &str, bool)] = &[
         ("next.js", "Next.js", true),
         ("next dev", "Next.js", true),
@@ -529,9 +485,6 @@ mod tests {
         );
     }
 
-    // EP-005 security review: the clickable URL must never leave loopback -
-    // a hostile pane printing a localhost anchor next to an attacker URL
-    // must not arm `open::that` toward that host.
     #[test]
     fn hostile_url_next_to_local_anchor_is_replaced_by_loopback() {
         let info =

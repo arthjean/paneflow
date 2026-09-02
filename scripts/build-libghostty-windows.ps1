@@ -6,9 +6,6 @@ param(
     [string]$ZigSourceArchive = $env:PANEFLOW_ZIG_SOURCE_ARCHIVE,
     [string]$EvidenceDir = $env:EVIDENCE_DIR,
     [switch]$VerifyReproducible,
-    # Only for minting a new reviewed archive: it downgrades the manifest hash
-    # gates to warnings so the recipe can be re-pinned deliberately. Matches
-    # scripts/build-libghostty-linux.sh and scripts/build-libghostty-macos.sh.
     [switch]$AllowHashDrift
 )
 
@@ -101,31 +98,12 @@ function Write-Utf8Lines {
 function Write-Phase {
     param([string]$Message)
 
-    # The rebuild is otherwise silent for its whole duration: Zig's output is
-    # captured into a variable and only printed when the build fails, so a
-    # stalled pass and a slow pass look identical in the job log. That is what
-    # burned five 90 minute Windows runs between 2026-08-28 and 2026-08-29
-    # without producing one diagnosable line. These markers go to the host
-    # stream, so they never contaminate a function's return value.
     Write-Host ("[{0}Z] {1}" -f [DateTime]::UtcNow.ToString("HH:mm:ss"), $Message)
 }
 
 function Add-DefenderExclusion {
     param([string]$Path)
 
-    # Real-time scanning is a plausible tax on this build: the pinned Zig
-    # source archive unpacks to 19660 files across 239 MB, and the Zig cache
-    # under the canonical source writes tens of thousands more.
-    #
-    # It is not, however, what stalled the extraction. These exclusions were
-    # added on 2026-08-29 against that stall and were refuted the same day:
-    # both applied cleanly and `tar -xf` still ran past 38 minutes. They are
-    # kept because they are free and hash-neutral, not because they were shown
-    # to help. Do not cite them as the fix for a slow extraction.
-    #
-    # Exclusions never touch a build input, so they cannot move the archive
-    # hash. Best effort on purpose: a developer machine without an elevated
-    # shell, or a host with no Defender at all, must still build.
     if (-not (Get-Command Add-MpPreference -ErrorAction SilentlyContinue)) {
         return
     }
@@ -139,16 +117,11 @@ function Add-DefenderExclusion {
 }
 
 function Get-SevenZip {
-    # Preinstalled on GitHub's Windows images and on most developer machines
-    # that build this archive, but never required: the caller falls back to a
-    # single-step `tar -xf` when this returns $null.
     $onPath = Get-Command 7z -CommandType Application -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($null -ne $onPath) {
         return $onPath.Source
     }
-    # Build the fallback list without Join-Path: it throws on a null root, and
-    # ProgramFiles(x86) is absent on a 32-bit host.
     foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if ([string]::IsNullOrWhiteSpace($root)) {
             continue
@@ -283,12 +256,6 @@ function Normalize-CoffArchive {
         Pop-Location
     }
 
-    # `llvm-ar x` writes every member under its own basename, so enumerate the
-    # extraction from the member list instead of globbing `*.obj`. The Zig
-    # 0.16 build emits `.o` members next to the MSVC `.obj` ones - the
-    # manifest names two of them, `libghostty-vt-static_zcu.o` and
-    # `wuffs-v0.4.o` - and the glob dropped them, which is what "COFF
-    # extraction produced 12 objects, expected 14" reported.
     $sourcePaths = Sort-Ordinal @($names | ForEach-Object { Join-Path $work $_ })
     $missing = @($sourcePaths | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) })
     if ($missing.Count -ne 0) {
@@ -297,14 +264,6 @@ function Normalize-CoffArchive {
     }
     $sources = @($sourcePaths | ForEach-Object { Get-Item -LiteralPath $_ })
 
-    # Ghostty asks Zig to link ntdll and kernel32 into the static libghostty-vt,
-    # and a static Zig link resolves a system library by archiving the SDK's
-    # whole import library as a member. Those members are import libraries, not
-    # x64 COFF objects, so llvm-objcopy rejects them outright. Drop them: the
-    # Rust consumer already emits its own link directives from the manifest's
-    # `system_libraries`, and shipping Microsoft's import libraries inside our
-    # archive buys nothing. Anything else that is not a COFF object still
-    # fails loudly below.
     $importLibrarySet = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($importLibrary in $BundledImportLibraries) {
         $null = $importLibrarySet.Add($importLibrary)
@@ -759,12 +718,6 @@ $buildSource = $null
 $ZigLibDir = $null
 
 function Initialize-ZigSourceLib {
-    # This tree is scratch: nothing under it is a recorded build input, and the
-    # reproducibility contract pins only the canonical source, cache, and
-    # prefix paths, all of which live under $buildSource. So it is free to sit
-    # on whichever volume is fastest. On a GitHub runner that is the ephemeral
-    # temp disk named by RUNNER_TEMP (D:), not the OS disk that
-    # [IO.Path]::GetTempPath() resolves to (C:).
     $zigSourceParent = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP) -and
         (Test-Path -LiteralPath $env:RUNNER_TEMP -PathType Container)) {
         Join-Path $env:RUNNER_TEMP ("paneflow-zig-source-" + [guid]::NewGuid().ToString("N"))
@@ -777,20 +730,6 @@ function Initialize-ZigSourceLib {
     $script:zigSourceScratch = $zigSourceParent
     Add-DefenderExclusion $zigSourceParent
 
-    # `tar -xf` on the .tar.xz directly does not finish on a GitHub Windows
-    # runner. Five runs between 2026-08-28 and 2026-08-29 died at the job
-    # timeout inside this one call, at 84 minutes and again at 38, on both the
-    # OS disk and the ephemeral one, with Defender exclusions applied. The same
-    # archive, 19660 entries, extracts in 4.4 s on macOS. Granting a Windows
-    # runner a 10x to 20x penalty on small-file creation predicts one to two
-    # minutes, so file creation alone does not explain the observed magnitude,
-    # and the xz filter in the bundled bsdtar is the prime suspect.
-    #
-    # So split the work and time each half separately: 7-Zip owns the xz
-    # decompression, bsdtar owns only the plain tar. The two numbers below say
-    # which half is pathological, and they keep saying it on every future run.
-    # This is byte-neutral for the reproducibility contract: the extracted tree
-    # is identical either way, and nothing under it is a recorded build input.
     $sevenZip = Get-SevenZip
     if ($null -ne $sevenZip) {
         $xzStage = Join-Path $zigSourceParent "xz-stage"
@@ -823,8 +762,6 @@ function Initialize-ZigSourceLib {
         Remove-Item -LiteralPath $xzStage -Recurse -Force
     }
     else {
-        # No 7-Zip, so this is a developer machine and not a runner. Keep the
-        # single-step path working rather than adding a hard dependency.
         Write-Phase "no 7-Zip found; extracting the pinned Zig $ZigVersion source archive with $tarExe in one step"
         $extractTimer = [Diagnostics.Stopwatch]::StartNew()
         & $tarExe -xf $ZigSourceArchive -C $zigSourceRoot
@@ -999,11 +936,6 @@ function Invoke-NativeBuild {
     if ($machineCount -ne $members.Count -or @($headers | Where-Object { $_ -match '^Format:' -and $_ -notmatch 'COFF-x86-64' }).Count -ne 0) {
         throw "archive for $Target contains a non-x64 COFF member: $archive"
     }
-    # Keep the archive inventory and its linker directives as evidence. Under
-    # Zig 0.15.2 every C and C++ member carried a `.drectve` naming the CRT
-    # model; under 0.16.0 none of them does, so the archive no longer states
-    # its own CRT and the smoke executable below is where that claim is
-    # checked instead.
     $directives = @(& $llvmReadobj --coff-directives $archive)
     if ($LASTEXITCODE -ne 0) {
         throw "cannot inspect COFF directives in $archive"
@@ -1030,11 +962,6 @@ function Invoke-NativeBuild {
     if ($LASTEXITCODE -ne 0) {
         throw "cannot inspect the MSVC static smoke dependencies"
     }
-    # `cl /MT` above links the archive into a fully static-CRT executable, so
-    # the import table is what proves `$Crt` and `$CxxRuntime`: an archive
-    # member compiled against the dynamic CRT would drag `vcruntime140.dll`,
-    # `ucrtbase.dll` or `msvcp140.dll` in behind it. This replaces the
-    # `/FAILIFMISMATCH` assertion the archive can no longer make about itself.
     $imports = @($dependencies |
         Select-String -Pattern '^\s+([A-Za-z0-9._-]+\.dll)\s*$' |
         ForEach-Object { $_.Matches[0].Groups[1].Value.ToLowerInvariant() } |

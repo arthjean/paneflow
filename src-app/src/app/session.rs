@@ -1,10 +1,3 @@
-//! Session persistence for `PaneFlowApp` - save/restore workspace layouts
-//! and their per-pane metadata so relaunching rebuilds what the user had open.
-//! Terminal scrollback stays process-local: a relaunched shell must not inherit
-//! plain-text output from an earlier PTY.
-//!
-//! Extracted from `main.rs` per US-017 of the src-app refactor PRD.
-
 use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,17 +16,8 @@ use crate::pane::Pane;
 use crate::terminal::TerminalView;
 use crate::workspace::{MAX_TABS_PER_WORKSPACE, MAX_WORKSPACES, Tab, Workspace, next_workspace_id};
 
-/// Cap on the number of `session.json.corrupted-*` backup files retained
-/// alongside the live session. Beyond this, the oldest are deleted on
-/// rotation. Cf. risk R8 in `prd-stabilization-2026-q2.md`: every parse
-/// failure produces a new backup, and without rotation a user with a
-/// chronic corruption (e.g. a flaky disk) would silently fill `~/.cache`.
 const MAX_CORRUPTION_BACKUPS: usize = 5;
 
-/// US-011: debounce window for coalescing a burst of [`PaneFlowApp::save_session`]
-/// calls into a single disk write. Short enough to be imperceptible, long
-/// enough to absorb the multi-call bursts emitted when creating/closing many
-/// workspaces in quick succession.
 const SAVE_DEBOUNCE_MS: u64 = 150;
 
 static SESSION_WRITE_LOCK: Mutex<()> = Mutex::new(());
@@ -46,39 +30,15 @@ fn session_write_guard() -> MutexGuard<'static, ()> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Forensic context emitted alongside a `session_corrupted` telemetry
-/// event (US-006). Gathered by [`PaneFlowApp::load_session_at`] inside
-/// the parse-failure branch *before* the empty fallback session is
-/// returned, so the values reflect the file the user actually had on
-/// disk - not the one we're about to overwrite. Stays a plain data
-/// struct (no telemetry client coupling) because `load_session` runs
-/// in bootstrap before the `TelemetryClient` is constructed; the
-/// caller in `bootstrap.rs` defers the emit until after telemetry is
-/// up.
 #[derive(Debug, Clone)]
 pub(crate) struct SessionCorruptionInfo {
-    /// Canonical `serde_json::Error::classify()` bucket (`io | syntax | data
-    /// | eof`) or a guarded-load bucket such as `oversize`, `non_regular`, or
-    /// `unsupported_version`. Plain string keeps the telemetry schema fixed.
     pub(crate) error_category: &'static str,
-    /// Size in bytes of the corrupted file, or `0` if the metadata
-    /// call itself failed (rare - file just got read successfully).
     pub(crate) file_size: u64,
-    /// Wall-clock age in seconds (mtime → now). `None` when the
-    /// platform's modification-time call returns a value newer than
-    /// `now` (clock drift) or the metadata call fails.
     pub(crate) file_age_seconds: Option<u64>,
-    /// Resolved path of the freshly-written backup, or `None` if the
-    /// backup write itself failed (AC6 - never block startup on
-    /// backup-side errors).
     pub(crate) backup_path: Option<PathBuf>,
 }
 
 impl PaneFlowApp {
-    /// Build the [`SessionState`] snapshot from live app state.
-    ///
-    /// Every persisted terminal surface emits `scrollback: None`, keeping PTY
-    /// output local to the process that produced it.
     fn build_session_state(&self, cx: &App) -> paneflow_config::schema::SessionState {
         paneflow_config::schema::SessionState {
             version: paneflow_config::schema::SESSION_SCHEMA_VERSION,
@@ -89,21 +49,12 @@ impl PaneFlowApp {
                 .map(|ws| paneflow_config::schema::WorkspaceSession {
                     title: ws.title.clone(),
                     cwd: ws.cwd.clone(),
-                    // US-018: v2 persists the whole tab list. An empty
-                    // folder is a single tab with `layout: null`, which v2
-                    // reads as "no pane" - the EP-003 `empty` marker existed
-                    // only because v1 could not express that.
                     tabs: ws.serialize_tabs_without_scrollback(cx),
                     active_tab: ws.active_tab_idx(),
                     legacy_layout: None,
                     legacy_empty: false,
                     custom_buttons: ws.custom_buttons.clone(),
-                    // US-007: store expanded dirs relative to the workspace
-                    // root. A path that can't be made relative (symlinked
-                    // outside the root) is dropped rather than persisted absolute.
                     expanded_paths: persisted_expanded_paths(&ws.cwd, &ws.files_expanded),
-                    // EP-002 (orchestration-v2): persist worktree ownership so
-                    // a crash/restart keeps the teardown + prune record.
                     managed_worktrees: ws
                         .managed_worktrees
                         .iter()
@@ -114,32 +65,14 @@ impl PaneFlowApp {
                             teardown: wt.teardown.as_str().to_string(),
                         })
                         .collect(),
-                    // Folding a rail row survives a restart: reopening ten
-                    // folders you had deliberately closed is exactly the chore
-                    // the fold was avoiding.
                     sidebar_collapsed: !ws.sidebar_expanded,
                 })
                 .collect(),
-            // Persist the live UI mode so the restore branch reopens
-            // Paneflow in the same screen the user left.
             mode: self.mode,
-            // US-015 (prd-git-diff-mode-2026-Q3.md): persist the diff scope so
-            // a session that quit in Diff mode reopens on the same scope.
             diff_scope: Some(self.diff_mode.diff_scope.as_persisted().to_string()),
         }
     }
 
-    /// US-011: persist the session WITHOUT blocking the GPUI main thread.
-    ///
-    /// The lightweight metadata snapshot is built here (render thread, cheap),
-    /// then JSON serialization and the atomic write run on a background task.
-    /// A burst of saves (e.g. closing 20 workspaces) is coalesced into a single
-    /// write via a monotonic token + short debounce, so the most-recent snapshot
-    /// wins.
-    ///
-    /// The quit / pre-update-install paths must use [`save_session_blocking`]
-    /// instead - there the write has to land before the process exits or is
-    /// replaced, so a deferred task would be lost.
     pub(crate) fn save_session(&self, cx: &App) {
         let state = self.build_session_state(cx);
         let Some(path) = paneflow_config::loader::session_path() else {
@@ -155,16 +88,9 @@ impl PaneFlowApp {
         cx.background_spawn(async move {
             smol::Timer::after(std::time::Duration::from_millis(SAVE_DEBOUNCE_MS)).await;
             if save_seq.load(std::sync::atomic::Ordering::SeqCst) != seq {
-                // A newer save was scheduled meanwhile - let it carry the
-                // latest state; skip this redundant write.
                 return;
             }
-            // `smol::unblock` keeps serialization and filesystem I/O off the
-            // background executor's async threads.
             smol::unblock(move || {
-                // Re-check inside the shared write lock. A quit-path blocking
-                // save or a newer deferred save may have superseded this task
-                // after its debounce check but before it reached the filesystem.
                 write_session_json_if_current(&path, &state, &save_seq, seq);
             })
             .await;
@@ -172,16 +98,8 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// US-011: synchronous session save for the quit / pre-update-install
-    /// paths, where a deferred background write would be lost when the process
-    /// exits or is replaced.
     pub(crate) fn save_session_blocking(&self, cx: &App) {
         crate::window_state::save();
-        // Cancel any in-flight deferred save: bump the coalescing token so a
-        // background task still sleeping in its debounce wakes to a stale `seq`
-        // and no-ops. Without this, a `save_session` fired moments before quit
-        // could land its (older) snapshot *after* this final synchronous write,
-        // resurrecting pre-quit state (e.g. a just-closed workspace).
         self.save_seq
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let state = self.build_session_state(cx);
@@ -191,31 +109,6 @@ impl PaneFlowApp {
         write_session_json(&path, &state);
     }
 
-    /// Restore a saved session from disk, or fall back silently to an
-    /// empty session if anything goes wrong.
-    ///
-    /// Behaviour matrix (US-006):
-    ///
-    /// | State on disk           | Returned session  | Corruption info | Backup written |
-    /// |-------------------------|-------------------|-----------------|----------------|
-    /// | File missing            | `None`            | `None`          | no             |
-    /// | Read error (perms, IO)  | `None`            | `Some(info)`    | no             |
-    /// | Non-regular / oversize | `None`            | `Some(info)`    | no             |
-    /// | Read OK + parse OK      | `Some(state)`     | `None`          | no             |
-    /// | Read OK + parse FAIL    | `None` (fallback) | `Some(info)`    | yes            |
-    /// | Unsupported version     | `None` (fallback) | `Some(info)`    | yes            |
-    ///
-    /// On parse failure the bad file is preserved as
-    /// `session.json.corrupted-<unix-timestamp>` *before* the next
-    /// `save_session` overwrites it, so we keep forensic evidence even
-    /// when the user immediately moves on. The backup directory is
-    /// rotated down to [`MAX_CORRUPTION_BACKUPS`] entries (R8) so a
-    /// chronic-corruption case can't silently fill `~/.cache`.
-    ///
-    /// Telemetry: callers receive a `SessionCorruptionInfo` they can
-    /// pass to `PaneFlowApp::emit_session_corrupted` once the
-    /// telemetry client is up. The client factory gates the emit, so
-    /// opted-out users never produce a network call.
     pub(crate) fn load_session() -> (
         Option<paneflow_config::schema::SessionState>,
         Option<SessionCorruptionInfo>,
@@ -226,20 +119,12 @@ impl PaneFlowApp {
         Self::load_session_at(&path)
     }
 
-    /// Path-parametrised core of [`load_session`]. Direct test surface -
-    /// the wrapper above resolves `paneflow_config::loader::session_path()`
-    /// against the user's XDG cache dir, which is unsuitable for unit
-    /// tests because every run would race against a live install.
     pub(crate) fn load_session_at(
         path: &Path,
     ) -> (
         Option<paneflow_config::schema::SessionState>,
         Option<SessionCorruptionInfo>,
     ) {
-        // U-008/U-016: bound the read so a multi-hundred-MB hand-edited /
-        // agent-written session.json (or a non-regular file swapped in) can't
-        // OOM/stall the load before parse. Guard hits start from an empty
-        // session, but still surface forensic context to telemetry.
         let bytes = match read_session_capped(path) {
             Ok(SessionRead::Data(d)) => d,
             Ok(SessionRead::Missing) => return (None, None),
@@ -284,9 +169,6 @@ impl PaneFlowApp {
             Ok(mut state)
                 if state.version == paneflow_config::schema::SESSION_SCHEMA_VERSION_V1 =>
             {
-                // US-018: a v1 file is migrated, never replaced by an empty
-                // session - the tab list is derived from the single layout
-                // tree it carries. The next save writes pure v2.
                 log::info!(
                     "session load: migrating schema v{} to v{} at {}",
                     paneflow_config::schema::SESSION_SCHEMA_VERSION_V1,
@@ -329,10 +211,6 @@ impl PaneFlowApp {
 
                 let backup_path =
                     write_corruption_backup(path, data.as_bytes()).unwrap_or_else(|e| {
-                        // AC6: backup write failure must not block startup.
-                        // Log and proceed - telemetry still fires with a
-                        // `backup_path: None`, so the operator can still see
-                        // the corruption rate even if forensics are missing.
                         log::warn!(
                             "session load: backup write failed at {}: {e}",
                             path.display()
@@ -352,19 +230,12 @@ impl PaneFlowApp {
         }
     }
 
-    /// Rebuild workspaces from a saved session. Each workspace's layout tree
-    /// is reconstructed via `LayoutTree::from_layout_node` with CWD-aware
-    /// terminal spawning. Returns the workspace list and active index.
     pub(crate) fn restore_workspaces(
         session: &paneflow_config::schema::SessionState,
         cx: &mut Context<Self>,
     ) -> (Vec<Workspace>, usize) {
         let mut workspaces = Vec::new();
 
-        // U-016: cap restored workspaces. Each layout's pane count is bounded by
-        // `validate_layout` (US-011) below, so this is the only remaining
-        // unbounded restore axis - a session.json with thousands of workspace
-        // entries would otherwise each spawn ≥1 real PTY.
         if session.workspaces.len() > MAX_WORKSPACES {
             log::warn!(
                 "session restore: {} workspaces exceeds MAX_WORKSPACES ({MAX_WORKSPACES}); restoring the first {MAX_WORKSPACES}",
@@ -384,9 +255,6 @@ impl PaneFlowApp {
             }
             let ws_id = next_workspace_id();
 
-            // US-018: v2 restores a tab list. A v1 file never reaches here
-            // with its old shape - `migrate_session_v1` has already turned its
-            // single tree into tabs - so this is the only restore path.
             if ws_session.tabs.len() > MAX_TABS_PER_WORKSPACE {
                 log::warn!(
                     "session restore: workspace \"{title}\" holds {} tabs, restoring the first {MAX_TABS_PER_WORKSPACE}",
@@ -395,8 +263,6 @@ impl PaneFlowApp {
             }
             let mut tabs = Vec::new();
             for tab_session in ws_session.tabs.iter().take(MAX_TABS_PER_WORKSPACE) {
-                // The config boundary canonicalizes the untrusted tree and
-                // enforces the same hard pane ceiling as live layout mutations.
                 let restored_layout = tab_session
                     .layout
                     .clone()
@@ -425,32 +291,20 @@ impl PaneFlowApp {
 
             workspace.custom_buttons = ws_session.custom_buttons.clone();
             workspace.sidebar_expanded = !ws_session.sidebar_collapsed;
-            // EP-002 (orchestration-v2): rehydrate worktree ownership so the
-            // close-time teardown still applies after a restart.
             workspace.managed_worktrees = ws_session
                 .managed_worktrees
                 .iter()
                 .filter_map(rehydrate_managed_worktree)
                 .collect();
-            // US-007: rehydrate expanded dirs as absolute paths under this
-            // workspace's cwd. Paths that no longer resolve to a directory are
-            // dropped lazily later (by the tree's `hydrated` filter on open),
-            // so a deleted folder never resurrects a dead row.
             workspace.files_expanded = ws_session
                 .expanded_paths
                 .iter()
                 .filter_map(|rel| rehydrate_expanded_path(&workspace.cwd, rel))
                 .collect();
-            // US-013: kick off the deferred git-stats probe (off render thread).
             Self::spawn_initial_git_stats(ws_id, workspace.cwd.clone(), cx);
             workspaces.push(workspace);
         }
 
-        // US-009 (orchestration-v2): `git worktree prune` on every repo whose
-        // restored workspaces own worktrees - drops references whose directory
-        // vanished (manual rm -rf, crashed teardown). Git-native guarantee: a
-        // worktree whose directory still exists is untouched (AC5). Best-effort,
-        // off the render thread, deduplicated per repo.
         let mut prune_roots: Vec<std::path::PathBuf> = workspaces
             .iter()
             .flat_map(|ws| ws.managed_worktrees.iter().map(|wt| wt.repo_root.clone()))
@@ -477,14 +331,6 @@ impl PaneFlowApp {
         (workspaces, active_idx)
     }
 
-    /// Build the single [`crate::pane::PaneSurface`] described by one
-    /// serialized definition, or `None` when the definition cannot be
-    /// materialized (a markdown entry with no path).
-    ///
-    /// EP-002 US-005: a pane is mono-surface, so exactly one definition is ever
-    /// built. Kept separate from [`Self::spawn_pane_from_surfaces`] so the
-    /// caller can try candidates in order without constructing - and instantly
-    /// dropping - a live `TerminalView` (and its PTY) per discarded surface.
     fn build_restored_surface(
         workspace_id: u64,
         surface: &paneflow_config::schema::SurfaceDefinition,
@@ -503,30 +349,18 @@ impl PaneFlowApp {
 
         let cwd = resolved_surface_cwd(surface.cwd.as_deref(), fallback_cwd);
 
-        // US-014: forward the per-surface env override; the global
-        // `terminal.env` default is merged underneath in `TerminalState::new`.
         let surface_env = surface.env.clone();
         let t = cx.new(|cx| {
             TerminalView::with_cwd_and_env(workspace_id, Some(cwd), None, surface_env, cx)
         });
-        // Explicit layout definitions may still seed scrollback.
-        // Session restore clears the legacy field before this path.
         if let Some(ref scrollback) = surface.scrollback {
             t.read(cx).restore_scrollback(scrollback);
         }
-        // US-013: re-apply the persisted custom name.
         if let Some(ref custom) = surface.custom_name {
             t.update(cx, |view, _cx| {
                 view.terminal.custom_name = Some(custom.clone());
             });
         }
-        // EP-005 US-013: restore the identity pill as a dimmed "last known"
-        // value. Ingress whitelist: `from_tag` is an exact match against the
-        // known agent tags, so an unknown, oversized, or control-char value
-        // from a hand-edited session.json maps to `None` and no pill is
-        // rendered (parity with the US-057/EP-010 invariant - session.json is
-        // local-only but validated anyway). The first scan (0/2 s burst on
-        // restore activity) then confirms or clears it.
         if let Some(agent) = surface
             .agent
             .as_deref()
@@ -537,9 +371,6 @@ impl PaneFlowApp {
                 view.terminal.agent_confirmed = false;
             });
         }
-        // EP-006 US-019: restore the per-pane font zoom through the ingress
-        // sanitizer - NaN/inf dropped, finite values clamped to [8.0, 32.0];
-        // never fed raw to the cell geometry (US-057/EP-010 invariant).
         if let Some(size) = surface
             .font_size
             .and_then(crate::terminal::element::sanitize_font_override)
@@ -552,15 +383,6 @@ impl PaneFlowApp {
         Some(crate::pane::PaneSurface::Terminal(t))
     }
 
-    /// Create a `Pane` from serialized surface definitions. Falls back to a
-    /// single terminal in `fallback_cwd` when the surface list is empty.
-    ///
-    /// EP-002 US-005: a pane is mono-surface, so a legacy session that still
-    /// lists several surfaces for one pane restores only the focused one (the
-    /// first one when none is flagged); the extra entries are dropped rather
-    /// than silently re-creating a tab strip. They are dropped *before* being
-    /// built, so restoring such a pane never spawns the shells it would
-    /// immediately discard.
     pub(crate) fn spawn_pane_from_surfaces(
         workspace_id: u64,
         surfaces: &[paneflow_config::schema::SurfaceDefinition],
@@ -595,18 +417,6 @@ impl PaneFlowApp {
     }
 }
 
-// ---------------------------------------------------------------------------
-// EP-003 ingress-bound helpers (free functions, free of `&self`)
-// ---------------------------------------------------------------------------
-
-/// Order in which a legacy multi-surface pane's definitions are tried at
-/// restore: the focused one first, then the rest in file order (EP-002 US-005).
-///
-/// The caller builds the *first* candidate that materializes and stops, so a
-/// pane never spawns the surfaces (and PTYs) it is about to discard. Returning
-/// indices into the input slice - rather than picking inside an already-built
-/// list - is also what keeps the choice correct when a definition is skipped:
-/// a filtered build list no longer lines up with `focus`'s position.
 fn restore_candidate_order(surfaces: &[paneflow_config::schema::SurfaceDefinition]) -> Vec<usize> {
     if surfaces.is_empty() {
         return Vec::new();
@@ -627,10 +437,6 @@ enum SessionRead {
     Rejected(&'static str),
 }
 
-/// Read `path`, bounded at [`MAX_SESSION_SIZE_BYTES`] and rejecting
-/// non-regular files (U-008/U-016). Stats the OPEN fd, not the path, and caps
-/// the read with `take`, so a swap/grow between stat and read cannot defeat the
-/// bound (the FIFO/device + TOCTOU class, mirroring `read_config_string`).
 fn read_session_capped(path: &Path) -> std::io::Result<SessionRead> {
     use std::io::Read;
     let file = match std::fs::File::open(path) {
@@ -655,7 +461,6 @@ fn read_session_capped(path: &Path) -> std::io::Result<SessionRead> {
         return Ok(SessionRead::Rejected("oversize"));
     }
     let mut data = Vec::new();
-    // +1 so a file grown past the cap between stat and read is still caught.
     file.take(MAX_SESSION_SIZE_BYTES + 1)
         .read_to_end(&mut data)?;
     if data.len() as u64 > MAX_SESSION_SIZE_BYTES {
@@ -739,35 +544,12 @@ fn without_persisted_scrollback(mut layout: LayoutNode) -> LayoutNode {
     layout
 }
 
-/// Canonicalize a persisted layout at the config boundary. The validator owns
-/// the pane ceiling invariant, so callers do not need a second guard.
 fn canonicalize_persisted_layout(mut layout: LayoutNode) -> LayoutNode {
     paneflow_config::schema::validate_layout(&mut layout);
     debug_assert!(layout.leaf_count() <= MAX_PANES);
     layout
 }
 
-/// Title provenance to restore a persisted tab with.
-///
-/// A snapshot that states its provenance is believed as written - including a
-/// tab someone deliberately renamed "Claude Code", whose lock a content
-/// heuristic would cheerfully guess away.
-///
-/// `session.json` files written before auto-naming say nothing, and their
-/// titles are two different things wearing the same clothes: names people
-/// typed, and the label of whatever preset opened the tab ("Claude Code",
-/// "OpenCode", "Terminal"). Locking all of them would freeze exactly the tabs
-/// auto-naming exists for; unlocking all of them would erase names on the next
-/// prompt. So a legacy title is judged by content, and only what Paneflow
-/// itself writes is handed back to `Auto`: every agent's display name (not
-/// just the visible ones - hiding an agent in Settings must not freeze the
-/// tabs it opened), the shell and palette placeholders, the workspace's own
-/// custom command buttons, and a blank title.
-///
-/// The asymmetry is deliberate. A user who really had typed "Terminal" loses a
-/// lock they take back with one rename; the reverse mistake destroys a name
-/// with no warning and no undo. Files written from here on carry the field, so
-/// the heuristic applies once, to the snapshot that predates the feature.
 fn restored_tab_title_source(
     tab: &paneflow_config::schema::TabSession,
     custom_buttons: &[paneflow_config::schema::ButtonCommand],
@@ -785,8 +567,6 @@ fn restored_tab_title_source(
     TabTitleSource::User
 }
 
-/// Whether `title` is one Paneflow writes on its own, rather than a name a
-/// human chose. Agent-independent half of [`restored_tab_title_source`].
 fn is_app_written_tab_title(title: &str) -> bool {
     let title = title.trim();
     title.is_empty()
@@ -797,9 +577,6 @@ fn is_app_written_tab_title(title: &str) -> bool {
             .any(|agent| agent.display_name() == title)
 }
 
-/// The preset picker's label for a plain shell (`pane_palette`). Duplicated as
-/// a constant here rather than reached for through the picker's private list,
-/// which is built per workspace from live settings.
 const SHELL_PRESET_LABEL: &str = "Terminal";
 
 fn should_repair_restored_root_terminal(title: &str, cwd: &Path) -> bool {
@@ -813,13 +590,6 @@ fn is_numbered_terminal_title(title: &str) -> bool {
     !number.is_empty() && number.chars().all(|ch| ch.is_ascii_digit())
 }
 
-/// Rehydrate one persisted `expanded_paths` entry into an absolute path under
-/// `cwd`, re-asserting containment (U-030). The save side strips to a relative
-/// inside-root path, but `Path::join` does not normalize, so a hand-edited /
-/// agent-written session.json could carry `../../etc` or an absolute `/etc`
-/// that silently replaces the base. Reject any traversal/absolute component up
-/// front, then re-check `starts_with(base)` after the join. Returns `None`
-/// (drop the entry) on any escape.
 fn rehydrate_expanded_path(cwd: &str, rel: &str) -> Option<PathBuf> {
     let rel_path = Path::new(rel);
     if rel_path.components().any(|c| {
@@ -853,17 +623,6 @@ fn rehydrate_managed_worktree(
     )
 }
 
-/// Rehydrate a tab's worktree binding, dropping it when the checkout is gone.
-///
-/// A worktree can be removed between two runs - by `git worktree remove`, by
-/// another Paneflow session tearing down its own, or by hand. Restoring a
-/// binding to a directory that no longer exists would spawn every pane of that
-/// tab into a missing path; dropping it simply returns the tab to unbound,
-/// which is the state it can always fall back to.
-///
-/// Deliberately a plain `is_dir` and no canonicalization: this runs on the
-/// bootstrap path, and a stat is bounded where resolving symlinks across a dead
-/// network mount is not.
 fn restored_tab_worktree(path: Option<&str>) -> Option<PathBuf> {
     let path = PathBuf::from(path.filter(|p| !p.is_empty())?);
     path.is_dir().then_some(path)
@@ -879,15 +638,6 @@ fn persisted_expanded_paths(cwd: &str, expanded: &[PathBuf]) -> Vec<String> {
     paths
 }
 
-// ---------------------------------------------------------------------------
-// US-006: corruption-backup helpers (free functions, free of `&self`)
-// ---------------------------------------------------------------------------
-
-/// US-011: serialize a [`SessionState`] to `path` with an atomic
-/// write-temp-then-rename, so a crash mid-write never truncates the live
-/// `session.json`. Best-effort: any error is logged, never propagated. Runs off
-/// the GPUI main thread in the deferred path (`save_session` wraps it in
-/// `smol::unblock`); `save_session_blocking` calls it directly at quit.
 fn write_session_json(path: &Path, state: &paneflow_config::schema::SessionState) {
     let _guard = session_write_guard();
     write_session_json_inner(path, state);
@@ -942,9 +692,6 @@ fn session_tmp_path(path: &Path) -> PathBuf {
     parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), seq))
 }
 
-/// Convert `serde_json::Error::classify()` to a fixed string. Telemetry
-/// schema commits to these four buckets so we can dashboard them
-/// directly without remapping if serde widens its enum later.
 fn serde_category_tag(err: &serde_json::Error) -> &'static str {
     match err.classify() {
         serde_json::error::Category::Io => "io",
@@ -954,14 +701,6 @@ fn serde_category_tag(err: &serde_json::Error) -> &'static str {
     }
 }
 
-/// Persist the corrupted file's bytes to
-/// `<session_path>.corrupted-<unix-timestamp>` and rotate the backup
-/// directory down to [`MAX_CORRUPTION_BACKUPS`] entries.
-///
-/// Returns `Ok(Some(path))` on success, `Ok(None)` if the wall clock is
-/// before `UNIX_EPOCH` (a degenerate state we do not want to crash on),
-/// `Err` on actual filesystem failures so the caller can log without
-/// blocking startup.
 fn write_corruption_backup(
     session_path: &Path,
     contents: &[u8],
@@ -996,11 +735,6 @@ fn write_corruption_backup(
     Ok(Some(backup))
 }
 
-/// Cap the count of `<stem>.corrupted-*` files in `dir` to
-/// [`MAX_CORRUPTION_BACKUPS`], deleting the oldest first. Best-effort -
-/// any filesystem error during rotation is logged and swallowed because
-/// failing rotation must never abort startup (R8 mitigation, AC6
-/// spirit).
 fn rotate_corruption_backups(dir: &Path, stem: &str) {
     let prefix = format!("{stem}.corrupted-");
     let mut backups: Vec<PathBuf> = match std::fs::read_dir(dir) {
@@ -1020,9 +754,6 @@ fn rotate_corruption_backups(dir: &Path, stem: &str) {
         return;
     }
 
-    // Sort by the timestamp prefix ascending (oldest first). Older builds used
-    // `corrupted-<seconds>`; current builds append `-<pid>-<seq>` to avoid
-    // same-second collisions.
     backups.sort_by_key(|p| {
         p.file_name()
             .and_then(|n| n.to_str())
@@ -1062,10 +793,6 @@ mod tests {
             .expect("a title-only tab is a valid pre-auto-naming snapshot")
     }
 
-    /// The migration that makes auto-naming reach the tabs it exists for.
-    /// Everything Paneflow itself writes into a tab title is handed back to
-    /// `Auto`, so a restored "Claude Code" tab can still be named after its
-    /// first prompt.
     #[test]
     fn a_legacy_preset_label_is_handed_back_to_auto_naming() {
         for title in [
@@ -1076,8 +803,6 @@ mod tests {
             "Codex",
             "Terminal",
             "New pane",
-            // Hidden in Settings > AI Agent, yet still the label that opened
-            // the tab: visibility must not decide whether a tab stays frozen.
             "Qoder",
         ] {
             assert_eq!(
@@ -1088,9 +813,6 @@ mod tests {
         }
     }
 
-    /// The other half: a legacy title that matches nothing Paneflow writes can
-    /// only have been typed, and a build that guessed otherwise would erase it
-    /// on the next prompt with no warning and no undo.
     #[test]
     fn a_legacy_title_that_is_not_app_written_stays_user_owned() {
         for title in ["sprint 3", "fix the flaky test", "claude code review"] {
@@ -1102,8 +824,6 @@ mod tests {
         }
     }
 
-    /// A workspace's custom command buttons are preset labels too - they just
-    /// live per workspace instead of in `TerminalAgent::ALL`.
     #[test]
     fn a_legacy_custom_button_label_is_handed_back_to_auto_naming() {
         let buttons = vec![paneflow_config::schema::ButtonCommand {
@@ -1123,9 +843,6 @@ mod tests {
         );
     }
 
-    /// A file that states its provenance is believed as written - the label
-    /// heuristic is for the snapshot that predates the field, and must not
-    /// second-guess a lock the user asked for.
     #[test]
     fn an_explicit_provenance_is_taken_at_face_value() {
         let user_named_after_a_preset: paneflow_config::schema::TabSession =
@@ -1169,13 +886,10 @@ mod tests {
 
     #[test]
     fn rehydrate_expanded_path_keeps_inside_root_and_drops_escapes() {
-        // U-030: a legitimate relative path joins under the cwd…
         assert_eq!(
             rehydrate_expanded_path("/home/u/proj", "src/app"),
             Some(PathBuf::from("/home/u/proj/src/app"))
         );
-        // …while traversal and absolute entries from a tampered session.json
-        // are dropped rather than silently escaping the workspace root.
         assert_eq!(rehydrate_expanded_path("/home/u/proj", "../../etc"), None);
         assert_eq!(rehydrate_expanded_path("/home/u/proj", "/etc/passwd"), None);
         assert_eq!(rehydrate_expanded_path("/home/u/proj", "a/../../b"), None);
@@ -1245,7 +959,6 @@ mod tests {
     #[test]
     fn canonicalize_persisted_layout_sanitizes_deep_layout() {
         use paneflow_config::schema::LayoutNode;
-        // A small, valid layout passes through unchanged.
         let small = LayoutNode::Split {
             direction: "vertical".to_string(),
             ratio: None,
@@ -1262,8 +975,6 @@ mod tests {
         let sanitized_small = canonicalize_persisted_layout(small.clone());
         assert_eq!(sanitized_small, small);
 
-        // A deeply-nested left-leaning chain is reduced at the canonical
-        // boundary without padding panes back into the exhausted budget.
         let mut deep = LayoutNode::Pane {
             surfaces: vec![Default::default()],
         };
@@ -1287,16 +998,12 @@ mod tests {
     #[test]
     fn read_session_capped_reads_small_file_and_rejects_non_regular() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        // Happy path: a normal small file round-trips.
         let path = tmp.path().join("session.json");
         std::fs::write(&path, "{\"ok\":true}").expect("seed");
         assert_eq!(
             read_session_capped(&path).expect("io ok"),
             SessionRead::Data(b"{\"ok\":true}".to_vec())
         );
-        // Opening a directory is platform-dependent: Unix usually reaches the
-        // metadata guard, Windows can fail at open. Either path must not be
-        // mistaken for a missing session.
         assert!(matches!(
             read_session_capped(tmp.path()),
             Ok(SessionRead::Rejected("non_regular")) | Err(_)
@@ -1346,10 +1053,6 @@ mod tests {
         );
     }
 
-    /// US-018 AC2: a v1 file is migrated by the real load entry point, not
-    /// backed up and replaced by an empty session. The v1 branch sits *before*
-    /// the unsupported-version arm, which `unsupported_session_version_...`
-    /// above still proves is reached by anything else.
     #[test]
     fn v1_session_is_migrated_not_rejected() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1446,11 +1149,6 @@ mod tests {
         );
     }
 
-    /// Write a `session.json` with deliberately broken JSON, run the
-    /// path-parametrised loader, assert the corruption-info shape and
-    /// the on-disk backup file. Covers AC1 (None fallback + info
-    /// emitted), AC2 (backup written before fallback), AC3 (load_session
-    /// behaviour test).
     #[test]
     fn malformed_json_returns_corruption_info_and_writes_backup() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1492,9 +1190,6 @@ mod tests {
         assert_eq!(backup_contents, vec![0xff, 0xfe, b'{']);
     }
 
-    /// AC1: missing file is *not* corruption - both halves of the
-    /// return tuple must be `None` so `bootstrap.rs` doesn't emit a
-    /// noisy `session_corrupted` event for every fresh install.
     #[test]
     fn missing_file_yields_no_state_no_corruption() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1505,18 +1200,11 @@ mod tests {
         assert!(info.is_none(), "missing file is not corruption");
     }
 
-    /// R8: backup directory must not grow unbounded. After 7 induced
-    /// corruptions only the 5 newest survive - verifies the
-    /// timestamp-sort + drop-oldest path in `rotate_corruption_backups`.
     #[test]
     fn corruption_backup_rotation_caps_at_five() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let session_path = tmp.path().join("session.json");
 
-        // Pre-seed 7 backups with monotonic synthetic timestamps so
-        // the test does not depend on the host's wall-clock resolution
-        // (a real run produces one new backup per parse failure, but
-        // bursts within the same second would otherwise collide).
         for ts in 1000..1007u64 {
             let p = tmp.path().join(format!("session.json.corrupted-{ts}"));
             std::fs::write(&p, format!("backup{ts}")).expect("seed backup");
@@ -1541,28 +1229,17 @@ mod tests {
             "5 newest survive, 2 oldest deleted"
         );
 
-        // Live session.json itself is unaffected by the rotation.
         std::fs::write(&session_path, "{").expect("seed");
         assert!(session_path.exists());
     }
 
-    /// US-011 AC: a burst of `save_session` calls (e.g. closing 20 workspaces)
-    /// must coalesce to a single disk write - only the most-recent snapshot
-    /// wins. This guards the `save_seq` monotonic-token predicate that the
-    /// deferred path uses (`save_session` checks `load() == seq` after its
-    /// debounce). A full `save_session` needs a live GPUI `App`, so this tests
-    /// the coalescing invariant directly on the same atomic logic.
     #[test]
     fn save_seq_burst_coalesces_to_a_single_write() {
         use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 
         let save_seq = AtomicU64::new(0);
-        // Simulate 20 saves fired in a burst; each captures its token the way
-        // `save_session` does (`fetch_add(1) + 1`).
         let captured: Vec<u64> = (0..20).map(|_| save_seq.fetch_add(1, SeqCst) + 1).collect();
 
-        // After the burst, exactly one captured token equals the latest value,
-        // so exactly one deferred task survives its post-debounce check.
         let latest = save_seq.load(SeqCst);
         let survivors = captured.iter().filter(|&&s| s == latest).count();
         assert_eq!(survivors, 1, "a 20-save burst coalesces to one write");
@@ -1573,15 +1250,11 @@ mod tests {
         );
     }
 
-    /// Regression guard for the US-011 quit-path race: a deferred save that
-    /// passed its debounce check must still skip its write if a blocking or
-    /// newer save bumped the token before it acquired the write lock.
     #[test]
     fn deferred_save_skips_write_when_superseded_before_write() {
         use std::sync::atomic::{AtomicU64, Ordering::SeqCst};
 
         let save_seq = AtomicU64::new(0);
-        // A deferred save is scheduled and passes its post-debounce check.
         let deferred = save_seq.fetch_add(1, SeqCst) + 1;
         assert_eq!(
             save_seq.load(SeqCst),
@@ -1589,12 +1262,8 @@ mod tests {
             "deferred is latest pre-drain"
         );
 
-        // Before it reaches the write lock, a blocking save bumps the token.
         save_seq.fetch_add(1, SeqCst);
 
-        // The pre-write re-check inside `smol::unblock` must now observe the
-        // mismatch and skip - so the older deferred snapshot never renames over
-        // the final quit write.
         assert_ne!(
             save_seq.load(SeqCst),
             deferred,
@@ -1650,12 +1319,6 @@ mod tests {
         );
     }
 
-    /// EP-002 US-005: a legacy pane listing several surfaces restores the
-    /// focused one, and the caller stops at the first that materializes - so
-    /// the discarded entries are never built (no PTY spawned then dropped).
-    /// The order is expressed over the *input* indices on purpose: the previous
-    /// shape picked inside an already-filtered build list, which silently
-    /// restored the wrong surface as soon as one definition was skipped.
     #[test]
     fn restore_candidate_order_puts_the_focused_surface_first() {
         use paneflow_config::schema::SurfaceDefinition;
@@ -1667,15 +1330,11 @@ mod tests {
 
         assert!(super::restore_candidate_order(&[]).is_empty());
 
-        // No flag: file order, first surface wins.
         assert_eq!(
             super::restore_candidate_order(&[surface(None), surface(Some(false))]),
             vec![0, 1]
         );
 
-        // Focused entry first, remaining entries keep file order. Index 2 here
-        // is exactly the case the old build-then-index shape got wrong when an
-        // earlier definition was unbuildable.
         assert_eq!(
             super::restore_candidate_order(&[surface(None), surface(None), surface(Some(true))]),
             vec![2, 0, 1]

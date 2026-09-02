@@ -1,35 +1,9 @@
-//! Caret, selection and navigation model for the code editor (EP-003).
-//!
-//! Everything here is pure: it reads a [`CodeDocument`] and returns byte
-//! offsets, with no GPUI type in sight. `view.rs` owns the state and the input
-//! plumbing, `element.rs` owns the painting; this module owns "where does the
-//! caret land".
-//!
-//! ## Legal caret slots
-//!
-//! A caret sits at a byte offset that is both a `char` boundary and a grapheme
-//! boundary inside its row. Every row `r` contributes the closed range
-//! `[line_byte_range(r).start, line_byte_range(r).end]`: the upper bound is the
-//! offset of the terminator, which is why moving right from the end of a row
-//! lands on the first byte of the next one and never inside the `\n`.
-//!
-//! ## Goal column
-//!
-//! Vertical motion preserves a *char* column, not TextArea's byte column
-//! (`widgets/text_area.rs`). The rope converts char <-> byte in O(log n), and a
-//! char column is what survives a shorter intermediate line the way the story
-//! asks: byte columns drift on any non-ASCII row.
-
 use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::document::CodeDocument;
 
-/// A caret plus the anchor it was extended from, both byte offsets.
-///
-/// `anchor == head` is a plain caret: [`CodeSelection::is_empty`] is true and
-/// nothing gets painted behind the text.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CodeSelection {
     pub(crate) anchor: usize,
@@ -37,7 +11,6 @@ pub(crate) struct CodeSelection {
 }
 
 impl CodeSelection {
-    /// A caret at `offset` with no selection.
     pub(crate) fn at(offset: usize) -> Self {
         Self {
             anchor: offset,
@@ -45,12 +18,10 @@ impl CodeSelection {
         }
     }
 
-    /// The caret itself: the end the user last moved.
     pub(crate) fn cursor(self) -> usize {
         self.head
     }
 
-    /// Ordered byte range covered by the selection.
     pub(crate) fn range(self) -> Range<usize> {
         if self.anchor <= self.head {
             self.anchor..self.head
@@ -63,19 +34,15 @@ impl CodeSelection {
         self.anchor == self.head
     }
 
-    /// Move the caret to `offset`, dropping the selection.
     pub(crate) fn collapse_to(&mut self, offset: usize) {
         self.anchor = offset;
         self.head = offset;
     }
 
-    /// Move the caret to `offset`, keeping the anchor: this is what every
-    /// `Shift+` motion and every mouse drag does.
     pub(crate) fn extend_to(&mut self, offset: usize) {
         self.head = offset;
     }
 
-    /// Apply a motion, extending when `extend` and collapsing otherwise.
     pub(crate) fn apply(&mut self, offset: usize, extend: bool) {
         if extend {
             self.extend_to(offset);
@@ -89,7 +56,6 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Row containing `offset` plus that row's content range.
 fn row_of(doc: &CodeDocument, offset: usize) -> (usize, Range<usize>) {
     let row = doc.byte_to_line(offset);
     let range = doc
@@ -98,7 +64,6 @@ fn row_of(doc: &CodeDocument, offset: usize) -> (usize, Range<usize>) {
     (row, range)
 }
 
-/// Snap `local` (a byte index into `line`) down to a grapheme boundary.
 fn snap_local_to_grapheme(line: &str, local: usize) -> usize {
     let local = local.min(line.len());
     let mut last = 0;
@@ -115,11 +80,6 @@ fn snap_local_to_grapheme(line: &str, local: usize) -> usize {
     }
 }
 
-/// Nearest legal caret slot at or before `offset`.
-///
-/// Clamps into the document, snaps to a `char` boundary, then snaps to a
-/// grapheme boundary inside the row, so a click can never split an emoji
-/// cluster or a combining sequence.
 pub(crate) fn clamp(doc: &CodeDocument, offset: usize) -> usize {
     let offset = doc.snap_to_boundary(offset);
     let (row, range) = row_of(doc, offset);
@@ -135,7 +95,6 @@ pub(crate) fn clamp(doc: &CodeDocument, offset: usize) -> usize {
     range.start + snap_local_to_grapheme(&line, offset - range.start)
 }
 
-/// Caret slot at char column `col` of `row`, clamped to the row's length.
 pub(crate) fn offset_at_column(doc: &CodeDocument, row: usize, col: usize) -> usize {
     let row = row.min(doc.line_count().saturating_sub(1));
     let Some(range) = doc.line_byte_range(row) else {
@@ -149,7 +108,6 @@ pub(crate) fn offset_at_column(doc: &CodeDocument, row: usize, col: usize) -> us
     clamp(doc, range.start + local)
 }
 
-/// Char column of `offset` inside its row: the value vertical motion carries.
 pub(crate) fn goal_column(doc: &CodeDocument, offset: usize) -> usize {
     let (row, range) = row_of(doc, offset);
     let Some(slice) = doc.line(row) else {
@@ -159,7 +117,6 @@ pub(crate) fn goal_column(doc: &CodeDocument, offset: usize) -> usize {
     slice.byte_to_char(local)
 }
 
-/// One grapheme left, crossing to the end of the previous row at a row start.
 pub(crate) fn grapheme_left(doc: &CodeDocument, offset: usize) -> usize {
     let (row, range) = row_of(doc, offset);
     if offset <= range.start {
@@ -183,7 +140,6 @@ pub(crate) fn grapheme_left(doc: &CodeDocument, offset: usize) -> usize {
     range.start + prev
 }
 
-/// One grapheme right, crossing to the start of the next row at a row end.
 pub(crate) fn grapheme_right(doc: &CodeDocument, offset: usize) -> usize {
     let (row, range) = row_of(doc, offset);
     if offset >= range.end {
@@ -204,7 +160,6 @@ pub(crate) fn grapheme_right(doc: &CodeDocument, offset: usize) -> usize {
     range.start + next
 }
 
-/// Start of the previous word: skip whitespace back, then a run of one class.
 pub(crate) fn word_left(doc: &CodeDocument, offset: usize) -> usize {
     let (row, range) = row_of(doc, offset);
     if offset <= range.start {
@@ -229,7 +184,6 @@ pub(crate) fn word_left(doc: &CodeDocument, offset: usize) -> usize {
     range.start + local
 }
 
-/// End of the next word: skip whitespace forward, then a run of one class.
 pub(crate) fn word_right(doc: &CodeDocument, offset: usize) -> usize {
     let (row, range) = row_of(doc, offset);
     if offset >= range.end {
@@ -254,22 +208,18 @@ pub(crate) fn word_right(doc: &CodeDocument, offset: usize) -> usize {
     range.start + end
 }
 
-/// First byte of the row containing `offset`.
 pub(crate) fn line_home(doc: &CodeDocument, offset: usize) -> usize {
     row_of(doc, offset).1.start
 }
 
-/// Last caret slot of the row containing `offset`, before the terminator.
 pub(crate) fn line_end(doc: &CodeDocument, offset: usize) -> usize {
     row_of(doc, offset).1.end
 }
 
-/// Last caret slot of the document.
 pub(crate) fn doc_end(doc: &CodeDocument) -> usize {
     doc.len_bytes()
 }
 
-/// Move `delta` rows while preserving the char column `goal`.
 pub(crate) fn vertical(doc: &CodeDocument, offset: usize, goal: usize, delta: isize) -> usize {
     let row = doc.byte_to_line(offset) as isize;
     let last = doc.line_count().saturating_sub(1) as isize;
@@ -277,8 +227,6 @@ pub(crate) fn vertical(doc: &CodeDocument, offset: usize, goal: usize, delta: is
     offset_at_column(doc, target, goal)
 }
 
-/// Rows a `PageUp`/`PageDown` travels for a viewport `viewport_h` px tall,
-/// keeping one row of overlap so the reader never loses their place.
 pub(crate) fn page_rows(viewport_h: f32, row_height: f32) -> usize {
     if row_height <= 0. {
         return 1;
@@ -287,9 +235,6 @@ pub(crate) fn page_rows(viewport_h: f32, row_height: f32) -> usize {
     (rows - 1).max(1) as usize
 }
 
-/// Word under `offset`, for double-click. Falls back to the grapheme under the
-/// caret when it sits on a lone separator, and to the whitespace run when it
-/// sits in indentation.
 pub(crate) fn word_range_at(doc: &CodeDocument, offset: usize) -> Range<usize> {
     let (row, range) = row_of(doc, offset);
     let Some(line) = doc.line_string(row) else {
@@ -300,15 +245,12 @@ pub(crate) fn word_range_at(doc: &CodeDocument, offset: usize) -> Range<usize> {
     }
     let local = (offset - range.start).min(line.len());
     let chars: Vec<(usize, char)> = line.char_indices().collect();
-    // Index of the char the caret sits on, biased left when it sits at the end.
     let mut at = chars.partition_point(|(b, _)| *b < local);
     if at >= chars.len() {
         at = chars.len() - 1;
     } else if chars[at].0 > local {
         at -= 1;
     }
-    // A double-click on the trailing edge of a word rounds to the separator
-    // after it; bias back onto the word, which is what the click meant.
     if at > 0 && chars[at].1.is_whitespace() && is_word_char(chars[at - 1].1) {
         at -= 1;
     }
@@ -324,7 +266,6 @@ pub(crate) fn word_range_at(doc: &CodeDocument, offset: usize) -> Range<usize> {
     };
     let want = class(pivot);
     if want == 2 {
-        // Punctuation selects just itself, like every editor worth the name.
         let end = chars.get(at + 1).map(|(b, _)| *b).unwrap_or(line.len());
         return range.start + chars[at].0..range.start + end;
     }
@@ -340,7 +281,6 @@ pub(crate) fn word_range_at(doc: &CodeDocument, offset: usize) -> Range<usize> {
     range.start + chars[start].0..range.start + end_byte
 }
 
-/// Whole row under `offset`, terminator included, for triple-click.
 pub(crate) fn line_range_at(doc: &CodeDocument, offset: usize) -> Range<usize> {
     let (row, range) = row_of(doc, offset);
     let end = if row + 1 < doc.line_count() {
@@ -374,7 +314,6 @@ mod tests {
 
     #[test]
     fn the_caret_never_lands_inside_a_grapheme_cluster() {
-        // Family emoji: one cluster, several codepoints, many bytes.
         let d = doc("a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}b");
         let cluster_end = d.len_bytes() - 1;
         for byte in 0..=d.len_bytes() {
@@ -408,7 +347,6 @@ mod tests {
     #[test]
     fn a_click_past_the_last_line_lands_on_the_end_of_the_file() {
         let d = doc("one\ntwo\n");
-        // Trailing "\n" gives ropey a final empty row.
         assert_eq!(d.line_count(), 3);
         assert_eq!(clamp(&d, 9_999), d.len_bytes());
         assert_eq!(offset_at_column(&d, 99, 40), d.len_bytes());
@@ -417,7 +355,7 @@ mod tests {
     #[test]
     fn vertical_motion_keeps_the_goal_column_across_a_shorter_line() {
         let d = doc("aaaaaaa\nbb\ncccccccc");
-        let start = 5; // row 0, column 5
+        let start = 5;
         let goal = goal_column(&d, start);
         assert_eq!(goal, 5);
         let mid = vertical(&d, start, goal, 1);
@@ -442,7 +380,6 @@ mod tests {
         assert_eq!(word_right(&d, 3), 11, "whitespace then `foo_bar`");
         assert_eq!(word_left(&d, 11), 4, "back to the start of `foo_bar`");
         assert_eq!(word_left(&d, 0), 0);
-        // Crossing rows falls back to a single grapheme step.
         let d = doc("ab\ncd");
         assert_eq!(word_right(&d, 2), 3);
         assert_eq!(word_left(&d, 3), 2);

@@ -1,10 +1,3 @@
-//! Standalone OSC (Operating System Command) parsing.
-//!
-//! The terminal parses its own OSC sequences and reports them through
-//! callbacks. This parser is for OSC bytes that never reach a terminal:
-//! classifying a sequence captured from a log, a hook payload, or an agent's
-//! raw output without instantiating a screen for it.
-
 use std::ffi::CStr;
 use std::ffi::c_void;
 
@@ -13,98 +6,54 @@ use paneflow_libghostty_sys as sys;
 use crate::handles::{OwnedHandle, create};
 use crate::{GhosttyError, Result};
 
-/// BEL, the classic OSC terminator.
 pub const OSC_TERMINATOR_BEL: u8 = 0x07;
-/// The `ST` half of `ESC \`, the standards-conformant OSC terminator.
 pub const OSC_TERMINATOR_ST: u8 = 0x5c;
 
-/// Cap on a single OSC payload fed through [`OscParser::parse`]. libghostty
-/// enforces its own per-command budgets; this only bounds what Paneflow will
-/// hand it in one call.
 const MAX_OSC_PAYLOAD_BYTES: usize = 1024 * 1024;
 
-/// The kind of OSC command a payload turned out to be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OscCommandType {
-    /// The payload did not parse as a known command.
     Invalid,
-    /// OSC 0 / OSC 2: set the window title.
     ChangeWindowTitle,
-    /// OSC 1: set the window icon name.
     ChangeWindowIcon,
-    /// OSC 133: shell integration prompt marks.
     SemanticPrompt,
-    /// OSC 4 / 10 / 11 / 12 and friends: query or set a color.
     ColorOperation,
-    /// OSC 8 start: open a hyperlink.
     HyperlinkStart,
-    /// OSC 8 end: close a hyperlink.
     HyperlinkEnd,
-    /// OSC 52: clipboard contents.
     ClipboardContents,
-    /// OSC 7: report the working directory.
     ReportPwd,
-    /// OSC 22: set the mouse cursor shape.
     MouseShape,
-    /// OSC 9 / OSC 777: desktop notification.
     ShowDesktopNotification,
-    /// OSC 99: the Kitty desktop notification protocol.
     KittyDesktopNotification,
-    /// OSC 5522: the Kitty clipboard protocol.
     KittyClipboardProtocol,
-    /// OSC 21: the Kitty color protocol.
     KittyColorProtocol,
-    /// The Kitty drag-and-drop protocol.
     KittyDndProtocol,
-    /// The Kitty text sizing protocol.
     KittyTextSizing,
-    /// A signal delivered through a context command.
     ContextSignal,
-    /// ConEmu: change the tab title.
     ConemuChangeTabTitle,
-    /// ConEmu: a comment, which has no effect.
     ConemuComment,
-    /// ConEmu: a GUI macro.
     ConemuGuimacro,
-    /// ConEmu: output an environment variable.
     ConemuOutputEnvironmentVariable,
-    /// ConEmu: OSC 9;4 progress report.
     ConemuProgressReport,
-    /// ConEmu: run a process.
     ConemuRunProcess,
-    /// ConEmu: show a message box.
     ConemuShowMessageBox,
-    /// ConEmu: sleep.
     ConemuSleep,
-    /// ConEmu: wait for input.
     ConemuWaitInput,
-    /// ConEmu: xterm emulation control.
     ConemuXtermEmulation,
 }
 
-/// A parsed OSC command.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OscCommand {
-    /// What kind of command this is.
     pub kind: OscCommandType,
-    /// The requested window title, for [`OscCommandType::ChangeWindowTitle`].
-    ///
-    /// libghostty exposes typed payload extraction for this command only; the
-    /// others are currently reported by kind alone.
     pub window_title: Option<String>,
 }
 
-/// An incremental OSC parser.
 pub struct OscParser {
     handle: OwnedHandle<sys::GhosttyOscParser>,
 }
 
 impl OscParser {
-    /// Create a parser on libghostty's default allocator.
     pub fn new() -> Result<Self> {
-        // SAFETY: the null allocator selects libghostty's default, and
-        // `ghostty_osc_free` is the matching destructor for the handle
-        // `ghostty_osc_new` produces.
         let handle = unsafe {
             create(
                 "osc_new",
@@ -116,37 +65,22 @@ impl OscParser {
         Ok(Self { handle })
     }
 
-    /// Discard any partially accumulated sequence.
     pub fn reset(&mut self) {
-        // SAFETY: the handle is live for as long as `self` is.
         unsafe { sys::ghostty_osc_reset(self.handle.raw()) };
     }
 
-    /// Feed one payload byte, excluding the `ESC ]` introducer and the
-    /// terminator.
     pub fn feed_byte(&mut self, byte: u8) {
-        // SAFETY: the handle is live for as long as `self` is.
         unsafe { sys::ghostty_osc_next(self.handle.raw(), byte) };
     }
 
-    /// Feed a run of payload bytes.
     pub fn feed(&mut self, bytes: &[u8]) {
         for &byte in bytes {
             self.feed_byte(byte);
         }
     }
 
-    /// Terminate the sequence and read back the command.
-    ///
-    /// `terminator` should be [`OSC_TERMINATOR_BEL`] or
-    /// [`OSC_TERMINATOR_ST`]; libghostty keeps it so a reply can mirror the
-    /// form the program used.
     pub fn end(&mut self, terminator: u8) -> Result<OscCommand> {
-        // SAFETY: the handle is live for as long as `self` is.
         let command = unsafe { sys::ghostty_osc_end(self.handle.raw(), terminator) };
-        // SAFETY: `ghostty_osc_command_type` accepts a null command and the
-        // handle stays valid until the next parser call, which the borrow of
-        // `self` prevents until this function returns.
         let kind = command_type(unsafe { sys::ghostty_osc_command_type(command) })?;
         let window_title = if kind == OscCommandType::ChangeWindowTitle {
             window_title(command)?
@@ -156,7 +90,6 @@ impl OscParser {
         Ok(OscCommand { kind, window_title })
     }
 
-    /// Parse one complete payload: reset, feed, terminate.
     pub fn parse(&mut self, payload: &[u8], terminator: u8) -> Result<OscCommand> {
         if payload.len() > MAX_OSC_PAYLOAD_BYTES {
             return Err(GhosttyError::LimitExceeded {
@@ -172,8 +105,6 @@ impl OscParser {
 
 fn window_title(command: sys::GhosttyOscCommand) -> Result<Option<String>> {
     let mut pointer: *const std::ffi::c_char = std::ptr::null();
-    // SAFETY: the data kind writes a `const char *`, which is what `pointer`
-    // provides, and the command handle is live for this call.
     let extracted = unsafe {
         sys::ghostty_osc_command_data(
             command,
@@ -184,8 +115,6 @@ fn window_title(command: sys::GhosttyOscCommand) -> Result<Option<String>> {
     if !extracted || pointer.is_null() {
         return Ok(None);
     }
-    // SAFETY: libghostty documents this as a null-terminated string owned by
-    // the parser and valid until the next call on it. It is copied here.
     let title = unsafe { CStr::from_ptr(pointer) }
         .to_str()
         .map_err(|_| GhosttyError::InvalidUtf8("OSC window title"))?

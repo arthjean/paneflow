@@ -589,14 +589,6 @@ pub(super) mod tests {
     const MANIFEST: &str = include_str!("../../../../native/libghostty/manifest.toml");
     pub(crate) const MACOS_TARGET: &str = "aarch64-apple-darwin";
 
-    /// The reviewed manifest with the macOS target's archive digest and system
-    /// library list overridden.
-    ///
-    /// `native/libghostty/manifest.toml` declares the target since US-007, so
-    /// the fixture rewrites that block in place rather than appending a second
-    /// one, which TOML would reject as a duplicate table. Every other field
-    /// stays exactly as reviewed, and the contract is still exercised from the
-    /// same `Manifest::parse` entry point the build script uses.
     pub(crate) fn macos_manifest(archive_sha256: &str, system_libraries: &str) -> String {
         let header = format!("[targets.\"{MACOS_TARGET}\"]");
         let start = MANIFEST
@@ -665,9 +657,6 @@ pub(super) mod tests {
     #[test]
     fn rejects_undeclared_link_target() -> BuildResult<()> {
         let manifest = Manifest::parse(MANIFEST)?;
-        // `aarch64-apple-darwin` is declared, so the undeclared-target
-        // assertion uses the Intel Mac triple, which stays closed until a
-        // separate PRD opens that target.
         let error = manifest
             .target_contract("x86_64-apple-darwin")
             .expect_err("undeclared targets must not silently skip linking");
@@ -682,10 +671,6 @@ pub(super) mod tests {
         assert_eq!(macos.platform(), NativePlatform::Macos);
         assert_eq!(macos.zig_target, "aarch64-macos");
         assert_eq!(macos.link_name(), "ghostty-vt");
-        // `build_support::run` emits one `dylib` directive per system library,
-        // so an empty list is what keeps the macOS link line to a single
-        // `rustc-link-lib=static=ghostty-vt` with no `dylib` and no
-        // `framework` entry.
         assert!(macos.system_libraries().is_empty());
         assert!(
             macos
@@ -704,9 +689,6 @@ pub(super) mod tests {
             .into_iter()
             .map(|(key, _)| key)
             .collect::<Vec<_>>();
-        // `archive_sha256` is required by `ArtifactBundle::validate` rather
-        // than compared against a manifest string, so it completes the set
-        // that `scripts/build-libghostty-macos.sh` writes.
         required.push("archive_sha256");
         required.sort_unstable();
         assert_eq!(

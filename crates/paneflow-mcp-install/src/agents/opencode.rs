@@ -1,17 +1,3 @@
-//! opencode writer (EP-003 US-010).
-//!
-//! opencode's schema diverges from every other agent:
-//! - the container key is **`mcp`**, not `mcpServers`;
-//! - the entry is `{type: "local", command: [<path>], enabled: true}` -
-//!   `command` is an **array**, with the binary path as its first element.
-//!
-//! Config lives in opencode's global config path, preferring JSONC when an
-//! existing `opencode.jsonc` is present. No CLI mutates server config, so this
-//! is always a direct merge - preserving `$schema` and sibling `mcp.*` entries.
-//!
-//! **Volatility:** opencode's config schema is young; re-verify the `mcp`
-//! key, `type: "local"`, and array `command` if registration regresses.
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -45,8 +31,6 @@ impl OpenCode {
     }
 
     fn entry(bridge: &str) -> serde_json::Value {
-        // `command` is an ARRAY for opencode; `type: "local"` marks a stdio
-        // child process; `enabled: true` activates it.
         json!({ "type": "local", "command": [bridge], "enabled": true })
     }
 
@@ -92,7 +76,6 @@ impl AgentConfigWriter for OpenCode {
     }
 
     fn status(&self, bridge: Option<&Path>) -> Result<StatusOutcome> {
-        // opencode stores `command` as an array → use the array extractor.
         support::json_status(self.path()?, CONTAINER, bridge, Self::validate_entry)
     }
 }
@@ -125,7 +108,6 @@ mod tests {
             "command is an array"
         );
         assert_eq!(entry["enabled"], json!(true));
-        // Must NOT land under mcpServers.
         assert!(v.get("mcpServers").is_none());
     }
 

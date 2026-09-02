@@ -1,13 +1,3 @@
-//! Claude Code writer (EP-003 US-007).
-//!
-//! The writer atomically merges the entry into `~/.claude.json` under
-//! `mcpServers.paneflow`. One canonical mutation path keeps installs
-//! deterministic and testable without destructive remove/add shell-outs.
-//!
-//! The entry carries **no `env` block** (PRD D5): the bridge inherits
-//! `PANEFLOW_SOCKET_PATH` from the pane it runs in. Per 2026 verification
-//! the entry also carries `type: "stdio"`.
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
@@ -38,7 +28,6 @@ impl ClaudeCode {
     }
 
     fn entry(bridge: &str) -> serde_json::Value {
-        // No `env` (D5). `type: "stdio"` matches what `claude mcp add` writes.
         json!({ "type": "stdio", "command": bridge, "args": [] })
     }
 
@@ -185,9 +174,6 @@ mod tests {
 
     #[test]
     fn uninstall_malformed_config_is_error() {
-        // US-021: a present-but-unparseable config is corruption, not
-        // "nothing to remove" - surface a loud error so the user fixes it
-        // rather than silently believing the entry was already gone.
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join(".claude.json");
         std::fs::write(&p, b"{ broken").unwrap();
@@ -196,14 +182,11 @@ mod tests {
             w.uninstall().is_err(),
             "uninstall on a malformed present config must error, not return NothingToRemove"
         );
-        // The invalid file was NOT overwritten.
         assert_eq!(std::fs::read(&p).unwrap(), b"{ broken");
     }
 
     #[test]
     fn uninstall_absent_config_is_nothing_to_remove() {
-        // Counterpart to the malformed case: a genuinely absent file is a
-        // clean NothingToRemove, not an error.
         let dir = tempfile::TempDir::new().unwrap();
         let w = test_writer(dir.path().join("missing.json"));
         assert_eq!(w.uninstall().unwrap(), UninstallOutcome::NothingToRemove);

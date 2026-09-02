@@ -1,11 +1,7 @@
 use crate::schema::*;
 
-// --- Session persistence round-trip tests (US-017) ---
-
 #[test]
 fn validate_layout_converts_legacy_2child_ratio_to_explicit_pair() {
-    // U-007: a 2-child split's legacy `ratio` is promoted to an explicit
-    // `ratios` pair so it survives restore instead of being dropped.
     let mut node = LayoutNode::Split {
         direction: "vertical".to_string(),
         ratio: Some(0.3),
@@ -33,8 +29,6 @@ fn validate_layout_converts_legacy_2child_ratio_to_explicit_pair() {
 
 #[test]
 fn validate_layout_drops_legacy_ratio_on_nary_split() {
-    // U-007: an N-ary split's legacy `ratio` is ambiguous; it stays unset
-    // (a warn is logged) rather than being silently honored.
     let mut node = LayoutNode::Split {
         direction: "horizontal".to_string(),
         ratio: Some(0.3),
@@ -84,7 +78,6 @@ fn validate_layout_normalizes_unknown_split_direction() {
 
 #[test]
 fn validate_layout_caps_total_leaves() {
-    // U-008/U-016: an over-broad layout is trimmed to MAX_LAYOUT_LEAVES.
     let mut node = LayoutNode::Split {
         direction: "vertical".to_string(),
         ratio: None,
@@ -128,7 +121,6 @@ fn validate_layout_caps_deep_trees_without_padding_overshoot() {
 
 #[test]
 fn validate_layout_caps_surfaces_per_pane() {
-    // U-008: a pane is one leaf, but each surface spawns a terminal - cap it.
     let mut node = LayoutNode::Pane {
         surfaces: (0..200).map(|_| Default::default()).collect(),
     };

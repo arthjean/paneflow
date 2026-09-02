@@ -1,40 +1,18 @@
-//! Safe-write primitives (EP-002 US-006).
-//!
-//! Every agent-config writer goes through [`write_if_changed`], which is:
-//! - **idempotent** - a write only happens when the bytes actually differ,
-//!   so a re-run of `paneflow mcp install` produces zero disk churn (no
-//!   mtime bump, no backup spam);
-//! - **backed up** - the previous contents are copied to `<file>.bak`
-//!   *before* the new bytes land, and a backup failure aborts the write
-//!   (we never modify the original if we could not preserve it first);
-//! - **atomic** - bytes are written to a temp file in the same directory
-//!   and `rename`d into place, mirroring `session.rs`'s tmp+rename pattern.
-//!   A crash mid-write leaves the temp file, never a half-written config.
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 pub use paneflow_agent_config::ConfigLock;
 
-/// Acquire the Paneflow lock for `path`, retrying briefly if another
-/// Paneflow process is already editing the same config. Abandoned leases are
-/// recovered by the shared dependency-light config layer.
 pub fn lock_config(path: &Path) -> Result<ConfigLock> {
     paneflow_agent_config::lock_config(path)
         .with_context(|| format!("lock {} failed", path.display()))
 }
 
-/// Run a closure while holding the Paneflow config lock for `path`.
 pub fn with_config_lock<T>(path: &Path, f: impl FnOnce() -> Result<T>) -> Result<T> {
     let _lock = lock_config(path)?;
     f()
 }
 
-/// Copy `path` to `path` + `.bak` when it exists. Returns the backup path
-/// (or `None` if the original did not exist - nothing to preserve).
-///
-/// A copy failure is an error: callers MUST abort the write rather than
-/// risk clobbering a config they could not back up first (US-006 AC).
 pub fn backup(path: &Path) -> Result<Option<PathBuf>> {
     if !path.exists() {
         return Ok(None);
@@ -47,9 +25,6 @@ pub fn backup(path: &Path) -> Result<Option<PathBuf>> {
     Ok(Some(bak))
 }
 
-/// Atomically write `contents` to `path`: temp file in the same directory,
-/// flush + fsync, then `rename`. The rename is atomic on POSIX and on
-/// Windows NTFS (`MoveFileEx` semantics inside `persist`).
 pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     let parent = path
         .parent()
@@ -70,27 +45,16 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Backup-then-atomic-write `contents` to `path`, **only if** the bytes
-/// differ from what is already on disk.
-///
-/// Returns `true` when a write happened, `false` when the on-disk bytes
-/// already matched (a no-op - no backup, no rename, no mtime change). This
-/// is the idempotency knob every writer relies on.
 pub fn write_if_changed(path: &Path, contents: &[u8]) -> Result<bool> {
     with_config_lock(path, || write_if_changed_unlocked(path, contents))
 }
 
-/// Same as [`write_if_changed`], but assumes the caller already holds
-/// [`ConfigLock`] for `path`.
 pub(crate) fn write_if_changed_unlocked(path: &Path, contents: &[u8]) -> Result<bool> {
-    // Edition 2021 (workspace default) - no let-chains, so nest the guard.
     if let Ok(existing) = std::fs::read(path) {
         if existing == contents {
             return Ok(false);
         }
     }
-    // Bytes differ (or the file is absent / unreadable): back up the old
-    // contents first, then publish the new bytes atomically.
     backup(path)?;
     write_atomic(path, contents)?;
     Ok(true)
@@ -114,7 +78,6 @@ mod tests {
         std::fs::write(&p, b"original").unwrap();
         let bak = backup(&p).unwrap().unwrap();
         assert_eq!(std::fs::read(&bak).unwrap(), b"original");
-        // Original untouched.
         assert_eq!(std::fs::read(&p).unwrap(), b"original");
     }
 
@@ -139,7 +102,6 @@ mod tests {
         assert!(!wrote, "identical bytes must not be rewritten");
         let mtime_after = std::fs::metadata(&p).unwrap().modified().unwrap();
         assert_eq!(mtime_before, mtime_after, "no-op must not bump mtime");
-        // No backup was created on the no-op path.
         let mut bak = p.as_os_str().to_owned();
         bak.push(".bak");
         assert!(!PathBuf::from(bak).exists(), "no-op must not write a .bak");

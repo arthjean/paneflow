@@ -1,11 +1,3 @@
-//! Session discovery for agent CLIs that expose a documented list command.
-//!
-//! These readers intentionally stay conservative: they never parse private
-//! storage, they run the vendor CLI in the scanned cwd when the command is
-//! project-scoped, and they drop output that cannot be reduced to a safe
-//! session id. Global commands (Hermes) additionally require the row to mention
-//! the scanned cwd before PaneFlow renders it.
-
 use std::io;
 use std::path::Path;
 use std::process::Command;
@@ -19,11 +11,7 @@ const STDERR_LOG_CAP: usize = 200;
 
 #[derive(Clone, Copy)]
 enum CommandScope {
-    /// The command is run with `current_dir(cwd)` and its output is expected to
-    /// be scoped to that directory.
     CurrentDirectory,
-    /// The command can return global rows, so keep only rows that include the
-    /// cwd path text.
     LineMustMentionCwd,
 }
 

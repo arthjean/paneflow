@@ -1,19 +1,7 @@
-//! Structured, programmatic API over the agent writers (EP-004 US-012).
-//!
-//! [`crate::cli`] formats human output for `paneflow mcp …`; this module
-//! returns the same orchestration as plain data so a GUI (the Settings
-//! button) can render a per-agent recap and derive a single
-//! [`OverallState`] for its button label - without parsing stdout.
-//!
-//! These functions perform blocking filesystem / process I/O; callers on a
-//! UI thread MUST run them on a background executor (the Settings button
-//! uses `smol::unblock`).
-
 use std::path::Path;
 
 use crate::agents::{self, AgentConfigWriter, InstallOutcome, StatusOutcome, UninstallOutcome};
 
-/// Per-agent outcome of an install pass.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum InstallKind {
     Installed,
@@ -23,7 +11,6 @@ pub enum InstallKind {
     Error(String),
 }
 
-/// Per-agent read-only state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatusKind {
     NotDetected,
@@ -42,7 +29,6 @@ pub enum StatusKind {
     Error(String),
 }
 
-/// Per-agent outcome of an uninstall pass.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UninstallKind {
     Removed,
@@ -51,7 +37,6 @@ pub enum UninstallKind {
     Error(String),
 }
 
-/// One agent's result, carrying its id + label for display.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentResult<K> {
     pub id: String,
@@ -59,32 +44,18 @@ pub struct AgentResult<K> {
     pub kind: K,
 }
 
-/// Ergonomic aliases for GUI/state code.
 pub type InstallReport = AgentResult<InstallKind>;
 pub type StatusReport = AgentResult<StatusKind>;
 pub type UninstallReport = AgentResult<UninstallKind>;
 
-/// Aggregate state used to pick the Settings button's label.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OverallState {
-    /// No supported agent is installed on this machine.
     NoAgents,
-    /// At least one detected agent has no `paneflow` entry yet.
     NeedsInstall,
-    /// A detected agent points at a stale bridge path (post-update).
     NeedsRepair,
-    /// Every detected agent is installed and current.
     AllInstalled,
 }
 
-// ---------------------------------------------------------------------------
-// Install
-// ---------------------------------------------------------------------------
-
-/// Register the bridge with every detected agent. `bridge` is the resolved
-/// stable path (`runtime_paths::bridge_binary_path()`), which must already
-/// exist on disk. `Err` is a whole-operation refusal (bridge missing / data
-/// dir unresolved) that wrote nothing; `Ok` carries one entry per agent.
 pub fn install_all(bridge: Option<&Path>) -> Result<Vec<AgentResult<InstallKind>>, String> {
     install_with(bridge, &agents::default_writers())
 }
@@ -93,15 +64,8 @@ pub(crate) fn install_with(
     bridge: Option<&Path>,
     writers: &[Box<dyn AgentConfigWriter>],
 ) -> Result<Vec<AgentResult<InstallKind>>, String> {
-    // US-038: resolve each writer's presence EXACTLY ONCE. `presence()` does a
-    // PATH scan (via `which::which`, heavier on Windows `PATH × PATHEXT`); the
-    // old code called it twice per writer - both wasteful and a benign TOCTOU
-    // (the two non-atomic reads could disagree within one pass). Compute up
-    // front, derive `any_present`, and iterate the cached booleans.
     let presences: Vec<bool> = writers.iter().map(|w| w.presence().is_present()).collect();
     let any_present = presences.iter().any(|&p| p);
-    // Only require the bridge binary when there is at least one agent to
-    // write to - a machine with no agents is "nothing to do", not an error.
     let bridge = if any_present {
         match bridge {
             Some(p) if p.exists() => Some(p),
@@ -132,7 +96,6 @@ pub(crate) fn install_with(
                 Ok(InstallOutcome::AlreadyCurrent) => InstallKind::AlreadyCurrent,
                 Err(e) => InstallKind::Error(format!("{e:#}")),
             },
-            // Unreachable: any_present implies bridge is Some. Defensive.
             (true, None) => InstallKind::Error("bridge path unavailable".to_string()),
         };
         out.push(AgentResult {
@@ -144,12 +107,6 @@ pub(crate) fn install_with(
     Ok(out)
 }
 
-// ---------------------------------------------------------------------------
-// Status
-// ---------------------------------------------------------------------------
-
-/// Read-only state of the bridge registration per agent. Never writes.
-/// `bridge` is the current expected path used to flag staleness.
 #[must_use]
 pub fn status_all(bridge: Option<&Path>) -> Vec<AgentResult<StatusKind>> {
     status_with(bridge, &agents::default_writers())
@@ -186,8 +143,6 @@ pub(crate) fn status_with(
         .collect()
 }
 
-/// Collapse per-agent statuses into the single state the Settings button
-/// renders. `NotDetected` agents are ignored for the aggregate.
 #[must_use]
 pub fn overall_state(statuses: &[AgentResult<StatusKind>]) -> OverallState {
     let detected: Vec<&StatusKind> = statuses
@@ -213,11 +168,6 @@ pub fn overall_state(statuses: &[AgentResult<StatusKind>]) -> OverallState {
     OverallState::AllInstalled
 }
 
-// ---------------------------------------------------------------------------
-// Uninstall
-// ---------------------------------------------------------------------------
-
-/// Remove the `paneflow` entry from every detected agent.
 pub fn uninstall_all() -> Vec<AgentResult<UninstallKind>> {
     uninstall_with(&agents::default_writers())
 }
@@ -264,7 +214,6 @@ mod tests {
 
     #[test]
     fn install_no_agents_is_ok_empty() {
-        // No agents present → no refusal even with a missing/None bridge.
         let writers = vec![boxed(Mock::absent("claude"))];
         let res = install_with(None, &writers).unwrap();
         assert_eq!(res[0].kind, InstallKind::SkippedAbsent);
@@ -288,7 +237,6 @@ mod tests {
 
     #[test]
     fn overall_state_transitions() {
-        // No agents.
         let none = vec![AgentResult {
             id: "a".into(),
             label: "A".into(),
@@ -296,7 +244,6 @@ mod tests {
         }];
         assert_eq!(overall_state(&none), OverallState::NoAgents);
 
-        // Stale wins over everything.
         let stale = vec![
             AgentResult {
                 id: "a".into(),
@@ -324,7 +271,6 @@ mod tests {
         }];
         assert_eq!(overall_state(&repair), OverallState::NeedsRepair);
 
-        // Some not installed → needs install.
         let partial = vec![
             AgentResult {
                 id: "a".into(),
@@ -339,7 +285,6 @@ mod tests {
         ];
         assert_eq!(overall_state(&partial), OverallState::NeedsInstall);
 
-        // All installed.
         let all = vec![AgentResult {
             id: "a".into(),
             label: "A".into(),

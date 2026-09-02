@@ -53,7 +53,6 @@ impl Modifiers {
         self.0
     }
 
-    /// Rebuild a modifier set from the bits libghostty reports.
     pub const fn from_bits(bits: u16) -> Self {
         Self(bits)
     }

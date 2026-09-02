@@ -1,17 +1,3 @@
-//! `MarkdownView` - GPUI entity that renders an owned `MdNode` AST.
-//!
-//! The view does no parsing of its own - `MarkdownView::open` reads the file
-//! from disk, runs `parser::parse_with_limit`, and stores the resulting AST.
-//! `Render` walks the AST and emits a nested `div` element tree styled from
-//! `MarkdownPalette` (which itself snapshots the active terminal theme).
-//!
-//! US-021 - live reload: `start_watcher` registers a `notify::RecommendedWatcher`
-//! on the file's parent directory and spawns a `cx.spawn` task that debounces
-//! events at 200 ms before re-reading the file and calling `cx.notify()`. The
-//! watcher is owned by the entity, so closing the pane drops it and frees the
-//! OS handle. Scroll position is preserved automatically: the GPUI element id
-//! (`element_id`) is stable across re-renders.
-
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -33,31 +19,14 @@ use super::parser::{MAX_INPUT_BYTES, MdNode, ParseError, Span, parse_with_limit}
 use super::state;
 use super::theme::MarkdownPalette;
 
-/// Debounce window for the live-reload watcher (US-021 AC). Many editors and
-/// AI agents stream writes - a single user-perceived save fires multiple
-/// `Modify` events within ~50 ms. 200 ms is the sweet spot per AC: long
-/// enough to coalesce a streaming write, short enough to feel instant.
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 
-/// Approximate scroll page-step in CSS pixels. Used by `MarkdownScrollPageUp`
-/// / `MarkdownScrollPageDown` (US-022) when we don't know the precise viewport
-/// height - close enough to one screen for typical terminal-pane sizes.
 const PAGE_SCROLL_PX: f32 = 480.0;
 
-/// Throttle window for scroll-position persistence writes. Scrolling fires
-/// many GPUI ticks per second; we coalesce within this window to avoid a
-/// disk write per pixel.
 const SCROLL_PERSIST_THROTTLE: Duration = Duration::from_millis(750);
 
-/// Polling cadence for the persistence task - checks the scroll handle's
-/// current offset, writes if it changed and the throttle has elapsed.
 const SCROLL_POLL_CADENCE: Duration = Duration::from_millis(250);
 
-/// Cap on the byte size of clipboard payloads produced by `MarkdownCopy`.
-/// Larger documents are truncated with a trailing ellipsis. Most platform
-/// clipboards (NSPasteboard, X11 selections, Win32) accept multi-MB payloads
-/// fine, but a 10 MB markdown copied to the clipboard is almost certainly
-/// not what the user wanted - search-match copies are the common path.
 const COPY_MAX_BYTES: usize = 64 * 1024;
 
 const RENDER_PATH_ROOT: u64 = 14_695_981_039_346_656_037;
@@ -65,67 +34,28 @@ const MAX_RENDERED_TABLE_COLUMNS: u16 = 64;
 
 static MARKDOWN_VIEW_ID: AtomicU64 = AtomicU64::new(1);
 
-/// A markdown viewer pane. One instance per opened file.
 pub struct MarkdownView {
-    /// Absolute path to the file on disk. Stored for display in the title bar
-    /// and consumed by the live-reload watcher (US-021).
     pub path: PathBuf,
-    /// Parsed AST. `None` when the file failed to parse (size cap, IO error)
-    /// `error` carries the user-visible message in that case.
     ast: Option<Vec<MdNode>>,
     error: Option<SharedString>,
     focus_handle: FocusHandle,
-    /// Stable GPUI element id, computed once at construction so the render
-    /// hot path doesn't re-`format!` the path on every frame.
     element_id: SharedString,
-    /// US-021 - owned watcher handle. `Some` when the live-reload pipeline is
-    /// active. Dropping the entity drops this field, which unregisters the OS
-    /// watch and closes the channel sender; the spawned debounce loop sees
-    /// the closed channel on its next `next().await` and terminates.
     _watcher: Option<RecommendedWatcher>,
-    /// US-022 - scroll handle attached to the viewer's outer scroll container.
-    /// Owned here so action handlers (`MarkdownScrollPageUp/Down`) and the
-    /// persistence task can read/write the offset.
     scroll_handle: ScrollHandle,
-    /// US-022 - vertical offset to restore on next render. `Some` until the
-    /// pending value is applied to the scroll handle (handled by a one-shot
-    /// task that fires after the first paint computes `max_offset`). Storing
-    /// raw f32 (CSS pixels) keeps the on-disk format simple.
     pending_restore_y: Option<f32>,
-    /// US-022 - search overlay state. `search_active` gates the bar visibility
-    /// and the `MarkdownSearch` key context that captures Enter/Esc/typing.
     search_active: bool,
     search_query: String,
-    /// Plain-text snapshot of the rendered AST, lazily rebuilt when the AST
-    /// changes. Searching this string is O(n) per query - fine for files up
-    /// to `MAX_INPUT_BYTES`.
     search_corpus: String,
-    /// Lowercased search corpus plus a byte-offset map back to `search_corpus`.
-    /// Kept only while search is active so normal reading does not pay for it.
     search_corpus_lower: String,
     search_lower_to_source: Vec<usize>,
-    /// Byte offsets of each match in `search_corpus`. Empty when no query is
-    /// set or no matches exist.
     search_matches: Vec<usize>,
-    /// Index into `search_matches` for the currently focused match.
     search_current: usize,
-    /// Drag-to-scroll state for the visible scrollbar overlay. `None` when
-    /// the user isn't currently dragging the thumb.
     scroll_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
 }
 
 impl MarkdownView {
-    /// Read `path` from disk and build a view. IO errors are surfaced via the
-    /// `error` field; the view is still created so the user sees the message
-    /// instead of the click silently failing.
-    ///
-    /// US-021: on a successful first read, registers a `notify` watcher on
-    /// the file's parent directory and spawns the debounce/reload loop.
     pub fn open(path: PathBuf, cx: &mut Context<Self>) -> Self {
         let element_id = make_element_id(&path);
-        // US-022 - restore last-known scroll offset for this file (if any).
-        // Goes through the shared state mutex so concurrent panes never
-        // observe a half-written cache.
         let pending_restore_y = state::lookup_offset_for(&path);
         let view = Self {
             path,
@@ -158,9 +88,6 @@ impl MarkdownView {
                 cx.update(|cx| {
                     let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
                         view.apply_loaded(ast, error);
-                        // Start watching after the first snapshot is applied
-                        // so a slow initial read cannot overwrite a newer
-                        // watcher reload that raced ahead of it.
                         view.start_watcher(cx);
                         view.maybe_apply_pending_restore(cx);
                         cx.notify();
@@ -174,10 +101,6 @@ impl MarkdownView {
     fn apply_loaded(&mut self, ast: Option<Vec<MdNode>>, error: Option<SharedString>) {
         self.ast = ast;
         self.error = error;
-        // US-022 - only refresh the search corpus when the find bar is open
-        // (M-1). Live-reload (US-021) fires every 200 ms during streaming
-        // writes; rebuilding a multi-MB corpus on every tick would be wasted
-        // work for the common case where the user is just reading.
         if self.search_active {
             self.search_corpus = self.ast.as_deref().map(harvest_text).unwrap_or_default();
             let (lower, map) = lowercase_with_byte_map(&self.search_corpus);
@@ -193,8 +116,6 @@ impl MarkdownView {
         }
     }
 
-    /// Rebuild `search_matches` from the current `search_query` and corpus.
-    /// Called on query change, on AST reload, and when the bar opens.
     fn recompute_matches(&mut self) {
         self.search_matches.clear();
         if self.search_query.is_empty() {
@@ -218,10 +139,6 @@ impl MarkdownView {
         }
     }
 
-    /// US-022 - proportional scroll-to-match. We don't have per-span pixel
-    /// offsets in the AST, so we approximate by mapping the byte offset in
-    /// the search corpus to a fraction of `max_offset`. Coarse but useful:
-    /// the user lands close enough to the match to spot it visually.
     fn scroll_to_current_match(&self) {
         let Some(byte_offset) = self.search_matches.get(self.search_current).copied() else {
             return;
@@ -232,19 +149,10 @@ impl MarkdownView {
         }
         let fraction = byte_offset as f32 / total as f32;
         let max = self.scroll_handle.max_offset();
-        // Offset is negative-down per ScrollHandle convention.
         let target = max.y * fraction;
         self.scroll_handle.set_offset(point(px(0.0), -target));
     }
 
-    /// US-022 - schedule the pending scroll restore once the document has
-    /// painted at least once. `set_offset` itself does not clamp, but until
-    /// the scroll container has been laid out the `ScrollHandle` is not yet
-    /// linked to the layout node (`track_scroll` only takes effect during
-    /// prepaint). Setting an offset before the first paint writes to a
-    /// detached handle and is functionally a no-op. Sleeping one tick lets
-    /// the first paint complete; afterwards the handle drives layout.
-    /// Non-finite values (NaN/Inf) from a hand-edited cache are dropped.
     fn maybe_apply_pending_restore(&self, cx: &mut Context<Self>) {
         if self.pending_restore_y.is_none() {
             return;
@@ -264,15 +172,6 @@ impl MarkdownView {
         .detach();
     }
 
-    /// US-022 - long-running task that persists the scroll offset to the JSON
-    /// cache as the user scrolls. Polls every `SCROLL_POLL_CADENCE`; flushes
-    /// to disk when the offset has changed by more than 1 px AND the throttle
-    /// window has elapsed since the last write. The task self-terminates on
-    /// entity drop via the standard `WeakEntity` cancellation.
-    ///
-    /// Writes go through `state::save_offset_for` which serialises through a
-    /// process-wide mutex - concurrent persistence tasks from multiple
-    /// markdown panes therefore never lose updates from each other.
     fn start_scroll_persistence(&self, cx: &mut Context<Self>) {
         let path = self.path.clone();
         let handle = self.scroll_handle.clone();
@@ -297,7 +196,6 @@ impl MarkdownView {
                 if last_write.elapsed() < SCROLL_PERSIST_THROTTLE {
                     continue;
                 }
-                // Store as positive vertical offset for clarity in the JSON.
                 if let Err(e) = state::save_offset_for(&path, -current) {
                     log::warn!("markdown_state.json save failed: {}", e);
                 }
@@ -308,10 +206,6 @@ impl MarkdownView {
         .detach();
     }
 
-    // ---------------------------------------------------------------------
-    // US-022 action handlers
-    // ---------------------------------------------------------------------
-
     fn handle_scroll_page_up(
         &mut self,
         _: &crate::MarkdownScrollPageUp,
@@ -319,7 +213,6 @@ impl MarkdownView {
         cx: &mut Context<Self>,
     ) {
         let cur = self.scroll_handle.offset();
-        // Less-negative y = scrolled up.
         self.scroll_handle
             .set_offset(point(cur.x, (cur.y + px(PAGE_SCROLL_PX)).min(px(0.0))));
         cx.notify();
@@ -333,8 +226,6 @@ impl MarkdownView {
     ) {
         let cur = self.scroll_handle.offset();
         let max = self.scroll_handle.max_offset();
-        // Bottom of content corresponds to `-max.y`. Clamp so we don't
-        // over-scroll past it.
         let target_y = (cur.y - px(PAGE_SCROLL_PX)).max(-max.y);
         self.scroll_handle.set_offset(point(cur.x, target_y));
         cx.notify();
@@ -347,7 +238,6 @@ impl MarkdownView {
         cx: &mut Context<Self>,
     ) {
         self.search_active = true;
-        // Build the corpus on demand the first time the bar opens (M-1).
         if let Some(ast) = self.ast.as_deref() {
             self.search_corpus = harvest_text(ast);
             let (lower, map) = lowercase_with_byte_map(&self.search_corpus);
@@ -407,17 +297,10 @@ impl MarkdownView {
         cx.notify();
     }
 
-    /// US-022 - copy support. GPUI in the pinned commit does not expose
-    /// drag-text-selection across `div(...).child(SharedString)` trees. As a
-    /// pragmatic substitute we copy either the active search match (with
-    /// surrounding context) or the entire flat text. Mouse drag-selection
-    /// over rendered markdown is a documented follow-up gap.
     fn handle_copy(&mut self, _: &crate::MarkdownCopy, _: &mut Window, cx: &mut Context<Self>) {
         let payload = if self.search_active && !self.search_matches.is_empty() {
             self.context_around_match()
         } else if let Some(ast) = self.ast.as_deref() {
-            // Build the flat text on demand - the corpus field is only kept
-            // up to date when the find bar is active (M-1).
             harvest_text(ast)
         } else {
             return;
@@ -429,8 +312,6 @@ impl MarkdownView {
         cx.write_to_clipboard(ClipboardItem::new_string(bounded));
     }
 
-    /// Extract the line of `search_corpus` containing the current match,
-    /// trimmed to a reasonable preview length. Used by `handle_copy`.
     fn context_around_match(&self) -> String {
         let Some(&offset) = self.search_matches.get(self.search_current) else {
             return String::new();
@@ -447,10 +328,6 @@ impl MarkdownView {
         self.search_corpus[start..end].to_string()
     }
 
-    /// US-022 - handle keystrokes routed via the `MarkdownSearch` key context
-    /// when the find bar is open. Printable ASCII chars append to the query;
-    /// Backspace removes the last char. Arrow keys / Enter / Esc are handled
-    /// by their respective bound actions.
     fn handle_search_key(
         &mut self,
         event: &KeyDownEvent,
@@ -483,13 +360,6 @@ impl MarkdownView {
         }
     }
 
-    /// US-021 - install the file watcher and spawn the debounce loop.
-    ///
-    /// We watch the *parent directory* non-recursively (matching
-    /// `ConfigWatcher` / `ThemeWatcher`) so atomic-save patterns
-    /// (`write to tmp + rename over original`) are caught: the file being
-    /// removed and recreated would defeat a watch on the file inode itself.
-    /// Events for siblings are filtered out by file_name match.
     fn start_watcher(&mut self, cx: &mut Context<Self>) {
         let Some(parent) = self.path.parent().map(|p| p.to_path_buf()) else {
             log::warn!(
@@ -516,13 +386,6 @@ impl MarkdownView {
             }
         };
 
-        // `mpsc::unbounded` is the only async-friendly channel that supports
-        // sync `unbounded_send` from the notify OS thread without blocking.
-        // Critical invariant: events delivered between this line and the
-        // first `rx.next().await` in the spawned task below are *queued*,
-        // not lost - `unbounded` has no capacity limit. Switching to a
-        // bounded channel without revisiting this race window would silently
-        // drop the very-first event after `start_watcher` returns.
         let (tx, mut rx) = mpsc::unbounded::<notify::Result<notify::Event>>();
         let mut watcher = match RecommendedWatcher::new(
             move |res: notify::Result<notify::Event>| {
@@ -544,22 +407,15 @@ impl MarkdownView {
             );
             return;
         }
-        // Keep the watcher alive on the entity. Dropping the entity drops the
-        // watcher, which unregisters the OS handle and closes the channel.
         self._watcher = Some(watcher);
         let path = self.path.clone();
 
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                // Outer loop: each iteration consumes one debounced burst.
-                // `rx.next().await == None` ⇒ channel closed (entity /
-                // watcher dropped) ⇒ exit cleanly.
                 while let Some(first) = rx.next().await {
                     if !event_is_relevant(&first, &target_filename) {
                         continue;
                     }
-                    // Coalesce subsequent events that arrive within the debounce
-                    // window. We re-read once after the burst settles.
                     let deadline = Instant::now() + RELOAD_DEBOUNCE;
                     loop {
                         let remaining = deadline.saturating_duration_since(Instant::now());
@@ -569,7 +425,7 @@ impl MarkdownView {
                         let timer = smol::Timer::after(remaining);
                         match futures::future::select(rx.next(), timer).await {
                             Either::Left((Some(res), _)) => {
-                                let _ = res; // event already accounted for; we re-read once at end
+                                let _ = res;
                             }
                             Either::Left((None, _)) => return,
                             Either::Right(_) => break,
@@ -578,13 +434,6 @@ impl MarkdownView {
                     let path = path.clone();
                     let (ast, error) = smol::unblock(move || load_from_disk(&path)).await;
 
-                    // Apply the parsed snapshot on the GPUI main thread.
-                    // `is_err()` catches the AsyncApp-dropped case directly. The
-                    // entity-dropped case (this.update returning Err) is
-                    // handled by the natural channel-closure chain: when
-                    // MarkdownView is dropped, `_watcher` drops, the notify
-                    // sender drops, `rx.next().await` returns None, and the
-                    // outer `while let` exits on the next iteration.
                     if cx
                         .update(|cx| {
                             this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
@@ -603,8 +452,6 @@ impl MarkdownView {
         .detach();
     }
 
-    /// User-facing display title. Matches the file's basename so the pane's
-    /// tab strip shows e.g. `README.md` rather than the absolute path.
     pub fn title(&self) -> SharedString {
         let owned: String = match self.path.file_name().and_then(|s| s.to_str()) {
             Some(name) => name.to_string(),
@@ -631,10 +478,6 @@ impl Render for MarkdownView {
                 .child(msg.clone())
                 .into_any_element()
         } else if let Some(ast) = &self.ast {
-            // `w_full()` is load-bearing: list items and paragraphs use
-            // `w_full()` on their inner `StyledText` wrappers to opt into
-            // soft-wrap. Without a bounded outer width those `w_full()` calls
-            // resolve to the intrinsic content width and stop wrapping.
             let mut col = div().flex().flex_col().gap(px(12.)).p(px(16.)).w_full();
             for (idx, node) in ast.iter().enumerate() {
                 col = col.child(render_node(RENDER_PATH_ROOT, idx, node, palette));
@@ -644,9 +487,6 @@ impl Render for MarkdownView {
             div().p(px(16.)).child("(empty)").into_any_element()
         };
 
-        // US-022 - key contexts: `Markdown` always-on; `MarkdownSearch`
-        // layered when the find bar is open so Enter/Esc/typing route to
-        // the search handlers instead of the document.
         let mut key_ctx = KeyContext::default();
         key_ctx.add("Markdown");
         if self.search_active {
@@ -663,10 +503,6 @@ impl Render for MarkdownView {
             .track_scroll(&self.scroll_handle)
             .child(body);
 
-        // US-022 - visible scrollbar overlay. The markdown viewer fills
-        // its pane so we don't have a meaningful first-frame content
-        // estimate; pass `None` and let the scrollbar appear after the
-        // first paint populates real bounds.
         let bar = crate::widgets::scrollbar::render(
             &self.scroll_handle,
             crate::theme::ui_colors(),
@@ -779,11 +615,6 @@ impl MarkdownView {
     }
 }
 
-/// US-022 - bound the payload size of a clipboard write. Truncates at
-/// `COPY_MAX_BYTES` and appends an ellipsis marker when the cap fires so
-/// the user knows the content was clipped. Truncation respects UTF-8
-/// codepoint boundaries by walking back to the most recent boundary at or
-/// before `COPY_MAX_BYTES`.
 fn truncate_for_clipboard(text: &str) -> String {
     if text.len() <= COPY_MAX_BYTES {
         return text.to_string();
@@ -797,9 +628,6 @@ fn truncate_for_clipboard(text: &str) -> String {
     out
 }
 
-/// US-022 - flatten an AST into plain text for substring search. Each block
-/// is followed by `\n` so the per-line context heuristic in `handle_copy`
-/// can recover the surrounding line. Inline spans concat without separators.
 fn harvest_text(nodes: &[MdNode]) -> String {
     let mut buf = String::new();
     walk_text(nodes, &mut buf);
@@ -870,8 +698,6 @@ fn walk_text(nodes: &[MdNode], buf: &mut String) {
     }
 }
 
-/// Compute a stable GPUI element id for one view instance. Multiple tabs may
-/// point at the same file, so the path alone is not unique enough for GPUI.
 fn make_element_id(path: &std::path::Path) -> SharedString {
     let id = MARKDOWN_VIEW_ID.fetch_add(1, Ordering::Relaxed);
     SharedString::from(format!("markdown-{id}-{}", path.display()))
@@ -883,10 +709,6 @@ fn render_path_child(parent: u64, idx: usize) -> u64 {
         .wrapping_add(idx as u64 + 1)
 }
 
-/// US-021 - true when `result` carries a notify event that should trigger a
-/// reload of the file we are watching. Event-level errors (`Err`) are ignored;
-/// events whose `paths` do not include `target_filename` are siblings in the
-/// watched parent directory and ignored.
 fn event_is_relevant(
     result: &notify::Result<notify::Event>,
     target_filename: &std::ffi::OsStr,
@@ -900,33 +722,14 @@ fn event_is_relevant(
         .any(|p| p.file_name() == Some(target_filename))
 }
 
-/// Outcome of resolving + reading the watched path exactly once. Distinguishes
-/// the three states `load_from_disk` needs to surface distinct messages for,
-/// without leaking platform-specific `io::ErrorKind`/errno details to callers.
 enum ReadOutcome {
-    /// File read successfully within the markdown byte cap.
     Bytes(Vec<u8>),
-    /// File exceeded the markdown byte cap.
     TooLarge(usize),
-    /// The final path component was (or became) a symlink - refused.
     Symlink,
-    /// The file does not exist (deleted between watch fire and read).
     NotFound,
-    /// Any other IO failure; carries the error for the user-visible message.
     Other(std::io::Error),
 }
 
-/// Resolve `path` and read its bytes with a SINGLE name resolution, closing the
-/// TOCTOU window (CWE-367) between the old `symlink_metadata` check and the
-/// subsequent symlink-following `fs::read`.
-///
-/// Unix: open with `O_NOFOLLOW` so the kernel refuses (`ELOOP`) if the final
-/// component is a symlink - the check and the read are the same syscall, so an
-/// attacker cannot swap a regular file for a symlink in between. We read from
-/// the resulting fd, never re-resolving the name.
-///
-/// Windows: open with `FILE_FLAG_OPEN_REPARSE_POINT`, inspect the handle's
-/// attributes, and refuse reparse points before reading from that same handle.
 fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
     #[cfg(unix)]
     {
@@ -938,7 +741,6 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
             .open(path)
         {
             Ok(f) => f,
-            // `O_NOFOLLOW` on a symlinked final component fails with ELOOP.
             Err(e) if e.raw_os_error() == Some(libc::ELOOP) => return ReadOutcome::Symlink,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReadOutcome::NotFound,
             Err(e) => return ReadOutcome::Other(e),
@@ -1007,21 +809,6 @@ fn read_no_follow(path: &std::path::Path) -> ReadOutcome {
     }
 }
 
-/// Load and parse a markdown file from disk, returning `(ast, error)` where
-/// exactly one is `Some`. Free function so unit tests can exercise the
-/// initial-load and reload paths without a GPUI context.
-///
-/// Security: refuses to follow a path that became a symlink since the original
-/// open. US-019 canonicalises the path at click time, so the path stored on
-/// `MarkdownView` is the real on-disk target (not a symlink). If between
-/// initial open and reload an attacker creates a symlink and atomically
-/// renames it over the original (e.g. `README.md.evil → /etc/passwd` then
-/// `mv README.md.evil README.md`), the post-rename file IS a symlink. We refuse
-/// to follow it. The resolution is atomic via `read_no_follow` (`O_NOFOLLOW` on
-/// unix) so there is no TOCTOU window between the symlink check and the read
-/// (CWE-367). This blocks the information-disclosure attack from adversarial
-/// agents writing into the user's project directory. Hard-link attacks remain
-/// out of scope (require write access to the disclosure target itself).
 fn load_from_disk(path: &std::path::Path) -> (Option<Vec<MdNode>>, Option<SharedString>) {
     let bytes = match read_no_follow(path) {
         ReadOutcome::Bytes(bytes) => bytes,
@@ -1044,8 +831,6 @@ fn load_from_disk(path: &std::path::Path) -> (Option<Vec<MdNode>>, Option<Shared
                 Some("File path was replaced by a symlink - refusing to read.".into()),
             );
         }
-        // US-021 AC: deletion during the session shows a stable message
-        // and keeps the pane open (no crash, no auto-close).
         ReadOutcome::NotFound => return (None, Some("File deleted".into())),
         ReadOutcome::Other(e) => return (None, Some(format!("Could not read file: {}", e).into())),
     };
@@ -1070,10 +855,6 @@ fn load_from_disk(path: &std::path::Path) -> (Option<Vec<MdNode>>, Option<Shared
         ),
     }
 }
-
-// ---------------------------------------------------------------------------
-// Render helpers - pure functions, no `&mut Context` needed.
-// ---------------------------------------------------------------------------
 
 fn render_node(
     parent_path: u64,
@@ -1101,33 +882,6 @@ fn render_node(
     }
 }
 
-/// Build a single `StyledText` element from a sequence of inline spans.
-///
-/// Why one element instead of N child divs (the previous approach): GPUI's
-/// soft-wrap only kicks in *inside* a `StyledText` - a paragraph rendered as
-/// many sibling divs lays out as a row that grows past the parent width and
-/// never breaks. Coalescing every span of a paragraph into a single element
-/// with per-run styling lets the text shaper reflow naturally inside the
-/// pane's bounded width.
-///
-/// `base_color` and `base_weight` apply to plain (non-styled) spans; per-span
-/// flags (strong, emphasis, code, link, strikethrough) override on a per-run
-/// basis. Returns `None` when the spans contain no text - caller can then
-/// skip the element entirely instead of painting an empty StyledText.
-///
-/// Known limitation: link spans are styled (link color + underline) but are
-/// not yet clickable. The previous implementation routed clicks via a per-
-/// span `on_mouse_down`, which loses inline reflow. Restoring clickability
-/// here requires hit-testing the StyledText's laid-out runs (Zed's approach
-/// in `crates/markdown/src/markdown.rs` - `RenderedText` + `LinkAndRange`).
-/// Tracked as follow-up work; until then `Cmd/Ctrl-click` on a `.md` path
-/// from a terminal pane remains the supported way to open another markdown.
-///
-/// SECURITY (US-044): when that rewire lands, the resolved `span.link_url`
-/// MUST be passed through `crate::markdown::security::validate_link_url(url)?`
-/// before reaching `open::that`. `.md` content is potentially hostile, so a
-/// raw `file://`/`javascript:`/`data:` URL must never hit `xdg-open`. The
-/// allow-list is regression-tested by `security::tests::allowlist_is_http_https_only`.
 fn build_styled_text(
     spans: &[Span],
     palette: MarkdownPalette,
@@ -1223,12 +977,6 @@ fn render_paragraph(spans: &[Span], palette: MarkdownPalette) -> impl IntoElemen
 }
 
 fn render_code_block(path: u64, text: &str, palette: MarkdownPalette) -> AnyElement {
-    // Code blocks contain pre-formatted content that must NOT soft-wrap
-    // (preserves indentation + intent). Long lines previously clipped at the
-    // pane edge; following Zed's `markdown.rs` pattern (`overflow_x_scroll`
-    // + a stable id), each block becomes its own horizontally scrollable
-    // container. The id is derived from the AST path, not the text, so large
-    // blocks do not get hashed during render.
     div()
         .id(("md-code-block", path))
         .bg(palette.code_bg)
@@ -1273,12 +1021,6 @@ fn render_list(
             Some(start) => format!("{}.", start.saturating_add(idx as u64)).into(),
             None => "•".into(),
         };
-        // `w_full()` bounds the row to its parent. The marker is fixed-width
-        // and `flex_shrink_0` so it never collapses; the body claims the rest
-        // (`flex_1`) and `min_w(px(0.))` lets it shrink below its intrinsic
-        // text width - without this, a flex item's min-width defaults to
-        // `auto` (= content size) and long lines push the row past the
-        // viewport instead of wrapping inside StyledText.
         let mut item_row = div().flex().flex_row().gap(px(8.)).w_full();
         item_row = item_row.child(
             div()
@@ -1297,12 +1039,6 @@ fn render_list(
     col.into_any_element()
 }
 
-/// Column count for a markdown table: the max of header arity and the longest
-/// data row, capped to a renderer-safe maximum.
-///
-/// U-050: the input is untrusted file content (MAX_INPUT_BYTES = 10 MB admits
-/// a multi-million-column delimiter row). `grid_cols` with thousands of
-/// columns is not useful UI, so we render a bounded prefix.
 fn table_col_count(header: &[Vec<Span>], rows: &[Vec<Vec<Span>>]) -> u16 {
     let cols = header
         .len()
@@ -1318,21 +1054,11 @@ fn render_table(
     rows: &[Vec<Vec<Span>>],
     palette: MarkdownPalette,
 ) -> AnyElement {
-    // Column count: max of header arity and the longest data row. Empty
-    // tables (zero header + zero rows, or rows with zero cells) bail out
-    // before invoking grid_cols(0) which would be a runtime no-op.
     let cols = table_col_count(header, rows);
     if cols == 0 {
         return div().into_any_element();
     }
 
-    // Per Zed's `MarkdownElement` (crates/markdown/src/markdown.rs:1981):
-    // CSS grid + equal-fraction columns + `overflow_hidden` is the only
-    // layout that prevents wide cells from blowing the table past the pane
-    // width. `flex_row` rows would let any single cell push the row wider
-    // than its parent - which is exactly what the original implementation
-    // did. With grid the row width is always `w_full`, columns are 1fr each,
-    // and StyledText cell content reflows inside its column.
     let mut table = div()
         .grid()
         .grid_cols(cols)
@@ -1413,20 +1139,12 @@ fn render_footnote(
     col.into_any_element()
 }
 
-// ---------------------------------------------------------------------------
-// Tests - exercise the data-only paths (non-rendering) so the file doesn't
-// drift from `parser` without notice. Render paths require a GPUI context
-// and are verified manually per repo convention.
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
 
-    /// U-050: a pathological table must be capped before it reaches grid_cols.
-    /// A genuinely empty table still reports 0.
     #[test]
     fn table_col_count_caps_pathological_tables() {
         let huge: Vec<Vec<Span>> = vec![Vec::new(); u16::MAX as usize + 2];
@@ -1434,9 +1152,7 @@ mod tests {
             table_col_count(&[], std::slice::from_ref(&huge)),
             MAX_RENDERED_TABLE_COLUMNS
         );
-        // Empty table reports 0 so the `cols == 0` bail still fires.
         assert_eq!(table_col_count(&[], &[]), 0);
-        // Header arity counts too, and a normal small table is unchanged.
         let header: Vec<Vec<Span>> = vec![Vec::new(); 3];
         assert_eq!(table_col_count(&header, &[]), 3);
     }
@@ -1469,7 +1185,6 @@ mod tests {
 
     #[test]
     fn reload_picks_up_modified_content() {
-        // US-021: a second read after content change must reflect the new AST.
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("live.md");
         write(&path, b"# v1\n");
@@ -1495,8 +1210,6 @@ mod tests {
 
     #[test]
     fn deleted_file_surfaces_file_deleted_message() {
-        // US-021 AC: deletion during the session must produce the literal
-        // "File deleted" message, not a crash or auto-close.
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("doomed.md");
         write(&path, b"# alive\n");
@@ -1523,7 +1236,6 @@ mod tests {
     fn invalid_utf8_shows_message() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let path = tmp.path().join("not_utf8.md");
-        // 0xFF is invalid as a leading byte in UTF-8.
         write(&path, &[0xFF, 0xFE, 0xFD]);
         let (ast, error) = load_from_disk(&path);
         assert!(ast.is_none());
@@ -1534,9 +1246,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlink_replacement_is_rejected() {
-        // SEC defence: if the watched path becomes a symlink between open
-        // and reload, refuse to follow it. Simulates the rename-over attack
-        // an adversarial agent could mount in the user's project directory.
         use std::os::unix::fs::symlink;
         let tmp = tempfile::tempdir().expect("tempdir");
         let real_target = tmp.path().join("secret.txt");
@@ -1557,14 +1266,6 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn symlink_swapped_in_after_check_is_still_rejected() {
-        // CWE-367 regression: the old code stat'd the path, then did a separate
-        // symlink-following read. `read_no_follow` collapses both into one
-        // O_NOFOLLOW open, so even a symlink that is the *current* final
-        // component (the post-swap state) is refused at read time - there is no
-        // window where a regular-file stat is paired with a symlink read.
-        // Before the fix, the read path followed the symlink and disclosed the
-        // target; after it, the open fails with ELOOP and we surface the
-        // refusal message.
         use std::os::unix::fs::symlink;
         let tmp = tempfile::tempdir().expect("tempdir");
         let secret = tmp.path().join("secret.txt");
@@ -1595,7 +1296,6 @@ mod tests {
         };
         assert!(event_is_relevant(&make("/x/README.md"), &target));
         assert!(!event_is_relevant(&make("/x/other.md"), &target));
-        // Errors are ignored.
         assert!(!event_is_relevant(
             &Err(notify::Error::generic("boom")),
             &target
@@ -1604,10 +1304,6 @@ mod tests {
 
     #[test]
     fn harvest_text_concatenates_paragraph_spans_with_inline_styles() {
-        // Verifies the search corpus contains the visible text of a
-        // formatted paragraph. pulldown-cmark preserves inter-span spaces in
-        // its Text events, so the corpus reads "this is bold text" as the
-        // user sees it (CR H-3 regression guard).
         let nodes = parse_with_limit("this is **bold** text\n").expect("parse");
         let corpus = harvest_text(&nodes);
         assert!(
@@ -1655,14 +1351,10 @@ mod tests {
 
     #[test]
     fn truncate_for_clipboard_respects_utf8_boundaries() {
-        // Build a string whose byte at COPY_MAX_BYTES falls inside a 3-byte
-        // codepoint. The truncator must walk back to the boundary rather
-        // than splitting the codepoint (which would panic the slice).
         let mut s = String::with_capacity(COPY_MAX_BYTES + 8);
         while s.len() < COPY_MAX_BYTES - 2 {
             s.push('a');
         }
-        // 3-byte UTF-8 codepoint that straddles the cap.
         s.push('日');
         while s.len() < COPY_MAX_BYTES + 32 {
             s.push('a');

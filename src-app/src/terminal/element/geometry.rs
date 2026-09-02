@@ -1,36 +1,21 @@
-//! Cell ↔ pixel conversion state.
-//!
-//! `CellGeometry` bundles the three scalars that every paint pass needs to
-//! map grid coordinates to window pixels: the gutter-adjusted origin, the
-//! cell width, and the line height. Passing it around avoids copy-paste of
-//! three arguments per call site.
-//!
-//! Extracted from `terminal_element.rs` per US-015 of the src-app refactor PRD.
-
 use gpui::{Bounds, Pixels, Point, px};
 
-/// Pixel-space geometry for a single terminal grid, shared across paint passes.
 #[derive(Clone, Copy)]
 pub(super) struct CellGeometry {
-    /// Top-left corner of the usable grid in window coordinates (includes the
-    /// fixed left content inset applied in `paint()`).
     pub origin: Point<Pixels>,
     pub cell_width: Pixels,
     pub line_height: Pixels,
 }
 
 impl CellGeometry {
-    /// Integer pixel X boundary for a column edge.
     pub(super) fn x_boundary(&self, col: usize) -> Pixels {
         cell_x_boundary(self.origin.x, self.cell_width, col)
     }
 
-    /// Integer pixel Y boundary for a row edge.
     pub(super) fn y_boundary(&self, line: i32) -> Pixels {
         cell_y_boundary(self.origin.y, self.line_height, line)
     }
 
-    /// Top-left pixel for a cell. Used by text and cursor paint passes.
     pub(super) fn cell_origin(&self, line: i32, col: usize) -> Point<Pixels> {
         Point {
             x: self.x_boundary(col),
@@ -38,7 +23,6 @@ impl CellGeometry {
         }
     }
 
-    /// Bounds for a single-row span of terminal cells.
     pub(super) fn cell_span_bounds(
         &self,
         line: i32,
@@ -75,9 +59,6 @@ fn cell_y_boundary(origin_y: Pixels, line_height: Pixels, line: i32) -> Pixels {
     (origin_y + line_height * line as f32).floor()
 }
 
-/// Compute integer pixel X boundaries for `col_count` cells, indexed
-/// `0..=col_count`. Adjacent spans share the same edge entry, so no per-rect
-/// rounding can introduce a gap between them.
 pub(super) fn cell_x_boundaries(
     origin_x: Pixels,
     cell_width: Pixels,
@@ -88,7 +69,6 @@ pub(super) fn cell_x_boundaries(
         .collect()
 }
 
-/// Y-axis counterpart to [`cell_x_boundaries`]. Indexed `0..=row_count`.
 pub(super) fn cell_y_boundaries(
     origin_y: Pixels,
     line_height: Pixels,

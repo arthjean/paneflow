@@ -17,8 +17,6 @@ impl DisplayTerminal {
         max_scrollback: usize,
         appearance: TerminalAppearance,
     ) -> Result<Self> {
-        // SAFETY: a null pointer selects libghostty's process-lifetime default
-        // allocator, so every owned handle may retain it until Drop.
         unsafe { Self::new_with_allocator(size, max_scrollback, appearance, std::ptr::null()) }
     }
 
@@ -29,12 +27,6 @@ impl DisplayTerminal {
         Ok(())
     }
 
-    /// Construct with an allocator that remains valid through this terminal's Drop.
-    ///
-    /// # Safety
-    ///
-    /// `allocator` must be null or point to an allocator whose vtable and
-    /// context outlive the returned terminal and every native handle it owns.
     unsafe fn new_with_allocator(
         size: WindowSize,
         max_scrollback: usize,
@@ -59,43 +51,20 @@ impl DisplayTerminal {
                 "terminal_new returned a null handle".into(),
             ));
         }
-        // SAFETY: `terminal_new` just returned this non-null, uniquely owned
-        // handle using the selected allocator, and `terminal_free` is its
-        // matching destructor.
         let terminal = unsafe { OwnedHandle::from_raw(raw_terminal, sys::ghostty_terminal_free) };
         callbacks::install(terminal.raw(), (&mut *callbacks) as *mut CallbackState)?;
         configure_scrollback(terminal.raw(), max_scrollback)?;
         configure_safety_limits(terminal.raw())?;
         configure_appearance(terminal.raw(), appearance)?;
-        // `terminal_new` takes a cell grid but no cell size, so the pixel
-        // metrics stay at zero until something resizes. Anything that divides
-        // pixels by cells then comes back zero, which is how a Kitty image
-        // ended up occupying no grid cells at all.
         crate::engine::resize_terminal(terminal.raw(), size)?;
-        // SAFETY: the caller's allocator contract carries through to every
-        // auxiliary handle `assemble` creates.
         unsafe { Self::assemble(terminal, callbacks, allocator) }
     }
 
-    /// Build the render, key, and mouse handles around an already configured
-    /// terminal.
-    ///
-    /// Shared with the snapshot decoder, which produces its terminal instead
-    /// of creating an empty one.
-    ///
-    /// # Safety
-    ///
-    /// `allocator` must be null or point to an allocator that outlives every
-    /// handle created here, and `terminal` must already have its callbacks
-    /// installed.
     pub(crate) unsafe fn assemble(
         terminal: OwnedHandle<sys::GhosttyTerminal>,
         callbacks: Box<CallbackState>,
         allocator: *const sys::GhosttyAllocator,
     ) -> Result<Self> {
-        // SAFETY: each constructor writes the named handle type using the
-        // selected allocator, and each paired function is that type's exact
-        // libghostty destructor. No raw handle escapes these owners.
         let render_state = unsafe {
             create(
                 "render_state_new",
@@ -104,8 +73,6 @@ impl DisplayTerminal {
                 sys::ghostty_render_state_free,
             )?
         };
-        // SAFETY: `row_iterator_new` and `row_iterator_free` are the matching
-        // constructor/destructor pair for `GhosttyRenderStateRowIterator`.
         let row_iterator = unsafe {
             create(
                 "row_iterator_new",
@@ -114,8 +81,6 @@ impl DisplayTerminal {
                 sys::ghostty_render_state_row_iterator_free,
             )?
         };
-        // SAFETY: `row_cells_new` and `row_cells_free` are the matching
-        // constructor/destructor pair for `GhosttyRenderStateRowCells`.
         let row_cells = unsafe {
             create(
                 "row_cells_new",
@@ -124,8 +89,6 @@ impl DisplayTerminal {
                 sys::ghostty_render_state_row_cells_free,
             )?
         };
-        // SAFETY: `key_encoder_new` and `key_encoder_free` are the matching
-        // constructor/destructor pair for `GhosttyKeyEncoder`.
         let key_encoder = unsafe {
             create(
                 "key_encoder_new",
@@ -134,8 +97,6 @@ impl DisplayTerminal {
                 sys::ghostty_key_encoder_free,
             )?
         };
-        // SAFETY: `key_event_new` and `key_event_free` are the matching
-        // constructor/destructor pair for `GhosttyKeyEvent`.
         let key_event = unsafe {
             create(
                 "key_event_new",
@@ -144,8 +105,6 @@ impl DisplayTerminal {
                 sys::ghostty_key_event_free,
             )?
         };
-        // SAFETY: `mouse_encoder_new` and `mouse_encoder_free` are the matching
-        // constructor/destructor pair for `GhosttyMouseEncoder`.
         let mouse_encoder = unsafe {
             create(
                 "mouse_encoder_new",
@@ -154,8 +113,6 @@ impl DisplayTerminal {
                 sys::ghostty_mouse_encoder_free,
             )?
         };
-        // SAFETY: `mouse_event_new` and `mouse_event_free` are the matching
-        // constructor/destructor pair for `GhosttyMouseEvent`.
         let mouse_event = unsafe {
             create(
                 "mouse_event_new",
@@ -235,12 +192,6 @@ pub(crate) fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<
             (&disabled as *const bool).cast::<c_void>(),
         ),
         (
-            // Ghostty f2d5758f retyped this option from `bool*` to
-            // `GhosttyString*`: it now names the directory the temporary-file
-            // medium may read from, and a NULL value pointer is what disables
-            // the medium. Handing it `&false` made libghostty read a 16-byte
-            // string header off a one-byte stack bool, and the garbage length
-            // came back as GHOSTTY_OUT_OF_MEMORY.
             sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE,
             std::ptr::null::<c_void>(),
         ),
@@ -263,11 +214,6 @@ pub(crate) fn configure_safety_limits(terminal: sys::GhosttyTerminal) -> Result<
     Ok(())
 }
 
-/// Pin the scrollback line budget the caller asked for.
-///
-/// `ghostty_terminal_new` no longer takes a scrollback limit, so the line
-/// budget has to be set explicitly right after construction. libghostty keeps
-/// its own byte budget alongside it and prunes on whichever limit is hit first.
 pub(crate) fn configure_scrollback(terminal: sys::GhosttyTerminal, max_scrollback: usize) -> Result<()> {
     let result = unsafe {
         sys::ghostty_terminal_set(
@@ -294,9 +240,6 @@ mod tests {
     }
 
     fn tracked_layout(len: usize, alignment_exponent: u8) -> Option<Layout> {
-        // Pinned Ghostty forwards Zig's `std.mem.Alignment` enum value across
-        // this C ABI. That value is log2(alignment), not the byte alignment
-        // described by the generated C header.
         let alignment = 1usize.checked_shl(u32::from(alignment_exponent))?;
         Layout::from_size_align(len.max(1), alignment).ok()
     }
@@ -310,15 +253,11 @@ mod tests {
         if context.is_null() {
             return std::ptr::null_mut();
         }
-        // SAFETY: the test keeps `AllocationState` alive until all handles
-        // using this allocator have been dropped.
         let state = unsafe { &*context.cast::<AllocationState>() };
         let Some(layout) = tracked_layout(len, alignment) else {
             state.invalid_callback.store(true, Ordering::SeqCst);
             return std::ptr::null_mut();
         };
-        // SAFETY: `layout` has a non-zero size and a supported power-of-two
-        // alignment. The matching callback reconstructs the same layout.
         let memory = unsafe { alloc(layout) }.cast::<c_void>();
         if !memory.is_null() {
             state.live.fetch_add(1, Ordering::SeqCst);
@@ -349,15 +288,11 @@ mod tests {
         if context.is_null() || memory.is_null() || new_len == 0 {
             return std::ptr::null_mut();
         }
-        // SAFETY: the test keeps `AllocationState` alive until all handles
-        // using this allocator have been dropped.
         let state = unsafe { &*context.cast::<AllocationState>() };
         let Some(layout) = tracked_layout(memory_len, alignment) else {
             state.invalid_callback.store(true, Ordering::SeqCst);
             return std::ptr::null_mut();
         };
-        // SAFETY: the pointer and old layout came from `tracked_alloc` or a
-        // prior successful call here. `new_len` is non-zero.
         unsafe { realloc(memory.cast::<u8>(), layout, new_len) }.cast()
     }
 
@@ -371,14 +306,11 @@ mod tests {
         if context.is_null() || memory.is_null() {
             return;
         }
-        // SAFETY: the test keeps the allocator context alive through Drop.
         let state = unsafe { &*context.cast::<AllocationState>() };
         let Some(layout) = tracked_layout(memory_len, alignment) else {
             state.invalid_callback.store(true, Ordering::SeqCst);
             return;
         };
-        // SAFETY: libghostty provides the same pointer, length, and alignment
-        // originally returned by `tracked_alloc`.
         unsafe { dealloc(memory.cast::<u8>(), layout) };
         if state
             .live
@@ -464,8 +396,6 @@ mod tests {
         for iteration in 0..32 {
             let allocations_before = state.total.load(Ordering::SeqCst);
             {
-                // SAFETY: both `state` and the static vtable outlive the
-                // terminal, which is dropped before this scope ends.
                 let mut terminal = unsafe {
                     DisplayTerminal::new_with_allocator(
                         size,

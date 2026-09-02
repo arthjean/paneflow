@@ -1,5 +1,3 @@
-//! Shared Windows identity used by the installer, taskbar, and notifications.
-
 #[cfg(any(target_os = "windows", test))]
 pub(crate) const PANEFLOW_WINDOWS_AUMID: &str = "Strivex.PaneFlow";
 

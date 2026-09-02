@@ -1,13 +1,3 @@
-//! Broadcast Groups (EP-001, CLI Cockpit).
-//!
-//! US-002: named groups of panes sharing a colored left-edge stripe - the
-//! explicit, visible target of a Composer broadcast (US-003). Groups are
-//! session-volatile by design (Technical Considerations: persistence is a
-//! future extension), live on `PaneFlowApp` (single-thread GPUI state,
-//! no Arc/Mutex) and reference panes by `EntityId`. A pane belongs to at
-//! most ONE group (v1). The picker reuses the theme-picker modal scaffold
-//! (dedicated focus handle + manual key handler + deferred backdrop).
-
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
@@ -19,45 +9,21 @@ use crate::PaneFlowApp;
 use crate::pane::Pane;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-/// Hard cap on simultaneously defined groups - one per `UiColors` stripe
-/// slot (`group_1..group_8`). Creating a 9th is refused with an explicit
-/// message (US-002 AC3).
 pub(crate) const MAX_GROUPS: usize = 8;
 
-/// A named broadcast group. Generic over the member id so the membership
-/// logic is unit-testable without constructing GPUI entities (`EntityId`
-/// has no public constructor); production code uses the default.
 pub(crate) struct BroadcastGroup<Id = gpui::EntityId> {
     pub(crate) name: String,
-    /// Index into the eight `UiColors::group_*` stripe slots.
     pub(crate) color_idx: usize,
-    /// Member panes. May hold ids of closed panes between syncs - readers
-    /// always intersect with the live leaves (US-002 AC4: a closed pane
-    /// disappears silently; an empty group stays valid).
     pub(crate) members: Vec<Id>,
 }
 
-/// All broadcast state owned by `PaneFlowApp`. Volatile - none of it is
-/// persisted to session.json in v1.
 #[derive(Default)]
 pub(crate) struct BroadcastState {
     pub(crate) groups: Vec<BroadcastGroup>,
-    /// Index of the active group (the target of member toggles and of the
-    /// Composer's broadcast mode). `None` until the user picks one.
     pub(crate) active: Option<usize>,
-    /// US-003: per-terminal queued prompt, keyed by surface id (terminal
-    /// `EntityId::as_u64`). One slot per pane, latest-wins - a new
-    /// broadcast to the same busy pane REPLACES the buffer. Flushed
-    /// (prefill only, never submitted - FR-02) when the mapped session
-    /// leaves `Thinking`; dropped silently if the terminal disappears
-    /// first.
     pub(crate) pending: HashMap<u64, String>,
 }
 
-/// Toggle `pane` in `groups[active]`. A pane belongs to at most one group
-/// (US-002 AC5), so joining the active group removes it from any other.
-/// Returns `true` when the pane is a member of the active group after the
-/// call.
 pub(crate) fn toggle_member<Id: PartialEq + Copy>(
     groups: &mut [BroadcastGroup<Id>],
     active: usize,
@@ -79,26 +45,12 @@ pub(crate) fn toggle_member<Id: PartialEq + Copy>(
     }
 }
 
-/// First stripe slot not used by an existing group, so deleting and
-/// re-creating groups recycles colors deterministically. Falls back to a
-/// modulo wrap when all 8 are taken (callers gate creation on
-/// [`MAX_GROUPS`] before asking for a color).
 pub(crate) fn next_free_color<Id>(groups: &[BroadcastGroup<Id>]) -> usize {
     (0..MAX_GROUPS)
         .find(|i| !groups.iter().any(|g| g.color_idx == *i))
         .unwrap_or(groups.len() % MAX_GROUPS)
 }
 
-/// FR-02: a prompt may only be DELIVERED (pre-filled) into a pane whose
-/// mapped session is not generating. A pane with no agent session is
-/// always safe (US-001: the gate never requires an agent - bare shells
-/// receive the prefill identically).
-///
-/// EP-004 US-011: `Stalled` blocks too - a stalled session is a `Thinking`
-/// session that went silent, i.e. the agent may STILL be mid-generation
-/// (the false-positive case the PRD documents). Treating it as safe would
-/// reopen the exact stdin-corruption window FR-02 exists to close. The
-/// buffer flushes on the next hook event, which also clears `Stalled`.
 pub(crate) fn state_blocks_delivery(state: &crate::ai_types::AgentState) -> bool {
     matches!(
         state,
@@ -106,8 +58,6 @@ pub(crate) fn state_blocks_delivery(state: &crate::ai_types::AgentState) -> bool
     )
 }
 
-/// Validation shared by create + rename so the picker shows one error
-/// vocabulary. Pure for unit tests.
 pub(crate) fn validate_group_name<Id>(
     groups: &[BroadcastGroup<Id>],
     name: &str,
@@ -117,9 +67,6 @@ pub(crate) fn validate_group_name<Id>(
     if name.is_empty() {
         return Err("Group name is empty".to_string());
     }
-    // Security review: names render in picker rows, the Composer group
-    // label, and toasts - bound them so a runaway input can't inflate
-    // every re-push and repaint.
     if name.chars().count() > 64 {
         return Err("Group name is too long (max 64 characters)".to_string());
     }
@@ -137,9 +84,6 @@ pub(crate) fn validate_group_name<Id>(
 }
 
 impl PaneFlowApp {
-    /// The pane a cockpit gesture targets: the focused leaf, or the first
-    /// leaf of the active workspace as a fallback so the shortcut still
-    /// works right after a workspace switch (no leaf focused yet).
     pub(crate) fn focused_or_first_pane(
         &self,
         window: &Window,
@@ -149,9 +93,6 @@ impl PaneFlowApp {
         root.focused_pane(window, cx).or_else(|| root.first_leaf())
     }
 
-    /// Live `Entity<Pane>` handles of the active group's members, in tree
-    /// order across all workspaces. Stale ids (closed panes) are skipped -
-    /// US-002 AC4.
     pub(crate) fn live_active_group_members(&self, _cx: &Context<Self>) -> Vec<gpui::Entity<Pane>> {
         let Some(group) = self
             .broadcast
@@ -173,9 +114,6 @@ impl PaneFlowApp {
         out
     }
 
-    /// Push group membership down into the panes as a stripe color index
-    /// and prune members whose pane no longer exists. Mirrors
-    /// `sync_attention`: recomputed idempotently from the group truth.
     pub(crate) fn sync_broadcast_stripes(&mut self, cx: &mut Context<Self>) {
         let mut live: HashSet<gpui::EntityId> = HashSet::new();
         let mut leaves: Vec<gpui::Entity<Pane>> = Vec::new();
@@ -202,8 +140,6 @@ impl PaneFlowApp {
         }
     }
 
-    // -- Actions ----------------------------------------------------------
-
     pub(crate) fn handle_toggle_broadcast_member(
         &mut self,
         _: &crate::ToggleBroadcastMember,
@@ -223,8 +159,6 @@ impl PaneFlowApp {
                 self.refresh_composer_slot(cx);
                 cx.notify();
             }
-            // No (valid) active group yet: route to the picker, whose empty
-            // state proposes creation (US-002 AC6) - never a silent no-op.
             _ => self.open_broadcast_picker(window, cx),
         }
     }
@@ -244,8 +178,6 @@ impl PaneFlowApp {
             self.open_broadcast_picker(window, cx);
         }
     }
-
-    // -- Picker (theme-picker scaffold) ------------------------------------
 
     pub(crate) fn open_broadcast_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.broadcast_picker_open = true;
@@ -393,7 +325,6 @@ impl PaneFlowApp {
         let ui = crate::theme::ui_colors();
         let renaming = self.broadcast_picker_renaming;
 
-        // Live member counts so a closed pane never inflates a row (AC4).
         let mut live: HashSet<gpui::EntityId> = HashSet::new();
         for ws in &self.workspaces {
             if let Some(root) = &ws.active_tab().root {
@@ -461,7 +392,6 @@ impl PaneFlowApp {
         }
 
         if self.broadcast.groups.is_empty() {
-            // US-002 AC6: explicit empty state proposing creation.
             card = card.child(
                 div()
                     .px(px(14.))
@@ -669,8 +599,6 @@ mod tests {
 
     #[test]
     fn toggle_moves_between_groups_one_group_per_pane() {
-        // US-002 AC5: a pane belongs to at most one group - joining the
-        // active group removes it from any other.
         let mut groups = vec![group("a", 0, &[7]), group("b", 1, &[])];
         assert!(toggle_member(&mut groups, 1, 7));
         assert!(groups[0].members.is_empty());
@@ -688,19 +616,16 @@ mod tests {
     fn next_free_color_recycles_freed_slot() {
         let groups: Vec<BroadcastGroup<u64>> =
             vec![group("a", 0, &[]), group("c", 2, &[]), group("d", 3, &[])];
-        // Slot 1 was freed (or never used) - it must be reused before 4.
         assert_eq!(next_free_color(&groups), 1);
     }
 
     #[test]
     fn validate_rejects_ninth_group_with_explicit_message() {
-        // US-002 AC3: at 8 existing groups the 9th create is refused.
         let groups: Vec<BroadcastGroup<u64>> = (0..MAX_GROUPS)
             .map(|i| group(&format!("g{i}"), i, &[]))
             .collect();
         let err = validate_group_name(&groups, "ninth", None).unwrap_err();
         assert_eq!(err, "Limit of 8 groups reached");
-        // Renaming an existing group at the cap stays allowed.
         assert!(validate_group_name(&groups, "renamed", Some(0)).is_ok());
     }
 
@@ -709,15 +634,12 @@ mod tests {
         let groups = vec![group("alpha", 0, &[])];
         assert!(validate_group_name(&groups, "  ", None).is_err());
         assert!(validate_group_name(&groups, "alpha", None).is_err());
-        // Renaming a group to its own current name is a no-op, not an error.
         assert!(validate_group_name(&groups, "alpha", Some(0)).is_ok());
         assert!(validate_group_name(&groups, "beta", None).is_ok());
     }
 
     #[test]
     fn validate_rejects_oversized_names() {
-        // Security review: names render in picker rows / Composer label /
-        // toasts - bounded at 64 chars (counted in chars, not bytes).
         let groups: Vec<BroadcastGroup<u64>> = Vec::new();
         assert!(validate_group_name(&groups, &"x".repeat(64), None).is_ok());
         assert!(validate_group_name(&groups, &"x".repeat(65), None).is_err());
@@ -726,15 +648,10 @@ mod tests {
 
     #[test]
     fn only_generating_states_block_delivery() {
-        // FR-02: WaitingForInput / Finished / Errored (and absent sessions,
-        // handled by the caller) are safe prefill targets. Thinking blocks;
-        // Stalled blocks too (EP-004 US-011: a stalled agent may still be
-        // mid-generation - its stdin is NOT known-safe).
         assert!(state_blocks_delivery(&AgentState::Thinking));
         assert!(state_blocks_delivery(&AgentState::Stalled));
         assert!(!state_blocks_delivery(&AgentState::WaitingForInput));
         assert!(!state_blocks_delivery(&AgentState::Finished));
-        // An Errored agent's process is gone - the pane is a bare shell.
         assert!(!state_blocks_delivery(&AgentState::Errored));
     }
 }

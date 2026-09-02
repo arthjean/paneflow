@@ -1,18 +1,3 @@
-//! Terminal performance benchmarks.
-//!
-//! One ignored test that runs under the release profile and prints one JSON
-//! line per metric, then a document that gathers them all.
-//! `scripts/bench-terminal.sh` (or `.ps1`) drives it, archives the document
-//! under `bench/results/`, and compares it against `bench/baseline.json`.
-//! `bench/README.md` describes the protocol and what each metric means.
-//!
-//! Everything here is GPU-free and, apart from the shell idle probe, PTY-free,
-//! so a run measures the terminal pipeline itself: the libghostty snapshot,
-//! the conversion into the neutral `Content`, the window-free layout pass,
-//! the render-thread per-frame lookups, and the runtime loop's idle behavior.
-//! Allocation counts come from a counting wrapper around the system
-//! allocator installed for the test binary only.
-
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -32,17 +17,11 @@ use super::ghostty_session::{
 use super::pty_session::TerminalState;
 use super::types::{Content, Point};
 
-// ---------------------------------------------------------------------------
-// Counting allocator
-// ---------------------------------------------------------------------------
-
 struct CountingAllocator;
 
 static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
 static ALLOCATION_CALLS: AtomicU64 = AtomicU64::new(0);
 
-// SAFETY: every call is forwarded to the system allocator unchanged; the
-// wrapper only adds relaxed counter updates around it.
 unsafe impl GlobalAlloc for CountingAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
@@ -80,12 +59,6 @@ fn allocation_counters() -> (u64, u64) {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Measurement
-// ---------------------------------------------------------------------------
-
-/// Whether a smaller value is the better one. Everything is a cost except
-/// throughput.
 #[derive(Clone, Copy)]
 enum Direction {
     LowerIsBetter,
@@ -96,7 +69,6 @@ struct Metric {
     name: &'static str,
     unit: &'static str,
     direction: Direction,
-    /// The headline value: p50 for timings, the raw figure for counts.
     value: f64,
     p95: Option<f64>,
     mean: Option<f64>,
@@ -141,9 +113,6 @@ impl Metric {
     }
 }
 
-/// Time `op` `iters` times after `warmup` unmeasured runs. The headline value
-/// is the median in nanoseconds; allocations are averaged over the measured
-/// iterations.
 fn measure(
     name: &'static str,
     note: &'static str,
@@ -180,10 +149,6 @@ fn measure(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Scenario builders
-// ---------------------------------------------------------------------------
-
 const SCROLLBACK_LINES: usize = 10_000;
 
 fn terminal(cols: usize, rows: usize) -> ghostty::DisplayTerminal {
@@ -196,8 +161,6 @@ fn terminal(cols: usize, rows: usize) -> ghostty::DisplayTerminal {
     .expect("libghostty must initialize")
 }
 
-/// Feed the deterministic corpus until the grid has scrolled at least twice,
-/// so every row carries styled content and the scrollback is non-empty.
 fn fill(terminal: &mut ghostty::DisplayTerminal, rows: usize) {
     let streams = deterministic_streams();
     let mut lines = 0usize;
@@ -210,9 +173,6 @@ fn fill(terminal: &mut ghostty::DisplayTerminal, rows: usize) {
     }
 }
 
-/// One line of streaming output: colored, wide enough to matter, and ending in
-/// a newline so the whole viewport scrolls. This is what a build log or an
-/// agent transcript looks like to the parser.
 fn scroll_chunk(index: usize) -> Vec<u8> {
     format!(
         "\x1b[38;5;{}m{index:>7}\x1b[0m  streaming output line with words, numbers 0123456789 and a path src/lib.rs:42\r\n",
@@ -221,14 +181,10 @@ fn scroll_chunk(index: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-/// One keystroke echo on the bottom row: the cursor moves and a handful of
-/// cells change, no scroll. The dirty tracking has one row to report.
 fn echo_chunk(index: usize, rows: usize) -> Vec<u8> {
     format!("\x1b[{rows};1Hprompt> {index:06}").into_bytes()
 }
 
-/// What the runtime does per frame: snapshot, convert through the mirror, and
-/// install the result where the previous frame was, handing that one back.
 #[derive(Default)]
 struct Publisher {
     mirror: CellMirror,
@@ -283,7 +239,6 @@ fn layout(content: &Content, cols: usize, rows: usize, theme: &crate::theme::Ter
     std::hint::black_box(state);
 }
 
-/// Runtime loop iterations per second while a session has nothing to do.
 fn idle_wakeups_per_second(settle: Duration, window: Duration) -> f64 {
     std::thread::sleep(settle);
     let before = RUNTIME_LOOP_ITERATIONS.load(Ordering::Relaxed);
@@ -292,10 +247,6 @@ fn idle_wakeups_per_second(settle: Duration, window: Duration) -> f64 {
     let after = RUNTIME_LOOP_ITERATIONS.load(Ordering::Relaxed);
     (after - before) as f64 / started.elapsed().as_secs_f64()
 }
-
-// ---------------------------------------------------------------------------
-// Scenarios
-// ---------------------------------------------------------------------------
 
 fn publish_scenarios(metrics: &mut Vec<Metric>) -> Content {
     let mut sample = None;
@@ -333,8 +284,6 @@ fn publish_scenarios(metrics: &mut Vec<Metric>) -> Content {
                     std::hint::black_box(publisher.publish(&mut term));
                 },
             ));
-            // Taken once the scenario is over: a clone held during it would
-            // pin one of the mirror's buffers and skew every other frame.
             sample = publisher.front.take();
         }
     }
@@ -422,10 +371,6 @@ fn idle_scenarios(metrics: &mut Vec<Metric>) {
     let cwd = std::env::current_dir().ok();
     match TerminalState::new(cwd, 1, 1, Some((80, 24)), None, None) {
         Ok(shell) => {
-            // A shell takes its own time to print a prompt (PowerShell needs
-            // a couple of seconds), and the runtime keeps its short tick for
-            // `RUNTIME_QUIET_AFTER` past the last byte. Wait for the PTY to
-            // have been silent long enough, within a bound, before counting.
             let silent_for = Duration::from_millis(1_500);
             let give_up = Instant::now() + Duration::from_secs(15);
             let mut last_change = Instant::now();
@@ -504,10 +449,6 @@ fn pipeline_scenario(metrics: &mut Vec<Metric>) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Reporting
-// ---------------------------------------------------------------------------
-
 fn env_or(name: &str, fallback: &str) -> String {
     std::env::var(name).unwrap_or_else(|_| fallback.to_owned())
 }
@@ -553,7 +494,6 @@ fn format_bytes(value: f64) -> String {
     }
 }
 
-/// Markdown table of this run against a baseline document, ready to paste.
 fn comparison_table(current: &[Metric], baseline: &serde_json::Value) -> String {
     let baseline_metrics = baseline
         .get("metrics")
@@ -645,11 +585,6 @@ fn terminal_pipeline_benchmark() {
     );
 
     let mut metrics = Vec::new();
-    // The timed scenarios are single-threaded and never sleep, so the CPU
-    // time the process accrues over them should match the wall clock. A
-    // share well below one means the machine was busy with something else
-    // and the timings of this run are inflated; the allocation columns are
-    // exact regardless.
     let timed_started = Instant::now();
     let cpu_before = process_cpu_time();
     let sample = publish_scenarios(&mut metrics);
@@ -667,11 +602,6 @@ fn terminal_pipeline_benchmark() {
             cpu_share * 100.0
         );
     }
-    // Last: tearing a shell down keeps the machine busy for a while after
-    // the session is dropped (the process tree is terminated and reaped),
-    // which would land on the timed scenarios if the probes ran first. The
-    // probes count every runtime loop in the process, and by now every
-    // earlier session has been shut down.
     if std::env::var_os("PANEFLOW_BENCH_SKIP_IDLE").is_none() {
         idle_scenarios(&mut metrics);
     }
@@ -706,8 +636,6 @@ fn terminal_pipeline_benchmark() {
 mod tests {
     use super::*;
 
-    /// The comparison table is the public artifact, so its arithmetic is
-    /// checked: a halved timing is a 2x improvement and reads as -50%.
     #[test]
     fn comparison_table_reports_speedups_from_the_baseline() {
         let now = [Metric {

@@ -1,13 +1,3 @@
-# Run the terminal performance benchmark and archive its result.
-#
-# Usage:
-#   scripts/bench-terminal.ps1                 # run, compare against bench/baseline.json
-#   scripts/bench-terminal.ps1 -SetBaseline    # run, then make this run the baseline
-#
-# The benchmark is the ignored test `terminal_pipeline_benchmark` in
-# src-app/src/terminal/perf_bench.rs, built under the release profile. Each run
-# writes bench/results/<stamp>-<sha>.json; the comparison table printed between
-# the PANEFLOW_BENCH_TABLE markers is the shareable artifact. See bench/README.md.
 [CmdletBinding()]
 param(
     [switch]$SetBaseline
@@ -20,7 +10,6 @@ $sha = (git rev-parse --short=12 HEAD).Trim()
 $dirty = if ((git status --porcelain --untracked-files=no | Measure-Object).Count -gt 0) { "true" } else { "false" }
 $stamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 New-Item -ItemType Directory -Force -Path "bench/results" | Out-Null
-# Absolute paths: cargo runs the test binary from the package directory.
 $root = (Get-Location).Path
 $out = Join-Path $root "bench/results/$stamp-$sha.json"
 

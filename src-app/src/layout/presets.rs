@@ -1,7 +1,3 @@
-//! Layout presets: equal-distribution, main-vertical (60/40 split with stack),
-//! and tmux-style tiled grid. Each builder returns `None` for empty, `Leaf`
-//! for single pane, or a multi-child `Container` otherwise.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -12,8 +8,6 @@ use crate::pane::Pane;
 use super::tree::{LayoutChild, LayoutTree, SplitDirection};
 
 impl LayoutTree {
-    /// Build a flat container with all panes at equal ratios in the given direction.
-    /// Returns `None` for empty, `Leaf` for single pane, `Container` for 2+.
     pub fn from_panes_equal(direction: SplitDirection, panes: Vec<Entity<Pane>>) -> Option<Self> {
         match panes.len() {
             0 => None,
@@ -37,19 +31,14 @@ impl LayoutTree {
         }
     }
 
-    /// Build a "main-vertical" layout: one main pane on the left,
-    /// remaining panes stacked vertically on the right.
-    /// `main_pane` is placed first. Returns `None` for empty, `Leaf` for single.
     pub fn main_vertical(main_pane: Entity<Pane>, others: Vec<Entity<Pane>>) -> Option<Self> {
         if others.is_empty() {
             return Some(LayoutTree::Leaf(main_pane));
         }
 
-        // Right side: stack remaining panes with equal ratios (Horizontal = top/bottom)
         let right = LayoutTree::from_panes_equal(SplitDirection::Horizontal, others)
             .expect("others is non-empty");
 
-        // Outer: Vertical (side by side) - centered split between main and side panel.
         Some(LayoutTree::Container {
             direction: SplitDirection::Vertical,
             children: vec![
@@ -67,10 +56,6 @@ impl LayoutTree {
         })
     }
 
-    /// Build a tiled grid layout. Uses tmux's algorithm: increment rows and
-    /// columns alternately until `rows * cols >= N`. Each row is a Vertical
-    /// container; rows are stacked in a Horizontal container.
-    /// Returns `None` for empty, `Leaf` for single.
     pub fn tiled(panes: Vec<Entity<Pane>>) -> Option<Self> {
         match panes.len() {
             0 => return None,
@@ -79,7 +64,6 @@ impl LayoutTree {
         }
 
         let n = panes.len();
-        // tmux algorithm: increment rows and cols alternately until rows*cols >= n
         let mut rows = 1usize;
         let mut cols = 1usize;
         while rows * cols < n {
@@ -90,13 +74,11 @@ impl LayoutTree {
             }
         }
 
-        // Distribute panes across rows
         let row_ratio = 1.0 / rows as f32;
         let mut pane_iter = panes.into_iter();
         let mut row_children: Vec<LayoutChild> = Vec::with_capacity(rows);
 
         for r in 0..rows {
-            // Last row may have fewer panes
             let panes_in_row = if r < rows - 1 {
                 cols
             } else {

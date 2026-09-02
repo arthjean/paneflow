@@ -1,87 +1,26 @@
-//! Workspace tab - the level that owns a pane layout tree.
-//!
-//! US-001 (prd-cli-tab-hierarchy): a workspace no longer owns a single
-//! `LayoutTree`; it owns a list of [`Tab`], each carrying the tree the
-//! workspace used to carry, plus the zoom `saved_layout` that used to live at
-//! the workspace level. Split, zoom and focus mechanics are unchanged - they
-//! now operate one level down.
-
 use gpui::{App, Entity, Window};
 use paneflow_config::schema::{LayoutNode, TabTitleSource};
 
 use crate::layout::LayoutTree;
 use crate::pane::Pane;
 
-/// Monotonic tab ID counter. Process-local and never persisted: the IPC
-/// surface addresses surfaces by `surface_id`, never by tab index or tab id
-/// (FR-07), so a stable in-memory identity is all the UI needs.
 static NEXT_TAB_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub fn next_tab_id() -> u64 {
     NEXT_TAB_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-/// One working composition inside a workspace: a title plus the pane layout
-/// tree, with the zoom bookkeeping that belongs to it.
 pub struct Tab {
-    /// Unique tab identifier, assigned at construction.
     pub id: u64,
-    /// User-facing title. Empty means "unnamed" - the sidebar derives a
-    /// fallback label (US-009).
-    ///
-    /// Private on purpose: [`Self::set_title`] is the ONE way a title changes,
-    /// and it is where "a name a human typed is never overwritten" is
-    /// enforced. A `pub` field would put that rule back in the hands of every
-    /// caller, which is how such rules quietly stop holding.
     title: String,
-    /// Who wrote [`Self::title`]. See [`TabTitleSource`].
     title_source: TabTitleSource,
-    /// Pane layout tree. `None` for an empty tab (every pane closed).
     pub root: Option<LayoutTree>,
-    /// Saved layout tree while zoomed. `Some(tree)` means this tab is zoomed
-    /// and `root` holds only the zoomed pane as a single Leaf.
     pub saved_layout: Option<LayoutTree>,
-    /// The git worktree this tab works in, or `None` for an unbound tab.
-    ///
-    /// This is the tab's git identity, in the sense discussion #41 asks for:
-    /// bound, every pane opened in the tab starts in this checkout, and the
-    /// sidebar row names the branch it sits on. Unbound, the tab behaves
-    /// exactly as it always has and its row says nothing extra - which is what
-    /// makes the line signal rather than chrome, since it only appears where it
-    /// tells two tabs apart.
-    ///
-    /// The same unit as a Cursor agent and a Codex chat, both of which carry
-    /// the worktree on the session rather than on the window. Zed is the
-    /// counter-example: its active repository is one field per window
-    /// (`crates/project/src/git_store.rs`, `active_repo_id`), recomputed from
-    /// the focused item, and it opens a *window* per worktree - the opposite of
-    /// several agents side by side in one.
-    ///
-    /// A path, not a branch name: a branch can only be checked out in one
-    /// worktree at a time, the checkout directory is what a pane actually needs
-    /// to spawn in, and a detached-HEAD worktree (what the Codex app creates by
-    /// default) has no branch at all. The branch is derived for display.
     pub worktree: Option<std::path::PathBuf>,
-    /// Whether this tab wants the docked Files rail on screen.
-    ///
-    /// The rail itself is a single app-level surface (one tree, one watcher),
-    /// but *wanting* it is a property of the session that asked for it: opening
-    /// the tree in one tab must not put it in front of a sibling tab. The app
-    /// mirrors the visible tab's flag and reconciles on every session change
-    /// ([`crate::PaneFlowApp::sync_files_sidebar_session`]). Never persisted -
-    /// like the app-level mirror, a restart starts every tab closed.
     pub files_sidebar_open: bool,
 }
 
 impl Tab {
-    /// Create a tab holding `root`, with a freshly allocated id.
-    ///
-    /// The title is [`TabTitleSource::Preset`], the weakest rank: every
-    /// in-process construction site is Paneflow naming the tab itself (a
-    /// preset label, the palette placeholder, an empty string), and all of it
-    /// is meant to be replaced by a name that describes the work. A human's
-    /// title only ever arrives through [`Self::set_title`], or from the
-    /// restore path via [`Self::restored`].
     pub fn new(title: impl Into<String>, root: Option<LayoutTree>) -> Self {
         Self {
             id: next_tab_id(),
@@ -94,10 +33,6 @@ impl Tab {
         }
     }
 
-    /// Rebuild a tab from a session snapshot, carrying the persisted title
-    /// provenance across the restart. Without this, every restored tab would
-    /// look app-named and the first prompt of the next session would erase a
-    /// name the user typed days ago.
     pub fn restored(
         title: impl Into<String>,
         title_source: TabTitleSource,
@@ -111,15 +46,6 @@ impl Tab {
         }
     }
 
-    /// The cwd a pane opened in this tab must start in, given the cwd it would
-    /// otherwise have inherited.
-    ///
-    /// An unbound tab keeps `inherited` untouched. A bound tab keeps it only
-    /// while it stays inside its own checkout - splitting from a pane sitting
-    /// in `src/` must land in `src/`, not back at the root - and pulls anything
-    /// outside back to the worktree. That last clause is the whole safety
-    /// property: without it a `cd` in one pane leaks into every pane opened
-    /// after it, and the binding is decoration.
     pub fn confine_cwd(&self, inherited: Option<std::path::PathBuf>) -> Option<std::path::PathBuf> {
         let Some(worktree) = self.worktree.as_ref() else {
             return inherited;
@@ -130,15 +56,10 @@ impl Tab {
         }
     }
 
-    /// Create an untitled tab with no pane. Used to honour the "a workspace
-    /// always has at least one tab" invariant (FR-01) when the last tab is
-    /// closed.
     pub fn empty() -> Self {
         Self::new(String::new(), None)
     }
 
-    /// The tab's stored title. Empty means unnamed; the sidebar derives the
-    /// visible fallback (US-009).
     pub fn title(&self) -> &str {
         &self.title
     }
@@ -147,31 +68,14 @@ impl Tab {
         self.title_source
     }
 
-    /// Whether this title belongs to the user and is therefore frozen against
-    /// every automatic naming path.
     pub fn title_is_user_owned(&self) -> bool {
         self.title_source == TabTitleSource::User
     }
 
-    /// Whether an automatic name should still be looked for. See
-    /// [`TabTitleSource::is_settled`].
     pub fn title_is_settled(&self) -> bool {
         self.title_source.is_settled()
     }
 
-    /// The single write path for a tab title. Returns whether anything
-    /// changed, so callers persist the session only on a real delta.
-    ///
-    /// Rules, in order:
-    /// 1. Precedence is [`TabTitleSource::yields_to`]'s to decide, and only
-    ///    its. Checking it here rather than at each call site is what keeps
-    ///    "a name a human typed is never overwritten" true of code not yet
-    ///    written.
-    /// 2. An automatic title never *clears* one. A CLI that generated nothing
-    ///    must leave the tab as it is, not blank it.
-    /// 3. Titles are stored trimmed, and a write that changes nothing reports
-    ///    `false` - every turn of an agent would otherwise schedule a session
-    ///    save of identical bytes.
     pub fn set_title(&mut self, title: &str, source: TabTitleSource) -> bool {
         let title = title.trim();
         if title.is_empty() || !self.title_source.yields_to(source) {
@@ -186,14 +90,6 @@ impl Tab {
         true
     }
 
-    /// Hand a named tab back to auto-naming (the tab menu's "Reset name").
-    /// Returns whether anything changed.
-    ///
-    /// The text is deliberately kept: dropping it would flash the tab back to
-    /// its "Tab 3" fallback until the next turn produced a name. Only the
-    /// ownership changes - and it drops all the way to `Preset`, so the very
-    /// next thing the agent does can name the tab, rather than the reset only
-    /// taking effect once a *better* rank comes along.
     pub fn unlock_title(&mut self) -> bool {
         let changed = self.title_source != TabTitleSource::Preset;
         self.title_source = TabTitleSource::Preset;
@@ -204,7 +100,6 @@ impl Tab {
         self.saved_layout.is_some()
     }
 
-    /// Leave zoom, restoring the saved tree. Returns the pane that was zoomed.
     pub fn exit_zoom(&mut self, cx: &mut App) -> Option<Entity<Pane>> {
         let zoomed_pane = self.root.as_ref().and_then(|root| root.first_leaf());
         let saved = self.saved_layout.take()?;
@@ -221,12 +116,6 @@ impl Tab {
         self.root.as_ref().map_or(0, |r| r.leaf_count())
     }
 
-    /// Whether this tab can take one more pane.
-    ///
-    /// US-003 (prd-cli-tab-hierarchy): `MAX_PANES` bounds a *tab*, not a
-    /// workspace. Every create site - keyboard split, drop-to-split, launch
-    /// pad, IPC `surface.split` - gates on this single predicate so the cap
-    /// cannot drift between them.
     pub fn can_add_pane(&self) -> bool {
         self.pane_count() < crate::layout::MAX_PANES
     }
@@ -255,13 +144,6 @@ impl Tab {
         false
     }
 
-    /// Every pane of this tab, the zoom-saved tree included, in traversal
-    /// order and without duplicates.
-    /// Terminal surface ids this tab owns.
-    ///
-    /// The same walk the sidebar does to attribute a session to a tab row
-    /// (`tab_row_sessions`), so an unread completion and a session badge can
-    /// never disagree about which row speaks for a surface.
     pub fn surface_ids(&self, cx: &gpui::App) -> std::collections::HashSet<u64> {
         let mut ids = std::collections::HashSet::new();
         for pane in self.collect_panes() {
@@ -293,24 +175,17 @@ impl Tab {
         }
     }
 
-    /// Serialize this tab's layout to a `LayoutNode`.
-    ///
-    /// When zoomed, serializes the saved (un-zoomed) layout so the full pane
-    /// arrangement is captured rather than just the single zoomed pane.
     pub fn serialize(&self, cx: &App) -> Option<LayoutNode> {
         let tree = self.saved_layout.as_ref().or(self.root.as_ref())?;
         Some(tree.serialize(cx))
     }
 
-    /// Serialize this tab for session persistence without terminal output,
-    /// which must remain local to the current process.
     pub fn serialize_without_scrollback(&self, cx: &App) -> Option<LayoutNode> {
         let tree = self.saved_layout.as_ref().or(self.root.as_ref())?;
         Some(tree.serialize_without_scrollback(cx))
     }
 }
 
-/// The title-precedence rule, tested at the one place that enforces it.
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,9 +194,6 @@ mod tests {
         Tab::new(title, None)
     }
 
-    /// The ladder each rank climbs: a preset label gives way to the first
-    /// prompt's placeholder, which gives way to the title the CLI generates,
-    /// which gives way to a human.
     #[test]
     fn each_rank_replaces_the_ones_below_it() {
         let mut tab = tab("Claude Code");
@@ -353,10 +225,6 @@ mod tests {
         assert!(tab.title_is_user_owned());
     }
 
-    /// The bug this ranking exists for: a session is torn down a few seconds
-    /// after each turn, so every new turn used to look like a first one and
-    /// rename the tab after whatever was just typed. A tab keeps naming the
-    /// work it was opened for.
     #[test]
     fn a_later_prompt_does_not_replace_the_first_ones_placeholder() {
         let mut tab = tab("Claude Code");
@@ -366,8 +234,6 @@ mod tests {
         assert_eq!(tab.title(), "fix the flaky worktree test");
     }
 
-    /// A generated title is live intent, not a one-shot: a CLI that
-    /// regenerates its session title has a better one.
     #[test]
     fn a_generated_title_replaces_an_earlier_generated_title() {
         let mut tab = tab("Claude Code");
@@ -384,8 +250,6 @@ mod tests {
         assert_eq!(tab.title(), "sprint 4");
     }
 
-    /// A preset label never replaces one: the empty tab being filled already
-    /// carries whatever it should.
     #[test]
     fn a_preset_label_does_not_replace_a_preset_label() {
         let mut tab = tab("Claude Code");
@@ -393,8 +257,6 @@ mod tests {
         assert_eq!(tab.title(), "Claude Code");
     }
 
-    /// A CLI that generated nothing must leave the tab alone rather than blank
-    /// it - the sidebar would fall back to "Tab 2" out of nowhere.
     #[test]
     fn an_automatic_title_never_clears_one() {
         let mut tab = tab("OpenCode");
@@ -403,8 +265,6 @@ mod tests {
         assert_eq!(tab.title(), "OpenCode");
     }
 
-    /// Every turn of an agent would otherwise schedule a session write of
-    /// identical bytes.
     #[test]
     fn an_unchanged_title_reports_no_change() {
         let mut tab = tab("Codex");
@@ -421,9 +281,6 @@ mod tests {
         assert_eq!(tab.title(), "fix the flaky test");
     }
 
-    /// Only the top two ranks stop the search for a better name. A tab still
-    /// wearing a preset label or a placeholder is one worth reading a
-    /// transcript for.
     #[test]
     fn only_a_generated_or_user_title_settles_a_tab() {
         let mut tab = tab("Claude Code");
@@ -439,9 +296,6 @@ mod tests {
         assert!(tab.title_is_settled());
     }
 
-    /// Reset name drops all the way to the weakest rank, so the very next
-    /// thing the agent does can name the tab. Dropping only one rank would
-    /// leave a reset tab waiting on a title better than the one it had.
     #[test]
     fn unlock_title_reopens_naming_and_keeps_the_text() {
         let mut tab = tab("Claude Code");
@@ -460,8 +314,6 @@ mod tests {
         assert!(!tab("Claude Code").unlock_title());
     }
 
-    /// A blank rename is the inline editor being dismissed, not a request to
-    /// erase the name - `commit_rename` guards this too, doubly on purpose.
     #[test]
     fn a_blank_user_title_is_refused() {
         let mut tab = tab("Codex");
@@ -495,14 +347,9 @@ mod tests {
             Some(worktree.clone()),
         );
 
-        // Splitting from a pane deeper inside the same checkout keeps that
-        // directory: the boundary is the worktree, not its root.
         let inside = worktree.join("src/auth");
         assert_eq!(tab.confine_cwd(Some(inside.clone())), Some(inside));
 
-        // A pane that wandered out - a `cd` to the main checkout, to a sibling
-        // worktree, to anywhere - does not drag the next pane out with it.
-        // Without this the binding is decoration.
         assert_eq!(
             tab.confine_cwd(Some(std::path::PathBuf::from("/repo"))),
             Some(worktree.clone())
@@ -515,8 +362,6 @@ mod tests {
             "a sibling worktree is outside, however similar its path looks"
         );
 
-        // Nothing inherited at all still lands in the worktree, never at the
-        // process cwd.
         assert_eq!(tab.confine_cwd(None), Some(worktree));
     }
 }

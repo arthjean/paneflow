@@ -1,17 +1,9 @@
-//! Shared signed-asset download for self-update installers.
-
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 
-/// Download `asset_url` to `dest`, verify its detached minisign sibling, then
-/// promote the verified bytes into place.
-///
-/// The caller owns installer-specific policy through `max_bytes`, `timeout`,
-/// and `label`; the trust and staging mechanics stay identical across tar.gz,
-/// DMG, and MSI paths.
 pub(crate) fn download_verified_asset(
     asset_url: &str,
     dest: &Path,

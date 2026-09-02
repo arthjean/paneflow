@@ -1,27 +1,3 @@
-//! Paint sub-passes for `TerminalElement`.
-//!
-//! Each sub-module owns a specific visual layer. `paint()` in
-//! `terminal/element/mod.rs` orchestrates them in the fixed order:
-//!
-//! 1. `background`  - terminal background, per-cell bg rects, block quads
-//! 2. `selection`   - selection highlight rects
-//! 3. `overlay::search_highlights` - search match rects
-//! 4. `box_drawing` - connected single-stroke box glyphs
-//! 5. `kitty`      - graphics placements with a negative z-index
-//! 6. `text`        - batched `shape_line` glyph runs
-//! 7. `kitty`      - graphics placements with a zero or positive z-index
-//! 8. `overlay::hyperlink` - Ctrl+hover underline
-//! 9. `cursor`      - primary cursor + copy-mode anchor cursor
-//! 10. `scrollbar`   - right-edge thumb
-//! 11. `overlay::ime` - IME handler registration + preedit overlay
-//! 12. `overlay::exit` - process-exited centered message
-//!
-//! Every function here is a `pub fn` inside a `pub(super)` module - the
-//! parent module boundary gates access to `element`, and every function
-//! takes explicit args (no hidden state).
-//!
-//! Extracted from `terminal_element.rs` per US-015 of the src-app refactor PRD.
-
 use gpui::{Font, FontWeight};
 
 pub(super) mod background;
@@ -33,12 +9,6 @@ pub(super) mod scrollbar;
 pub(super) mod selection;
 pub(super) mod text;
 
-/// Convert terminal intensity into a distinct display weight.
-///
-/// SGR 1 must remain visibly distinct from regular terminal text. A single
-/// 100-point step turns the default 400 face into Medium 500, which is too
-/// subtle at terminal sizes. Keep at least a 200-point separation, use the
-/// bundled SemiBold face as the floor, and never reduce an already-heavy base.
 fn display_font_for_intensity(font: &Font, base_weight: FontWeight) -> Font {
     let mut display_font = font.clone();
     if font.weight == FontWeight::BOLD {

@@ -1,5 +1,3 @@
-// This process-level harness treats every setup or assertion failure as fatal,
-// so panic/expect/unwrap keep failures local and preserve the scenario context.
 #![allow(
     clippy::panic,
     clippy::unwrap_used,
@@ -410,8 +408,6 @@ fn supported_events_dispatch_through_the_process_boundary() {
         let frame = server.expect_frame(case.name);
         let params = assert_envelope(&frame, &case);
         if case.name == "claude_prompt" {
-            // The prompt crosses the real process boundary intact: the app
-            // names the tab after it.
             assert_eq!(params["hook_payload"]["prompt"], "hello");
         }
         if case.name == "codex_session_start" {

@@ -1,31 +1,3 @@
-//! A focused multi-line text area for the Composer.
-//!
-//! Design constraint: the existing single-line [`crate::widgets::text_input::TextInput`]
-//! is a faithful port of GPUI's `examples/input.rs` with full native text
-//! input. This module keeps the textarea smaller, but it still supports the
-//! production editing surface the composer needs:
-//!
-//! - Stores `content: String` with `\n` separators.
-//! - Stores cursor + selection anchor as byte offsets (UTF-8 safe via
-//!   grapheme-aware navigation through `unicode-segmentation`).
-//! - Shapes logical lines through GPUI, with soft-wrap aware hit testing.
-//! - Supports native text input and IME composition through
-//!   [`gpui::EntityInputHandler`].
-//! - Supports click-to-position, drag selection, double-click word selection
-//!   and triple-click line selection.
-//! - Up/Down movement remains logical-line based, not visual-row based.
-//!
-//! The widget exposes `pub` callbacks for Enter (parent decides --
-//! Composer maps Enter to send and Shift+Enter to insert `\n`) so the
-//! same widget works as a Send-on-Enter input or as a free-typing
-//! textarea.
-
-// Two methods on the public surface (`is_empty`, `set_value`) are
-// not exercised by US-016's Composer but are intentionally part of
-// the widget API so other callers (settings flows, US-019's
-// attachment composer, US-020's edit-message-fork) can reuse the
-// area without a fork. Silence the dead-code warning until those
-// land.
 #![allow(dead_code)]
 
 use std::cell::RefCell;
@@ -44,13 +16,7 @@ use gpui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
-/// Max delay between mouse clicks to count as a double / triple
-/// click. Mirrors the OS default on Linux/macOS (400 ms ~= GTK's
-/// `gtk-double-click-time`).
 const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
-/// Max byte distance between two clicks to still register as a
-/// multi-click. A small slop tolerates micro-movements of the mouse
-/// between mouse-up and mouse-down on the same character.
 const MULTI_CLICK_RADIUS: usize = 2;
 
 actions!(
@@ -74,26 +40,11 @@ actions!(
         TaCut,
         TaPaste,
         TaSubmit,
-        // US-106 (prd-agent-ui-refactor-2026-Q3.md): bypass the queue
-        // and send the current draft immediately, interrupting any
-        // in-flight turn. Bound to Ctrl+Shift+Enter (Cmd+Shift+Enter
-        // on macOS). Composer routes this to `send_prompt_immediate`.
         TaSubmitImmediate,
-        // The Composer overlays popups
-        // (`+`-menu, `@`-mention, `/`-slash) on top of the textarea.
-        // Escape dismisses an open popup; if none is open, the action
-        // is a no-op (no default behaviour to swallow). The AC
-        // mandates that the trigger character (`@` / `/`) stays in
-        // the buffer after dismissal, which falls out naturally
-        // because Escape never inserts text.
         TaEscape,
     ]
 );
 
-/// Register key bindings for every [`TextArea`] in the app. Call
-/// once at startup, after GPUI's App is created. Uses its own
-/// `PaneflowTextArea` key context so it does not conflict with
-/// `TextInput` bindings on the single-line widget.
 pub fn register_keybindings(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("backspace", TaBackspace, Some("PaneflowTextArea")),
@@ -108,18 +59,9 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("shift-down", TaSelectDown, Some("PaneflowTextArea")),
         KeyBinding::new("home", TaHome, Some("PaneflowTextArea")),
         KeyBinding::new("end", TaEnd, Some("PaneflowTextArea")),
-        // PRD AC #2: Shift+Enter for a literal newline; plain Enter
-        // fires `TaSubmit` which the Composer interprets as "send".
         KeyBinding::new("enter", TaSubmit, Some("PaneflowTextArea")),
         KeyBinding::new("shift-enter", TaInsertNewline, Some("PaneflowTextArea")),
-        // US-019: Escape dismisses the Composer's popups via the
-        // registered `on_escape` callback (no-op when none is set).
         KeyBinding::new("escape", TaEscape, Some("PaneflowTextArea")),
-        // EP-001 (cli-cockpit US-001): the Composer's explicit
-        // deliver-then-submit gesture. `secondary` resolves to Cmd on macOS
-        // and Ctrl elsewhere. Consumers that install no
-        // `on_submit_immediate` callback (inline renames) are unaffected -
-        // the action no-ops for them.
         KeyBinding::new(
             "secondary-enter",
             TaSubmitImmediate,
@@ -132,7 +74,6 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("cmd-c", TaCopy, Some("PaneflowTextArea")),
         KeyBinding::new("cmd-v", TaPaste, Some("PaneflowTextArea")),
         KeyBinding::new("cmd-x", TaCut, Some("PaneflowTextArea")),
-        // US-106: bypass the queue and send immediately.
         KeyBinding::new(
             "cmd-shift-enter",
             TaSubmitImmediate,
@@ -144,12 +85,8 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-a", TaSelectAll, Some("PaneflowTextArea")),
         KeyBinding::new("ctrl-c", TaCopy, Some("PaneflowTextArea")),
         KeyBinding::new("ctrl-v", TaPaste, Some("PaneflowTextArea")),
-        // Linux/Windows convention: terminal apps swallow Ctrl+V so
-        // `Ctrl+Shift+V` is the second-nature paste binding. We bind
-        // both so it works regardless of muscle memory.
         KeyBinding::new("ctrl-shift-v", TaPaste, Some("PaneflowTextArea")),
         KeyBinding::new("ctrl-x", TaCut, Some("PaneflowTextArea")),
-        // US-106: bypass the queue and send immediately.
         KeyBinding::new(
             "ctrl-shift-enter",
             TaSubmitImmediate,
@@ -158,43 +95,14 @@ pub fn register_keybindings(cx: &mut App) {
     ]);
 }
 
-/// Callback fired when the user hits Enter (no shift). Receives the
-/// current full content. Boxed so callers can store stateful
-/// closures (e.g. `move |text| send_runtime.send_prompt(text)`).
 type SubmitFn = Rc<RefCell<dyn FnMut(String, &mut Window, &mut App)>>;
 
-/// US-019: callback fired after any mutation that changes the content
-/// OR the cursor position. Used by the agents Composer to detect
-/// `@` / `/` triggers and to update completion popup state.
 type ChangeFn = Rc<RefCell<dyn FnMut(&str, usize, &mut Context<TextArea>)>>;
 
-/// US-019: callback fired on Escape. Boxed for the same reason as
-/// `SubmitFn`. The Composer's installer dismisses any open popup;
-/// when no popup is open the closure is still invoked but is a
-/// no-op, which is harmless.
 type EscapeFn = Rc<RefCell<dyn FnMut(&mut Window, &mut App)>>;
 
-/// US-106: callback fired on Ctrl+Shift+Enter (Cmd+Shift+Enter on
-/// macOS). Same shape as [`SubmitFn`] - the Composer routes this to
-/// `send_prompt_immediate`, which interrupts the current turn before
-/// dispatching the new prompt.
 type SubmitImmediateFn = Rc<RefCell<dyn FnMut(String, &mut Window, &mut App)>>;
 
-/// Inline decoration anchored to a byte range in [`TextArea::content`].
-///
-/// US-108a of `tasks/prd-agent-ui-refactor-2026-Q3.md`. The
-/// decoration shape is intentionally minimal in this first cut: a
-/// byte range + a display label. The paint pass overlays a chip-
-/// shaped rectangle on top of the underlying text bytes; the
-/// underlying string is preserved verbatim so prompt-send
-/// serialization (US-108b) can recover the literal `@path` token
-/// and emit the appropriate `ContentBlock::ResourceLink`.
-///
-/// Decorations are invalidated lazily on any structural edit
-/// (replace_selection / clear / set_value): the simplest correct
-/// behavior given that the cursor model is still byte-offset based.
-/// Atomic cursor + selection over decorations is the follow-up cut
-/// captured in the US-108a notes.
 #[derive(Debug, Clone)]
 pub struct Decoration {
     pub byte_range: Range<usize>,
@@ -204,21 +112,10 @@ pub struct Decoration {
 pub struct TextArea {
     pub focus_handle: FocusHandle,
     content: String,
-    /// Selected byte range. When empty, `start == end` is the cursor
-    /// position.
     selected_range: Range<usize>,
-    /// `true` when the selection grew leftward, so further
-    /// shift-left extends the start; otherwise extends the end.
     selection_reversed: bool,
     marked_range: Option<Range<usize>>,
-    /// Byte offset where the current mouse drag (or shift-click)
-    /// anchor lives. `Some` while the mouse is held down after a
-    /// click; `None` between drags. Used by `extend_selection_to` so
-    /// drag-select always grows from the original click position.
     drag_anchor: Option<usize>,
-    /// `(when, where, count)` of the most recent left-button click.
-    /// Lets `register_click` detect double / triple clicks by
-    /// checking the time delta + byte proximity to the previous one.
     last_click: Option<(Instant, usize, u8)>,
     placeholder: SharedString,
     on_submit: Option<SubmitFn>,
@@ -226,20 +123,11 @@ pub struct TextArea {
     on_escape: Option<EscapeFn>,
     on_submit_immediate: Option<SubmitImmediateFn>,
     last_bounds: Option<Bounds<Pixels>>,
-    /// EP-002 (Launch Pad): when `true`, Enter fires `on_submit` even on an
-    /// empty buffer (optional field in a form whose Enter confirms the whole
-    /// form). Default `false` - every other consumer keeps the empty no-op.
     submit_on_empty: bool,
-    /// Inline chip decorations (US-108a). Rendered as paint-pass
-    /// overlays in the `TextAreaContent` element; the underlying
-    /// `content` string still carries the literal bytes the
-    /// decoration shadows.
     decorations: Vec<Decoration>,
 }
 
 impl TextArea {
-    /// Build a new TextArea. `placeholder` shows in
-    /// `ui.muted` while content is empty.
     pub fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -260,15 +148,10 @@ impl TextArea {
         }
     }
 
-    /// Opt into firing `on_submit` on an empty buffer (optional form field
-    /// whose Enter confirms the whole form). See [`Self::submit_on_empty`].
     pub fn set_submit_on_empty(&mut self, value: bool) {
         self.submit_on_empty = value;
     }
 
-    /// Register a chip decoration spanning `byte_range` with display
-    /// label `label`. Overlapping decorations are rejected silently
-    /// so callers can fire-and-forget. US-108a.
     pub fn insert_decoration(&mut self, byte_range: Range<usize>, label: impl Into<SharedString>) {
         if byte_range.start >= byte_range.end || byte_range.end > self.content.len() {
             return;
@@ -286,25 +169,14 @@ impl TextArea {
         });
     }
 
-    /// Snapshot of the current decorations. Returned as a clone so
-    /// callers can iterate without holding a borrow.
     pub fn decorations(&self) -> Vec<Decoration> {
         self.decorations.clone()
     }
 
-    /// Remove every decoration. Called when the composer is reset
-    /// (Send / draft delete) and as the lazy invalidation step on
-    /// any text mutation.
     pub fn clear_decorations(&mut self) {
         self.decorations.clear();
     }
 
-    // -----------------------------------------------------------------
-    // Mouse-driven cursor + selection mutators
-    // -----------------------------------------------------------------
-
-    /// Collapse the selection to `offset` and arm the drag anchor so
-    /// a subsequent mouse-move extends from this point.
     pub(crate) fn place_cursor_at(&mut self, offset: usize, cx: &mut Context<Self>) {
         let clamped = clamp_to_grapheme(&self.content, offset);
         self.selected_range = clamped..clamped;
@@ -315,10 +187,6 @@ impl TextArea {
         self.fire_change(cx);
     }
 
-    /// Extend selection from the current `drag_anchor` (or, if no
-    /// anchor is set, the active cursor end - which is then promoted
-    /// to the persistent anchor for any subsequent drag) to `offset`.
-    /// Used by both shift+click and drag.
     pub(crate) fn extend_selection_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         let clamped = clamp_to_grapheme(&self.content, offset);
         let anchor = match self.drag_anchor {
@@ -341,10 +209,6 @@ impl TextArea {
         self.fire_change(cx);
     }
 
-    /// Double-click: snap the selection to the word under `offset`.
-    /// Word boundaries follow the same heuristic as most editors:
-    /// alphanumerics + underscore form a word, everything else is a
-    /// boundary.
     pub(crate) fn select_word_at(&mut self, offset: usize, cx: &mut Context<Self>) {
         let (start, end) = word_bounds(&self.content, offset);
         self.selected_range = start..end;
@@ -355,8 +219,6 @@ impl TextArea {
         self.fire_change(cx);
     }
 
-    /// Triple-click: snap the selection to the full line under
-    /// `offset` (excluding the trailing newline).
     pub(crate) fn select_line_at(&mut self, offset: usize, cx: &mut Context<Self>) {
         let start = line_start(&self.content, offset);
         let end = line_end(&self.content, offset);
@@ -372,10 +234,6 @@ impl TextArea {
         self.drag_anchor = None;
     }
 
-    /// Returns the click count for `offset`: 1 for a fresh click,
-    /// 2 if it lands close enough in time + position to the last
-    /// click, 3 if there was already a recent double-click. Caps at
-    /// 3 - further clicks roll back to single.
     pub(crate) fn register_click(&mut self, offset: usize) -> u8 {
         let now = Instant::now();
         let count = match self.last_click {
@@ -392,9 +250,6 @@ impl TextArea {
         count
     }
 
-    /// Install a callback that fires on plain Enter. The parent
-    /// typically captures the content + clears the area inside the
-    /// closure.
     pub fn on_submit<F>(&mut self, f: F)
     where
         F: FnMut(String, &mut Window, &mut App) + 'static,
@@ -402,11 +257,6 @@ impl TextArea {
         self.on_submit = Some(Rc::new(RefCell::new(f)));
     }
 
-    /// US-019: install a callback that fires after every content
-    /// mutation OR cursor movement. The Composer uses it to drive the
-    /// `@` / `/` completion popups -- detecting trigger characters
-    /// and re-running the file walk when the query changes.
-    /// Receives `(content, cursor_byte_offset, cx)`.
     pub fn on_change<F>(&mut self, f: F)
     where
         F: FnMut(&str, usize, &mut Context<TextArea>) + 'static,
@@ -414,9 +264,6 @@ impl TextArea {
         self.on_change = Some(Rc::new(RefCell::new(f)));
     }
 
-    /// US-019: install an Escape callback. Bound via `KeyBinding::new
-    /// ("escape", TaEscape, "PaneflowTextArea")` so it fires only
-    /// while the textarea is focused.
     pub fn on_escape<F>(&mut self, f: F)
     where
         F: FnMut(&mut Window, &mut App) + 'static,
@@ -424,10 +271,6 @@ impl TextArea {
         self.on_escape = Some(Rc::new(RefCell::new(f)));
     }
 
-    /// US-106: install a callback that fires on Ctrl+Shift+Enter
-    /// (Cmd+Shift+Enter on macOS). The Composer routes this to
-    /// `send_prompt_immediate`, which cancels the in-flight turn before
-    /// dispatching the new prompt. Mirrors [`Self::on_submit`].
     pub fn on_submit_immediate<F>(&mut self, f: F)
     where
         F: FnMut(String, &mut Window, &mut App) + 'static,
@@ -435,16 +278,10 @@ impl TextArea {
         self.on_submit_immediate = Some(Rc::new(RefCell::new(f)));
     }
 
-    /// US-019: current cursor byte offset. The Composer reads this to
-    /// scan backwards for an active `@<query>` / `/<query>` token.
     pub fn cursor_offset(&self) -> usize {
         self.cursor()
     }
 
-    /// US-019: replace the bytes in `range` with `replacement` and
-    /// place the cursor at the end of the inserted text. Public so
-    /// the Composer can splice a selected file path into the input
-    /// after an `@`-mention pick.
     pub fn replace_range(
         &mut self,
         range: Range<usize>,
@@ -456,10 +293,6 @@ impl TextArea {
         self.selected_range = start..end;
         self.selection_reversed = false;
         self.marked_range = None;
-        // US-032: `replace_selection` already ends with `fire_change` (the two
-        // calls were sequential, not nested, so `try_borrow_mut` didn't guard
-        // them). The duplicate re-fired `on_change`, re-triggering the Composer
-        // `@`-mention file-walk / popup after a path was picked.
         self.replace_selection(replacement, cx);
     }
 
@@ -492,9 +325,6 @@ impl TextArea {
         self.fire_change(cx);
     }
 
-    /// Select the full content. Used by callers (inline-rename flows) that
-    /// open a TextArea pre-populated with a value the user is expected to
-    /// replace - selecting it up front avoids a Ctrl+A round-trip.
     pub fn select_all_text(&mut self, cx: &mut Context<Self>) {
         self.selected_range = 0..self.content.len();
         self.selection_reversed = false;
@@ -620,9 +450,6 @@ impl TextArea {
 
     fn replace_selection(&mut self, replacement: &str, cx: &mut Context<Self>) {
         let range = self.selected_range.clone();
-        // US-108a: drop any decoration that overlaps the edit and
-        // shift every decoration after the edit by the byte delta
-        // so chips beyond the edit stay anchored to the same token.
         self.invalidate_decorations_after_edit(&range, replacement.len());
         self.content.replace_range(range.clone(), replacement);
         let new_cursor = range.start + replacement.len();
@@ -633,12 +460,6 @@ impl TextArea {
         self.fire_change(cx);
     }
 
-    /// US-108a: rebuild the decoration list after an edit that
-    /// removed bytes `range` and inserted `inserted_len` bytes in
-    /// their place. Decorations strictly before the edit keep their
-    /// range; decorations that overlap the edit are dropped (their
-    /// underlying token no longer exists); decorations strictly
-    /// after the edit shift by `delta = inserted_len - removed_len`.
     fn invalidate_decorations_after_edit(&mut self, range: &Range<usize>, inserted_len: usize) {
         if self.decorations.is_empty() {
             return;
@@ -659,10 +480,6 @@ impl TextArea {
         });
     }
 
-    /// US-019: dispatch to the registered `on_change` callback, if
-    /// any. Borrows the closure mutably so re-entrant changes inside
-    /// the callback are gracefully ignored (`try_borrow_mut` returns
-    /// Err on the second call, which we discard).
     fn fire_change(&mut self, cx: &mut Context<Self>) {
         let Some(cb) = self.on_change.clone() else {
             return;
@@ -672,16 +489,8 @@ impl TextArea {
         }
     }
 
-    // ---- Action handlers ----
-
     fn backspace(&mut self, _: &TaBackspace, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            // US-123 AC #1: when the cursor sits flush against the
-            // right edge of a chip decoration, the FIRST Backspace
-            // selects the whole chip (visual selected state); the
-            // SECOND Backspace then deletes it atomically -- the
-            // existing `replace_selection("")` path drops the
-            // decoration via `invalidate_decorations_after_edit`.
             if let Some(range) = self.decoration_ending_at(self.cursor()) {
                 self.selected_range = range;
                 cx.notify();
@@ -698,9 +507,6 @@ impl TextArea {
 
     fn delete(&mut self, _: &TaDelete, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            // Symmetrical to backspace (AC #1): when the cursor is at
-            // the LEFT edge of a chip, first Delete selects it; second
-            // Delete removes it atomically.
             if let Some(range) = self.decoration_starting_at(self.cursor()) {
                 self.selected_range = range;
                 cx.notify();
@@ -718,9 +524,6 @@ impl TextArea {
     fn left(&mut self, _: &TaLeft, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
             let prev = prev_grapheme(&self.content, self.cursor());
-            // US-123 AC #2: chips are not character-traversable. When
-            // the previous grapheme would land inside a decoration's
-            // byte range, jump over the whole chip to its left edge.
             let target = self
                 .decoration_containing(prev)
                 .map(|r| r.start)
@@ -733,9 +536,6 @@ impl TextArea {
 
     fn right(&mut self, _: &TaRight, _w: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            // Symmetrical to `left`: when the cursor would step INTO
-            // a decoration (or starts at its left edge), jump straight
-            // to the chip's right edge.
             let here = self.cursor();
             if let Some(range) = self.decoration_containing(here) {
                 self.move_to(range.end, cx);
@@ -748,9 +548,6 @@ impl TextArea {
         }
     }
 
-    /// US-123 helper: thin instance wrapper around the pure
-    /// [`find_decoration_containing`] -- kept inline so existing
-    /// callers stay terse.
     fn decoration_containing(&self, offset: usize) -> Option<Range<usize>> {
         find_decoration_containing(&self.decorations, offset)
     }
@@ -763,12 +560,6 @@ impl TextArea {
         find_decoration_starting_at(&self.decorations, offset)
     }
 
-    /// US-035: if `offset` would land STRICTLY inside a chip decoration, snap
-    /// to the chip boundary in the direction of travel. Chips are not
-    /// character-traversable (US-123); `Home`/`End`/`Up`/`Down` went straight
-    /// to `move_to(raw_offset)` and could park the cursor mid-chip, where a
-    /// following delete drops the `@path` token. The chip boundaries
-    /// themselves are valid stops, so only a strictly-interior offset snaps.
     fn snap_out_of_chip(&self, offset: usize, toward_start: bool) -> usize {
         match self.decoration_containing(offset) {
             Some(range) if offset > range.start => {
@@ -863,10 +654,6 @@ impl TextArea {
     }
 
     fn submit(&mut self, _: &TaSubmit, w: &mut Window, cx: &mut Context<Self>) {
-        // PRD AC #2: Enter sends. AC #9 (unhappy path): empty submit is a
-        // no-op - unless the consumer opted into empty submits (EP-002
-        // Launch Pad: the prompt is OPTIONAL, so Enter in the empty field
-        // must still confirm the form instead of being swallowed here).
         if !self.submit_on_empty && self.content.trim().is_empty() {
             return;
         }
@@ -874,16 +661,12 @@ impl TextArea {
             return;
         };
         let content = self.content.clone();
-        // Fire synchronously so the parent (Composer) can clear the
-        // area and dispatch the prompt in the same frame.
         if let Ok(mut callback) = cb.try_borrow_mut() {
             callback(content, w, cx);
         }
     }
 
     fn submit_immediate(&mut self, _: &TaSubmitImmediate, w: &mut Window, cx: &mut Context<Self>) {
-        // US-106 AC #8: empty submit is still a no-op -- there is
-        // nothing to send.
         if self.content.trim().is_empty() {
             return;
         }
@@ -896,8 +679,6 @@ impl TextArea {
         }
     }
 
-    /// Type a literal character into the area. Routed from the
-    /// element's `input_handler` in [`Render::render`].
     pub fn insert_char(&mut self, text: &str, cx: &mut Context<Self>) {
         if text.is_empty() {
             return;
@@ -1040,12 +821,6 @@ impl Render for TextArea {
         let sel = self.selected_range.clone();
         let marked_range = self.marked_range.clone();
 
-        // Custom Element does the heavy lifting: shapes each line in
-        // `prepaint`, paints text + cursor + selection, and registers
-        // mouse listeners for click-to-position + drag-to-select +
-        // double-click word / triple-click line. The outer div keeps
-        // the key context, focus tracking and all keyboard actions
-        // (Ctrl+C/V/X, Backspace, Delete, arrows, …).
         let content_view = TextAreaContent {
             entity: cx.weak_entity(),
             content,
@@ -1058,17 +833,11 @@ impl Render for TextArea {
             line_height: px(20.),
             text_color: ui.text,
             muted_color: ui.muted,
-            // Match the markdown selection background (markdown_style.rs:70)
-            // - accent at 30% alpha keeps the glyphs readable beneath
-            // the selection rect.
             selection_color: ui.accent.alpha(0.3),
             cursor_color: ui.accent,
             decorations: self.decorations.clone(),
             chip_bg: ui.subtle,
             chip_border: ui.border,
-            // US-004: subtle accent tint for the "just inserted"
-            // selected state. Alpha matches Zed's `Tinted` button
-            // background opacity (~0.18 against the surface bg).
             chip_accent_bg: ui.accent.alpha(0.18),
             chip_accent_border: ui.accent,
         };
@@ -1104,15 +873,6 @@ impl Render for TextArea {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Custom Element: shaped-text rendering + mouse hit-testing
-// ---------------------------------------------------------------------------
-
-/// Per-frame snapshot of the [`TextArea`] state, packaged as a custom
-/// GPUI `Element` so we can shape each line in `prepaint` (giving us
-/// pixel-exact x positions for every character) and then hit-test
-/// mouse clicks in `paint`. Plain `div` children don't expose the
-/// shaped-text geometry, hence the dedicated element.
 struct TextAreaContent {
     entity: WeakEntity<TextArea>,
     content: SharedString,
@@ -1127,21 +887,10 @@ struct TextAreaContent {
     muted_color: Hsla,
     selection_color: Hsla,
     cursor_color: Hsla,
-    /// US-108a: decorations to paint as chips over the shaped text.
     decorations: Vec<Decoration>,
-    /// US-108a: surface color for the chip fill. Read from the
-    /// active theme at render time so the chip blends with the
-    /// composer's card surface.
     chip_bg: Hsla,
-    /// US-108a: border / outline color for the chip.
     chip_border: Hsla,
-    /// US-004 (visual-parity): tinted fill used when the chip is
-    /// "selected" (cursor immediately follows the chip's last byte).
-    /// Mirrors Zed `ButtonStyle::Tinted(TintColor::Accent)` applied
-    /// via `selected_style(..)` in `mention_crease.rs:103`.
     chip_accent_bg: Hsla,
-    /// US-004 (visual-parity): accent border used in the selected
-    /// state.
     chip_accent_border: Hsla,
 }
 
@@ -1152,10 +901,6 @@ impl IntoElement for TextAreaContent {
     }
 }
 
-/// Carried from `prepaint` into `paint` and into the mouse-listener
-/// closures. The shaped lines are wrapped in `Arc` so we can share
-/// them across the three `on_mouse_event` callbacks without cloning
-/// the glyph layout buffers.
 struct TextAreaPrepaint {
     lines: Arc<Vec<ShapedLineInfo>>,
     hitbox: Hitbox,
@@ -1163,23 +908,10 @@ struct TextAreaPrepaint {
 
 #[derive(Clone)]
 struct ShapedLineInfo {
-    /// Byte offset of the first character on this line within the
-    /// full textarea content. Advances past every newline.
     byte_start: usize,
-    /// Byte offset of the line's end (exclusive of the trailing
-    /// newline). For an empty trailing line this equals `byte_start`.
     byte_end: usize,
-    /// Top-left Y position where the wrapped line will paint.
     y_top: Pixels,
-    /// Total visual height of this logical line after wrapping:
-    /// `line_height * (1 + wrap_boundaries.len())`. Used by hit-test
-    /// to find which logical line a click landed on when content
-    /// soft-wraps across multiple visual rows.
     visual_height: Pixels,
-    /// The wrapped, shaped line - owns the glyph layout + wrap
-    /// boundaries and exposes `position_for_index` /
-    /// `closest_index_for_position` for cursor placement and
-    /// hit-testing across wrap boundaries.
     wrapped: Arc<WrappedLine>,
 }
 
@@ -1252,18 +984,6 @@ impl Element for TextAreaContent {
         window: &mut Window,
         _cx: &mut App,
     ) -> (LayoutId, ()) {
-        // Height must account for soft-wrap rows, not just `\n`
-        // separators, otherwise a long single line that wraps
-        // visually overflows onto the toolbar below (the previous
-        // `content.matches('\n').count()` heuristic ignored wrap
-        // boundaries entirely -- only Ctrl+Enter grew the box).
-        //
-        // Use `request_measured_layout` so the closure receives the
-        // actual available width from the layout engine and can
-        // shape the text against it before reporting a height. The
-        // closure runs during compute_layout (prepaint), which is
-        // when the textarea's parent flex container knows how wide
-        // it is.
         let content = self.content.clone();
         let font_size = self.font_size;
         let line_height = self.line_height;
@@ -1301,8 +1021,6 @@ impl Element for TextAreaContent {
                             total_rows += lines[0].wrap_boundaries().len() + 1;
                         }
                         _ => {
-                            // Empty segment (trailing newline) still
-                            // occupies one row for the caret.
                             total_rows += 1;
                         }
                     }
@@ -1333,9 +1051,6 @@ impl Element for TextAreaContent {
         let mut lines = Vec::with_capacity(segments.len());
         let mut byte_offset = 0usize;
         let mut y = bounds.origin.y;
-        // Wrap at the textarea's available width so long input lines
-        // soft-wrap to a new visual row instead of running off the
-        // right edge of the composer card.
         let wrap_width = Some(bounds.size.width);
         for (i, segment) in segments.iter().enumerate() {
             let len = segment.len();
@@ -1352,10 +1067,6 @@ impl Element for TextAreaContent {
                 .text_system()
                 .shape_text(text, self.font_size, &runs, wrap_width, None)
                 .unwrap_or_default();
-            // `shape_text` may return multiple `WrappedLine`s when the
-            // input contains newlines - we already split on `\n`, so
-            // each segment shapes into exactly one `WrappedLine`. Take
-            // it; skip empty / failed segments silently.
             if let Some(wrapped) = wrapped_lines.drain(..).next() {
                 let wrap_rows = wrapped.wrap_boundaries().len() + 1;
                 let visual_height = px(self.line_height.as_f32() * wrap_rows as f32);
@@ -1368,8 +1079,6 @@ impl Element for TextAreaContent {
                 });
                 y += visual_height;
             } else {
-                // Empty segment (e.g. trailing newline) still needs a
-                // visual row so the caret can sit on it.
                 lines.push(ShapedLineInfo {
                     byte_start: byte_offset,
                     byte_end,
@@ -1412,10 +1121,6 @@ impl Element for TextAreaContent {
 
         let content_empty = self.content.is_empty();
 
-        // 1. Selection highlight - paint first so the glyphs draw on
-        // top. Each logical line may span multiple visual rows after
-        // wrapping; `paint_wrapped_selection` handles single-row and
-        // multi-row cases.
         if !self.selected_range.is_empty() {
             for line in prepaint.lines.iter() {
                 let Some((start_local, end_local)) =
@@ -1436,8 +1141,6 @@ impl Element for TextAreaContent {
             }
         }
 
-        // 2. Glyphs - placeholder for the empty state, otherwise the
-        // wrapped lines we built in `prepaint`.
         if content_empty {
             let run = TextRun {
                 len: self.placeholder.len(),
@@ -1459,8 +1162,6 @@ impl Element for TextAreaContent {
                 )
                 .unwrap_or_default();
             if let Some(placeholder) = placeholder_lines.drain(..).next() {
-                // Indent so the blinking caret doesn't overlap the
-                // first placeholder glyph.
                 let origin = if self.focused {
                     point(bounds.origin.x + px(4.0), bounds.origin.y)
                 } else {
@@ -1489,15 +1190,6 @@ impl Element for TextAreaContent {
             }
         }
 
-        // US-108a: decoration chip overlays. Each decoration paints
-        // a filled, rounded rectangle behind a label that REPLACES
-        // the underlying glyphs (the underlying text was already
-        // drawn -- the chip sits on top, so the bare bytes only
-        // peek through if rendering fails). The chip rect is
-        // computed via `position_for_index` on the wrapped line:
-        // start and end x positions delimit the chip's horizontal
-        // span; the y is the line's `y_top` plus the position's
-        // wrap-row offset.
         if !self.content.is_empty() {
             for deco in &self.decorations {
                 let Some(line) = prepaint.lines.iter().find(|l| {
@@ -1517,28 +1209,14 @@ impl Element for TextAreaContent {
                 else {
                     continue;
                 };
-                // Same-row chip only -- a chip that straddles a
-                // soft-wrap boundary is too fiddly for this first
-                // cut and would need a multi-segment paint. The
-                // mention popover commits its insert as a single
-                // contiguous run so soft-wrap inside a chip is rare.
                 if start_pos.y != end_pos.y {
                     continue;
                 }
                 let chip_x = bounds.origin.x + start_pos.x - px(2.);
-                // US-004: chip height = line_height - 1px (Zed
-                // `mention_crease.rs:95-97`). Offset y by 0.5 so the
-                // shorter chip sits visually centred within the line.
                 let chip_h = self.line_height - px(1.);
                 let chip_y = line.y_top + start_pos.y + px(0.5);
                 let chip_w = (end_pos.x - start_pos.x) + px(4.);
                 let chip_bounds = Bounds::new(point(chip_x, chip_y), size(chip_w, chip_h));
-                // US-004 (visual-parity): "selected" state when the
-                // cursor sits immediately after the chip's last byte
-                // - mirrors Zed's `selected_style(ButtonStyle::Tinted
-                // (TintColor::Accent))` after a fresh mention insert.
-                // Moving the cursor away returns the chip to the
-                // Outlined default styling.
                 let is_selected = deco.byte_range.end == self.cursor;
                 let (fill, border) = if is_selected {
                     (self.chip_accent_bg, self.chip_accent_border)
@@ -1553,9 +1231,6 @@ impl Element for TextAreaContent {
                     border,
                     gpui::BorderStyle::Solid,
                 ));
-                // Paint the label on top so the chip shows the
-                // resolved display text even when the underlying
-                // bytes differ (e.g. `@src/main.rs` -> "main.rs").
                 let label_run = TextRun {
                     len: deco.label.len(),
                     font: window.text_style().font(),
@@ -1588,9 +1263,6 @@ impl Element for TextAreaContent {
             }
         }
 
-        // 3. Caret. `position_for_index` accounts for wrap rows so
-        // the caret jumps to the correct visual row even when the
-        // user is mid-soft-wrapped-line.
         if self.focused {
             let (caret_x, caret_y) = if content_empty {
                 (bounds.origin.x, bounds.origin.y)
@@ -1616,9 +1288,6 @@ impl Element for TextAreaContent {
             window.paint_quad(fill(caret, self.cursor_color));
         }
 
-        // 4. Mouse listeners. Each closure clones what it needs
-        // (entity, shaped lines, hitbox, geometry) so it stays valid
-        // past the paint frame.
         let entity_down = self.entity.clone();
         let entity_move = self.entity.clone();
         let entity_up = self.entity.clone();
@@ -1628,8 +1297,6 @@ impl Element for TextAreaContent {
         let line_height = self.line_height;
         let bounds_origin = bounds.origin;
 
-        // Mouse down: focus + place caret. Shift extends, double-click
-        // selects the word, triple-click the line.
         window.on_mouse_event(move |ev: &MouseDownEvent, phase, w, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -1659,9 +1326,6 @@ impl Element for TextAreaContent {
                 .ok();
         });
 
-        // Mouse move while dragging: extend selection. No hitbox
-        // check so drags past the textarea bounds still grow the
-        // selection - `hit_test` clamps to the nearest line / edge.
         window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _w, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -1679,9 +1343,6 @@ impl Element for TextAreaContent {
                 .ok();
         });
 
-        // Mouse up: clear the drag anchor so the next mouse-down
-        // starts a fresh selection rather than extending the prior
-        // one.
         window.on_mouse_event(move |ev: &MouseUpEvent, phase, _w, cx| {
             if phase != DispatchPhase::Bubble {
                 return;
@@ -1698,11 +1359,6 @@ impl Element for TextAreaContent {
     }
 }
 
-/// Convert a mouse position into the byte offset within the textarea
-/// content. Walks the wrapped lines to find which logical line owns
-/// the click's Y, then defers to `closest_index_for_position` which
-/// is wrap-aware (returns the right byte even when the line spans
-/// multiple visual rows).
 fn hit_test(
     lines: &[ShapedLineInfo],
     origin: Point<Pixels>,
@@ -1712,9 +1368,6 @@ fn hit_test(
     if lines.is_empty() {
         return 0;
     }
-    // Find which logical line owns this Y. Clamp out-of-range clicks
-    // to the first / last line so drags past the edges still update
-    // the selection.
     let line = lines
         .iter()
         .find(|l| pos.y >= l.y_top && pos.y < l.y_top + l.visual_height)
@@ -1726,8 +1379,6 @@ fn hit_test(
             }
         })
         .unwrap_or(&lines[0]);
-    // Position relative to the line's top-left, used by the wrapped
-    // layout to pick the right visual row + character offset.
     let local = point(
         (pos.x - origin.x).max(px(0.0)),
         (pos.y - line.y_top).max(px(0.0)),
@@ -1739,10 +1390,6 @@ fn hit_test(
     line.byte_start + in_line.min(line.byte_end - line.byte_start)
 }
 
-/// Paint the selection highlight for the byte range
-/// `[start_local, end_local)` within a wrapped line. Handles
-/// single-row and multi-row cases by querying `position_for_index`
-/// at both ends and walking the wrap boundaries in between.
 #[allow(clippy::too_many_arguments)]
 fn paint_wrapped_selection(
     wrapped: &WrappedLine,
@@ -1762,14 +1409,9 @@ fn paint_wrapped_selection(
     };
     let start_abs = point(line_origin.x + start_pos.x, line_origin.y + start_pos.y);
     let end_abs = point(line_origin.x + end_pos.x, line_origin.y + end_pos.y);
-    // Right edge of selectable area = the wrap width (where text
-    // soft-wraps). For the last visual row of a logical line we use
-    // the line's own content width so the highlight doesn't trail
-    // past the last glyph.
     let row_right = line_origin.x + available_width;
 
     if (start_abs.y.as_f32() - end_abs.y.as_f32()).abs() < line_height.as_f32() * 0.5 {
-        // Same visual row.
         let rect = Bounds::new(
             start_abs,
             size((end_abs.x - start_abs.x).max(px(1.0)), line_height),
@@ -1778,8 +1420,6 @@ fn paint_wrapped_selection(
         return;
     }
 
-    // Multi-row: first row → end of available width, middle rows →
-    // full width, last row → from left to end_x.
     let first_row = Bounds::new(
         start_abs,
         size((row_right - start_abs.x).max(px(1.0)), line_height),
@@ -1800,9 +1440,6 @@ fn paint_wrapped_selection(
     window.paint_quad(fill(last_row, color));
 }
 
-/// Intersection of `[sel.start, sel.end)` with the line span
-/// `[line_start, line_end]`. Returns local-to-line byte offsets, or
-/// `None` when the selection is empty or doesn't touch this line.
 fn sel_overlap_local(
     sel: &Range<usize>,
     line_start: usize,
@@ -1819,19 +1456,10 @@ fn sel_overlap_local(
     Some((a - line_start, b - line_start))
 }
 
-/// Word boundaries around `offset`. Alphanumerics + underscore form
-/// a word; everything else is a boundary. Used by double-click word
-/// selection.
-/// US-108a: whether two byte ranges share any overlap.
 fn ranges_overlap(a: &Range<usize>, b: &Range<usize>) -> bool {
     a.start < b.end && b.start < a.end
 }
 
-/// US-123: decoration whose byte range contains `offset`. Inclusive
-/// on `start`, exclusive on `end` -- a cursor at `end` is "just past"
-/// the chip, NOT inside. Pure (no `self`) so the boundary semantics
-/// are unit-testable without constructing a `TextArea` (which needs
-/// a GPUI `FocusHandle` -- only constructible inside `Context<Self>`).
 fn find_decoration_containing(decorations: &[Decoration], offset: usize) -> Option<Range<usize>> {
     decorations
         .iter()
@@ -1839,8 +1467,6 @@ fn find_decoration_containing(decorations: &[Decoration], offset: usize) -> Opti
         .map(|d| d.byte_range.clone())
 }
 
-/// US-123: decoration whose right edge sits at `offset` (cursor is
-/// just past the chip). Used by backspace's first-press select.
 fn find_decoration_ending_at(decorations: &[Decoration], offset: usize) -> Option<Range<usize>> {
     decorations
         .iter()
@@ -1848,8 +1474,6 @@ fn find_decoration_ending_at(decorations: &[Decoration], offset: usize) -> Optio
         .map(|d| d.byte_range.clone())
 }
 
-/// US-123: decoration whose left edge sits at `offset` (cursor is
-/// just before the chip). Used by delete's first-press select.
 fn find_decoration_starting_at(decorations: &[Decoration], offset: usize) -> Option<Range<usize>> {
     decorations
         .iter()
@@ -1884,10 +1508,6 @@ fn word_bounds(content: &str, offset: usize) -> (usize, usize) {
     (start, end)
 }
 
-// ---------------------------------------------------------------------------
-// Grapheme / line navigation helpers (private)
-// ---------------------------------------------------------------------------
-
 fn prev_grapheme(s: &str, offset: usize) -> usize {
     s.grapheme_indices(true)
         .rev()
@@ -1911,7 +1531,6 @@ fn clamp_to_grapheme(s: &str, offset: usize) -> usize {
     if off == 0 || off == s.len() {
         return off;
     }
-    // Snap to the nearest grapheme boundary at or before `off`.
     s.grapheme_indices(true)
         .map(|(i, g)| (i, i + g.len()))
         .find_map(|(start, end)| {
@@ -1924,9 +1543,6 @@ fn clamp_to_grapheme(s: &str, offset: usize) -> usize {
         .unwrap_or(off)
 }
 
-/// Byte offset of the `\n` that closes the line containing
-/// `offset`, OR the end-of-string if no further `\n`. The cursor at
-/// this offset still sits on the same logical line.
 fn line_end(s: &str, offset: usize) -> usize {
     s[offset..]
         .find('\n')
@@ -1934,22 +1550,17 @@ fn line_end(s: &str, offset: usize) -> usize {
         .unwrap_or(s.len())
 }
 
-/// Byte offset of the character that starts the line containing
-/// `offset`. Zero when there is no preceding `\n`.
 fn line_start(s: &str, offset: usize) -> usize {
     s[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0)
 }
 
-/// Move the cursor "one line up". Targets the same visual column
-/// (computed in chars from the start of the current line). Returns
-/// 0 when already on the first line.
 fn offset_one_line_up(s: &str, offset: usize) -> usize {
     let cur_start = line_start(s, offset);
     if cur_start == 0 {
         return 0;
     }
     let col = s[cur_start..offset].chars().count();
-    let prev_end = cur_start - 1; // index of `\n` that closes the previous line
+    let prev_end = cur_start - 1;
     let prev_start = line_start(s, prev_end);
     let prev_line = &s[prev_start..prev_end];
     let mut col_iter = prev_line.char_indices();
@@ -1964,8 +1575,6 @@ fn offset_one_line_up(s: &str, offset: usize) -> usize {
     }
 }
 
-/// Move the cursor "one line down". Mirrors
-/// [`offset_one_line_up`].
 fn offset_one_line_down(s: &str, offset: usize) -> usize {
     let cur_start = line_start(s, offset);
     let cur_end = line_end(s, offset);
@@ -1988,10 +1597,6 @@ fn offset_one_line_down(s: &str, offset: usize) -> usize {
     }
 }
 
-/// Walk `content` line-by-line, yielding each line and whether it
-/// is closed by a trailing `\n`. Avoids the allocation of `lines()`'s
-/// owned iterator AND keeps trailing-newline information so the
-/// caller can advance the byte cursor correctly.
 fn split_keeping_newlines(s: &str) -> impl Iterator<Item = LineSlice<'_>> {
     let mut out = Vec::new();
     let bytes = s.as_bytes();
@@ -2084,10 +1689,8 @@ mod tests {
 
     #[test]
     fn line_up_preserves_column() {
-        // "abcde\nxy" -- cursor at offset 8 (end of "xy"), column 2.
         let s = "abcde\nxy";
         let up = offset_one_line_up(s, 8);
-        // Up should land on offset 2 (column 2 of "abcde").
         assert_eq!(up, 2);
     }
 
@@ -2099,10 +1702,8 @@ mod tests {
 
     #[test]
     fn line_down_preserves_column_or_clamps() {
-        // "abcde\nxy" -- cursor at column 4 of line 0; line 1 has 2 chars.
         let s = "abcde\nxy";
         let down = offset_one_line_down(s, 4);
-        // Column 4 on "xy" exceeds length, so clamps to end of "xy" -> 8.
         assert_eq!(down, 8);
     }
 
@@ -2126,8 +1727,6 @@ mod tests {
 
     #[test]
     fn sel_overlap_returns_intersection() {
-        // `sel_overlap_local` returns offsets LOCAL to the line, so the
-        // returned tuple is (sel_clamp - line_start, ...).
         let sel = 2..8;
         assert_eq!(sel_overlap_local(&sel, 0, 5), Some((2, 5)));
         assert_eq!(sel_overlap_local(&sel, 6, 10), Some((0, 2)));
@@ -2142,14 +1741,6 @@ mod tests {
         assert!(ranges_overlap(&(0..10), &(3..6)));
     }
 
-    // ----------------------------------------------------------------
-    // US-123: atomic-cursor helpers. These tests cover the pure
-    // boundary lookup functions; the cursor-movement integration is
-    // exercised manually inside the running app (GPUI `Context<Self>`
-    // cannot be constructed from a unit test, so the action handlers
-    // themselves are not in scope here).
-    // ----------------------------------------------------------------
-
     fn make_decoration(byte_range: Range<usize>, label: &str) -> Decoration {
         Decoration {
             byte_range,
@@ -2160,23 +1751,17 @@ mod tests {
     #[test]
     fn decoration_containing_inclusive_start_exclusive_end() {
         let decos = vec![make_decoration(6..14, "file.rs")];
-        // Offset just inside the left edge -> inside.
         assert!(find_decoration_containing(&decos, 6).is_some());
         assert!(find_decoration_containing(&decos, 10).is_some());
         assert!(find_decoration_containing(&decos, 13).is_some());
-        // Right-edge offset is OUTSIDE -- cursor sitting at the end
-        // of the chip is "just past" the decoration.
         assert!(find_decoration_containing(&decos, 14).is_none());
-        // Outside the chip entirely.
         assert!(find_decoration_containing(&decos, 5).is_none());
     }
 
     #[test]
     fn decoration_ending_at_matches_right_edge_only() {
         let decos = vec![make_decoration(6..14, "file.rs")];
-        // Cursor just past the chip -- backspace's first-press anchor.
         assert!(find_decoration_ending_at(&decos, 14).is_some());
-        // Anywhere else -> None.
         assert!(find_decoration_ending_at(&decos, 13).is_none());
         assert!(find_decoration_ending_at(&decos, 15).is_none());
     }
@@ -2184,7 +1769,6 @@ mod tests {
     #[test]
     fn decoration_starting_at_matches_left_edge_only() {
         let decos = vec![make_decoration(6..14, "file.rs")];
-        // Cursor at the chip's left edge -- delete's first-press anchor.
         assert!(find_decoration_starting_at(&decos, 6).is_some());
         assert!(find_decoration_starting_at(&decos, 5).is_none());
         assert!(find_decoration_starting_at(&decos, 7).is_none());
@@ -2192,8 +1776,6 @@ mod tests {
 
     #[test]
     fn decoration_helpers_handle_multiple_chips() {
-        // Two chips: one near the start, one near the end. Each helper
-        // must locate the matching one independently.
         let decos = vec![make_decoration(0..2, "a"), make_decoration(12..14, "b")];
         assert!(find_decoration_containing(&decos, 0).is_some());
         assert!(find_decoration_containing(&decos, 13).is_some());

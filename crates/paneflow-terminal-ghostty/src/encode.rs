@@ -56,8 +56,6 @@ impl DisplayTerminal {
                 self.terminal.raw(),
             );
         }
-        // The call above rewrites the whole option set from terminal state,
-        // so the embedder's own settings go back on top of it.
         self.apply_key_encoder_overrides();
         unsafe {
             sys::ghostty_key_event_set_key(self.key_event.raw(), key);
@@ -118,14 +116,8 @@ impl DisplayTerminal {
             padding_left: geometry.padding_left,
         };
         let track_last_cell = true;
-        // `setopt_from_terminal` clears the encoder's last-cell memory, which
-        // is exactly the state that collapses a stream of pixel-level motion
-        // into one report per cell. Reconfiguring on every event therefore
-        // defeats the deduplication entirely, so it only runs when the mouse
-        // modes have actually changed.
         let mouse_modes = crate::engine::MouseModes::from(self.modes()?);
         if self.mouse_encoder_modes != Some(mouse_modes) {
-            // SAFETY: both handles are owned by `self`.
             unsafe {
                 sys::ghostty_mouse_encoder_setopt_from_terminal(
                     self.mouse_encoder.raw(),
@@ -134,11 +126,7 @@ impl DisplayTerminal {
             }
             self.mouse_encoder_modes = Some(mouse_modes);
         }
-        // Pushing the size also clears the last-cell memory, so it only goes
-        // in when the geometry actually changed.
         if self.mouse_encoder_size != Some(geometry) {
-            // SAFETY: the option takes a `GhosttyMouseEncoderSize*` that
-            // outlives the call.
             unsafe {
                 sys::ghostty_mouse_encoder_setopt(
                     self.mouse_encoder.raw(),

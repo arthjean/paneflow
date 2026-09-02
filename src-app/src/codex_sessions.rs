@@ -1,19 +1,3 @@
-//! Codex CLI session discovery - reads the on-disk transcript store at
-//! `~/.codex/sessions/YYYY/MM/DD/rollout-<TS>-<uuid>.jsonl` and produces
-//! unified [`SessionMeta`](crate::agent_sessions::SessionMeta) entries
-//! for the sessions popover.
-//!
-//! Format reference: PR openai/codex#3380 (RolloutItem envelope) and
-//! community discussion #3827. The first line of every rollout file is a
-//! `type:"session_meta"` envelope with `payload.id`, `payload.cwd`,
-//! `payload.timestamp`, `payload.thread_source` and `payload.git.branch`.
-//! Codex doesn't emit an `ai-title`-equivalent record, so the title falls
-//! back to the first human-authored message (see
-//! [`user_text_from_record`] for the three record shapes that carry one).
-//!
-//! All filesystem work happens off the GPUI main thread - call
-//! [`read_sessions_for_cwd`] from inside `smol::unblock`.
-
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -21,34 +5,12 @@ use std::time::SystemTime;
 
 use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta, clean_session_label};
 
-/// Maximum number of leading lines to scan for the first user message.
-/// In practice this lands within the first ~10 lines (measured on real
-/// 0.149.1 rollouts: `session_meta`, `task_started`, three `developer`
-/// preludes, one injected `user` envelope, `world_state`, `turn_context`,
-/// then the prompt on line 9). The cap is generous so unusual prelude
-/// sequences still produce a label.
 const TITLE_SCAN_LIMIT: usize = 256;
 
-/// Byte budget for the same scan, and the binding constraint in practice:
-/// those prelude lines are large (30-56 KB each), so line 9 sits at ~178 KB
-/// into the file. 1 MiB leaves ~5x headroom while bounding the read - the
-/// line cap alone would allow 256 x [`MAX_LINE_BYTES`] = 16 MiB per file, on
-/// every sidebar refresh, for every rollout on disk.
 const TITLE_SCAN_BYTES: u64 = 1024 * 1024;
 
-/// Dedicated cap for line 1. [`MAX_LINE_BYTES`] (64 KiB) is the right bound
-/// for body records but not for `session_meta`, which embeds
-/// `base_instructions` + `dynamic_tools`: 49.6 KB measured on a current
-/// rollout, and it grows with every tool Codex ships. Overrunning the cap
-/// costs the whole file (id and cwd live nowhere else), so this one line gets
-/// its own, much larger bound. Still bounded, and still one line per file.
 const SESSION_META_MAX_BYTES: u64 = 1024 * 1024;
 
-/// Prefixes of the synthetic `role:"user"` records Codex injects around a real
-/// prompt: repo instructions, skill bodies, plugin catalogs, desktop context.
-/// They are indistinguishable from human input at the record level, so the
-/// title scan filters them by prefix - the same approach as cmux's
-/// `realCodexUserMessage`, extended with the envelopes 0.149.1 added.
 const SYNTHETIC_USER_PREFIXES: [&str; 8] = [
     "# AGENTS.md",
     "<app-context",
@@ -60,42 +22,20 @@ const SYNTHETIC_USER_PREFIXES: [&str; 8] = [
     "<user_instructions",
 ];
 
-/// EP-004 US-016: deeper line cap for the attribution scan, which walks the
-/// whole rollout to capture the model (`turn_context.payload.model`) and the
-/// last cumulative `token_count` usage event. Bounded, and run ONLY on the
-/// attribution path (the diff column load), never on the popover title scan.
 const MODEL_USAGE_SCAN_LIMIT: usize = 20_000;
 
-// US-013: per-line JSONL read cap, centralized (see `crate::limits`).
 use crate::limits::MAX_LINE_BYTES;
 
-/// Cap rendered first-user-message labels at this character count.
 const LABEL_MAX_CHARS: usize = 80;
 
-/// Compute the absolute path of `~/.codex/sessions/`. Returns `None` when
-/// `dirs::home_dir()` fails.
 pub fn sessions_root() -> Option<PathBuf> {
     Some(dirs::home_dir()?.join(".codex").join("sessions"))
 }
 
-/// Read all Codex CLI sessions whose recorded `cwd` matches the given
-/// directory. Returns sessions sorted by timestamp descending (most
-/// recent first).
-///
-/// **Blocking I/O** - call from inside `smol::unblock` or
-/// `cx.background_executor`. Codex's flat date-bucketed layout
-/// (`YYYY/MM/DD`) means we must scan every rollout file and read the
-/// first line to filter by `cwd`. For the typical user (≤ 200 sessions)
-/// this is comfortably under 100 ms, because a file whose `session_meta`
-/// records another `cwd` is abandoned on line 1 (see the `cwd_filter`
-/// argument of [`read_session_meta_inner`]) instead of having its body
-/// scanned for a title that would then be thrown away.
 pub fn read_sessions_for_cwd(cwd: &str) -> Vec<SessionMeta> {
     read_sessions_for_cwd_with_omitted(cwd).0
 }
 
-/// Like [`read_sessions_for_cwd`], but also reports how many older matching
-/// sessions were omitted by the sidebar retention cap.
 pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
     read_sessions_for_cwd_inner(
         cwd,
@@ -104,10 +44,6 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
     )
 }
 
-/// EP-004 US-014/US-016: like [`read_sessions_for_cwd`] but the retained
-/// attribution candidates are scanned deeper to populate `model`
-/// (`turn_context`) + cumulative `usage` (last `token_count` event).
-/// **Blocking I/O** - call from inside `smol::unblock`.
 pub fn read_sessions_with_usage_for_attribution(cwd: &str, branch: &str) -> Vec<SessionMeta> {
     let Some(root) = sessions_root() else {
         return Vec::new();
@@ -128,12 +64,7 @@ pub fn read_sessions_with_usage_for_attribution(cwd: &str, branch: &str) -> Vec<
 
     let enriched: Vec<SessionMeta> = candidates
         .into_iter()
-        .map(|(fallback, path)| {
-            // The deep re-read can fail where the cheap head scan succeeded
-            // (an I/O error, a body that outruns the usage budget); keep the
-            // already-matched head result rather than dropping the column.
-            read_session_meta_inner(&path, true, Some(cwd)).unwrap_or(fallback)
-        })
+        .map(|(fallback, path)| read_session_meta_inner(&path, true, Some(cwd)).unwrap_or(fallback))
         .collect();
     crate::agent_sessions::match_sessions_to_column(enriched, cwd, branch)
 }
@@ -195,14 +126,8 @@ fn read_sessions_for_cwd_inner(
     result
 }
 
-/// Codex's layout is `YYYY/MM/DD/*.jsonl` - three levels below the root - so
-/// a depth bound of 8 leaves generous slack while making a pathologically deep
-/// tree (or any symlink cycle that slips past the `file_type` guard) terminate
-/// instead of overflowing the stack (U-003).
 const MAX_WALK_DEPTH: u32 = 8;
 
-/// Walk Codex's `YYYY/MM/DD/*.jsonl` layout depth-first and invoke
-/// `visit` on every `.jsonl` leaf.
 fn walk_jsonl_files(dir: &Path, visit: &mut impl FnMut(&Path)) {
     walk_jsonl_files_bounded(dir, MAX_WALK_DEPTH, visit);
 }
@@ -212,12 +137,6 @@ fn walk_jsonl_files_bounded(dir: &Path, depth_left: u32, visit: &mut impl FnMut(
         return;
     };
     for entry in entries.flatten() {
-        // U-003: `DirEntry::file_type()` reports the entry's *own* type (from
-        // the readdir record, or an lstat) and does NOT follow symlinks -
-        // unlike `Path::is_dir()`, which dereferences. A symlinked directory
-        // therefore reports as neither dir nor file and is skipped, so a
-        // planted cycle (`sessions/loop -> ../../sessions`) can never be
-        // descended. Entries whose type can't be read are skipped.
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
@@ -258,26 +177,11 @@ fn is_jsonl_file(path: &Path) -> bool {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
 }
 
-/// Title-only wrapper, used by the unit tests (production routes through
-/// [`read_sessions_for_cwd_inner`] → [`read_session_meta_inner`] directly).
 #[cfg(test)]
 fn read_session_meta(path: &Path) -> Option<SessionMeta> {
     read_session_meta_inner(path, false, None)
 }
 
-/// Read the head of a rollout file: extract the `session_meta` envelope
-/// (line 1) and the first user message (typically a few lines later). When
-/// `scan_usage` (EP-004 attribution path) the tail scan also captures the model
-/// (`turn_context`) and the last cumulative `token_count` usage.
-///
-/// `cwd_filter` short-circuits the scan: Codex's store is one flat date tree
-/// for every project, so most files on disk belong to another directory and
-/// their body is pure waste to read. Passing the caller's cwd stops those
-/// files at line 1, which is what makes [`TITLE_SCAN_BYTES`] affordable.
-///
-/// Returns `None` for a rollout that is not worth a row: a sub-agent thread
-/// (it belongs to its parent, not to the sidebar) or a session that never ran
-/// a turn.
 fn read_session_meta_inner(
     path: &Path,
     scan_usage: bool,
@@ -287,11 +191,7 @@ fn read_session_meta_inner(
     let mut reader = BufReader::new(file);
     let mut buf = String::new();
 
-    // Line 1 must be session_meta or we skip the file.
     buf.clear();
-    // US-010 (cli-hardening-followup-2026-Q3): cap line read at
-    // SESSION_META_MAX_BYTES. Truncated line fails serde_json parse below
-    // and the file is skipped -- same outcome as a malformed line.
     let n = reader
         .by_ref()
         .take(SESSION_META_MAX_BYTES)
@@ -314,13 +214,6 @@ fn read_session_meta_inner(
         return None;
     }
     let payload = first_value.get("payload")?;
-    // A sub-agent spawned by `/root` gets its own rollout file, tagged
-    // `thread_source:"subagent"` with the spawning thread in
-    // `payload.source.subagent.thread_spawn.parent_thread_id`. Its
-    // `payload.id` is its own, so without this guard every sub-agent turn
-    // surfaced in the sidebar as a first-class session (four such rows in a
-    // single day of real use, all untitled). The parent thread already
-    // represents that work.
     if payload.get("thread_source").and_then(|v| v.as_str()) == Some("subagent") {
         return None;
     }
@@ -334,13 +227,6 @@ fn read_session_meta_inner(
     {
         return None;
     }
-    // session_id lands verbatim in `codex resume <id>`, so hold it to the
-    // strict `^[A-Za-z0-9_-]+$` allow-list (Codex ids are UUIDs): rejects a
-    // `\r`/`\n` that would submit injected text and a `;`/space that would
-    // chain a second shell command. cwd is display-only today but a future
-    // `cd <cwd>` prefix would inherit the gap, and a path legitimately carries
-    // `/` + spaces, so keep the control-char guard for it. Mirrors (and
-    // tightens) the guard in `opencode_sessions::record_to_session`.
     if !crate::agent_sessions::is_valid_session_id(&session_id)
         || cwd.chars().any(|c| c.is_control())
     {
@@ -350,9 +236,6 @@ fn read_session_meta_inner(
         );
         return None;
     }
-    // Inner timestamp is the session start; outer envelope timestamp is
-    // the moment the file was opened. They're typically within seconds
-    // of each other - prefer the inner (session-relative) value.
     let timestamp = payload
         .get("timestamp")
         .and_then(|v| v.as_str())
@@ -360,9 +243,6 @@ fn read_session_meta_inner(
         .unwrap_or("")
         .to_string();
 
-    // Codex records the branch it started on in `session_meta.payload.git`
-    // (alongside `commit_hash` and `repository_url`). Control-char guard for
-    // the same reason as `cwd` above: it is display-only today.
     let git_branch = payload
         .get("git")
         .and_then(|g| g.get("branch"))
@@ -371,19 +251,12 @@ fn read_session_meta_inner(
         .unwrap_or("")
         .to_string();
 
-    // Title-only path keeps the cheap first-user-message scan untouched. The
-    // attribution path runs the deeper tail scan (model + usage).
     let scan = if scan_usage {
         scan_tail_with_usage(&mut reader)
     } else {
         scan_head_for_title(&mut reader)
     };
 
-    // A rollout whose only line is `session_meta` is a thread the user opened
-    // and closed without sending anything. It has no title and nothing to
-    // resume, so it must not take a sidebar row - it would render as a raw
-    // hex id. Keyed on "the scan saw a body record at all" rather than on the
-    // summary, so a session whose prompt is unlabelable still gets its row.
     if !scan.saw_activity {
         return None;
     }
@@ -400,23 +273,14 @@ fn read_session_meta_inner(
     })
 }
 
-/// What one head/tail scan pass recovered from a rollout body.
 #[derive(Default)]
 struct RolloutScan {
     summary: Option<String>,
     model: Option<String>,
     usage: Option<AssistantUsage>,
-    /// Whether any body record was parsed at all - the empty-session signal.
     saw_activity: bool,
 }
 
-/// EP-004 US-016: deeper tail scan for the attribution path. Walks up to
-/// [`MODEL_USAGE_SCAN_LIMIT`] lines capturing the first user message (label),
-/// the model (`turn_context.payload.model`), and the LAST cumulative
-/// `token_count` usage event. Codex reports `token_count` as a running total,
-/// so the last one wins (not summed). Usage is normalized to the shared
-/// [`AssistantUsage`] tier semantics (input = uncached input, cache_read =
-/// cached subset) so the pricing table treats Claude and Codex uniformly.
 fn scan_tail_with_usage(reader: &mut BufReader<fs::File>) -> RolloutScan {
     let mut scan = RolloutScan::default();
     let mut buf = String::new();
@@ -482,7 +346,6 @@ fn scan_tail_with_usage(reader: &mut BufReader<fs::File>) -> RolloutScan {
                         cache_read: cached,
                         cache_creation: 0,
                     };
-                    // Cumulative - last non-empty wins.
                     if !u.is_empty() {
                         scan.usage = Some(u);
                     }
@@ -494,15 +357,6 @@ fn scan_tail_with_usage(reader: &mut BufReader<fs::File>) -> RolloutScan {
     scan
 }
 
-/// Scan the head of a rollout for the first human-authored message, bounded by
-/// [`TITLE_SCAN_LIMIT`] lines AND [`TITLE_SCAN_BYTES`].
-///
-/// Signature is concrete on `BufReader<File>` rather than the
-/// generic `R: BufRead` it used to be: the `by_ref().take()`
-/// pattern needed by US-010 for the per-line byte cap fails to
-/// type-check against `&mut R` (the compiler auto-derefs to `R`
-/// and the move blocks the borrow). The only call site already
-/// passes a `BufReader<File>`, so the generic was vestigial.
 fn scan_head_for_title(reader: &mut BufReader<fs::File>) -> RolloutScan {
     let mut scan = RolloutScan::default();
     let mut buf = String::new();
@@ -512,10 +366,6 @@ fn scan_head_for_title(reader: &mut BufReader<fs::File>) -> RolloutScan {
             break;
         }
         buf.clear();
-        // US-010 (cli-hardening-followup-2026-Q3): cap each line read.
-        // Oversize lines fall through to `serde_json::from_str` which
-        // errors and the loop `continue`s -- the scan moves on to the
-        // next chunk without OOMing.
         let n = match reader
             .by_ref()
             .take(MAX_LINE_BYTES.min(budget))
@@ -547,28 +397,10 @@ fn scan_head_for_title(reader: &mut BufReader<fs::File>) -> RolloutScan {
     scan
 }
 
-/// Whether this record proves the rollout carries a real turn. Codex writes a
-/// `session_meta`-only file for a thread the user opened and closed without
-/// sending anything; any body record at all means the session actually ran.
 fn is_activity_record(record_type: Option<&str>) -> bool {
     matches!(record_type, Some("response_item") | Some("event_msg"))
 }
 
-/// Extract the first human-authored text carried by one rollout record.
-/// Three shapes, all of which appear in the wild:
-///
-/// 1. `event_msg` / `item_completed` with `item.type == "UserMessage"` - the
-///    authoritative marker in Codex 0.149.x. It fires exactly once per real
-///    user turn (three occurrences in a 1675-line rollout with three prompts)
-///    and never for an injected envelope.
-/// 2. `response_item` / `message` / `role == "user"` with `input_text`
-///    content - the same turn, one line earlier, and the only shape older
-///    rollouts carry. It also carries every injected envelope, hence the
-///    [`SYNTHETIC_USER_PREFIXES`] filter in [`clean_user_message`].
-/// 3. `event_msg` / `user_message` / `message` - the pre-0.149 shape. Codex no
-///    longer emits it (zero occurrences across current rollouts), which is why
-///    the sidebar fell back to raw hex ids; kept so older sessions keep their
-///    label.
 fn user_text_from_record(value: &serde_json::Value) -> Option<String> {
     let payload = value.get("payload")?;
     match value.get("type").and_then(|v| v.as_str())? {
@@ -595,10 +427,6 @@ fn user_text_from_record(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-/// First content block of type `kind` that survives [`clean_user_message`].
-/// Codex packs several blocks into one record (a real 0.149.1 prompt line
-/// carries three), and the envelopes come first, so this walks past them
-/// rather than judging the record on its opening block alone.
 fn first_labelable_block(blocks: &[serde_json::Value], kind: &str) -> Option<String> {
     blocks
         .iter()
@@ -607,8 +435,6 @@ fn first_labelable_block(blocks: &[serde_json::Value], kind: &str) -> Option<Str
         .find_map(clean_user_message)
 }
 
-/// Clean one candidate label, rejecting the synthetic envelopes Codex injects
-/// as `role:"user"` records around the real prompt.
 fn clean_user_message(raw: &str) -> Option<String> {
     let trimmed = raw.trim_start();
     if SYNTHETIC_USER_PREFIXES
@@ -624,9 +450,6 @@ fn clean_user_message(raw: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Reproduce the real Codex rollout sequence observed in the wild:
-    /// line 1 is `session_meta`, then a few state events, then the first
-    /// `event_msg` `user_message`.
     #[test]
     fn read_session_meta_extracts_envelope_and_first_user_message() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -655,10 +478,6 @@ mod tests {
 
     #[test]
     fn usage_scan_captures_model_and_normalizes_token_count() {
-        // EP-004 US-016: scan_usage=true captures `turn_context.payload.model`
-        // and the LAST cumulative `token_count`, normalized to the shared tier
-        // semantics (input = uncached input, cache_read = cached subset). The
-        // title-only path leaves model/usage None.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("rollout-usage.jsonl");
         std::fs::write(
@@ -685,7 +504,6 @@ mod tests {
         let with_usage = read_session_meta_inner(&path, true, None).expect("meta");
         assert_eq!(with_usage.model.as_deref(), Some("gpt-5"));
         let usage = with_usage.usage.expect("usage parsed");
-        // Last cumulative event wins: 900 total input, 300 cached → 600 uncached.
         assert_eq!(usage.input, 600);
         assert_eq!(usage.cache_read, 300);
         assert_eq!(usage.output, 150);
@@ -753,9 +571,6 @@ mod tests {
 
     #[test]
     fn session_id_control_char_guard() {
-        // payload.id carries CR+LF + an injected shell command. Without
-        // the guard, the id flows into `codex resume <id>` and submits
-        // `rm -rf ~` as a separate PTY command.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("malicious.jsonl");
         std::fs::write(
@@ -790,12 +605,6 @@ mod tests {
         assert_eq!(meta.session_id, "019dc9ea-38d7-7372-9cc4-253ce944d41b");
     }
 
-    /// Codex 0.149.1 shape: the real prompt arrives as a `response_item`
-    /// `role:"user"` line and again as an `event_msg` `item_completed`
-    /// `UserMessage`. Neither existed in the matcher, which is why every
-    /// recent Codex row rendered as a raw hex id. The injected envelopes that
-    /// precede it (`<app-context>`, `# AGENTS.md`, `<recommended_plugins>`)
-    /// must not win the title race.
     #[test]
     fn read_session_meta_skips_injected_envelopes_and_takes_the_real_prompt() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -824,14 +633,9 @@ mod tests {
             meta.summary.as_deref(),
             Some("Corrige la sidebar agent sessions")
         );
-        // session_meta.payload.git.branch, not the hardcoded empty string the
-        // reader used to emit.
         assert_eq!(meta.git_branch, "main");
     }
 
-    /// The `item_completed` marker alone must produce a label: it is the only
-    /// user-turn signal a rollout carries once the `response_item` line
-    /// outruns the per-line cap.
     #[test]
     fn item_completed_user_message_yields_the_label() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -850,8 +654,6 @@ mod tests {
         assert_eq!(meta.summary.as_deref(), Some("ship it"));
     }
 
-    /// A sub-agent thread carries its own `payload.id` and would otherwise
-    /// list as a first-class session next to its parent.
     #[test]
     fn subagent_rollout_is_not_a_session_row() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -872,8 +674,6 @@ mod tests {
         );
     }
 
-    /// A thread opened and closed without a turn is a `session_meta`-only
-    /// file. It has no title and nothing to resume.
     #[test]
     fn session_meta_only_rollout_is_dropped() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -889,8 +689,6 @@ mod tests {
         assert!(read_session_meta(&path).is_none());
     }
 
-    /// `cwd_filter` is what keeps the byte budget affordable: a rollout from
-    /// another project must be abandoned before its body is read.
     #[test]
     fn cwd_filter_rejects_a_foreign_rollout_at_line_one() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -914,9 +712,6 @@ mod tests {
 
     #[test]
     fn cwd_control_char_guard() {
-        // Same class of injection as session_id, just one field over.
-        // cwd is display-only today but a future `cd <cwd>` prefix
-        // would inherit the gap without any git-blame signal.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("malicious-cwd.jsonl");
         std::fs::write(
@@ -933,13 +728,9 @@ mod tests {
         );
     }
 
-    /// U-003: a deep-but-acyclic tree within the depth bound still yields every
-    /// real `.jsonl` leaf - the guard must not drop legitimate sessions.
     #[test]
     fn walk_discovers_jsonl_in_deep_acyclic_tree() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // Codex's real shape is 3 levels (YYYY/MM/DD); go a little deeper to
-        // prove the bound (8) leaves slack.
         let leaf_dir = dir.path().join("2026/06/08/extra");
         std::fs::create_dir_all(&leaf_dir).expect("mkdir -p");
         let jsonl = leaf_dir.join("rollout.jsonl");
@@ -951,13 +742,9 @@ mod tests {
         assert_eq!(found, vec![jsonl], "the one real .jsonl must be discovered");
     }
 
-    /// U-003: the depth bound stops recursion past `MAX_WALK_DEPTH`, so an
-    /// arbitrarily deep tree terminates rather than overflowing the stack.
     #[test]
     fn walk_stops_past_depth_bound() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // Build MAX_WALK_DEPTH + 4 nested dirs, with a .jsonl just past the
-        // bound. The walk must terminate and must NOT visit the too-deep file.
         let mut deep = dir.path().to_path_buf();
         for i in 0..(MAX_WALK_DEPTH + 4) {
             deep = deep.join(format!("d{i}"));
@@ -970,16 +757,6 @@ mod tests {
         assert_eq!(count, 0, "a leaf past the depth bound must not be visited");
     }
 
-    /// U-003: a symlink cycle pointing back at an ancestor must not be
-    /// descended (it would otherwise recurse forever and stack-overflow).
-    /// Unix-only because creating a symlink on Windows needs elevation/dev
-    /// mode. The Windows equivalent (NTFS junction / `IO_REPARSE_TAG_*`) is
-    /// reported by `DirEntry::file_type()` on the pinned toolchain (Rust 1.95)
-    /// with `is_symlink() = true` and `is_dir() = false` for native Win10/11
-    /// volumes - so the same `is_dir()` guard skips it. Treated as
-    /// inspection-only per US-002 AC4 (no Win symlink CI leg yet); a junction
-    /// on a CIFS/remote-mapped volume is the residual gap to revisit if a
-    /// Windows integration test lands.
     #[cfg(unix)]
     #[test]
     fn walk_does_not_follow_symlink_cycle() {
@@ -988,14 +765,11 @@ mod tests {
         std::fs::create_dir_all(&real).expect("mkdir -p");
         let jsonl = real.join("rollout.jsonl");
         std::fs::write(&jsonl, b"{}\n").expect("write");
-        // sessions/2026/loop -> sessions (points at an ancestor: a cycle).
         std::os::unix::fs::symlink(dir.path(), dir.path().join("2026/loop"))
             .expect("create symlink cycle");
 
         let mut found = Vec::new();
         walk_jsonl_files(dir.path(), &mut |p| found.push(p.to_path_buf()));
-        // Terminates (no stack overflow) and still finds the one real file
-        // exactly once - the symlinked directory was never descended.
         assert_eq!(found, vec![jsonl]);
     }
 }

@@ -1,9 +1,3 @@
-//! Conversion between `LayoutTree` and `LayoutNode` (the session-persistence
-//! schema). `serialize` captures each leaf's tabs + CWD + scrollback, while
-//! `serialize_without_scrollback` keeps terminal output process-local. The
-//! reverse `from_layout_node` consumes a pane deque and calls `spawn` for any
-//! leaves beyond what was handed in.
-
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -22,31 +16,18 @@ enum ScrollbackCapture {
 }
 
 impl LayoutTree {
-    /// Serialize the layout tree to a `LayoutNode` (config schema type).
-    ///
-    /// Each leaf produces a `LayoutNode::Pane` with one `SurfaceDefinition` per
-    /// tab, capturing the terminal's CWD and OSC title. The active tab is marked
-    /// with `focus: true`. Each container produces a `LayoutNode::Split` with
-    /// per-child `ratios` and recursive children.
     pub fn serialize(&self, cx: &App) -> LayoutNode {
         self.serialize_with(cx, ScrollbackCapture::Inline)
     }
 
-    /// Serialize session metadata without carrying terminal output into the
-    /// next process. The schema field remains present as `None` for backward
-    /// compatibility with existing session files.
     pub fn serialize_without_scrollback(&self, cx: &App) -> LayoutNode {
         self.serialize_with(cx, ScrollbackCapture::Omit)
     }
 
-    /// Inner serializer parametrised by the [`ScrollbackCapture`] strategy.
     fn serialize_with(&self, cx: &App, capture: ScrollbackCapture) -> LayoutNode {
         match self {
             LayoutTree::Leaf(pane) => {
                 let pane_ref = pane.read(cx);
-                // EP-002 US-004: a pane holds exactly one surface, so the
-                // serialized list has at most one entry and it is always the
-                // focused one.
                 let surfaces: Vec<SurfaceDefinition> = std::iter::once(&pane_ref.surface)
                     .map(|tab| match tab {
                         crate::pane::PaneSurface::Terminal(tv) => {
@@ -138,11 +119,6 @@ impl LayoutTree {
         }
     }
 
-    /// Rebuild a `LayoutTree` from a `LayoutNode` (config schema).
-    ///
-    /// Panes are consumed from `panes` in left-to-right order for each leaf.
-    /// When `panes` is exhausted, `spawn` is called with the current `LayoutNode`
-    /// so the caller can extract per-surface metadata (e.g. CWD) for new panes.
     pub fn from_layout_node(
         node: &LayoutNode,
         panes: &mut VecDeque<Entity<Pane>>,
@@ -220,10 +196,6 @@ mod tests {
         }
     }
 
-    /// US-002 (prd-cli-tab-hierarchy): serialization emits one `LayoutNode` per
-    /// tab, the zoomed tab contributes its *saved* (un-zoomed) arrangement, and
-    /// the tree survives a round-trip through `from_layout_node`. Switching the
-    /// visible tab must not disturb either tab's zoom state.
     #[gpui::test]
     fn two_tab_workspace_with_one_zoomed_round_trips(cx: &mut TestAppContext) {
         let cx = cx.add_empty_window();
@@ -236,8 +208,6 @@ mod tests {
         );
         let mut ws = Workspace::with_layout_and_id(1, "ws", std::path::PathBuf::new(), flat);
 
-        // Second tab, zoomed on `c`: root holds the single zoomed leaf while
-        // `saved_layout` keeps the full arrangement.
         let mut zoomed = Tab::new("zoomed", Some(LayoutTree::Leaf(c.clone())));
         zoomed.saved_layout = Some(LayoutTree::new_split(
             SplitDirection::Horizontal,
@@ -248,9 +218,6 @@ mod tests {
         assert_eq!(ws.active_tab_idx(), 1);
         assert!(ws.is_zoomed(), "the active tab is the zoomed one");
 
-        // Per-tab serialization: the flat tab yields its two leaves, the zoomed
-        // one yields the saved arrangement (two leaves), not the single leaf
-        // `root` currently displays.
         let nodes: Vec<LayoutNode> = cx.update(|_, cx| {
             ws.tabs()
                 .iter()
@@ -265,7 +232,6 @@ mod tests {
             "zoomed tab serializes its saved layout, not the zoomed leaf"
         );
 
-        // Round-trip the zoomed tab's node back into a tree with the same panes.
         let mut panes: VecDeque<Entity<Pane>> = VecDeque::from(vec![c.clone(), d.clone()]);
         let restored = LayoutTree::from_layout_node(&nodes[1], &mut panes, &mut |_| {
             panic!("round-trip must not need to spawn a pane")
@@ -276,7 +242,6 @@ mod tests {
             "round-trip preserves the saved arrangement"
         );
 
-        // Zoom is per tab and survives switching the visible tab.
         ws.set_active_tab(0);
         assert!(!ws.is_zoomed(), "the flat tab is not zoomed");
         ws.set_active_tab(1);

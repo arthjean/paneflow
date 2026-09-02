@@ -1,9 +1,3 @@
-//! Integrated single-stroke box drawing.
-//!
-//! Font-rendered box glyphs can expose side-bearing gaps between cells. This
-//! pass draws their topology directly to shared grid boundaries, matching the
-//! integrated-glyph approach used by Ghostty's sprite font.
-
 use gpui::{Hsla, PathBuilder, Pixels, Point, Window, point, px};
 
 use super::super::{BoxDrawingGlyph, BoxDrawingShape, LayoutState};

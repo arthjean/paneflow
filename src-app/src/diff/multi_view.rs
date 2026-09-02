@@ -1,14 +1,3 @@
-//! US-014 (prd-git-diff-mode-2026-Q3.md): Multi-project scope - a **repo tab
-//! bar** above a single, full-height [`DiffView`] for the selected repo.
-//!
-//! Each open repo is a tab; the selected repo's `DiffView` fills the whole area
-//! (its own worktree columns side by side, its own internal scroll), so two
-//! repos never compete for vertical space and there is no inner/outer scroll
-//! fight. Repo views mount lazily and then stay cached; switching tabs suspends
-//! the outgoing view's watchers while retaining loaded rows for instant return.
-//! The base ref chosen in one repo is carried to the next tab (shared comparison
-//! base across repos).
-
 use std::path::PathBuf;
 
 use gpui::{
@@ -24,33 +13,18 @@ use crate::ui_primitives::AnimatedHoverExt;
 struct Group {
     repo_root: PathBuf,
     repo_name: String,
-    /// Seed kept so the `DiffView` can be (re)mounted on select without
-    /// re-collecting from the app.
     worktrees: Vec<DiffWorktree>,
-    /// Lazy + warm: created on first selection, then retained with watchers
-    /// suspended while the repo tab is not selected.
     view: Option<gpui::Entity<DiffView>>,
 }
 
-/// Hosts the per-repo diff tabs for the Multi-project scope.
 pub struct MultiRepoDiffView {
     groups: Vec<Group>,
-    /// Index of the repo whose `DiffView` is mounted + shown.
     selected: usize,
-    /// Shared comparison base carried across tabs: when the user picks a base in
-    /// one repo, switching to another seeds it with the same base. `None` until
-    /// a repo resolves/sets one.
     base_ref: Option<String>,
-    /// Scope breadcrumb fragment PUSHED by `render_diff_main` every frame and
-    /// consumed by the next `render` (push-only contract, same as
-    /// `DiffView::scope_slot`). Mounted at the left of the repo-tab strip so
-    /// Multi-project also has a single chrome row.
     pub scope_slot: Option<gpui::AnyElement>,
 }
 
 impl MultiRepoDiffView {
-    /// Build from the repo groups (US-014). The first repo is selected (and
-    /// mounted) by default; the rest mount on demand when their tab is clicked.
     pub fn new(groups: Vec<RepoGroup>, cx: &mut Context<Self>) -> Self {
         let groups: Vec<Group> = groups
             .into_iter()
@@ -71,8 +45,6 @@ impl MultiRepoDiffView {
         this
     }
 
-    /// Mount the selected repo's `DiffView` if not already, seeding it with the
-    /// shared base ref so cross-repo comparison stays on one base.
     fn mount_selected(&mut self, cx: &mut Context<Self>) {
         let base = self.base_ref.clone();
         if let Some(g) = self.groups.get_mut(self.selected)
@@ -88,14 +60,11 @@ impl MultiRepoDiffView {
         if idx == self.selected || idx >= self.groups.len() {
             return;
         }
-        // Carry the outgoing repo's base forward so the next tab opens on it.
         if let Some(g) = self.groups.get(self.selected)
             && let Some(view) = &g.view
         {
             self.base_ref = Some(view.read(cx).base_ref().to_string());
         }
-        // Keep the outgoing entity warm, but drop its watcher handles so hidden
-        // repos cannot trigger diff rebuilds.
         if let Some(g) = self.groups.get(self.selected)
             && let Some(view) = g.view.clone()
         {
@@ -112,9 +81,6 @@ impl MultiRepoDiffView {
         cx.notify();
     }
 
-    /// US-016 warm-resume passthrough: suspend all cached child `DiffView`s so
-    /// the Multi-project host releases watchers when the diff surface is hidden,
-    /// while retaining loaded rows for instant warm resume.
     pub fn suspend(&mut self, cx: &mut Context<Self>) {
         for group in &self.groups {
             if let Some(view) = group.view.clone() {
@@ -123,7 +89,6 @@ impl MultiRepoDiffView {
         }
     }
 
-    /// US-016 warm-resume passthrough: re-arm + revalidate the mounted child.
     pub fn resume(&mut self, cx: &mut Context<Self>) {
         if let Some(g) = self.groups.get(self.selected)
             && let Some(view) = g.view.clone()
@@ -132,8 +97,6 @@ impl MultiRepoDiffView {
         }
     }
 
-    /// Per-branch changed-file lists of the selected repo's `DiffView`, for the
-    /// multi-branch sidebar (one section per worktree column of that repo).
     pub fn active_column_file_lists(
         &self,
         cx: &App,
@@ -145,8 +108,6 @@ impl MultiRepoDiffView {
             .unwrap_or_default()
     }
 
-    /// Selected column index of the selected repo's `DiffView` (active-branch
-    /// highlight in the sidebar).
     pub fn active_selected_column(&self, cx: &App) -> usize {
         self.groups
             .get(self.selected)
@@ -155,8 +116,6 @@ impl MultiRepoDiffView {
             .unwrap_or(0)
     }
 
-    /// Select column `col_idx` of the selected repo's `DiffView` and scroll its
-    /// body to `path` (sidebar file click in a multi-branch section).
     pub fn active_select_and_jump(
         &self,
         col_idx: usize,
@@ -176,9 +135,6 @@ impl Render for MultiRepoDiffView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
 
-        // Single chrome row (Codex redesign): scope breadcrumb (host slot) at
-        // the left, then the repo tabs. No own background and no border - the
-        // strip sits directly on the panel (`ui.base`).
         let scope_slot = self.scope_slot.take();
         let mut tabs = div()
             .id("multi-diff-tabs")
@@ -204,11 +160,6 @@ impl Render for MultiRepoDiffView {
             let active = i == self.selected;
             let resting_bg = ui.subtle.opacity(0.0);
             tabs = tabs.child(
-                // Flat browser-style tab: accent underline + content-bg + bold
-                // when active; muted + transparent (border blends into the bar)
-                // otherwise. The 2px bottom border is always present so the row
-                // height does not jump between states. Repo name only - no git
-                // icon, no worktree-count badge (kept deliberately minimal).
                 div()
                     .id(SharedString::from(format!("multi-diff-tab-{i}")))
                     .flex_none()

@@ -1,10 +1,3 @@
-//! OSC 52 clipboard gate.
-//!
-//! The terminal engine raises clipboard requests from whatever is running in
-//! the PTY. `ClipboardGate` is the policy checked at that source: a request is
-//! honored only while the pane is focused and the configured OSC 52 mode
-//! allows the direction being requested.
-
 use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Default)]

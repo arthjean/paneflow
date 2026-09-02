@@ -1,10 +1,3 @@
-//! Terminal state and view - PTY management and GPUI view wrapper.
-//!
-//! Ghostty is the only terminal engine: `ghostty_session` owns the libghostty
-//! parser, the grid, and the `portable-pty` child it drives, while
-//! `pty_session` holds `TerminalState` and the GPUI-facing lifecycle. The
-//! TerminalView creates a TerminalElement for cell-by-cell rendering.
-
 #[cfg(test)]
 pub(crate) mod bench_corpus;
 pub mod blink;

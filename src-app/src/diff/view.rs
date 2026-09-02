@@ -1,17 +1,3 @@
-//! `DiffView` - GPUI entity hosting the multi-worktree diff viewer.
-//!
-//! Pipeline: each sibling worktree becomes a column whose diff
-//! (`merge-base..working-tree`) is computed off the main thread
-//! (`smol::unblock`) and applied back via `this.update` from a spawned task -
-//! never mutated inside `render`. A per-view `generation` counter discards
-//! stale results when a refresh is superseded (US-007 last-write-wins).
-//!
-//! EP-004: N columns render side by side in one tab (US-012) with a shared
-//! base-branch selector (US-013), per-column hide/show (US-014), and live
-//! refresh on working-tree / HEAD / index / base-ref changes via an
-//! entity-owned `notify` watcher (US-015). Rendering is virtualized by the
-//! custom `DiffElement` in both unified and split modes (US-006/US-009).
-
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -49,10 +35,6 @@ mod watcher;
 
 pub use model::{DiffWorktree, FileEntry, FileListState, aggregate_file_lists};
 
-/// Drag payload for a diff branch pane dragged by its column header (inc 5).
-/// Carries the source column index; dropping on another pane's edge restructures
-/// the [`Arrange`] tree to split toward that edge. Cloned cheaply by GPUI for
-/// the duration of the drag.
 #[derive(Clone)]
 pub struct DiffColumnDrag {
     pub source_idx: usize,
@@ -76,52 +58,24 @@ use super::rows::{
     split_offsets, unified_file_spans, unified_hunk_tops, unified_max_line_no, unified_offsets,
 };
 
-/// When jumping to a hunk, leave this much room above its first changed line so
-/// the pinned sticky file header (24px) does not cover it.
 const HUNK_JUMP_MARGIN: f32 = 28.0;
 
-/// Column-header bar height. The per-branch Review popover anchors just below it;
-/// named so a header-height change has a single place to update (mirrors how
-/// `HUNK_JUMP_MARGIN` centralizes the sticky-header offset).
 const COL_HEADER_HEIGHT: f32 = 30.0;
 
-/// Bottom of the toolbar base-ref chip; the base-branch popover anchors just
-/// under it.
 const TOOLBAR_CHIP_BOTTOM: f32 = 31.0;
 
-/// Below this estimated per-column width the split view auto-falls back to
-/// unified (mirroring Zed's `too_narrow_for_split`).
 const MIN_SPLIT_COLUMN_PX: f32 = 360.0;
 
-/// Live-refresh debounce. Long enough to coalesce a build's file churn into one
-/// re-diff per window, short enough to feel live (US-015).
 const REFRESH_DEBOUNCE: Duration = Duration::from_millis(500);
 
-/// After a reload, ignore further watcher events for this long. Prevents a
-/// reload's own churn (or a concurrent build) from immediately re-triggering and
-/// starving the in-flight load (the perpetual "Computing diff…" loop).
 const REFRESH_COOLDOWN: Duration = Duration::from_millis(1000);
 
-/// Syntax highlighting (prd-diff-syntax-highlight-2026-Q3.md). ON.
-///
-/// History: a full-file `syntect` pass cost 0.3-2.8 s/file (×4 builders ≈
-/// ~30 s/column), so it shipped gated. Replaced by tree-sitter
-/// ([`super::highlighter`]) - the same engine Zed uses - whose parse is
-/// ms-scale, so the eager full-file highlight is now cheap enough to run at
-/// build time off-thread. `super::syntax::DiffSyntax` supplies theme-derived
-/// (ANSI) colors; unknown grammars fall back to monochrome.
 const SYNTAX_HIGHLIGHT_ENABLED: bool = true;
 
-/// Embedded review-terminal region height (px): default + drag clamp bounds.
-/// Opens roughly half the view so the CLI/shell has real room (drag to resize).
 const REVIEW_DEFAULT_HEIGHT: f32 = 520.0;
 const REVIEW_MIN_HEIGHT: f32 = 120.0;
 const REVIEW_MAX_HEIGHT: f32 = 1000.0;
 
-/// Inline (unified) vs side-by-side. Unified is the default - it mirrors Zed's
-/// git-panel Diff view (single gutter, one merged line number, colored hunk
-/// bar). The toggle flips to Split; a too-narrow column also falls back to
-/// Unified (US-011).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ViewMode {
     Split,
@@ -202,65 +156,32 @@ fn build_rows_for_mode_with_caches(
     }
 }
 
-/// Async lifecycle of a single column's diff. Loaded keeps the raw per-file
-/// diffs plus the row models that have already been prepared. The first load
-/// installs the visible mode immediately; the inactive mode warms afterward.
 enum ColumnState {
     Loading,
     Loaded {
         unified: Option<Rc<Vec<DisplayRow>>>,
         split: Option<Rc<Vec<SplitRow>>>,
         file_count: usize,
-        /// US-008: per-file summary for the git panel (shared `Rc` so the
-        /// sidebar reads it without cloning the whole list each frame).
         files: Rc<Vec<FileEntry>>,
-        /// `(file path, header row index)` for the unified / split row sets, so
-        /// a sidebar file click can scroll the body to that file
-        /// ([`DiffView::jump_to_file`]). Built once per load, off-thread.
         anchors_unified: Option<Rc<Vec<(String, usize)>>>,
         anchors_split: Option<Rc<Vec<(String, usize)>>>,
-        /// US-001/US-002 (prd-ai-in-diff-2026-Q3.md): the raw per-file diffs
-        /// retained so "copy hunk/file" (US-003) and the agent review payload
-        /// (US-005) serialize an exact unified diff at action time (no stable
-        /// hunk ID - hunks are resolved from these on demand). Bounded by the
-        /// same per-file caps as the rows; shared `Arc` so lazy mode builds can
-        /// move the raw diff payload off-thread without cloning base/new text.
         files_full: Arc<Vec<super::git::FileDiff>>,
-        /// Per-file syntax/word caches for the retained raw diff. Shared by lazy
-        /// inactive-mode builds and fold expansion so those paths do not repeat
-        /// the expensive highlighting work.
         row_caches: Arc<Vec<FileRowCache>>,
-        /// Theme generation used to produce `row_caches`. Syntax runs store
-        /// concrete colors, so a theme change requires rebuilding these rows.
         theme_generation: u64,
     },
     Failed(String),
 }
 
-/// Off-thread build result for one column. `Send` (only owned data) so it can
-/// cross the `smol::unblock` boundary; the non-`Send` `Rc` wrapping happens back
-/// on the main thread when the result is applied.
 enum Built {
     Failed(String),
     Loaded {
         rows: BuiltModeRows,
         file_count: usize,
         files: Vec<FileEntry>,
-        /// US-001/US-002: raw per-file diffs retained for copy/review, moved out
-        /// of the off-thread `diff.files` after the rows are built from it.
         files_full: Vec<super::git::FileDiff>,
-        /// Per-file syntax/word caches built once from the same `FileDiff`s.
         row_caches: Vec<FileRowCache>,
-        /// Theme generation used to build the syntax caches.
         theme_generation: u64,
-        /// US-016: captured in the same off-thread pass as the diff, so a later
-        /// `revalidate` compares against it without re-shelling at harvest time.
-        /// Boxed to keep this (transient, immediately-consumed) builder variant
-        /// off the `large_enum_variant` threshold once `attribution` joined it.
         fingerprint: Box<super::git::ColumnFingerprint>,
-        /// EP-004 US-014: agent sessions matched to this column, computed in the
-        /// SAME off-thread pass (no second async round-trip) and applied onto the
-        /// `Column` when the diff lands.
         attribution: Vec<SessionMeta>,
     },
 }
@@ -268,96 +189,33 @@ enum Built {
 struct Column {
     branch: String,
     path: PathBuf,
-    /// The open workspace this column's worktree belongs to (seed
-    /// [`DiffWorktree::workspace_id`]), used to tag the embedded review terminal.
     workspace_id: Option<u64>,
     state: ColumnState,
-    /// Scroll handle for the custom [`DiffElement`] path (hosted in an
-    /// `overflow_y_scroll` div). Also the offset source/target for cross-column
-    /// scroll sync ([`DiffView::sync_scroll`]) and for `jump_to_file`.
     el_scroll: ScrollHandle,
-    /// US-014: hidden columns are skipped in render and in refresh (no wasted
-    /// diffing); re-showing reloads them.
     visible: bool,
-    /// File paths whose hunks are collapsed (header-only) in the body. Persists
-    /// across live-refresh reloads. Toggled per-file by clicking a file header
-    /// in the body, or in bulk by the toolbar collapse/expand-all chip.
     collapsed: std::collections::HashSet<String>,
-    /// Stable fold keys for collapsed unchanged regions that the user opened.
-    /// The fold marker remains visible, so toggling the same key closes it.
     expanded_folds: std::collections::HashSet<String>,
-    /// Collapse-filtered row sets + their file-header anchors, derived from
-    /// `state` + `collapsed` by [`Column::recompute_display`] only on load /
-    /// toggle (never per frame), so collapse is O(1) at paint and the body +
-    /// `jump_to_file` index against what is actually shown.
     disp_unified: Rc<Vec<DisplayRow>>,
     disp_split: Rc<Vec<SplitRow>>,
     disp_anchors_unified: Rc<Vec<(String, usize)>>,
     disp_anchors_split: Rc<Vec<(String, usize)>>,
-    /// Precomputed cumulative row offsets (`len + 1`) + widest line number for
-    /// each display set, derived once in [`Column::recompute_display`] and shared
-    /// with `DiffElement` so it never re-walks every row during `request_layout`
-    /// / `prepaint`. Kept in lockstep with `disp_unified` / `disp_split`.
     disp_unified_offsets: Rc<Vec<f32>>,
     disp_split_offsets: Rc<Vec<f32>>,
     disp_unified_max_no: u32,
     disp_split_max_no: u32,
-    /// Per-file horizontal-scroll spans (widest code line per file), lockstep
-    /// with the display rows; `DiffElement` bounds each file's horizontal offset
-    /// against `max_chars` instead of re-measuring rows per frame.
     disp_unified_spans: Rc<Vec<FileSpan>>,
     disp_split_spans: Rc<Vec<FileSpan>>,
-    /// US-046: cumulative top offsets of each hunk's first changed row, cached
-    /// in lockstep with the row sets (recomputed only in `recompute_display`).
-    /// The toolbar's hunk counter renders every frame, so deriving these per
-    /// frame was an O(rows) walk + allocation each repaint.
     disp_hunk_tops_unified: Rc<Vec<f32>>,
     disp_hunk_tops_split: Rc<Vec<f32>>,
-    /// US-016 warm-resume: the git fingerprint (HEAD + base + status hash) this
-    /// column's rows were built against, captured off-thread at load time.
-    /// `DiffView::revalidate` compares a fresh fingerprint on diff-mode re-entry
-    /// to re-diff ONLY columns that actually changed. `None` until first load
-    /// (and on a failed load), so such a column always reloads on resume.
     fingerprint: Option<super::git::ColumnFingerprint>,
-    /// Per-column comparison base override. `None` ⇒ this column diffs against
-    /// the view's shared `base_ref` (e.g. `develop`); `Some(ref)` ⇒ it diffs
-    /// against that ref instead - the per-commit toggle sets `Some("HEAD~1")` so
-    /// one branch column can show "just my latest commit's work" while its
-    /// siblings keep the whole-branch-vs-develop view.
     base_override: Option<String>,
-    /// Per-column last-write-wins guard (US-007). Bumped each time THIS column
-    /// is (re)loaded; the spawned task captures it and discards its result if a
-    /// newer load for the same column superseded it. Per-column (not a single
-    /// view-wide counter) so a subset reload - e.g. `revalidate` reloading only
-    /// the columns whose fingerprint moved - never discards an in-flight full
-    /// reload of the OTHER columns.
     generation: u64,
-    /// The view mode currently being materialized from retained raw diffs. Kept
-    /// separate from `generation`: a mode build can be superseded by another
-    /// mode toggle without forcing a fresh git diff.
     loading_mode: Option<ViewMode>,
-    /// Theme generation currently being rebuilt for this column. Prevents render
-    /// from spawning duplicate theme-refresh jobs while an old snapshot remains
-    /// visible until the new one lands.
     loading_theme_generation: Option<u64>,
-    /// Review CLIs launched on this column's branch, rendered as real terminals
-    /// under the diff body (prd-ai-in-diff-2026-Q3.md). Empty until the user runs
-    /// Review; replaced on a re-run; closed by explicit terminal-close actions.
     review_terminals: Vec<ReviewTerminal>,
-    /// Active terminal tab in the Review dock. Stored as an index because the
-    /// list is column-local and recreated on every review run.
     active_review_terminal: usize,
-    /// User-resizable height (px) of this column's embedded review region.
     review_height: f32,
-    /// EP-004: local agent sessions matched to this worktree (cwd + branch),
-    /// most-relevant first. Computed off-thread in the same task as the diff
-    /// (US-014, folded into the column-load) and re-fetched only on re-diff, so
-    /// per-frame render reads it O(1). Empty = no matching session (the
-    /// attribution slot collapses to zero width, US-015).
     attribution: Vec<SessionMeta>,
-    /// Horizontal scroll offsets (px), indexed by file in unified mode and by
-    /// file+side in split mode. Consumed by the shared `DiffElement`; the Review
-    /// body's wheel + scrollbar handlers mutate these slots directly.
     h_offsets: Rc<Vec<f32>>,
 }
 
@@ -506,9 +364,6 @@ impl Column {
         }
     }
 
-    /// Rebuild the collapse-filtered views from any loaded row sets +
-    /// `collapsed`. Both modes are normally loaded together so mode switches do
-    /// not show a transient "Preparing diff" state.
     fn recompute_display(&mut self) {
         self.recompute_display_for(ViewMode::Unified);
         self.recompute_display_for(ViewMode::Split);
@@ -627,8 +482,6 @@ impl Column {
         }
     }
 
-    /// Cached hunk-start offsets for `mode` (US-046). Lockstep with the display
-    /// rows - see [`Column::recompute_display`].
     fn hunk_tops(&self, mode: ViewMode) -> &Rc<Vec<f32>> {
         match mode {
             ViewMode::Unified => &self.disp_hunk_tops_unified,
@@ -637,118 +490,42 @@ impl Column {
     }
 }
 
-/// Multi-worktree diff viewer pane.
 pub struct DiffView {
     repo_root: PathBuf,
-    /// Resolved base ref every column diffs against (US-013 selector).
     base_ref: String,
-    /// Local branches offered by the base selector.
     branches: Vec<String>,
-    /// Lowercased mirror of `branches`, precomputed once when `branches` is set so
-    /// the base-popover filter never `to_lowercase()`es every branch on every
-    /// keystroke / frame while the popover is open.
     branches_lc: Vec<String>,
     base_picker_open: bool,
-    /// Live type-to-filter field inside the base-branch popover. Owned so the
-    /// popover can be a real searchable list (the DiffView observes it to
-    /// recompute matches on every keystroke).
     base_filter: Entity<TextInput>,
     columns: Vec<Column>,
     focus_handle: FocusHandle,
     element_id: SharedString,
-    /// US-016 watcher epoch. Bumped by [`Self::suspend`]; [`Self::start_watchers`]
-    /// captures it at spawn and (a) refuses to install the freshly-built watcher
-    /// if the epoch advanced while it was building off-thread, and (b) stops the
-    /// debounce loop once the epoch advances. Closes the build-race where a
-    /// `suspend` between the watcher-build spawn and its completion would
-    /// otherwise leave a live watcher (and event loop) on a hidden/cached entity,
-    /// or a double watcher after `resume`.
     watch_epoch: u64,
     mode: ViewMode,
-    /// Last mode that actually painted after responsive fallbacks. Reloads build
-    /// this mode first, so a narrow viewport that forces unified never spends the
-    /// initial off-thread pass on hidden split rows.
     last_effective_mode: ViewMode,
-    /// When true (default), all visible columns scroll in lockstep: the
-    /// vertical offset of `scroll_driver` is broadcast to the rest each render,
-    /// turning N parked viewers into one comparison surface (the whole point of
-    /// the side-by-side worktree view). Toggleable from the toolbar.
     sync_scroll: bool,
-    /// Index of the column the user last scrolled - the offset source the sync
-    /// broadcast follows. Set by each column's `on_scroll_wheel`. Sourcing only
-    /// from the explicit driver (never from clamped followers) keeps the sync
-    /// drift-free across columns of differing height.
     scroll_driver: usize,
-    /// Column whose changed-file list feeds the sidebar and whose body
-    /// `jump_to_file` scrolls. Set by clicking a column header.
     selected_column: usize,
-    /// Entity-owned filesystem watchers (US-015). Dropped on tab close, which
-    /// unregisters the OS handles and ends the debounce loop.
     _watchers: Vec<RecommendedWatcher>,
-    /// US-016 warm-resume: `true` while the diff surface is hidden (CLI/Agents
-    /// mode, or cached and not displayed). [`Self::suspend`] sets it and releases
-    /// the watchers; [`Self::resume`] clears it, re-arms the watcher, and
-    /// revalidates. While set, the deferred `bootstrap` completion does NOT arm a
-    /// watcher (it would leak one for an invisible repo).
     suspended: bool,
-    /// US-016: `true` once `bootstrap` has resolved the base + branches. Guards
-    /// `resume`: if bootstrap is still in flight, clearing `suspended` is enough
-    /// (bootstrap will arm the watcher + load itself); otherwise resume arms +
-    /// revalidates directly.
     bootstrapped: bool,
-    /// Inc 5: how the visible columns are arranged on screen - a splittable
-    /// tree over column indices (side-by-side / stacked / nested), driven by
-    /// drag-and-drop. Reconciled against the live columns each render, so the
-    /// `Vec<Column>` and all its index-based logic stay untouched.
     arrange: Arrange,
-    /// Transient drag state: `(hovered column idx, resolved drop edge)` while a
-    /// `DiffColumnDrag` is in flight, so the hovered pane's overlay can preview
-    /// the split. `None` edge = center (move/reorder). Cleared on drop.
     drag_target: Option<(usize, Option<DropEdge>)>,
-    /// US-002/US-003 (prd-ai-in-diff-2026-Q3.md): open body context menu
-    /// (right-click), carrying the resolved scope + window-space anchor. `None`
-    /// when closed.
     body_menu: Option<DiffBodyMenu>,
-    /// US-003: last pointer position over a column body `(col idx, window point)`,
-    /// so the `Ctrl+Shift+C` action resolves the hunk under the cursor without a
-    /// continuous row recompute on every move.
     last_body_pos: Option<(usize, Point<Pixels>)>,
-    /// US-003: transient "copied" confirmation pill, auto-cleared by a spawned
-    /// timer. Self-hosted so the diff view needs no PaneFlowApp toast handle.
     flash: Option<SharedString>,
-    /// Which branch column's Review CLI multi-select popover is open (by column
-    /// index), or `None` when closed. Anchored to that branch's header.
     review_menu_open: Option<usize>,
-    /// Per-CLI "include in the review" toggles, aligned to [`ReviewCli::all`]
-    /// order. Re-synced (default all-on) when the menu opens.
     review_picks: Vec<bool>,
-    /// Active review-region resize drag: `(col_idx, start_pointer_y_px,
-    /// start_height_px)`. `None` when not dragging.
     review_resizing: Option<(usize, f32, f32)>,
-    /// Active horizontal-scrollbar thumb drag inside a diff body.
     h_scroll_drag: Option<DiffHScrollDrag>,
-    /// When true, the column-header `×` emits [`DiffViewEvent::CloseColumn`] (the
-    /// host deselects the branch from the scope) instead of locally hiding the
-    /// column. Set for the Worktree scope, where a branch is either shown or not -
-    /// no in-between "hidden but tracked" state with a "N hidden" pill.
     close_removes: bool,
-    /// Scope breadcrumb fragment (scope › project › branches) PUSHED by
-    /// `render_diff_main` every frame and consumed (`take`) by the next
-    /// `render` - same push-only contract as `TitleBar`. The DiffView mounts
-    /// it as the left side of its single toolbar row so the whole Diff mode
-    /// has exactly one row of chrome.
     pub scope_slot: Option<AnyElement>,
 }
 
-/// Events a [`DiffView`] raises to its host (`PaneFlowApp`). Today: the user
-/// asked to drop a branch column from the Worktree scope via its header `×`.
 pub enum DiffViewEvent {
     CloseColumn { path: PathBuf },
 }
 
-/// US-002/US-003: an open right-click menu on the diff body, anchored at the
-/// click point and pre-resolved to the file (+ optional hunk + clicked line)
-/// under the cursor.
 struct DiffBodyMenu {
     position: Point<Pixels>,
     col_idx: usize,
@@ -756,9 +533,6 @@ struct DiffBodyMenu {
     mode: ViewMode,
 }
 
-/// Which file (+ optional hunk) a body point resolves to. Indices are into the
-/// column's `files_full` and that file's `hunks`, resolved at action time from
-/// the live rows (no stable hunk ID).
 #[derive(Clone, Copy)]
 struct DiffBodyScope {
     file_idx: usize,
@@ -766,15 +540,10 @@ struct DiffBodyScope {
 }
 
 impl DiffView {
-    /// Build a diff view seeded with a repo's sibling worktrees, kick off the
-    /// per-worktree diffs off the main thread, and start the live-refresh watch.
     pub fn new(repo_root: PathBuf, worktrees: Vec<DiffWorktree>, cx: &mut Context<Self>) -> Self {
         Self::with_base(repo_root, worktrees, None, cx)
     }
 
-    /// Like [`Self::new`] but seeds the base ref. The multi-project host passes
-    /// the last-chosen base so switching repos keeps the comparison base; when
-    /// `base` is `None`, `bootstrap` resolves the default (develop→main→master).
     pub fn with_base(
         repo_root: PathBuf,
         worktrees: Vec<DiffWorktree>,
@@ -786,21 +555,11 @@ impl DiffView {
             .into_iter()
             .map(|w| Column::new_loading(w.branch, w.path, w.workspace_id))
             .collect();
-        // Initial arrangement: every column side by side (mirrors the old fixed
-        // flex row). Drag-and-drop reshapes this; `reconcile` keeps it in sync
-        // with hide/show/reload.
         let arrange = Arrange::row(&(0..columns.len()).collect::<Vec<_>>());
-        // Searchable base-branch filter. Observe it so each keystroke re-renders
-        // the DiffView (and thus recomputes the filtered branch list) - the
-        // TextInput only notifies itself otherwise.
         let base_filter = cx.new(|cx| TextInput::new("", "Filter branches…", cx));
         cx.observe(&base_filter, |_, _, cx| cx.notify()).detach();
         let mut view = Self {
             repo_root,
-            // Seeded base (multi-project shared base) or empty until `bootstrap`
-            // resolves the default off-thread - the git subprocesses must not
-            // block the GPUI main thread at tab open. An empty base renders a
-            // "pick a base" prompt rather than spinning on a bogus ref.
             base_ref: base.unwrap_or_default(),
             branches: Vec::new(),
             branches_lc: Vec::new(),
@@ -834,16 +593,10 @@ impl DiffView {
         view
     }
 
-    /// Host opt-in: make the column-header `×` deselect the branch (emit
-    /// [`DiffViewEvent::CloseColumn`]) rather than hide it in place. Used by the
-    /// Worktree scope.
     pub fn set_close_removes(&mut self, v: bool) {
         self.close_removes = v;
     }
 
-    /// Working-tree paths of the currently visible columns, in column order.
-    /// Lets the host materialize the "currently shown" branch set (including
-    /// on-disk-discovered columns) when deselecting one.
     pub fn column_paths(&self) -> Vec<PathBuf> {
         self.columns
             .iter()
@@ -852,15 +605,9 @@ impl DiffView {
             .collect()
     }
 
-    /// Resolve the base ref + branch list off the main thread, then kick off the
-    /// per-column diffs and the live-refresh watcher. Doing the git subprocesses
-    /// AND the (recursive, ~20k-dir) inotify registration walk off the GPUI
-    /// thread is what prevents the multi-second "not responding" freeze that
-    /// `new()` used to cause at tab open.
     fn bootstrap(&mut self, cx: &mut Context<Self>) {
         let first = self.columns.first().map(|c| c.path.clone());
         let n = self.columns.len();
-        // Honor a seeded base (multi-project shared base); else resolve default.
         let preset = self.base_ref.clone();
         cx.spawn(async move |this, cx| {
             log::debug!("diff: bootstrap START ({n} columns); resolving base off-thread");
@@ -868,11 +615,6 @@ impl DiffView {
             let (base, branches) = match first {
                 Some(p) => {
                     smol::unblock(move || {
-                        // Honor a seeded base (multi-project shared base) only if
-                        // it actually exists in THIS repo - else fall back to the
-                        // repo's own default (develop→main→master). Empty when
-                        // nothing resolves, so the toolbar prompts for a base
-                        // instead of failing every column on a non-existent ref.
                         let base = if !preset.is_empty() && super::git::ref_exists(&p, &preset) {
                             preset
                         } else {
@@ -897,9 +639,6 @@ impl DiffView {
                     view.branches = branches;
                     view.bootstrapped = true;
                     view.start_loading(cx);
-                    // US-016: if the surface was hidden (parked to CLI) before
-                    // bootstrap resolved, do NOT arm a watcher for an invisible
-                    // repo - `resume` arms it when the user returns.
                     if !view.suspended {
                         view.start_watchers(cx);
                     }
@@ -909,7 +648,6 @@ impl DiffView {
         .detach();
     }
 
-    /// Tab-strip title, e.g. `Diff: paneflow`.
     pub fn title(&self) -> String {
         let name = self
             .repo_root
@@ -936,10 +674,6 @@ impl DiffView {
         self.columns.iter().filter(|c| c.visible).count()
     }
 
-    /// Toggle a column between the shared base (e.g. `develop`) and "just my
-    /// latest commit" (`HEAD~1`), reloading ONLY that column. One branch can show
-    /// its last-commit delta while its siblings keep the whole-branch-vs-base
-    /// view - the 80/20 of commit-granular review without a full commit walk.
     fn toggle_column_base(&mut self, idx: usize, cx: &mut Context<Self>) {
         match self.columns.get_mut(idx) {
             Some(col) => {
@@ -953,7 +687,6 @@ impl DiffView {
         self.start_loading_columns(&[idx], cx);
     }
 
-    /// US-014: hide a column (drop its data, skip future refreshes).
     fn hide_column(&mut self, idx: usize, cx: &mut Context<Self>) {
         let blocked_by_running_review = {
             let Some(col) = self.columns.get_mut(idx) else {
@@ -965,7 +698,7 @@ impl DiffView {
             } else {
                 col.visible = false;
                 col.drop_review_terminals();
-                col.drop_loaded_data(); // dropped data; reloads on re-show
+                col.drop_loaded_data();
                 false
             }
         };
@@ -1001,10 +734,6 @@ impl DiffView {
         {
             self.last_body_pos = None;
         }
-        // The hidden column must not remain the sync source or the selection: the
-        // scroll broadcast would otherwise re-run its first-visible fallback every
-        // frame, and the header selection marker would point at nothing. Re-anchor
-        // both to the first still-visible column.
         if self.scroll_driver == idx || self.selected_column == idx {
             let first_visible = self.columns.iter().position(|c| c.visible).unwrap_or(0);
             if self.scroll_driver == idx {
@@ -1018,7 +747,6 @@ impl DiffView {
         cx.notify();
     }
 
-    /// US-014: re-show every hidden column and reload them.
     fn show_all_columns(&mut self, cx: &mut Context<Self>) {
         for col in &mut self.columns {
             col.visible = true;
@@ -1028,17 +756,10 @@ impl DiffView {
         cx.notify();
     }
 
-    /// The base ref currently diffed against (read by the multi-project host to
-    /// seed sibling repos with the same base).
     pub fn base_ref(&self) -> &str {
         &self.base_ref
     }
 
-    /// Append worktree columns not already present (dedup by normalized path),
-    /// load them, and re-arm the watcher to cover the new trees. Used by
-    /// Worktree-scope on-disk discovery and live workspace-add so a new branch
-    /// shows up without re-mounting the whole view (which would flash every
-    /// column back to Loading).
     pub fn add_columns(&mut self, worktrees: Vec<DiffWorktree>, cx: &mut Context<Self>) {
         let existing: std::collections::HashSet<String> =
             self.columns.iter().map(|c| norm_key(&c.path)).collect();
@@ -1052,16 +773,11 @@ impl DiffView {
             added = true;
         }
         if added {
-            // start_loading keeps already-loaded columns' content until their
-            // fresh diff swaps in, so only the new columns visibly start from
-            // Loading. Re-arm the watcher off-thread to include the new trees.
             self.start_loading(cx);
             self.restart_watchers(cx);
         }
     }
 
-    /// The selected column if visible, else the first visible column - the one
-    /// the toolbar's diffstat / hunk-nav act on.
     fn selected_or_first_visible(&self) -> Option<usize> {
         if self
             .columns
@@ -1093,10 +809,6 @@ impl DiffView {
         }
     }
 
-    /// True when every visible, loaded column has all of its files collapsed -
-    /// the live source for the toolbar collapse/expand-all chip. Replaces a cached
-    /// bool that drifted whenever per-file collapse (body click) or a live-refresh
-    /// reload changed the real state without updating it.
     fn all_visible_collapsed(&self) -> bool {
         let mut any_loaded = false;
         for col in &self.columns {
@@ -1116,10 +828,7 @@ impl DiffView {
         any_loaded
     }
 
-    /// Toolbar: collapse every file in every visible column, or expand all.
     fn toggle_collapse_all(&mut self, cx: &mut Context<Self>) {
-        // Decide from the live state, not a cached flag: if everything is already
-        // collapsed, expand; otherwise collapse all.
         let collapse = !self.all_visible_collapsed();
         for col in &mut self.columns {
             if !col.visible {
@@ -1143,20 +852,12 @@ impl DiffView {
 }
 
 impl DiffView {
-    /// Floating, searchable base-branch popover anchored under the toolbar chip
-    /// (US-013). Replaces the old wrapping chip-row: it floats above the diff
-    /// body (no reflow), filters live as you type, marks the active base with a
-    /// check, and supports keyboard (Esc to close, Enter to pick the top match).
     fn render_base_popover(&self, cx: &mut Context<Self>) -> AnyElement {
         let ui = crate::theme::ui_colors();
 
         let filter = self.base_filter.read(cx).value().to_lowercase();
-        // Filter against the precomputed lowercase mirror so an open popover does
-        // not re-`to_lowercase()` every branch on each keystroke / frame.
         let matches = base_branch::matching_indices(&self.branches_lc, &filter);
 
-        // Header: a search field. The leading glyph + the real cursor-aware
-        // `TextInput` make the popover a command-palette-style picker.
         let search = div()
             .flex()
             .flex_row()
@@ -1191,8 +892,6 @@ impl DiffView {
                 )
             });
 
-        // Scrollable result list with a bounded height so a 100-branch repo
-        // doesn't grow the popover off-screen.
         let mut list = div()
             .id("diff-base-list")
             .flex()
@@ -1295,8 +994,6 @@ impl DiffView {
                             this.set_base(branch, cx);
                             window.focus(&this.focus_handle, cx);
                         } else if !raw.trim().is_empty() {
-                            // No listed branch/tag matches - try the typed text as
-                            // an arbitrary ref / SHA (validated off-thread).
                             this.resolve_and_set_base(raw, cx);
                             window.focus(&this.focus_handle, cx);
                         }
@@ -1425,9 +1122,6 @@ mod tests {
     }
 }
 
-/// Normalize a worktree path for dedup (canonicalize, lowercase on
-/// case-insensitive filesystems) so the same worktree seeded from an open
-/// workspace and discovered via `git worktree list` collapses to one column.
 fn norm_key(p: &std::path::Path) -> String {
     let resolved = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
     let s = resolved.to_string_lossy().into_owned();

@@ -1,11 +1,3 @@
-//! Keyboard, mouse, clipboard, and scroll handlers for `TerminalView`.
-//!
-//! Every method here is an `impl TerminalView` entry reached from the GPUI
-//! event dispatch wired in `mod.rs::Render`. Field access from these methods
-//! is what forces the `pub(super)` visibility on `TerminalView`'s fields.
-//!
-//! Extracted from `terminal.rs` per US-013 of the src-app refactor PRD.
-
 use std::borrow::Cow;
 
 use gpui::{
@@ -26,8 +18,6 @@ use super::probe_enabled;
 use super::pty_session::BackendInputResult;
 use super::{TerminalEvent, TerminalView};
 
-/// Returns true when the platform-appropriate "open link" modifier is held:
-/// Cmd on macOS, Ctrl on Linux/Windows (US-019 AC).
 #[inline]
 fn open_link_modifier_held(modifiers: &gpui::Modifiers) -> bool {
     #[cfg(target_os = "macos")]
@@ -53,14 +43,6 @@ fn key_escape_sequence(
     Some(sequence)
 }
 
-/// Sanitize and wrap `text` for a single bracketed-paste PTY write
-/// (`ESC[200~` … `ESC[201~`). ESC and C1 control bytes (U+0080..=U+009F) are
-/// stripped so the payload cannot close the paste early or smuggle a CSI
-/// escape. No carriage return is ever appended - submission stays a SEPARATE
-/// `\r` write (EP-001 US-001, agent-control-plane-hardening), so an agent that
-/// reads a burst as an unconfirmed paste never swallows the Enter. Embedded
-/// newlines are kept literal on purpose: that is the whole point of bracketed
-/// paste (the agent's input editor receives them as text, not as submit).
 pub(super) fn sanitize_bracketed_paste(text: &str) -> String {
     let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
     normalized
@@ -216,25 +198,11 @@ impl ReportedMouseButton {
     }
 }
 
-/// Convert a slice of OS paths to a single space-joined, shell-quoted string
-/// for pasting into a PTY (US-021). `None` when every path is filtered out
-/// (newline, carriage-return, or null bytes). Newline and CR are both rejected
-/// because the non-bracketed paste sink rewrites `\n` to `\r` and passes a bare
-/// `\r` verbatim, which the shell treats as Enter.
-///
-/// Only a conservative ASCII path subset is left unquoted; metacharacters like
-/// `;`, `&`, `$`, spaces, and quotes are always quoted. Windows uses the
-/// PowerShell-compatible single-quote form because Paneflow's default Windows
-/// shell resolver prefers PowerShell over cmd.exe. Shared by `handle_file_drop`
-/// and `handle_paste`.
 fn paths_to_pty_text(paths: &[std::path::PathBuf], shell_quoting: ShellQuoting) -> Option<String> {
     let quoted: Vec<String> = paths
         .iter()
         .filter_map(|p| {
             let s = p.to_string_lossy();
-            // Reject paths with newline, carriage-return, or null bytes: NUL
-            // breaks shell quoting; LF/CR can inject a line submit (Enter) past
-            // the single-quote wrapping.
             if s.contains('\n') || s.contains('\r') || s.contains('\0') {
                 return None;
             }
@@ -300,7 +268,6 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Cancel swap mode on Escape - checked before any other mode handling
         if crate::SWAP_MODE.load(std::sync::atomic::Ordering::Relaxed)
             && event.keystroke.key == "escape"
         {
@@ -308,16 +275,10 @@ impl TerminalView {
             return;
         }
 
-        // The find bar owns keyboard input via its focused `TextInput` entity
-        // (typing, IME, selection, clipboard); search-scoped action bindings
-        // (SearchNext / SearchPrev / DismissSearch / regex / fleet) are
-        // dispatched by GPUI before this handler. The terminal must not also
-        // forward these keys to the PTY, so bail out while the overlay is open.
         if self.search_active {
             return;
         }
 
-        // When copy mode is active, intercept navigation and exit keys
         if self.copy_mode_active {
             let keystroke = &event.keystroke;
             let key = keystroke.key.as_str();
@@ -345,14 +306,12 @@ impl TerminalView {
                     self.exit_copy_mode(false, cx);
                 }
                 _ => {
-                    // 'q' exits copy mode (vi-style)
                     if keystroke.key_char.as_deref() == Some("q")
                         && !keystroke.modifiers.control
                         && !keystroke.modifiers.alt
                     {
                         self.exit_copy_mode(false, cx);
                     }
-                    // All other keys consumed - not sent to PTY
                 }
             }
             return;
@@ -365,13 +324,10 @@ impl TerminalView {
             None
         };
 
-        // Reset cursor blink on keystroke
         self.cursor_visible = true;
 
         let keystroke = &event.keystroke;
 
-        // End key (no modifiers) while scrolled back - snap to bottom instead of
-        // sending "end of line" to the shell.
         if keystroke.key == "end"
             && !keystroke.modifiers.shift
             && !keystroke.modifiers.control
@@ -382,24 +338,16 @@ impl TerminalView {
             if backend.grid_metrics().display_offset > 0 {
                 backend.scroll_to_bottom();
                 self.terminal.dirty = true;
-                // Reset accumulated sub-line scroll so the next wheel tick
-                // does not "snap back" by the leftover fraction.
                 self.scroll_remainder = 0.0;
                 cx.notify();
                 return;
             }
         }
 
-        // Get current TermMode for key mapping (APP_CURSOR, etc.)
         let mode = self.terminal.session_backend().modes();
 
         self.ghostty_pending_text_key = None;
 
-        // Special keys / modifiers → write the escape sequence directly.
-        // Printable characters are NOT handled here: GPUI's InputHandler
-        // (replace_text_in_range) is the single source of truth for them on
-        // both normal and alt screens. Writing them here as well caused
-        // character doubling in ALT_SCREEN mode (e.g. Claude Code fullscreen TUI).
         if let Some(mapped_sequence) = key_escape_sequence(
             keystroke,
             &mode,
@@ -410,9 +358,6 @@ impl TerminalView {
                 TerminalKeySequence::Protocol(seq) => (seq, true),
                 TerminalKeySequence::Literal(seq) => (seq, false),
             };
-            // Snap to bottom on input. Matches Zed `terminal.rs:input()` - if
-            // the user is scrolled back in the history and types, the shell's
-            // echo would otherwise be invisible.
             {
                 let backend = self.terminal.session_backend();
                 if backend.grid_metrics().display_offset > 0 {
@@ -421,9 +366,6 @@ impl TerminalView {
                     self.scroll_remainder = 0.0;
                 }
             }
-            // A `Literal` sequence is written verbatim: it is already the
-            // exact bytes the mode asked for, and re-encoding it through the
-            // engine's key model would change them.
             let backend_key = if encode_with_backend {
                 ghostty_key_input(
                     keystroke,
@@ -473,7 +415,6 @@ impl TerminalView {
         #[cfg(debug_assertions)]
         if let Some(start) = _probe_start {
             let elapsed = start.elapsed();
-            // Store timestamp for total keystroke→pixel measurement in paint()
             self.terminal.last_keystroke_at = Some(start);
             if elapsed.as_millis() > 1 {
                 log::warn!(
@@ -516,20 +457,11 @@ impl TerminalView {
         }
     }
 
-    // --- Pixel → grid coordinate conversion ---
-
     pub(super) fn pixel_to_grid(&self, pos: gpui::Point<gpui::Pixels>) -> Point {
         self.selection_geometry().cell_at(self.pane_relative(pos))
     }
 
-    /// The pointer measured from the grid's own top-left corner.
-    ///
-    /// Negative values, and values past the grid, are the pointer having left
-    /// the pane. That is exactly what the selection engine reads to decide it
-    /// should autoscroll, so they are handed over unclamped.
     fn pane_relative(&self, pos: gpui::Point<gpui::Pixels>) -> (f32, f32) {
-        // Poison-safe: if a panic happened inside paint() while holding the
-        // lock, the inner Point is still a valid value - recover and continue.
         let origin = *self
             .element_origin
             .lock()
@@ -537,9 +469,6 @@ impl TerminalView {
         (f32::from(pos.x - origin.x), f32::from(pos.y - origin.y))
     }
 
-    /// The cell under the pointer, or `None` when the pointer is not over the
-    /// grid at all. A release wants that distinction: the selection engine
-    /// records "no cell" rather than the edge cell a clamp would invent.
     fn grid_cell_at(&self, pos: gpui::Point<gpui::Pixels>) -> Option<Point> {
         let geometry = self.selection_geometry();
         let position = self.pane_relative(pos);
@@ -550,15 +479,12 @@ impl TerminalView {
         inside.then(|| geometry.cell_at(position))
     }
 
-    /// Where the grid sits, as one snapshot for the pointer event in hand.
     fn selection_geometry(&self) -> SelectionGeometry {
         self.terminal
             .session_backend()
             .selection_geometry(f32::from(self.cell_width), f32::from(self.line_height))
     }
 
-    /// Hand a mouse event to the engine, which owns the report encoding
-    /// (SGR vs normal/UTF-8) and the release-code rules for the active mode.
     fn write_mouse_report(&self, report: ReportedMouseInput) {
         let ReportedMouseInput {
             position,
@@ -608,10 +534,6 @@ impl TerminalView {
         }
     }
 
-    // --- Mouse selection handlers ---
-
-    /// US-015: if `x` falls on the (widened) scrollbar strip and there is
-    /// scrollback to navigate, return the painted geometry for hit-testing.
     fn scrollbar_hit(&self, x: gpui::Pixels) -> Option<super::element::ScrollbarMetrics> {
         let metrics = {
             *self
@@ -624,9 +546,6 @@ impl TerminalView {
             .then_some(metrics)
     }
 
-    /// US-015: scroll the grid so `target_offset` scrollback lines sit above the
-    /// viewport. `target_offset` is pre-clamped to history by the caller
-    /// (`ScrollbarMetrics::offset_for_y`). No-op when already there.
     fn apply_scrollbar_jump(&mut self, target_offset: usize, history_size: usize) -> bool {
         let row = history_size.saturating_sub(target_offset.min(history_size));
         if self.terminal.session_backend().scroll_to_viewport_row(row) {
@@ -637,9 +556,6 @@ impl TerminalView {
         }
     }
 
-    /// Apply a drag step relative to the last target accepted by the backend.
-    /// Relative steps compose with Ghostty's live viewport pin when output or
-    /// reflow changes the scrollback while the pointer is held.
     fn apply_scrollbar_drag_delta(&mut self, delta_lines: i64) -> bool {
         if delta_lines == 0
             || !self
@@ -669,19 +585,9 @@ impl TerminalView {
     ) {
         self.focus_handle(cx).focus(window, cx);
 
-        // US-015: a Left press on the scrollbar strip starts a jump/drag and
-        // consumes the event - no text selection, no mouse report. Checked
-        // first so the strip wins over selection on the right edge. Gated on
-        // scrollback existing (alt-screen TUIs have none, so this never fires
-        // over them).
         if event.button == MouseButton::Left
             && let Some(metrics) = self.scrollbar_hit(event.position.x)
         {
-            // A press on the bare track first jumps to that proportional
-            // position; a press on the thumb grabs it in place (no jump).
-            // Either way the pointer gesture owns an absolute target. The
-            // painted geometry stays frozen until release so output or reflow
-            // cannot change its scale under the cursor.
             let mut last_target = metrics.display_offset;
             let anchor_offset = if metrics.y_on_thumb(event.position.y) {
                 metrics.display_offset
@@ -702,11 +608,6 @@ impl TerminalView {
             return;
         }
 
-        // Cmd/Ctrl+Left-click on a link (US-012): DEFER the open to mouse-up.
-        // Record the link under the press and start a selection so a Ctrl+drag
-        // selects text instead of opening; the open fires on release only if
-        // the selection is still empty (no drag). Mirrors Zed's
-        // mouse_down/mouse_up hyperlink match (terminal.rs:2209-2310).
         if event.button == MouseButton::Left
             && open_link_modifier_held(&event.modifiers)
             && event.click_count == 1
@@ -725,11 +626,7 @@ impl TerminalView {
 
         let mode = self.terminal.session_backend().modes();
 
-        // Forward to PTY when mouse reporting is active.
-        // Shift overrides mouse mode for text selection (standard terminal convention).
         if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
-            // Side/Navigate mouse buttons have no terminal report encoding;
-            // skip them instead of injecting a phantom Left click.
             if let Some(reported_button) = ReportedMouseButton::from_gpui(event.button) {
                 self.write_mouse_report(ReportedMouseInput {
                     position: event.position,
@@ -743,7 +640,6 @@ impl TerminalView {
             return;
         }
 
-        // Text selection (mouse mode inactive or Shift held)
         if event.button != MouseButton::Left {
             return;
         }
@@ -771,14 +667,8 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // US-015: while dragging the scrollbar, map the pixel delta since the
-        // grab to an absolute scrollback target and consume the event (no
-        // selection / mouse report). The drag continues even if the pointer
-        // leaves the strip horizontally.
         if let Some(mut drag) = self.scrollbar_drag {
             if event.pressed_button == Some(MouseButton::Left) {
-                // Drag down (positive dy) scrolls toward the live edge. Use
-                // the exact frozen course swept by the painted thumb.
                 let target = Self::scrollbar_drag_target(drag, event.position.y);
                 let step = target as i64 - drag.last_target as i64;
                 if target != drag.last_target && self.apply_scrollbar_drag_delta(step) {
@@ -787,7 +677,6 @@ impl TerminalView {
                     cx.notify();
                 }
             } else {
-                // Button released without our up-handler seeing it (defensive).
                 self.scrollbar_drag = None;
             }
             return;
@@ -795,20 +684,15 @@ impl TerminalView {
 
         let mode = self.terminal.session_backend().modes();
 
-        // Forward motion to PTY when mouse tracking is active.
-        // Shift overrides mouse mode for text selection.
         if !event.modifiers.shift
             && (mode.contains(Modes::MOUSE_MOTION)
                 || (mode.contains(Modes::MOUSE_DRAG) && event.pressed_button.is_some()))
         {
-            // Skip motion reports for side/Navigate buttons - they have no
-            // terminal mouse-report encoding.
             let reported_button = match event.pressed_button {
                 Some(button) => match ReportedMouseButton::from_gpui(button) {
                     Some(reported) => Some(reported),
                     None => return,
                 },
-                // No button held: a bare motion report.
                 None => None,
             };
             self.write_mouse_report(ReportedMouseInput {
@@ -822,25 +706,12 @@ impl TerminalView {
             return;
         }
 
-        // Track hovered cell for URL regex detection (US-015).
-        // Save the prior cell so we can throttle the per-frame rescan below.
         let hover_point = self.pixel_to_grid(event.position);
         let prev_hovered_cell = self.hovered_cell;
         self.hovered_cell = Some(hover_point);
 
-        // Cmd/Ctrl+hover: detect link under cursor for hyperlink rendering
-        // (US-016 + US-019). OSC 8 takes priority over regex URL detection,
-        // which takes priority over file-path detection.
         self.link_modifier_held = open_link_modifier_held(&event.modifiers);
         if self.link_modifier_held {
-            // Throttle: only re-scan the line when the hovered cell changed.
-            // Without this, 60 fps of MouseMove with the modifier held = 60
-            // regex scans / s and a Term lock per frame. The scan result is
-            // cached per-cell REGARDLESS of whether a link was found, so a
-            // stationary Ctrl-hold over non-link text (the common case) does
-            // NOT rescan on sub-cell jitter (US-011 AC3: no per-event scanning).
-            // Same-cell first-detect on modifier press is handled separately by
-            // `handle_modifiers_changed`. Matches Zed's FIND_HYPERLINK_THROTTLE_PX.
             let hovered_cell_changed = prev_hovered_cell != Some(hover_point);
             if !hovered_cell_changed {
                 return;
@@ -852,16 +723,10 @@ impl TerminalView {
             cx.notify();
         }
 
-        // Text selection (mouse mode inactive)
         if !self.selecting {
             return;
         }
 
-        // Alt is the block-selection modifier every terminal uses, and the
-        // engine draws the rectangle: the renderer already paints a block
-        // range. Formatting the in-progress text would mean blocking GPUI on
-        // the runtime thread for every pointer event, so PRIMARY is written
-        // once on mouse-up instead.
         let geometry = self.selection_geometry();
         let position = self.pane_relative(event.position);
         self.terminal.session_backend().drag_selection(
@@ -874,16 +739,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// US-011/US-012: resolve the hyperlink under `hover_point` through the
-    /// OSC 8 → URL → markdown → code-path priority chain and store it in
-    /// `ctrl_hovered_link`. Shared by mouse-move (throttled by the caller) and
-    /// the modifiers-changed handler (runs on Ctrl/Cmd press without a move).
     fn refresh_hovered_link(&mut self, hover_point: Point, cx: &mut Context<Self>) {
-        // Regex detection answers now, from the published snapshot. The OSC 8
-        // lookup needs the engine, so the runtime thread is asked and
-        // `apply_resolved_hover_link` applies its answer when it comes back:
-        // a runtime busy parsing a burst could otherwise hold the UI thread
-        // for up to a second per hover.
         self.terminal
             .session_backend()
             .request_osc8_hyperlink_at(hover_point);
@@ -899,9 +755,6 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Apply the runtime's answer to an OSC 8 lookup. An explicit hyperlink on
-    /// the hovered cell takes priority over regex detection, but only while
-    /// the pointer is still on that cell with the modifier held.
     pub(super) fn apply_resolved_hover_link(
         &mut self,
         point: Point,
@@ -924,10 +777,6 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // US-011: GPUI fires no MouseMove when only a modifier changes, so link
-        // detection would otherwise not run until the mouse jiggles - making
-        // the first Ctrl-click miss. Re-run detection on the last hovered cell
-        // when the open-modifier becomes held, and clear on release.
         self.link_modifier_held = open_link_modifier_held(&event.modifiers);
         if self.link_modifier_held {
             if let Some(point) = self.hovered_cell {
@@ -939,10 +788,6 @@ impl TerminalView {
         }
     }
 
-    /// US-012: open a resolved hyperlink. `.md` routes to the in-pane markdown
-    /// viewer, code paths to the editor chain (both via app-level events so the
-    /// VISUAL/EDITOR resolution stays testable), and URLs / OSC 8 to the OS
-    /// handler. Shared routing for the mouse-up open.
     fn open_hyperlink(&self, link: &HyperlinkZone, cx: &mut Context<Self>) {
         match link.source {
             HyperlinkSource::FilePath => {
@@ -971,11 +816,6 @@ impl TerminalView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // US-015: end a scrollbar drag on the LEFT release without running the
-        // selection cleanup below (we never started a selection). Scoped to
-        // Left so a right-click release mid-drag still reaches the PTY
-        // mouse-report path and is not swallowed (which would strand a
-        // mouse-mode TUI in a phantom-button-held state).
         if let Some(drag) = self.scrollbar_drag
             && event.button == MouseButton::Left
         {
@@ -990,15 +830,7 @@ impl TerminalView {
 
         let mode = self.terminal.session_backend().modes();
 
-        // Forward release to PTY when mouse reporting is active.
-        // Shift overrides mouse mode for text selection.
         if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
-            // US-012: a Ctrl-press may have stashed a pending link on mouse-down
-            // (that path returns before this mouse-mode check). If the modifier
-            // is released before this mouse-mode release, the link-open path
-            // below is skipped and the stash would otherwise survive - clear it
-            // here so it cannot phantom-open on a later plain click once mouse
-            // mode ends.
             self.mouse_down_link = None;
             if let Some(reported_button) = ReportedMouseButton::from_gpui(event.button) {
                 self.write_mouse_report(ReportedMouseInput {
@@ -1013,10 +845,6 @@ impl TerminalView {
             return;
         }
 
-        // Middle-click: paste from primary selection (X11/Wayland only;
-        // `read_from_primary` is gated to linux+freebsd in GPUI - mirror
-        // the same gate here. On macOS/Windows middle-click has no primary
-        // paste convention, so the block is a no-op and we just return.
         if event.button == MouseButton::Middle {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             {
@@ -1029,25 +857,17 @@ impl TerminalView {
             return;
         }
 
-        // Text selection cleanup (mouse mode inactive or Shift held)
         if event.button != MouseButton::Left {
             return;
         }
         self.selecting = false;
-        // US-012: a Ctrl/Cmd-click stashed the link under the press. It opens
-        // below only if the selection is empty (no drag); a Ctrl+drag that
-        // started on a link became a text selection and copies instead.
         let down_link = self.mouse_down_link.take();
 
-        // Clear empty selections, or auto-copy non-empty selections (tmux-style):
-        // write to both PRIMARY (middle-click paste) and CLIPBOARD (Ctrl+V),
-        // then clear the selection so the disappearing highlight signals the copy.
         self.terminal
             .session_backend()
             .release_selection(self.grid_cell_at(event.position));
         let (selection_empty, copied) = self.terminal.session_backend().finish_selection();
 
-        // US-012: open on a genuine click (empty selection = no drag).
         if selection_empty
             && let Some(link) = down_link
             && link.is_openable
@@ -1067,8 +887,6 @@ impl TerminalView {
         cx.notify();
     }
 
-    // --- Clipboard handlers ---
-
     pub(super) fn handle_copy(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = self.terminal.session_backend().selection_text() {
             cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -1080,13 +898,6 @@ impl TerminalView {
             return;
         };
 
-        // US-021: file(s) copied in the OS file manager (Nautilus/Finder/
-        // Explorer/Thunar) arrive as `ExternalPaths`. Insert the shell-quoted
-        // path(s). Checked BEFORE `clipboard.text()`, which falls back to
-        // unquoted path display strings - those would break on spaces. Iterate
-        // all entries (some backends emit a String entry alongside the paths)
-        // and fall through to text() when no `ExternalPaths` is present (e.g.
-        // Wayland compositors that copy a `file://` URI as text instead).
         for entry in clipboard.entries() {
             if let ClipboardEntry::ExternalPaths(ext_paths) = entry
                 && let Some(text) =
@@ -1098,16 +909,12 @@ impl TerminalView {
             }
         }
 
-        // Text paste (normal Ctrl+V)
         if let Some(text) = clipboard.text() {
             let mode = self.terminal.session_backend().modes();
             self.write_paste_text(&text, mode);
             return;
         }
 
-        // Image-only clipboard: forward raw Ctrl+V (0x16) so TUI agents can read
-        // it. Text and ExternalPaths win above because they are deterministic PTY
-        // input; Ctrl+V has shell-specific "literal next" behavior.
         if clipboard
             .entries()
             .iter()
@@ -1117,8 +924,6 @@ impl TerminalView {
         }
     }
 
-    /// Prepare and write paste text to PTY, respecting bracketed paste mode.
-    /// Strips ESC and C1 control chars when bracketed paste is active.
     pub(super) fn handle_file_drop(
         &mut self,
         paths: &ExternalPaths,
@@ -1131,10 +936,6 @@ impl TerminalView {
         }
     }
 
-    /// The engine owns the `ESC[200~` / `ESC[201~` framing: it wraps the
-    /// payload itself when the surface has bracketed paste active. Only the
-    /// non-bracketed newline rewrite stays here, because that one is an
-    /// interactive-paste convention, not a protocol rule.
     pub(super) fn write_paste_text(&self, text: &str, mode: Modes) {
         let payload = if mode.contains(Modes::BRACKETED_PASTE) {
             sanitize_bracketed_paste(text)
@@ -1144,18 +945,6 @@ impl TerminalView {
         self.terminal.write_ghostty_paste(payload);
     }
 
-    /// EP-001 US-001 (agent-control-plane-hardening): deliver an automation /
-    /// agent payload while NEVER synthesizing a submit out of the body. When the
-    /// target has bracketed paste active, the bytes are wrapped (embedded
-    /// newlines stay literal inside the agent's editor); when it does NOT, they
-    /// are written VERBATIM - crucially not through the interactive `\n` -> `\r`
-    /// rewrite that `write_paste_text` applies, which would turn a multi-line
-    /// prompt into N carriage returns and defeat the single, SEPARATE deferred
-    /// `\r` that is the only sanctioned submission (US-005 human-in-loop
-    /// invariant). This is the divergence from `paste_text`: a human pressing
-    /// Ctrl+V into a bare shell still wants newline -> run, but a `send_text`
-    /// inject toward an agent that has not (yet) enabled `ESC[?2004h` must not
-    /// smuggle Enters through the burst.
     pub fn inject_text(&self, text: &str) {
         let mode = self.terminal.session_backend().modes();
         if mode.contains(Modes::BRACKETED_PASTE) {
@@ -1165,8 +954,6 @@ impl TerminalView {
         }
     }
 
-    // --- Scroll handlers ---
-
     pub(super) fn handle_scroll_wheel(
         &mut self,
         event: &ScrollWheelEvent,
@@ -1175,8 +962,6 @@ impl TerminalView {
     ) {
         let mode = self.terminal.session_backend().modes();
 
-        // Forward scroll to PTY when mouse reporting is active.
-        // Shift overrides mouse mode for scrollback.
         if mode.intersects(Modes::MOUSE_MODE) && !event.modifiers.shift {
             let delta_y = event.delta.pixel_delta(self.line_height).y;
             self.scroll_remainder += delta_y / self.line_height;
@@ -1203,8 +988,6 @@ impl TerminalView {
             return;
         }
 
-        // Alternate scroll: ALT_SCREEN + ALTERNATE_SCROLL without MOUSE_MODE
-        // Synthesize arrow key sequences so scroll works in less, vim, htop, etc.
         if mode.contains(Modes::ALT_SCREEN | Modes::ALTERNATE_SCROLL) && !event.modifiers.shift {
             let delta_y = event.delta.pixel_delta(self.line_height).y;
             self.scroll_remainder += delta_y / self.line_height;
@@ -1231,11 +1014,6 @@ impl TerminalView {
             return;
         }
 
-        // Scrollback (mouse mode inactive, not alt screen alternate scroll).
-        // US-022: reset the sub-line accumulator on gesture start so an
-        // opposite-direction flick is crisp (no leftover momentum). Mouse wheels
-        // arrive as `Moved`; only trackpad gestures emit Started/Ended. Mirrors
-        // Zed terminal.rs `determine_scroll_lines` (TouchPhase::Started → reset).
         match event.touch_phase {
             TouchPhase::Started => {
                 self.scroll_remainder = 0.0;
@@ -1245,15 +1023,9 @@ impl TerminalView {
             TouchPhase::Moved => {}
         }
 
-        // US-022: scroll-sensitivity multiplier, cached on the view at
-        // construction (no config I/O on this hot per-event path). Applied ONLY
-        // here in the scrollback path - the mouse-mode and alt-scroll branches
-        // above already returned, so the PTY protocol framing is never scaled
-        // (Zed forces 1.0 in mouse mode for the same reason).
         let delta_y = event.delta.pixel_delta(self.line_height).y;
         self.scroll_remainder += (delta_y / self.line_height) * self.scroll_multiplier;
 
-        // Clamp to prevent extreme values from synthesised events
         self.scroll_remainder = self.scroll_remainder.clamp(-500.0, 500.0);
 
         let lines = self.scroll_remainder as i32;
@@ -1262,8 +1034,6 @@ impl TerminalView {
         }
         self.scroll_remainder -= lines as f32;
 
-        // Positive wheel delta means scrolling up (toward history in natural-scroll
-        // convention), which matches AlacScroll::Delta positive = scroll toward history.
         if !self.terminal.session_backend().scroll_delta(lines) {
             return;
         }
@@ -1273,12 +1043,6 @@ impl TerminalView {
     }
 
     pub(super) fn handle_scroll_page_up(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        // US-009: in an alt-screen TUI (lazygit, less, vim, k9s, full-screen
-        // agent UIs) scrollback is empty, so scroll_display is a no-op and the
-        // key would be silently swallowed. Forward the PageUp escape instead so
-        // the TUI actually pages. `\x1b[5~` matches what `keys::to_esc_str`
-        // emits for a plain PageUp - the single source of truth (asserted by a
-        // test in `keys.rs`).
         let alt_screen = self
             .terminal
             .session_backend()
@@ -1296,7 +1060,6 @@ impl TerminalView {
     }
 
     pub(super) fn handle_scroll_page_down(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        // US-009: see handle_scroll_page_up. `\x1b[6~` is plain PageDown.
         let alt_screen = self
             .terminal
             .session_backend()
@@ -1399,8 +1162,6 @@ mod tests {
         assert_eq!(sequence.as_ref(), expected);
     }
 
-    // EP-001 US-001 (agent-control-plane-hardening): the wrap is the burst that
-    // reaches an agent; the `\r` must NEVER ride inside it.
     #[test]
     fn bracketed_wrap_has_both_sentinels_and_no_cr() {
         let wrapped = wrap_bracketed_paste("hello world");
@@ -1412,8 +1173,6 @@ mod tests {
 
     #[test]
     fn bracketed_wrap_keeps_newlines_literal() {
-        // A multi-line prompt stays literal inside the sentinels (the agent's
-        // editor sees text, not N submits); crucially still no `\r` injected.
         let wrapped = wrap_bracketed_paste("line one\nline two");
         assert_eq!(wrapped, "\x1b[200~line one\nline two\x1b[201~");
         assert!(!wrapped.contains('\r'));
@@ -1428,16 +1187,12 @@ mod tests {
 
     #[test]
     fn bracketed_wrap_strips_esc_and_c1_to_block_paste_escape() {
-        // An embedded ESC[201~ or C1 control could otherwise terminate the
-        // paste early and smuggle a CSI; both bytes are filtered out.
         let wrapped = wrap_bracketed_paste("a\x1b[201~b\u{0085}c");
         assert_eq!(wrapped, "\x1b[200~a[201~bc\x1b[201~");
-        // Exactly one opener and one closer survive (the wrapper's own).
         assert_eq!(wrapped.matches("\x1b[200~").count(), 1);
         assert_eq!(wrapped.matches("\x1b[201~").count(), 1);
     }
 
-    // US-021: shell-quoting of file-manager paths for paste.
     #[test]
     fn shell_quoting_detects_common_shells() {
         assert_eq!(ShellQuoting::for_shell("/bin/zsh"), ShellQuoting::Posix);
@@ -1506,8 +1261,6 @@ mod tests {
 
     #[test]
     fn carriage_return_path_is_rejected() {
-        // A bare CR survives the non-bracketed paste rewrite and submits a
-        // line (Enter), so a path like `evil\rrm -rf ~` must be dropped.
         assert_eq!(
             paths_to_pty_text(&[PathBuf::from("/bad\rpath")], ShellQuoting::Posix),
             None

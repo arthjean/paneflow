@@ -1,17 +1,3 @@
-//! Gemini CLI writer (EP-003 US-009).
-//!
-//! Direct merge into `~/.gemini/settings.json` under `mcpServers.paneflow`
-//! = `{command, args: [], trust: true}`. `trust: true` skips the per-call
-//! confirmation prompt - safe because the bridge is a local binary we
-//! control and ship.
-//!
-//! A `gemini mcp add --trust` CLI does exist (verified 2026), but the
-//! direct merge is used so we own the `trust` flag and the idempotent /
-//! no-clobber semantics from [`crate::merge`]. No `env` block (D5).
-//!
-//! **Volatility:** Gemini's settings schema may shift; re-verify the
-//! `mcpServers` key + `trust` field if registration regresses.
-
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};

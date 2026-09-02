@@ -262,11 +262,6 @@ pub(crate) fn render_row_data(
 ) -> Result<RenderRowData> {
     let mut dirty = false;
     let mut cells = cells;
-    // One call for the two fields every row needs. The selection is read
-    // separately below because it reports `NO_VALUE` on an unselected row,
-    // which would abort the whole batch.
-    // SAFETY: both destinations match the output types render.h documents
-    // for their keys, and both outlive the call.
     unsafe {
         get_multi(
             "render_state_row_get_multi",
@@ -308,15 +303,9 @@ pub(crate) fn render_row_data(
 }
 
 pub(crate) fn render_cell_data(cells: sys::GhosttyRenderStateRowCells) -> Result<RenderCellData> {
-    // SAFETY: `GhosttyStyle` is plain-old-data whose zeroed form is valid;
-    // `size` is set immediately after.
     let mut style: sys::GhosttyStyle = unsafe { std::mem::zeroed() };
     style.size = std::mem::size_of::<sys::GhosttyStyle>();
     let mut raw: sys::GhosttyCell = 0;
-    // This runs once per cell per frame, so the two reads are batched into
-    // one crossing.
-    // SAFETY: both destinations match the output types render.h documents
-    // for their keys, and both outlive the call.
     unsafe {
         get_multi(
             "render_state_row_cells_get_multi",
@@ -342,9 +331,6 @@ pub(crate) fn raw_cell_data(cell: sys::GhosttyCell) -> Result<RawCellData> {
     let mut wide = sys::GhosttyCellWide_GHOSTTY_CELL_WIDE_NARROW;
     let mut has_hyperlink = false;
     let mut content_tag = sys::GhosttyCellContentTag_GHOSTTY_CELL_CONTENT_CODEPOINT;
-    // Four fields, one crossing: this is the innermost loop of a frame.
-    // SAFETY: every destination matches the output type screen.h documents
-    // for its key, and all of them outlive the call.
     unsafe {
         get_multi(
             "cell_get_multi",
@@ -416,11 +402,7 @@ pub(crate) fn raw_cell_rgb(cell: sys::GhosttyCell) -> Result<sys::GhosttyColorRg
 
 impl From<sys::GhosttyColorRgb> for Rgb {
     fn from(value: sys::GhosttyColorRgb) -> Self {
-        // Read the channels back through libghostty's accessor so a future
-        // layout change stays its problem rather than a silent field swap.
         let (mut r, mut g, mut b) = (0u8, 0u8, 0u8);
-        // SAFETY: `value` is a live struct and the three out-parameters are
-        // valid writable storage.
         unsafe { sys::ghostty_color_rgb_get(&raw const value, &mut r, &mut g, &mut b) };
         Self { r, g, b }
     }

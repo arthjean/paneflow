@@ -1,18 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Re-pins native/libghostty/manifest.toml for a deliberate libghostty-vt bump.
-#
-# Every build recipe reads source_sha, header_sha256, bindings_sha256, and its
-# own archive hashes from the manifest, and refuses to run against a checkout
-# that does not match. A bump therefore has to stage the manifest before it can
-# build anything, which is all this script does: it never fetches Ghostty, never
-# runs Zig, and never touches an artifact.
-#
-# Each edit requires the key to already exist with a string value. A missing or
-# ambiguous key is an error, so a renamed manifest field fails the bump instead
-# of silently adding a dead entry.
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 MANIFEST="$ROOT/native/libghostty/manifest.toml"
 EDITS=()

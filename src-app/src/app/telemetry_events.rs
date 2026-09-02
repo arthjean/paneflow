@@ -1,9 +1,3 @@
-//! v1 desktop telemetry event emitters.
-//!
-//! The closed property schema lives in `paneflow-telemetry`; these helpers only
-//! translate desktop domain types into its closed categorical values. Consent is
-//! enforced once by `TelemetryClient::from_consent`.
-
 use std::time::Duration;
 
 use crate::PaneFlowApp;
@@ -15,13 +9,9 @@ use crate::telemetry::event::{
 use crate::telemetry::tags::{install_method_value, update_error_category};
 use crate::update::{self, UpdateError};
 
-/// Upper bound on the direct shutdown request. The transport itself owns this
-/// deadline, so no detached telemetry worker survives a timeout.
 const SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl PaneFlowApp {
-    /// Emit forensic context gathered before a corrupted session falls back to
-    /// empty state. The backup path is intentionally reduced to a boolean.
     pub(crate) fn emit_session_corrupted(&self, info: &SessionCorruptionInfo) {
         let Some(error) = SessionErrorCategory::from_tag(info.error_category) else {
             log::debug!(
@@ -38,8 +28,6 @@ impl PaneFlowApp {
         ));
     }
 
-    /// Fire the once-per-launch `app_started` event after the consent-gated
-    /// client has been constructed.
     pub(crate) fn emit_app_started(&self, is_first_run: bool) {
         let Some(app_version) = telemetry_version(env!("CARGO_PKG_VERSION")) else {
             return;
@@ -53,7 +41,6 @@ impl PaneFlowApp {
         ));
     }
 
-    /// Fire `app_exited` and perform the only blocking desktop flush.
     pub(crate) fn emit_app_exited_and_flush(&self) {
         self.telemetry.capture(TelemetryEvent::app_exited(
             self.launch_instant.elapsed().as_secs(),
@@ -61,7 +48,6 @@ impl PaneFlowApp {
         self.telemetry.flush_blocking(SHUTDOWN_FLUSH_TIMEOUT);
     }
 
-    /// Fire a successful staged update without blocking the render thread.
     pub(crate) fn emit_update_success(&self) {
         let Some(from_version) = telemetry_version(env!("CARGO_PKG_VERSION")) else {
             return;
@@ -79,8 +65,6 @@ impl PaneFlowApp {
         ));
     }
 
-    /// Fire a failed staged update with a closed error category, never an error
-    /// message or path.
     pub(crate) fn emit_update_failure(&self, error: &UpdateError) {
         let Some(from_version) = telemetry_version(env!("CARGO_PKG_VERSION")) else {
             return;

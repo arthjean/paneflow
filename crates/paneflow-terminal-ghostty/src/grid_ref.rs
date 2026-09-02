@@ -1,10 +1,3 @@
-//! Per-cell and per-row metadata read through a grid reference.
-//!
-//! The render snapshot carries what the renderer draws. This is everything
-//! else the grid knows about a position: soft-wrap state, OSC 133 semantic
-//! prompt regions, protected cells, style identity. Selection correctness and
-//! "select the output of this command" both depend on it.
-
 use paneflow_libghostty_sys as sys;
 
 use crate::batch::{Slot, get_multi};
@@ -13,104 +6,66 @@ use crate::handles::check;
 use crate::style::Style;
 use crate::{GhosttyError, Point, Result, WideCell};
 
-/// Where a row sits in an OSC 133 shell prompt.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SemanticPrompt {
-    /// Not part of a prompt, or the shell never reported one.
     #[default]
     None,
-    /// The first row of a prompt.
     Prompt,
-    /// A continuation row of a multi-line prompt.
     PromptContinuation,
 }
 
-/// What a cell holds in an OSC 133 command cycle.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SemanticContent {
-    /// Command output.
     #[default]
     Output,
-    /// Prompt text.
     Prompt,
-    /// Text the user typed at the prompt.
     Input,
 }
 
-/// Row-level grid metadata.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RowInfo {
-    /// The row soft-wraps into the next one.
     pub wrap: bool,
-    /// The row continues a soft-wrapped row above it.
     pub wrap_continuation: bool,
-    /// Some cell in the row carries a grapheme cluster.
     pub grapheme: bool,
-    /// Some cell in the row is styled. May report a false positive.
     pub styled: bool,
-    /// Some cell in the row carries a hyperlink. May report a false positive.
     pub hyperlink: bool,
-    /// The row's prompt state, from OSC 133.
     pub semantic_prompt: SemanticPrompt,
-    /// The row holds a Kitty virtual image placeholder.
     pub kitty_virtual_placeholder: bool,
-    /// The row changed since the renderer last cleared its dirty bit.
     pub dirty: bool,
 }
 
-/// What kind of content a cell holds.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CellContent {
-    /// A single codepoint.
     #[default]
     Codepoint,
-    /// A codepoint with an attached grapheme cluster.
     Grapheme,
-    /// No text: a palette-indexed background color only.
     BackgroundPalette,
-    /// No text: a direct RGB background color only.
     BackgroundRgb,
 }
 
-/// Cell-level grid metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CellInfo {
-    /// What the cell holds.
     pub content: CellContent,
-    /// The codepoint, or zero when the cell has no text.
     pub codepoint: u32,
-    /// The cell's contribution to a wide character.
     pub wide: WideCell,
-    /// The cell has text to render.
     pub has_text: bool,
-    /// The cell carries non-default styling.
     pub has_styling: bool,
-    /// Identifier for the cell's style, stable within a screen.
     pub style_id: u16,
-    /// The cell carries a hyperlink.
     pub has_hyperlink: bool,
-    /// The cell is protected from selective erase (DECSCA).
     pub protected: bool,
-    /// The cell's role in an OSC 133 command cycle.
     pub semantic_content: SemanticContent,
 }
 
 impl DisplayTerminal {
-    /// Row metadata for the logical line at `line`, where zero is the first
-    /// viewport row and negative values address scrollback.
     pub fn row_info(&self, line: i32) -> Result<RowInfo> {
         let reference = self.grid_ref(Point::new(line, 0))?;
         let mut row: sys::GhosttyRow = 0;
-        // SAFETY: `reference` is a live grid ref and `row` is valid writable
-        // storage for the out-parameter.
         let result = unsafe { sys::ghostty_grid_ref_row(&raw const reference, &mut row) };
         check("grid_ref_row", result)?;
 
         let mut info = RowInfo::default();
         let mut semantic = sys::GhosttyRowSemanticPrompt_GHOSTTY_ROW_SEMANTIC_NONE;
         use sys as s;
-        // SAFETY: every destination matches the output type screen.h
-        // documents for its key, and all of them outlive the call.
         unsafe {
             get_multi(
                 "row_get_multi",
@@ -147,17 +102,12 @@ impl DisplayTerminal {
         Ok(info)
     }
 
-    /// Read one row field on its own, for callers that need a single bit
-    /// without paying for the full [`RowInfo`] batch.
     pub fn row_wraps(&self, line: i32) -> Result<bool> {
         let reference = self.grid_ref(Point::new(line, 0))?;
         let mut row: sys::GhosttyRow = 0;
-        // SAFETY: `reference` is live and `row` is valid writable storage.
         let result = unsafe { sys::ghostty_grid_ref_row(&raw const reference, &mut row) };
         check("grid_ref_row", result)?;
         let mut wrap = false;
-        // SAFETY: `GHOSTTY_ROW_DATA_WRAP` writes a `bool`, which is what
-        // `wrap` provides, and `row` is live.
         let result = unsafe {
             sys::ghostty_row_get(
                 row,
@@ -169,11 +119,9 @@ impl DisplayTerminal {
         Ok(wrap)
     }
 
-    /// Cell metadata at `point`.
     pub fn cell_info(&self, point: Point) -> Result<CellInfo> {
         let reference = self.grid_ref(point)?;
         let mut cell: sys::GhosttyCell = 0;
-        // SAFETY: `reference` is live and `cell` is valid writable storage.
         let result = unsafe { sys::ghostty_grid_ref_cell(&raw const reference, &mut cell) };
         check("grid_ref_cell", result)?;
 
@@ -187,8 +135,6 @@ impl DisplayTerminal {
         let mut has_hyperlink = false;
         let mut protected = false;
         use sys as s;
-        // SAFETY: every destination matches the output type screen.h
-        // documents for its key, and all of them outlive the call.
         unsafe {
             get_multi(
                 "cell_get_multi",
@@ -238,12 +184,9 @@ impl DisplayTerminal {
         })
     }
 
-    /// The full style at `point`.
     pub fn cell_style(&self, point: Point) -> Result<Style> {
         let reference = self.grid_ref(point)?;
         let mut style = std::mem::MaybeUninit::<sys::GhosttyStyle>::uninit();
-        // SAFETY: `reference` is live and the callee fully initializes the
-        // style it is handed, including its leading `size` field.
         let style = unsafe {
             let result = sys::ghostty_grid_ref_style(&raw const reference, style.as_mut_ptr());
             check("grid_ref_style", result)?;

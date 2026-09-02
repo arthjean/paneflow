@@ -1,9 +1,3 @@
-//! Context-menu row helpers shared between the sidebar workspace menu and the
-//! title-bar burger menu. Includes the action-name shortcut lookup used
-//! to render the keyboard-shortcut label next to each action.
-//!
-//! Part of the US-025 sidebar decomposition.
-
 use std::path::PathBuf;
 
 use gpui::{
@@ -117,11 +111,6 @@ impl PaneFlowApp {
             })
     }
 
-    /// One workspace-menu row in the shared Settings "Shell" select look
-    /// (`components::select_item`): 28px tall, 7px radius, 12px label flex-filled
-    /// with the optional shortcut pinned right, and the whisper hover highlight
-    /// (`text @ 0.05`) instead of the older flat `ui.subtle`. Keeps every app
-    /// menu reading as one consistent menu language.
     pub(crate) fn render_select_menu_item(
         &self,
         id: SharedString,
@@ -167,10 +156,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Build the deferred element that paints the right-click workspace
-    /// context menu. Caller is responsible for the
-    /// `if let Some(menu) = self.workspace_menu_open && menu.idx < self.workspaces.len()`
-    /// guard. Extracted from `main.rs` per US-002.
     pub(crate) fn render_workspace_context_menu(
         &self,
         menu: WorkspaceContextMenu,
@@ -202,8 +187,6 @@ impl PaneFlowApp {
         let workflow_rows = usize::from(workflow_template.is_some());
         let service_rows = services.len();
         let separator_rows = 2 + workflow_rows + usize::from(service_rows > 0);
-        // Fixed rows: reveal, copy path, manage custom buttons, close. Renaming
-        // is not one of them - it stays on the row's double-click.
         let menu_rows = EDITOR_CONTEXT_MENU_ITEMS.len() + 4 + workflow_rows + service_rows;
         let menu_height = px(8. + menu_rows as f32 * 28. + separator_rows as f32 * 9.);
         let menu_pos = clamped_context_menu_position(menu.position, px(248.), menu_height, window);
@@ -234,9 +217,6 @@ impl PaneFlowApp {
             ));
         }
 
-        // Conditional: with Rename gone, "Run Workflow" is the only row that can
-        // sit above this rule. Unconditional, it would open the menu on a
-        // leading divider.
         if workflow_rows > 0 {
             context_menu = context_menu.child(context_menu_divider(ui));
         }
@@ -296,7 +276,6 @@ impl PaneFlowApp {
 
         context_menu = context_menu.child(context_menu_divider(ui));
 
-        // Reveal in file manager
         let reveal_shortcut = self
             .shortcut_for_action("reveal_workspace_in_file_manager")
             .map(|s| SharedString::from(s.to_string()));
@@ -311,7 +290,6 @@ impl PaneFlowApp {
             }),
         ));
 
-        // Copy path
         let copy_shortcut = self
             .shortcut_for_action("copy_workspace_path")
             .map(|s| SharedString::from(s.to_string()));
@@ -326,7 +304,6 @@ impl PaneFlowApp {
             }),
         ));
 
-        // Manage Custom Buttons - opens the per-workspace button editor modal.
         context_menu = context_menu.child(self.render_select_menu_item(
             "workspace-context-custom-buttons".into(),
             "Manage Custom Buttons…",
@@ -340,7 +317,6 @@ impl PaneFlowApp {
 
         context_menu = context_menu.child(context_menu_divider(ui));
 
-        // Close workspace (conditionally disabled)
         let close_shortcut = self
             .shortcut_for_action("close_workspace")
             .map(|s| SharedString::from(s.to_string()));
@@ -396,22 +372,6 @@ impl PaneFlowApp {
         deferred(context_menu).priority(3).into_any_element()
     }
 
-    /// Build the deferred pane context menu, anchored on the pane header
-    /// (EP-002 US-007). A pane is mono-surface, so the former "Move to pane…"
-    /// entry is gone along with the tab strip that anchored it: what remains
-    /// are the surface actions (copy path, cancel a queued prompt, close the
-    /// pane). No dead or disabled move entry is left behind.
-    /// US-010: right-click menu on a sidebar tab row. Rename and Close, in the
-    /// shared select-menu language of the workspace menu, plus "Reset name" on
-    /// a tab the user has named. Close keeps FR-01: the last tab of a
-    /// workspace is replaced by an empty one, the workspace itself is never
-    /// closed from here.
-    ///
-    /// "Reset name" is the way back out of the naming lock. Renaming a tab
-    /// freezes it against auto-naming for good, which is the point - but a
-    /// one-way door would leave a tab named after a task that ended three
-    /// tasks ago, with nothing to do about it. It only appears where it does
-    /// something, so an auto-named tab shows the same two entries as before.
     pub(crate) fn render_tab_context_menu(
         &self,
         menu: TabContextMenu,
@@ -431,10 +391,6 @@ impl PaneFlowApp {
         let can_reset_name = tab.is_some_and(|tab| tab.title_is_user_owned());
         let bound = tab.and_then(|tab| tab.worktree.clone());
         let is_bound = bound.is_some();
-        // Discussion #41: the branches this tab can be moved to, one row each,
-        // exactly what the New pane picker offers - a branch with no worktree
-        // yet gets one when it is chosen. The repository's own branch is in
-        // there like any other, and picking it unbinds the tab.
         let root = self
             .workspaces
             .get(ws_idx)
@@ -456,8 +412,6 @@ impl PaneFlowApp {
                 (None, branch.clone(), selected)
             })
             .collect();
-        // A detached checkout is under no branch, and dropping it would strand
-        // a tab already bound to one.
         branches.extend(
             listing
                 .iter()
@@ -469,17 +423,12 @@ impl PaneFlowApp {
                     (Some(entry.path.clone()), label, selected)
                 }),
         );
-        // A single branch is where the tab already works: the section would
-        // only restate it.
         let show_worktrees = branches.len() > 1;
         let worktree_rows = if show_worktrees {
-            // The section header and its divider, plus one row per branch.
             1. + branches.len() as f32
         } else {
             0.
         };
-        // The removal entry and its divider, sized like the Branch section
-        // header above (divider folded into the row it introduces).
         let remove_rows = if is_bound { 1. } else { 0. };
         let rows = if can_reset_name { 3. } else { 2. } + worktree_rows + remove_rows;
         let menu_height = px(8. + rows * 28.);
@@ -487,9 +436,6 @@ impl PaneFlowApp {
         let close_shortcut = self
             .shortcut_for_action("close_tab")
             .map(|key| SharedString::from(key.to_string()));
-        // Only a bound tab has a checkout to remove. Built here rather than
-        // inside the `when_some` below because `render_select_menu_item` needs
-        // `self`, exactly like every other item in this menu.
         let remove_worktree_item = is_bound.then(|| {
             self.render_select_menu_item(
                 "tab-context-remove-worktree".into(),
@@ -609,9 +555,6 @@ impl PaneFlowApp {
     ) -> AnyElement {
         let source = menu.pane.clone();
 
-        // Workspace root of the pane, for the relative-path entry. The pane
-        // carries its owning workspace id, so this resolves without walking
-        // every tab's layout tree.
         let owner_id = source.read(cx).workspace_id;
         let workspace_cwd: Option<PathBuf> = self
             .workspaces
@@ -630,8 +573,6 @@ impl PaneFlowApp {
                 .unwrap_or_else(|| path.to_string_lossy().into_owned())
         });
 
-        // EP-001 US-003 (cli-cockpit): cancel this surface's queued prompt -
-        // the non-Composer cancel path. Only shown when a buffer exists.
         let pending_sid = source
             .read(cx)
             .surface
@@ -765,8 +706,6 @@ impl PaneFlowApp {
             )
     }
 
-    /// Path a pane surface can advertise in its context menu: the terminal's
-    /// live CWD, the markdown file, or the diff's first column.
     fn surface_context_path(surface: &PaneSurface, cx: &App) -> Option<PathBuf> {
         match surface {
             PaneSurface::Terminal(terminal) => terminal

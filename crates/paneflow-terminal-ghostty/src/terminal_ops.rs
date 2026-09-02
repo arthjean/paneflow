@@ -1,7 +1,3 @@
-//! Terminal operations that sit outside the read/write hot path: scrollback
-//! compression, mid-sequence continuation, protocol-aware paste, and size
-//! reports.
-
 use std::ffi::c_void;
 
 use paneflow_libghostty_sys as sys;
@@ -12,43 +8,28 @@ use crate::engine::DisplayTerminal;
 use crate::handles::check;
 use crate::{GhosttyError, Result, WindowSize};
 
-/// Upper bound for an encoded size report.
 const MAX_SIZE_REPORT_BYTES: usize = 64;
 
-/// Upper bound for a continuation dump. A continuation is a partially parsed
-/// escape sequence, which libghostty already caps well below this.
 const MAX_CONTINUATION_BYTES: usize = 64 * 1024;
 
-/// How much scrollback compression work to do in one call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompressionMode {
-    /// One bounded step, sized for running on an idle tick.
     Incremental,
-    /// Compress everything before returning.
     Full,
 }
 
-/// What a compression pass accomplished.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CompressionOutcome {
-    /// Nothing is left to compress.
     Complete,
-    /// More work remains; call again on the next idle tick.
     Pending,
-    /// This build of libghostty cannot compress scrollback.
     Unsupported,
 }
 
-/// Which report format to encode a terminal size in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SizeReportStyle {
-    /// In-band size report, mode 2048: `CSI 48 ; rows ; cols ; height ; width t`.
     Mode2048,
-    /// XTWINOPS text area size in pixels: `CSI 4 ; height ; width t`.
     Csi14T,
-    /// XTWINOPS cell size in pixels: `CSI 6 ; height ; width t`.
     Csi16T,
-    /// XTWINOPS text area size in cells: `CSI 8 ; rows ; cols t`.
     Csi18T,
 }
 
@@ -64,34 +45,22 @@ impl SizeReportStyle {
     }
 }
 
-/// The result of writing up to the ground state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroundWrite {
-    /// Bytes consumed, including the one that reached ground.
     pub consumed: usize,
-    /// Whether the parser is now at ground. When false the whole slice was
-    /// consumed and a sequence is still open.
     pub at_ground: bool,
 }
 
-/// Where a paste's text comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PasteSource {
-    /// The system clipboard, which the program may be told about.
     Clipboard,
-    /// Text the embedder supplied directly, such as a bracketed-paste
-    /// injection.
     Text,
 }
 
-/// Which clipboard a paste came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ClipboardLocation {
-    /// The standard clipboard.
     Standard,
-    /// The X11 primary selection.
     Primary,
-    /// The current terminal selection.
     Selection,
 }
 
@@ -106,20 +75,12 @@ impl ClipboardLocation {
     }
 }
 
-/// One MIME-typed representation of pasted content.
 pub struct PasteRepresentation<'data> {
-    /// The MIME type, for example `text/plain;charset=utf-8`.
     pub mime: &'data str,
-    /// The bytes of that representation.
     pub data: &'data [u8],
 }
 
 impl DisplayTerminal {
-    /// Encode a size report without going through a terminal query.
-    ///
-    /// The terminal answers `CSI 14 t` and friends on its own through the
-    /// size callback; this is for the cases where Paneflow has to synthesize
-    /// one, such as replaying a resize into a recorded stream.
     pub fn encode_size_report(&self, style: SizeReportStyle, size: WindowSize) -> Result<Vec<u8>> {
         let size = sys::GhosttySizeReportSize {
             rows: size.rows,
@@ -136,26 +97,14 @@ impl DisplayTerminal {
         )
     }
 
-    /// How much compression-relevant activity the terminal has seen.
-    ///
-    /// The counter only moves when something happened that compression could
-    /// act on, so a caller can skip a pass whose input has not changed.
     pub fn compression_activity(&self) -> Result<u64> {
         let mut activity = 0u64;
-        // SAFETY: the terminal handle is live and `activity` is valid
-        // writable storage.
         let result =
             unsafe { sys::ghostty_terminal_compression_activity(self.terminal.raw(), &mut activity) };
         check("terminal_compression_activity", result)?;
         Ok(activity)
     }
 
-    /// Compress scrollback, reclaiming memory from rows that are no longer on
-    /// screen.
-    ///
-    /// Run this on an idle tick with [`CompressionMode::Incremental`] and
-    /// stop once it reports [`CompressionOutcome::Complete`]. It walks the
-    /// page list, so it does not belong on the render thread.
     pub fn compress(&mut self, mode: CompressionMode) -> Result<CompressionOutcome> {
         let mode = match mode {
             CompressionMode::Incremental => {
@@ -167,8 +116,6 @@ impl DisplayTerminal {
         };
         let mut outcome =
             sys::GhosttyTerminalCompressionResult_GHOSTTY_TERMINAL_COMPRESSION_RESULT_COMPLETE;
-        // SAFETY: the terminal handle is live and `outcome` is valid writable
-        // storage.
         let result =
             unsafe { sys::ghostty_terminal_compress(self.terminal.raw(), mode, &mut outcome) };
         check("terminal_compress", result)?;
@@ -188,17 +135,8 @@ impl DisplayTerminal {
         }
     }
 
-    /// Write only the shortest prefix of `bytes` needed to bring the parser
-    /// back to the ground state.
-    ///
-    /// Ground is the stateless point of the stream: no UTF-8, ESC, CSI, or
-    /// OSC sequence in flight. It is the only safe place to interleave
-    /// Paneflow's own VT output with what the pty is producing, which is what
-    /// this is for. A parser already at ground consumes nothing.
     pub fn feed_until_ground(&mut self, bytes: &[u8]) -> Result<GroundWrite> {
         let mut consumed = 0usize;
-        // SAFETY: the terminal handle is live, `bytes` is borrowed for the
-        // call, and `consumed` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_vt_write_until_ground(
                 self.terminal.raw(),
@@ -207,8 +145,6 @@ impl DisplayTerminal {
                 &mut consumed,
             )
         };
-        // `NO_VALUE` means the whole slice went in without reaching ground,
-        // which is a state, not a failure.
         let at_ground = result != sys::GhosttyResult_GHOSTTY_NO_VALUE;
         if at_ground {
             check("terminal_vt_write_until_ground", result)?;
@@ -228,16 +164,7 @@ impl DisplayTerminal {
         })
     }
 
-    /// Retain up to `bytes` of unfinished VT or UTF-8 input.
-    ///
-    /// Off by default, which is why [`Self::continuation`] normally reports
-    /// nothing. It has to be enabled *before* the input that leaves the parser
-    /// mid-sequence arrives, so a snapshot taken later can carry that state:
-    /// `ghostty_snapshot_encode` rejects a terminal whose parser is unfinished
-    /// and whose tracking was off. Zero disables tracking again.
     pub fn set_continuation_max_bytes(&mut self, bytes: usize) -> Result<()> {
-        // SAFETY: the terminal handle is live and the option's documented
-        // input type is `size_t *`.
         let result = unsafe {
             sys::ghostty_terminal_set(
                 self.terminal.raw(),
@@ -248,17 +175,9 @@ impl DisplayTerminal {
         check("terminal_set_continuation_max_bytes", result)
     }
 
-    /// The escape sequence the parser is in the middle of, if any.
-    ///
-    /// Returns `None` when the parser is in the ground state. Requires the
-    /// continuation budget to be configured through
-    /// `GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES`; without it the terminal
-    /// does not retain partial sequences.
     pub fn continuation(&self) -> Result<Option<Vec<u8>>> {
         let mut pointer: *mut u8 = std::ptr::null_mut();
         let mut len = 0usize;
-        // SAFETY: the terminal handle is live, the null allocator selects
-        // libghostty's default, and both out-parameters are valid storage.
         let result = unsafe {
             sys::ghostty_terminal_continuation_alloc(
                 self.terminal.raw(),
@@ -270,19 +189,14 @@ impl DisplayTerminal {
         if result == sys::GhosttyResult_GHOSTTY_NO_VALUE
             || result == sys::GhosttyResult_GHOSTTY_INVALID_VALUE
         {
-            // `INVALID_VALUE` here means continuation tracking is disabled,
-            // which is a configuration state rather than a failure.
             return Ok(None);
         }
         check("terminal_continuation_alloc", result)?;
         if pointer.is_null() || len == 0 {
             return Ok(None);
         }
-        // SAFETY: the library reported `len` initialized bytes at `pointer`.
         let copied = unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec();
         let over_budget = len > MAX_CONTINUATION_BYTES;
-        // SAFETY: the pointer and length are exactly what the allocating call
-        // produced with the same default allocator.
         unsafe { sys::ghostty_free(std::ptr::null(), pointer, len) };
         if over_budget {
             return Err(GhosttyError::LimitExceeded {
@@ -293,11 +207,8 @@ impl DisplayTerminal {
         Ok(Some(copied))
     }
 
-    /// Write the pending continuation into `buffer`, returning its length.
     pub fn continuation_into(&self, buffer: &mut [u8]) -> Result<Option<usize>> {
         let mut written = 0usize;
-        // SAFETY: the terminal handle is live, `buffer` is a writable slice
-        // of the stated length, and `written` is valid storage.
         let result = unsafe {
             sys::ghostty_terminal_continuation_buf(
                 self.terminal.raw(),
@@ -321,12 +232,8 @@ impl DisplayTerminal {
         Ok(Some(written))
     }
 
-    /// Stream the pending continuation to `sink`, which returns `false` to
-    /// abort.
     pub fn continuation_to<F: FnMut(&[u8]) -> bool>(&self, mut sink: F) -> Result<bool> {
         let writer = crate::io::writer(&mut sink);
-        // SAFETY: the terminal handle is live and `writer` borrows `sink` for
-        // this synchronous call.
         let result = unsafe { sys::ghostty_terminal_continuation_write(self.terminal.raw(), writer) };
         if result == sys::GhosttyResult_GHOSTTY_NO_VALUE
             || result == sys::GhosttyResult_GHOSTTY_INVALID_VALUE
@@ -337,17 +244,6 @@ impl DisplayTerminal {
         Ok(true)
     }
 
-    /// Paste content into the terminal the way the running program expects
-    /// it.
-    ///
-    /// Unlike [`Self::encode_paste`], which only frames text for mode 2004,
-    /// this dispatches on terminal state: with the Kitty clipboard protocol
-    /// (mode 5522) active it sends a paste event that lets the program pull
-    /// whichever representation it wants, and it falls back to bracketed
-    /// paste otherwise. Output goes through the write-pty callback.
-    ///
-    /// Returns whether anything reached the pty. Unsafe text is rejected with
-    /// [`GhosttyError::UnsafePaste`] unless `allow_unsafe` is set.
     pub fn paste(
         &mut self,
         representations: &[PasteRepresentation<'_>],
@@ -378,8 +274,6 @@ impl DisplayTerminal {
             allow_unsafe,
         };
         let mut written = false;
-        // SAFETY: `paste` and everything it points at outlive this
-        // synchronous call, and `written` is valid writable storage.
         let result =
             unsafe { sys::ghostty_terminal_paste(self.terminal.raw(), &paste, &mut written) };
         if result == sys::GhosttyResult_GHOSTTY_REJECTED {
@@ -389,20 +283,11 @@ impl DisplayTerminal {
         Ok(written)
     }
 
-    /// Read the grid geometry in one call: columns, total rows, scrollback
-    /// rows.
-    ///
-    /// The individual getters each cross the FFI boundary; batching them is
-    /// what `ghostty_terminal_get_multi` exists for. The destination types
-    /// are the ones terminal.h documents per key, which differ between them:
-    /// columns are `uint16_t`, row counts are `size_t`.
     pub(crate) fn geometry_batch(&self) -> Result<(u16, usize, usize)> {
         let mut cols = 0u16;
         let mut total_rows = 0usize;
         let mut scrollback = 0usize;
         use sys as s;
-        // SAFETY: every destination matches the output type terminal.h
-        // documents for its key, and all of them outlive the call.
         unsafe {
             get_multi(
                 "terminal_get_multi",
@@ -425,8 +310,6 @@ impl DisplayTerminal {
     }
 }
 
-/// Bridges the paste reader callback back to the representations the caller
-/// supplied.
 struct PasteState<'data, 'slice> {
     representations: &'slice [PasteRepresentation<'data>],
 }
@@ -439,10 +322,7 @@ unsafe extern "C" fn mime_read_trampoline(
     if userdata.is_null() || mime.ptr.is_null() {
         return false;
     }
-    // SAFETY: `userdata` is the `&mut PasteState` handed to
-    // `ghostty_terminal_paste`, which calls this synchronously.
     let state = unsafe { &*userdata.cast::<PasteState<'_, '_>>() };
-    // SAFETY: libghostty documents the string as borrowed for this call.
     let requested = unsafe { std::slice::from_raw_parts(mime.ptr, mime.len) };
     let Some(representation) = state
         .representations
@@ -455,12 +335,8 @@ unsafe extern "C" fn mime_read_trampoline(
         return false;
     };
     if representation.data.is_empty() {
-        // A zero-length write is not allowed, and an empty representation has
-        // nothing to stream.
         return true;
     }
-    // SAFETY: `write` is the callback libghostty supplied with its own
-    // userdata, and the slice is live for the call.
     unsafe {
         write(
             writer.userdata,
@@ -515,7 +391,6 @@ mod tests {
     #[test]
     fn writing_until_ground_consumes_only_what_closes_the_sequence() {
         let mut terminal = terminal(20, 3);
-        // A fresh parser is already at ground, so nothing is consumed.
         assert_eq!(
             terminal
                 .feed_until_ground(b"abc")
@@ -526,8 +401,6 @@ mod tests {
             }
         );
 
-        // Leave the parser inside a CSI, then close it: only the final byte
-        // is consumed and the rest is left for the caller to write normally.
         terminal.feed(b"\x1b[1").expect("partial sequence");
         assert_eq!(
             terminal
@@ -539,8 +412,6 @@ mod tests {
             }
         );
 
-        // A slice that never closes the sequence is consumed whole and the
-        // parser stays off ground.
         terminal.feed(b"\x1b[").expect("partial sequence");
         assert_eq!(
             terminal
@@ -678,8 +549,6 @@ mod tests {
     fn a_continuation_is_absent_unless_the_budget_is_configured() {
         let mut terminal = terminal(20, 3);
         terminal.feed(b"\x1b[1").expect("partial sequence");
-        // The constructor does not set a continuation budget, so libghostty
-        // retains nothing and every accessor agrees on that.
         assert!(terminal.continuation().expect("alloc path").is_none());
         let mut buffer = [0u8; 32];
         assert!(

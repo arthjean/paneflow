@@ -1,43 +1,3 @@
-//! Incremental syntax highlighting for the file editor.
-//!
-//! prd-file-editor-2026-Q3, US-004. The diff colors a file by parsing it whole
-//! ([`crate::diff::highlight_lines`]); that is right for a diff, which is built
-//! once and never mutated, and wrong for an editor, where a full parse per
-//! keystroke is the entire latency budget. This module keeps the tree alive and
-//! feeds it edits instead - but it deliberately owns **no** grammar table, no
-//! query and no color map of its own. It consumes
-//! [`crate::diff::grammar_for_ext`], [`crate::diff::markdown_inline_grammar`],
-//! [`crate::diff::resolve_runs`], [`crate::diff::MAX_HIGHLIGHT_BYTES`] and
-//! [`DiffSyntax`], which is why `parity_matches_diff_highlighter_on_all_grammars`
-//! below can assert the two surfaces produce byte-identical runs.
-//!
-//! **The per-keystroke sequence**, in the order Zed established and this module
-//! mirrors:
-//!
-//! 1. [`CodeHighlighter::edit`] first *interpolates* the cached runs
-//!    (`zed:crates/language/src/syntax_map.rs::interpolate`): rows are spliced
-//!    and columns shifted so the frame that renders the keystroke already shows
-//!    plausible colors, with zero parsing.
-//! 2. Each live tree gets the same edit through `Tree::edit`, so the next parse
-//!    can reuse every subtree the edit did not touch.
-//! 3. A reparse is attempted **synchronously under a 1 ms budget** - Zed's
-//!    production value (`zed:crates/language/src/buffer.rs`, `sync_parse_timeout`),
-//!    not a number picked here. The budget is enforced through tree-sitter's
-//!    `ParseOptions::progress_callback`, which is the modern spelling of the
-//!    `reparse_with_timeout` mechanism.
-//! 4. If the budget blows, the aborted parser is [`Parser::reset`] (mandatory:
-//!    a cancelled parse leaves it mid-document) and the work becomes a
-//!    [`DeferredParse`] the caller runs off-thread. The text stays fully
-//!    editable meanwhile, colored by the interpolated runs.
-//! 5. The deferred result carries a generation. [`CodeHighlighter::apply_parsed`]
-//!    drops it if any edit happened in between, so a slow parse can never
-//!    repaint stale colors over newer text.
-//!
-//! After a successful parse, only the rows tree-sitter reports as changed
-//! (`Tree::changed_ranges`, unioned with the edit itself) are re-queried. A
-//! keystroke therefore costs an incremental parse plus a query over a handful
-//! of rows, never a full parse and never a full-file query.
-
 use std::ops::{ControlFlow, Range};
 use std::time::{Duration, Instant};
 
@@ -56,44 +16,27 @@ use crate::diff::{
 
 use super::document::{CodeDocument, CodeEdit};
 
-/// Synchronous reparse budget. 1 ms, matching Zed's `sync_parse_timeout`: long
-/// enough that ordinary edits in ordinary files never leave the main thread,
-/// short enough to stay invisible inside a 16 ms frame.
 pub(crate) const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 
-/// One line's foreground runs, in line-relative byte ranges - the exact shape
-/// [`crate::diff::highlight_lines`] returns per line, so the renderer treats a
-/// diff row and an editor row identically.
 pub(crate) type LineRuns = Vec<(Range<usize>, Hsla)>;
 
-/// A grammar kept live across edits: its interned grammar, a parser bound to
-/// it, and the tree from the last successful parse.
 struct GrammarPass {
     grammar: &'static Grammar,
     parser: Parser,
     tree: Option<Tree>,
 }
 
-/// What [`CodeHighlighter::edit`] managed to do within the budget.
 pub(crate) enum HighlightOutcome {
-    /// Reparsed and re-queried inside the budget: the runs are exact.
     Synced,
-    /// The budget blew. Runs are interpolated (plausible, not exact); run the
-    /// payload off-thread and feed it back to [`CodeHighlighter::apply_parsed`].
     Deferred(DeferredParse),
 }
 
-/// A reparse that has to happen off the render thread. Owns everything it
-/// needs: a snapshot of the rope (cheap - ropey clones share their chunks) and
-/// the already-edited trees to reuse.
 pub(crate) struct DeferredParse {
     generation: u64,
     rope: Rope,
     passes: Vec<(&'static Grammar, Option<Tree>)>,
 }
 
-/// The result of a [`DeferredParse`], still stamped with the generation it was
-/// started for.
 pub(crate) struct ParsedTrees {
     generation: u64,
     len_bytes: usize,
@@ -101,13 +44,11 @@ pub(crate) struct ParsedTrees {
 }
 
 impl DeferredParse {
-    #[allow(dead_code)] // EP-001 accessor: generations are compared inside the highlighter; no caller reads them out yet.
+    #[allow(dead_code)]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// **Blocking**, no budget. Runs inside `smol::unblock` (see
-    /// [`spawn_deferred_parse`]).
     pub(crate) fn run(self) -> ParsedTrees {
         let len_bytes = self.rope.len_bytes();
         let trees = self
@@ -129,31 +70,21 @@ impl DeferredParse {
     }
 }
 
-/// Per-file highlighting state: the live trees plus the per-row runs the
-/// renderer reads.
 pub(crate) struct CodeHighlighter {
     syntax: DiffSyntax,
     passes: Vec<GrammarPass>,
     rows: Vec<LineRuns>,
-    /// `false` for an unknown extension or a file past
-    /// [`MAX_HIGHLIGHT_BYTES`]. The document stays fully editable; every row
-    /// simply renders in the default foreground.
     enabled: bool,
     generation: u64,
 }
 
 impl CodeHighlighter {
-    /// Build the highlighter for `doc` and run the one full parse this file
-    /// gets. `syntax` is a snapshot of the active theme, rebuilt by the caller
-    /// on theme change exactly as the diff does.
     pub(crate) fn new(doc: &CodeDocument, syntax: DiffSyntax) -> Self {
         let mut passes = Vec::new();
         if doc.len_bytes() <= MAX_HIGHLIGHT_BYTES
             && let Some(grammar) = grammar_for_ext(doc.ext())
         {
             passes.push(grammar);
-            // Markdown is colored by two grammars, block then inline, merged by
-            // `resolve_runs` - the same two passes `highlight_lines` runs.
             if matches!(doc.ext(), "md" | "markdown" | "mdx")
                 && let Some(inline) = markdown_inline_grammar()
             {
@@ -188,26 +119,20 @@ impl CodeHighlighter {
         this
     }
 
-    /// Whether this file is colored at all. `false` means plain text, which is
-    /// a rendering outcome, never an editing restriction.
-    #[allow(dead_code)] // EP-001 accessor: the view branches on the highlight result, not on the flag, so far.
+    #[allow(dead_code)]
     pub(crate) fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    #[allow(dead_code)] // EP-001 accessor: generations are compared inside the highlighter; no caller reads them out yet.
+    #[allow(dead_code)]
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
 
-    /// Foreground runs for `row`, line-relative and non-overlapping. Empty for
-    /// an uncolored row or an out-of-range index.
     pub(crate) fn runs(&self, row: usize) -> &[(Range<usize>, Hsla)] {
         self.rows.get(row).map_or(&[], Vec::as_slice)
     }
 
-    /// Rebuild the color map against a new theme snapshot without reparsing:
-    /// the trees are unaffected by colors.
     pub(crate) fn set_syntax(&mut self, doc: &CodeDocument, syntax: DiffSyntax) {
         self.syntax = syntax;
         if self.enabled {
@@ -215,18 +140,10 @@ impl CodeHighlighter {
         }
     }
 
-    /// Fold one applied edit in. `doc` must already reflect `edit`.
-    ///
-    /// Always interpolates first, so the caller can paint immediately whatever
-    /// this returns.
     pub(crate) fn edit(&mut self, doc: &CodeDocument, edit: &CodeEdit) -> HighlightOutcome {
         self.edit_with_budget(doc, edit, SYNC_PARSE_BUDGET)
     }
 
-    /// [`Self::edit`] with an explicit budget. Exists so a test can pin the
-    /// budget instead of racing the 1 ms timer: zero to exercise the
-    /// off-thread path, or a wall-clock eternity when the subject is what the
-    /// parse produces rather than how long it may take.
     pub(crate) fn edit_with_budget(
         &mut self,
         doc: &CodeDocument,
@@ -253,8 +170,6 @@ impl CodeHighlighter {
             }
         }
 
-        // One budget for the whole keystroke, not one per pass: Markdown must
-        // not get twice the stall budget of every other file type.
         let deadline = Instant::now() + budget;
         let mut dirty = edit.start_byte..edit.new_end_byte.max(edit.start_byte);
         let mut deferred = false;
@@ -273,9 +188,6 @@ impl CodeHighlighter {
                     pass.tree = Some(new_tree);
                 }
                 None => {
-                    // An aborted parse leaves the parser mid-document; it must
-                    // be reset before it is usable again. The edited tree is
-                    // kept as the base for the off-thread retry.
                     pass.parser.reset();
                     deferred = true;
                 }
@@ -299,9 +211,6 @@ impl CodeHighlighter {
         HighlightOutcome::Synced
     }
 
-    /// Install an off-thread reparse. Returns `false` - changing nothing, so
-    /// the caller must not repaint - when another edit landed in the meantime,
-    /// or when the document no longer matches the text that was parsed.
     pub(crate) fn apply_parsed(&mut self, doc: &CodeDocument, parsed: ParsedTrees) -> bool {
         if parsed.generation != self.generation || parsed.len_bytes != doc.len_bytes() {
             return false;
@@ -318,12 +227,6 @@ impl CodeHighlighter {
         true
     }
 
-    /// Shift the cached runs to match the edited text without parsing anything
-    /// (`zed:crates/language/src/syntax_map.rs::interpolate`). Runs left of the
-    /// edit keep their columns, runs right of it move with the text, and rows
-    /// the edit added or removed are spliced in or out. Any run the edit
-    /// straddles is truncated rather than guessed at - a missing color for one
-    /// frame reads better than a wrong one.
     fn interpolate(&mut self, doc: &CodeDocument, edit: &CodeEdit) {
         let start_row = edit.start_point.row;
         let old_end_row = edit.old_end_point.row;
@@ -375,7 +278,6 @@ impl CodeHighlighter {
         self.rows.resize(doc.line_count(), Vec::new());
     }
 
-    /// Rows overlapping `bytes`, clamped to the document.
     fn dirty_rows(&self, doc: &CodeDocument, bytes: &Range<usize>) -> Range<usize> {
         let lines = doc.line_count();
         let first = doc.byte_to_line(bytes.start);
@@ -383,9 +285,6 @@ impl CodeHighlighter {
         first..(last + 1).min(lines)
     }
 
-    /// Re-run every grammar's query over `rows` only and rebuild their runs.
-    /// The query is bounded with `QueryCursor::set_byte_range`, so its cost
-    /// follows the edited region, not the file.
     fn requery_rows(&mut self, doc: &CodeDocument, rows: Range<usize>) {
         let lines = doc.line_count();
         if self.rows.len() != lines {
@@ -439,9 +338,6 @@ impl CodeHighlighter {
 
 #[cfg(test)]
 impl CodeHighlighter {
-    /// Identities of the root node's children in the block-grammar tree.
-    /// tree-sitter reuses untouched subtrees verbatim across an incremental
-    /// parse, so a stable id is direct evidence the subtree was not re-parsed.
     fn root_child_ids(&self) -> Vec<usize> {
         self.passes
             .first()
@@ -455,11 +351,6 @@ impl CodeHighlighter {
     }
 }
 
-/// Split one capture across the rows it covers, pushing line-relative runs.
-/// Same contract as `highlighter.rs::bucket_capture`, but resolved against the
-/// rope's line counters instead of a materialized `Vec` of line ranges - which
-/// is the point: building that `Vec` is O(lines) and would undo the incremental
-/// win on every keystroke.
 fn bucket_capture(
     doc: &CodeDocument,
     cstart: usize,
@@ -488,8 +379,6 @@ fn bucket_capture(
     }
 }
 
-/// Feeds tree-sitter's query engine straight from the rope's chunks - no
-/// full-text copy is ever materialized for a query.
 struct RopeText<'a>(&'a Rope);
 
 type ChunkBytes<'a> = std::iter::Map<ropey::iter::Chunks<'a>, fn(&'a str) -> &'a [u8]>;
@@ -509,18 +398,12 @@ impl<'a> TextProvider<&'a [u8]> for RopeText<'a> {
     }
 }
 
-/// Parse `rope` incrementally, reading it chunk by chunk, and abort past
-/// `deadline`. Returns `None` when the parse was aborted (the caller must then
-/// [`Parser::reset`]) or when tree-sitter failed outright.
 fn parse_rope(
     parser: &mut Parser,
     rope: &Rope,
     old: Option<&Tree>,
     deadline: Option<Instant>,
 ) -> Option<Tree> {
-    // A budget already spent means the parse never starts. Without this, a
-    // zero budget would still run to completion on a small file, because the
-    // progress callback only fires every few thousand nodes.
     if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
         return None;
     }
@@ -546,10 +429,6 @@ const fn point(row: usize, column: usize) -> TsPoint {
     TsPoint { row, column }
 }
 
-/// Run `deferred` off the render thread and hand the trees back to `view` on
-/// the main thread. Mirrors `load::spawn_code_load`: a closed tab makes the
-/// `WeakEntity` update fail silently, and `apply` is responsible for its own
-/// `cx.notify()` - it is simply never reached for a dead entity.
 pub(crate) fn spawn_deferred_parse<V, F>(deferred: DeferredParse, cx: &mut Context<V>, apply: F)
 where
     V: 'static,
@@ -582,8 +461,6 @@ mod tests {
         CodeDocument::new(PathBuf::from(format!("/tmp/{name}")), text)
     }
 
-    /// One sample per arm of `diff/highlighter.rs::grammar_for_ext`, so the
-    /// parity assertion below covers every grammar the diff can select.
     fn corpus() -> Vec<(&'static str, &'static str)> {
         vec![
             (
@@ -653,10 +530,6 @@ mod tests {
         ]
     }
 
-    /// The runs the diff would produce for `text`, padded to the document's
-    /// line count. `str::lines()` drops the empty line a trailing `\n` implies,
-    /// while the editor keeps it (a cursor can sit there), so the editor has at
-    /// most one extra row and it must be empty.
     fn expected_rows(text: &str, ext: &str, lines: usize) -> Vec<LineRuns> {
         let mut rows = highlight_lines(text, ext, &syntax());
         assert!(
@@ -695,14 +568,8 @@ mod tests {
         for (name, text) in corpus() {
             let mut d = doc(name, text);
             let h = &mut CodeHighlighter::new(&d, syntax());
-            // Insert a newline plus a space at the start of the second line:
-            // it shifts every byte after it and adds a row, so a stale tree or
-            // a bad `InputEdit` shows up immediately.
             let at = d.line_to_byte(1);
             let edit = d.insert(at, "\n ").expect("insert");
-            // A wall-clock eternity rather than the production budget: the
-            // subject is the runs the reparse produces, and a loaded runner
-            // can blow past 1 ms on any grammar here.
             let outcome = h.edit_with_budget(&d, &edit, Duration::from_secs(5));
             assert!(
                 matches!(outcome, HighlightOutcome::Synced),
@@ -735,14 +602,8 @@ mod tests {
         let before = h.root_child_ids();
         assert!(before.len() >= 400);
 
-        // Type one character inside the very first function.
         let at = d.line_to_byte(1) + 4;
         let edit = d.insert(at, "1").expect("insert");
-        // An explicit, generous budget instead of the production 1 ms one: the
-        // subject here is subtree reuse, not the deadline, and a wall-clock
-        // budget makes the assertion depend on how loaded the machine running
-        // the suite happens to be (it defers, and the test fails, roughly one
-        // run in five under a fully parallel `cargo test`).
         assert!(matches!(
             h.edit_with_budget(&d, &edit, Duration::from_secs(5)),
             HighlightOutcome::Synced
@@ -751,10 +612,6 @@ mod tests {
         let after = h.root_child_ids();
         assert_eq!(after.len(), before.len());
         let reused = before.iter().zip(&after).filter(|(a, b)| a == b).count();
-        // A tree-sitter node id is the address of its subtree, so an id that
-        // survives an edit is a subtree that was reused verbatim rather than
-        // re-parsed. A from-scratch parse allocates a fresh tree and shares
-        // almost nothing, which is the control this asserts against.
         let fresh = CodeHighlighter::new(&d, syntax()).root_child_ids();
         let coincidental = after.iter().zip(&fresh).filter(|(a, b)| a == b).count();
         assert!(
@@ -785,12 +642,9 @@ mod tests {
             panic!("a zero budget must defer");
         };
         assert_eq!(deferred.generation(), h.generation());
-        // Interpolated, not blank: the inserted row is plain, and the row that
-        // moved down kept the colors it had.
         assert!(h.runs(1).is_empty());
         assert_eq!(h.runs(2), colored_before.as_slice());
 
-        // The off-thread result restores exact parity with the diff.
         assert!(h.apply_parsed(&d, deferred.run()));
         let after = d.to_disk_string();
         let expected = expected_rows(&after, d.ext(), d.line_count());
@@ -811,13 +665,10 @@ mod tests {
             panic!("a zero budget must defer");
         };
 
-        // A second keystroke lands while the first parse is still running.
         let second = d.insert(0, "//y\n").expect("insert");
         let _ = h.edit(&d, &second);
         let snapshot: Vec<_> = (0..d.line_count()).map(|r| h.runs(r).to_vec()).collect();
 
-        // The older result is rejected, and nothing changes - so the caller
-        // never repaints.
         assert!(!h.apply_parsed(&d, stale.run()));
         let after: Vec<_> = (0..d.line_count()).map(|r| h.runs(r).to_vec()).collect();
         assert_eq!(snapshot, after);
@@ -834,7 +685,6 @@ mod tests {
         assert!(!h.is_enabled());
         assert!(h.runs(0).is_empty());
 
-        // Still editable, and the edit is folded in without a parse.
         let edit = d.insert(0, "// still editable\n").expect("insert");
         assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
         assert!(h.runs(0).is_empty());
@@ -849,7 +699,6 @@ mod tests {
         let edit = d.insert(0, "x").expect("insert");
         assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
         assert!(h.runs(0).is_empty());
-        // The diff renders this file exactly as plainly.
         assert!(highlight_lines("anything at all\n", "unknownext", &syntax())[0].is_empty());
     }
 
@@ -862,8 +711,6 @@ mod tests {
         let start = d.line_to_byte(1);
         let end = d.line_to_byte(2);
         let edit = d.remove(start..end).expect("remove");
-        // Budget pinned for the same reason as the parity tests: the subject
-        // is the row map, not the 1 ms timer.
         assert!(matches!(
             h.edit_with_budget(&d, &edit, Duration::from_secs(5)),
             HighlightOutcome::Synced

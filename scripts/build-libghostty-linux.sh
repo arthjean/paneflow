@@ -63,9 +63,6 @@ while (($#)); do
       shift
       ;;
     --allow-hash-drift)
-      # Only for minting a new reviewed archive: it downgrades the manifest
-      # hash gate to a warning so the recipe can be re-pinned deliberately.
-      # Matches scripts/build-libghostty-macos.sh.
       ALLOW_HASH_DRIFT=1
       shift
       ;;
@@ -159,8 +156,6 @@ normalize_archive() {
     echo "archive normalization found duplicate member names: $duplicates" >&2
     return 1
   }
-  # Zig may append members in parallel completion order. Rebuild from a
-  # canonical order so identical object files always produce identical bytes.
   mapfile -t basenames < <(printf '%s\n' "${basenames[@]}" | LC_ALL=C sort)
 
   rm -rf "$normalize_dir" "$normalized"
@@ -219,10 +214,6 @@ build_one() {
   }
   local archive_sha
   archive_sha="$(sha256sum "$archive" | awk '{print $1}')"
-  # Close the recipe-to-manifest link, exactly as the macOS and Windows
-  # recipes do. Without it `--verify-reproducible` only proves build-1 ==
-  # build-2, so a tampered prebuilt tree could pass every Linux gate by
-  # shipping a matching tampered manifest hash.
   local expected_archive_sha
   expected_archive_sha="$(target_manifest_string "$rust_target" archive_sha256)"
   if [[ "$archive_sha" != "$expected_archive_sha" ]]; then

@@ -1,56 +1,3 @@
-//! "Shortcuts" settings tab - grouped, searchable, *virtualized* list of every
-//! rebindable action with click-to-record key capture.
-//!
-//! The page used to be one flat card of ~80 rows in registry order, which made
-//! finding a binding a scrolling exercise and answering "what already owns this
-//! chord?" impossible. Three things fix that:
-//!
-//! - **Sections.** Rows are filed under [`ShortcutGroup`], declared on the
-//!   action in `keybindings::registry` rather than implied by table order.
-//!   Each section collapses, and a header control folds or unfolds all of them.
-//! - **Text filter.** One field matching the action description *and* the
-//!   rendered keystroke, so "workspace" and "ctrl+shift" both narrow the list.
-//! - **Key capture.** A toggle that turns the next pressed chord into the
-//!   filter (the VS Code / KDE recipe). Text search cannot answer "who owns
-//!   this key?" unless you already know how the chord is spelled; capture can.
-//!
-//! Filtering auto-expands: a collapsed section that contains a match opens for
-//! the duration of the query, so a hit is never hidden behind a closed header.
-//! Rebind capture itself is still driven by
-//! `PaneFlowApp::handle_shortcut_recording` (in `app::settings`), and every row
-//! carries its index into the *unfiltered* `effective_shortcuts`, because that
-//! is what the rebind keys off.
-//!
-//! ## Why this page is virtualized and the other six are not
-//!
-//! Fully expanded, the page is ~90 rows of ~8 elements each. GPUI rebuilds its
-//! taffy tree from scratch every frame (`TaffyLayoutEngine::clear`), so a flat
-//! tree of ~800 nodes was laid out and prepainted on *every* repaint, offscreen
-//! rows included - and because each row carries a hover style, simply moving
-//! the pointer across the list repaints the whole page. Measured on this
-//! machine: 6.2 ms/frame expanded vs 1.2 ms folded in release, 70 ms vs 14 ms
-//! in a debug build.
-//!
-//! So the rows live in a [`gpui::list`], which materializes only what the
-//! viewport shows. `list` rather than `uniform_list` because section headers
-//! and binding rows are different heights. The item stream is flat - header,
-//! its rows, next header - exactly the shape Zed's settings window uses
-//! (`crates/settings_ui/src/settings_ui.rs`, `render_current_page_items`).
-//!
-//! Two consequences the code has to carry:
-//!
-//! - **The card is drawn per row.** A virtualized item cannot span its
-//!   neighbours, so each row paints its own slice of the section card and the
-//!   first/last row of a section round the slice's top/bottom. That also
-//!   retires the per-section `squircle_fill`: a filled path forces GPUI to end
-//!   the main render pass, rasterize into an intermediate texture and reopen
-//!   the pass (`gpui_wgpu::wgpu_renderer`, `draw_paths_to_intermediate`), so
-//!   nine open sections cost nine render-pass splits per frame. See
-//!   [`SHORTCUT_CARD_RADIUS`] for the corner that replaces it.
-//! - **The filter runs outside `render`.** [`PaneFlowApp::shortcut_rows`] is
-//!   rebuilt when the query, the fold state or the bindings change, not once
-//!   per frame.
-
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, InteractiveElement, IntoElement, ListAlignment,
     ListState, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Point, Styled,
@@ -70,47 +17,20 @@ use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 use crate::widgets::scrollbar::{self, ScrollableHandle as _};
 use crate::{PaneFlowApp, config_writer, keybindings};
 
-/// Corner of a section card on this page.
-///
-/// Elsewhere a settings card is a superellipse at
-/// `constants::PANE_CARD_RADIUS` (20). Here the card is sliced across list
-/// items, so it is painted as plain rounded quads instead - a filled path per
-/// section would cost a render-pass split per section, every frame (see the
-/// module docs). GPUI resolves `rounded()` with a circular arc, and
-/// `ui_primitives::ROW_RADIUS` documents the conversion: a superellipse needs
-/// roughly 1.5x the circular radius to read as equally round, so 20 / 1.5
-/// lands here.
 const SHORTCUT_CARD_RADIUS: Pixels = px(13.);
 
-/// Inset between a section card's edge and its rows, matching the `p(4.)` the
-/// card used to carry as a single element.
 const SHORTCUT_CARD_INSET: Pixels = px(4.);
 
-/// Vertical air above a section header, matching the `gap(16.)` the page used
-/// between sections before the list flattened them.
 const SHORTCUT_SECTION_GAP: Pixels = px(16.);
 
-/// Air between a section header and its card, matching the old `gap(6.)`.
 const SHORTCUT_HEADER_GAP: Pixels = px(6.);
 
-/// One entry in the flattened, virtualized Shortcuts list.
-///
-/// Flat rather than nested because that is what a virtualized list can index:
-/// a section is a header item followed by its binding items, and folding a
-/// section simply drops that run.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ShortcutListRow {
-    /// A collapsible section header. `count` is how many bindings survived the
-    /// filter under it, which is what the header's badge shows.
     Header { group: ShortcutGroup, count: usize },
-    /// One binding. `idx` indexes the *unfiltered* `effective_shortcuts`,
-    /// because that is what a rebind keys off. `first` / `last` place the row
-    /// in its section's card so the slab's corners land on the right rows.
     Binding { idx: usize, first: bool, last: bool },
 }
 
-/// Range of `rows` holding the binding items of `group`, or `None` when the
-/// group is not on the page at all. The range is empty when it is folded.
 fn shortcut_group_span(rows: &[ShortcutListRow], group: ShortcutGroup) -> Option<Range<usize>> {
     let header = rows
         .iter()
@@ -123,36 +43,11 @@ fn shortcut_group_span(rows: &[ShortcutListRow], group: ShortcutGroup) -> Option
     Some(start..start + len)
 }
 
-/// A fresh, empty list state. The page seeds it on every rebuild, so only the
-/// three policy knobs are fixed here.
-///
-/// - **Top-aligned**, like any settings page.
-/// - **No overdraw**: a settings list has no streaming tail to keep ahead of,
-///   and every overdrawn row is a row rendered for nothing.
-/// - **`measure_all`**, which is the one that is not obvious. A `ListState`
-///   measures lazily, and `max_offset_for_scrollbar` only counts what it has
-///   measured, so a lazy list reports a scroll range covering roughly the
-///   visible rows: the thumb starts near full height and grows as you scroll,
-///   and the wheel can only advance in bites of that range. The height *hints*
-///   `reset_with_uniform_height` seeds do not save it either - the first
-///   prepaint after any width change wipes every hint
-///   (`gpui::List::prepaint`, "invalidate all cached item heights"), and the
-///   first layout is always a width change. So the list measures everything
-///   once per re-seed instead. That pass is O(rows) - the cost the page used
-///   to pay on *every* frame - and it now happens only when the row set
-///   changes. Zed's settings window makes the same call
-///   (`crates/settings_ui/src/settings_ui.rs`: `ListState::new(..).measure_all()`).
 pub(crate) fn new_shortcut_list_state() -> ListState {
     ListState::new(0, ListAlignment::Top, px(0.)).measure_all()
 }
 
 impl PaneFlowApp {
-    /// Rows surviving the active filter, flattened for the virtualized list.
-    ///
-    /// Matching is case-insensitive and substring-based over both the action
-    /// description and the displayed keystroke. A captured chord is compared
-    /// against the whole keystroke instead, since a chord is an exact thing:
-    /// substring-matching "Ctrl+C" would also drag in "Ctrl+Shift+C".
     fn shortcut_rows_for(&self, cx: &App) -> Vec<ShortcutListRow> {
         let query = self
             .shortcut_search_input
@@ -166,20 +61,14 @@ impl PaneFlowApp {
             if query.is_empty() {
                 return true;
             }
-            // A captured chord asks "what owns exactly this?". macOS glyphs
-            // concatenate with no separator, so a substring test would answer
-            // ⌘⇧D with every row that merely contains it, ⌃⌘⇧D included.
             if self.shortcut_capture_active {
                 return entry.key.to_lowercase() == query;
             }
             entry.description.to_lowercase().contains(&query)
                 || entry.key.to_lowercase().contains(&query)
-                // `key` renders Apple glyphs on macOS, so the ASCII spellings
-                // are what makes "cmd+shift" / "ctrl+shift" find anything there.
                 || entry.search_key.contains(&query)
         };
 
-        // One pass over the entries rather than one per section.
         let mut by_group: HashMap<ShortcutGroup, Vec<usize>> = HashMap::new();
         for (idx, entry) in self.effective_shortcuts.iter().enumerate() {
             if matches(entry) {
@@ -198,9 +87,6 @@ impl PaneFlowApp {
                 group: *group,
                 count,
             });
-            // A filter overrides the fold: hiding a match behind a closed
-            // header would make the search look broken. The user's fold state
-            // is kept, not cleared, so it comes back when the query goes.
             if !filtering && self.collapsed_shortcut_groups.contains(group) {
                 continue;
             }
@@ -215,19 +101,6 @@ impl PaneFlowApp {
         rows
     }
 
-    /// Recompute the flattened rows and re-seed the list.
-    ///
-    /// Used whenever the *whole* list can move: the query changed, capture mode
-    /// flipped, or the bindings themselves were rewritten. A fold, which moves
-    /// only one run of rows, goes through [`Self::toggle_shortcut_group`]
-    /// instead so it can splice.
-    ///
-    /// Re-seeding drops the scroll position, which is what a new result set
-    /// wants - the same thing Zed does after a keymap query
-    /// (`scroll_to_item(0)`). But a rebind also comes through here, and the row
-    /// count is the tell: an unchanged count means the same rows in the same
-    /// order with one key relabelled, and throwing the user back to the top of
-    /// a 90-row list after every rebind would be its own bug.
     pub(crate) fn rebuild_shortcut_rows(&mut self, cx: &mut Context<Self>) {
         let previous_len = self.shortcut_rows.len();
         let previous_top = self.shortcut_list.logical_scroll_top();
@@ -241,8 +114,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Fold or unfold one section, splicing just its run of rows so the list
-    /// keeps its scroll position.
     fn toggle_shortcut_group(&mut self, group: ShortcutGroup, cx: &mut Context<Self>) {
         if !self.collapsed_shortcut_groups.remove(&group) {
             self.collapsed_shortcut_groups.insert(group);
@@ -253,25 +124,14 @@ impl PaneFlowApp {
         let after = shortcut_group_span(&self.shortcut_rows, group);
 
         match (before, after) {
-            // The header did not move, so only its own rows changed.
             (Some(before), Some(after)) if before.start == after.start => {
                 self.shortcut_list.splice(before, after.len());
             }
-            // The section moved or left the page (the filter changed underneath
-            // us). Splicing the wrong range would corrupt the item heights, so
-            // re-seed instead.
             _ => self.shortcut_list.reset(self.shortcut_rows.len()),
         }
         cx.notify();
     }
 
-    /// The whole Shortcuts page: a fixed header block, the virtualized list,
-    /// and the hint line.
-    ///
-    /// The toolbar stays *outside* the list on purpose. It owns a focused text
-    /// field, and a virtualized item that scrolls out of range is unmounted -
-    /// which would drop the focus mid-query. Zed keeps its keymap search bar
-    /// outside its table for the same reason.
     pub(crate) fn render_shortcuts_page(
         &self,
         heading: AnyElement,
@@ -292,9 +152,6 @@ impl PaneFlowApp {
         };
 
         let body = if self.shortcut_rows.is_empty() {
-            // No result count anywhere else on this page: the matching rows are
-            // on screen, and counting what the user can already see answers no
-            // question they have. An empty result is the one case that does.
             div()
                 .flex_none()
                 .pt(SHORTCUT_SECTION_GAP)
@@ -353,7 +210,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// The virtualized list plus its scrollbar overlay.
     fn render_shortcut_list(
         &self,
         ui: crate::theme::UiColors,
@@ -398,27 +254,16 @@ impl PaneFlowApp {
             }),
         );
 
-        // Two boxes, not one. The outer carries the spacing above the list; the
-        // inner is the scrollbar's coordinate frame and must coincide *exactly*
-        // with the list's viewport, because `scrollbar::render` anchors the
-        // track at `top_0`. The gutter is the inner's padding rather than the
-        // list's: `List` applies its own padding vertically only - it hands
-        // items the full `bounds.size.width` and offsets them by `padding.top`
-        // alone - so `pr` on the list would reserve nothing.
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            // The eyebrow above already carries 8px of its own; together they
-            // reproduce the 16px the page put between every section back when
-            // the whole column was one flex stack.
             .pt(SHORTCUT_SECTION_GAP)
             .child(self.shortcut_list_region(rows, bar, cx))
             .into_any_element()
     }
 
-    /// The list and its scrollbar, sharing one coordinate frame.
     fn shortcut_list_region(
         &self,
         rows: gpui::List,
@@ -452,7 +297,6 @@ impl PaneFlowApp {
             .when_some(bar, |d, sb| d.child(sb))
     }
 
-    /// Search field + key-capture toggle + "Reset to defaults".
     fn render_shortcut_toolbar(
         &self,
         ui: crate::theme::UiColors,
@@ -460,15 +304,8 @@ impl PaneFlowApp {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let capture_active = self.shortcut_capture_active;
-        // `accent` and `text` are independent theme tokens: on vercel_dark they
-        // are #ffffff and #ededed, so a plain `text` label on an `accent` fill
-        // is invisible. Lift the label off the fill with the same APCA pass the
-        // terminal uses for selected text.
         let on_accent = ensure_minimum_contrast(ui.text, ui.accent, MIN_APCA_CONTRAST);
 
-        // One field in both modes. In capture mode the interceptor writes the
-        // pressed chord straight into it, so the user always reads back exactly
-        // what was captured instead of trusting an invisible filter.
         let field = crate::ui_primitives::filter_pill(
             "shortcut-search",
             "shortcut-search-clear",
@@ -494,8 +331,6 @@ impl PaneFlowApp {
                 .py(px(5.)),
             "shortcut-capture-skin",
             ROW_RADIUS,
-            // Armed state is a resting fill, not just a hover: the mode
-            // swallows keystrokes, so it must be visible without pointing at it.
             capture_active.then_some(ui.accent),
             Some(ui.subtle),
         )
@@ -503,8 +338,6 @@ impl PaneFlowApp {
             let next = !this.shortcut_capture_active;
             this.set_shortcut_capture(next, cx);
             if next {
-                // The chord has to land on the settings surface, not on
-                // whatever held focus before.
                 this.settings_focus.focus(window, cx);
             }
             cx.notify();
@@ -527,10 +360,6 @@ impl PaneFlowApp {
                 }),
         );
 
-        // Resetting rewrites every binding in paneflow.json with no undo, so it
-        // asks first. A two-step inline confirm rather than a dialog: settings
-        // already live in a modal, and stacking a second one over it to ask a
-        // one-line question reads as heavier than the action deserves.
         let mut row = div()
             .flex()
             .flex_row()
@@ -592,11 +421,6 @@ impl PaneFlowApp {
         row.into_any_element()
     }
 
-    /// The "Bindings" eyebrow, with an "Expand all" / "Collapse all" action.
-    ///
-    /// The action is dropped while a filter is active: a query forces every
-    /// matching section open for its duration, so the button could only ever be
-    /// a no-op there - it would set the fold state and change nothing on screen.
     fn render_shortcut_group_controls(
         &self,
         ui: crate::theme::UiColors,
@@ -607,8 +431,6 @@ impl PaneFlowApp {
             return section_header_with_action(ui, "Bindings", div()).into_any_element();
         }
 
-        // Offer whichever action actually changes something: if every visible
-        // section is already folded, the only useful verb is "expand".
         let visible_groups: Vec<ShortcutGroup> = self
             .shortcut_rows
             .iter()
@@ -640,7 +462,6 @@ impl PaneFlowApp {
                         this.collapsed_shortcut_groups
                             .extend(ShortcutGroup::ALL.iter().copied());
                     }
-                    // Every section moved, so re-seed rather than splice.
                     this.rebuild_shortcut_rows(cx);
                     cx.notify();
                 }),
@@ -649,8 +470,6 @@ impl PaneFlowApp {
         .into_any_element()
     }
 
-    /// One section header, as a list item. `first` drops the leading air so the
-    /// list does not open on a gap.
     fn render_shortcut_section_header(
         &self,
         ui: crate::theme::UiColors,
@@ -659,12 +478,6 @@ impl PaneFlowApp {
         first: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // The chevron follows the rows actually on the page, not
-        // `collapsed_shortcut_groups`: a query opens every matching section for
-        // its duration (see `shortcut_rows_for`) while leaving the user's fold
-        // state untouched, and the header has to say what is on screen. A
-        // section with no rows under it is folded - one with no *matches* has
-        // no header at all.
         let collapsed =
             shortcut_group_span(&self.shortcut_rows, group).is_some_and(|span| span.is_empty());
 
@@ -714,9 +527,6 @@ impl PaneFlowApp {
         );
 
         div()
-            // See `shortcut_card_slice`: a list item is its own layout root.
-            // A block container already fills, but stating it keeps the two
-            // item kinds reading the same way.
             .w_full()
             .when(!first, |d| d.pt(SHORTCUT_SECTION_GAP))
             .pb(SHORTCUT_HEADER_GAP)
@@ -724,7 +534,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// One binding row, wrapped in its slice of the section card.
     fn render_shortcut_row(
         &self,
         ui: crate::theme::UiColors,
@@ -748,9 +557,6 @@ impl PaneFlowApp {
                 .bg(ui.accent)
                 .text_size(px(11.))
                 .font_weight(gpui::FontWeight::SEMIBOLD)
-                // Same APCA lift as the capture toggle: on themes where accent
-                // and text nearly coincide, a plain `text` label would leave
-                // the armed row looking like an empty pill.
                 .text_color(ensure_minimum_contrast(
                     ui.text,
                     ui.accent,
@@ -765,8 +571,6 @@ impl PaneFlowApp {
                 .bg(ui.subtle)
                 .text_size(px(11.))
                 .font_weight(gpui::FontWeight::MEDIUM)
-                // An unassigned row is an absence, not a binding, so it reads
-                // muted instead of sitting at the same weight as a real chord.
                 .text_color(if unassigned { ui.muted } else { ui.text })
                 .child(entry.key.clone())
         };
@@ -787,8 +591,6 @@ impl PaneFlowApp {
             Some(ui.subtle),
         )
         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-            // Recording a rebind and capturing a search chord both want the
-            // keyboard; arming one disarms the other.
             this.set_shortcut_capture(false, cx);
             this.recording_shortcut_idx = Some(idx);
             this.settings_focus.focus(window, cx);
@@ -807,28 +609,13 @@ impl PaneFlowApp {
 
         shortcut_card_slice(card_bg, first, last)
             .child(row)
-            // The separator lives inside the row above it, not between two
-            // items: a list item is the smallest thing the viewport can clip,
-            // and a 1px item of its own would be one more thing to measure.
             .when(!last, |d| d.child(hairline(ui)))
             .into_any_element()
     }
 }
 
-/// The section card, sliced for one row.
-///
-/// `first` / `last` round the slab where the card's own corners used to be, so
-/// the run of rows still reads as one card even though no element spans them.
 fn shortcut_card_slice(card_bg: gpui::Hsla, first: bool, last: bool) -> Div {
     div()
-        // `w_full` is load-bearing. `List` lays every item out as its own
-        // layout root (`layout_items` -> `layout_as_root`), and taffy sizes an
-        // `auto` *flex container* root from its content, not from the available
-        // space the way a block one fills it. Without this the slabs
-        // shrink-wrap their text - measured at 191px inside a 640px list - and
-        // the page reads as a ragged staircase. `ListState::bounds_for_item`
-        // cannot see it either: it reports the list's own width for every item,
-        // which is why the guard test below asserts on painted bounds.
         .w_full()
         .flex()
         .flex_col()
@@ -881,9 +668,6 @@ mod tests {
 
     #[test]
     fn group_span_of_a_folded_section_is_empty_not_missing() {
-        // A folded section still has a header, and the splice that unfolds it
-        // needs its insertion point - `None` would force a full re-seed and
-        // throw the scroll position away.
         let rows = vec![
             header(ShortcutGroup::Panes, 2),
             header(ShortcutGroup::Tabs, 1),
@@ -903,12 +687,6 @@ mod tests {
         assert_eq!(shortcut_group_span(&rows, ShortcutGroup::Panes), None);
     }
 
-    /// A `List` lays every item out as its own layout root, so an `auto` width
-    /// resolves to the item's *content* width instead of stretching the way a
-    /// flex child does. Dropping `w_full` from a row therefore does not fail to
-    /// compile and does not fail any logic test - it just renders the page as a
-    /// ragged staircase of shrink-wrapped cards, which is exactly how this
-    /// shipped once. Pin the invariant on the real element.
     #[gpui::test]
     fn list_items_span_the_full_list_width(cx: &mut gpui::TestAppContext) {
         struct Probe {
@@ -924,8 +702,6 @@ mod tests {
                 let card = card_color();
                 let ui = crate::theme::ui_colors();
                 list(self.state.clone(), move |index, _window, _cx| {
-                    // The real row shape: a squircle-skinned flex row with a
-                    // truncating label and a trailing badge.
                     let row = squircle_skin(
                         div()
                             .id(("probe", index))
@@ -969,8 +745,6 @@ mod tests {
         cx.simulate_resize(gpui::size(px(WIDTH), px(400.0)));
         cx.run_until_parked();
 
-        // `ListState::bounds_for_item` reports the *list's* width, not the
-        // item's, so it cannot see this bug. Read what was actually painted.
         let painted = cx
             .debug_bounds("probe-card-1")
             .expect("item 1 must be painted");

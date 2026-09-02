@@ -1,4 +1,3 @@
-//! Native macOS material for PaneFlow's unified sidebar and title bar.
 #![allow(deprecated, unexpected_cfgs)]
 
 use cocoa::{
@@ -24,11 +23,6 @@ struct SidebarMaterial {
     is_enabled: bool,
 }
 
-/// Installs AppKit's semantic sidebar material below GPUI's renderer.
-///
-/// The material spans the full content view, including the transparent native
-/// title bar. PaneFlow's opaque shell mask hides it everywhere except the inset
-/// primary sidebar rail. AppKit owns focus dimming and accessibility adaptation.
 pub(crate) fn apply_subtle_sidebar_material(
     window: &gpui::Window,
     is_light: bool,
@@ -51,7 +45,6 @@ pub(crate) fn apply_subtle_sidebar_material(
     }
 }
 
-/// Keeps AppKit vibrancy and visibility aligned with PaneFlow's live settings.
 pub(crate) fn sync_subtle_sidebar_material(is_light: bool, is_enabled: bool) {
     SIDEBAR_MATERIAL.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -82,9 +75,6 @@ fn try_apply_subtle_sidebar_material(
 
     let native_view = handle.ns_view.as_ptr() as id;
 
-    // SAFETY: GPUI invokes this callback on AppKit's main thread and the raw
-    // handle guarantees that `native_view` remains a valid NSView for the
-    // lifetime of `window`.
     unsafe {
         let content_view: id = msg_send![native_view, superview];
         if content_view == nil {
@@ -117,8 +107,6 @@ fn try_apply_subtle_sidebar_material(
 }
 
 fn set_material_enabled(effect_view: id, is_enabled: bool) {
-    // SAFETY: `effect_view` remains installed in the content view and all
-    // calls run on AppKit's main thread. Hidden NSViews are not drawn.
     unsafe {
         let hidden = if is_enabled { NO } else { YES };
         let _: () = msg_send![effect_view, setHidden: hidden];
@@ -126,8 +114,6 @@ fn set_material_enabled(effect_view: id, is_enabled: bool) {
 }
 
 fn set_material_appearance(effect_view: id, is_light: bool) {
-    // SAFETY: this module only runs on AppKit's main thread. The semantic
-    // vibrant appearances are designed for NSVisualEffectView materials.
     unsafe {
         let name = if is_light {
             NSAppearanceNameVibrantLight

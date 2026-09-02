@@ -1,12 +1,3 @@
-//! Font resolution + cell measurement for the terminal renderer.
-//!
-//! Owns the embedded-font primary contract, the installed-monospace-font
-//! registry (cross-platform), and the cached font config read from
-//! `paneflow.json`. Exposes `resolve_frame_metrics` to turn the current font
-//! config + size into a per-frame font snapshot and terminal cell strides.
-//!
-//! Extracted from `terminal_element.rs` per US-008 of the src-app refactor PRD.
-
 #[cfg(target_os = "macos")]
 use std::collections::HashSet;
 use std::sync::LazyLock;
@@ -17,59 +8,22 @@ use gpui::{
 
 use super::{CellDimensions, TerminalFrameMetrics};
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 pub(crate) const DEFAULT_FONT_SIZE: f32 = 13.0;
 const POINTS_TO_PIXELS: f32 = 96.0 / 72.0;
 pub(crate) const DEFAULT_LINE_HEIGHT: f32 = 1.2;
 pub(crate) const DEFAULT_CELL_WIDTH: f32 = 0.6;
 pub(crate) const DEFAULT_FONT_WEIGHT_KEY: &str = "normal";
 
-/// Embedded monospace family - the bundled cross-platform default. Files:
-/// `assets/fonts/JetBrainsMonoNerdFontMono-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`,
-/// registered with GPUI at startup (`main.rs` → `Assets::load_fonts` →
-/// `cx.text_system().add_fonts`).
-///
-/// Picking an *embedded* family as the primary instead of a system family
-/// (Menlo / Cascadia Mono / DejaVu) sidesteps the failure mode behind commit
-/// c3e2331: Core Text inside a signed .app bundle can return valid glyph_ids
-/// for a system family while rasterizing them as empty bitmaps, and GPUI's
-/// per-`Font` fallback chain only walks on missing-glyph not on empty-raster -
-/// so the system primary "renders" zero glyphs and nothing falls through. With
-/// an embedded family as primary, GPUI's text system owns the font tables
-/// end-to-end and rasterization always works.
 pub(crate) const EMBEDDED_MONO_FAMILY: &str = "JetBrainsMono Nerd Font Mono";
 pub(crate) const JETBRAINS_MONO_NFM_ALIAS: &str = "JetBrainsMono NFM";
 pub(crate) const LEGACY_GEIST_MONO_FAMILY: &str = "Geist Mono";
 pub(crate) const LEGACY_EMBEDDED_MONO_FAMILY: &str = "Lilex";
 
-/// Embedded UI/sans family. Files:
-/// `assets/fonts/Geist-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`.
-/// Used as Paneflow's primary UI family and as the `.PaneflowSans`
-/// config alias target. The terminal stays mono by default; this
-/// sans target exists for explicit user config and GPUI fallback.
 pub(crate) const EMBEDDED_SANS_FAMILY: &str = "Geist";
 
-/// Paneflow-side virtual font aliases. Mirror Zed's `.ZedMono` /
-/// `.ZedSans` pattern from `crates/gpui/src/text_system.rs:1167-1173`,
-/// but expanded at the Paneflow boundary (in `resolve_font_family`)
-/// before the family name reaches GPUI - GPUI's pinned rev does not
-/// know about Paneflow-specific aliases.
-///
-/// Users can write an alias (`".PaneflowMono"`, `"JetBrainsMono NFM"`, or
-/// `".PaneflowSans"`) or a concrete embedded family in `paneflow.json`.
-/// Keeping the alias available lets a future swap
-/// of the bundled fallback happen with a single edit to this constant
-/// table instead of a config migration for every user.
 pub(crate) const PANEFLOW_MONO_ALIAS: &str = ".PaneflowMono";
 pub(crate) const PANEFLOW_SANS_ALIAS: &str = ".PaneflowSans";
 
-/// Resolve a Paneflow-virtual alias to its concrete embedded family.
-/// Returns the input unchanged when it isn't an alias. Pure function,
-/// no I/O, used by `resolve_font_family` to expand aliases at the
-/// Paneflow boundary before the family name reaches GPUI.
 fn expand_paneflow_alias(name: &str) -> &str {
     match name {
         PANEFLOW_MONO_ALIAS | JETBRAINS_MONO_NFM_ALIAS => EMBEDDED_MONO_FAMILY,
@@ -78,89 +32,27 @@ fn expand_paneflow_alias(name: &str) -> &str {
     }
 }
 
-// Per-`Font` `fallbacks: Some(...)` was REMOVED on purpose. Paneflow
-// previously attached a hardcoded chain (Noto Color Emoji, Symbols
-// Nerd Font Mono, embedded sans, embedded mono) that, on macOS, was
-// the trigger for the v0.2.12 "boxes drawn, no glyphs" bug:
-// `apply_features_and_fallbacks` (gpui_macos/src/open_type.rs:30-73)
-// rebuilds every CTFont with a Core Text cascade list assembled from
-// `CTFontDescriptorCreateWithNameAndSize` for each fallback name.
-// Two entries in the old chain - Noto Color Emoji and Symbols Nerd
-// Font Mono - are NOT installed on a fresh macOS, and the resulting
-// cascade list, while accepted by Core Text without erroring, ended
-// up suppressing rasterization of the primary face. Icons rendered
-// (different code path, walking GPUI's internal `fallback_font_stack`
-// at gpui/src/text_system.rs:71-83) but text glyphs did not.
-//
-// Zed's terminal uses `fallbacks: None` by default
-// (zed/crates/terminal_view/src/terminal_element.rs:908-912). It only
-// wraps `Some(...)` when the user explicitly configures
-// `terminal.font_fallbacks` in their settings. Paneflow mirrors that
-// pattern: `base_font` emits `Some(FontFallbacks)` ONLY when the user sets
-// the top-level `font_fallbacks` array in `paneflow.json` (e.g. a Nerd
-// Font for Starship / oh-my-posh / Terminal-Icons glyphs that no Windows
-// system font carries), and `None` otherwise - never a hardcoded chain.
-//
-// Glyph fallback for codepoints the primary font doesn't cover (emoji, CJK,
-// symbols) still works: GPUI walks its built-in `fallback_font_stack`
-// - which already ships `.ZedMono` (resolves to Lilex, which we still
-// embed), `.ZedSans` (resolves to IBM Plex Sans, which we historically embed),
-// then OS-canonical sans like Helvetica / Segoe UI / Arial. That
-// chain is global, not per-`Font`, so it does NOT pollute the
-// per-Font CTFont cascade list.
-
-/// Registry of installed monospace families (Core Text), used ONLY on macOS to
-/// validate a configured `font_family` against the documented c3e2331
-/// empty-raster failure mode. Populated lazily on first access.
-///
-/// macOS-only by design: on Linux the equivalent `fc-list :spacing=mono`
-/// validation wrongly rejected real monospace fonts that fontconfig didn't tag
-/// (patched Nerd Fonts) and forked `fc-list` on the first terminal layout; on
-/// Windows the registry was always empty (no enumeration). `resolve_font_family`
-/// therefore trusts the configured family on those platforms.
 #[cfg(target_os = "macos")]
 static INSTALLED_MONO_FONTS: LazyLock<HashSet<String>> =
     LazyLock::new(|| crate::fonts::load_mono_fonts().into_iter().collect());
-
-// ---------------------------------------------------------------------------
-// Font config cache - avoids load_config() on every base_font()/font_size() call
-// ---------------------------------------------------------------------------
 
 struct CachedFontConfig {
     settings: FontSettings,
     family: String,
     font_weight_key: &'static str,
-    /// US-008: render ligatures when `true`. Hot-reload comes for free
-    /// via the surrounding 500 ms cache: editing `paneflow.json` is
-    /// picked up on the next `cached_font_config()` call without any
-    /// extra wiring.
     ligatures: bool,
-    /// Modification time of the config file the settings were read from,
-    /// so the periodic check is a `stat` rather than a parse.
     mtime: Option<std::time::SystemTime>,
     last_check: std::time::Instant,
 }
 
-/// The resolved font settings the renderer reads for every pane on every
-/// frame.
-///
-/// Cheap to clone: the `Font` holds shared strings and shared feature lists,
-/// so a clone is a few reference-count bumps and no allocation.
 #[derive(Clone)]
 pub(super) struct FontSettings {
     pub(super) font: Font,
-    /// Points, before any per-pane override.
     pub(super) size: f32,
-    /// Multiplier of the rendered size that gives the row stride.
     pub(super) line_height: f32,
-    /// Multiplier of the rendered size that gives the column stride.
     pub(super) cell_width: f32,
 }
 
-/// Normalize a configured `font_fallbacks` list before it reaches GPUI:
-/// trim each entry, drop empties, and collapse an absent / all-empty list to
-/// `None` so [`base_font`] emits `fallbacks: None` (GPUI's built-in stack
-/// only) rather than an empty `FontFallbacks`. Pure - unit-tested.
 fn sanitize_font_fallbacks(configured: Option<&Vec<String>>) -> Option<Vec<String>> {
     let list: Vec<String> = configured?
         .iter()
@@ -237,16 +129,6 @@ where
     EMBEDDED_MONO_FAMILY
 }
 
-/// The default monospace family PaneFlow uses out of the box.
-///
-/// Uses bundled JetBrainsMono Nerd Font Mono so fresh installs are visually
-/// consistent across Linux, macOS, and Windows while avoiding the Core Text
-/// empty-raster failure documented by commit c3e2331.
-///
-/// Users can still override with any system font via
-/// `paneflow.json#font_family` - `resolve_font_family` validates the
-/// override against the installed-mono registry (when populated) and
-/// degrades back to this default with a warning otherwise.
 pub(crate) fn default_font_family() -> &'static str {
     *DEFAULT_MONO_FAMILY
 }
@@ -258,12 +140,6 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
         .map(expand_paneflow_alias)
         .unwrap_or(default_font_family());
 
-    // Embedded families are always resolvable: Assets::load_fonts
-    // registers them directly with GPUI's text system at boot,
-    // bypassing the OS font enumeration registry. Short-circuit before
-    // the INSTALLED_MONO_FONTS lookup, which only sees system fonts.
-    // Lilex and IBM Plex Mono are also embedded and remain valid explicit
-    // choices. Installed families flow through normal system-font resolution.
     if candidate == EMBEDDED_MONO_FAMILY
         || candidate == LEGACY_GEIST_MONO_FAMILY
         || candidate == LEGACY_EMBEDDED_MONO_FAMILY
@@ -274,14 +150,6 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
         return candidate.to_string();
     }
 
-    // The installed-monospace validation guards a macOS-specific Core Text
-    // failure mode (a system family that resolves but rasterizes empty - commit
-    // c3e2331), so it is gated to macOS. On Linux it wrongly rejected real
-    // monospace fonts fontconfig didn't tag `:spacing=mono` (patched Nerd
-    // Fonts) AND ran `fc-list` on the first terminal layout; on Windows the
-    // registry was always empty. Elsewhere we trust the configured family -
-    // GPUI's text system resolves it, and an unresolvable name already falls
-    // through to the embedded fallback stack.
     #[cfg(target_os = "macos")]
     if !INSTALLED_MONO_FONTS.is_empty() && !INSTALLED_MONO_FONTS.contains(candidate) {
         let fallback = default_font_family();
@@ -294,11 +162,6 @@ pub fn resolve_font_family(configured: Option<&str>) -> String {
     candidate.to_string()
 }
 
-/// Read font config, cached and re-validated against the config file's
-/// modification time every 500 ms (same pattern as the theme cache).
-///
-/// Runs on the render thread, so the periodic check is one `stat`; the
-/// config is parsed again only when the file changed or is missing.
 pub(super) fn cached_font_config() -> FontSettings {
     use std::time::{Duration, Instant};
     const CHECK_INTERVAL: Duration = Duration::from_millis(500);
@@ -316,8 +179,6 @@ pub(super) fn cached_font_config() -> FontSettings {
         }
     }
 
-    // Read before the parse, so a write that lands between the two is seen
-    // by the next check instead of being masked by a newer stamp.
     let mtime = crate::theme::config_mtime();
     let config = paneflow_config::loader::load_config();
 
@@ -372,27 +233,14 @@ pub(super) fn cached_font_config() -> FontSettings {
     }
     let font_weight = font_weight_from_key(font_weight_key);
 
-    // US-008: ligatures are off by default to preserve the historical
-    // monospaced cell-stride behavior. Opt-in via `terminal.ligatures: true`
-    // in `paneflow.json`. Both `terminal == None` and
-    // `terminal.ligatures == None` keep ligatures disabled.
     let ligatures = config
         .terminal
         .as_ref()
         .and_then(|t| t.ligatures)
         .unwrap_or(false);
 
-    // User-configured fallback families (Nerd Font for icon glyphs, …),
-    // sanitized to `None` when absent/all-empty so the font keeps GPUI's
-    // built-in stack in that case.
     let fallbacks = sanitize_font_fallbacks(config.font_fallbacks.as_ref());
 
-    // Diagnostic: log the effective resolved family the first time we
-    // populate the cache, and on every subsequent change. This makes it
-    // possible to confirm from `RUST_LOG=info` whether the embedded
-    // fallback was selected (e.g. on a macOS install where Core Text
-    // failed to surface `Menlo` from inside a signed .app bundle) without
-    // adding a hot-path log on every render.
     let font_changed = cache.as_ref().is_none_or(|prev| {
         prev.family != family
             || (prev.settings.size - size).abs() > f32::EPSILON
@@ -432,10 +280,6 @@ fn build_font(
     ligatures: bool,
     fallbacks: Option<Vec<String>>,
 ) -> Font {
-    // US-008: when the user opts into ligatures, hand GPUI the font's
-    // native feature set untouched. Default behavior (and explicit
-    // `ligatures: false`) keeps the historical `disable_ligatures()`
-    // call so a Paneflow upgrade never silently flips ligatures on.
     let features = if ligatures {
         FontFeatures::default()
     } else {
@@ -444,28 +288,17 @@ fn build_font(
     Font {
         family: SharedString::from(family.to_owned()),
         features,
-        // `None` matches Zed's terminal Font default
-        // (zed/crates/terminal_view/src/terminal_element.rs:908-912) and is
-        // kept unless the user opts in via the top-level `font_fallbacks`
-        // array (already sanitized to non-empty-or-`None` by
-        // `cached_font_config`). See the long-form rationale on the removed
-        // `FONT_FALLBACKS` static above for why we never hardcode a chain.
         fallbacks: fallbacks.map(FontFallbacks::from_fonts),
         weight,
         style: FontStyle::Normal,
     }
 }
 
-/// The base terminal font, resolved once per config change and shared. The
-/// renderer reads it through `resolve_frame_metrics`; the benchmark reads it
-/// alone.
 #[cfg(test)]
 pub(crate) fn base_font() -> Font {
     cached_font_config().font
 }
 
-/// EP-006 US-019: bounds shared by the global config validation, the
-/// per-pane zoom steps, and the session-restore ingress.
 pub const MIN_FONT_SIZE: f32 = 8.0;
 pub const MAX_FONT_SIZE: f32 = 32.0;
 
@@ -473,10 +306,6 @@ fn font_points_to_pixels(size_points: f32) -> Pixels {
     px(size_points * POINTS_TO_PIXELS)
 }
 
-/// EP-006 US-019: validate a `font_size` read back from session.json
-/// (UNTRUSTED-adjacent: local-only but validated anyway, US-057/EP-010
-/// invariant). NaN/±inf are DROPPED (`None` - they would poison the cell
-/// geometry); finite out-of-range values are clamped. Pure - unit-tested.
 pub fn sanitize_font_override(raw: f32) -> Option<f32> {
     if !raw.is_finite() {
         return None;
@@ -484,8 +313,6 @@ pub fn sanitize_font_override(raw: f32) -> Option<f32> {
     Some(raw.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE))
 }
 
-/// EP-006 US-019: the global (non-overridden) font size in points - the zoom
-/// handlers' baseline for a pane that has no override yet.
 pub fn global_font_size() -> f32 {
     cached_font_config().size
 }
@@ -495,25 +322,11 @@ pub fn resolve_frame_metrics(
     _cx: &mut App,
     size_override: Option<f32>,
 ) -> TerminalFrameMetrics {
-    // One cache read per frame. Config and per-pane overrides are stored in
-    // points to match OS terminal settings; GPUI expects logical pixels. The
-    // override (EP-006 US-019's per-pane zoom) is already clamped to
-    // [8.0, 32.0] at every write site, so no re-validation here.
     let settings = cached_font_config();
     let font = settings.font;
     let font_size = font_points_to_pixels(size_override.unwrap_or(settings.size));
     let font_id = window.text_system().resolve_font(&font);
 
-    // DIAGNOSTIC A - fires once per process. Surfaces whether GPUI's
-    // `resolve_font` actually loaded the requested family or
-    // silently fell back to the `fallback_font_stack`
-    // (gpui/src/text_system.rs:148-160). The Paneflow log line
-    // `font: resolved family='...'` reflects only what Paneflow
-    // requested as input - it is NOT proof that GPUI returned a
-    // FontId pointing at that family. If `get_font_for_id` returns a
-    // different family, GPUI silently fell through to a system font
-    // that may not rasterize correctly inside a signed .app on
-    // macOS. Tied to the v0.2.12 "boxes drawn, no glyphs" bug.
     {
         use std::sync::Once;
         static LOG_ONCE: Once = Once::new();
@@ -546,27 +359,12 @@ pub fn resolve_frame_metrics(
         });
     }
 
-    // Cell width and line height are config-derived terminal strides, not
-    // measured glyph advances. They scale with the effective rendered size so
-    // Windows Terminal-style multipliers stay comparable across font changes.
     let cell_width_raw = px(font_size.as_f32() * settings.cell_width);
     let line_height_raw = px(font_size.as_f32() * settings.line_height);
 
-    // US-002: snap raw font measurements to integer pixels via `.round()`
-    // (WezTerm convention - minimizes layout-area drift on fractional
-    // advances vs `floor`/`ceil`). Quantizing the cell stride at measure
-    // time means every downstream coordinate `cell_width * col` is also
-    // integer, eliminating the fractional residual that prevents adjacent
-    // quads from sharing a pixel boundary. Trade-off: column count
-    // `viewport / cell_width` may shift by ±1 on extreme aspect ratios.
-    // Acceptable for pixel-perfect rendering (US-001 / US-003 / US-004).
     let cell_width = cell_width_raw.round();
     let line_height = line_height_raw.round();
 
-    // PANEFLOW_PIXEL_PROBE: record both raw and snapped cell dimensions so a
-    // future investigation can tell at a glance whether the snap was a
-    // no-op (`raw == snapped`) or quantized a fractional residual. Origin
-    // is logged separately from `paint()` via `record_origin`.
     #[cfg(debug_assertions)]
     super::pixel_probe::record_cell_dimensions(
         cell_width_raw,
@@ -592,10 +390,6 @@ mod tests {
 
     #[test]
     fn round_snap_no_op_for_integer_advance() {
-        // When the font system already returns an integer advance (the case
-        // observed in `debug_block_char_rendering.md`: cell_width=9.0), the
-        // snap must be a no-op so US-002 introduces no regression on
-        // already-aligned environments.
         let raw = px(9.0);
         assert_eq!(raw.round(), raw);
 
@@ -605,8 +399,6 @@ mod tests {
 
     #[test]
     fn round_snap_yields_integer_for_fractional_advance() {
-        // 8.4 px advance is the canonical fractional case from the PRD
-        // (DejaVu Sans Mono at 14 pt @ 1.0 DPI on Linux).
         let raw = px(8.4);
         let snapped = raw.round();
         assert_eq!(snapped, px(8.0));
@@ -617,8 +409,6 @@ mod tests {
         );
     }
 
-    // EP-006 US-019: session.json ingress for the per-pane zoom - NaN/inf
-    // dropped, finite values clamped to [8.0, 32.0] (PRD AC + test).
     #[test]
     fn sanitize_font_override_drops_non_finite_and_clamps() {
         assert_eq!(sanitize_font_override(f32::NAN), None);
@@ -686,9 +476,6 @@ mod tests {
 
     #[test]
     fn round_snap_handles_half_away_from_zero() {
-        // Rust's f32::round documents round-half-away-from-zero. Lock in
-        // that behavior so a future `.round()` → `.round_ties_even()` swap
-        // would surface here instead of as a silent layout shift.
         assert_eq!(px(8.5).round(), px(9.0));
         assert_eq!(px(8.6).round(), px(9.0));
         assert_eq!(px(8.49).round(), px(8.0));
@@ -696,19 +483,11 @@ mod tests {
 
     #[test]
     fn round_snap_yields_integer_for_fractional_line_height() {
-        // 13 pt x 96/72 x 1.2 multiplier = 20.8 logical px.
         let raw_lh = font_points_to_pixels(DEFAULT_FONT_SIZE) * DEFAULT_LINE_HEIGHT;
         let snapped = raw_lh.round();
         assert_eq!(snapped, px(21.0));
         assert!(snapped.as_f32().fract().abs() < 1e-6);
     }
-
-    // ─── Paneflow virtual-alias resolution ────────────────────────────
-    // Lock in the contract that `.PaneflowMono` and `.PaneflowSans`
-    // resolve to the embedded family names BEFORE leaving Paneflow.
-    // GPUI's pinned rev does not know these aliases - a regression
-    // here would surface as "embedded font registered but never
-    // selected because GPUI sees the literal alias string".
 
     #[test]
     fn expand_paneflow_alias_resolves_mono_alias() {
@@ -731,14 +510,10 @@ mod tests {
 
     #[test]
     fn expand_paneflow_alias_passes_concrete_names_through() {
-        // System fonts and any non-alias string round-trip unchanged.
-        // Critical for `resolve_font_family` correctness: the alias
-        // expansion must not eat user-configured system fonts.
         assert_eq!(expand_paneflow_alias("Menlo"), "Menlo");
         assert_eq!(expand_paneflow_alias("Cascadia Mono"), "Cascadia Mono");
         assert_eq!(expand_paneflow_alias("Lilex"), "Lilex");
         assert_eq!(expand_paneflow_alias(""), "");
-        // Case-sensitive: `.paneflowmono` is not `.PaneflowMono`.
         assert_eq!(expand_paneflow_alias(".paneflowmono"), ".paneflowmono");
     }
 
@@ -751,9 +526,6 @@ mod tests {
 
     #[test]
     fn resolve_font_family_expands_paneflow_aliases() {
-        // Both aliases must resolve through to their embedded targets
-        // - the value GPUI's `text_system().resolve_font` will look
-        // up against the registered TTFs.
         assert_eq!(
             resolve_font_family(Some(".PaneflowMono")),
             "JetBrainsMono Nerd Font Mono"
@@ -767,12 +539,6 @@ mod tests {
 
     #[test]
     fn resolve_font_family_short_circuits_embedded_concrete_names() {
-        // Users who write the canonical JetBrainsMono name, `"Geist Mono"`,
-        // `"Lilex"`, `"Geist"`, or `"IBM Plex Sans"` in
-        // paneflow.json get the embedded font even on platforms whose
-        // INSTALLED_MONO_FONTS registry doesn't list them (Windows
-        // pre-DirectWrite, container without fontconfig). The short
-        // circuit before the registry lookup is what makes that work.
         assert_eq!(
             resolve_font_family(Some("JetBrainsMono Nerd Font Mono")),
             "JetBrainsMono Nerd Font Mono"
@@ -803,13 +569,6 @@ mod tests {
     fn default_font_family_is_bundled_jetbrains_mono_nfm() {
         assert_eq!(default_font_family(), EMBEDDED_MONO_FAMILY);
     }
-
-    // ─── font_fallbacks sanitization ─────────────────────────────────
-    // The wiring that lets a user keep a bundled primary while adding
-    // a Nerd Font fallback for Starship / oh-my-posh icons. The sanitizer
-    // must collapse absent/all-empty lists to `None` so `base_font` emits
-    // `fallbacks: None` (GPUI's built-in stack) rather than an empty
-    // `FontFallbacks`, and must trim + drop blank entries.
 
     #[test]
     fn sanitize_font_fallbacks_absent_is_none() {
@@ -845,8 +604,6 @@ mod tests {
 
     #[test]
     fn sanitize_font_fallbacks_preserves_order() {
-        // Fallback order is significant - GPUI consults entries in order,
-        // so the sanitizer must never reorder or dedupe.
         let cfg = vec!["B".to_string(), "A".to_string(), "B".to_string()];
         assert_eq!(
             sanitize_font_fallbacks(Some(&cfg)),

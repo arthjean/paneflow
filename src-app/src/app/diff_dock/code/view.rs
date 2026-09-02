@@ -1,68 +1,3 @@
-//! The entity that hosts a [`CodeElement`]: one open file, its scroll state,
-//! its caret, and the mouse plumbing the element cannot own.
-//!
-//! `CodeElement` paints; everything that has to survive between frames lives
-//! here. The split follows Zed's `Editor` / `EditorElement` pair and Paneflow's
-//! own diff dock: state on the entity, geometry on the element, handed back
-//! through a single `Rc<Cell<CodeGeometry>>` the element writes during
-//! `prepaint` and the wheel / scrollbar handlers read.
-//!
-//! ## The two-axis scroll recipe
-//!
-//! Verbatim from `CLAUDE.md` ("GPUI scroll & wheel"), and load-bearing in all
-//! three of its parts:
-//!
-//! - `overflow_y_scroll()` is what actually moves the element. GPUI only pushes
-//!   the scroll offset onto the element-offset stack when the host's overflow
-//!   axis is `Scroll`; under `overflow_hidden` a custom element that positions
-//!   content off its own `bounds.origin` never moves at all.
-//! - `track_scroll()` keeps `offset()` / `bounds()` / `max_offset()` live, which
-//!   is where the vertical scrollbar's geometry comes from.
-//! - `restrict_scroll_to_axis = Some(true)` stops the native Y handler
-//!   back-filling `delta_y` from `delta.x`. Without it, a Shift+wheel gesture
-//!   scrolls the file vertically instead of horizontally.
-//!
-//! Horizontal is fully custom and always reads `delta.x`. X11, Wayland and
-//! Windows all swap Shift+wheel onto the X axis at the platform layer and zero
-//! `delta.y`, and macOS delivers horizontal natively, so branching on
-//! `modifiers.shift` would read a zero on every platform.
-//!
-//! ## Caret and selection (EP-003)
-//!
-//! The caret is a byte offset carried by a [`CodeSelection`], the same shape
-//! `widgets/text_area.rs:441` uses. Every "where does it land" rule lives in
-//! [`super::cursor`], which knows nothing about GPUI; this file only turns an
-//! event into one call and one repaint. Hit-testing goes through the element's
-//! [`CodeHitMap`], i.e. the real `ShapedLine`s of the frame that was painted,
-//! so a click lands on a glyph boundary even with tabs or wide characters.
-//!
-//! ## Editing (EP-004)
-//!
-//! Every mutation of the rope goes through [`CodeView::splice_all`], including
-//! the platform's own text input. That single door is what makes the read-only
-//! refusal, the undo history and the dirty mark impossible to bypass: an action
-//! handler that spliced directly would silently skip all three.
-//!
-//! Three decisions are deliberate and worth stating rather than rediscovering:
-//!
-//! - **The IME composition lives in the document.** US-012 asks that the
-//!   document be "mutated only on commit", but GPUI's `EntityInputHandler`
-//!   protocol reads the marked text back out of the buffer
-//!   (`text_for_range`, `bounds_for_range`), so a preedit held on the side
-//!   would render nothing and place the candidate window nowhere. The preedit
-//!   is spliced in as a single typing transaction, tracked in `marked`, and
-//!   painted underlined so it reads as uncommitted - the same shape as Zed's
-//!   `Editor` and `widgets/text_area.rs`. A commit replaces it in place; an
-//!   abandoned composition is removed, never left pending.
-//! - **This view owns its own conflict watcher.** `diff/view/watcher.rs`
-//!   watches a worktree, on another entity, only while the diff is open. What
-//!   is reused is its shape (parent directory, non-recursive, debounced), not
-//!   its instance.
-//! - **Disk work runs on GPUI's background executor**, not `smol::unblock`.
-//!   Both keep the render thread free; only the former is driven by the test
-//!   scheduler, which is what lets `Ctrl+S` and the conflict refusal be proven
-//!   from the action rather than from `super::save` alone.
-
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -82,10 +17,6 @@ use gpui::{
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
-/// The one link between the notify backend thread and the reload task.
-///
-/// See [`CodeView::_watch_bridge`] for why the sender lives behind a lock
-/// rather than inside the watcher callback.
 type WatchBridge = Arc<Mutex<Option<mpsc::UnboundedSender<notify::Result<notify::Event>>>>>;
 
 use super::cursor::{self, CodeSelection};
@@ -102,121 +33,60 @@ use crate::diff::{DiffSyntax, palette};
 use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
 use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState};
 
-/// Key context the editor's bindings are scoped to (US-009).
 pub(crate) const CODE_KEY_CONTEXT: &str = "CodeEditor";
 
-/// Two presses closer together than this, and within [`MULTI_CLICK_RADIUS`],
-/// chain into a double then a triple click. Same values as
-/// `widgets/text_area.rs`, so the two editors feel identical.
 const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 const MULTI_CLICK_RADIUS: f32 = 2.0;
 
-/// Rows an out-of-viewport drag scrolls per mouse-move event (US-010).
 const DRAG_SCROLL_ROWS: f32 = 1.0;
-/// Columns the same drag scrolls horizontally. Three columns is close to one
-/// row height on the editor's mono font, so both axes move at a similar visual
-/// speed.
 const DRAG_SCROLL_COLUMNS: f32 = 3.0;
 
-/// How long a refused keystroke lights the read-only banner up (US-012). Long
-/// enough to be noticed, short enough not to linger after a burst of typing.
 const READ_ONLY_FLASH: Duration = Duration::from_millis(600);
 
-/// Quiet period a burst of filesystem events has to end with before the file is
-/// re-read (US-016). Same value, same reasoning as `markdown/view.rs`: an
-/// editor writing through a temp file emits several events per save.
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 
 actions!(
     paneflow_code_editor,
     [
-        /// Move the caret one grapheme left.
         CeLeft,
-        /// Move the caret one grapheme right.
         CeRight,
-        /// Move the caret one row up, keeping the goal column.
         CeUp,
-        /// Move the caret one row down, keeping the goal column.
         CeDown,
-        /// Extend the selection one grapheme left.
         CeSelectLeft,
-        /// Extend the selection one grapheme right.
         CeSelectRight,
-        /// Extend the selection one row up.
         CeSelectUp,
-        /// Extend the selection one row down.
         CeSelectDown,
-        /// Move the caret to the start of the previous word.
         CeWordLeft,
-        /// Move the caret to the end of the next word.
         CeWordRight,
-        /// Extend the selection to the start of the previous word.
         CeSelectWordLeft,
-        /// Extend the selection to the end of the next word.
         CeSelectWordRight,
-        /// Move the caret to the first column of its row.
         CeHome,
-        /// Move the caret past the last column of its row.
         CeEnd,
-        /// Extend the selection to the first column of its row.
         CeSelectHome,
-        /// Extend the selection past the last column of its row.
         CeSelectEnd,
-        /// Move the caret one viewport up.
         CePageUp,
-        /// Move the caret one viewport down.
         CePageDown,
-        /// Extend the selection one viewport up.
         CeSelectPageUp,
-        /// Extend the selection one viewport down.
         CeSelectPageDown,
-        /// Move the caret to the first byte of the document.
         CeDocStart,
-        /// Move the caret to the last byte of the document.
         CeDocEnd,
-        /// Extend the selection to the first byte of the document.
         CeSelectDocStart,
-        /// Extend the selection to the last byte of the document.
         CeSelectDocEnd,
-        /// Select the whole document.
         CeSelectAll,
-        /// Delete the selection, or the grapheme before the caret.
         CeBackspace,
-        /// Delete the selection, or the grapheme after the caret.
         CeDelete,
-        /// Insert a newline, repeating the current row's indentation.
         CeNewline,
-        /// Undo the newest transaction.
         CeUndo,
-        /// Redo the newest undone transaction.
         CeRedo,
-        /// Copy the selection, or the whole current row.
         CeCopy,
-        /// Cut the selection, or the whole current row.
         CeCut,
-        /// Paste the clipboard, sanitized.
         CePaste,
-        /// Indent the selected rows by one level.
         CeIndent,
-        /// Outdent the selected rows by one level.
         CeOutdent,
-        /// Write the document back to disk.
         CeSave,
     ]
 );
 
-/// Register the code editor's key bindings (US-011).
-///
-/// Called from [`crate::keybindings::apply_keybindings`], which clears every
-/// binding before rebuilding them, so this has to run on every apply and not
-/// only at startup.
-///
-/// Each shortcut is declared once, with its platform variants adjacent: the
-/// shared half is unconditional, and the two `cfg` blocks carry only the chords
-/// that genuinely differ (word motion and document ends follow the macOS
-/// Option / Command conventions, everything else is identical). Nothing here
-/// installs a catch-all key handler, so a key with no binding bubbles to the
-/// parent dispatch instead of dying on the editor.
 pub(crate) fn register_keybindings(cx: &mut App) {
     let ctx = Some(CODE_KEY_CONTEXT);
     cx.bind_keys([
@@ -236,11 +106,7 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("pagedown", CePageDown, ctx),
         KeyBinding::new("shift-pageup", CeSelectPageUp, ctx),
         KeyBinding::new("shift-pagedown", CeSelectPageDown, ctx),
-        // `secondary` is Cmd on macOS and Ctrl elsewhere, so Select All needs
-        // no platform split.
         KeyBinding::new("secondary-a", CeSelectAll, ctx),
-        // Editing (EP-004). `secondary` covers the Cmd / Ctrl split, so only
-        // the extra Windows-and-Linux redo chord below needs a `cfg`.
         KeyBinding::new("backspace", CeBackspace, ctx),
         KeyBinding::new("delete", CeDelete, ctx),
         KeyBinding::new("enter", CeNewline, ctx),
@@ -274,13 +140,10 @@ pub(crate) fn register_keybindings(cx: &mut App) {
         KeyBinding::new("ctrl-end", CeDocEnd, ctx),
         KeyBinding::new("ctrl-shift-home", CeSelectDocStart, ctx),
         KeyBinding::new("ctrl-shift-end", CeSelectDocEnd, ctx),
-        // The second redo chord Windows and Linux editors also answer to.
         KeyBinding::new("ctrl-y", CeRedo, ctx),
     ]);
 }
 
-/// What a mouse drag selects by (US-010): the granularity the opening press
-/// established, kept for the whole drag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DragGrain {
     Grapheme,
@@ -288,16 +151,12 @@ enum DragGrain {
     Line,
 }
 
-/// A live text drag: its granularity plus the range the opening press selected,
-/// which a word or line drag always keeps covered.
 #[derive(Clone, Debug)]
 struct TextDrag {
     grain: DragGrain,
     anchor: Range<usize>,
 }
 
-/// Multi-click accumulator: when and where the last press landed, and how many
-/// presses have chained so far.
 #[derive(Clone, Copy)]
 struct ClickChain {
     at: Instant,
@@ -305,110 +164,47 @@ struct ClickChain {
     count: u8,
 }
 
-/// How the in-memory document stands against the file on disk (US-016).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 enum DiskState {
-    /// The last stamp the editor took still describes the file.
     #[default]
     InSync,
-    /// Someone else wrote the file. Nothing is overwritten until the user
-    /// picks a side.
     Conflict,
-    /// The file is gone. Saving recreates it.
     Deleted,
 }
 
-/// One open file inside the diff dock.
 pub(crate) struct CodeView {
     path: PathBuf,
     state: CodeLoadState,
-    /// Generation guard: a load that lands after the tab moved on is dropped
-    /// without repainting (US-002).
     slot: CodeLoadSlot,
-    /// Keyboard focus (US-009). Owning it here is what scopes the
-    /// [`CODE_KEY_CONTEXT`] bindings to this widget, and what tells the element
-    /// whether to paint a caret at all.
     focus: FocusHandle,
-    /// Vertical scroll, owned by the host div's native handler.
     scroll: ScrollHandle,
-    /// Live vertical-scrollbar drag, if any (US-007).
     v_drag: Option<ScrollDragState>,
-    /// Live horizontal offset in pixels, always `>= 0` (US-008).
     h_offset: f32,
-    /// Caret plus selection anchor, in document bytes (US-009, US-010).
     selection: CodeSelection,
-    /// Char column vertical motion aims at, so Up/Down across a short row come
-    /// back to where the caret started (US-011).
     goal_column: usize,
-    /// Live text selection drag (US-010).
     text_drag: Option<TextDrag>,
-    /// Double / triple click tracking (US-010).
     click_chain: Option<ClickChain>,
-    /// When the caret last moved. It stops blinking for one interval after
-    /// that, which is the "solid while you work" behavior US-009 asks for.
     last_motion: Instant,
-    /// Blink phase, mirrored from the app-wide [`BlinkPhaseGlobal`].
     blink_visible: bool,
-    /// Theme snapshot the highlighter's colors were resolved against (US-005).
     theme_generation: u64,
-    /// Geometry the element resolves each `prepaint` and the handlers read back.
     geometry: Rc<Cell<CodeGeometry>>,
-    /// Gutter width memo, keyed on the line-number digit count (US-006).
     gutter_memo: Rc<Cell<GutterMemo>>,
-    /// The frame's shaped lines, published by the element for hit-testing.
     hits: Rc<RefCell<CodeHitMap>>,
-    /// Stable element id, built once so the render hot path never formats a
-    /// string per frame.
     element_id: SharedString,
-    /// Undo / redo stack (US-013).
     history: edit::UndoHistory,
-    /// Where the history stood when the file last agreed with disk. The dirty
-    /// mark is `history.mark() != saved_mark`, which is what makes undoing back
-    /// to the saved state clear the dot instead of stacking a second change.
     saved_mark: edit::HistoryMark,
-    /// Indentation Tab inserts, detected from the file at load (US-014).
     indent: IndentUnit,
-    /// Byte range of the live IME composition (US-012).
     marked: Option<Range<usize>>,
-    /// When a keystroke was last refused because the document is read-only.
-    /// Drives the banner flash (US-012).
     read_only_flash: Option<Instant>,
-    /// What the file looked like on disk when it was last read or written
-    /// (US-016). `None` means it is not there.
     stamp: Option<FileStamp>,
-    /// Whether an agent got to the file first (US-016).
     disk: DiskState,
-    /// Written explanation of the last failed save (US-015).
     save_error: Option<String>,
-    /// A save is in flight; a second Ctrl+S is ignored rather than racing it.
     saving: bool,
-    /// Parent-directory watcher (US-016). Held only to keep it alive: dropping
-    /// it unregisters the watch.
     _watcher: Option<RecommendedWatcher>,
-    /// The sender the watcher callback writes into, owned here rather than by
-    /// the callback (US-016).
-    ///
-    /// Every wake of the reload task has to happen on the thread that owns
-    /// this view, or GPUI's test scheduler rightly calls the test
-    /// non-deterministic. The callback owning the sender breaks that twice:
-    /// `INotifyWatcher::drop` only posts a shutdown message, so the backend
-    /// thread drops the callback - and with it the last sender, closing the
-    /// channel - after the drop has already returned, and until it gets there
-    /// it can still deliver one last event. Both wakes land on the notify
-    /// thread.
-    ///
-    /// Holding the sender behind a lock fixes both: dropping the watcher
-    /// closes nothing, and clearing the option severs the callback before the
-    /// watcher goes away, from whichever thread does the clearing.
-    ///
-    /// Declared after `_watcher` on purpose: fields drop in declaration order,
-    /// so the watch is unregistered first and the channel closes second.
     _watch_bridge: Option<WatchBridge>,
 }
 
 impl CodeView {
-    /// Open `path`. The read, the rope and the first parse all happen off the
-    /// render thread; the view renders a spinner until they land.
     pub(crate) fn new(path: PathBuf, cx: &mut Context<Self>) -> Self {
         let mut view = Self {
             element_id: format!("code-view:{}", path.display()).into(),
@@ -446,9 +242,6 @@ impl CodeView {
         view
     }
 
-    /// Mirror the app-wide cursor blink (US-009). `try_global` rather than
-    /// `global` so a headless or test-built view degrades to a solid caret
-    /// instead of panicking, the same fallback `terminal/view.rs` takes.
     fn observe_blink(&mut self, cx: &mut Context<Self>) {
         let Some(global) = cx.try_global::<BlinkPhaseGlobal>() else {
             log::warn!("BlinkPhaseGlobal not installed - the code caret will not blink");
@@ -456,9 +249,6 @@ impl CodeView {
         };
         let phase = global.0.clone();
         cx.observe(&phase, |view: &mut Self, phase, cx: &mut Context<Self>| {
-            // A caret that just moved stays solid for a full interval: blinking
-            // through a burst of navigation is what makes a caret hard to
-            // follow.
             let visible =
                 view.last_motion.elapsed() < CURSOR_BLINK_INTERVAL || phase.read(cx).visible;
             if visible != view.blink_visible {
@@ -469,8 +259,6 @@ impl CodeView {
         .detach();
     }
 
-    /// Point the view at a different file, cancelling whatever load is in
-    /// flight.
     pub(crate) fn open(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.element_id = format!("code-view:{}", path.display()).into();
         self.path = path;
@@ -512,10 +300,6 @@ impl CodeView {
                     return;
                 }
                 view.state = CodeLoadState::from_outcome(outcome);
-                // The indent unit and the disk stamp are both properties of the
-                // file that just landed, so they are taken here rather than at
-                // the first Tab or the first save, when the file may already
-                // have moved on.
                 if let Some(doc) = view.state.document() {
                     view.indent = IndentUnit::detect(doc);
                 }
@@ -538,27 +322,18 @@ impl CodeView {
         self.state.highlighter()
     }
 
-    /// The caret's byte offset (US-009).
-    #[allow(dead_code)] // EP-003 accessor: no caller outside the view reads the cursor yet.
+    #[allow(dead_code)]
     pub(crate) fn cursor(&self) -> usize {
         self.selection.cursor()
     }
 
-    /// The caret's row. Derived from the selection rather than stored, so the
-    /// gutter highlight and the current-line wash can never drift from the byte
-    /// offset that actually moved.
-    #[allow(dead_code)] // EP-003 accessor: no caller outside the view reads the cursor row yet.
+    #[allow(dead_code)]
     pub(crate) fn cursor_row(&self) -> usize {
         self.document()
             .map(|doc| doc.byte_to_line(self.selection.cursor()))
             .unwrap_or(0)
     }
 
-    /// The caret's 1-based `(line, column)`, for the dock's file header
-    /// (US-018). The column counts characters, not bytes, so a line of accented
-    /// text reports the position the user can actually count to. An unloaded
-    /// document reports the top of an empty file rather than nothing, which is
-    /// what the header shows while the spinner is up.
     pub(crate) fn cursor_line_column(&self) -> (usize, usize) {
         let Some(doc) = self.document() else {
             return (1, 1);
@@ -570,10 +345,6 @@ impl CodeView {
         )
     }
 
-    /// The refusal panel (US-003) plus, when a retry could actually clear the
-    /// error, the reload button US-018 asks for. The written sentence and the
-    /// icon still come from `diff_panel_centered`, so every dock state is drawn
-    /// by one component; the button is the only thing layered on top.
     fn render_load_error(
         &self,
         message: String,
@@ -617,15 +388,12 @@ impl CodeView {
             .into_any_element()
     }
 
-    /// The current selection, empty when the caret carries none.
-    #[allow(dead_code)] // EP-003 accessor: no caller outside the view reads the selection yet.
+    #[allow(dead_code)]
     pub(crate) fn selection(&self) -> Range<usize> {
         self.selection.range()
     }
 
-    /// Put the caret on `row`, column 0, and scroll it into view (US-007). The
-    /// entry point the outline and the diff dock call to jump to a line.
-    #[allow(dead_code)] // EP-003 setter: reserved for a jump-to-line entry point that has no gesture yet.
+    #[allow(dead_code)]
     pub(crate) fn set_cursor_row(&mut self, row: usize, cx: &mut Context<Self>) {
         let Some(doc) = self.state.document() else {
             return;
@@ -635,12 +403,6 @@ impl CodeView {
         self.place_caret(offset, false, cx);
     }
 
-    /// Apply a resolved caret offset: clamp it to a legal slot, refresh the
-    /// goal column, keep the caret solid, reveal it, repaint.
-    ///
-    /// Every keyboard motion and every mouse gesture funnels through here,
-    /// which is what keeps the caret, the goal column, the blink and the scroll
-    /// in step.
     fn place_caret(&mut self, offset: usize, extend: bool, cx: &mut Context<Self>) {
         self.end_typing_group();
         let Some(doc) = self.state.document() else {
@@ -653,8 +415,6 @@ impl CodeView {
         self.after_motion(cx);
     }
 
-    /// Vertical motion, which is the one case that must *not* refresh the goal
-    /// column: preserving it across a shorter row is the whole point (US-011).
     fn move_rows(&mut self, delta: isize, extend: bool, cx: &mut Context<Self>) {
         self.end_typing_group();
         let goal = self.goal_column;
@@ -673,13 +433,10 @@ impl CodeView {
         cx.notify();
     }
 
-    /// Rows a Page key travels, derived from the live viewport.
     fn page_rows(&self) -> usize {
         cursor::page_rows(f32::from(self.scroll.bounds().size.height), CODE_ROW_HEIGHT)
     }
 
-    /// Scroll so the caret sits inside the viewport with the mandated margin,
-    /// on both axes. A no-op when it is already comfortably visible.
     pub(crate) fn reveal_cursor(&mut self) {
         let viewport_h = f32::from(self.scroll.bounds().size.height);
         let geometry = self.geometry.get();
@@ -697,9 +454,6 @@ impl CodeView {
         if (target - current).abs() > f32::EPSILON {
             self.scroll.set_offset(Point::new(px(0.), px(target)));
         }
-        // The horizontal reveal uses the monospace advance rather than a shaped
-        // x: the caret's row may not have been shaped this frame (it can be off
-        // screen entirely), and the editor's font is mono by construction.
         let caret_x = column as f32 * geometry.char_w;
         self.h_offset = reveal_h_offset(
             caret_x,
@@ -709,12 +463,6 @@ impl CodeView {
         );
     }
 
-    /// Recolor after a theme hot-reload (US-005).
-    ///
-    /// `set_syntax` re-derives every row's colors from the already-parsed trees,
-    /// so this costs one requery and no reparse. GPUI's shaped-line cache keys
-    /// on the `TextRun`s, colors included, so the new colors invalidate the
-    /// cached glyphs by themselves.
     fn sync_theme(&mut self) {
         let generation = crate::theme::theme_generation();
         if generation == self.theme_generation {
@@ -727,21 +475,15 @@ impl CodeView {
         }
     }
 
-    /// Horizontal wheel (US-008). Vertical is the host's native handler; doing
-    /// it here as well would double-scroll the file.
     fn apply_wheel(&mut self, ev: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
         let dx = f32::from(ev.delta.pixel_delta(window.line_height()).x);
         if dx == 0.0 {
-            // Notifying on a bare vertical tick would render the frame twice:
-            // the native handler already requested one.
             return;
         }
         let bounds = self.scroll.bounds();
         if !bounds.contains(&ev.position) {
             return;
         }
-        // GPUI deltas go negative toward the end of the axis; subtract so our
-        // positive offset grows and reveals the right of the line.
         let max = self.geometry.get().max_h_offset;
         let next = (self.h_offset - dx).clamp(0.0, max);
         if next != self.h_offset {
@@ -750,14 +492,11 @@ impl CodeView {
         }
     }
 
-    /// True when `x` is inside the vertical scrollbar's grab strip.
     fn over_v_scrollbar(&self, position: Point<gpui::Pixels>) -> bool {
         let bounds = self.scroll.bounds();
         position.x >= bounds.right() - SCROLLBAR_GUTTER && position.x <= bounds.right()
     }
 
-    /// Grab the vertical thumb, or jump the track (US-007). Returns `true` when
-    /// the press was consumed.
     fn on_scrollbar_down(&mut self, ev: &MouseDownEvent, cx: &mut Context<Self>) -> bool {
         if !self.over_v_scrollbar(ev.position) {
             return false;
@@ -767,7 +506,6 @@ impl CodeView {
         };
         let local_y = f32::from(ev.position.y - self.scroll.bounds().origin.y);
         if local_y >= m.thumb_top && local_y <= m.thumb_top + m.thumb_h {
-            // On the thumb: start a drag that tracks the pointer pixel for pixel.
             self.v_drag = Some(scrollbar::begin_drag(&self.scroll, ev.position.y));
         } else if let Some(offset) = scrollbar::track_click_offset(&self.scroll, ev.position.y) {
             self.scroll.set_offset(Point::new(px(0.), px(offset)));
@@ -780,10 +518,6 @@ impl CodeView {
         let Some(drag) = self.v_drag else {
             return;
         };
-        // Mouse-move listeners are hitbox-gated, so a release outside the view
-        // never delivers its `MouseUpEvent` here and the drag would survive it.
-        // Any move that arrives without the left button held therefore ends the
-        // drag instead of scrolling the file off a stale anchor.
         if ev.pressed_button != Some(MouseButton::Left) {
             self.v_drag = None;
             cx.notify();
@@ -801,15 +535,11 @@ impl CodeView {
         }
     }
 
-    /// Resolve a window position to a caret slot through the frame's shaped
-    /// lines (US-010).
     fn offset_at(&self, position: Point<Pixels>) -> Option<usize> {
         let doc = self.state.document()?;
         Some(self.hits.borrow().offset_at(doc, position))
     }
 
-    /// Advance the double / triple click chain and return how many presses have
-    /// landed in a row (1, 2 or 3, then back to 1).
     fn chain_click(&mut self, position: Point<Pixels>, now: Instant) -> u8 {
         let count = match self.click_chain {
             Some(prev)
@@ -829,8 +559,6 @@ impl CodeView {
         count
     }
 
-    /// Take focus, place the caret, open a selection drag (US-009, US-010).
-    /// Returns `true` when the press was consumed.
     fn on_text_down(
         &mut self,
         ev: &MouseDownEvent,
@@ -868,26 +596,17 @@ impl CodeView {
         true
     }
 
-    /// Extend the live selection, auto-scrolling when the pointer has left the
-    /// viewport (US-010).
-    ///
-    /// The scroll step is applied per mouse-move event rather than on a timer:
-    /// a drag that has left the viewport is a moving pointer by definition, and
-    /// a timer would be a second source of truth for the scroll offset.
     fn on_text_move(&mut self, ev: &MouseMoveEvent, cx: &mut Context<Self>) {
         if self.text_drag.is_none() {
             return;
         }
         if ev.pressed_button != Some(MouseButton::Left) {
-            // Same hitbox reasoning as the scrollbar drag: a release outside
-            // the view never reaches us, so an unpressed move ends the drag.
             self.text_drag = None;
             cx.notify();
             return;
         }
         let scrolled = self.drag_autoscroll(ev.position);
         let Some(offset) = self.offset_at(ev.position) else {
-            // A pointer outside the shaped rows still owes the scroll a frame.
             if scrolled {
                 cx.notify();
             }
@@ -896,13 +615,6 @@ impl CodeView {
         self.extend_drag_to(offset, cx);
     }
 
-    /// Grow the live selection so it reaches `offset` at the drag's own
-    /// granularity (US-010).
-    ///
-    /// A word or line drag always keeps the unit the opening press selected
-    /// covered, and puts the head on whichever end the pointer is chasing, so
-    /// dragging back over the anchor flips the direction instead of collapsing
-    /// the selection.
     fn extend_drag_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         let Some(drag) = self.text_drag.clone() else {
             return;
@@ -934,12 +646,6 @@ impl CodeView {
         cx.notify();
     }
 
-    /// Scroll toward a pointer that has left the viewport, on either axis
-    /// (US-010). Returns `true` when an offset actually moved.
-    ///
-    /// Both axes matter: the editor scrolls horizontally too (US-008), so a
-    /// selection dragged off the right edge of a long line has to follow the
-    /// pointer the same way one dragged off the bottom does.
     fn drag_autoscroll(&mut self, position: Point<Pixels>) -> bool {
         let bounds = self.scroll.bounds();
         let geometry = self.geometry.get();
@@ -953,8 +659,6 @@ impl CodeView {
         );
         if dy != 0.0 {
             let max = f32::from(self.scroll.max_offset().y);
-            // GPUI's live offset is `<= 0` while `max_offset()` is non-negative
-            // (`widgets/scrollbar.rs`), so scrolling down goes more negative.
             let current = -f32::from(self.scroll.offset().y);
             let next = (current + dy).clamp(0.0, max);
             if next != current {
@@ -1092,8 +796,6 @@ impl CodeView {
     }
 
     fn horizontal(&mut self, direction: isize, extend: bool, cx: &mut Context<Self>) {
-        // A bare arrow on a live selection collapses onto its edge rather than
-        // stepping off the head, which is what every editor does.
         let from = match (extend, self.selection.is_empty(), direction < 0) {
             (false, false, true) => self.selection.range().start,
             (false, false, false) => self.selection.range().end,
@@ -1152,8 +854,6 @@ impl CodeView {
         self.place_caret(offset, extend, cx);
     }
 
-    /// Select All (US-010). Anchored at the start so a following Shift+arrow
-    /// shrinks from the end, the way a dragged selection would.
     fn take_whole_document(&mut self, cx: &mut Context<Self>) {
         self.end_typing_group();
         let Some(doc) = self.state.document() else {
@@ -1169,44 +869,20 @@ impl CodeView {
         self.after_motion(cx);
     }
 
-    // ----------------------------------------------------------------- EP-004
-
-    /// Close the open undo group and drop any IME mark.
-    ///
-    /// Every deliberate caret move calls this: it is what stops a keystroke
-    /// after a click or an arrow from being folded into the transaction that
-    /// preceded it (US-013), and what guarantees a composition interrupted by a
-    /// click is committed rather than left pending (US-012).
     fn end_typing_group(&mut self) {
         self.history.close_group();
         self.marked = None;
     }
 
-    /// Whether the document differs from what is on disk (US-015).
-    ///
-    /// Compared by transaction identity, not by a counter: undoing back to the
-    /// saved state has to clear the dot, and a counter can only ever grow.
     pub(crate) fn is_dirty(&self) -> bool {
         self.history.mark() != self.saved_mark
     }
 
-    /// Whether a conflict banner is showing, i.e. the user still owes the file
-    /// a decision (US-016).
-    #[allow(dead_code)] // EP-004 accessor: the conflict banner is rendered from the state enum inside the view.
+    #[allow(dead_code)]
     pub(crate) fn has_conflict(&self) -> bool {
         self.disk == DiskState::Conflict
     }
 
-    /// The one door into the rope.
-    ///
-    /// `ops` are applied in the order given, so a caller touching several
-    /// places must order them back to front for its own offsets to stay valid.
-    /// Every `CodeEdit` the splices produce is handed to the highlighter, which
-    /// is what keeps the reparse incremental, and the whole batch lands as one
-    /// undo transaction.
-    ///
-    /// Returns `false` when nothing changed - a read-only document (refused
-    /// visibly), or a batch that turned out to be a no-op.
     fn splice_all(
         &mut self,
         ops: &[(Range<usize>, String)],
@@ -1222,9 +898,6 @@ impl CodeView {
         let now = Instant::now();
         let mut records = Vec::with_capacity(ops.len());
         let mut deferred: Option<DeferredParse> = None;
-        // The highlighter and the document come out of one borrow, and
-        // `spawn_deferred_parse` needs `&mut self`, so the deferred parse is
-        // collected here and started once the borrow is over.
         if let Some((doc, hl)) = self.state.editable() {
             for (range, text) in ops {
                 let Some(applied) = edit::splice(doc, range.clone(), text) else {
@@ -1246,8 +919,6 @@ impl CodeView {
         true
     }
 
-    /// Land a mutation: clamp the caret to the new text, refresh the goal
-    /// column, start whatever reparse was deferred, repaint.
     fn finish_edit(
         &mut self,
         after: CodeSelection,
@@ -1273,12 +944,6 @@ impl CodeView {
         self.after_motion(cx);
     }
 
-    /// Light the read-only banner up for [`READ_ONLY_FLASH`] (US-012).
-    ///
-    /// The refusal has to be *seen*: `accepts_text_input` deliberately stays at
-    /// its permissive default so the keystroke still reaches
-    /// [`Self::replace_text_in_range`], where it can be turned down loudly
-    /// rather than swallowed by the platform.
     fn flash_read_only(&mut self, cx: &mut Context<Self>) {
         self.read_only_flash = Some(Instant::now());
         cx.notify();
@@ -1299,11 +964,6 @@ impl CodeView {
         .detach();
     }
 
-    /// Replace the selection (or the caret slot) with `text`.
-    ///
-    /// The text is normalized here as well as inside [`edit::splice`], because
-    /// the caret has to land past what the rope really received: a pasted
-    /// `\r\n` is one byte shorter once it is in.
     fn insert_text(&mut self, text: &str, group: EditGroup, cx: &mut Context<Self>) -> bool {
         let range = self.replacement_range();
         let inserted = normalize_newlines(text).into_owned();
@@ -1311,8 +971,6 @@ impl CodeView {
         self.splice_all(&[(range, inserted)], caret, group, cx)
     }
 
-    /// Range the next insertion replaces: the live composition if there is one,
-    /// otherwise the selection.
     fn replacement_range(&self) -> Range<usize> {
         match &self.marked {
             Some(marked) => marked.clone(),
@@ -1320,11 +978,6 @@ impl CodeView {
         }
     }
 
-    /// Turn the platform's optional UTF-16 range into document bytes.
-    ///
-    /// `None` means "wherever the editor thinks it is", which is the marked
-    /// range during a composition and the selection otherwise - the same
-    /// resolution `widgets/text_area.rs` performs.
     fn resolve_replacement(&self, range_utf16: Option<Range<usize>>) -> Option<Range<usize>> {
         let doc = self.state.document()?;
         Some(match range_utf16 {
@@ -1336,9 +989,6 @@ impl CodeView {
         })
     }
 
-    /// Backspace and Delete (US-012). A live selection is what gets removed;
-    /// otherwise one whole grapheme goes, which is why a composed emoji
-    /// disappears in one press instead of losing a modifier at a time.
     fn delete_grapheme(&mut self, forward: bool, cx: &mut Context<Self>) {
         let selection = self.selection.range();
         let range = if !selection.is_empty() {
@@ -1361,9 +1011,6 @@ impl CodeView {
         self.splice_all(&[(range, String::new())], caret, EditGroup::Typing, cx);
     }
 
-    /// Enter (US-012): a newline plus whatever indentation the row already had,
-    /// truncated at the caret so splitting a line mid-indent cannot invent
-    /// leading whitespace that was never typed.
     fn insert_newline(&mut self, cx: &mut Context<Self>) {
         let mut text = String::from("\n");
         if let Some(doc) = self.state.document() {
@@ -1379,13 +1026,10 @@ impl CodeView {
         self.insert_text(&text, EditGroup::Atomic, cx);
     }
 
-    /// Rows the current selection touches, as an inclusive row range.
     fn selected_rows(&self) -> Option<(usize, usize)> {
         let doc = self.state.document()?;
         let range = self.selection.range();
         let first = doc.byte_to_line(range.start);
-        // A selection ending exactly at a row start stops on the row before:
-        // Tab on a full-line selection must not indent the row after it.
         let last_byte = if range.end > range.start {
             range.end - 1
         } else {
@@ -1394,13 +1038,6 @@ impl CodeView {
         Some((first, doc.byte_to_line(last_byte).max(first)))
     }
 
-    /// Tab and Shift+Tab (US-014).
-    ///
-    /// A bare Tab with no selection inserts one unit at the caret; anything
-    /// else shifts every touched row. The rows are rewritten back to front so
-    /// each splice's offsets are still valid when it runs, and the caret and
-    /// anchor are carried across with [`shift_offset`] rather than re-derived,
-    /// so a selection survives the operation intact.
     fn shift_lines(&mut self, outdent: bool, cx: &mut Context<Self>) {
         let Some((first, last)) = self.selected_rows() else {
             return;
@@ -1430,9 +1067,6 @@ impl CodeView {
                     ops.push((start..start + width, String::new()));
                     deltas.push((start, -(width as isize)));
                 } else {
-                    // A blank row gains nothing: indenting whitespace-only
-                    // lines is churn the diff would show and the user did not
-                    // ask for.
                     if line.trim_end_matches('\n').is_empty() {
                         continue;
                     }
@@ -1453,11 +1087,6 @@ impl CodeView {
         self.splice_all(&ops, after, EditGroup::Atomic, cx);
     }
 
-    /// The text Copy and Cut act on, and the range Cut removes.
-    ///
-    /// With no selection that is the whole row, newline included (US-014), so
-    /// pasting it back lands a complete line rather than gluing it onto the
-    /// current one.
     fn clip_range(&self) -> Option<Range<usize>> {
         let doc = self.state.document()?;
         let selection = self.selection.range();
@@ -1486,10 +1115,6 @@ impl CodeView {
         }
     }
 
-    /// Paste (US-014). One transaction whatever the clipboard holds, so a
-    /// multi-line paste is a single Ctrl+Z, and the text goes through
-    /// [`edit::sanitize_paste`] first: control characters and bidi overrides
-    /// from a web page must not end up in a source file.
     fn paste(&mut self, cx: &mut Context<Self>) {
         let Some(item) = cx.read_from_clipboard() else {
             return;
@@ -1505,16 +1130,7 @@ impl CodeView {
         self.insert_text(&text, EditGroup::Atomic, cx);
     }
 
-    /// Undo / redo (US-013). The document and the highlighter move together:
-    /// every edit the replay produces is fed to `hl.edit`, so the tree stays in
-    /// step with the rope in both directions.
     fn time_travel(&mut self, redo: bool, cx: &mut Context<Self>) {
-        // A read-only document can still hold history: a silent reload
-        // (US-016) records its transaction with the flag lifted for the
-        // duration of the splice. Replaying that here would move the caret and
-        // the history mark while `CodeDocument` refuses the rope mutation,
-        // leaving a file that matches disk exactly looking modified. The
-        // refusal is the same one a keystroke gets (US-012).
         if self.state.document().is_none_or(CodeDocument::is_read_only) {
             self.flash_read_only(cx);
             return;
@@ -1543,13 +1159,6 @@ impl CodeView {
         self.finish_edit(selection, deferred, cx);
     }
 
-    // ------------------------------------------------------------ disk (EP-004)
-
-    /// Ctrl+S (US-015). No autosave anywhere in this file.
-    ///
-    /// The stamp check happens on the worker thread, immediately before the
-    /// write, so a file an agent touched between the last watcher tick and this
-    /// keystroke is still caught. A conflict is reported *without writing*.
     fn save(&mut self, cx: &mut Context<Self>) {
         if self.saving {
             return;
@@ -1564,9 +1173,6 @@ impl CodeView {
         if !self.is_dirty() && self.disk == DiskState::InSync {
             return;
         }
-        // Closing the group first is what makes the saved mark stable: a
-        // keystroke after the save must open a new transaction, or typing would
-        // silently extend the one the save just blessed.
         self.history.close_group();
         let contents = doc.to_disk_string();
         let path = self.path.clone();
@@ -1579,10 +1185,6 @@ impl CodeView {
             let outcome = cx
                 .background_spawn(async move {
                     let current = FileStamp::read(&path);
-                    // `expected` is `None` for a file that was not on disk
-                    // when it was last stamped, which is the "deleted, save
-                    // recreates it" path: anything present now is someone
-                    // else's file.
                     let conflict = match (expected, current) {
                         (Some(expected), Some(current)) => expected.differs(&current),
                         (None, Some(_)) => true,
@@ -1603,7 +1205,6 @@ impl CodeView {
         .detach();
     }
 
-    /// Land a save's result. `Err(None)` is the refused-before-writing case.
     fn finish_save(
         &mut self,
         outcome: Result<FileStamp, Option<String>>,
@@ -1619,8 +1220,6 @@ impl CodeView {
                 self.save_error = None;
             }
             Err(Some(message)) => {
-                // The in-memory edits are untouched: a failed write must never
-                // be able to cost the user their work (US-015).
                 self.save_error = Some(message);
             }
             Err(None) => {
@@ -1630,13 +1229,6 @@ impl CodeView {
         cx.notify();
     }
 
-    /// Watch the file's parent directory for someone else's write (US-016).
-    ///
-    /// The parent rather than the file: an atomic save renames a sibling over
-    /// the target, which arrives as a directory event and would never reach a
-    /// watch registered on the old inode. Non-recursive, so a deep tree costs
-    /// one watch descriptor - the inotify-exhaustion lesson from
-    /// `reference_gpui_recursive_watcher_main_thread_hang`.
     fn start_watcher(&mut self, cx: &mut Context<Self>) {
         self._watcher = None;
         self._watch_bridge = None;
@@ -1649,8 +1241,6 @@ impl CodeView {
         if !parent.is_dir() {
             return;
         }
-        // Unbounded on purpose: events fired between registration and the first
-        // poll below have to queue, not be dropped.
         let (tx, mut rx) = mpsc::unbounded::<notify::Result<notify::Event>>();
         let bridge: WatchBridge = Arc::new(Mutex::new(Some(tx)));
         let notify_side = Arc::clone(&bridge);
@@ -1684,8 +1274,6 @@ impl CodeView {
                 if !event_is_relevant(&first, &name) {
                     continue;
                 }
-                // One save is several events. Wait for the burst to go quiet
-                // rather than re-reading the file three times.
                 let deadline = Instant::now() + RELOAD_DEBOUNCE;
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
@@ -1713,7 +1301,6 @@ impl CodeView {
                         view.disk_changed(stamp, text, cx);
                     })
                 });
-                // A closed tab is the loop's exit condition, not an error.
                 if updated.is_err() {
                     break;
                 }
@@ -1722,7 +1309,6 @@ impl CodeView {
         .detach();
     }
 
-    /// React to what the watcher found on disk (US-016).
     fn disk_changed(
         &mut self,
         stamp: Option<FileStamp>,
@@ -1737,14 +1323,11 @@ impl CodeView {
                 }
             }
             (Some(stamp), Some(text)) => {
-                // Our own save comes back through the watcher too; the stamp we
-                // recorded when it landed is what tells the two apart.
                 if self.stamp == Some(stamp) && self.disk == DiskState::InSync {
                     return;
                 }
                 self.stamp = Some(stamp);
                 if self.is_dirty() {
-                    // Nothing is overwritten either way until the user chooses.
                     self.disk = DiskState::Conflict;
                     cx.notify();
                     return;
@@ -1756,13 +1339,6 @@ impl CodeView {
         }
     }
 
-    /// Replace the buffer with `text`, keeping the viewport where the user left
-    /// it.
-    ///
-    /// Applied as a normal transaction rather than a reload, so Ctrl+Z brings
-    /// the previous state back - the recovery US-016 asks for when the reload
-    /// was not what the user wanted. The caret is only preserved when the line
-    /// count is unchanged: past that, a byte offset is a guess.
     fn adopt_disk_text(&mut self, text: &str, cx: &mut Context<Self>) {
         let Some(doc) = self.state.document() else {
             return;
@@ -1771,9 +1347,6 @@ impl CodeView {
         let len = doc.len_bytes();
         let scroll = self.scroll.offset();
         let caret = self.selection;
-        // `edit::splice` refuses a read-only document, and a file can be
-        // read-only on disk and still change underneath us. The flag is lifted
-        // for the duration of the reload and put straight back.
         let reason = doc.read_only_reason();
         if reason.is_some()
             && let Some(doc) = self.state.document_mut()
@@ -1805,8 +1378,6 @@ impl CodeView {
         cx.notify();
     }
 
-    /// "Keep mine" (US-016): the in-memory text wins, and the on-disk stamp is
-    /// adopted so the next Ctrl+S goes through instead of being refused again.
     fn resolve_keep_mine(&mut self, cx: &mut Context<Self>) {
         self.disk = DiskState::InSync;
         let path = self.path.clone();
@@ -1825,8 +1396,6 @@ impl CodeView {
         cx.notify();
     }
 
-    /// "Reload from disk" (US-016). Re-reads rather than trusting a snapshot
-    /// taken when the banner appeared, which may already be stale.
     fn resolve_reload(&mut self, cx: &mut Context<Self>) {
         let path = self.path.clone();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
@@ -1855,8 +1424,6 @@ impl CodeView {
         })
         .detach();
     }
-
-    // ----------------------------------------------------- EP-004 action glue
 
     fn backspace(&mut self, _: &CeBackspace, _w: &mut Window, cx: &mut Context<Self>) {
         self.delete_grapheme(false, cx);
@@ -1902,8 +1469,6 @@ impl CodeView {
         self.save(cx);
     }
 
-    /// The banners stacked above the file: read-only, conflict, deletion, and
-    /// the last failed write.
     fn banners(&self, ui: crate::theme::UiColors, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out: Vec<AnyElement> = Vec::new();
         let row = || {
@@ -1981,13 +1546,6 @@ impl CodeView {
     }
 }
 
-/// Carry `offset` across a batch of line-start insertions and removals.
-///
-/// The batch is what Tab and Shift+Tab produce: one delta per touched row, at
-/// that row's first byte. An insertion pushes everything at or after it along;
-/// a removal only takes back what actually sat between the row start and the
-/// offset, which is what keeps a caret parked inside the indentation from
-/// jumping into the previous line.
 fn shift_offset(offset: usize, deltas: &[(usize, isize)]) -> usize {
     let mut out = offset as isize;
     for (start, delta) in deltas {
@@ -2003,10 +1561,6 @@ fn shift_offset(offset: usize, deltas: &[(usize, isize)]) -> usize {
     out.max(0) as usize
 }
 
-/// Whether a filesystem event concerns the open file.
-///
-/// An `Err` is not a change: a watcher that lost an event should not be able to
-/// present the user with a conflict that never happened.
 fn event_is_relevant(result: &notify::Result<notify::Event>, target: &std::ffi::OsStr) -> bool {
     match result {
         Ok(event) => event
@@ -2017,8 +1571,6 @@ fn event_is_relevant(result: &notify::Result<notify::Event>, target: &std::ffi::
     }
 }
 
-/// The banner sentence for a read-only document, plus what a refused keystroke
-/// adds to it.
 fn read_only_text(reason: ReadOnlyReason) -> String {
     format!(
         "{} Nothing you type is discarded - it simply is not applied.",
@@ -2026,7 +1578,6 @@ fn read_only_text(reason: ReadOnlyReason) -> String {
     )
 }
 
-/// One button inside the conflict banner.
 fn conflict_button(
     id: &'static str,
     label: &'static str,
@@ -2049,14 +1600,6 @@ fn conflict_button(
         .into_any_element()
 }
 
-/// The native text-input and IME target (US-012).
-///
-/// GPUI dispatches actions before it dispatches text (`gpui/src/window.rs:4525`
-/// only reaches `dispatch_input` when the action pass left propagation alive
-/// and the keystroke carries a `key_char`), so Enter, Tab and Backspace land on
-/// their bindings and only genuinely printable input arrives here. All of it
-/// converts between UTF-16 - the unit every platform IME speaks - and the
-/// rope's bytes through [`CodeDocument::byte_to_utf16`] and its inverse.
 impl EntityInputHandler for CodeView {
     fn text_for_range(
         &mut self,
@@ -2096,8 +1639,6 @@ impl EntityInputHandler for CodeView {
         Some(doc.byte_to_utf16(marked.start)..doc.byte_to_utf16(marked.end))
     }
 
-    /// The platform abandoning a composition. The text stays: it is already in
-    /// the rope and in one undo transaction, so Ctrl+Z is what removes it.
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.marked.take().is_some() {
             self.history.close_group();
@@ -2136,13 +1677,10 @@ impl EntityInputHandler for CodeView {
         let start = range.start;
         let end = start + inserted.len();
         let caret = CodeSelection::at(end);
-        // Typing, so the whole composition - every intermediate state the IME
-        // pushed - collapses into one undo transaction.
         if !self.splice_all(&[(range, inserted)], caret, EditGroup::Typing, cx) {
             return;
         }
         self.marked = if start == end { None } else { Some(start..end) };
-        // The IME's own caret inside the composition, expressed relative to it.
         if let Some(selected) = new_selected_range_utf16
             && let Some(doc) = self.state.document()
         {
@@ -2167,10 +1705,6 @@ impl EntityInputHandler for CodeView {
         let row = doc.byte_to_line(start);
         let column = cursor::goal_column(doc, start);
         let hits = self.hits.borrow();
-        // The hit map is the frame that was actually painted, so the candidate
-        // window lands on the composition even when the gutter is wide or the
-        // line is scrolled sideways. With no painted frame yet, the element's
-        // own origin is the honest fallback.
         let (x, y) = if hits.lines.is_empty() {
             (
                 f32::from(element_bounds.origin.x),
@@ -2260,8 +1794,6 @@ impl Render for CodeView {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
-                    // The scrollbar strip wins: it overlaps the text column's
-                    // right edge, and a press there is furniture, not a caret.
                     if this.on_scrollbar_down(ev, cx) || this.on_text_down(ev, window, cx) {
                         cx.stop_propagation();
                     }
@@ -2271,8 +1803,6 @@ impl Render for CodeView {
                 this.apply_wheel(ev, window, cx);
             }))
             .child(element);
-        // Not a builder method on the pinned fork - set on the style refinement
-        // directly, the same raw mutation Zed uses.
         host.style().restrict_scroll_to_axis = Some(true);
 
         div()
@@ -2320,10 +1850,6 @@ impl Render for CodeView {
             .w_full()
             .flex()
             .flex_col()
-            // The drag continuation lives on the root, not on the scroll host:
-            // mouse listeners only fire over their own hitbox, so keeping them
-            // on the host would drop the release the moment the pointer leaves
-            // it. Same placement as the markdown view and the settings pane.
             .on_mouse_move(cx.listener(|this, ev: &MouseMoveEvent, _w, cx| {
                 this.on_scrollbar_move(ev, cx);
                 this.on_text_move(ev, cx);
@@ -2349,14 +1875,6 @@ mod tests {
     use super::super::load::{LoadedCode, build_document};
     use super::*;
 
-    /// Build a view around `text` inside a real window: the action handlers
-    /// take a `&mut Window`, so the tests need one, and `update_in` is the only
-    /// way to get a genuine one.
-    ///
-    /// The state is assembled by hand rather than through `CodeView::new`,
-    /// whose constructor kicks off an off-thread read the deterministic test
-    /// scheduler refuses. An empty `text` leaves the view loading, which is
-    /// what the scrollbar guard needs.
     fn view<'a>(
         cx: &'a mut TestAppContext,
         text: &str,
@@ -2408,10 +1926,6 @@ mod tests {
         })
     }
 
-    /// A release outside the view never reaches the mouse-up listener, so the
-    /// drag has to end on the first move that arrives with no button held.
-    /// Without the guard, re-entering the view after such a release scrolled
-    /// the file off the stale anchor with nothing pressed (US-007).
     #[gpui::test]
     fn a_move_without_the_left_button_ends_the_drag(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "");
@@ -2429,8 +1943,6 @@ mod tests {
             );
             assert!(view.v_drag.is_none());
 
-            // A held button still drives the drag: the guard must not swallow
-            // the normal case.
             view.v_drag = Some(scrollbar::begin_drag(&view.scroll, px(40.)));
             view.on_scrollbar_move(
                 &MouseMoveEvent {
@@ -2444,15 +1956,11 @@ mod tests {
         });
     }
 
-    /// EP-005 US-018: the file header reads the caret as 1-based line and
-    /// column, the way every editor's status bar states it, and a document
-    /// that has not loaded yet still answers with a coherent position.
     #[gpui::test]
     fn the_header_reads_the_caret_as_one_based_line_and_column(cx: &mut TestAppContext) {
         let (editor, cx) = view(cx, "let foo = 1;\nbb\nlast line");
 
         editor.update_in(cx, |view, window, cx| {
-            // Start of the document: line 1, column 1 - never 0.
             assert_eq!(view.cursor_line_column(), (1, 1));
 
             view.right(&CeRight, window, cx);
@@ -2471,8 +1979,6 @@ mod tests {
             assert_eq!(view.cursor_line_column(), (3, 10), "end of `last line`");
         });
 
-        // A tab whose load is still in flight reports the origin rather than
-        // panicking on the absent document.
         let (loading, cx) = view(cx, "");
         loading.update(cx, |view, _cx| {
             assert!(view.document().is_none());
@@ -2480,8 +1986,6 @@ mod tests {
         });
     }
 
-    /// US-011: the actions the key bindings dispatch to walk the document by
-    /// grapheme, by word and to both edges, and plain motion never selects.
     #[gpui::test]
     fn the_navigation_actions_walk_the_document(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "let foo = 1;\nbb\nlast line");
@@ -2509,8 +2013,6 @@ mod tests {
         });
     }
 
-    /// US-010 / US-011: Shift extends instead of replacing, a bare arrow
-    /// collapses onto the selection's edge, and Select All takes the document.
     #[gpui::test]
     fn shift_extends_and_select_all_takes_the_document(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "abc\ndef");
@@ -2530,8 +2032,6 @@ mod tests {
         });
     }
 
-    /// US-011: Up/Down keep the column they started from, even after crossing a
-    /// shorter row.
     #[gpui::test]
     fn vertical_motion_restores_the_goal_column(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "aaaaaaa\nbb\ncccccccc");
@@ -2545,9 +2045,6 @@ mod tests {
         });
     }
 
-    /// US-009: a caret pushed past the end of the file lands on the last legal
-    /// slot rather than panicking, and US-010: a new caret drops the selection
-    /// without touching the content.
     #[gpui::test]
     fn the_caret_clamps_and_a_new_caret_clears_the_selection(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "one\ntwo");
@@ -2570,8 +2067,6 @@ mod tests {
         });
     }
 
-    /// US-010: presses inside the interval chain into double then triple, and a
-    /// press that is too late or too far restarts the chain.
     #[gpui::test]
     fn multi_click_chains_then_resets(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "let foo = 1;\nnext");
@@ -2601,14 +2096,11 @@ mod tests {
         });
     }
 
-    /// US-010: a drag started on a word keeps whole words selected, and one
-    /// started on a row keeps whole rows, whichever direction the pointer goes.
     #[gpui::test]
     fn a_word_drag_extends_by_whole_words(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "alpha beta gamma");
 
         view.update(cx, |view, cx| {
-            // Stand in for the press: a double click on `beta`.
             view.selection = CodeSelection {
                 anchor: 6,
                 head: 10,
@@ -2624,16 +2116,6 @@ mod tests {
         });
     }
 
-    // --------------------------------------------------------------- EP-004
-
-    /// Build a view over a file that really exists, so the save and conflict
-    /// paths have something to stat. Returns the temp dir, which has to outlive
-    /// the view.
-    ///
-    /// `watch` stays off for every test that writes into the directory: a real
-    /// inotify watcher wakes the reload task from the notify thread, which the
-    /// deterministic test scheduler rightly calls non-determinism. Registration
-    /// is proven on its own, by a test that never writes.
     fn file_view<'a>(
         cx: &'a mut TestAppContext,
         text: &str,
@@ -2699,15 +2181,12 @@ mod tests {
         (dir, view, cx)
     }
 
-    /// Current buffer text.
     fn text_of(view: &CodeView) -> String {
         view.document()
             .map(|doc| doc.slice_string(0..doc.len_bytes()))
             .unwrap_or_default()
     }
 
-    /// US-012 AC: typing with a live selection replaces it, through the real
-    /// platform text-input entry point rather than a helper.
     #[gpui::test]
     fn typing_replaces_the_live_selection(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "hello world\n");
@@ -2724,8 +2203,6 @@ mod tests {
         });
     }
 
-    /// US-012 AC: Backspace removes a full grapheme, so a composed emoji goes in
-    /// one press instead of shedding its skin-tone modifier first.
     #[gpui::test]
     fn backspace_removes_a_whole_composed_emoji(cx: &mut TestAppContext) {
         let emoji = "\u{1F44D}\u{1F3FD}";
@@ -2746,11 +2223,9 @@ mod tests {
         });
     }
 
-    /// US-012 AC: Enter repeats the row's indentation.
     #[gpui::test]
     fn enter_repeats_the_row_indentation(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "fn main() {\n    let x = 1;\n}\n");
-        // End of the indented row.
         let at = "fn main() {\n    let x = 1;".len();
 
         view.update_in(cx, |view, window, cx| {
@@ -2764,10 +2239,6 @@ mod tests {
         });
     }
 
-    /// US-012 AC: a keystroke on a read-only document mutates nothing and says
-    /// so. The refusal has to be visible, which is why the input handler is left
-    /// enabled and the keystroke is turned down here rather than by the
-    /// platform.
     #[gpui::test]
     fn a_keystroke_on_a_read_only_document_is_refused_visibly(cx: &mut TestAppContext) {
         let path = PathBuf::from("/nonexistent/paneflow-code.rs");
@@ -2829,11 +2300,6 @@ mod tests {
         });
     }
 
-    /// US-012 and US-016 AC: a read-only file an agent rewrote reloads
-    /// silently, which leaves a transaction in the history. `Ctrl+Z` must be
-    /// refused like any other edit on that document - replaying it moves the
-    /// caret and the dirty mark while the rope stays put, so a file that
-    /// matches disk exactly starts claiming it is modified.
     #[gpui::test]
     fn undo_on_a_read_only_document_is_refused_visibly(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
@@ -2868,10 +2334,6 @@ mod tests {
         });
     }
 
-    /// US-013 AC: an undo feeds `Tree::edit` in reverse, so the coloring that
-    /// survives a `Ctrl+Z` is the coloring a fresh parse of the same text
-    /// produces. The oracle is that fresh parse, compared row by row against
-    /// the tree the view kept editing incrementally.
     #[gpui::test]
     fn undo_keeps_the_highlighting_a_fresh_parse_would_give(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "fn main() {\n    let value = 1;\n}\n");
@@ -2881,9 +2343,6 @@ mod tests {
             view.replace_text_in_range(None, "xyz", window, cx);
             view.undo(&CeUndo, window, cx);
         });
-        // An edit whose reparse overran the 1 ms budget finishes off-thread,
-        // and on a loaded runner even three lines of Rust can. Park first so
-        // the comparison below reads a settled highlighter either way.
         cx.run_until_parked();
 
         view.update(cx, |view, _cx| {
@@ -2906,8 +2365,6 @@ mod tests {
         });
     }
 
-    /// US-013 AC: consecutive keystrokes undo as one transaction, and a caret
-    /// move closes the group so what follows undoes on its own.
     #[gpui::test]
     fn keystrokes_group_until_the_caret_moves(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "\n");
@@ -2939,8 +2396,6 @@ mod tests {
         });
     }
 
-    /// US-013 AC: undo restores the caret and the selection the edit started
-    /// from, not merely the text.
     #[gpui::test]
     fn undo_restores_the_selection_the_edit_replaced(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "hello world\n");
@@ -2960,8 +2415,6 @@ mod tests {
         });
     }
 
-    /// US-013 and US-014 AC: a multi-line paste is one transaction and one
-    /// Ctrl+Z, and the caret ends at the end of what was inserted.
     #[gpui::test]
     fn a_multi_line_paste_is_one_undo_step(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "start\n");
@@ -2982,8 +2435,6 @@ mod tests {
         });
     }
 
-    /// US-014 AC: a paste carrying control characters and a bidi override is
-    /// neutralized before it reaches the rope.
     #[gpui::test]
     fn a_paste_is_sanitized_before_insertion(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "\n");
@@ -3000,8 +2451,6 @@ mod tests {
         });
     }
 
-    /// US-014 AC: Copy with no selection takes the whole row, newline included,
-    /// so pasting it back lands a complete line.
     #[gpui::test]
     fn copy_with_no_selection_takes_the_whole_row(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "first\nsecond\n");
@@ -3018,32 +2467,23 @@ mod tests {
         });
     }
 
-    /// US-014 AC: Tab indents every row a multi-line selection touches, and
-    /// Shift+Tab takes exactly one level back off without ever eating a
-    /// non-blank character.
     #[gpui::test]
     fn tab_and_shift_tab_shift_every_touched_row(cx: &mut TestAppContext) {
         let (view, cx) = view(cx, "one\ntwo\nthree\n");
 
         view.update_in(cx, |view, window, cx| {
-            view.selection = CodeSelection {
-                anchor: 0,
-                head: 8, // into row two
-            };
+            view.selection = CodeSelection { anchor: 0, head: 8 };
             view.indent(&CeIndent, window, cx);
             assert_eq!(text_of(view), "    one\n    two\nthree\n");
 
             view.outdent(&CeOutdent, window, cx);
             assert_eq!(text_of(view), "one\ntwo\nthree\n");
 
-            // Nothing left to take: the row's own characters are safe.
             view.outdent(&CeOutdent, window, cx);
             assert_eq!(text_of(view), "one\ntwo\nthree\n");
         });
     }
 
-    /// US-015 AC: Ctrl+S writes the file and clears the dirty mark, and undoing
-    /// back to the saved state leaves it clear.
     #[gpui::test]
     fn saving_writes_the_file_and_settles_the_dirty_mark(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\n", false);
@@ -3073,8 +2513,6 @@ mod tests {
         });
     }
 
-    /// US-016 AC: a save is refused *before* writing when the file changed in
-    /// the meantime, and the on-disk bytes are untouched.
     #[gpui::test]
     fn a_save_is_refused_when_the_file_changed_underneath(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\n", false);
@@ -3084,8 +2522,6 @@ mod tests {
             view.selection = CodeSelection::at(4);
             view.replace_text_in_range(None, "mine\n", window, cx);
         });
-        // An agent gets there first. The stamp carries a length change, so this
-        // does not depend on the filesystem's timestamp granularity.
         std::fs::write(&path, "written by someone else\n").expect("agent write");
 
         view.update_in(cx, |view, window, cx| {
@@ -3106,16 +2542,10 @@ mod tests {
         });
     }
 
-    /// US-016 AC: an external write to a clean document reloads silently,
-    /// keeping the scroll and the caret, and the reload is undoable.
     #[gpui::test]
     fn an_external_write_reloads_a_clean_document(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
         let path = dir.path().join("main.rs");
-        // The replacement changes the length on purpose. Windows stamps a
-        // file's last-write time on the system timer tick (~15 ms), so a
-        // same-length rewrite this soon after the load can carry a stamp
-        // identical to the one the load recorded and read as "no change".
         std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
         let stamp = FileStamp::read(&path);
 
@@ -3143,8 +2573,6 @@ mod tests {
         });
     }
 
-    /// US-016 AC: the same write against a dirty document raises the banner and
-    /// overwrites nothing.
     #[gpui::test]
     fn an_external_write_on_a_dirty_document_raises_a_conflict(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\n", false);
@@ -3163,8 +2591,6 @@ mod tests {
             assert_eq!(text_of(view), "one\nmine\n", "the buffer was not touched");
         });
 
-        // "Keep mine" adopts the on-disk stamp, so the next save deliberately
-        // wins instead of looping on the same refusal.
         view.update(cx, |view, cx| view.resolve_keep_mine(cx));
         cx.executor().allow_parking();
         cx.run_until_parked();
@@ -3176,7 +2602,6 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).expect("read"), "one\nmine\n");
     }
 
-    /// US-016 AC: a file deleted on disk is flagged, and saving recreates it.
     #[gpui::test]
     fn a_deleted_file_is_flagged_and_saving_recreates_it(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\n", false);
@@ -3199,9 +2624,6 @@ mod tests {
         view.update(cx, |view, _cx| assert_eq!(view.disk, DiskState::InSync));
     }
 
-    /// US-016 AC: detection is wired at load time, on the file's parent
-    /// directory. A rename-based save never reaches a watch on the old inode,
-    /// which is why the watch is registered one level up.
     #[gpui::test]
     fn opening_a_real_file_registers_the_conflict_watcher(cx: &mut TestAppContext) {
         let (_dir, view, cx) = file_view(cx, "one\n", true);
@@ -3211,10 +2633,6 @@ mod tests {
                 ._watch_bridge
                 .take()
                 .expect("the reload task is bridged to the watcher");
-            // Sever the bridge from this thread, then stop watching, both
-            // before the temp dir is removed. Either order of the last two
-            // would otherwise let the notify thread wake the reload task,
-            // which the test scheduler reads as non-determinism.
             *bridge.lock().expect("bridge lock") = None;
             view._watcher = None;
         });

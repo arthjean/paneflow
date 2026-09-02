@@ -4,10 +4,6 @@ use paneflow_terminal_ghostty::{
 
 const MAX_FUZZ_BYTES: usize = 4_096;
 
-/// Feed bounded VT input to libghostty and assert the snapshot invariants the
-/// renderer relies on. The engine is the only implementation now, so there is
-/// no second parser to diff against: the oracle is the contract the terminal
-/// element assumes when it paints a `Content`.
 pub fn replay(data: &[u8], cols: usize, rows: usize, snapshot_each_chunk: bool) {
     let size = WindowSize::new(cols, rows, 8, 16).expect("bounded fuzz dimensions are valid");
     let mut ghostty = DisplayTerminal::new(size, 1_000, TerminalAppearance::default())
@@ -46,8 +42,6 @@ fn assert_snapshot_invariants(ghostty: &mut DisplayTerminal, cols: usize, rows: 
     assert_eq!(content.rows, rows);
     assert_cursor_in_bounds(&content);
     assert_cells_in_bounds(&content);
-    // Rebuilding the visible text must not panic on any cell the engine emits:
-    // this is the exact walk the renderer and `extract_scrollback` perform.
     let _ = visible_text(&content);
 }
 

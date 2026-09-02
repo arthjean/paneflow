@@ -1,10 +1,7 @@
-//! Search model for the base-branch picker.
-
 use gpui::{Context, Window};
 
 use super::DiffView;
 
-/// Indices of branches matching a lowercase query, preserving source order.
 pub(super) fn matching_indices(branches_lc: &[String], query: &str) -> Vec<usize> {
     if query.is_empty() {
         return (0..branches_lc.len()).collect();

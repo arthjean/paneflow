@@ -1,40 +1,9 @@
-//! `CodeDocument` - the editable text behind a file tab of the diff dock.
-//!
-//! prd-file-editor-2026-Q3, US-001. The text lives in a [`ropey::Rope`] rather
-//! than a flat `String` + line index: an insertion in the middle of a 20 000
-//! line file costs O(log n) instead of an O(n) memmove plus an O(lines) index
-//! rebuild, and the rope already carries the line counters, so every byte <->
-//! line conversion is a tree descent rather than a rescan.
-//!
-//! **Line-break alphabet.** `ropey` is pinned with `default-features = false`
-//! (see `src-app/Cargo.toml`), which drops its `unicode_lines` and `cr_lines`
-//! features: only `\n` ends a line here, exactly as in `str::lines()`, which is
-//! how [`crate::diff::highlight_lines`] segments the diff. A lone `\r`, `\u{2028}`
-//! or `\u{0085}` therefore cannot split a line in the editor while leaving the
-//! diff's rows unsplit - the divergence US-004 forbids.
-//!
-//! **CRLF.** The rope always holds LF text. The document remembers the file's
-//! [`LineEnding`] at load and re-applies it in [`CodeDocument::to_disk_string`],
-//! so a CRLF file stays CRLF and an LF file stays LF across a round-trip
-//! without a single `\r` reaching the layout or the parser. Text inserted at
-//! runtime (a CRLF paste, say) is normalized the same way.
-//!
-//! **Longest line.** [`CodeDocument::longest_line_chars`] backs the horizontal
-//! scroll extent of US-008. It is measured over every line exactly once, at
-//! construction; afterwards each edit only measures the rows it actually
-//! touched. That makes it grow-only between loads: deleting the longest line
-//! leaves an over-estimate rather than paying a full rescan per keystroke. The
-//! direction is deliberate - an over-estimate only offers scroll room nobody
-//! uses, while an under-estimate would clip real text.
-
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use ropey::{Rope, RopeSlice};
 
-/// The line terminator a file uses on disk. Detected once at load from the
-/// first `\n`, and re-applied on save.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LineEnding {
     Lf,
@@ -42,10 +11,6 @@ pub(crate) enum LineEnding {
 }
 
 impl LineEnding {
-    /// CRLF when the first `\n` in `text` is preceded by a `\r`, LF otherwise
-    /// (which covers a file with no line break at all). Mixed files follow
-    /// their first break; [`CodeDocument::to_disk_string`] then normalizes the
-    /// rest to it, which is what every mainstream editor does.
     pub(crate) fn detect(text: &str) -> Self {
         match text.find('\n') {
             Some(i) if i > 0 && text.as_bytes()[i - 1] == b'\r' => Self::Crlf,
@@ -53,7 +18,7 @@ impl LineEnding {
         }
     }
 
-    #[allow(dead_code)] // EP-001 accessor: the writer round-trips the stored `LineEnding`; no caller needs its literal yet.
+    #[allow(dead_code)]
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Lf => "\n",
@@ -62,19 +27,12 @@ impl LineEnding {
     }
 }
 
-/// A `(row, column)` position, with `column` counted in **bytes from the start
-/// of the row**. Same shape and units as `tree_sitter::Point`, which
-/// `code::highlight` converts it into; kept as a local type so this module
-/// stays free of any highlighting dependency.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) struct DocPoint {
     pub(crate) row: usize,
     pub(crate) column: usize,
 }
 
-/// One applied mutation, described in both byte offsets and points, in the form
-/// tree-sitter's `InputEdit` needs (US-004). `old_*` describe the text *before*
-/// the mutation, `new_*` the text after it.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct CodeEdit {
     pub(crate) start_byte: usize,
@@ -85,19 +43,13 @@ pub(crate) struct CodeEdit {
     pub(crate) new_end_point: DocPoint,
 }
 
-/// Why a loaded document refuses edits. `None` on the document means editable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ReadOnlyReason {
-    /// The file is not writable by this process (POSIX mode bits, or the
-    /// Windows read-only attribute).
     Permissions,
-    /// A line longer than the editor's cap (US-003). Rendering it is fine;
-    /// editing it is what breaks the vertical virtualization budget.
     GiantLine { chars: usize, limit: usize },
 }
 
 impl ReadOnlyReason {
-    /// The written banner shown above the file (FR-7: never a raw OS error).
     pub(crate) fn banner(self) -> String {
         match self {
             Self::Permissions => {
@@ -111,9 +63,6 @@ impl ReadOnlyReason {
     }
 }
 
-/// An editable file: its text, where it came from, and how it must be written
-/// back. Holds no cursor, no selection and no highlighting - those belong to
-/// EP-003 / EP-004 and to `code::highlight`.
 pub(crate) struct CodeDocument {
     path: PathBuf,
     ext: String,
@@ -123,9 +72,6 @@ pub(crate) struct CodeDocument {
     longest_line_chars: usize,
 }
 
-/// Deliberately hand-written rather than derived: a derived `Debug` would dump
-/// the whole rope into any assertion message or log line, which is unusable for
-/// a multi-megabyte file.
 impl std::fmt::Debug for CodeDocument {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CodeDocument")
@@ -139,14 +85,8 @@ impl std::fmt::Debug for CodeDocument {
 }
 
 impl CodeDocument {
-    /// Build a document from text just read off disk. `raw` may use either line
-    /// ending; the rope keeps the LF form and [`Self::line_ending`] remembers
-    /// the original. This is the only place that measures every line.
     pub(crate) fn new(path: PathBuf, raw: &str) -> Self {
         let line_ending = LineEnding::detect(raw);
-        // Same derivation the diff uses, called through the same function, so
-        // a path can never resolve to one grammar in the diff and another in
-        // the editor (US-004).
         let ext = crate::diff::file_ext(&path.to_string_lossy());
         let mut doc = Self {
             path,
@@ -160,18 +100,16 @@ impl CodeDocument {
         doc
     }
 
-    #[allow(dead_code)] // EP-001 accessor: the view holds the path it opened, so nothing reads it back off the document yet.
+    #[allow(dead_code)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Lowercased extension, derived exactly like [`crate::diff::file_ext`] so
-    /// the editor and the diff resolve the same grammar for the same path.
     pub(crate) fn ext(&self) -> &str {
         &self.ext
     }
 
-    #[allow(dead_code)] // EP-001 accessor: the save path reads the field directly; no caller needs it off the document yet.
+    #[allow(dead_code)]
     pub(crate) fn line_ending(&self) -> LineEnding {
         self.line_ending
     }
@@ -184,10 +122,6 @@ impl CodeDocument {
         self.text.len_bytes()
     }
 
-    /// Number of lines, editor-style: an empty file is one empty line, and a
-    /// file whose last byte is `\n` carries a final empty line (which is what
-    /// the trailing newline means). A file with no trailing newline gains no
-    /// phantom line.
     pub(crate) fn line_count(&self) -> usize {
         self.text.len_lines()
     }
@@ -204,16 +138,10 @@ impl CodeDocument {
         self.read_only = reason;
     }
 
-    /// Widest line measured so far, in characters. Grow-only between loads -
-    /// see the module header for why that direction is the safe one.
     pub(crate) fn longest_line_chars(&self) -> usize {
         self.longest_line_chars
     }
 
-    /// Byte range of row `row`'s **content**, with the trailing `\n` (and a
-    /// `\r` before it, should a degenerate mixed file have left one) excluded.
-    /// Matches the slices `str::lines()` yields, which is what keeps per-line
-    /// highlight runs interchangeable with the diff's.
     pub(crate) fn line_byte_range(&self, row: usize) -> Option<Range<usize>> {
         let span = self.line_span(row)?;
         let mut end = span.end;
@@ -226,30 +154,24 @@ impl CodeDocument {
         Some(span.start..end)
     }
 
-    /// Row `row` without its line terminator, or `None` past the last row.
     pub(crate) fn line(&self, row: usize) -> Option<RopeSlice<'_>> {
         let range = self.line_byte_range(row)?;
         Some(self.text.byte_slice(range))
     }
 
-    /// Row `row` materialized as a `String`. Convenience for callers that need
-    /// an owned line (tests, clipboard); rendering reads the `RopeSlice`.
     pub(crate) fn line_string(&self, row: usize) -> Option<String> {
         self.line(row).map(|s| s.to_string())
     }
 
-    /// Row containing `byte`, clamped into range. O(log n).
     pub(crate) fn byte_to_line(&self, byte: usize) -> usize {
         self.text.byte_to_line(byte.min(self.text.len_bytes()))
     }
 
-    /// First byte of row `row`, clamped into range. O(log n).
     pub(crate) fn line_to_byte(&self, row: usize) -> usize {
         self.text
             .line_to_byte(row.min(self.text.len_lines().saturating_sub(1)))
     }
 
-    /// `(row, byte column)` of `byte`, clamped into range.
     pub(crate) fn point_at(&self, byte: usize) -> DocPoint {
         let byte = byte.min(self.text.len_bytes());
         let row = self.text.byte_to_line(byte);
@@ -259,16 +181,11 @@ impl CodeDocument {
         }
     }
 
-    /// Largest byte offset that is a char boundary and `<= byte`.
     pub(crate) fn snap_to_boundary(&self, byte: usize) -> usize {
         let byte = byte.min(self.text.len_bytes());
         self.text.char_to_byte(self.text.byte_to_char(byte))
     }
 
-    /// Insert `text` at `byte_offset`, returning the applied edit, or `None`
-    /// when the document is read-only or `text` normalizes to nothing. Line
-    /// endings in `text` are normalized to the rope's LF form, so the returned
-    /// `new_end_byte` is authoritative and may be shorter than `text.len()`.
     pub(crate) fn insert(&mut self, byte_offset: usize, text: &str) -> Option<CodeEdit> {
         if self.is_read_only() {
             return None;
@@ -295,9 +212,6 @@ impl CodeDocument {
         })
     }
 
-    /// Delete `range` (byte offsets, snapped to char boundaries), returning the
-    /// applied edit, or `None` when the document is read-only or the range is
-    /// empty.
     pub(crate) fn remove(&mut self, range: Range<usize>) -> Option<CodeEdit> {
         if self.is_read_only() {
             return None;
@@ -324,9 +238,6 @@ impl CodeDocument {
         })
     }
 
-    /// The text of `range` as an owned `String`, byte offsets snapped to char
-    /// boundaries. The undo history (US-013) stores exactly this: what a splice
-    /// removed, so it can be put back byte for byte.
     pub(crate) fn slice_string(&self, range: Range<usize>) -> String {
         let start = self.snap_to_boundary(range.start);
         let end = self.snap_to_boundary(range.end.max(range.start));
@@ -338,14 +249,6 @@ impl CodeDocument {
         self.text.slice(start_char..end_char).to_string()
     }
 
-    /// UTF-16 code-unit index of byte `offset` (US-012).
-    ///
-    /// GPUI's [`gpui::EntityInputHandler`] speaks UTF-16 because that is what
-    /// every platform IME speaks; the document speaks bytes. `ropey` 1.6 ships
-    /// no UTF-16 conversion, so this walks the rope's chunks and takes an
-    /// `is_ascii` fast path per chunk - the vectorized check turns the common
-    /// case (a source file that is ASCII up to the caret) into a length sum
-    /// instead of a per-character loop.
     pub(crate) fn byte_to_utf16(&self, offset: usize) -> usize {
         let offset = self.snap_to_boundary(offset);
         let char_idx = self.text.byte_to_char(offset);
@@ -356,9 +259,6 @@ impl CodeDocument {
             .sum::<usize>()
     }
 
-    /// Inverse of [`Self::byte_to_utf16`]. An index that lands inside a
-    /// surrogate pair resolves to the start of that character, which keeps the
-    /// result a legal caret slot.
     pub(crate) fn utf16_to_byte(&self, target: usize) -> usize {
         let mut units = 0usize;
         let mut byte = 0usize;
@@ -381,9 +281,6 @@ impl CodeDocument {
         byte
     }
 
-    /// The bytes to write to disk: the rope's LF text, with every `\n` turned
-    /// back into the file's original terminator. A file that had no trailing
-    /// newline still has none.
     pub(crate) fn to_disk_string(&self) -> String {
         let text = self.text.to_string();
         match self.line_ending {
@@ -392,7 +289,6 @@ impl CodeDocument {
         }
     }
 
-    /// Raw byte span of row `row`, terminator included.
     fn line_span(&self, row: usize) -> Option<Range<usize>> {
         let lines = self.text.len_lines();
         if row >= lines {
@@ -407,13 +303,10 @@ impl CodeDocument {
         Some(start..end)
     }
 
-    /// Character width of row `row`, terminator excluded.
     fn line_chars(&self, row: usize) -> usize {
         self.line(row).map_or(0, |l| l.len_chars())
     }
 
-    /// Full scan, load-time only (US-001 AC: a complete recompute is allowed
-    /// exactly here).
     fn measure_all_lines(&self) -> usize {
         (0..self.text.len_lines())
             .map(|row| self.line_chars(row))
@@ -421,8 +314,6 @@ impl CodeDocument {
             .unwrap_or(0)
     }
 
-    /// Measure only the rows an edit touched and keep the running maximum.
-    /// Bounded by the edit's own row span, never by `line_count`.
     fn remeasure_rows(&mut self, first_row: usize, last_row: usize) {
         let last = last_row.min(self.text.len_lines().saturating_sub(1));
         for row in first_row..=last {
@@ -434,8 +325,6 @@ impl CodeDocument {
     }
 }
 
-/// UTF-16 code units in `chunk`. ASCII is one unit per byte, which is the
-/// whole point of the fast path.
 fn utf16_len(chunk: &str) -> usize {
     if chunk.is_ascii() {
         chunk.len()
@@ -444,10 +333,6 @@ fn utf16_len(chunk: &str) -> usize {
     }
 }
 
-/// Collapse `\r\n` to `\n`. Borrows when there is nothing to do, which is the
-/// common case on Linux and macOS. Only ASCII bytes are dropped, so the result
-/// is still valid UTF-8; the fallback keeps the function total rather than
-/// asserting that.
 pub(crate) fn normalize_newlines(text: &str) -> Cow<'_, str> {
     if !text.contains('\r') {
         return Cow::Borrowed(text);
@@ -513,7 +398,6 @@ mod tests {
         let d = doc("only\n");
         assert_eq!(d.line(usize::MAX), None);
         assert_eq!(d.line_byte_range(9_999), None);
-        // Clamping conversions stay in range for absurd inputs.
         assert_eq!(d.byte_to_line(usize::MAX), d.line_count() - 1);
         assert_eq!(d.line_to_byte(usize::MAX), d.len_bytes());
     }
@@ -522,10 +406,8 @@ mod tests {
     fn crlf_is_preserved_across_a_round_trip() {
         let d = doc("one\r\ntwo\r\n");
         assert_eq!(d.line_ending(), LineEnding::Crlf);
-        // The rope holds LF, so no `\r` reaches layout or the parser...
         assert_eq!(d.line_string(0).as_deref(), Some("one"));
         assert_eq!(d.line_count(), 3);
-        // ...but the file written back is byte-identical to the original.
         assert_eq!(d.to_disk_string(), "one\r\ntwo\r\n");
     }
 
@@ -538,8 +420,6 @@ mod tests {
 
     #[test]
     fn a_lone_cr_is_not_a_line_break() {
-        // `str::lines()` does not split on a bare `\r`, and neither may the
-        // editor - that is the parity the ropey feature flags buy (US-004).
         let d = doc("a\rb\n");
         assert_eq!(d.line_count(), 2);
         assert_eq!(d.line_string(0).as_deref(), Some("a\rb"));
@@ -559,7 +439,6 @@ mod tests {
         let edit = d.insert(0, "x\r\ny").expect("insert");
         assert_eq!(d.line_count(), 3);
         assert_eq!(d.line_string(0).as_deref(), Some("x"));
-        // The edit reports the bytes actually inserted, not the input length.
         assert_eq!(edit.new_end_byte, 3);
     }
 
@@ -590,8 +469,6 @@ mod tests {
     fn an_empty_or_reversed_range_is_a_no_op() {
         let mut d = doc("abc");
         assert!(d.remove(2..2).is_none());
-        // Built by hand: a `3..1` literal is a clippy::reversed_empty_ranges
-        // error, and a reversed range is exactly what this asserts is inert.
         let reversed = std::ops::Range { start: 3, end: 1 };
         assert!(d.remove(reversed).is_none());
         assert!(d.insert(0, "").is_none());
@@ -601,7 +478,6 @@ mod tests {
     #[test]
     fn edits_snap_to_char_boundaries_instead_of_panicking() {
         let mut d = doc("héllo");
-        // Byte 2 is inside the two-byte `é`; the edit lands before it.
         let edit = d.insert(2, "X").expect("insert");
         assert_eq!(edit.start_byte, 1);
         assert_eq!(d.line_string(0).as_deref(), Some("hXéllo"));
@@ -628,9 +504,6 @@ mod tests {
         assert_eq!(d.longest_line_chars(), 4);
         d.insert(0, "ZZZZZZZZ").expect("insert");
         assert_eq!(d.longest_line_chars(), 10);
-        // Only the edited rows are re-measured, so the maximum is grow-only:
-        // deleting the widest line leaves the over-estimate rather than paying
-        // an O(lines) rescan on a keystroke.
         d.remove(0..8).expect("remove");
         assert_eq!(d.longest_line_chars(), 10);
     }
@@ -656,7 +529,6 @@ mod tests {
         assert_eq!(d.line_count(), 100_002);
         assert_eq!(d.line_string(50_000).as_deref(), Some("// inserted"));
         assert_eq!(d.line_string(50_001).as_deref(), Some("line 50000"));
-        // The rope's counters answer conversions; nothing rescanned.
         assert_eq!(d.byte_to_line(d.line_to_byte(99_999)), 99_999);
     }
 
@@ -667,7 +539,6 @@ mod tests {
             Cow::Borrowed(_)
         ));
         assert_eq!(normalize_newlines("a\r\nb"), "a\nb");
-        // A bare `\r` is content, not a terminator, so it survives.
         assert_eq!(normalize_newlines("a\rb"), "a\rb");
     }
 

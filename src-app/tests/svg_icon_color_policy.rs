@@ -3,26 +3,8 @@
     reason = "integration test setup failures need contextual diagnostics"
 )]
 
-//! Every `svg()` icon must set its own `text_color`.
-//!
-//! GPUI's `svg()` rasterizes to a monochrome alpha mask painted in the colour
-//! taken from that element's *own* style. It does not inherit the parent's
-//! text colour the way a text glyph does, so an `svg()` with no `text_color`
-//! of its own paints nothing at all.
-//!
-//! That failure is invisible to every other kind of test, and nearly invisible
-//! in review: the button still lays out, still hit-tests, still shows its
-//! tooltip and still runs its click handler. Only the glyph is missing, which
-//! is exactly how the sidebar's delete icon and the text fields' clear icon
-//! both shipped as blank squares - a button users could not see but could
-//! still press.
-//!
-//! Enforcing it here rather than by convention keeps the whole class from
-//! coming back, since nothing else in the suite can observe a painted pixel.
-
 use std::path::{Path, PathBuf};
 
-/// Walk `dir` and return every `.rs` file under it.
 fn rust_sources(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -39,10 +21,6 @@ fn rust_sources(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// The builder chain that starts at `start` in `src`, ending at the statement
-/// or argument terminator. Good enough to tell "this `svg()` sets a colour"
-/// from "this one does not": both `.path(..)` and `.text_color(..)` sit on the
-/// same chain, and a chain never spans a `;`.
 fn builder_chain(src: &str, start: usize) -> &str {
     let rest = &src[start..];
     let end = rest.find(';').unwrap_or(rest.len());
@@ -61,8 +39,6 @@ fn every_svg_icon_sets_its_own_text_color() {
         };
         for (offset, _) in source.match_indices("svg()") {
             let chain = builder_chain(&source, offset);
-            // Only chains that actually name an asset paint an icon; a bare
-            // `svg()` handed to a helper is coloured by that helper.
             if !chain.contains(".path(") {
                 continue;
             }

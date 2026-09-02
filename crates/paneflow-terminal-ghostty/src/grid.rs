@@ -48,9 +48,6 @@ impl DisplayTerminal {
         Ok(reference)
     }
 
-    /// Read multiple logical grid lines from the live terminal in one call.
-    /// Logical line zero is the first viewport row and negative lines address
-    /// scrollback, matching the coordinates returned by [`Self::search`].
     pub fn line_texts(&self, lines: &[i32]) -> Result<Vec<(i32, String)>> {
         if lines.is_empty() {
             return Ok(Vec::new());
@@ -109,8 +106,6 @@ impl DisplayTerminal {
     }
 
     pub(crate) fn grid_geometry(&self) -> Result<GridGeometry> {
-        // One batched read rather than three round trips: this runs per
-        // search chunk and per scrollback extraction.
         let (cols, total_rows, scrollback) = self.geometry_batch()?;
         if cols == 0 {
             return Err(GhosttyError::AbiMismatch(
@@ -185,7 +180,6 @@ impl DisplayTerminal {
         Ok(())
     }
 
-
     pub(crate) fn scrollback_rows(&self) -> Result<usize> {
         let value = terminal_get::<TerminalScrollbackRows>(self.terminal.raw())?;
         if value > MAX_SCROLLBACK_ROWS {
@@ -196,7 +190,6 @@ impl DisplayTerminal {
         }
         Ok(value)
     }
-
 }
 
 fn check_grid_cell_count(rows: usize, cols: usize) -> Result<()> {

@@ -1,17 +1,3 @@
-//! Claude Code session discovery - reads the on-disk session store at
-//! `~/.claude/projects/<slug>/<uuid>.jsonl` and produces unified
-//! [`SessionMeta`](crate::agent_sessions::SessionMeta) entries for the
-//! sessions popover.
-//!
-//! There is no public Claude Code API for listing sessions (issue #34318);
-//! the `.jsonl` files are the source of truth. Each line is one event;
-//! the *first* line that carries `cwd` is the session envelope. The
-//! LLM-generated `type:"ai-title"` record (when present) provides the
-//! human-readable label that the `claude --resume` picker shows.
-//!
-//! All filesystem work happens off the GPUI main thread - call
-//! [`read_sessions_for_cwd`] from inside `smol::unblock`.
-
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -21,60 +7,20 @@ use serde::Deserialize;
 
 use crate::agent_sessions::{AssistantUsage, SessionAgent, SessionMeta, clean_session_label};
 
-/// Maximum number of leading lines to scan for envelope + title. The
-/// first lines of a Claude Code session file are typically
-/// `permission-mode` and `file-history-snapshot` records with no `cwd`;
-/// the actual user/assistant events start on line 3+. The `ai-title`
-/// record (when present) usually lands around line 18, but a session that
-/// resumed or opened on slash commands writes it much later: 420 and 543
-/// measured on real files, both of which silently fell back to the first
-/// user message under the previous cap of 256.
 const TITLE_SCAN_LIMIT: usize = 2048;
 
-/// Byte budget for the same scan, and the real bound: transcript lines carry
-/// whole tool results, so line 256 already sits ~600 KB into a working
-/// session file and the line cap alone would allow 2048 x [`MAX_LINE_BYTES`]
-/// = 128 MiB. 1 MiB covers the common `ai-title` position (63-220 KB
-/// measured) plus one late outlier, and caps a file the scan can't satisfy.
-/// Applies to the title path only - the attribution path (`scan_usage`) is
-/// bounded by [`MODEL_USAGE_SCAN_LIMIT`] and runs once per diff column.
 const TITLE_SCAN_BYTES: u64 = 1024 * 1024;
 
-/// EP-004 US-016: deeper line cap for the attribution scan, which walks PAST
-/// the title break to aggregate `message.usage` across assistant turns. A
-/// session's turns are spread through the file, so this is much larger than
-/// [`TITLE_SCAN_LIMIT`] - but still bounded, and it runs ONLY on the attribution
-/// path (the diff column load), never on the popover title scan. 20k lines
-/// covers very long sessions while keeping a pathological file bounded.
 const MODEL_USAGE_SCAN_LIMIT: usize = 20_000;
 
-// US-013: per-line JSONL read cap, centralized (see `crate::limits`).
 use crate::limits::MAX_LINE_BYTES;
 
-/// Cap rendered first-user-message labels at this character count to keep
-/// the popover row from overflowing horizontally.
 const LABEL_MAX_CHARS: usize = 80;
 
-/// Prefixes of the synthetic `type:"user"` records Claude Code writes into a
-/// transcript. They are plumbing, not human input: `<local-command-caveat>`
-/// and `<local-command-stdout>` wrap local-command execution, and
-/// `<system-reminder>` wraps injected context. The caveat record is `isMeta`
-/// and sits on line 3 of nearly every recent session, so without this filter
-/// it wins the fallback-title race and the row renders as
-/// "<local-command-caveat>Caveat: Th…". Mirrors cmux's
-/// `isClaudeSyntheticEnvelope`.
 const SYNTHETIC_USER_PREFIXES: [&str; 2] = ["<local-command-", "<system-reminder>"];
 
-/// Slash commands that reset the conversation rather than describe work. They
-/// are real user input, but as a title they say nothing: a session opened with
-/// `/clear` puts the prompt that matters two records later (measured on three
-/// real sessions, where `/clear` on line 4 masked `/review-epic <prd>` and
-/// `/implement-epic <prd>` on line 7). Skipping them lets the scan reach it.
 const CONTEXT_RESET_COMMANDS: [&str; 2] = ["clear", "compact"];
 
-/// First-line envelope. Tolerant: any missing field falls back via
-/// `serde(default)` so the parser never bails on a forward-compatible schema
-/// change.
 #[derive(Debug, Deserialize)]
 struct FirstLineEnvelope {
     #[serde(default, rename = "sessionId")]
@@ -87,43 +33,18 @@ struct FirstLineEnvelope {
     git_branch: String,
 }
 
-/// Convert an absolute path into the slug Claude Code uses as the directory
-/// name under `~/.claude/projects/`. Algorithm (matches Claude Code's own
-/// encoder): every character that is **not** ASCII alphanumeric becomes `-`.
-/// That covers `/`, `\`, the Windows drive `:` (so `C:\dev\paneflow` →
-/// `C--dev-paneflow`, NOT `C:-dev-paneflow`), spaces (`C:\Program Files\..`
-/// → `C--Program-Files-..`), and `.` (so `/home/u/.claude` → `-home-u--claude`,
-/// the dir Claude Code actually writes). Runs of separators are NOT collapsed -
-/// `C:\` produces the literal `C--`. No percent-encoding or hashing.
-///
-/// The previous encoder only replaced `/` and `\`, leaving the drive `:`
-/// intact: on Windows it produced `C:-dev-paneflow` while the on-disk dir is
-/// `C--dev-paneflow`, so `read_dir` opened a path that never existed and the
-/// sessions sidebar came up empty.
 pub fn slug_for_cwd(cwd: &str) -> String {
     cwd.chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
         .collect()
 }
 
-/// Compute the absolute path of `~/.claude/projects/<slug>/`. Returns
-/// `None` when `dirs::home_dir()` fails (no `$HOME` / `%USERPROFILE%`).
-///
-/// A trailing separator is normalized away first. Claude derives its own slug
-/// from the agent process's cwd, which never carries one, so `/a/b/` has to
-/// resolve to the same directory as `/a/b` - otherwise the lookup misses a
-/// directory that exists and the readers below report "no sessions" for a
-/// project that is very much there.
 pub fn project_dir_for_cwd(cwd: &str) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let slug = slug_for_cwd(normalize_cwd_for_slug(cwd));
     Some(home.join(".claude").join("projects").join(slug))
 }
 
-/// Strip trailing path separators, unless that would reduce `cwd` to a bare
-/// root. `/` is all separator and `C:\` is a drive root: trimming those
-/// changes the slug (`-` → ``, `C--` → `C-`) instead of normalizing it, and
-/// Claude keeps them intact.
 fn normalize_cwd_for_slug(cwd: &str) -> &str {
     let trimmed = cwd.trim_end_matches(['/', '\\']);
     if trimmed.is_empty() || trimmed.ends_with(':') {
@@ -160,29 +81,14 @@ fn max_mtime(current: Option<SystemTime>, candidate: Option<SystemTime>) -> Opti
     }
 }
 
-/// Read all Claude Code session metadata for the given working directory.
-/// Sessions are sorted by timestamp descending (most recent first) and only
-/// those whose first-line `cwd` matches `cwd` (via
-/// [`cwd_matches`](crate::agent_sessions::cwd_matches): exact on Unix,
-/// case/separator-insensitive on Windows) are kept - dedupes the rare slug
-/// collision where two distinct paths produce the same directory name
-/// (`/a/b-c` and `/a/b/c` both slug to `-a-b-c`).
-///
-/// **Blocking I/O** - call from inside `smol::unblock` or
-/// `cx.background_executor`. Never invoke on the GPUI main thread.
 pub fn read_sessions_for_cwd(cwd: &str) -> Vec<SessionMeta> {
     read_sessions_for_cwd_with_omitted(cwd).0
 }
 
-/// Like [`read_sessions_for_cwd`], but also reports how many older matching
-/// sessions were omitted by the sidebar retention cap.
 pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize) {
     let Some(project_dir) = project_dir_for_cwd(cwd) else {
         return (Vec::new(), 0);
     };
-    // Existing Claude sessions are append-only JSONL files. Appending to a
-    // file does not reliably change the parent directory mtime, so include
-    // leaf-file mtimes in the cache fingerprint.
     let snapshot_mtime = project_snapshot_mtime(&project_dir);
     if let Some(snapshot_mtime) = snapshot_mtime
         && let Some(cached) = crate::agent_sessions::cache::lookup_with_mtime(
@@ -221,13 +127,6 @@ pub fn read_sessions_for_cwd_with_omitted(cwd: &str) -> (Vec<SessionMeta>, usize
     (sessions, omitted)
 }
 
-/// EP-004 US-014/US-016: like [`read_sessions_for_cwd`] but the retained
-/// attribution candidates are scanned deeper to populate `model` + aggregated
-/// `usage`. Deliberately bypasses the title-scan mtime cache - that cache
-/// stores usage-less rows for the popover, and the attribution result is
-/// instead cached on the diff `Column` keyed to its diff fingerprint
-/// (re-fetched only on re-diff). **Blocking I/O** - call from inside
-/// `smol::unblock`.
 pub fn read_sessions_with_usage_for_attribution(cwd: &str, branch: &str) -> Vec<SessionMeta> {
     let Some(project_dir) = project_dir_for_cwd(cwd) else {
         return Vec::new();
@@ -276,38 +175,14 @@ fn is_jsonl_file(path: &Path) -> bool {
             .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
 }
 
-/// Read the head of a `.jsonl` and collect everything we need for a UI
-/// row in a single pass: the first envelope carrying `cwd`, the
-/// LLM-generated `ai-title` (when present), and the cleaned first
-/// `type:"user"` message (used as a fallback title when `ai-title` is
-/// absent - typical of sessions older than that feature's introduction).
-///
-/// Title priority:
-/// 1. `type:"ai-title"` → `aiTitle` field. Matches what the
-///    `claude --resume` picker shows for newer sessions.
-/// 2. First `type:"user"` message, with `<command-*>` boilerplate
-///    collapsed into `/<name> <args>` when present.
 fn read_session_meta(path: &Path) -> Option<SessionMeta> {
     read_session_meta_inner(path, false)
 }
 
-/// The LLM-generated title of the session at `path`, and ONLY that.
-///
-/// Auto-naming a tab wants the real thing or nothing: the first-user-message
-/// fallback [`read_session_meta`] falls back to is exactly the placeholder the
-/// tab already shows, so accepting it would end the search having changed
-/// nothing. `None` here means "not written yet, ask again after the next
-/// turn", which is a state the caller must be able to tell from success.
-///
-/// Blocking file I/O - call from inside `smol::unblock`.
 pub fn read_generated_title(path: &Path) -> Option<String> {
     scan_session_head(path, false)?.ai_title
 }
 
-/// What one pass over a session file's head yields, before it is composed
-/// into a [`SessionMeta`]. Keeping the generated title and the first-message
-/// fallback apart is the point: by the time they are folded into
-/// `SessionMeta::summary` there is no telling which one won.
 struct SessionHead {
     envelope: FirstLineEnvelope,
     ai_title: Option<String>,
@@ -316,11 +191,6 @@ struct SessionHead {
     usage: Option<AssistantUsage>,
 }
 
-/// Shared session-head scan. `scan_usage = false` is the title-only popover
-/// path: bounded by [`TITLE_SCAN_LIMIT`], it stops as soon as the envelope +
-/// title are known. `scan_usage = true` is the EP-004 attribution path: it
-/// walks past the title (bounded by [`MODEL_USAGE_SCAN_LIMIT`]) aggregating
-/// `message.usage` across assistant turns and capturing `message.model`.
 fn read_session_meta_inner(path: &Path, scan_usage: bool) -> Option<SessionMeta> {
     let head = scan_session_head(path, scan_usage)?;
     Some(SessionMeta {
@@ -343,7 +213,6 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
     let mut envelope: Option<FirstLineEnvelope> = None;
     let mut ai_title: Option<String> = None;
     let mut user_fallback: Option<String> = None;
-    // US-016: model + aggregated usage (attribution path only).
     let mut model: Option<String> = None;
     let mut usage = AssistantUsage::default();
     let mut saw_usage = false;
@@ -355,24 +224,10 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
     };
     let mut title_budget = TITLE_SCAN_BYTES;
     for _ in 0..scan_limit {
-        // Stop once the remaining budget can no longer hold a full line. The
-        // threshold is MAX_LINE_BYTES rather than zero so the oversized-line
-        // detection below stays exact: it compares the read length against
-        // that constant, which only holds while the whole cap is available.
         if !scan_usage && title_budget < MAX_LINE_BYTES {
             break;
         }
         buf.clear();
-        // US-010 (cli-hardening-followup-2026-Q3): cap each line read
-        // at MAX_LINE_BYTES. An agent can write to
-        // `~/.claude/projects/<slug>/` (it's the very directory Claude
-        // Code persists sessions to), so a malicious 500 MB
-        // single-line JSONL would otherwise allocate fully on a
-        // background smol::unblock thread before the
-        // TITLE_SCAN_LIMIT count guard fires. Truncation surfaces as
-        // a partial line that fails serde_json::from_str and is
-        // skipped on `continue` below; the file's session entry is
-        // simply omitted, not the entire scan.
         let n = reader
             .by_ref()
             .take(MAX_LINE_BYTES)
@@ -383,29 +238,11 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
         }
         title_budget = title_budget.saturating_sub(n as u64);
         if n as u64 == MAX_LINE_BYTES && !buf.ends_with('\n') {
-            // U-017: an exactly-MAX_LINE_BYTES line with no trailing newline is
-            // ambiguous - it may be a genuinely TRUNCATED oversized line, or a
-            // COMPLETE final record written without a final EOL. Peek one byte
-            // to disambiguate: empty = EOF = the line is complete, fall through
-            // and parse it (don't drop a valid final session). Non-empty = more
-            // bytes follow = the cap truncated it mid-line → genuinely oversized.
             let more_follows = match reader.fill_buf() {
                 Ok(b) => !b.is_empty(),
-                // I/O error mid-read: abort like the drain loop below (don't
-                // silently fall through and parse a possibly-truncated buf).
                 Err(_) => return None,
             };
             if more_follows {
-                // Newer Claude Code writes oversized records ahead of the
-                // envelope -- notably a `type:"queue-operation"` first line
-                // whose `content` blob can run to hundreds of KB and which
-                // carries no `cwd`. Abandoning the file here dropped the
-                // whole session from the sidebar (and logged a WARN per
-                // file on every open). Instead, discard the rest of this
-                // one overlong line in bounded chunks -- preserving the
-                // US-010 anti-OOM guard, since we never buffer the tail --
-                // and keep scanning: the envelope lands on a later,
-                // normal-sized line.
                 log::debug!(
                     target: "paneflow_app::claude_sessions",
                     "skipped an oversized (>{} B) line in {}; continuing scan for the envelope",
@@ -418,7 +255,7 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
                         Err(_) => return None,
                     };
                     if chunk.is_empty() {
-                        return None; // EOF mid-line: nothing more to find.
+                        return None;
                     }
                     if let Some(nl) = chunk.iter().position(|&b| b == b'\n') {
                         reader.consume(nl + 1);
@@ -430,8 +267,6 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
                 }
                 continue;
             }
-            // EOF after exactly MAX_LINE_BYTES: `buf` is a complete final
-            // record - fall through to the normal parse below.
         }
         let trimmed = buf.trim_end();
         if !trimmed.starts_with('{') {
@@ -450,14 +285,6 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
             && let Ok(parsed) = serde_json::from_value::<FirstLineEnvelope>(value.clone())
             && !parsed.cwd.is_empty()
         {
-            // session_id lands in `claude --resume <id>`, so hold it to the
-            // strict `^[A-Za-z0-9_-]+$` allow-list (Claude ids are UUIDs):
-            // rejects a `\r`/`\n` that would submit injected text and a
-            // `;`/space that would chain a second shell command. cwd lands in
-            // display chrome today but a future `cd <cwd>` prefix would inherit
-            // the gap; a path legitimately carries `/` + spaces, so keep the
-            // control-char guard for it. Guard both at the gate, not the
-            // consumer.
             if !crate::agent_sessions::is_valid_session_id(&parsed.session_id)
                 || parsed.cwd.chars().any(|c| c.is_control())
             {
@@ -476,18 +303,11 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
                     && let Some(cleaned) = clean_session_label(title, LABEL_MAX_CHARS)
                 {
                     ai_title = Some(cleaned);
-                    // Title-only path: stop as soon as we have envelope + title.
-                    // Attribution path: keep walking to aggregate usage/model.
                     if envelope.is_some() && !scan_usage {
                         break;
                     }
                 }
             }
-            // Sub-agent traffic is inline in the same transcript, flagged
-            // `isSidechain`. A sidechain turn is the orchestrator talking to a
-            // sub-agent, never the human, so it must not win the title race -
-            // the assistant arm below deliberately does NOT skip it, since
-            // those tokens are billed and belong in the attribution total.
             Some("user") if user_fallback.is_none() && !json_flag(&value, "isSidechain") => {
                 if let Some(text) = extract_user_content(&value)
                     && let Some(cleaned) = clean_user_message(&text, json_flag(&value, "isMeta"))
@@ -495,10 +315,6 @@ fn scan_session_head(path: &Path, scan_usage: bool) -> Option<SessionHead> {
                     user_fallback = Some(cleaned);
                 }
             }
-            // US-016: assistant turns carry `message.model` + `message.usage`.
-            // Aggregate usage across turns; keep the most recent non-empty model
-            // (overwrite - a session that switched models reports the last one,
-            // which is the most representative for a single-figure estimate).
             Some("assistant") if scan_usage => {
                 if let Some(message) = value.get("message") {
                     if let Some(m) = message.get("model").and_then(|v| v.as_str())
@@ -557,15 +373,10 @@ fn extract_user_content(line: &serde_json::Value) -> Option<String> {
     None
 }
 
-/// Read a boolean transcript flag, defaulting to `false` when absent or of
-/// another type. Claude Code omits these keys rather than writing `false`.
 fn json_flag(value: &serde_json::Value, key: &str) -> bool {
     value.get(key).and_then(|v| v.as_bool()).unwrap_or(false)
 }
 
-/// Turn one `type:"user"` record into a fallback title, or `None` when the
-/// record is not human input. `is_meta` is the record's `isMeta` flag: Claude
-/// Code sets it on the plumbing records it injects on the user's behalf.
 fn clean_user_message(raw: &str, is_meta: bool) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || is_meta {
@@ -613,9 +424,6 @@ mod tests {
 
     #[test]
     fn slug_replaces_spaces() {
-        // Spaces are non-alphanumeric, so they become `-` like every other
-        // separator (real example: `C:\Program Files\PaneFlow` →
-        // `C--Program-Files-PaneFlow`).
         assert_eq!(
             slug_for_cwd("/home/alice/my project"),
             "-home-alice-my-project"
@@ -624,17 +432,11 @@ mod tests {
 
     #[test]
     fn slug_replaces_dots() {
-        // A leading-dot segment is NOT preserved: the `.` becomes `-`, so a
-        // dotfile dir produces a double dash (`/home/arthur/.claude` →
-        // `-home-arthur--claude`, the dir Claude Code writes on Linux).
         assert_eq!(slug_for_cwd("/home/alice/.config"), "-home-alice--config");
     }
 
     #[test]
     fn slug_windows_path_replaces_drive_colon() {
-        // Regression guard: the drive `:` MUST become `-`. The old encoder left
-        // it as `C:-Users-alice-myapp`, which never matched the on-disk
-        // `C--Users-alice-myapp` and emptied the sidebar on Windows.
         assert_eq!(
             slug_for_cwd("C:\\Users\\alice\\myapp"),
             "C--Users-alice-myapp"
@@ -643,17 +445,11 @@ mod tests {
 
     #[test]
     fn slug_matches_real_windows_project_dir() {
-        // Verified against a real install: Claude Code stores `C:\dev\paneflow`
-        // sessions under `~/.claude/projects/C--dev-paneflow/`.
         assert_eq!(slug_for_cwd("C:\\dev\\paneflow"), "C--dev-paneflow");
     }
 
     #[test]
     fn trailing_separator_resolves_to_the_same_project_dir() {
-        // Claude's own cwd never carries a trailing separator, so a stored
-        // `thread.cwd` that does must still find the directory that exists.
-        // Getting this wrong makes the readers report "no sessions" for a
-        // project that has them.
         assert_eq!(
             project_dir_for_cwd("/home/alice/myapp/"),
             project_dir_for_cwd("/home/alice/myapp")
@@ -670,8 +466,6 @@ mod tests {
 
     #[test]
     fn bare_roots_keep_their_slug() {
-        // All-separator paths are not normalized: trimming would change the
-        // slug rather than canonicalize it.
         assert_eq!(normalize_cwd_for_slug("/"), "/");
         assert_eq!(normalize_cwd_for_slug("C:\\"), "C:\\");
         assert_eq!(slug_for_cwd(normalize_cwd_for_slug("/")), "-");
@@ -713,10 +507,6 @@ mod tests {
         assert_eq!(meta.summary.as_deref(), Some("Implement feature X"));
     }
 
-    /// Tab naming wants the generated title or nothing. Returning the
-    /// first-user-message fallback would hand back exactly the placeholder the
-    /// tab already shows, and the caller would take it for success and stop
-    /// looking for the real one.
     #[test]
     fn read_generated_title_refuses_the_first_message_fallback() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -840,9 +630,6 @@ mod tests {
 
     #[test]
     fn usage_scan_aggregates_across_assistant_turns_and_captures_model() {
-        // EP-004 US-016: the deeper scan (scan_usage=true) walks past the title
-        // break, sums `message.usage` across assistant turns, and captures the
-        // model. The title-only scan (false) leaves both None.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("usage.jsonl");
         std::fs::write(
@@ -860,13 +647,11 @@ mod tests {
         )
         .expect("write fixture");
 
-        // Title-only path: no model/usage.
         let title_only = read_session_meta_inner(&path, false).expect("meta");
         assert!(title_only.model.is_none());
         assert!(title_only.usage.is_none());
         assert_eq!(title_only.summary.as_deref(), Some("Some title"));
 
-        // Attribution path: aggregated usage + model.
         let with_usage = read_session_meta_inner(&path, true).expect("meta");
         assert_eq!(
             with_usage.model.as_deref(),
@@ -879,9 +664,6 @@ mod tests {
         assert_eq!(usage.cache_creation, 5);
     }
 
-    /// The line-3 caveat record Claude Code writes into nearly every recent
-    /// session: `isMeta`, `<local-command-caveat>` prefixed, and the first
-    /// `type:"user"` line in the file. It must never become the row label.
     #[test]
     fn meta_caveat_record_never_becomes_the_title() {
         assert_eq!(
@@ -891,23 +673,18 @@ mod tests {
             ),
             None,
         );
-        // The prefix alone is enough, even without the isMeta flag.
         assert_eq!(clean_user_message("<local-command-stdout>ok", false), None);
         assert_eq!(
             clean_user_message("<system-reminder>context</system-reminder>", false),
             None,
         );
-        // isMeta on ordinary text is still plumbing, not a prompt.
         assert_eq!(clean_user_message("some injected note", true), None);
-        // A real prompt still passes.
         assert_eq!(
             clean_user_message("Corrige la sidebar", false).as_deref(),
             Some("Corrige la sidebar"),
         );
     }
 
-    /// `/clear` opens a large share of sessions and describes none of them;
-    /// a command that carries an argument still does.
     #[test]
     fn context_reset_commands_do_not_become_the_title() {
         assert_eq!(
@@ -927,9 +704,6 @@ mod tests {
         );
     }
 
-    /// End to end: the caveat is skipped and the first real prompt below it
-    /// becomes the fallback title. Sidechain (sub-agent) turns are skipped
-    /// too, so a sub-agent prompt can never label the parent session.
     #[test]
     fn fallback_title_skips_meta_and_sidechain_records() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -963,22 +737,14 @@ mod tests {
         assert!(label.ends_with('…'));
     }
 
-    /// US-010 (cli-hardening-followup-2026-Q3): a JSONL file whose
-    /// first line exceeds [`MAX_LINE_BYTES`] must NOT be loaded
-    /// fully into memory. The truncated line fails the
-    /// `serde_json::from_str` parse and the file is skipped --
-    /// `read_session_meta` returns `None` without OOMing.
     #[test]
     fn read_session_meta_truncates_oversize_lines() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("oversize.jsonl");
-        // 1 MB single line, no newline. Well above MAX_LINE_BYTES.
         let big = "x".repeat(1024 * 1024);
         std::fs::write(&path, &big).expect("write fixture");
-        // Sanity: input file is 1 MB.
         let meta = std::fs::metadata(&path).expect("metadata");
         assert_eq!(meta.len(), 1024 * 1024);
-        // The reader caps at MAX_LINE_BYTES and surfaces None.
         assert!(read_session_meta(&path).is_none());
     }
 
@@ -998,9 +764,6 @@ mod tests {
 
     #[test]
     fn session_id_control_char_guard() {
-        // sessionId carries CR+LF + an injected shell command. Without
-        // the guard, this id would flow into `claude --resume <id>` and
-        // submit `rm -rf ~` as a separate PTY command.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("malicious.jsonl");
         std::fs::write(
@@ -1035,9 +798,6 @@ mod tests {
 
     #[test]
     fn cwd_control_char_guard() {
-        // cwd is display-only today (prettify_cwd in sessions_sidebar) but
-        // the same JSONL field could leak into a future `cd <cwd>`
-        // prefix. Guard at the gate, not at each future consumer.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("malicious-cwd.jsonl");
         std::fs::write(
@@ -1054,12 +814,6 @@ mod tests {
         );
     }
 
-    /// US-017 (audit P2-5): a second read_session_meta call against
-    /// the same path returns the same content, and the
-    /// cache::lookup/store cycle round-trips a fixture vector. This
-    /// test exercises the cache primitives directly (the
-    /// `read_sessions_for_cwd` path hits real `~/.claude/projects/`
-    /// which we cannot reliably set up in unit tests).
     #[test]
     fn session_cache_round_trips_and_invalidates_on_mtime_change() {
         use crate::agent_sessions::cache;
@@ -1069,7 +823,6 @@ mod tests {
         let cwd = "/some/cwd";
         let project_dir = dir.path();
 
-        // Empty cache: lookup returns None.
         assert!(
             cache::lookup(SessionAgent::Claude, cwd, project_dir).is_none(),
             "freshly-cleared cache must miss"
@@ -1093,14 +846,6 @@ mod tests {
         assert_eq!(hit[0].session_id, "abc");
         assert_eq!(omitted, 7);
 
-        // Touch the directory to bump its mtime; sleep long enough to
-        // cross every mtime-granularity floor we care about: ext4/
-        // APFS/NTFS report sub-millisecond mtimes, but FAT32/exFAT
-        // round to 2 s and NFS without `actimeo` typically rounds to
-        // 1 s. 2500 ms is the safe floor across the matrix (FAT32
-        // 2 s + a healthy guard band) -- a faster sleep would silently
-        // flake on Windows CI runners that fall back to FAT32-style
-        // semantics or on NFS-mounted CI volumes.
         std::thread::sleep(std::time::Duration::from_millis(2500));
         std::fs::write(project_dir.join("touch.tmp"), b"x").expect("touch");
 
@@ -1112,9 +857,6 @@ mod tests {
 
     #[test]
     fn exactly_max_final_line_is_parsed_not_dropped() {
-        // U-017: a complete envelope exactly MAX_LINE_BYTES long with no
-        // trailing newline (a final record written without a final EOL) must be
-        // parsed, not misclassified as oversized and dropped.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("exact.jsonl");
         let prefix =
@@ -1127,23 +869,20 @@ mod tests {
             MAX_LINE_BYTES,
             "fixture must be exactly the cap"
         );
-        std::fs::write(&path, &line).expect("write"); // no trailing newline
+        std::fs::write(&path, &line).expect("write");
         let meta = read_session_meta(&path).expect("exactly-MAX complete record must parse");
         assert_eq!(meta.cwd, "/tmp/proj");
     }
 
     #[test]
     fn genuinely_oversized_line_is_skipped() {
-        // U-017: a line longer than MAX_LINE_BYTES (the cap truncates it
-        // mid-line, more bytes follow) is still classified oversized and
-        // dropped - the peek sees a non-empty buffer, not EOF.
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("oversized.jsonl");
         let line = format!(
             r#"{{"cwd":"/tmp/proj","p":"{}"#,
             "x".repeat(MAX_LINE_BYTES as usize + 2000)
         );
-        std::fs::write(&path, &line).expect("write"); // truncated, no close/newline
+        std::fs::write(&path, &line).expect("write");
         assert!(
             read_session_meta(&path).is_none(),
             "an oversized line must be skipped, not parsed"

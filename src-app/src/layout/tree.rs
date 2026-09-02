@@ -1,9 +1,3 @@
-//! Core layout tree types, constants, and ratio-manipulation helpers.
-//!
-//! Part of the US-029 `split.rs` decomposition. The `LayoutTree` enum + its
-//! `LayoutChild`/`DragState` supporting types live here; rendering, mutation,
-//! navigation, preset, and serialization logic is split into sibling modules.
-
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -11,21 +5,11 @@ use gpui::Entity;
 
 use crate::pane::Pane;
 
-// ---------------------------------------------------------------------------
-// Split direction
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy, PartialEq)]
 pub enum SplitDirection {
-    /// Horizontal divider - panes stacked top/bottom (flex_col)
     Horizontal,
-    /// Vertical divider - panes side by side (flex_row)
     Vertical,
 }
-
-// ---------------------------------------------------------------------------
-// Drag state - tracks an in-progress divider drag
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Copy)]
 pub(crate) struct DragState {
@@ -34,10 +18,6 @@ pub(crate) struct DragState {
     pub(crate) start_ratio_before: f32,
     pub(crate) start_ratio_after: f32,
 }
-
-// ---------------------------------------------------------------------------
-// Layout tree - N-ary tree
-// ---------------------------------------------------------------------------
 
 pub struct LayoutChild {
     pub node: LayoutTree,
@@ -50,22 +30,14 @@ pub enum LayoutTree {
         direction: SplitDirection,
         children: Vec<LayoutChild>,
         drag: Rc<Cell<Option<DragState>>>,
-        /// Actual main-axis pixel size of this container, captured each frame
-        /// via canvas() prepaint. Used for pixel-accurate drag-to-resize.
         container_size: Rc<Cell<f32>>,
     },
 }
 
-/// Gap reserved between two sibling panes. Panes are floating cards, so this
-/// band paints nothing: it exposes the window shell behind the grid, and the
-/// same value is used as the grid's outer padding (`PANE_GUTTER_PX`).
 pub(super) const DIVIDER_PX: f32 = 8.0;
-/// Grab band for drag-to-resize, independent of the visual gap above.
 pub(super) const DIVIDER_HIT_PX: f32 = 7.0;
-/// Minimum pane size in pixels. No pane may be resized below this.
 pub(crate) const MIN_PANE_SIZE: f32 = 80.0;
 
-/// Re-normalize ratios so they sum to 1.0 (proportional scaling).
 pub(super) fn normalize_ratios(children: &[LayoutChild]) {
     let sum: f32 = children.iter().map(|c| c.ratio.get()).sum();
     if sum > 0.0 && (sum - 1.0).abs() > f32::EPSILON {
@@ -75,8 +47,6 @@ pub(super) fn normalize_ratios(children: &[LayoutChild]) {
     }
 }
 
-/// Redistribute a removed child's ratio equally among remaining children.
-/// Each sibling gets `removed_ratio / num_remaining` added to its current ratio.
 pub(super) fn redistribute_equal(children: &[LayoutChild], removed_ratio: f32) {
     if children.is_empty() {
         return;
@@ -123,16 +93,8 @@ pub(super) fn resize_adjacent_ratios(
     Some((new_before, pair_sum - new_before))
 }
 
-/// Insert a new pane as a sibling after `children[idx]`.
-/// The new child steals half of the target child's ratio.
-///
-/// # Panics
-/// Panics in debug builds if `idx >= children.len()`.
 pub(super) fn insert_sibling(children: &mut Vec<LayoutChild>, idx: usize, new_pane: Entity<Pane>) {
     debug_assert!(idx < children.len(), "insert_sibling: idx out of bounds");
-    // US-058: fail-safe on a stale index - `.get()` instead of `children[idx]`,
-    // which would panic in release. Halve the target's ratio inside a scoped
-    // borrow so the borrow drops before the `children.insert` below.
     let half = {
         let Some(target) = children.get(idx) else {
             return;
@@ -157,7 +119,6 @@ pub(super) fn insert_sibling(children: &mut Vec<LayoutChild>, idx: usize, new_pa
 }
 
 impl LayoutTree {
-    /// Create a new 2-child container with 50/50 ratios.
     pub(super) fn new_split(
         direction: SplitDirection,
         first: LayoutTree,

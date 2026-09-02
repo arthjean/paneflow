@@ -1,5 +1,3 @@
-//! Windows system backdrop integration.
-
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use std::sync::atomic::{AtomicI8, AtomicIsize, Ordering};
 
@@ -23,11 +21,6 @@ unsafe extern "system" {
     ) -> i32;
 }
 
-/// Requests standard Mica on Windows 11.
-///
-/// Mica samples the desktop wallpaper rather than other windows behind
-/// PaneFlow. Windows 10 returns an error for this attribute and keeps the
-/// Acrylic effect selected through GPUI's `WindowBackgroundAppearance::Blurred`.
 pub(crate) fn apply_wallpaper_mica(window: &gpui::Window, is_light: bool) {
     let Some(hwnd) = win32_hwnd(window) else {
         return;
@@ -50,9 +43,6 @@ pub(crate) fn apply_wallpaper_mica(window: &gpui::Window, is_light: bool) {
     }
 }
 
-/// Keeps Mica aligned with PaneFlow's theme instead of the Windows app theme.
-///
-/// The DWM attribute is cached because this is called from the render path.
 pub(crate) fn sync_wallpaper_mica_theme(window: &gpui::Window, is_light: bool) {
     let Some(hwnd) = win32_hwnd(window) else {
         return;

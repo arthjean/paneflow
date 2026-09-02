@@ -1,18 +1,3 @@
-//! `paneflow up <file>` - declarative agent workspaces (US-009/US-011/US-012;
-//! worktree-per-agent: EP-002 of prd-orchestration-v2).
-//!
-//! Loads a `paneflow.workspace.toml`, resolves each pane's `agent` to its CLI
-//! launch command (verifying the binary is on PATH for an atomic failure),
-//! plans (and, outside `--dry-run`, creates) one git worktree per pane that
-//! asks for one, substitutes `${port_offset}` in env values, and calls the
-//! `workspace.up` IPC method. `--dry-run` prints the resolved plan without
-//! touching the running instance OR the filesystem - worktree planning is
-//! read-only (`git worktree list`), so a locked branch is detected without
-//! creating anything.
-//!
-//! All of this runs in the CLI process: git subprocesses can never block the
-//! GPUI render thread by construction (FR-09).
-
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -26,35 +11,23 @@ use super::{CliError, EXIT_OK};
 use crate::agent_launcher::TerminalAgent;
 use crate::workspace::worktree;
 
-/// Default base port for `${port_offset}` (US-008).
 pub(super) const DEFAULT_PORT_BASE: u16 = 3000;
-/// Ports reserved per pane referencing `${port_offset}`.
 const PORT_STRIDE: u16 = 10;
-/// Default wall-clock bound for a pane's `setup` command (US-007).
 const DEFAULT_SETUP_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// `paneflow up <file> [--dry-run]`.
 pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, CliError> {
     let src = std::fs::read_to_string(file)
         .map_err(|e| CliError::runtime(format!("cannot read '{file}': {e}")))?;
     let spec = workspace_spec::load(&src).map_err(CliError::runtime)?;
 
-    // Phase 1 (pure): validate every `${…}` token and find which panes
-    // reference `${port_offset}` - an unknown variable fails atomically
-    // before any git or network side effect (US-008).
     let port_refs = validate_env_tokens(&spec.panes)?;
 
-    // Phase 2 (read-only git): plan worktrees. Locked branches, non-repo
-    // cwds and path conflicts are all caught here, before anything mutates -
-    // which is also exactly what `--dry-run` reports (US-006).
     let mut worktree_plans: Vec<Option<WorktreePlan>> = Vec::with_capacity(spec.panes.len());
     for (idx, pane) in spec.panes.iter().enumerate() {
         worktree_plans.push(plan_worktree(idx, pane)?);
     }
     check_worktree_conflicts(&mut worktree_plans)?;
 
-    // Phase 3: allocate a free port stride per referencing pane (bind-probe;
-    // cross-platform - no /proc parsing, works on Windows too).
     let port_base = spec.port_base.unwrap_or(DEFAULT_PORT_BASE);
     let offsets = allocate_port_offsets(&port_refs, port_base, port_is_free)?;
 
@@ -87,8 +60,6 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
     });
 
     if dry_run {
-        // Print the resolved plan (agents -> commands, worktree actions,
-        // allocated ports) without touching the instance or the filesystem.
         super::print_json(&params)?;
         return Ok(EXIT_OK);
     }
@@ -97,9 +68,6 @@ pub fn up(client: &impl IpcTransport, file: &str, dry_run: bool) -> Result<i32, 
         ensure_orchestration_gate(client)?;
     }
 
-    // Phase 4 (mutating, still CLI-side): create the planned worktrees, copy
-    // `.env*`, run `setup`. A creation failure aborts before workspace.up so
-    // no half-spawned workspace points at a missing directory.
     let mut created_worktrees: Vec<&WorktreePlan> = Vec::new();
     for plan in worktree_plans.iter().flatten() {
         if let Err(err) = execute_worktree_plan(plan) {
@@ -161,19 +129,12 @@ fn ensure_orchestration_gate(client: &impl IpcTransport) -> Result<(), CliError>
     }
 }
 
-// ---------------------------------------------------------------------------
-// Worktree planning + execution (EP-002 US-006/US-007)
-// ---------------------------------------------------------------------------
-
-/// Everything needed to create (or reuse) one pane's worktree.
 #[derive(Debug)]
 pub(super) struct WorktreePlan {
     pane_idx: usize,
     repo_root: PathBuf,
     pub(super) path: PathBuf,
     branch: String,
-    /// `Some(true)` → `git worktree add -b` (new branch), `Some(false)` →
-    /// existing branch, `None` → the worktree already exists (reuse, no add).
     create: Option<bool>,
     copy_env: bool,
     setup: Option<String>,
@@ -186,8 +147,6 @@ impl WorktreePlan {
         self.create.is_some()
     }
 
-    /// The `managed_worktree` JSON object handed to the server (ownership
-    /// record for close-time teardown, US-009). Shared by `up` and `flow`.
     pub(super) fn managed_json(&self) -> serde_json::Value {
         json!({
             "path": self.path.to_string_lossy(),
@@ -199,14 +158,10 @@ impl WorktreePlan {
     }
 }
 
-/// Resolve one pane's `worktree` field into a [`WorktreePlan`] (read-only:
-/// safe under `--dry-run`). Errors are pane-indexed and atomic - nothing has
-/// been created when they surface.
 pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<WorktreePlan>, CliError> {
     let Some(branch) = pane.worktree.as_deref() else {
         return Ok(None);
     };
-    // `worktree` requires `cwd` - enforced by spec validation.
     let cwd = expand_tilde(pane.cwd.as_deref().unwrap_or_default());
     let git_dir = crate::workspace::find_git_dir(&cwd).ok_or_else(|| {
         CliError::runtime(format!(
@@ -232,7 +187,6 @@ pub(super) fn plan_worktree(idx: usize, pane: &PaneSpec) -> Result<Option<Worktr
                 path = entry.path.clone();
                 create = None;
             } else {
-                // Locked: a branch can only be checked out in one worktree.
                 return Err(CliError::runtime(format!(
                     "pane {idx}: branch '{branch}' already checked out at {}",
                     entry.path.display()
@@ -307,9 +261,6 @@ fn validate_worktree_target(
     Ok(())
 }
 
-/// Two panes must not target the same worktree path. Same-branch duplicates
-/// are refused; different branches that slug to the same path are moved to a
-/// hashed fallback before any mutation so `--dry-run` reports the final plan.
 pub(super) fn check_worktree_conflicts(plans: &mut [Option<WorktreePlan>]) -> Result<(), CliError> {
     let mut groups: HashMap<PathBuf, Vec<usize>> = HashMap::new();
     for (idx, plan) in plans.iter().enumerate() {
@@ -393,14 +344,9 @@ pub(super) fn check_worktree_conflicts(plans: &mut [Option<WorktreePlan>]) -> Re
     Ok(())
 }
 
-/// Create the worktree and bootstrap its environment. `.env*` copy and
-/// `setup` run on CREATION only - a reused worktree already had its bootstrap
-/// (and re-running an install behind the user's back would be a surprise).
-/// `setup` failure warns and continues (US-007 AC4): the human can fix it in
-/// the pane; a broken install must not block the agent launch.
 pub(super) fn execute_worktree_plan(plan: &WorktreePlan) -> Result<(), CliError> {
     let Some(create_branch) = plan.create else {
-        return Ok(()); // reuse - nothing to do
+        return Ok(());
     };
     worktree::add_worktree(&plan.repo_root, &plan.path, &plan.branch, create_branch)
         .map_err(|e| CliError::runtime(format!("pane {}: {e}", plan.pane_idx)))?;
@@ -464,9 +410,6 @@ pub(super) fn rollback_created_worktrees(plans: &[&WorktreePlan]) {
     }
 }
 
-/// Expand a leading `~`, `~/` or `~\` to the home directory (the server does this
-/// via `canonicalize_workspace_cwd`, but worktree planning needs the real
-/// path CLI-side, before any IPC round-trip).
 fn expand_tilde(raw: &str) -> String {
     if raw == "~" {
         if let Some(home) = dirs::home_dir() {
@@ -484,14 +427,6 @@ fn expand_tilde(raw: &str) -> String {
     raw.to_string()
 }
 
-// ---------------------------------------------------------------------------
-// `${port_offset}` (EP-002 US-008)
-// ---------------------------------------------------------------------------
-
-/// Validate every `${…}` token across all panes' env values. Returns, per
-/// pane, whether it references `${port_offset}`. The only supported variable
-/// is `port_offset` - anything else (or an unclosed `${`) is an atomic
-/// validation error naming the supported set.
 pub(super) fn validate_env_tokens(panes: &[PaneSpec]) -> Result<Vec<bool>, CliError> {
     let mut refs = Vec::with_capacity(panes.len());
     for (idx, pane) in panes.iter().enumerate() {
@@ -521,7 +456,6 @@ pub(super) fn validate_pane_env_tokens(idx: usize, pane: &PaneSpec) -> Result<bo
     Ok(references)
 }
 
-/// All `${…}` token names in a string. Unclosed `${` is an error.
 pub(super) fn extract_tokens(value: &str) -> Result<Vec<&str>, String> {
     let mut tokens = Vec::new();
     let mut rest = value;
@@ -536,10 +470,6 @@ pub(super) fn extract_tokens(value: &str) -> Result<Vec<&str>, String> {
     Ok(tokens)
 }
 
-/// Allocate one free port stride per referencing pane: the k-th referencing
-/// pane gets the k-th stride of `PORT_STRIDE` above `port_base` whose full
-/// port range probes free. `is_free` is injected so the policy is unit-testable
-/// without binding sockets.
 pub(super) fn allocate_port_offsets(
     refs: &[bool],
     port_base: u16,
@@ -580,8 +510,6 @@ fn port_stride_is_free(port_base: u16, is_free: &impl Fn(u16) -> bool) -> bool {
     (0..PORT_STRIDE).all(|offset| port_base.checked_add(offset).is_some_and(is_free))
 }
 
-/// Bind-probe: can we listen on this port right now? Cross-platform (real
-/// check on Windows too, unlike the /proc-based scan in `workspace::ports`).
 pub(super) fn port_is_free(port: u16) -> bool {
     use std::io::ErrorKind;
 
@@ -602,8 +530,6 @@ pub(super) fn port_is_free(port: u16) -> bool {
     }
 }
 
-/// Substitute `${port_offset}` in env values. Values without the token pass
-/// through untouched; `offset == None` (pane doesn't reference it) is a no-op.
 pub(super) fn substitute_env(
     env: Option<&HashMap<String, String>>,
     offset: Option<u16>,
@@ -619,9 +545,6 @@ pub(super) fn substitute_env(
     )
 }
 
-/// Resolve a pane's launch command: an `agent` maps to its CLI launch command
-/// (and the binary is verified on PATH for an atomic failure before any pane
-/// spawns, US-012); a raw `command` passes through; neither leaves a bare shell.
 pub(super) fn resolve_command(
     idx: usize,
     pane: &PaneSpec,
@@ -641,8 +564,6 @@ pub(super) fn resolve_command(
     Ok(Some(resolved.launch_command(config)))
 }
 
-/// Map a friendly agent name from the spec to a [`TerminalAgent`]. Accepts
-/// hyphen or underscore separators and the bare `claude` alias for Claude Code.
 fn resolve_agent(name: &str) -> Option<TerminalAgent> {
     let normalized = name.trim().to_lowercase().replace('-', "_");
     let tag = match normalized.as_str() {
@@ -700,8 +621,6 @@ mod tests {
         p
     }
 
-    // --- ${port_offset} (US-008) ---
-
     #[test]
     fn extract_tokens_finds_all_and_rejects_unclosed() {
         assert_eq!(extract_tokens("${a} x ${b}").expect("ok"), vec!["a", "b"]);
@@ -743,8 +662,6 @@ mod tests {
 
     #[test]
     fn allocate_port_offsets_skips_busy_strides() {
-        // Pane 0 and 2 reference the variable; 3010 is "busy" → pane 2 jumps
-        // to 3020 (US-008 AC2). Non-referencing panes get None.
         let refs = vec![true, false, true];
         let offsets = allocate_port_offsets(&refs, 3000, |p| p != 3010).expect("offsets");
         assert_eq!(offsets, vec![Some(3000), None, Some(3020)]);
@@ -776,12 +693,9 @@ mod tests {
         let out = substitute_env(Some(&env), Some(3010)).expect("some");
         assert_eq!(out["PORT"], "3010");
         assert_eq!(out["PLAIN"], "untouched", "passthrough exact (AC4)");
-        // No offset allocated (pane doesn't reference it): exact clone.
         let out = substitute_env(Some(&env), None).expect("some");
         assert_eq!(out["PORT"], "${port_offset}");
     }
-
-    // --- worktree planning (US-006) ---
 
     #[test]
     fn plan_worktree_none_without_field() {
@@ -794,8 +708,6 @@ mod tests {
 
     #[test]
     fn plan_worktree_outside_a_repo_is_an_atomic_error() {
-        // US-006 AC5: a cwd outside any git repository fails the plan phase
-        // (before anything is created), with a pane-indexed message.
         let mut p = pane(Some("claude"), None);
         p.cwd = Some("/".to_string());
         p.worktree = Some("feat/x".to_string());
@@ -825,9 +737,6 @@ mod tests {
 
     #[test]
     fn duplicate_worktree_paths_are_an_atomic_validation_error() {
-        // NFR fail-atomique: two panes on the same branch must be refused at
-        // the plan stage (both panes cited), never discovered mid-execution
-        // after the first worktree was already created.
         let mut plans = vec![
             Some(dummy_plan(0, "/r.worktrees/feat-x", "feat/x")),
             None,
@@ -908,8 +817,6 @@ mod tests {
 
     #[test]
     fn resolve_command_rejects_unknown_agent() {
-        // US-007/US-012: an unrecognized agent fails with a pane-indexed,
-        // non-zero error before any pane spawns - not a silent fallthrough.
         let cfg = PaneFlowConfig::default();
         let err = resolve_command(2, &pane(Some("cloode"), None), &cfg).unwrap_err();
         assert_eq!(err.code, crate::cli::EXIT_RUNTIME);
@@ -919,7 +826,6 @@ mod tests {
 
     #[test]
     fn resolve_command_passes_raw_command_through() {
-        // A raw `command` (no `agent`) is used verbatim, with no PATH check.
         let cfg = PaneFlowConfig::default();
         let resolved = resolve_command(0, &pane(None, Some("cargo watch")), &cfg).expect("ok");
         assert_eq!(resolved.as_deref(), Some("cargo watch"));

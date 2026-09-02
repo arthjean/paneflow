@@ -1,5 +1,3 @@
-//! Session-scoped agent hook installation.
-
 mod agents;
 mod claude;
 mod codex;

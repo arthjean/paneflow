@@ -1,10 +1,3 @@
-//! Cross-platform Ghostty runtime adapter for native PTYs.
-//!
-//! The libghostty engine is owned by one worker thread. PTY bytes, protocol
-//! replies, input, resize, search, selection, persistence, and shutdown all
-//! pass through its bounded command queue, so no C handle or borrowed render
-//! data crosses a thread or frame boundary.
-
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -27,13 +20,6 @@ use super::types::{
     SelectionKind, SelectionRange, TerminalWindowSize,
 };
 
-// The session is written against exactly two process models: the POSIX one
-// (`cfg(unix)`: `getpgid`, `waitid`, `kill(-pid, ...)`, `strsignal`) and the
-// Win32 one. Every other target would silently assemble a half-configured
-// session type out of whichever arms happened to match, so it is rejected
-// here, at one named location, instead. `src-app/build.rs` already refuses a
-// target with no pinned libghostty archive, so this is a backstop against a
-// predicate mistake, never a normal build state.
 #[cfg(not(any(unix, windows)))]
 compile_error!("terminal::ghostty_session requires a Unix or Windows target");
 
@@ -47,64 +33,20 @@ const MAX_QUEUED_INPUT_BYTES: usize = NFR_005_MAX_QUEUED_INPUT_BYTES;
 const NFR_005_MAX_PENDING_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const NFR_005_MAX_QUEUED_INPUT_BYTES: usize = 1024 * 1024;
 const RECENT_OUTPUT_REFRESH_INTERVAL: Duration = Duration::from_millis(300);
-/// Shortest gap between two grid publications driven by PTY output.
-///
-/// Publishing costs a full libghostty snapshot plus a full conversion into the
-/// neutral `Content`, and `OUTPUT_BATCH_MAX_TIME` closes a batch every
-/// millisecond, so an unthrottled runtime pays for roughly sixteen frames per
-/// frame the display actually shows. Ghostty and Ghostling both publish once
-/// per displayed frame; the runtime thread cannot see the vblank, so the same
-/// budget is expressed as a rate. 8 ms is 125 Hz, past every shipping display
-/// and well past what a terminal needs. The gate only ever *delays* a
-/// publication that follows a recent one: the first request after an idle gap
-/// still goes out immediately, so keystroke echo keeps its latency.
 const MIN_PUBLISH_INTERVAL: Duration = Duration::from_millis(8);
-/// How long a DEC 2026 (synchronized output) hold may suppress publication.
-///
-/// Ghostty resets the mode itself after a second (`sync_reset_ms` in
-/// `src/termio/Thread.zig`). Paneflow never touches the terminal's mode, it
-/// only stops honoring the hold, so it can give up far sooner: a program that
-/// opens a frame and dies must not freeze the pane.
 const SYNC_OUTPUT_MAX_HOLD: Duration = Duration::from_millis(150);
-/// How fast a drag held outside the viewport scrolls it. One line per tick at
-/// this rate is close to what Ghostty itself does, and slow enough that a
-/// pointer parked just past the edge stays readable.
-/// Longest a runtime loop blocks while something only a poll can notice is
-/// in flight: a drag held outside the viewport, a child exit, the drain
-/// window after one, or output that just stopped. Also the granularity of
-/// `advance_selection_autoscroll` and the Windows child-exit poll.
 const RUNTIME_IDLE_TICK: Duration = Duration::from_millis(10);
-/// Longest a runtime loop blocks once the pane has been quiet for
-/// `RUNTIME_QUIET_AFTER`. A child that exits while a grandchild keeps the PTY
-/// open is the one event nothing wakes the loop for, and noticing it a tenth
-/// of a second late is invisible, while a pane sitting at its prompt wakes
-/// ten times less.
 const RUNTIME_QUIET_TICK: Duration = Duration::from_millis(100);
-/// Silence after the last PTY output before the loop switches to
-/// `RUNTIME_QUIET_TICK`.
 const RUNTIME_QUIET_AFTER: Duration = Duration::from_secs(1);
-/// Longest a display-only runtime blocks. It has no child and publishes every
-/// write at once, so nothing needs it awake between messages.
 const DISPLAY_RUNTIME_TICK: Duration = Duration::from_secs(1);
 
-/// Runtime and display loop iterations across every session in the process.
-///
-/// Read by the terminal benchmarks to count idle wakeups: a loop that ticks
-/// while nothing happens shows up here as a steady rate, a loop that blocks
-/// until it has work does not.
 #[cfg(test)]
 pub(super) static RUNTIME_LOOP_ITERATIONS: AtomicU64 = AtomicU64::new(0);
 
-/// Loop iterations that blocked for `RUNTIME_QUIET_TICK`, and iterations
-/// that received a message rather than timing out. Benchmark diagnostics for
-/// the idle probes: they say whether an idle pane is quiet, and if not, why.
 #[cfg(test)]
 pub(super) static RUNTIME_LOOP_QUIET_WAITS: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
 pub(super) static RUNTIME_LOOP_MESSAGES: AtomicU64 = AtomicU64::new(0);
-/// Bit set of the reasons the loop stayed on the short tick: 1 winding
-/// down, 2 recent output lines pending, 4 output within `RUNTIME_QUIET_AFTER`,
-/// 8 a drag in flight.
 #[cfg(test)]
 pub(super) static RUNTIME_LOOP_ATTENTIVE_REASONS: AtomicU64 = AtomicU64::new(0);
 
@@ -140,16 +82,8 @@ fn count_runtime_loop_wait(_wait: Duration, _received_message: bool) {}
 #[inline(always)]
 fn count_runtime_loop_iteration() {}
 
-/// Process-wide stamp handed to every published `Content`.
-///
-/// Global rather than per-session so a pane whose backend was replaced can
-/// never draw a stale layout the previous session left in the renderer's
-/// cache: the new session's first frame is numbered above every frame the old
-/// one ever published. A u64 at one frame per millisecond per pane outlives
-/// any machine this runs on.
 static CONTENT_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Claim the next grid stamp.
 fn next_content_generation() -> u64 {
     CONTENT_GENERATION
         .fetch_add(1, Ordering::Relaxed)
@@ -180,8 +114,6 @@ pub(crate) enum GhosttyUiEvent {
         code: i32,
         signal: Option<String>,
     },
-    /// The OSC 8 hyperlink under a hovered cell, or `None` when the cell
-    /// carries none. Answers [`RuntimeMessage::HyperlinkHover`].
     HyperlinkResolved {
         point: Point,
         link: Option<HyperlinkZone>,
@@ -222,16 +154,12 @@ struct ClipboardSlot {
     queued: bool,
 }
 
-/// A desktop notification the running program asked for with OSC 9 or
-/// OSC 777.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ProgramNotification {
     pub(crate) title: String,
     pub(crate) body: String,
 }
 
-/// Notifications are queued rather than coalesced: unlike a title or a
-/// progress bar, each one is a separate thing the program wanted to say.
 #[derive(Debug, Default)]
 struct NotificationSlot {
     pending: VecDeque<ProgramNotification>,
@@ -347,9 +275,6 @@ struct SharedState {
     content: Content,
     modes: Modes,
     metrics: GridMetrics,
-    /// Kitty graphics placements resolved for the last published frame, with
-    /// their textures already uploaded. Empty unless a program transmitted an
-    /// image, which is the overwhelmingly common case.
     kitty: Arc<[crate::terminal::kitty::KittyPlacement]>,
 }
 
@@ -366,10 +291,6 @@ struct ResizeCommand {
     clear_initial: bool,
 }
 
-/// One pointer drag, in the terms libghostty extends a selection with: the
-/// cell under the pointer, the exact pixel position inside that cell (which
-/// decides whether the pointer is past the cell's midpoint), and the geometry
-/// that tells a drag it has left the viewport.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct DragTarget {
     point: ghostty::Point,
@@ -378,15 +299,8 @@ struct DragTarget {
     rectangle: bool,
 }
 
-/// The pointer gesture in flight.
-///
-/// libghostty owns the anchor, the click granularity and the extension rules;
-/// this only holds what the UI thread cannot hand over synchronously. Drags
-/// are coalesced by generation so a 60 fps pointer cannot flood the control
-/// mailbox.
 #[derive(Default)]
 struct GestureUpdateState {
-    /// Granularity the press asked for, kept for the copy filter.
     kind: Option<SelectionKind>,
     generation: u64,
     requested: Option<DragTarget>,
@@ -401,9 +315,6 @@ struct SessionInner {
     ui_events: Arc<UiEventState>,
     clipboard_gate: Arc<ClipboardGate>,
     state: RwLock<SharedState>,
-    /// Uploaded Kitty textures, keyed by libghostty's per-image generation.
-    /// Only the runtime thread touches it, but it has to outlive one frame,
-    /// so it lives here rather than on the stack of the runtime loop.
     kitty_images: Mutex<crate::terminal::kitty::KittyImages>,
     recent_output_lines: RwLock<Arc<[String]>>,
     search_generation: AtomicU64,
@@ -440,8 +351,6 @@ enum RuntimeMessage {
         text: String,
         allow_unsafe: bool,
     },
-    /// Display-only injection of pre-recorded bytes. `reply` fires once the
-    /// grid reflects them, so a caller can read the snapshot right after.
     WriteOutput {
         bytes: Vec<u8>,
         reply: SyncSender<()>,
@@ -449,15 +358,11 @@ enum RuntimeMessage {
     Resize(ResizeCommand),
     Scroll(ghostty::Scroll),
     ScrollToViewportRow(usize),
-    /// Open a pointer selection. The behavior table carries the granularity
-    /// GPUI's click count resolved to.
     PressSelection {
         point: ghostty::Point,
         behavior: ghostty::GestureBehavior,
         position: (f64, f64),
     },
-    /// Apply the coalesced drag stored under this generation. The payload
-    /// lives in `gesture` so a stale message can be dropped on arrival.
     DragSelection(u64),
     ReleaseSelection {
         point: Option<ghostty::Point>,
@@ -465,8 +370,6 @@ enum RuntimeMessage {
     ClearSelection,
     ClearScrollback,
     UpdateAppearance(ghostty::TerminalAppearance),
-    /// The cursor `CSI 0 q` resets to, which is a Paneflow setting rather
-    /// than something the program picks.
     SetDefaultCursor {
         shape: ghostty::CursorShape,
         blink: bool,
@@ -481,18 +384,10 @@ enum RuntimeMessage {
         reply: SyncSender<Result<Vec<(i32, String)>, String>>,
     },
     SelectionText(SyncSender<Result<Option<String>, String>>),
-    /// Resolve the OSC 8 hyperlink under a hovered cell. Answered with
-    /// [`GhosttyUiEvent::HyperlinkResolved`] rather than a reply channel, so
-    /// the UI thread never waits on the runtime for a hover.
     HyperlinkHover(ghostty::Point),
     ExtractScrollback(SyncSender<Result<Option<String>, String>>),
-    /// Capture the screen and its recent history as VT sequences, which keep
-    /// the styling, modes, and cursor that plain text drops.
     CaptureReplay(SyncSender<Result<Vec<u8>, String>>),
-    /// The active screen as plain text, alternate screen included.
     ScreenText(SyncSender<Result<String, String>>),
-    /// Restore of saved scrollback. `reply` fires once the grid reflects the
-    /// text, so a caller can read the snapshot right after.
     RestoreScrollback {
         text: String,
         reply: SyncSender<()>,
@@ -752,9 +647,6 @@ impl RuntimeMailbox {
         discarded_input_bytes
     }
 
-    /// Seal the producer side at the bounded drain deadline. The mailbox lock
-    /// makes this atomic with `send_output`: every buffer admitted before the
-    /// seal remains queued, while no later read can race exit publication.
     #[cfg(any(target_os = "windows", test))]
     fn stop_accepting_output(&self) {
         let mut state = self
@@ -918,10 +810,6 @@ impl RuntimeChildCleanupGuard {
 impl Drop for RuntimeChildCleanupGuard {
     fn drop(&mut self) {
         if self.armed {
-            // A second panic while unwinding the runtime would abort the whole
-            // process. Cleanup is best effort and the outer boundary publishes
-            // a deterministic terminal failure even if a third-party child
-            // implementation panics here.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 terminate_child(&mut *self.child, self.termination_target);
             }));
@@ -1081,9 +969,6 @@ impl<M: Send + 'static> Drop for PtyCloser<M> {
     }
 }
 
-/// Own the ConPTY master and guarantee that even a runtime unwind transfers
-/// `ClosePseudoConsole` to a dedicated thread. The runtime must remain free to
-/// consume its fixed output pool while that API drains the output pipe.
 #[cfg(any(test, target_os = "windows"))]
 struct DrainablePtyMaster<M: Send + 'static> {
     master: Option<M>,
@@ -1111,9 +996,6 @@ impl<M: Send + 'static> DrainablePtyMaster<M> {
         match self.closer.submit(master) {
             Ok(()) => true,
             Err(master) => {
-                // A dead closer thread is already a fatal invariant failure.
-                // Leaking the handle here preserves bounded shutdown instead
-                // of risking a synchronous ClosePseudoConsole deadlock.
                 std::mem::forget(master);
                 false
             }
@@ -1296,9 +1178,6 @@ impl GhosttySession {
         }
     }
 
-    /// Starts a runtime that owns a terminal grid but neither a PTY nor a
-    /// child process. Display-only sessions back restored scrollback and the
-    /// error pane shown when a spawn fails.
     pub(super) fn start_display(
         &self,
         pending: GhosttyRuntimePending,
@@ -1328,8 +1207,6 @@ impl GhosttySession {
         }
     }
 
-    /// Feeds pre-recorded bytes into the grid. Blocks until the snapshot
-    /// reflects them so a caller can read back immediately.
     pub(super) fn write_output(&self, bytes: &[u8]) {
         let _ = self.request(|reply| RuntimeMessage::WriteOutput {
             bytes: bytes.to_vec(),
@@ -1434,8 +1311,6 @@ impl GhosttySession {
         self.inner.queued_input_bytes.load(Ordering::Acquire)
     }
 
-    /// The grid size the surface last asked for, used to size the
-    /// replacement display-only session that renders a spawn failure.
     pub(super) fn requested_window_size(&self) -> TerminalWindowSize {
         self.inner
             .resize
@@ -1511,8 +1386,6 @@ impl GhosttySession {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Hand the pending drag to the runtime thread, unless one is already
-    /// queued for this generation.
     fn submit_requested_drag(&self, gesture: &mut GestureUpdateState) {
         if gesture.queued_generation == Some(gesture.generation) || gesture.requested.is_none() {
             return;
@@ -1532,8 +1405,6 @@ impl GhosttySession {
         }
     }
 
-    /// Drop every drag in flight and start a new generation, so a stale
-    /// `DragSelection` cannot land on top of what comes next.
     fn invalidate_gesture(&self, gesture: &mut GestureUpdateState) {
         gesture.generation = gesture.generation.wrapping_add(1);
         gesture.requested = None;
@@ -1590,7 +1461,6 @@ impl GhosttySession {
         self.inner.processed_output_bytes.load(Ordering::Acquire)
     }
 
-    /// Kitty graphics placements for the published frame.
     pub(super) fn kitty_placements(&self) -> Arc<[crate::terminal::kitty::KittyPlacement]> {
         self.inner.state.read().kitty.clone()
     }
@@ -1613,16 +1483,6 @@ impl GhosttySession {
             .is_ok()
     }
 
-    /// Press at `point`, opening a pointer selection at `kind` granularity.
-    ///
-    /// libghostty can derive the click count itself from event times, but
-    /// Paneflow copies and clears on every mouse-up, so no click sequence ever
-    /// survives long enough for it to. GPUI has already applied the platform's
-    /// double-click settings, so the count it resolved is handed over as a
-    /// one-shot behavior table instead.
-    ///
-    /// `position` is the pointer in pane-relative pixels: it is what lets the
-    /// engine decide which half of the cell was hit.
     pub(super) fn press_selection(&self, kind: SelectionKind, point: Point, position: (f32, f32)) {
         {
             let mut gesture = self.lock_gesture();
@@ -1639,12 +1499,6 @@ impl GhosttySession {
             });
     }
 
-    /// Extend the pressed selection to `point`.
-    ///
-    /// Nothing is computed here: the anchor, the granularity and the extension
-    /// rules all live in libghostty. The drag is only coalesced, because the
-    /// pointer produces one of these per frame and the runtime thread is the
-    /// one that has to apply them.
     pub(super) fn drag_selection(
         &self,
         point: Point,
@@ -1663,7 +1517,6 @@ impl GhosttySession {
         };
         let mut gesture = self.lock_gesture();
         if gesture.kind.is_none() {
-            // No press is open: a bare hover is not a drag.
             return;
         }
         if gesture.requested == Some(target)
@@ -1681,10 +1534,6 @@ impl GhosttySession {
         self.submit_requested_drag(&mut gesture);
     }
 
-    /// Report the pointer coming back up, closing the drag.
-    ///
-    /// `point` is `None` when the release landed outside any cell, which is
-    /// what libghostty wants to hear rather than a clamped guess.
     pub(super) fn release_selection(&self, point: Option<Point>) {
         if self.lock_gesture().kind.is_none() {
             return;
@@ -1706,8 +1555,6 @@ impl GhosttySession {
         filter_copyable_selection_text(kind, self.selection_range(), text)
     }
 
-    /// Drop the scrollback and clear the screen. Ghostty owns the history, so
-    /// this is a runtime command, not a grid mutation the UI thread can do.
     pub(super) fn clear_history(&self) {
         let _ = self
             .inner
@@ -1731,11 +1578,6 @@ impl GhosttySession {
         self.inner.state.read().content.selection
     }
 
-    /// Tell the engine which cursor a `CSI 0 q` reset lands on.
-    ///
-    /// The renderer already falls back to the configured shape when a program
-    /// never picks one; this is the other half, so a program that explicitly
-    /// resets the cursor gets Paneflow's default rather than libghostty's.
     pub(super) fn set_default_cursor(&self, shape: ghostty::CursorShape, blink: bool) -> bool {
         self.inner
             .mailbox
@@ -1752,8 +1594,6 @@ impl GhosttySession {
             .is_ok()
     }
 
-    /// Ask the runtime which OSC 8 hyperlink sits under `point`. The answer
-    /// arrives as [`GhosttyUiEvent::HyperlinkResolved`]; nothing blocks here.
     pub(super) fn request_hyperlink_at(&self, point: Point) -> bool {
         self.inner
             .mailbox
@@ -1764,8 +1604,6 @@ impl GhosttySession {
     pub(super) fn line_text_at(&self, point: Point) -> Option<GridLineText> {
         let state = self.inner.state.read();
         let content = &state.content;
-        // Cells are row-major in viewport order, so a row is one slice; the
-        // first cell's coordinate confirms the layout before it is trusted.
         let row = usize::try_from(point.line.0).ok()?;
         let start = row.checked_mul(content.cols)?;
         let cells = content
@@ -1909,11 +1747,6 @@ impl GhosttySession {
             .flatten()
     }
 
-    /// The active screen as plain text.
-    ///
-    /// Unlike [`Self::extract_scrollback`] this reads the screen the program
-    /// is actually painting, which is the only way to see an alternate-screen
-    /// TUI: that screen has no scrollback at all.
     pub(super) fn screen_text(&self) -> Option<String> {
         self.request(RuntimeMessage::ScreenText)
             .and_then(Result::ok)
@@ -1925,8 +1758,6 @@ impl GhosttySession {
             .filter(|replay| !replay.is_empty())
     }
 
-    /// Blocks until the grid reflects the restored text, so a caller can read
-    /// the snapshot back immediately.
     pub(super) fn restore_scrollback(&self, text: &str) {
         let _ = self.request(|reply| RuntimeMessage::RestoreScrollback {
             text: text.to_owned(),
@@ -2111,24 +1942,12 @@ fn run_runtime(
     let mut command = CommandBuilder::new(&params.shell);
     command.args(&params.extra_args);
     command.cwd(&params.cwd);
-    // `CommandBuilder` seeds its env from this process's, so a marker Paneflow
-    // inherited reaches the pane unless it is removed HERE - the assembled env
-    // map only carries overrides and cannot unset an inherited name. Two
-    // families qualify: the host terminal's identity (Windows Terminal's
-    // `WT_SESSION`, tmux's `TMUX`) and the launching agent session's own
-    // (`CLAUDE_CODE_*`).
-    // Runs before the override loop so an explicit `terminal.env` entry still
-    // wins: the target is inheritance, not the user's stated intent. The agent
-    // markers are not exposed to that intent anyway - `assemble_pty_env`
-    // strips them from the merged map after the user layer.
     for key in super::pty_session::inherited_env_keys_to_strip() {
         command.env_remove(&key);
     }
     for (key, value) in &params.env {
         command.env(key, value);
     }
-    // Match Ghostty and cmux: keep the portable TERM contract while exposing
-    // the renderer identity that terminal applications use for capabilities.
     command.env("TERM_PROGRAM", "ghostty");
     command.env("TERM_PROGRAM_VERSION", ghostty::GHOSTTY_APP_VERSION);
 
@@ -2290,15 +2109,6 @@ fn run_runtime(
                 &mut master,
             );
         }
-        // A pending publication shortens the block, so a change that the rate
-        // limit deferred lands on its own deadline rather than on the next
-        // idle tick.
-        // Floored at a millisecond: a deadline that has already passed means
-        // the previous `poll` could not publish, and a zero-length block would
-        // spin instead of yielding.
-        // With nothing pending, the block is short only while a poll has
-        // something to notice; a pane that has been quiet for a while
-        // blocks for the quiet tick instead.
         let wait = match publish_gate.next_wake(Instant::now()) {
             Some(wake) => wake.clamp(Duration::from_millis(1), RUNTIME_IDLE_TICK),
             None => {
@@ -2493,7 +2303,6 @@ fn run_runtime(
                     shutdown_requested = true;
                 }
             }
-            // `handle_terminal_command` owns every remaining variant.
             Ok(None) | Ok(Some(_)) => {}
             Err(MailboxRecvError::Disconnected) => {
                 #[cfg(unix)]
@@ -2514,8 +2323,6 @@ fn run_runtime(
             Err(MailboxRecvError::Timeout) => {}
         }
 
-        // Turns a rate-limited or synchronized-output-held request into a
-        // frame without a timer of its own.
         if let Err(error) = publish_gate.poll(&inner, &mut terminal) {
             if !runtime_failed {
                 let _ = inner
@@ -2580,10 +2387,6 @@ fn run_runtime(
                     );
                     queue_service_output_ready(&inner);
                 }
-                // The loop is about to end, so nothing will come back to
-                // publish a change the gate deferred. `ChildExited` is the
-                // teardown barrier consumers wait on: everything the program
-                // wrote has to be on the grid before it goes out.
                 let _ = publish_gate.publish_now(&inner, &mut terminal);
                 let code = i32::try_from(status.exit_code()).unwrap_or(-1);
                 let signal = status.signal().map(str::to_owned);
@@ -2721,17 +2524,10 @@ fn run_runtime(
                     );
                     queue_service_output_ready(&inner);
                 }
-                // The loop is about to end, so nothing will come back to
-                // publish a change the gate deferred. `ChildExited` is the
-                // teardown barrier consumers wait on: everything the program
-                // wrote has to be on the grid before it goes out.
                 let _ = publish_gate.publish_now(&inner, &mut terminal);
                 if child_reaped {
                     child.disarm();
                 }
-                // `ChildExited` is the externally observable teardown barrier.
-                // Release the ConPTY and child process handles before publishing
-                // it so rapid host churn cannot accumulate still-live resources.
                 drop(child);
                 drop(master);
                 publish_child_exit_once(&inner, exit.code, exit.signal);
@@ -2741,16 +2537,11 @@ fn run_runtime(
     }
 }
 
-/// Outcome of routing a runtime command through the PTY-independent handler.
 enum CommandOutcome {
-    /// The command was serviced entirely against the terminal grid.
     Handled,
-    /// The command needs the PTY-owning loop.
     Unhandled(RuntimeMessage),
 }
 
-/// Services the commands that only touch the terminal grid, so the PTY-backed
-/// and display-only runtimes share one implementation.
 fn handle_terminal_command(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
@@ -2844,8 +2635,6 @@ fn handle_terminal_command(
             }
         }
         RuntimeMessage::ReleaseSelection { point } => {
-            // A release never yields a selection, so nothing is published: it
-            // only closes the drag so the next tick stops autoscrolling.
             if let Err(error) = terminal.gesture_release(point) {
                 log::warn!(
                     target: "paneflow::terminal::ghostty",
@@ -2985,8 +2774,6 @@ fn handle_terminal_command(
     CommandOutcome::Handled
 }
 
-/// Feeds pre-recorded bytes into a display-only grid and republishes the
-/// snapshot, so the caller observes them as soon as the reply lands.
 fn feed_display_output(
     inner: &SessionInner,
     terminal: &mut ghostty::DisplayTerminal,
@@ -3000,7 +2787,6 @@ fn feed_display_output(
     gate.publish_now(inner, terminal)
 }
 
-/// Runtime loop for a session that owns a grid but no PTY and no child.
 fn run_display_runtime(
     inner: Arc<SessionInner>,
     mailbox: Arc<RuntimeMailbox>,
@@ -3041,9 +2827,6 @@ fn run_display_runtime(
 
     loop {
         count_runtime_loop_iteration();
-        // Nothing here is timer-driven: every write publishes at once and no
-        // child can exit, so the block is only bounded to keep the loop
-        // observable.
         let message = match mailbox.recv_timeout(DISPLAY_RUNTIME_TICK) {
             Ok(message) => message,
             Err(MailboxRecvError::Timeout) => continue,
@@ -3095,9 +2878,6 @@ fn run_display_runtime(
             }
             RuntimeMessage::Shutdown => break,
             other => {
-                // A display-only session has no PTY: input and child-lifecycle
-                // messages are dropped, but their reserved bytes must be freed
-                // or the input backpressure counter never drains.
                 if let Some(bytes) = other.queued_input_bytes() {
                     release_queued_input_bytes(&inner, bytes);
                     notify_command_capacity(&inner);
@@ -3107,8 +2887,6 @@ fn run_display_runtime(
     }
 }
 
-// These parameters are the mutable runtime-loop state. Grouping them would add
-// a second state container without improving ownership or call-site clarity.
 #[allow(clippy::too_many_arguments)]
 fn process_output_batch(
     inner: &SessionInner,
@@ -3146,9 +2924,6 @@ fn process_output_batch(
                 .processed_output_bytes
                 .fetch_add(bytes.len(), Ordering::AcqRel);
 
-            // A command mark is positioned against the snapshot immediately
-            // following its PTY chunk. Continuing the batch would attach it to
-            // a cursor location produced by later chunks.
             if emitted_mark
                 || inner.shutdown_sent.load(Ordering::Acquire)
                 || processed_bytes >= OUTPUT_BATCH_MAX_BYTES
@@ -3167,9 +2942,6 @@ fn process_output_batch(
             recent_output_pending,
         );
         record_command_marks(inner, &raw_marks);
-        // Rate-limited against the previous frame and held back while the
-        // program is mid-redraw: the runtime loop's `poll` publishes it once
-        // both lift.
         gate.request(inner, terminal)?;
         if service_output_ready {
             queue_service_output_ready(inner);
@@ -3330,8 +3102,6 @@ fn queue_progress(inner: &SessionInner, report: ghostty::ProgressReport) {
     }
 }
 
-/// A program controls both strings, so they go through the same bidi and
-/// zero-width strip an agent question does before reaching a notification.
 fn sanitized_notification(title: String, body: String) -> ProgramNotification {
     ProgramNotification {
         title: crate::agents::notifications::sanitize_notification_message(&title),
@@ -3467,31 +3237,16 @@ fn handle_engine_events(
     Ok(())
 }
 
-/// Decides when a grid change becomes a published frame.
-///
-/// Two things hold a publication back. A DEC 2026 hold means the program is
-/// mid-redraw and every frame in between would be torn, which is what
-/// Ghostty's renderer checks before it draws (`src/renderer/generic.zig`).
-/// `MIN_PUBLISH_INTERVAL` means the last frame is too recent to be worth
-/// another snapshot; the change waits for the interval to expire and the
-/// runtime loop wakes for it then. Neither applies to state the user is
-/// waiting on: [`PublishGate::publish_now`] bypasses both, and so does the
-/// last frame before the child's exit is announced.
 struct PublishGate {
     last_publish: Instant,
-    /// A grid change is waiting for one of the two holds to lift.
     pending: bool,
-    /// When the current DEC 2026 hold started, so `SYNC_OUTPUT_MAX_HOLD` can
-    /// expire it. `None` while no hold is open.
     sync_hold_since: Option<Instant>,
-    /// The cells every publish through this gate writes into.
     mirror: CellMirror,
 }
 
 impl PublishGate {
     fn new() -> Self {
         Self {
-            // Backdated so the very first request publishes immediately.
             last_publish: Instant::now()
                 .checked_sub(MIN_PUBLISH_INTERVAL)
                 .unwrap_or_else(Instant::now),
@@ -3501,11 +3256,6 @@ impl PublishGate {
         }
     }
 
-    /// Publish immediately, whatever the rate limit and the DEC 2026 hold say.
-    ///
-    /// For state the user is directly waiting on: a resize, a scroll, a
-    /// scrollback clear, the first frame of a session. These are rare and
-    /// their latency is visible, so they never queue behind the rate limit.
     fn publish_now(
         &mut self,
         inner: &SessionInner,
@@ -3515,7 +3265,6 @@ impl PublishGate {
         self.commit(inner, terminal)
     }
 
-    /// Record a grid change and publish it if nothing holds it back.
     fn request(
         &mut self,
         inner: &SessionInner,
@@ -3525,10 +3274,6 @@ impl PublishGate {
         self.poll(inner, terminal)
     }
 
-    /// Publish a pending change once its holds have lifted.
-    ///
-    /// The runtime loop calls this every wake, which is what turns a delayed
-    /// request into a frame without a timer of its own.
     fn poll(
         &mut self,
         inner: &SessionInner,
@@ -3537,8 +3282,6 @@ impl PublishGate {
         if !self.pending {
             return Ok(());
         }
-        // One FFI crossing per wake, against a full snapshot saved every time
-        // a TUI is mid-redraw.
         let synchronized_output = terminal
             .synchronized_output()
             .map_err(|error| error.to_string())?;
@@ -3548,20 +3291,6 @@ impl PublishGate {
         self.commit(inner, terminal)
     }
 
-    /// Whether the pending change may be published now.
-    ///
-    /// The whole gating rule, with no terminal and no session attached, so it
-    /// can be exercised against a synthetic clock.
-    ///
-    /// The rate limit applies whether or not more PTY bytes are queued behind
-    /// the change. A program that prints a line every couple of milliseconds
-    /// never builds a backlog, the runtime parses each chunk long before the
-    /// next one lands, yet snapshotting after every chunk means hundreds of
-    /// frames per second that no display shows. A change that arrives inside
-    /// the interval is not dropped, only deferred: [`Self::next_wake`] tells
-    /// the runtime loop when to come back, and `poll` publishes it then. The
-    /// first change after an idle gap still publishes at once, so a keystroke
-    /// echo pays nothing.
     fn decide(&mut self, synchronized_output: bool, now: Instant) -> bool {
         if !self.pending {
             return false;
@@ -3572,13 +3301,6 @@ impl PublishGate {
         now.duration_since(self.last_publish) >= MIN_PUBLISH_INTERVAL
     }
 
-    /// How long the runtime loop may block before [`Self::poll`] has work.
-    ///
-    /// `None` when nothing is pending. An open DEC 2026 hold reports its own
-    /// deadline rather than the rate-limit gap: the rate limit has usually
-    /// already elapsed by then, and reporting zero would spin the loop for the
-    /// length of the redraw. The closing bracket arrives as PTY bytes, which
-    /// wake the loop on their own well before this deadline.
     fn next_wake(&self, now: Instant) -> Option<Duration> {
         if !self.pending {
             return None;
@@ -3589,11 +3311,6 @@ impl PublishGate {
         Some(MIN_PUBLISH_INTERVAL.saturating_sub(now.duration_since(self.last_publish)))
     }
 
-    /// Whether DEC 2026 is set and its hold has not yet timed out.
-    ///
-    /// The hold opens on the first wake that observes the mode and closes as
-    /// soon as the mode clears, so a program that brackets every redraw gets a
-    /// fresh `SYNC_OUTPUT_MAX_HOLD` budget for each one.
     fn held_by_synchronized_output(&mut self, synchronized_output: bool, now: Instant) -> bool {
         if !synchronized_output {
             self.sync_hold_since = None;
@@ -3616,14 +3333,6 @@ impl PublishGate {
     }
 }
 
-/// Replay the gate against a synthetic clock: `chunks` grid changes arrive
-/// `interval` apart with the output queue drained after each one, and the
-/// runtime loop wakes at [`PublishGate::next_wake`] between arrivals. Returns
-/// how many of those changes became published frames.
-///
-/// This is the shape of a program that prints faster than a display refreshes
-/// but slower than the runtime can parse, which is what ConPTY delivers for
-/// almost any output. Benchmark input, so it only models the gate's decisions.
 #[cfg(test)]
 pub(super) fn simulate_gate_trickle(interval: Duration, chunks: usize) -> usize {
     let origin = Instant::now();
@@ -3636,7 +3345,6 @@ pub(super) fn simulate_gate_trickle(interval: Duration, chunks: usize) -> usize 
     let mut published = 0usize;
     for index in 0..chunks {
         let arrived = origin + interval * (index as u32 + 1);
-        // A deferred change lands on its own deadline before the next chunk.
         if let Some(wait) = gate.next_wake(arrived - interval)
             && wait < interval
             && gate.decide(false, arrived - interval + wait)
@@ -3665,8 +3373,6 @@ fn update_shared_state(
     let metrics = grid_metrics_from_ghostty(&snapshot);
     let content = mirror.publish(snapshot);
     let modes = modes_from_ghostty(modes);
-    // Resolved here, on the runtime thread, so the render thread never walks
-    // the placement iterator or copies a pixel.
     let kitty: Arc<[_]> = inner
         .kitty_images
         .lock()
@@ -3706,33 +3412,12 @@ fn ghostty_rgb(color: gpui::Hsla) -> ghostty::Rgb {
     }
 }
 
-/// The 256-color palette libghostty resolves a program's indexed colors
-/// against.
-///
-/// A theme defines sixteen colors; libghostty derives the 216-color cube and
-/// the grayscale ramp from them. Without this the renderer paints the theme
-/// while libghostty answers `OSC 4` queries from its own built-in palette, so
-/// a program that asks what color 1 is gets an answer the screen contradicts.
-/// Terminfo entry Paneflow advertises, matching the `TERM` it exports.
 const TERMINFO_NAME: &str = "xterm-256color";
 
-/// Memory a retained scrollback line is budgeted at.
-///
-/// libghostty's own default byte budget prunes an 80-column terminal at
-/// roughly a thousand rows, so a configured 10,000-line history silently
-/// became a tenth of that. The config's line count is the intent; this
-/// converts it to the byte budget libghostty actually prunes on, which is
-/// what `TerminalConfig::scrollback_lines` always said happened at spawn.
 const SCROLLBACK_BYTES_PER_LINE: usize = 1024;
 
-/// Ceiling on the derived byte budget, so a 100,000-line configuration
-/// cannot ask for an unbounded allocation.
 const MAX_SCROLLBACK_BYTES: usize = 128 * 1024 * 1024;
 
-/// Push the settings that belong to Paneflow rather than to the program.
-///
-/// Failures here are logged, never fatal: a terminal with libghostty's own
-/// defaults is degraded, not broken, and losing the pane would be worse.
 fn configure_embedder_options(terminal: &mut ghostty::DisplayTerminal, max_scrollback: usize) {
     let apply = |what: &str, result: ghostty::Result<()>| {
         if let Err(error) = result {
@@ -3756,7 +3441,6 @@ fn configure_embedder_options(terminal: &mut ghostty::DisplayTerminal, max_scrol
                 .min(MAX_SCROLLBACK_BYTES),
         )),
     );
-    // Diagnostics only, and only when someone is reading the log for them.
     if log::log_enabled!(target: "paneflow::terminal::ghostty", log::Level::Debug) {
         apply(
             "unsupported sequence capture",
@@ -3833,9 +3517,6 @@ fn child_termination_target(child_pid: u32) -> ChildTerminationTarget {
 #[cfg(unix)]
 fn verified_process_group(child_pid: u32) -> Option<i32> {
     let pid = i32::try_from(child_pid).ok().filter(|pid| *pid > 0)?;
-    // SAFETY: getpgid only observes the freshly-spawned child. portable-pty
-    // creates it as its own session leader, so equality authenticates the
-    // process group before any wait can reap the leader or permit PID reuse.
     (unsafe { libc::getpgid(pid) } == pid).then_some(pid)
 }
 
@@ -3849,9 +3530,6 @@ fn observe_child_exit(
         .filter(|pid| *pid > 0)
         .ok_or_else(|| std::io::Error::new(ErrorKind::InvalidInput, "child PID unavailable"))?;
     let mut info = std::mem::MaybeUninit::<libc::siginfo_t>::zeroed();
-    // SAFETY: waitid initializes siginfo_t on success. WNOWAIT observes the
-    // exit without reaping, keeping the leader PID reserved until remaining
-    // group members are terminated and portable-pty performs the final wait.
     let result = unsafe {
         libc::waitid(
             libc::P_PID,
@@ -3863,8 +3541,6 @@ fn observe_child_exit(
     if result != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    // SAFETY: the successful waitid call initialized info, and WEXITED makes
-    // si_pid/si_status valid for the child-state variants handled below.
     let info = unsafe { info.assume_init() };
     let observed_pid = unsafe { info.si_pid() };
     if observed_pid == 0 {
@@ -4100,29 +3776,18 @@ fn window_size(size: TerminalWindowSize) -> ghostty::Result<ghostty::WindowSize>
     )
 }
 
-/// Scroll the viewport while a drag is held outside it, and extend the
-/// selection to match.
-///
-/// libghostty decides whether a drag wants an autoscroll and which way, from
-/// the pointer position and grid geometry the last drag carried. Acting on it
-/// needs the terminal, so it happens here: the runtime loop already wakes
-/// every 10 ms, which saves a timer of its own.
 fn advance_selection_autoscroll(
     inner: &Arc<SessionInner>,
     terminal: &mut ghostty::DisplayTerminal,
     gate: &mut PublishGate,
     last_tick: &mut Instant,
 ) {
-    // `applied` is only set while a drag is live, so this costs one atomic
-    // load per idle tick.
     let Some(target) = lock_gesture(inner).applied else {
         return;
     };
     if last_tick.elapsed() < SELECTION_AUTOSCROLL_INTERVAL {
         return;
     }
-    // Stamped before the direction is known, so a drag held inside the
-    // viewport costs one state read per interval rather than one per wake.
     *last_tick = Instant::now();
     let state = match terminal.gesture_state() {
         Ok(state) => state,
@@ -4136,8 +3801,6 @@ fn advance_selection_autoscroll(
     };
     let (delta, viewport_row) = match state.autoscroll {
         ghostty::GestureAutoscroll::None => return,
-        // `Scroll::Delta` counts up into history, and the pointer lands on the
-        // row that just came into view.
         ghostty::GestureAutoscroll::Up => (1, 0),
         ghostty::GestureAutoscroll::Down => (
             -1,
@@ -4153,8 +3816,6 @@ fn advance_selection_autoscroll(
     };
     let viewport = ghostty::Point::new(viewport_row, target.point.column);
     match terminal.gesture_autoscroll_tick(viewport, target.geometry, &options) {
-        // The viewport moved, so the whole grid has to be republished, not
-        // just the selection.
         Ok(_) => {
             if let Err(error) = gate.publish_now(inner, terminal) {
                 log::warn!(
@@ -4177,8 +3838,6 @@ fn lock_gesture(inner: &SessionInner) -> std::sync::MutexGuard<'_, GestureUpdate
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Mirror what a gesture just selected into the shared state the renderer
-/// reads. `None` is a gesture that produced no selection, which clears it.
 fn publish_gesture_selection(inner: &SessionInner, range: Option<ghostty::SelectionRange>) {
     update_shared_selection(inner, range.map(selection_range_from_ghostty));
 }
@@ -4191,11 +3850,6 @@ fn gesture_behavior(kind: SelectionKind) -> ghostty::GestureBehavior {
     }
 }
 
-/// Convert the pane geometry into the shape libghostty reads drags against.
-///
-/// Returns `None` for a pane that has not been laid out yet: libghostty
-/// requires non-zero columns, cell width and height, and a drag on a
-/// zero-sized grid has nothing to select anyway.
 fn gesture_geometry(geometry: SelectionGeometry) -> Option<ghostty::GestureGeometry> {
     let columns = u32::try_from(geometry.columns).ok()?;
     let cell_width = geometry.cell_width.max(0.0).round() as u32;
@@ -4206,8 +3860,6 @@ fn gesture_geometry(geometry: SelectionGeometry) -> Option<ghostty::GestureGeome
     Some(ghostty::GestureGeometry {
         columns,
         cell_width,
-        // Paneflow measures pointer positions from the grid's own top-left
-        // corner, so the padding libghostty would subtract is already gone.
         padding_left: 0,
         screen_height: height,
     })
@@ -4238,9 +3890,6 @@ fn filter_copyable_selection_text(
     range: Option<SelectionRange>,
     text: Option<String>,
 ) -> Option<String> {
-    // libghostty formats a point-only simple selection as the cell under the
-    // cursor, but that gesture is a focus click, not a copy: dropping it keeps
-    // a bare click from replacing the clipboard with a single character.
     let is_focus_click = matches!(kind, Some(SelectionKind::Simple))
         && range.is_some_and(|range| range.start == range.end);
     (!is_focus_click).then_some(text).flatten()
@@ -4287,11 +3936,6 @@ pub(super) fn modes_from_ghostty(modes: ghostty::Modes) -> Modes {
     result
 }
 
-/// Convert a whole snapshot, every cell from scratch.
-///
-/// The runtime publishes through [`CellMirror`], which only converts the rows
-/// the engine flagged and falls back to the same full conversion; this is
-/// what tests call to check the mirror against.
 #[cfg(test)]
 pub(super) fn content_from_ghostty(content: ghostty::Content) -> Content {
     let cells = cells_from_ghostty(&content.cells);
@@ -4309,8 +3953,6 @@ pub(super) fn content_from_ghostty(content: ghostty::Content) -> Content {
 }
 
 fn cells_from_ghostty(cells: &[ghostty::Cell]) -> Arc<[Cell]> {
-    // A slice iterator reports its exact length, so this is one allocation
-    // written in place, not a `Vec` copied into the `Arc` afterwards.
     cells.iter().map(cell_from_ghostty).collect()
 }
 
@@ -4327,9 +3969,6 @@ fn cell_from_ghostty(cell: &ghostty::Cell) -> Cell {
 }
 
 fn cursor_from_ghostty(content: &ghostty::Content) -> RenderableCursor {
-    // Cells are stored row-major in viewport order, so the cell under the
-    // cursor has a known index. The coordinate check keeps the lookup honest
-    // against a snapshot whose cells were laid out differently.
     let cursor_viewport_line = content.cursor.point.line + content.display_offset as i32;
     let column = content.cursor.point.column;
     let cursor_cell = usize::try_from(cursor_viewport_line)
@@ -4364,41 +4003,17 @@ fn cursor_from_ghostty(content: &ghostty::Content) -> RenderableCursor {
     }
 }
 
-/// The neutral cells the runtime publishes, kept up to date row by row from
-/// the engine's dirty tracking instead of rebuilt from scratch every frame.
-///
-/// Two buffers alternate. The front one sits in `SharedState`, where the
-/// render thread reads it. The back one is the previous front: the publish
-/// that replaced it converted some rows, so the back buffer is missing
-/// exactly those rows, and the next publish brings it up to date by
-/// converting them together with whatever the engine flags next. A snapshot
-/// of a grid that only echoed a keystroke thus converts one row instead of
-/// every row of the pane.
-///
-/// When the render thread still holds the back buffer (it is mid-layout on
-/// the frame before last), or when the grid changed size, the publish
-/// converts every cell into a fresh buffer, which is what every publish did
-/// before. Either way the published cells are identical.
 #[derive(Default)]
 pub(super) struct CellMirror {
     back: Arc<[Cell]>,
-    /// Rows `back` is missing relative to the engine.
     back_stale: Vec<bool>,
-    /// Whether `back` was published by this mirror, so `back_stale` describes
-    /// it. False for the blank grid a session starts with.
     back_valid: bool,
-    /// Rows the latest publish converted: what the buffer it replaced is
-    /// missing once it comes back through [`Self::recycle`].
     last_dirty: Vec<bool>,
-    /// Addresses of the buffer in `SharedState` and of the one just
-    /// published, so `recycle` can tell the mirror's own buffer from a grid
-    /// another writer installed.
     front_address: usize,
     published_address: usize,
 }
 
 impl CellMirror {
-    /// Convert `snapshot` into the next published frame.
     pub(super) fn publish(&mut self, snapshot: ghostty::Content) -> Content {
         let cols = snapshot.cols;
         let rows = snapshot.rows;
@@ -4440,7 +4055,6 @@ impl CellMirror {
         }
     }
 
-    /// Take back the frame the latest publish replaced in `SharedState`.
     pub(super) fn recycle(&mut self, previous: Content) {
         let own =
             !previous.cells.is_empty() && previous.cells.as_ptr().addr() == self.front_address;
@@ -4591,7 +4205,6 @@ mod tests {
         assert_eq!(MAX_QUEUED_INPUT_BYTES, 1024 * 1024);
     }
 
-    /// A gate whose clock starts at `origin`, with no publication yet made.
     fn gate_at(origin: Instant) -> PublishGate {
         PublishGate {
             last_publish: origin,
@@ -4606,8 +4219,6 @@ mod tests {
         let origin = Instant::now();
         let mut gate = gate_at(origin);
         gate.pending = true;
-        // Keystroke echo lands well past the interval: the rate limit must
-        // never add latency to it.
         assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
     }
 
@@ -4619,7 +4230,6 @@ mod tests {
 
         let too_soon = origin + MIN_PUBLISH_INTERVAL - Duration::from_millis(1);
         assert!(!gate.decide(false, too_soon));
-        // Still pending, so the loop shortens its block to the remaining gap.
         assert_eq!(
             gate.next_wake(too_soon),
             Some(Duration::from_millis(1)),
@@ -4628,16 +4238,12 @@ mod tests {
         assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
     }
 
-    /// A pending change held by DEC 2026 must not spin the runtime loop: the
-    /// rate limit has long since elapsed by then, so `next_wake` has to report
-    /// the hold's deadline instead of zero.
     #[test]
     fn a_synchronized_output_hold_parks_the_loop_instead_of_spinning_it() {
         let origin = Instant::now();
         let mut gate = gate_at(origin);
         gate.pending = true;
 
-        // Far past the rate limit, so the naive answer would be zero.
         let opened = origin + MIN_PUBLISH_INTERVAL * 4;
         assert!(!gate.decide(true, opened));
         assert_eq!(
@@ -4651,10 +4257,6 @@ mod tests {
         assert_eq!(gate.next_wake(midway), Some(SYNC_OUTPUT_MAX_HOLD / 2));
     }
 
-    /// Output that trickles in faster than the interval but never queues up
-    /// (a line every two milliseconds, which is what ConPTY delivers for most
-    /// programs) is coalesced the same way a backlog is: the frame is
-    /// deferred to the interval's end, never dropped.
     #[test]
     fn a_trickle_inside_the_interval_is_deferred_to_its_deadline_not_dropped() {
         let origin = Instant::now();
@@ -4671,8 +4273,6 @@ mod tests {
         assert!(gate.decide(false, origin + MIN_PUBLISH_INTERVAL));
     }
 
-    /// One frame per interval, whatever the arrival rate: a 500 Hz trickle
-    /// becomes a stream at the interval's rate, with nothing lost.
     #[test]
     fn a_trickle_publishes_once_per_interval() {
         let interval = Duration::from_millis(2);
@@ -4699,10 +4299,8 @@ mod tests {
         let mut gate = gate_at(origin);
         gate.pending = true;
 
-        // Far past the rate limit, so only DEC 2026 can be holding it.
         let ready = origin + MIN_PUBLISH_INTERVAL * 4;
         assert!(!gate.decide(true, ready));
-        // Closing the bracket releases the same frame on the next wake.
         assert!(gate.decide(false, ready));
     }
 
@@ -4737,8 +4335,6 @@ mod tests {
         assert!(!gate.decide(true, first), "first redraw opens a hold");
         assert!(gate.decide(false, first), "and closing it publishes");
 
-        // A second redraw one full budget later must be held again, not
-        // treated as a continuation of the first.
         gate.pending = true;
         let second = first + SYNC_OUTPUT_MAX_HOLD * 2;
         assert!(!gate.decide(true, second));
@@ -5057,9 +4653,6 @@ mod tests {
         assert_eq!((content.cols, content.rows), (80, 24));
     }
 
-    /// The mirror converts only the rows the engine flags and alternates two
-    /// buffers, so every frame it publishes must equal a full conversion of
-    /// the same snapshot, through partial redraws, a clear, and a scroll.
     #[test]
     fn the_cell_mirror_matches_a_full_conversion_across_partial_frames() {
         let size = ghostty::WindowSize::new(40, 8, 8, 16).expect("valid grid");
@@ -5097,15 +4690,11 @@ mod tests {
             let previous = std::mem::replace(&mut front, published);
             mirror.recycle(previous);
         }
-        // From the third frame on, each publish writes into the buffer it
-        // published two frames earlier instead of allocating.
         assert_eq!(addresses[2], addresses[0]);
         assert_eq!(addresses[3], addresses[1]);
         assert_eq!(addresses[6], addresses[4]);
     }
 
-    /// A frame nobody else holds is reused, one the render thread still holds
-    /// is left alone: the publish then converts into a fresh buffer.
     #[test]
     fn the_cell_mirror_falls_back_to_a_fresh_buffer_while_the_renderer_holds_the_old_one() {
         let size = ghostty::WindowSize::new(20, 4, 8, 16).expect("valid grid");
@@ -5123,14 +4712,11 @@ mod tests {
         };
         let first = publish(&mut terminal, &mut front);
         let second_address = publish(&mut terminal, &mut front).as_ptr().addr();
-        // `first` is still alive here, like a layout pass in flight, so the
-        // third frame cannot be written into it.
         let third = publish(&mut terminal, &mut front);
         assert!(!Arc::ptr_eq(&first, &third));
         let third_address = third.as_ptr().addr();
         drop(first);
         drop(third);
-        // Nothing holds the second and third buffers any more: reused in turn.
         let fourth_address = publish(&mut terminal, &mut front).as_ptr().addr();
         assert_eq!(fourth_address, second_address);
         let fifth_address = publish(&mut terminal, &mut front).as_ptr().addr();
@@ -5156,9 +4742,6 @@ mod tests {
         }
     }
 
-    /// The renderer memoizes a pane's layout on `Content::generation` alone,
-    /// so two frames must never share a stamp even when their grids are
-    /// byte-identical: a cursor blink or a selection is a new frame.
     #[test]
     fn every_published_grid_gets_its_own_generation() {
         let first = content_from_ghostty(empty_ghostty_content(80, 24));
@@ -5178,9 +4761,6 @@ mod tests {
         );
     }
 
-    /// The selection is published in place, without a snapshot. Skipping the
-    /// stamp there would leave the renderer showing the previous selection
-    /// until unrelated output happened to arrive.
     #[test]
     fn republishing_only_the_selection_still_advances_the_generation() {
         let (session, _pending, _events_rx) =
@@ -5200,8 +4780,6 @@ mod tests {
             "expected a new stamp, got {before} then {after}"
         );
 
-        // An identical selection is not a new frame and must not invalidate
-        // every pane's memoized layout.
         update_shared_selection(&session.inner, selection);
         assert_eq!(session.inner.state.read().content.generation, after);
     }
@@ -5371,8 +4949,6 @@ mod tests {
             );
         }
 
-        // One press and one drag: 76 pointer frames collapse into a single
-        // queued drag because the runtime thread has not consumed it yet.
         let queued = pending.mailbox.drain();
         assert_eq!(queued.len(), 2);
         assert!(matches!(queued[0], RuntimeMessage::PressSelection { .. }));
@@ -6034,10 +5610,6 @@ mod tests {
         assert!(lifecycle.take_ready_exit(now, 0).is_some());
     }
 
-    /// Spawn `/bin/sh -c <script>` on its own PTY, the same shape
-    /// `run_runtime` uses, and hand back the pieces the POSIX lifecycle
-    /// helpers operate on. Every assertion below therefore exercises the
-    /// production helper against a real Darwin/Linux process, not a model.
     #[cfg(unix)]
     fn spawn_posix_lifecycle_probe(
         script: &str,
@@ -6069,8 +5641,6 @@ mod tests {
         i32::try_from(pid).expect("a probe PID must fit in pid_t")
     }
 
-    /// Wait for `observe_child_exit` to report the probe's exit without ever
-    /// reaping it, so the caller can re-observe the same status afterwards.
     #[cfg(unix)]
     fn observe_probe_exit(
         child: &mut (dyn portable_pty::Child + Send + Sync),
@@ -6121,8 +5691,6 @@ mod tests {
         assert_eq!(exit.exit_code(), 7, "CLD_EXITED must carry the exit code");
         assert!(exit.signal().is_none());
 
-        // WNOWAIT left the zombie in place, so the leader PID is still
-        // reserved and a second observation sees the same status.
         let again = observe_probe_exit(child.as_mut(), pid);
         assert_eq!(
             again.exit_code(),
@@ -6164,8 +5732,6 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut group_error = None;
         while Instant::now() < deadline {
-            // SAFETY: signal 0 performs no delivery; it only probes whether
-            // any member of the process group still exists.
             if unsafe { libc::kill(-group, 0) } == -1 {
                 group_error = std::io::Error::last_os_error().raw_os_error();
                 break;

@@ -102,10 +102,6 @@ pub struct Surface {
     pub workspace_id: Option<u64>,
     pub workspace: Option<u64>,
     pub scope: String,
-    /// US-019 (`prd-cli-tab-hierarchy`): identity and title of the workspace
-    /// tab owning this surface. Both are additive and absent for surfaces
-    /// outside the CLI tab hierarchy - and absent altogether when talking to a
-    /// Paneflow older than the tab hierarchy, which simply never sends them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -136,9 +132,6 @@ pub struct SurfaceSearchResult {
     pub truncated: bool,
 }
 
-/// Typed, scope-aware adapter over Paneflow's raw JSON IPC transport. MCP
-/// tools and resources share this single canonical path for target resolution,
-/// response validation, and stable-workspace authorization parameters.
 pub struct Bridge<'a, T: IpcTransport + ?Sized> {
     transport: &'a T,
     scope: BridgeScope,
@@ -262,9 +255,6 @@ mod tests {
         })
     }
 
-    /// US-019: the tab is read when the app sends it, and its absence - an
-    /// older Paneflow that predates the tab hierarchy - is not an error and
-    /// leaves the reported payload byte-identical to what it was before.
     #[test]
     fn surface_list_reports_the_owning_tab_and_tolerates_its_absence() {
         let mut tabbed = surface(7, Some(42));
@@ -280,7 +270,6 @@ mod tests {
             "build"
         );
 
-        // Older server: no tab keys at all.
         let transport =
             FakeTransport::new().with("surface.list", json!({"surfaces": [surface(7, Some(42))]}));
         let bridge = Bridge::new(&transport, BridgeScope::Workspace(42));

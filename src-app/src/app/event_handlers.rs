@@ -1,12 +1,3 @@
-//! Event-subscription callbacks and background workers for `PaneFlowApp`.
-//!
-//! Hosts the GPUI `subscribe` handlers (`handle_title_bar_event`,
-//! `handle_pane_event`, `handle_terminal_event`) plus the port-scan /
-//! loader-animation / stale-PID-sweep workers and the CWD change handler.
-//!
-//! Extracted from `main.rs` per US-026 of the src-app refactor PRD - pure
-//! code-motion, behaviour unchanged.
-
 use gpui::{App, AppContext, Context, Entity};
 use notify::Watcher;
 use paneflow_config::schema::TerminalSurfaceProfile;
@@ -18,26 +9,15 @@ use crate::terminal::{self, TerminalView};
 use crate::window_chrome::title_bar;
 use crate::{PaneFlowApp, ai_types};
 
-/// Cross-platform "is this PID still running?" probe used by the AI agent
-/// stale-PID sweep. Unix path preserves the pre-US-034 `kill(pid, 0)` +
-/// `ESRCH` semantics (EPERM ⇒ alive). Windows path mirrors the pattern in
-/// `terminal::pty_session::Drop`: `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
-/// returns NULL for a dead/inaccessible PID. US-034 - keeps `libc::` calls
-/// off the Windows compile path.
 fn pid_is_alive(pid: u32) -> bool {
     #[cfg(unix)]
     {
         if pid > i32::MAX as u32 {
             return false;
         }
-        // SAFETY: `libc::kill` with sig=0 performs error-checking only and
-        // does not deliver a signal. The call takes an i32 pid by value and
-        // has no memory aliasing requirements.
         let ret = unsafe { libc::kill(pid as i32, 0) };
         if ret == -1 {
             let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            // ESRCH = no such process; EPERM/etc. ⇒ process exists but we
-            // can't signal it - keep the entry.
             return errno != libc::ESRCH;
         }
         true
@@ -47,16 +27,10 @@ fn pid_is_alive(pid: u32) -> bool {
     {
         use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Threading::OpenProcess;
-        // PROCESS_QUERY_LIMITED_INFORMATION (winnt.h: 0x1000) - minimum
-        // access right that lets OpenProcess succeed for any visible PID.
-        // Declared locally so we don't require an extra windows-sys feature.
         const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
         if pid == 0 {
             return false;
         }
-        // SAFETY: `OpenProcess` either returns a valid handle that we close,
-        // or NULL. No memory aliasing. `CloseHandle` on a valid handle is
-        // always sound.
         unsafe {
             let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
             if handle.is_null() {
@@ -69,9 +43,6 @@ fn pid_is_alive(pid: u32) -> bool {
 
     #[cfg(not(any(unix, windows)))]
     {
-        // Conservative fallback for exotic targets: never sweep. Better to
-        // keep a stale entry than to drop a live one and confuse the AI
-        // badge state.
         let _ = pid;
         true
     }
@@ -93,23 +64,12 @@ fn split_pane_at_edge(
     true
 }
 
-/// Parse the `starttime` field (22) from `/proc/{pid}/stat` content. The
-/// comm field (2) is parenthesized and may contain spaces and parens
-/// (`(tmux: server)`, `(next-server (v15))`) - split after the LAST `)`
-/// (kernel-guaranteed unambiguous), then take the 20th whitespace field of
-/// the remainder (state is field 3 → index 0, so starttime is index 19).
-/// Platform-neutral pure parsing so the fixture test runs on every host.
 #[cfg(any(target_os = "linux", test))]
 fn parse_proc_stat_starttime(stat: &str) -> Option<u64> {
     let after = stat.rsplit_once(')')?.1;
     after.split_whitespace().nth(19)?.parse::<u64>().ok()
 }
 
-/// OS start time of a process, as an opaque value only ever compared for
-/// equality. Pinned on `AgentSession` at creation and re-probed by the
-/// sweep to detect PID reuse (a recycled PID passes `pid_is_alive` but
-/// carries a different start time). `None` on probe failure (EPERM, dead
-/// process, exotic target) - callers fall back to liveness-only.
 #[cfg(target_os = "linux")]
 pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
     let content = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
@@ -120,8 +80,6 @@ pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
 pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
     use libproc::libproc::bsd_info::BSDInfo;
     use libproc::libproc::proc_pid::pidinfo;
-    // EPERM (SIP-protected targets) and dead-pid races degrade to None -
-    // the caller keeps the conservative liveness-only check.
     let info = pidinfo::<BSDInfo>(pid as i32, 0).ok()?;
     Some(
         info.pbi_start_tvsec
@@ -134,14 +92,10 @@ pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
 pub(crate) fn pid_start_time(pid: u32) -> Option<u64> {
     use windows_sys::Win32::Foundation::{CloseHandle, FILETIME};
     use windows_sys::Win32::System::Threading::{GetProcessTimes, OpenProcess};
-    // Same minimal access right as `pid_is_alive` above.
     const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
     if pid == 0 {
         return None;
     }
-    // SAFETY: `OpenProcess` returns a valid handle (closed below) or NULL;
-    // `GetProcessTimes` writes only into the four provided FILETIMEs, which
-    // are plain-old-data and fully initialized by `zeroed`.
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if handle.is_null() {
@@ -165,10 +119,6 @@ pub(crate) fn pid_start_time(_pid: u32) -> Option<u64> {
     None
 }
 
-/// [`pid_is_alive`] hardened against PID reuse: when the session pinned a
-/// start time at creation, a live PID with a DIFFERENT current start time
-/// is a recycled PID - the original agent is gone. An unknown start time on
-/// either side keeps the conservative "alive" answer.
 fn pid_matches(pid: u32, pinned_start: Option<u64>) -> bool {
     if !pid_is_alive(pid) {
         return false;
@@ -190,25 +140,6 @@ fn keep_session_after_surface_purge(
     session.surface_id.is_some() || pid > i32::MAX as u32 || pid_matches(pid, session.proc_start)
 }
 
-/// Retention rule when a surface's shell comes back to its prompt.
-///
-/// The prompt proves nothing runs in that pane's foreground any more, so a
-/// session still bound to it is finished whether or not its hooks said so.
-/// Two exceptions keep the existing contracts intact:
-///
-/// - an `Errored` row stays sticky until its pane closes (same rule as
-///   [`stale_sweep_keeps_without_pid_probe`]) - the shell reaches its prompt
-///   the instant the agent crashes, and reaping here would wipe the crash
-///   signal before the user could see it;
-/// - a real PID that is still alive with its pinned start time keeps its row,
-///   which is the conservative answer for an agent that backgrounded itself.
-///
-/// Synthetic keys (legacy no-pid frames) cannot be probed, so the prompt is
-/// the only evidence available and they are reaped. `surface_child_pid` is
-/// reaped on the same terms: a session keyed on the pane's own shell is the
-/// last-resort identity a terminal-sourced observation falls back to, and
-/// probing THAT pid asks whether the shell printing this very prompt is
-/// alive, which it always is.
 fn keep_session_at_shell_prompt(
     prompt_surface_id: u64,
     surface_child_pid: u32,
@@ -224,24 +155,6 @@ fn keep_session_at_shell_prompt(
             && pid_matches(pid, session.proc_start))
 }
 
-/// Retention rule when a pane's process scan no longer sees an agent in its
-/// PTY subtree.
-///
-/// The scan is PID-authoritative and re-runs on every activity burst, which
-/// makes it the one "the agent is gone" signal that survives a machine with
-/// no hooks, and it fires whether or not the shell publishes OSC 133 prompt
-/// marks. Three exceptions keep the existing contracts intact:
-///
-/// - an `Errored` row stays sticky until its pane closes, the same rule
-///   [`keep_session_at_shell_prompt`] applies;
-/// - a real PID still alive with its pinned start time keeps its row, so a
-///   scan that missed the process (or a platform whose scanner is a stub)
-///   can never reap a live agent;
-/// - a session keyed on the pane's OWN shell is the case this rule exists
-///   for. That key is the last-resort identity a terminal-sourced
-///   observation falls back to when nothing told it the agent's PID; it
-///   outlives every agent the pane runs, so probing it answers "alive"
-///   forever and the scan is the only evidence available.
 fn keep_session_without_agent_in_pane(
     surface_id: u64,
     surface_child_pid: u32,
@@ -298,18 +211,6 @@ fn scan_workspace_ports(
     ports
 }
 
-/// Whether a scan deposit must LEAVE a launch-declared identity alone.
-///
-/// A launch-declared agent ([`crate::terminal::TerminalView::declare_agent`])
-/// exists before its process does: the shell still has to start and `exec` the
-/// CLI, and the first scan lands inside that window with an empty subtree.
-/// Without this, the deposit would clear the logo the launch had just set and
-/// the next tick would put it back - a visible flicker.
-///
-/// Evidence always wins: a scan that SAW an agent resolves the surface
-/// immediately, whether it confirms the declaration or corrects it. Only the
-/// absence of evidence is deferred, and only until the declared deadline, so a
-/// declaration that never materializes is still cleared.
 fn declaration_survives_scan(
     scanned: Option<crate::agent_launcher::TerminalAgent>,
     declared_until: Option<std::time::Instant>,
@@ -452,15 +353,6 @@ fn announced_port_conflicts(
         .collect()
 }
 
-/// EP-002 US-007: place `pane` in a brand-new workspace tab of `ws_idx` and
-/// make that tab active.
-///
-/// This is where an edgeless drop lands. A pane holds exactly one surface, so
-/// a drop on the center band can no longer append next to the surface already
-/// there, and overwriting it would destroy whatever is running in it - a new
-/// workspace tab is the only placement that keeps both. Returns `false`
-/// without mutating anything when the workspace is at [`MAX_TABS_PER_WORKSPACE`]
-/// (`crate::workspace`); the caller owns the user-facing message.
 fn open_pane_in_new_workspace_tab(
     workspaces: &mut [crate::workspace::Workspace],
     ws_idx: usize,
@@ -475,10 +367,6 @@ fn open_pane_in_new_workspace_tab(
 }
 
 impl PaneFlowApp {
-    /// EP-002 US-007: open `pane` as a brand-new workspace tab of `ws_idx` and
-    /// make it active. Toasts and leaves the workspace untouched when the tab
-    /// cap refuses the insert. See [`open_pane_in_new_workspace_tab`] for the
-    /// rule this enforces.
     pub(crate) fn open_pane_in_new_workspace_tab(
         &mut self,
         ws_idx: usize,
@@ -501,9 +389,6 @@ impl PaneFlowApp {
         match event {
             title_bar::TitleBarEvent::CloseRequested => {
                 self.save_session_blocking(cx);
-                // US-013 AC #2 - flush `app_exited` before the process is
-                // torn down. Bounded to 2 s by the client; if PostHog is
-                // unreachable the worker detaches and quit still proceeds.
                 self.emit_app_exited_and_flush();
                 cx.quit();
             }
@@ -539,10 +424,6 @@ impl PaneFlowApp {
     ) {
         match event {
             pane::PaneEvent::Remove => {
-                // Find the workspace that owns this pane (not necessarily the
-                // active one - shells can exit in background workspaces).
-                // US-003: also resolve *which* tab owns it - a shell can exit
-                // in a background tab just as it can in a background workspace.
                 let Some((ws_idx, tab_idx)) =
                     self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
                         ws.tab_index_containing_pane(&pane).map(|t| (idx, t))
@@ -579,8 +460,6 @@ impl PaneFlowApp {
                     }
                 }
 
-                // Never leave a tab without a pane - respawn at the workspace's
-                // root cwd so the user returns to the right folder.
                 let tab_is_empty = self.workspaces[ws_idx]
                     .tabs()
                     .get(tab_idx)
@@ -598,23 +477,13 @@ impl PaneFlowApp {
                 cx.notify();
             }
             pane::PaneEvent::ToggleAgentSessions => {
-                // Toggle: clicking the icon again with the sidebar open closes it.
                 if self.agent_sessions.sessions_sidebar_open {
                     self.close_sessions_sidebar(cx);
                     return;
                 }
-                // Open + bind + scan, extracted to `sessions_sidebar.rs` so a
-                // workspace switch can re-target the open sidebar through the
-                // exact same path.
                 self.open_sessions_sidebar_for_pane(&pane, None, cx);
             }
             pane::PaneEvent::ToggleDiffDock => {
-                // The dock diffs the pane's *checkout*, not the shell's current
-                // directory: the checkout is the unit the git pipeline operates
-                // on. For a tab bound to a worktree (discussion #41) that is
-                // the tab's worktree, so two tabs of one workspace diff two
-                // different branches instead of both reporting the repository
-                // root.
                 let owner_id = pane.read(cx).workspace_id;
                 let Some(cwd) = self.checkout_for_pane(&pane).or_else(|| {
                     self.workspaces
@@ -627,9 +496,6 @@ impl PaneFlowApp {
                 self.toggle_cli_diff_dock(cwd, cx);
             }
             pane::PaneEvent::OpenPaneMenu { position } => {
-                // EP-002 US-007: open the pane header menu. Mutually exclusive
-                // with the other popovers, matching the workspace/profile/
-                // sessions menu pattern.
                 self.dismiss_transient_surfaces();
                 self.pane_menu_open = Some(crate::PaneContextMenu {
                     pane: pane.clone(),
@@ -643,21 +509,12 @@ impl PaneFlowApp {
                 session_id,
                 cwd,
             } => {
-                // A session row was dropped out of the sidebar onto a pane.
-                // Spawn a fresh terminal at the session's cwd running the
-                // agent's resume command, then split the target pane toward
-                // the previewed edge. EP-002 US-007: the center band no longer
-                // appends a pane-level tab (panes are mono-surface) - it opens
-                // the new surface in a new *workspace* tab instead, via
-                // `open_pane_in_new_workspace_tab`.
                 let edge = *edge;
                 let agent = *agent;
                 let session_id = session_id.clone();
                 let cwd = cwd.clone();
-                let target = pane.clone(); // the emitting pane is the target
+                let target = pane.clone();
 
-                // US-003: the pane cap bounds a tab, so resolve the owning
-                // tab and count (and later mutate) that one.
                 let Some((ws_idx, tab_idx)) =
                     self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
                         ws.tab_index_containing_pane(&target).map(|t| (idx, t))
@@ -666,9 +523,6 @@ impl PaneFlowApp {
                     return;
                 };
 
-                // A split adds one pane to the current tab - refuse at the cap
-                // (edge case #5). A center drop opens its own workspace tab, so
-                // it does not grow this tab's count and isn't capped here.
                 if edge.is_some()
                     && !self.workspaces[ws_idx]
                         .tabs()
@@ -689,9 +543,6 @@ impl PaneFlowApp {
                         cx,
                     )
                 });
-                // Resume the picked session in the new terminal. Honors the
-                // Claude bypass flag exactly like a tab-bar launch. Skips the
-                // send if the id fails the allow-list (defence-in-depth).
                 if let Some(resume) = crate::app::sessions_sidebar::resume_command(
                     agent,
                     &session_id,
@@ -703,8 +554,6 @@ impl PaneFlowApp {
 
                 match edge {
                     Some(edge) => {
-                        // `create_pane` wires the app-level CWD/port subscription
-                        // and the pane-event subscription (mirrors `DropSplit`).
                         let new_pane = self.create_pane(term, ws_id, cx);
                         let inserted = if let Some(root) = self.workspaces[ws_idx]
                             .tab_mut(tab_idx)
@@ -720,11 +569,6 @@ impl PaneFlowApp {
                         self.pending_pane_focus = Some(new_pane);
                     }
                     None => {
-                        // EP-002 US-007: a center drop opens the resumed
-                        // session in a NEW WORKSPACE TAB. The pane is
-                        // mono-surface, so there is no strip to append to and
-                        // overwriting the target's live terminal is not an
-                        // option.
                         let new_pane = self.create_pane(term, ws_id, cx);
                         if !self.open_pane_in_new_workspace_tab(ws_idx, new_pane.clone(), cx) {
                             return;
@@ -739,21 +583,9 @@ impl PaneFlowApp {
                 source_pane_id,
                 edge,
             } => {
-                // A pane was dropped on another pane of the same tab. This is
-                // the pre-EP-002 `DropSplit` gesture rebuilt for mono-surface
-                // panes: `Some(edge)` detaches the source from wherever it sits
-                // and re-inserts it as a split of the target toward that edge
-                // (drop it under a pane, to its right, ...); the center band
-                // makes the two trade places. Either way the pane count is
-                // unchanged, so there is no cap to check and no surface to
-                // spawn or destroy.
-                //
-                // The source is re-resolved by entity id inside the tab that
-                // owns the *target*, so a stale drag (source closed mid-gesture,
-                // or dragged from another tab) is a no-op.
                 let source_pane_id = *source_pane_id;
                 let edge = *edge;
-                let target = pane.clone(); // the emitting pane is the target
+                let target = pane.clone();
                 if target.entity_id().as_u64() == source_pane_id {
                     return;
                 }
@@ -779,15 +611,8 @@ impl PaneFlowApp {
                 };
 
                 let moved = match edge {
-                    // Center band: swap in place, no restructuring.
                     None => root.swap_panes(&source, &target),
                     Some(edge) => {
-                        // Detach then re-insert. `remove_pane` consumes the
-                        // tree, so it is taken out and put back whatever
-                        // happens - a bail must never leave the tab rootless.
-                        // The source pane entity survives the detach (this
-                        // handler holds a strong handle), so its terminal keeps
-                        // running throughout.
                         let Some(mut tree) = self.workspaces[ws_idx]
                             .tab_mut(tab_idx)
                             .and_then(|tab| tab.root.take())
@@ -795,23 +620,11 @@ impl PaneFlowApp {
                             return;
                         };
                         let (pruned, removed) = tree.remove_pane(&source);
-                        // `pruned` is `None` only when the source *was* the whole
-                        // tree, which the `target != source` guard above already
-                        // excludes; treat it as a bail rather than dropping the
-                        // layout on the floor.
                         let mut moved = false;
-                        // `pruned == None` means the tree *was* the source leaf
-                        // alone, so rebuilding it as that leaf restores the
-                        // original layout verbatim.
                         tree = pruned.unwrap_or_else(|| LayoutTree::Leaf(source.clone()));
                         if removed && tree.contains_leaf(&target) {
                             moved = split_pane_at_edge(&mut tree, &target, edge, source.clone());
                             if !moved {
-                                // Unreachable in practice (the target was just
-                                // proven present), but a detached pane must
-                                // never be orphaned: its terminal would keep
-                                // running with no way back to it. Re-attach it
-                                // anywhere rather than lose it.
                                 moved = tree.first_leaf().is_some_and(|anchor| {
                                     tree.split_at_pane(
                                         &anchor,
@@ -836,8 +649,6 @@ impl PaneFlowApp {
             }
             pane::PaneEvent::Split(direction) => {
                 let direction = *direction;
-                // US-003: split into the tab that owns the pane and cap on
-                // that tab's leaf count.
                 let Some((ws_idx, tab_idx)) =
                     self.workspaces.iter().enumerate().find_map(|(idx, ws)| {
                         ws.tabs()
@@ -868,19 +679,10 @@ impl PaneFlowApp {
                     self.show_toast(format!("Maximum pane count reached ({MAX_PANES})"), cx);
                     return;
                 }
-                // EP-005: the header's split buttons ask *what* to launch
-                // instead of dropping a bare shell in the new half. The picker
-                // stands in that half and only splits once a preset is picked,
-                // so both guards above still run first and Escape leaves the
-                // tab untouched.
                 self.open_split_palette(pane, direction, cx);
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Terminal event handling - push-based port detection and CWD tracking
-    // -----------------------------------------------------------------------
 
     pub(crate) fn handle_terminal_event(
         &mut self,
@@ -898,9 +700,6 @@ impl PaneFlowApp {
                 self.handle_cwd_change(&terminal, new_cwd, cx);
             }
             terminal::TerminalEvent::ServiceDetected(info) => {
-                // EP-005 US-014: remember which terminal announced this port
-                // so the next scan can cross-check the announcement against
-                // the actual LISTEN owner (collision badge).
                 terminal.update(cx, |view, _| view.terminal.note_announced_port(info.port));
                 if let Some(ws_idx) = self.workspace_idx_for_terminal(&terminal, cx) {
                     let ws = &mut self.workspaces[ws_idx];
@@ -923,20 +722,12 @@ impl PaneFlowApp {
                 self.open_markdown_in_pane(&terminal, path.clone(), cx);
             }
             terminal::TerminalEvent::FontZoomChanged => {
-                // EP-006 US-019: persist immediately so the zoom survives a
-                // crash, not just a clean quit (SurfaceRenamed parity).
                 self.save_session(cx);
             }
             terminal::TerminalEvent::FleetSearchRequested { query, regex } => {
-                // EP-006 US-018: fan the query out to every pane.
                 self.start_fleet_search(query.clone(), *regex, cx);
             }
             terminal::TerminalEvent::OpenCodePath { path, line, col } => {
-                // Spawn the editor on the GPUI background executor so a
-                // slow editor launch (cold VS Code, remote SSH editor)
-                // never blocks the main thread. `open_at_location`
-                // already log-swallows failures, so we don't need to
-                // surface the result here.
                 let path = path.clone();
                 let line = *line;
                 let col = *col;
@@ -961,36 +752,16 @@ impl PaneFlowApp {
                 }
             }
             terminal::TerminalEvent::ShellPromptReady => {
-                // The shell is back at its prompt: whatever agent this pane
-                // was running has released the foreground. Reap now instead
-                // of waiting <=30 s for the PID sweep, and cover the agents
-                // the hooks never report on (shim SIGKILLed, CLI launched
-                // without hook integration at all).
                 let child_pid = terminal.read(cx).terminal.child_pid;
                 self.reap_sessions_at_shell_prompt(terminal.entity_id().as_u64(), child_pid, cx);
             }
             terminal::TerminalEvent::ChildExited => {
-                // The Pane's own subscription closes the tab; here we drop
-                // the dying surface's agent sessions NOW instead of waiting
-                // ≤30s for the sweep. Covers the paths where the shim's
-                // `ai.exit`/`ai.session_end` never arrive (shim SIGKILLed,
-                // agent launched without the shim).
                 self.purge_sessions_for_surface(terminal.entity_id().as_u64(), cx);
             }
-            // TitleChanged is handled by Pane's subscription
             _ => {}
         }
     }
 
-    /// Feed a pane-sourced observation into the agent-state machine.
-    ///
-    /// Gated on the pane having a known agent, and that gate is the whole
-    /// safety argument for this source: OSC 9;4 and OSC 9 / OSC 777 are
-    /// general-purpose terminal protocols, so a `make` with a progress bar or
-    /// a `notify-send` in a plain shell must not create an agent row. With an
-    /// agent in the pane the same bytes ARE the agent talking - it is the
-    /// channel Claude Code keeps using when a managed-settings policy has
-    /// disabled its hooks.
     fn apply_terminal_agent_observation(
         &mut self,
         terminal: &Entity<TerminalView>,
@@ -1011,19 +782,6 @@ impl PaneFlowApp {
         );
     }
 
-    /// US-020 - append a markdown tab to the pane that owns `source_terminal`.
-    ///
-    /// The historical implementation split the layout vertically and created
-    /// a dedicated markdown pane; the user feedback was that opening a doc
-    /// shouldn't shrink the terminal real-estate. The current behaviour is to
-    /// make markdown a peer tab inside the same pane - the user keeps the
-    /// terminal+markdown pair via Ctrl+Tab / mouse-click, and the layout tree
-    /// is untouched.
-    /// Open a markdown file requested from a terminal surface (OSC path click).
-    ///
-    /// EP-002 US-007: a pane holds one surface, so the file opens in a new
-    /// workspace tab instead of being appended next to the terminal that asked
-    /// for it - the terminal keeps running.
     fn open_markdown_in_pane(
         &mut self,
         source_terminal: &Entity<TerminalView>,
@@ -1050,7 +808,6 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// Find which workspace contains the given terminal entity.
     fn workspace_idx_for_terminal(
         &self,
         terminal: &Entity<TerminalView>,
@@ -1061,17 +818,6 @@ impl PaneFlowApp {
             .position(|ws| ws.any_pane(|pane| pane.read(cx).contains_terminal(terminal)))
     }
 
-    /// Immediately drop agent sessions anchored to a dying surface (the
-    /// shell behind it exited - its tab is closing), plus any real-PID
-    /// session of the same pass whose process is already gone. Surgical
-    /// complement to [`Self::sweep_stale_pids`]: same retention semantics,
-    /// zero latency instead of ≤30s, no Stalled logic. An `Errored` session
-    /// on the dying surface is dropped too - that matches the sweep's
-    /// "sticky until its pane closes" contract, just without the wait.
-    /// Reap the agent sessions a surface still carries once its shell prints
-    /// a fresh prompt. Event-driven complement to [`Self::sweep_stale_pids`]:
-    /// same post-mutation trio, no timer, retention decided by the pure
-    /// [`keep_session_at_shell_prompt`].
     pub(crate) fn reap_sessions_at_shell_prompt(
         &mut self,
         surface_id: u64,
@@ -1098,14 +844,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Reap the agent rows a surface still carries once its process scan
-    /// stops seeing an agent in the pane.
-    ///
-    /// Event-driven complement to [`Self::reap_sessions_at_shell_prompt`],
-    /// for the panes that never publish a prompt mark: same post-mutation
-    /// trio, retention decided by the pure
-    /// [`keep_session_without_agent_in_pane`]. `agentless` pairs each surface
-    /// whose identity the scan just cleared with that surface's PTY child.
     pub(crate) fn reap_sessions_without_agent(
         &mut self,
         agentless: &[(u64, u32)],
@@ -1143,38 +881,21 @@ impl PaneFlowApp {
                 continue;
             }
             let before = ws.agent_sessions.len();
-            ws.agent_sessions.retain(|&pid, session| {
-                // Opportunistic: a session never resolved to a surface can
-                // only be reaped through its PID - probe it now (the dying
-                // shell may have taken the agent with it via SIGHUP).
-                keep_session_after_surface_purge(surface_id, pid, session)
-            });
+            ws.agent_sessions
+                .retain(|&pid, session| keep_session_after_surface_purge(surface_id, pid, session));
             if ws.agent_sessions.len() < before {
                 changed = true;
             }
         }
         if changed {
-            // Same post-mutation trio as the sweep: drop orphan pane glows,
-            // flush queued prompts stranded on the dead session, repaint.
             self.sync_attention(cx);
             self.agent_sessions_changed(cx);
             cx.notify();
         }
     }
 
-    /// Probe registered AI agent PIDs and clean up stale entries where the
-    /// process no longer exists. See [`pid_is_alive`] for the per-platform
-    /// probe (Unix: `kill(pid, 0)` / `ESRCH`; Windows: `OpenProcess` null
-    /// handle; other: conservative keep).
     pub(crate) fn sweep_stale_pids(&mut self, cx: &mut Context<Self>) {
         let mut changed = false;
-        // EP-004 US-010: surfaces that still resolve to a live terminal tab.
-        // An `Errored` session's PID is dead by definition (the binary
-        // exited) - it is spared from the PID reap WHILE its pane lives so
-        // the crash signal stays visible, and reaped here once the pane
-        // closes. An Errored session that never resolved a surface has no
-        // visible anchor beyond the sidebar; it follows the plain PID reap
-        // (≤ 30 s) so unresolvable rows can never accumulate.
         let live_surfaces: std::collections::HashSet<u64> = self
             .workspaces
             .iter()
@@ -1186,11 +907,6 @@ impl PaneFlowApp {
                     .collect::<Vec<_>>()
             })
             .collect();
-        // EP-004 US-011 (cli-cockpit) + US-013 (agent-control-plane): Stalled
-        // detection (default ON, threshold default 60 s, both hot-reload aware
-        // via `cached_config`). The sweep runs every 30 s, so the effective
-        // detection latency is threshold + up to 30 s granularity (documented
-        // in the PRD AC and the JSON-schema description).
         let stall_enabled = self.cached_config.agent_stall_detection_enabled();
         let stall_threshold = std::time::Duration::from_secs(
             self.cached_config.resolved_agent_stall_threshold_secs(),
@@ -1202,13 +918,6 @@ impl PaneFlowApp {
                 continue;
             }
             let before = ws.agent_sessions.len();
-            // Synthetic PIDs (from the upsert fallback for legacy shims
-            // without `pid` on every frame) are stored in the high half
-            // of u32 - outside the OS-assignable range on all supported
-            // platforms - so probing them with `kill(pid, 0)` would
-            // always say "dead" and immediately drop a live legacy
-            // session. Keep them around: they'll be cleared by
-            // `ai.session_end` or by the next state transition.
             ws.agent_sessions.retain(|&pid, session| {
                 stale_sweep_keeps_without_pid_probe(pid, session, &live_surfaces)
                     || pid_matches(pid, session.proc_start)
@@ -1216,11 +925,6 @@ impl PaneFlowApp {
             if ws.agent_sessions.len() < before {
                 changed = true;
             }
-            // US-011: a `Thinking` session silent past the threshold flips
-            // to `Stalled`. Only `Thinking` flips, so the once-per-episode
-            // notification dedup is structural: the session stays Stalled
-            // (this branch can't re-trigger) until a hook event revives it,
-            // and a NEW episode requires a fresh Thinking phase first.
             if stall_enabled {
                 for session in ws.agent_sessions.values_mut() {
                     if session
@@ -1228,10 +932,6 @@ impl PaneFlowApp {
                         .stalls_after(session.last_activity.elapsed(), stall_threshold)
                     {
                         session.state = ai_types::AgentState::Stalled;
-                        // This write bypasses `upsert_session_state`, so hold
-                        // its invariant by hand: only WaitingForInput carries
-                        // a wait stamp. A Thinking row is already None, but
-                        // clear defensively rather than rely on that.
                         session.waiting_since = None;
                         stalled_notifs.push((
                             session.tool,
@@ -1244,19 +944,10 @@ impl PaneFlowApp {
             }
         }
         if changed {
-            // US-018 (orchestration-v2): a swept session may have been
-            // driving a pane glow - resync so no orphan attention survives.
             self.sync_attention(cx);
-            // EP-001 US-003 (cli-cockpit): a swept `Thinking` session leaves
-            // a bare shell - flush (or drop) its queued prompt now, else the
-            // buffer and the "1 queued" chip strand forever (no further
-            // `ai.*` frame will ever arrive for the dead session).
             self.agent_sessions_changed(cx);
             cx.notify();
         }
-        // EP-004 US-011: fire AFTER the state writes so the notification and
-        // the UI agree. One entry per Thinking→Stalled transition == one
-        // notification per stall episode (PRD dedup AC).
         for (agent, title, silent_secs) in stalled_notifs {
             super::ipc_handler::fire_stalled_notification(
                 agent,
@@ -1268,15 +959,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// True when a live surface in this workspace has never been resolved by a
-    /// scan (`child_pid > 0` but still not `agent_confirmed`).
-    ///
-    /// This is the "identity not settled yet" predicate, and it is
-    /// self-extinguishing: every deposit confirms every root it was handed, so
-    /// it goes false after one complete pass and stays false for the rest of
-    /// the surface's life. Both the debounce skip and the ladder re-arm below
-    /// key off it, which is what keeps them from turning into a permanent
-    /// scan loop under sustained agent output.
     fn has_unscanned_surface(&self, ws_idx: usize, cx: &Context<Self>) -> bool {
         self.workspaces.get(ws_idx).is_some_and(|ws| {
             ws.collect_panes().iter().any(|pane| {
@@ -1288,22 +970,6 @@ impl PaneFlowApp {
         })
     }
 
-    /// Schedule a debounced port-scan ladder for the given workspace.
-    ///
-    /// `port_scan_pending` absorbs bursts while a ladder is in flight: the
-    /// old design bumped the generation on EVERY burst, so sustained output
-    /// (an agent streaming for a minute) superseded the 500ms-debounced scan
-    /// over and over and no scan ran until the terminal went quiet. The
-    /// generation counter stays as the cancellation belt for workspace
-    /// close/reuse.
-    ///
-    /// Two carve-outs exist for identity, which unlike ports must feel
-    /// instantaneous. A workspace holding a never-scanned surface skips the
-    /// debounce entirely, and a ladder that absorbed such a surface's burst
-    /// re-arms itself the moment it ends instead of leaving that pane
-    /// unidentified for a whole ladder (up to ~8.5s). Both are gated on
-    /// [`Self::has_unscanned_surface`], so they cannot outlive the first
-    /// successful deposit.
     fn schedule_port_scan(&mut self, ws_idx: usize, cx: &mut Context<Self>) {
         let unscanned = self.has_unscanned_surface(ws_idx, cx);
         let ws = &mut self.workspaces[ws_idx];
@@ -1317,14 +983,10 @@ impl PaneFlowApp {
 
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                // Debounce: wait 500ms for activity to settle - skipped while a
-                // surface still has no scanned identity, so a freshly launched
-                // pane resolves on this burst rather than half a second later.
                 if !unscanned {
                     smol::Timer::after(std::time::Duration::from_millis(500)).await;
                 }
 
-                // Burst scan at 0s, +2s, +6s after debounce
                 for delay_ms in [0u64, 2000, 6000] {
                     if delay_ms > 0 {
                         smol::Timer::after(std::time::Duration::from_millis(delay_ms)).await;
@@ -1340,10 +1002,6 @@ impl PaneFlowApp {
                     }
                 }
 
-                // Re-arm regardless of how the ladder ended - the next
-                // ActivityBurst starts a fresh one. A pane launched *during*
-                // this ladder had its burst absorbed above, so relaunch
-                // immediately rather than make it wait for the next burst.
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
                         let Some(ws_idx) = app.workspaces.iter().position(|ws| ws.id == ws_id)
@@ -1376,18 +1034,12 @@ impl PaneFlowApp {
         }
     }
 
-    /// Execute a single per-pane scan for a workspace (EP-005 US-012).
-    /// Returns `false` if the scan should be aborted (generation superseded
-    /// or workspace removed).
     fn run_port_scan(&mut self, ws_id: u64, generation: u64, cx: &mut Context<Self>) -> bool {
         let ws = match self.workspaces.iter().find(|ws| ws.id == ws_id) {
             Some(ws) if ws.port_scan_generation == generation => ws,
             _ => return false,
         };
 
-        // (terminal entity id, PTY child pid) pairs - the scan partitions
-        // the process walk per terminal subtree instead of flattening the
-        // workspace into one pid pool.
         let roots: Vec<(u64, u32)> = ws
             .collect_panes()
             .iter()
@@ -1410,10 +1062,6 @@ impl PaneFlowApp {
 
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                // One unified subtree walk per tick feeds ports AND agent
-                // identity (the pre-refactor code walked the descendants
-                // once for each - this is the strictly-cheaper single pass,
-                // US-012 cost contract).
                 let mut scan = smol::unblock(move || {
                     let agent_binaries: Vec<&'static str> =
                         crate::agent_launcher::TerminalAgent::ALL
@@ -1423,12 +1071,6 @@ impl PaneFlowApp {
                     crate::workspace::scan_panes(&roots, &agent_binaries)
                 })
                 .await;
-                // A submitted root that produced no entry HAS been answered:
-                // the answer is "nothing". Materializing it keeps "no entry"
-                // meaning only "this surface was never submitted" (a pane born
-                // after root collection), which is what the deposit's skip and
-                // the ladder's identity re-arm both rely on to terminate - on
-                // the platforms whose scanner is a stub, every root lands here.
                 for key in submitted {
                     scan.entry(key).or_default();
                 }
@@ -1443,15 +1085,6 @@ impl PaneFlowApp {
         true
     }
 
-    /// Deposit a finished per-pane scan on the main thread (EP-005).
-    ///
-    /// Writes the per-terminal truth (identity-pill agent US-013, port
-    /// badges + collision flags US-014) onto each LIVE terminal, then
-    /// refreshes the workspace aggregates the sidebar reads - fed with the
-    /// union of the per-pane results, identically to the pre-refactor flat
-    /// scan (zero sidebar regression, US-012 AC). A pane closed between
-    /// scan and deposit is naturally dropped: the deposit iterates the
-    /// live tree, so its scan entry never matches.
     fn apply_pane_scan(
         &mut self,
         ws_id: u64,
@@ -1467,7 +1100,6 @@ impl PaneFlowApp {
             return;
         };
 
-        // Workspace aggregates (sidebar contract).
         let mut changed = merge_scan_workspace_state(
             &mut ws.active_ports,
             &mut ws.service_labels,
@@ -1475,12 +1107,8 @@ impl PaneFlowApp {
             &scan,
         );
 
-        // Snapshot for the per-terminal announce-dedup purge below (ends the
-        // mutable borrow region cleanly before the pane loop).
         let live_ports: Vec<u16> = ws.active_ports.clone();
 
-        // Frontend URLs for live per-terminal service state (sidebar parity:
-        // only frontend services get a link, backend ports stay textual).
         let frontend_urls: std::collections::HashMap<u16, String> = ws
             .service_labels
             .iter()
@@ -1490,23 +1118,8 @@ impl PaneFlowApp {
 
         let leaves: Vec<gpui::Entity<crate::pane::Pane>> = ws.collect_panes();
 
-        // US-014 collision pre-pass: port → owning terminal. A port
-        // LISTENed by ≥ 2 subtrees is excluded - that is SO_REUSEPORT-style
-        // sharding (nginx workers, `reusePort` servers), intentional load
-        // balancing, not a collision. Other known false positives (proxies,
-        // port-forwards, re-announcements after a restart) are tolerated in
-        // v1 - the badge is an info-level heuristic, never blocking.
         let (owner, shared) = port_ownership(&scan);
 
-        // Owner display names for the conflict tooltip (custom name, else
-        // OSC title, else a stable surface reference). The OSC title is
-        // UNTRUSTED terminal-controlled text and this tooltip is a new sink
-        // for it: strip bidi/zero-width controls (an RLO could visually
-        // reverse the surrounding `port N is owned by "…"` and spoof the
-        // owner) and clamp the length (an unbounded title would otherwise
-        // inflate the tooltip and this per-tick map). The custom name is
-        // user-typed and already bounded, but it rides the same scrub -
-        // one path, no exceptions.
         let mut display_names: std::collections::HashMap<u64, String> =
             std::collections::HashMap::new();
         for pane in &leaves {
@@ -1530,9 +1143,6 @@ impl PaneFlowApp {
             }
         }
 
-        // Surfaces whose agent identity this deposit clears, paired with their
-        // PTY child. An agent that leaves its pane takes its sidebar row with
-        // it, and on a machine with no hooks this scan is what says so.
         let mut agentless: Vec<(u64, u32)> = Vec::new();
 
         for pane in &leaves {
@@ -1541,9 +1151,6 @@ impl PaneFlowApp {
             let mut pane_changed = false;
             for tv in terminals {
                 let tid = tv.entity_id().as_u64();
-                // A terminal spawned after the scan's root collection has no
-                // entry - leave it untouched (the burst's next tick or the
-                // next activity scan covers it).
                 let Some(s) = scan.get(&tid) else {
                     continue;
                 };
@@ -1553,11 +1160,6 @@ impl PaneFlowApp {
                     .and_then(|b| crate::agent_launcher::TerminalAgent::from_binary(b));
                 tv.update(cx, |view, _cx| {
                     let t = &mut view.terminal;
-                    // A port that left LISTEN must become re-announceable -
-                    // a dev server restarted inside a live shell (nodemon,
-                    // plain re-run) re-prints its banner, and that line must
-                    // re-fire ServiceDetected (the dedup was previously
-                    // cleared only on ChildExit).
                     t.retain_reported_ports(&live_ports);
                     let in_grace = declaration_survives_scan(
                         agent,
@@ -1567,9 +1169,6 @@ impl PaneFlowApp {
                     if !in_grace {
                         t.agent_declared_until = None;
                         if t.detected_agent != agent || !t.agent_confirmed {
-                            // The live scan owns the value from here on - this
-                            // both confirms a declared or restored "last known"
-                            // pill and clears a stale one (US-013).
                             if agent.is_none() && t.detected_agent.is_some() {
                                 agentless.push((tid, t.child_pid));
                             }
@@ -1605,8 +1204,6 @@ impl PaneFlowApp {
                 });
             }
             if pane_changed {
-                // The tab strip renders from the terminals' state - nudge
-                // the pane so the pill/badges repaint on this frame.
                 pane.update(cx, |_, cx| cx.notify());
                 changed = true;
             }
@@ -1619,19 +1216,12 @@ impl PaneFlowApp {
         }
     }
 
-    /// Handle a CWD change from a terminal. Only processes if the terminal is
-    /// the active tab of a pane in its workspace (background terminals ignored).
     fn handle_cwd_change(
         &mut self,
         terminal: &Entity<TerminalView>,
         new_cwd: &str,
         cx: &mut Context<Self>,
     ) {
-        // Find the tab holding this terminal, in any workspace. Every tab, not
-        // just the active one: a pane that walks into another checkout gives
-        // its tab an identity whether or not you are looking at it.
-        // US-020: skip markdown panes - they have no active terminal, so the
-        // identity check via `active_terminal_opt` returns None for them.
         let located = self.workspaces.iter().enumerate().find_map(|(ws_idx, ws)| {
             ws.tabs()
                 .iter()
@@ -1655,13 +1245,6 @@ impl PaneFlowApp {
             return;
         }
 
-        // US-019: capture the stable workspace id, NOT the positional index.
-        // The git probe below awaits (long on big repos / network FS); during
-        // that await the main loop can run close/reorder/IPC-close and compact
-        // the `Vec`, so a reused `ws_idx` would point at a *different*
-        // workspace (silent git-state corruption + watch refcount desync).
-        // Re-resolve the index by identity after the await - model:
-        // `run_port_scan` / `spawn_initial_git_stats`.
         let ws_id = self.workspaces[ws_idx].id;
         let tab_id = self.workspaces[ws_idx].tabs()[tab_idx].id;
         let ws_repo_root = self.workspaces[ws_idx].repo_root.clone();
@@ -1669,7 +1252,6 @@ impl PaneFlowApp {
 
         let new_cwd_owned = new_cwd.to_string();
 
-        // Run git probe off main thread
         cx.spawn({
             let new_cwd = new_cwd_owned.clone();
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
@@ -1679,8 +1261,6 @@ impl PaneFlowApp {
                         let git_dir = crate::workspace::find_git_dir(&cwd);
                         let (branch, is_repo) = crate::workspace::detect_branch(&cwd);
                         let stats = crate::workspace::GitDiffStats::from_cwd(&cwd);
-                        // Which checkout of which repository the pane is now
-                        // in. All file reads under `.git`, no subprocess.
                         let checkout = git_dir.as_deref().map(|dir| {
                             let (repo_root, is_worktree) = crate::workspace::resolve_repo_root(dir);
                             let root = crate::workspace::resolve_worktree_root(
@@ -1698,20 +1278,10 @@ impl PaneFlowApp {
 
                 let _ = cx.update(|cx| {
                     this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                        // Re-resolve by identity: the workspace may have been
-                        // closed or reordered during the await.
                         let Some(ws_idx) = app.workspaces.iter().position(|ws| ws.id == ws_id)
                         else {
                             return;
                         };
-                        // The pane walked into another checkout of the same
-                        // repository - an agent that made itself a worktree,
-                        // typically. That is this TAB's identity now, and it
-                        // must not be written onto the workspace: the other
-                        // tabs still work in the repository's own checkout,
-                        // and until now this branch landed on `ws.cwd`'s git
-                        // state, showing every one of them a branch none of
-                        // them was on.
                         if let Some((repo_root, checkout)) = checkout
                             && repo_root.is_some()
                             && repo_root == ws_repo_root
@@ -1733,27 +1303,18 @@ impl PaneFlowApp {
                             }
                             return;
                         }
-                        // A `cd` inside a background tab says nothing about
-                        // the workspace's own checkout: only the tab you are
-                        // looking at moves the workspace's git state, as it
-                        // did before tabs had an identity of their own.
                         if !is_active_tab {
                             return;
                         }
-                        // Unwatch old git dir
                         let old_git_dir = app.workspaces[ws_idx].git_dir.clone();
                         if let Some(ref dir) = old_git_dir {
                             app.unwatch_git_dir(dir);
                         }
-                        // Update workspace git tracking (cwd stays fixed at creation -
-                        // it represents the workspace's root folder and must not drift
-                        // when the user `cd`s inside the shell).
                         let tracked_cwd = {
                             let ws = &mut app.workspaces[ws_idx];
                             ws.git_dir = git_dir.clone();
                             ws.cwd.clone()
                         };
-                        // Watch new git dir
                         if let Some(ref dir) = git_dir {
                             let count = app.git_watch_counts.entry(dir.clone()).or_insert(0);
                             *count += 1;
@@ -1780,13 +1341,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// US-013: populate a freshly-created workspace's `git diff --shortstat`
-    /// stats off the GPUI main thread. The constructors build with
-    /// `git_stats: default()` (0/0) so the blocking `git` subprocess never runs
-    /// on the render thread; this spawns it via `smol::unblock` and re-injects
-    /// the result, keyed by the stable `ws_id` (another workspace may be
-    /// created/closed during the await - EP-003 identity model). Mirrors
-    /// [`handle_cwd_change`].
     pub(crate) fn spawn_initial_git_stats(ws_id: u64, cwd: String, cx: &mut Context<Self>) {
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
@@ -1832,13 +1386,10 @@ mod tests {
 
     #[test]
     fn proc_stat_starttime_survives_hostile_comm_names() {
-        // Plain comm: starttime is the 22nd field (9876543 here).
         let plain = "1234 (zsh) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 9876543 123 456 18446744073709551615";
         assert_eq!(parse_proc_stat_starttime(plain), Some(9876543));
-        // Comm with spaces AND parens - split must anchor on the LAST ')'.
         let hostile = "1234 (next-server (v15)) S 1 1234 1234 0 -1 4194304 0 0 0 0 5 3 0 0 20 0 11 0 424242 123 456";
         assert_eq!(parse_proc_stat_starttime(hostile), Some(424242));
-        // Truncated content (fewer than 22 fields) yields None, not a panic.
         assert_eq!(parse_proc_stat_starttime("1234 (zsh) S 1 1234"), None);
         assert_eq!(parse_proc_stat_starttime(""), None);
     }
@@ -1854,28 +1405,18 @@ mod tests {
 
     #[test]
     fn shell_prompt_reaps_the_surface_it_fired_on() {
-        // A synthetic key can't be probed, so the prompt is the only evidence
-        // available and the row goes.
         const SHELL: u32 = 4242;
         let mut thinking = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Thinking);
         thinking.surface_id = Some(7);
         assert!(!keep_session_at_shell_prompt(7, SHELL, u32::MAX, &thinking));
-        // Another pane's prompt says nothing about this session.
         assert!(keep_session_at_shell_prompt(8, SHELL, u32::MAX, &thinking));
 
-        // A row keyed on the pane's own shell goes with the prompt too: that
-        // pid outlives every agent the pane runs, so probing it proves
-        // nothing.
         assert!(!keep_session_at_shell_prompt(7, SHELL, SHELL, &thinking));
 
-        // An Errored row stays sticky until its pane closes: the shell prints
-        // its prompt the instant the agent crashes.
         let mut errored = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Errored);
         errored.surface_id = Some(7);
         assert!(keep_session_at_shell_prompt(7, SHELL, u32::MAX, &errored));
 
-        // A live real PID with a matching start time survives - the current
-        // process is our own, so the probe is guaranteed to answer "alive".
         let mut backgrounded = AgentSession::new(TerminalAgent::Codex, AgentState::Thinking);
         backgrounded.surface_id = Some(7);
         let own_pid = std::process::id();
@@ -1890,21 +1431,16 @@ mod tests {
 
     #[test]
     fn a_pane_that_lost_its_agent_drops_the_row_keyed_on_its_own_shell() {
-        // The failure this prevents: quitting Claude Code leaves the pane's
-        // shell alive, so a row keyed on that shell probes "alive" forever
-        // and the attention bell never clears.
         const SHELL: u32 = 4242;
         let mut waiting = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::WaitingForInput);
         waiting.surface_id = Some(7);
         assert!(!keep_session_without_agent_in_pane(
             7, SHELL, SHELL, &waiting
         ));
-        // Another pane's scan says nothing about this session.
         assert!(keep_session_without_agent_in_pane(
             8, SHELL, SHELL, &waiting
         ));
 
-        // A synthetic key cannot be probed either, so the scan decides.
         assert!(!keep_session_without_agent_in_pane(
             7,
             SHELL,
@@ -1912,15 +1448,12 @@ mod tests {
             &waiting
         ));
 
-        // An Errored row stays sticky until its pane closes.
         let mut errored = AgentSession::new(TerminalAgent::ClaudeCode, AgentState::Errored);
         errored.surface_id = Some(7);
         assert!(keep_session_without_agent_in_pane(
             7, SHELL, SHELL, &errored
         ));
 
-        // A live agent PID survives a scan that failed to see it - our own
-        // process is the one probe guaranteed to answer "alive".
         let mut backgrounded = AgentSession::new(TerminalAgent::Codex, AgentState::Thinking);
         backgrounded.surface_id = Some(7);
         let own_pid = std::process::id();
@@ -1994,9 +1527,6 @@ mod tests {
         assert!(info.is_frontend);
     }
 
-    // A launch declaration must survive the scans that run before the shell
-    // has `exec`ed the CLI, but must never outlive its deadline nor override
-    // what the scan actually saw.
     #[test]
     fn declaration_survives_only_absent_evidence_before_its_deadline() {
         use crate::agent_launcher::TerminalAgent;
@@ -2004,19 +1534,14 @@ mod tests {
         let future = now.checked_add(std::time::Duration::from_secs(5));
         let past = now.checked_sub(std::time::Duration::from_secs(5));
 
-        // Declared, process not up yet: keep the logo.
         assert!(declaration_survives_scan(None, future, now));
-        // Declared but the deadline passed: the declaration was wrong, clear it.
         assert!(!declaration_survives_scan(None, past, now));
-        // Never declared (a restored "last known" value): the first scan owns it.
         assert!(!declaration_survives_scan(None, None, now));
-        // Evidence always wins, confirming...
         assert!(!declaration_survives_scan(
             Some(TerminalAgent::ClaudeCode),
             future,
             now
         ));
-        // ...or correcting a wrong declaration, without waiting for the deadline.
         assert!(!declaration_survives_scan(
             Some(TerminalAgent::Codex),
             future,
@@ -2226,10 +1751,6 @@ mod tests {
         );
     }
 
-    /// EP-002 US-007: an edgeless drop (`DropSessionSplit` with `edge: None`,
-    /// i.e. the center band) opens a NEW workspace tab. The pane it was dropped
-    /// on is mono-surface, so this proves the drop never evicts the surface
-    /// already running there.
     #[gpui::test]
     fn edgeless_drop_opens_a_new_workspace_tab(cx: &mut gpui::TestAppContext) {
         use gpui::AppContext;
@@ -2249,7 +1770,6 @@ mod tests {
             crate::layout::LayoutTree::Leaf(target.clone()),
         )];
 
-        // The center band resolves to no edge, which is what routes here.
         assert_eq!(
             crate::pane_drag::compute_drop_edge(
                 100.0,
@@ -2282,7 +1802,6 @@ mod tests {
             Some(vec![dropped]),
             "the new tab holds the dropped surface alone"
         );
-        // The target pane is untouched: same tab, same surface, still running.
         assert_eq!(
             workspaces[0].tabs()[0]
                 .root
@@ -2296,7 +1815,6 @@ mod tests {
             "the pane dropped onto keeps its own surface"
         );
 
-        // At the tab cap the insert is refused and nothing is mutated.
         while workspaces[0].tab_count() < crate::workspace::MAX_TABS_PER_WORKSPACE {
             assert!(workspaces[0].open_tab(crate::workspace::Tab::empty()));
         }

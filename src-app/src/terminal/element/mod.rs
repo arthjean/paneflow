@@ -1,8 +1,3 @@
-//! Terminal cell renderer using GPUI's Element trait.
-//!
-//! Renders terminal cells from a backend-neutral snapshot as batched text runs
-//! full ANSI color support, cell attributes, and background quads.
-
 use std::sync::{Arc, Mutex};
 
 use gpui::{
@@ -42,52 +37,27 @@ pub use hyperlink::{
     is_url_scheme_openable,
 };
 
-// US-007: re-export APCA primitives so theme code (and theme tests) can
-// derive and verify a contrast-validated `selection_foreground` color
-// without duplicating the algorithm. `ensure_minimum_contrast` is also
-// used locally by `build_layout` (cell-vs-bg pass); `apca_contrast` is
-// referenced only by theme tests but must be re-exported through this
-// module to honour `pub(crate)` visibility.
-#[allow(unused_imports)] // re-exported for theme tests; not used inside this module
+#[allow(unused_imports)]
 pub(crate) use color::apca_contrast;
 pub(crate) use color::ensure_minimum_contrast;
-// US-015: re-export the scrollbar geometry so the view's mouse handlers
-// (`crate::terminal::input`) can hit-test against the painted strip. `paint`
-// is a private module, so the type must surface through `element`.
 pub(crate) use paint::scrollbar::ScrollbarMetrics;
 
-/// APCA minimum Lc (lightness contrast) threshold.
-/// Lc 45 is "minimum for large fluent text" per ARC Bronze Simple Mode - matches Zed's default.
-/// APCA is more accurate than WCAG 2.0 on dark backgrounds (polarity-aware, perceptually uniform).
 pub(crate) const MIN_APCA_CONTRAST: f32 = 45.0;
 
-/// Returns `true` for characters whose colors should be preserved exactly
-/// (no contrast adjustment). Covers box-drawing, block elements, geometric
-/// shapes, and Powerline separator symbols.
 fn is_decorative_character(ch: char) -> bool {
     matches!(
         ch as u32,
-        0x2500..=0x257F   // Box Drawing (─ │ ┌ ┐ └ ┘ etc.)
-        | 0x2580..=0x259F // Block Elements (▀ ▄ █ ░ ▒ ▓ etc.)
-        | 0x25A0..=0x25FF // Geometric Shapes (■ ▶ ● etc.)
-        | 0xE0B0..=0xE0B7 // Powerline: right/left arrows
-        | 0xE0B8..=0xE0BF // Powerline: bottom/top triangles
-        | 0xE0C0..=0xE0CA // Powerline: flame, pixel separators
-        | 0xE0CC..=0xE0D1 // Powerline: waveform, hex (excludes 0xE0CB)
-        | 0xE0D2..=0xE0D7 // Powerline: trapezoids, inverted triangles
+        0x2500..=0x257F
+        | 0x2580..=0x259F
+        | 0x25A0..=0x25FF
+        | 0xE0B0..=0xE0B7
+        | 0xE0B8..=0xE0BF
+        | 0xE0C0..=0xE0CA
+        | 0xE0CC..=0xE0D1
+        | 0xE0D2..=0xE0D7
     )
 }
 
-/// US-007: returns `true` if a cell at `point` (viewport coordinates) lies
-/// inside the active `SelectionRange` (whose `start`/`end` are in scrollback
-/// coordinates and require `display_offset` correction). Mirrors the
-/// `selection_rects` generation block below - first/last/middle line ranges
-/// for linear selections, axis-aligned rectangle for block selections.
-///
-/// Used inside the cell loop to override the cell's `fg` with the theme's
-/// `selection_foreground`, guaranteeing readable text under the selection
-/// quad on themes whose `selection` background is close in luminance to
-/// common ANSI colors.
 fn is_cell_in_selection(point: GridPoint, sel: &SelectionRange, display_offset: usize) -> bool {
     let start_line = sel.start.line.0 + display_offset as i32;
     let end_line = sel.end.line.0 + display_offset as i32;
@@ -111,7 +81,6 @@ fn is_cell_in_selection(point: GridPoint, sel: &SelectionRange, display_offset: 
         return cell_line >= l_min && cell_line <= l_max && cell_col >= c_min && cell_col <= c_max;
     }
 
-    // Linear selection: normalize so (s_line, s_col) is reading-order start.
     let ((s_line, s_col), (e_line, e_col)) =
         if start_line < end_line || (start_line == end_line && start_col <= end_col) {
             ((start_line, start_col), (end_line, end_col))
@@ -131,15 +100,10 @@ fn is_cell_in_selection(point: GridPoint, sel: &SelectionRange, display_offset: 
     }
 }
 
-/// Merge vertically adjacent background rects that share the same column span
-/// and color, reducing the number of paint_quad() calls. The input rects are
-/// already horizontally merged (same-row, same-color, contiguous columns).
 fn merge_background_regions(mut rects: Vec<LayoutRect>) -> Vec<LayoutRect> {
     if rects.len() <= 1 {
         return rects;
     }
-    // Sort by (col, num_cols, color bits, line) so vertically adjacent candidates
-    // are consecutive in the list.
     rects.sort_unstable_by(|a, b| {
         a.col
             .cmp(&b.col)
@@ -212,8 +176,6 @@ fn resolved_cell_background(
     };
 
     if matches!(raw_bg, Color::Named(NamedColor::Background)) {
-        // Default-background cells paint nothing: the pane card behind the
-        // element owns the fill, and only it is clipped to the card radius.
         gpui::transparent_black()
     } else {
         terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme)
@@ -229,10 +191,6 @@ fn selection_marker_color() -> Hsla {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Layout types
-// ---------------------------------------------------------------------------
-
 #[derive(Clone, Copy, PartialEq)]
 pub struct CellDimensions {
     pub cell_width: Pixels,
@@ -247,9 +205,6 @@ pub struct TerminalFrameMetrics {
 }
 
 struct BatchedTextRun {
-    /// US-047: `SharedString` (not `String`) so the per-frame paint pass
-    /// (`shape_line`) refcount-bumps the text instead of deep-copying it +
-    /// re-wrapping into an `Arc<str>` every frame. Built once per flush.
     text: SharedString,
     font: Font,
     color: Hsla,
@@ -267,14 +222,11 @@ struct LayoutRect {
     color: Hsla,
 }
 
-/// A block/half-block character rendered as a filled quad instead of a font glyph.
-/// This eliminates subpixel gaps between adjacent block elements in pixel art (logos, etc.).
 struct BlockQuad {
     line: i32,
     col: usize,
-    num_cols: usize, // 2 for wide chars
+    num_cols: usize,
     color: Hsla,
-    /// Fractional coverage of the cell: (x_start, y_start, width, height) in 0.0..1.0
     coverage: (f32, f32, f32, f32),
 }
 
@@ -294,9 +246,6 @@ struct BoxDrawingGlyph {
     shape: BoxDrawingShape,
 }
 
-/// Map the single-stroke box glyphs used by terminal TUIs to geometry. These
-/// glyphs must meet at exact cell boundaries, which font advances cannot
-/// guarantee across font fallback and fractional scaling.
 fn box_drawing_shape(c: char) -> Option<BoxDrawingShape> {
     let shape = match c {
         '─' => (true, true, false, false, false),
@@ -325,85 +274,39 @@ fn box_drawing_shape(c: char) -> Option<BoxDrawingShape> {
     })
 }
 
-/// If `c` is a Unicode block element, return its fractional cell coverage as
-/// a slice of `(x, y, w, h)` rects (origin at the cell's top-left, in 0..1).
-/// Returns `None` for characters that should be rendered as normal glyphs.
-///
-/// Most block-element codepoints are a single rectangle, but the multi-quadrant
-/// chars (`▙ ▚ ▛ ▜ ▞ ▟`) need 2 rects each - that's why this returns a slice.
-/// Each emitted rect becomes one [`BlockQuad`] at the call site, all sharing
-/// the same outer cell boundaries through [`geometry::cell_x_boundaries`].
-///
-/// US-005 fallback: extension beyond the original `U+2580..U+2590` range, after
-/// the pixel probe revealed Claude Code's banner robot uses single + multi
-/// quadrant blocks (`U+2596..U+259F`) and the upper one-eighth block (`U+2594`).
-/// Without this extension these codepoints fall back to font glyphs that don't
-/// fully fill the cell, producing the visible vertical gaps documented in the
-/// `debug_block_char_rendering.md` memory.
 fn block_char_coverages(c: char) -> Option<&'static [(f32, f32, f32, f32)]> {
     match c {
-        // U+2580..U+2590 - half / eighth blocks (one rect each)
-        '▀' => Some(&[(0.0, 0.0, 1.0, 0.5)]), // U+2580 Upper half
-        '▁' => Some(&[(0.0, 7.0 / 8.0, 1.0, 1.0 / 8.0)]), // U+2581 Lower 1/8
-        '▂' => Some(&[(0.0, 6.0 / 8.0, 1.0, 2.0 / 8.0)]), // U+2582 Lower 1/4
-        '▃' => Some(&[(0.0, 5.0 / 8.0, 1.0, 3.0 / 8.0)]), // U+2583 Lower 3/8
-        '▄' => Some(&[(0.0, 0.5, 1.0, 0.5)]), // U+2584 Lower half
-        '▅' => Some(&[(0.0, 3.0 / 8.0, 1.0, 5.0 / 8.0)]), // U+2585 Lower 5/8
-        '▆' => Some(&[(0.0, 2.0 / 8.0, 1.0, 6.0 / 8.0)]), // U+2586 Lower 3/4
-        '▇' => Some(&[(0.0, 1.0 / 8.0, 1.0, 7.0 / 8.0)]), // U+2587 Lower 7/8
-        '█' => Some(&[(0.0, 0.0, 1.0, 1.0)]), // U+2588 Full block
-        '▉' => Some(&[(0.0, 0.0, 7.0 / 8.0, 1.0)]), // U+2589 Left 7/8
-        '▊' => Some(&[(0.0, 0.0, 6.0 / 8.0, 1.0)]), // U+258A Left 3/4
-        '▋' => Some(&[(0.0, 0.0, 5.0 / 8.0, 1.0)]), // U+258B Left 5/8
-        '▌' => Some(&[(0.0, 0.0, 0.5, 1.0)]), // U+258C Left half
-        '▍' => Some(&[(0.0, 0.0, 3.0 / 8.0, 1.0)]), // U+258D Left 3/8
-        '▎' => Some(&[(0.0, 0.0, 2.0 / 8.0, 1.0)]), // U+258E Left 1/4
-        '▏' => Some(&[(0.0, 0.0, 1.0 / 8.0, 1.0)]), // U+258F Left 1/8
-        '▐' => Some(&[(0.5, 0.0, 0.5, 1.0)]), // U+2590 Right half
+        '▀' => Some(&[(0.0, 0.0, 1.0, 0.5)]),
+        '▁' => Some(&[(0.0, 7.0 / 8.0, 1.0, 1.0 / 8.0)]),
+        '▂' => Some(&[(0.0, 6.0 / 8.0, 1.0, 2.0 / 8.0)]),
+        '▃' => Some(&[(0.0, 5.0 / 8.0, 1.0, 3.0 / 8.0)]),
+        '▄' => Some(&[(0.0, 0.5, 1.0, 0.5)]),
+        '▅' => Some(&[(0.0, 3.0 / 8.0, 1.0, 5.0 / 8.0)]),
+        '▆' => Some(&[(0.0, 2.0 / 8.0, 1.0, 6.0 / 8.0)]),
+        '▇' => Some(&[(0.0, 1.0 / 8.0, 1.0, 7.0 / 8.0)]),
+        '█' => Some(&[(0.0, 0.0, 1.0, 1.0)]),
+        '▉' => Some(&[(0.0, 0.0, 7.0 / 8.0, 1.0)]),
+        '▊' => Some(&[(0.0, 0.0, 6.0 / 8.0, 1.0)]),
+        '▋' => Some(&[(0.0, 0.0, 5.0 / 8.0, 1.0)]),
+        '▌' => Some(&[(0.0, 0.0, 0.5, 1.0)]),
+        '▍' => Some(&[(0.0, 0.0, 3.0 / 8.0, 1.0)]),
+        '▎' => Some(&[(0.0, 0.0, 2.0 / 8.0, 1.0)]),
+        '▏' => Some(&[(0.0, 0.0, 1.0 / 8.0, 1.0)]),
+        '▐' => Some(&[(0.5, 0.0, 0.5, 1.0)]),
 
-        // ─── US-005 fallback extension ────────────────────────────────────
-        // U+2594 - Upper 1/8 (the lone "upper edge" block, complement of ▁)
         '▔' => Some(&[(0.0, 0.0, 1.0, 1.0 / 8.0)]),
 
-        // U+2596..U+259D - single quadrants
-        '▖' => Some(&[(0.0, 0.5, 0.5, 0.5)]), // U+2596 Quadrant lower left
-        '▗' => Some(&[(0.5, 0.5, 0.5, 0.5)]), // U+2597 Quadrant lower right
-        '▘' => Some(&[(0.0, 0.0, 0.5, 0.5)]), // U+2598 Quadrant upper left
-        '▝' => Some(&[(0.5, 0.0, 0.5, 0.5)]), // U+259D Quadrant upper right
+        '▖' => Some(&[(0.0, 0.5, 0.5, 0.5)]),
+        '▗' => Some(&[(0.5, 0.5, 0.5, 0.5)]),
+        '▘' => Some(&[(0.0, 0.0, 0.5, 0.5)]),
+        '▝' => Some(&[(0.5, 0.0, 0.5, 0.5)]),
 
-        // U+2599..U+259F - multi-quadrants (2 rects each, each rect already
-        // shares its outer edges with the surrounding cell's boundary array
-        // via `paint_block_quads` → no inter-rect gaps possible).
-        '▙' => Some(&[
-            // U+2599 Quadrant upper-left + entire lower half
-            (0.0, 0.0, 0.5, 0.5),
-            (0.0, 0.5, 1.0, 0.5),
-        ]),
-        '▚' => Some(&[
-            // U+259A Diagonal upper-left + lower-right
-            (0.0, 0.0, 0.5, 0.5),
-            (0.5, 0.5, 0.5, 0.5),
-        ]),
-        '▛' => Some(&[
-            // U+259B Entire upper half + lower-left
-            (0.0, 0.0, 1.0, 0.5),
-            (0.0, 0.5, 0.5, 0.5),
-        ]),
-        '▜' => Some(&[
-            // U+259C Entire upper half + lower-right
-            (0.0, 0.0, 1.0, 0.5),
-            (0.5, 0.5, 0.5, 0.5),
-        ]),
-        '▞' => Some(&[
-            // U+259E Diagonal upper-right + lower-left
-            (0.5, 0.0, 0.5, 0.5),
-            (0.0, 0.5, 0.5, 0.5),
-        ]),
-        '▟' => Some(&[
-            // U+259F Quadrant upper-right + entire lower half
-            (0.5, 0.0, 0.5, 0.5),
-            (0.0, 0.5, 1.0, 0.5),
-        ]),
+        '▙' => Some(&[(0.0, 0.0, 0.5, 0.5), (0.0, 0.5, 1.0, 0.5)]),
+        '▚' => Some(&[(0.0, 0.0, 0.5, 0.5), (0.5, 0.5, 0.5, 0.5)]),
+        '▛' => Some(&[(0.0, 0.0, 1.0, 0.5), (0.0, 0.5, 0.5, 0.5)]),
+        '▜' => Some(&[(0.0, 0.0, 1.0, 0.5), (0.5, 0.5, 0.5, 0.5)]),
+        '▞' => Some(&[(0.5, 0.0, 0.5, 0.5), (0.0, 0.5, 0.5, 0.5)]),
+        '▟' => Some(&[(0.5, 0.0, 0.5, 0.5), (0.0, 0.5, 1.0, 0.5)]),
         _ => None,
     }
 }
@@ -415,7 +318,6 @@ pub(crate) struct CursorInfo {
     color: Hsla,
     cell_bg: Hsla,
     wide: bool,
-    /// Character under the cursor (None for whitespace or non-Block shapes).
     text: Option<char>,
     bold: bool,
     italic: bool,
@@ -481,9 +383,6 @@ fn selection_marker_cursor(
     })
 }
 
-/// The cursor as the layout carries it. The blink phase is not an input: it
-/// only decides whether `paint` draws this, so a blink never invalidates the
-/// memoized layout of the pane, let alone of every other pane.
 fn cursor_from_content(
     cursor: RenderableCursor,
     focused: bool,
@@ -527,17 +426,8 @@ fn focused_copy_mode_cursor(
     focused.then_some(copy_mode_cursor).flatten()
 }
 
-/// Window-free inputs to [`layout_from_snapshot`]. Everything the layout pass
-/// needs that would otherwise be read from `&mut Window` / `&App` / the `Term`
-/// lock / `&self`, captured as plain values. `build_layout` fills this from a
-/// neutral [`Content`] snapshot ([`content_from_term`]) plus the content mask;
-/// the golden-frame net fills it from a fixed fixture so the entire layout is
-/// reproducible with no display. The cells are the backend-neutral
-/// [`crate::terminal::types::Cell`] (EP-003) - no engine types reach here.
 pub(crate) struct LayoutInputs<'a> {
     pub cells: Arc<[Cell]>,
-    /// Cursor as snapshotted from the grid (before the copy-mode / selection
-    /// anchor override, which `layout_from_snapshot` applies internally).
     pub cursor: Option<CursorInfo>,
     pub selection_range: Option<SelectionRange>,
     pub copy_mode_cursor: Option<&'a CopyModeCursorState>,
@@ -546,14 +436,9 @@ pub(crate) struct LayoutInputs<'a> {
     pub history_size: usize,
     pub desired_cols: usize,
     pub desired_rows: usize,
-    /// Viewport cull range (rows `[first, last)`), derived from the content
-    /// mask in `build_layout`. Tests pass `0..desired_rows` to render all rows.
     pub first_visible_row: i32,
     pub last_visible_row: i32,
     pub dims: CellDimensions,
-    /// Base font, resolved once by the caller (config-dependent). Bold/italic
-    /// variants are derived per-cell. Passed in so the layout pass never reads
-    /// the font config and stays deterministic.
     pub base_font: Font,
     pub theme: &'a crate::theme::TerminalTheme,
     pub exited: Option<i32>,
@@ -570,40 +455,21 @@ pub struct LayoutState {
     selection_rects: Vec<LayoutRect>,
     search_rects: Vec<LayoutRect>,
     cursor: Option<CursorInfo>,
-    /// Secondary marker for keyboard copy mode selection.
     anchor_cursor: Option<CursorInfo>,
     dimensions: CellDimensions,
     background_color: Hsla,
     scrollbar_thumb: Hsla,
     exited: Option<i32>,
-    /// US-004: signal name if the child was killed by a signal; the exit
-    /// overlay renders this instead of the exit code to flag a crash.
     exit_signal: Option<String>,
-    /// Scroll position for scrollbar indicator (0 = at bottom)
     display_offset: usize,
-    /// Total scrollback history size
     history_size: usize,
-    /// Number of columns in the terminal grid
     desired_cols: usize,
-    /// Number of rows in the terminal grid
     desired_rows: usize,
-    /// Theme color for hyperlink underline.
     link_text_color: Hsla,
-    /// Cursor position bounds for IME popup positioning (pixel coordinates).
     ime_cursor_bounds: Option<Bounds<Pixels>>,
-    /// Whether emoji glyphs should use GPUI's platform color-emoji path.
     color_emoji_enabled: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Cell style - used for batching comparison
-// ---------------------------------------------------------------------------
-
-/// What decides whether two adjacent cells share a text run.
-///
-/// The font is not stored: within one layout pass it is a pure function of
-/// the base font and these two flags, so comparing the flags is comparing
-/// the fonts, without cloning shared strings for every cell of the grid.
 #[derive(Clone, Copy, PartialEq)]
 struct CellStyle {
     bold: bool,
@@ -615,17 +481,6 @@ struct CellStyle {
     strikethrough: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Layout memoization
-// ---------------------------------------------------------------------------
-
-/// Everything `layout_from_snapshot` reads, reduced to something comparable.
-///
-/// The grid itself collapses to `content_generation`: the runtime stamps every
-/// published frame, so one integer stands in for the cells, the cursor, the
-/// selection, the scroll offset, and the grid size. The rest are the render
-/// inputs the view recomputes each frame and that the snapshot cannot know
-/// about.
 #[derive(Clone, PartialEq)]
 pub(crate) struct LayoutCacheKey {
     content_generation: u64,
@@ -646,74 +501,33 @@ pub(crate) struct LayoutCacheKey {
     color_emoji_enabled: bool,
 }
 
-/// One pane's memoized layout.
-///
-/// GPUI re-renders the whole element tree whenever any view in it is dirty:
-/// `Window::mark_view_dirty` walks the ancestor path, the root re-renders, and
-/// `refreshing` then defeats the per-view element cache for every descendant.
-/// In a workspace of parallel agents that means one pane's output pays for a
-/// full re-layout of every other pane, sixty times a second, with nothing
-/// changed in any of them. This is the shortcut: an untouched pane compares a
-/// key and clones an `Arc`.
 pub(crate) type SharedLayoutCache = Arc<Mutex<Option<(LayoutCacheKey, Arc<LayoutState>)>>>;
-
-// ---------------------------------------------------------------------------
-// TerminalElement
-// ---------------------------------------------------------------------------
 
 pub struct TerminalElement {
     backend: TerminalSessionBackend,
     cursor_visible: bool,
     focused: bool,
     exited: Option<i32>,
-    /// US-004: signal name if the child was killed by a signal; the exit
-    /// overlay renders this instead of the exit code to flag a crash.
     exit_signal: Option<String>,
-    /// Shared origin - updated in paint() so mouse handlers know the element position.
     element_origin: Arc<Mutex<Point<Pixels>>>,
-    /// Search match highlights to paint
     search_highlights: Vec<SearchHighlight>,
-    /// Copy mode cursor position (grid coordinates), if copy mode is active
     copy_mode_cursor: Option<CopyModeCursorState>,
-    /// Ctrl+hovered hyperlink range for underline rendering (line, start_col, end_col).
     hovered_link_range: Option<(i32, usize, usize)>,
-    /// IME preedit text to render at cursor position.
     ime_marked_text: String,
-    /// Focus handle for IME input handler registration.
     focus_handle: gpui::FocusHandle,
-    /// Terminal view entity for IME callbacks.
     terminal_view: gpui::Entity<crate::terminal::TerminalView>,
-    /// User-configured fallback cursor shape before applications override it.
     default_cursor_shape: CursorShape,
-    /// User-configured cursor color override; falls back to theme cursor.
     cursor_color_override: Option<Hsla>,
-    /// Gate for clearing pre-resize shell startup content on first render.
     needs_initial_clear: Arc<std::sync::atomic::AtomicBool>,
-    /// Last terminal window size measured by layout and sent to the PTY.
     terminal_window_size: Arc<Mutex<Option<TerminalWindowSize>>>,
-    /// US-015: shared sink for the painted scrollbar geometry. `paint()` writes
-    /// the current frame's [`ScrollbarMetrics`] (or `None`) here so the view's
-    /// mouse handlers can hit-test interactive scroll against the exact strip
-    /// that was drawn. Same single-thread sharing as [`element_origin`].
     scrollbar_metrics: Arc<Mutex<Option<ScrollbarMetrics>>>,
-    /// EP-006 US-017: search-match positions as lines-from-grid-bottom,
-    /// snapshotted by the view at render time (empty when no search).
-    /// Painted as decimated ticks on the scrollbar track.
     search_rail_lines: Vec<usize>,
-    /// When active, default terminal backgrounds are painted transparent so
-    /// the parent surface/window material can show through.
-    /// When enabled, block-element glyphs are rendered as built-in quads.
     integrated_glyphs_enabled: bool,
-    /// When enabled, emoji glyphs are rendered through GPUI's color path.
     color_emoji_enabled: bool,
-    /// Font and cell metrics resolved once by the view for this frame.
     frame_metrics: TerminalFrameMetrics,
-    /// True while the terminal is in DEC alternate screen.
     alt_screen: bool,
-    /// Timestamp of the keystroke that triggered this render, for latency measurement.
     #[cfg(debug_assertions)]
     last_keystroke_at: Option<std::time::Instant>,
-    /// Memoized layout for this pane, shared with the view across frames.
     layout_cache: SharedLayoutCache,
 }
 
@@ -783,40 +597,22 @@ impl TerminalElement {
         let dims = self.frame_metrics.dimensions;
         let theme = crate::theme::active_theme();
 
-        // Ghostty's window padding model (`src/renderer/size.zig`): the inset
-        // is subtracted from the viewport on BOTH edges of each axis before the
-        // grid is sized, so the cells sit the same distance from every side of
-        // the pane card instead of hugging the right and bottom edges.
         let inset_x = px(crate::app::constants::PANE_CONTENT_INSET_X);
         let inset_y = px(crate::app::constants::PANE_CONTENT_INSET_Y);
         let available_width = (bounds.size.width - inset_x * 2.).max(px(0.0));
         let available_height = (bounds.size.height - inset_y * 2.).max(px(0.0));
-        // `next_up().floor()` guards against f32 rounding error: when pixel
-        // bounds are an exact multiple of the cell metric (24 lines × 16 px),
-        // direct `.floor()` can drop one cell because the division yields
-        // `23.99999…` instead of `24.0`. Stepping to the next representable
-        // float before flooring matches Zed's `TerminalBounds::num_lines`.
         let desired_cols = (available_width / dims.cell_width)
             .next_up()
             .floor()
             .max(1.0) as usize;
-        // `.max(1.0)` mirrors `desired_cols` above (U-046): on a zero/near-zero
-        // -height pane this keeps the row count ≥ 1 so no downstream consumer
-        // can underflow a `desired_rows - 1` or index a 0-len boundary array.
         let desired_rows = (available_height / dims.line_height)
             .next_up()
             .floor()
             .max(1.0) as usize;
 
-        // Viewport culling range from the content mask - the only remaining
-        // Window dependency. Computing it before the terminal snapshot lets the
-        // seam skip offscreen scrollback rows instead of allocating them and
-        // dropping them later.
         let content_mask = window.content_mask();
         let visible_top = content_mask.bounds.origin.y;
         let visible_bottom = visible_top + content_mask.bounds.size.height;
-        // Row 0 starts one vertical inset below the element's own top edge, so
-        // the culling range is measured from the grid origin, not from `bounds`.
         let grid_top = bounds.origin.y + inset_y;
         let first_visible_row = ((visible_top - grid_top) / dims.line_height)
             .floor()
@@ -825,11 +621,6 @@ impl TerminalElement {
             .ceil()
             .max(0.0) as i32;
 
-        // Snapshot the grid into neutral owned data. Ghostty applies a resize
-        // on its runtime thread, so it can return the previous complete grid
-        // for one frame before its wakeup publishes the resized snapshot. The
-        // layout below must use the snapshot dimensions, never combine old
-        // cells with the newly requested GPUI dimensions.
         let cursor_color = self.cursor_color_override.unwrap_or(theme.cursor);
         let window_size = TerminalWindowSize::new(
             desired_cols,
@@ -838,9 +629,6 @@ impl TerminalElement {
             terminal_metric_to_u16(dims.line_height.as_f32()),
         );
 
-        // A provisional layout can still match the 120x40 bootstrap grid. Keep
-        // the one-shot armed until a backend actually resizes and clears, or the
-        // next real layout would preserve startup bytes in Ghostty's scrollback.
         let clear_on_resize = self
             .needs_initial_clear
             .load(std::sync::atomic::Ordering::Relaxed);
@@ -886,10 +674,6 @@ impl TerminalElement {
         let copy_mode_cursor =
             focused_copy_mode_cursor(self.copy_mode_cursor.as_ref(), self.focused);
 
-        // Everything above this point is either cheap (an `RwLock` read and an
-        // `Arc` clone for the snapshot) or load-bearing side effects the cache
-        // must not skip: the resize notification and the initial-clear latch.
-        // What follows is the expensive part, so that is what gets memoized.
         let key = LayoutCacheKey {
             content_generation: content.generation,
             theme_generation: crate::theme::theme_generation(),
@@ -950,15 +734,6 @@ impl TerminalElement {
     }
 }
 
-/// Window-free rendering layout pass (US-002 golden-frame net).
-///
-/// Produces the complete [`LayoutState`] from a pure snapshot of the grid,
-/// theme, and cell dimensions - no `Window`/`App` access and no `Term` lock.
-/// [`TerminalElement::build_layout`] is the thin Window-coupled wrapper that
-/// snapshots the grid under lock, measures the cell, and derives the viewport
-/// cull range from the content mask, then delegates here. Keeping this seam
-/// pure lets the golden-frame net assert total layout state over a fixed
-/// corpus with no GPU/display.
 pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     let LayoutInputs {
         cells,
@@ -981,9 +756,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         color_emoji_enabled,
     } = inputs;
 
-    // The terminal never fills its own bounds. Its host pane card carries the
-    // background and the rounded corners; a base fill here would repaint the
-    // arcs square (GPUI does not clip children to a parent radius).
     let background_color = gpui::transparent_black();
     let selection_color = theme.selection;
 
@@ -992,8 +764,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         (cursor.line >= 0 && cursor.line < desired_rows as i32).then_some(cursor)
     });
 
-    // Override cursor with copy mode cursor when active, and surface the
-    // selection anchor as a distinct secondary marker (tmux-style).
     let (cursor_snapshot, anchor_cursor) = if let Some(cm) = copy_mode_cursor {
         let display_line = cm.grid_line + display_offset as i32;
         let marker_color = selection_marker_color();
@@ -1024,8 +794,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
 
         (main, anchor)
     } else if selection_range.is_some() {
-        // Mouse selection is cleaner as highlight-only: the range itself is the
-        // affordance, and auto-copy clears it on mouse-up.
         (None, None)
     } else {
         (cursor_snapshot, None)
@@ -1052,17 +820,14 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         let point = *point;
         let flags = *flags;
 
-        // Viewport culling: skip rendering for rows outside the visible content mask.
         if point.line.0 < first_visible_row || point.line.0 >= last_visible_row {
             continue;
         }
 
-        // Skip wide char spacers (trailing cell of CJK chars)
         if flags.contains(CellFlags::WIDE_CHAR_SPACER) {
             continue;
         }
 
-        // Line change → flush batch and rect
         if point.line.0 != last_line {
             batch.flush();
             if let Some(rect) = current_rect.take() {
@@ -1071,8 +836,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             last_line = point.line.0;
         }
 
-        // Compute colors - INVERSE swap on raw ANSI tags, then tag-based
-        // default-background skip (Zed parity: structural check, not HSLA compare).
         let (raw_fg, raw_bg) = if flags.contains(CellFlags::INVERSE) {
             (*cell_bg, *cell_fg)
         } else {
@@ -1081,47 +844,15 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         let mut fg = convert_color(raw_fg, theme);
         let bg = terminal_panel_background(raw_bg, convert_color(raw_bg, theme), theme);
 
-        // DIM/faint (SGR 2): reduce foreground opacity (applied after INVERSE)
         if flags.contains(CellFlags::DIM) {
             fg.a *= 0.7;
         }
 
-        // Enforce minimum foreground/background contrast.
-        // Skip when:
-        //  - the character is decorative (box-drawing, Powerline, blocks),
-        //    where APCA adjustment would destroy the intended visual shape.
-        //  - the app explicitly chose the fg color via truecolor SGR
-        //    (`Color::Spec`) or the xterm-256 palette indices 16-255
-        //    (the 6×6×6 RGB cube at 16..=231 and the 24-step grayscale ramp
-        //    at 232..=255). Apps that pick a specific color there (bat,
-        //    delta, lazygit, Neovim themes) expect it to render exactly;
-        //    APCA washing the foreground breaks their palettes.
-        //    Indices 0..=15 still go through contrast correction (US-018):
-        //    they map to theme-defined ANSI slots and can clash with the
-        //    theme background (e.g. `\e[38;5;0m` on a dark theme).
-        //    Mirrors Zed `terminal::is_app_chosen_exact_color` (PR #54565).
         let skip_contrast = matches!(raw_fg, Color::Spec(_) | Color::Indexed(16..=255));
         if !is_decorative_character(*c) && !skip_contrast {
             fg = ensure_minimum_contrast(fg, bg, MIN_APCA_CONTRAST);
         }
 
-        // US-007: cells inside the selection rect get the precomputed
-        // contrast-validated `selection_foreground` (computed at theme-
-        // load time against `selection`). This replaces the cell-vs-
-        // background contrast we just enforced - selected text needs
-        // contrast against the selection quad painted ON TOP of the
-        // cell background, not against the cell background itself.
-        // Because `fg` is part of `CellStyle` and `BatchAccumulator::
-        // can_append` compares CellStyle by equality, this override
-        // also breaks batched runs at selection boundaries with no
-        // explicit accumulator change.
-        //
-        // Decorative characters (box-drawing, Powerline separators,
-        // block elements) are skipped: their color encodes visual
-        // shape (e.g. Powerline arrows transitioning between segment
-        // colors), and overriding `fg` to `selection_foreground`
-        // would destroy that meaning. Same exclusion as the
-        // cell-vs-bg `ensure_minimum_contrast` pass above.
         if let Some(sel) = &selection_range
             && !is_decorative_character(*c)
             && is_cell_in_selection(point, sel, display_offset)
@@ -1129,11 +860,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             fg = theme.selection_foreground;
         }
 
-        // Background rect - paint for ALL cells. Default-bg cells normally use
-        // ansi_background (the theme's actual background) to contrast with the
-        // slightly darker widget fill, creating visible depth for TUI content.
-        // With terminal material enabled, only those default backgrounds become
-        // transparent; explicit ANSI/app backgrounds stay opaque.
         let cell_cols = if flags.contains(CellFlags::WIDE_CHAR) {
             2
         } else {
@@ -1162,26 +888,20 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             }
         }
 
-        // Skip space fillers following cells with zero-width extras (emoji sequences)
         let c = *c;
         if c == ' ' && previous_cell_had_extras {
             previous_cell_had_extras = false;
             continue;
         }
 
-        // Track whether this cell has combining/zero-width characters
         let has_extras = matches!(zw, Some(chars) if !chars.is_empty());
 
-        // Skip empty cells for text runs (space or NUL)
         if c == ' ' || c == '\0' {
             previous_cell_had_extras = has_extras;
             batch.flush();
             continue;
         }
 
-        // Render common single-stroke box drawing as connected paths. Every
-        // segment reaches the shared cell boundary, so adjacent `─` and `│`
-        // cells cannot expose font-side-bearing gaps.
         if integrated_glyphs_enabled && let Some(shape) = box_drawing_shape(c) {
             batch.flush();
             box_drawing_glyphs.push(BoxDrawingGlyph {
@@ -1194,14 +914,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             continue;
         }
 
-        // Render block elements as filled quads instead of font glyphs
-        // to eliminate subpixel gaps between adjacent cells (pixel art,
-        // Claude Code's banner robot, neofetch ASCII).
-        //
-        // Multi-quadrant chars (`▙ ▚ ▛ ▜ ▞ ▟`) emit two BlockQuad records
-        // per cell - both share the cell's outer boundary array so adjacent
-        // cells stay seamless regardless of how many sub-rects they each
-        // produce.
         if integrated_glyphs_enabled && let Some(coverages) = block_char_coverages(c) {
             batch.flush();
             for &coverage in coverages {
@@ -1217,12 +929,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             continue;
         }
 
-        // Build cell style for batching comparison.
-        // OSC 8 hyperlinks must render with an underline even when the cell
-        // flags don't carry `UNDERLINE` - the engine does not auto-set the
-        // flag on OSC 8 cells, so without this we'd lose the visual
-        // affordance until Ctrl/Cmd is held. Matches Zed
-        // `terminal_element.rs:580`.
         let is_underline = flags.contains(CellFlags::UNDERLINE)
             || flags.contains(CellFlags::DOUBLE_UNDERLINE)
             || flags.contains(CellFlags::UNDERCURL)
@@ -1239,7 +945,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             strikethrough: flags.contains(CellFlags::STRIKEOUT),
         };
 
-        // Check if we can append to current batch
         if batch.can_append(style, point.line.0, point.column.0) {
             batch.append(c, cell_cols);
         } else {
@@ -1247,24 +952,18 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             batch.start(c, cell_cols, style, point.line.0, point.column.0);
         }
 
-        // Append zero-width combining characters (diacriticals, ZWJ, variation selectors)
         if let Some(chars) = zw {
             batch.append_zerowidth(chars);
         }
         previous_cell_had_extras = has_extras;
     }
 
-    // Flush remaining
     batch.flush();
     if let Some(rect) = current_rect {
         rects.push(rect);
     }
-    // Vertical merge: coalesce same-column-span, same-color, adjacent-line rects
     let rects = merge_background_regions(rects);
 
-    // Build selection highlight rects from the SelectionRange.
-    // SelectionRange carries absolute grid-line coords (scrollback = negative);
-    // convert to viewport-line coords to match the cell coordinate system.
     let mut selection_rects = Vec::new();
     if let Some(sel) = &selection_range {
         let start_line = sel.start.line.0 + display_offset as i32;
@@ -1291,11 +990,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             };
 
         if sel.is_block {
-            // US-007: block (rectangular) selection - emit one rect per
-            // visible line covering only the columns inside the block,
-            // matching the rectangular semantics of `is_cell_in_selection`
-            // so the bg quad and the fg override agree on which cells
-            // are "in" the selection.
             let (l_min, l_max) = if start_line <= end_line {
                 (start_line, end_line)
             } else {
@@ -1327,50 +1021,39 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
                     e_col.saturating_sub(s_col).saturating_add(1),
                 );
             } else {
-                // Multi-line linear: first line from start.col to end of line
                 push_selection_rect(
                     &mut selection_rects,
                     s_line,
                     s_col,
                     num_cols.saturating_sub(s_col),
                 );
-                // Middle full lines
                 let middle_start = s_line.saturating_add(1).max(visible_start);
                 let middle_end = e_line.min(visible_end);
                 for line in middle_start..middle_end {
                     push_selection_rect(&mut selection_rects, line, 0, num_cols);
                 }
-                // Last line from col 0 to end.col. `saturating_add` matches the
-                // defensive arithmetic of the sibling rects (U-047): a stale
-                // `end_col` from a pre-resize selection can't overflow the count.
                 push_selection_rect(&mut selection_rects, e_line, 0, e_col.saturating_add(1));
             }
         }
     }
 
-    // Build search match highlight rects
     let search_match_color = Hsla {
         h: 0.11,
         s: 0.9,
         l: 0.55,
         a: 0.45,
-    }; // Amber for inactive matches
+    };
     let search_active_color = Hsla {
         h: 0.08,
         s: 1.0,
         l: 0.6,
         a: 0.7,
-    }; // Brighter orange for active match
+    };
 
     let mut search_rects = Vec::new();
     for highlight in search_highlights {
-        // Convert grid coordinates to display-relative line numbers
-        // display_offset is the number of scrollback lines visible above the viewport
-        // Visible lines are: -(display_offset as i32) .. (screen_lines - 1 - display_offset as i32)
-        // A match at grid line L maps to display line: L.0 + display_offset as i32
         let display_line = highlight.start.line.0 + display_offset as i32;
 
-        // Only paint if the match is in the visible area
         if display_line >= 0 && display_line < desired_rows as i32 {
             let color = if highlight.is_active {
                 search_active_color
@@ -1378,7 +1061,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
                 search_match_color
             };
 
-            // Single-line match (search matches are always single-line)
             let col_start = highlight.start.column.0;
             let col_end = highlight.end.column.0;
             search_rects.push(LayoutRect {
@@ -1391,7 +1073,6 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         }
     }
 
-    // Compute IME cursor bounds for popup positioning
     let ime_cursor_bounds = cursor_snapshot.as_ref().map(|c| {
         let x = dims.cell_width * c.col as f32;
         let y = dims.line_height * c.line as f32;
@@ -1432,7 +1113,6 @@ struct BatchAccumulator {
     runs: Vec<BatchedTextRun>,
     text: String,
     style: Option<CellStyle>,
-    /// The pane's font; each run derives its own from this and its style.
     base_font: Font,
     font: Font,
     fg: Hsla,
@@ -1441,7 +1121,7 @@ struct BatchAccumulator {
     strikethrough: bool,
     line: i32,
     col_start: usize,
-    col_end: usize, // next expected column (tracks wide chars correctly)
+    col_end: usize,
 }
 
 impl BatchAccumulator {
@@ -1475,11 +1155,6 @@ impl BatchAccumulator {
     }
 
     fn append_zerowidth(&mut self, chars: &[char]) {
-        // If the engine hands us combining marks before any base char has been
-        // appended (rare, but the grid layout could change in future versions),
-        // silently drop them rather than panicking in debug. The previous
-        // `debug_assert!` could trip during legitimate render flows that the
-        // user has no control over.
         if self.text.is_empty() {
             return;
         }
@@ -1490,7 +1165,6 @@ impl BatchAccumulator {
 
     fn start(&mut self, c: char, cell_cols: usize, style: CellStyle, line: i32, col_start: usize) {
         self.text.push(c);
-        // One font per run, not per cell: the clone bumps shared strings.
         let mut font = self.base_font.clone();
         if style.bold {
             font.weight = FontWeight::BOLD;
@@ -1541,18 +1215,7 @@ impl BatchAccumulator {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Element trait implementation
-// ---------------------------------------------------------------------------
-
 impl TerminalElement {
-    /// Keep a selection drag alive once the pointer leaves the pane.
-    ///
-    /// GPUI delivers `on_mouse_move` only while the pointer is over the
-    /// hitbox, so the view's handler goes quiet exactly when the engine most
-    /// needs the position: a pointer held past the edge is what tells it to
-    /// scroll the viewport and keep extending. Positions inside the element
-    /// are left to the view, which already sees them.
     fn track_drag_beyond_the_pane(
         &self,
         bounds: Bounds<Pixels>,
@@ -1569,8 +1232,6 @@ impl TerminalElement {
             {
                 return;
             }
-            // A no-op unless a press is open, so a drag started anywhere else
-            // in the window cannot select in this pane.
             let geometry = backend.selection_geometry(cell_width.into(), line_height.into());
             let position = (
                 f32::from(event.position.x - origin.x),
@@ -1646,29 +1307,14 @@ impl Element for TerminalElement {
         };
 
         let cell_width = layout.dimensions.cell_width;
-        // Offset the grid origin by the same fixed insets reserved in layout,
-        // on both axes (Ghostty's `padding.left` / `padding.top`).
         let mut origin = Point {
             x: bounds.origin.x + px(crate::app::constants::PANE_CONTENT_INSET_X),
             y: bounds.origin.y + px(crate::app::constants::PANE_CONTENT_INSET_Y),
         };
-        // US-017: snap the origin to physical-pixel boundaries so the grid
-        // doesn't shiver between sub-pixel positions while resizing the window
-        // or a pane divider on a HiDPI display. Snap the ORIGIN ONLY - never
-        // cell_width / line_height (Zed reverted metric-snapping in #54836; it
-        // breaks scroll math when rows × snapped_line_height ≠ viewport height).
-        // At scale 1.0 this floors the inset-adjusted origin to whole pixels,
-        // which is also the right thing (no regression). Mirrors Zed
-        // terminal_element.rs:1062-1070 (PR #47195). `.max(1.0)` guards against
-        // a 0.0 scale on headless/test windows (would divide by zero).
         let scale_factor = window.scale_factor().max(1.0);
         let snap_px = |v: Pixels| px((f32::from(v) * scale_factor).floor() / scale_factor);
         origin.x = snap_px(origin.x);
         origin.y = snap_px(origin.y);
-        // Store the inset-adjusted, SNAPPED origin for mouse → grid coordinate
-        // conversion so hit-testing stays coherent with what was painted.
-        // Poison-safe: a prior panic inside paint() could have poisoned the
-        // Mutex. The inner Point is still a valid value; recover and continue.
         *self
             .element_origin
             .lock()
@@ -1684,23 +1330,13 @@ impl Element for TerminalElement {
 
         self.track_drag_beyond_the_pane(bounds, origin, cell_width, line_height, window);
 
-        // Resolved and uploaded on the session runtime thread; this is a
-        // refcount bump, not a walk of the placement iterator.
         let kitty_placements = self.backend.kitty_placements();
 
-        // PANEFLOW_PIXEL_PROBE: log the per-frame origin once, before any
-        // glyph/background record carries it implicitly. Pairs with the
-        // `cell_dims` record emitted from `resolve_frame_metrics()`.
         #[cfg(debug_assertions)]
         pixel_probe::record_origin(origin);
 
         let base_font = &self.frame_metrics.base_font;
 
-        // US-047: the shared integer pixel boundary arrays are derived purely
-        // from `geom` + the viewport size, so compute them ONCE here and lend
-        // them to both background passes instead of each pass rebuilding two
-        // `Vec<Pixels>` per frame. Empty viewport → empty slices (both passes
-        // early-return before indexing).
         let (cell_x_bounds, cell_y_bounds) = if layout.desired_cols == 0 || layout.desired_rows == 0
         {
             (Vec::new(), Vec::new())
@@ -1711,12 +1347,9 @@ impl Element for TerminalElement {
             )
         };
 
-        // Clip to element bounds
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
-            // 1. Terminal background fill
             paint::background::paint_base_fill(&layout, bounds, window);
 
-            // 2. Per-cell background rects with Ghostty-style edge extension.
             paint::background::paint_cell_backgrounds(
                 &layout,
                 bounds,
@@ -1725,16 +1358,12 @@ impl Element for TerminalElement {
                 window,
             );
 
-            // 2b. Selection highlight
             paint::selection::paint_selection(&layout, &geom, window);
 
-            // 2c. Search match highlight
             paint::overlay::paint_search_highlights(&layout, &geom, window);
 
-            // 2d. Block element quads (pixel-perfect, no font glyph gaps)
             paint::background::paint_block_quads(&layout, &cell_x_bounds, &cell_y_bounds, window);
 
-            // 2e. Single-stroke box drawing with shared cell-edge endpoints.
             paint::box_drawing::paint_box_drawing_glyphs(
                 &layout,
                 &cell_x_bounds,
@@ -1742,43 +1371,27 @@ impl Element for TerminalElement {
                 window,
             );
 
-            // 2f. Kitty graphics under the text.
             paint::kitty::paint_below_text(&kitty_placements, &geom, window);
 
-            // 3. Batched text runs
             paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
 
-            // 3-bis. Kitty graphics over the text.
             paint::kitty::paint_above_text(&kitty_placements, &geom, window);
 
-            // 3a. PANEFLOW_PIXEL_PROBE_OVERLAY: draw thin red cell borders
-            // above the text. Independent of `PANEFLOW_PIXEL_PROBE`; opt-in
-            // only. Compiled out in release builds.
             #[cfg(debug_assertions)]
             if pixel_probe::overlay_enabled() {
                 paint::overlay::paint_pixel_probe_overlay(&layout, &geom, window);
             }
 
-            // 3b. Hyperlink underline (Ctrl+hover)
             paint::overlay::paint_hyperlink_underline(self, &layout, &geom, window);
 
-            // 4. Primary cursor, skipped on the off phase of a blink. The
-            // layout keeps the cursor either way, so the IME popup anchor and
-            // the memoized layout do not follow the blink.
             if self.cursor_visible {
                 paint::cursor::paint_cursor(&layout, &geom, base_font, font_size, window, cx);
             }
 
-            // 4b. Copy-mode / mouse-selection secondary marker
             paint::cursor::paint_anchor_cursor(&layout, &geom, base_font, font_size, window, cx);
 
-            // 5. Scrollbar thumb
             paint::scrollbar::paint_scrollbar(&layout, &geom, bounds, window);
 
-            // 5b. EP-006 US-017: search match rail - decimated ticks on the
-            // same strip. Click-to-jump rides the existing proportional
-            // track click (US-015 hit-test below); the rail disappears with
-            // the search at the same repaint (empty snapshot → no paint).
             paint::scrollbar::paint_match_ticks(
                 &self.search_rail_lines,
                 crate::theme::ui_colors().vc_modified,
@@ -1788,11 +1401,6 @@ impl Element for TerminalElement {
                 window,
             );
 
-            // US-015: publish the painted scrollbar geometry so the view's
-            // mouse handlers can hit-test click-to-jump / drag against the same
-            // strip. Computed even when the thumb is hidden (display_offset==0)
-            // so the track stays clickable to scroll back. Poison-safe like
-            // `element_origin`.
             let metrics = paint::scrollbar::scrollbar_metrics(
                 layout.history_size,
                 layout.display_offset,
@@ -1804,7 +1412,6 @@ impl Element for TerminalElement {
                 .lock()
                 .unwrap_or_else(|p| p.into_inner()) = metrics;
 
-            // 6. IME handler registration + preedit overlay
             let view_for_ime = self.terminal_view.clone();
             paint::overlay::paint_ime_preedit(
                 self,
@@ -1821,8 +1428,7 @@ impl Element for TerminalElement {
                 },
             );
 
-            // 7. Exit overlay
-            let exit_fg = rgb_to_hsla(0x6c, 0x70, 0x86); // Overlay6
+            let exit_fg = rgb_to_hsla(0x6c, 0x70, 0x86);
             paint::overlay::paint_exit_overlay(
                 &layout, &geom, bounds, font_size, base_font, exit_fg, window, cx,
             );
@@ -1833,12 +1439,10 @@ impl Element for TerminalElement {
             let paint_elapsed = paint_start.elapsed();
             let paint_ms = paint_elapsed.as_secs_f64() * 1000.0;
 
-            // Phase 2: paint() duration
             if paint_ms > 1.0 {
                 log::warn!("[latency] paint: {paint_ms:.2}ms");
             }
 
-            // Phase 3: total keystroke → pixel with per-phase breakdown
             if let Some(keystroke_at) = self.last_keystroke_at {
                 let total_elapsed = keystroke_at.elapsed();
                 let total_ms = total_elapsed.as_secs_f64() * 1000.0;
@@ -1855,10 +1459,6 @@ impl Element for TerminalElement {
     }
 }
 
-// ---------------------------------------------------------------------------
-// IntoElement implementation
-// ---------------------------------------------------------------------------
-
 impl IntoElement for TerminalElement {
     type Element = Self;
 
@@ -1866,10 +1466,6 @@ impl IntoElement for TerminalElement {
         self
     }
 }
-
-// ---------------------------------------------------------------------------
-// IME InputHandler (US-017)
-// ---------------------------------------------------------------------------
 
 struct TerminalInputHandler {
     terminal_view: gpui::Entity<crate::terminal::TerminalView>,
@@ -1923,7 +1519,6 @@ impl gpui::InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) {
-        // Commit: clear preedit and write text to PTY
         self.terminal_view.update(cx, |view, cx| {
             view.clear_marked_text(cx);
             view.commit_text(text, cx);
@@ -1938,14 +1533,12 @@ impl gpui::InputHandler for TerminalInputHandler {
         _window: &mut Window,
         cx: &mut App,
     ) {
-        // Preedit: update marked text for rendering
         self.terminal_view.update(cx, |view, cx| {
             view.set_marked_text(new_text.to_string(), cx);
         });
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut App) {
-        // Cancel composition
         self.terminal_view.update(cx, |view, cx| {
             view.clear_marked_text(cx);
         });
@@ -1984,25 +1577,10 @@ mod ime_input_handler_tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// US-005 fallback - block_char_coverages tests
-//
-// Discovered via pixel-probe analysis of Claude Code 2.1.119's banner robot:
-// the `▐███▌` core uses U+2580..U+2590 (already covered) but the antennas /
-// rounded corners use quadrant blocks (`U+2596..U+259F`) which originally
-// fell back to font glyphs and rendered with visible vertical gaps. These
-// tests lock in coverage for every codepoint added in the US-005 fallback
-// extension so a future regression surfaces here instead of as a visual
-// artifact reported weeks later.
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod block_char_coverage_tests {
     use super::*;
 
-    /// Every original-PRD codepoint must still resolve to a single rect with
-    /// the same geometry as before the slice refactor - guards against an
-    /// accidental table edit during the US-005 extension.
     #[test]
     fn original_block_chars_are_single_rect() {
         for c in [
@@ -2020,8 +1598,6 @@ mod block_char_coverage_tests {
         }
     }
 
-    /// The full block must cover the entire cell - the canonical sanity check
-    /// used by adjacent-block tests in `paint/background.rs`.
     #[test]
     fn full_block_covers_entire_cell() {
         let rects = block_char_coverages('█').expect("█ covered");
@@ -2030,8 +1606,6 @@ mod block_char_coverage_tests {
 
     #[test]
     fn upper_one_eighth_block_u2594() {
-        // ▔ is the upper-edge complement of ▁ (U+2581 lower 1/8). Same height,
-        // anchored at y=0 instead of y=7/8.
         let rects = block_char_coverages('▔').expect("▔ covered");
         assert_eq!(rects.len(), 1);
         let (x, y, w, h) = rects[0];
@@ -2042,14 +1616,11 @@ mod block_char_coverage_tests {
 
     #[test]
     fn single_quadrants_are_one_rect_each() {
-        // U+2596..U+2598 + U+259D - the four single-quadrant blocks.
-        // Each occupies exactly one corner of the cell, anchored on the grid
-        // halfway point, with a 0.5×0.5 extent.
         let cases = [
-            ('▖', (0.0, 0.5, 0.5, 0.5)), // lower-left
-            ('▗', (0.5, 0.5, 0.5, 0.5)), // lower-right
-            ('▘', (0.0, 0.0, 0.5, 0.5)), // upper-left
-            ('▝', (0.5, 0.0, 0.5, 0.5)), // upper-right
+            ('▖', (0.0, 0.5, 0.5, 0.5)),
+            ('▗', (0.5, 0.5, 0.5, 0.5)),
+            ('▘', (0.0, 0.0, 0.5, 0.5)),
+            ('▝', (0.5, 0.0, 0.5, 0.5)),
         ];
         for (c, expected) in cases {
             let rects = block_char_coverages(c).unwrap();
@@ -2059,7 +1630,6 @@ mod block_char_coverage_tests {
 
     #[test]
     fn multi_quadrants_emit_two_rects() {
-        // The six 3-quadrant + 2-quadrant chars all decompose into two rects.
         for c in ['▙', '▚', '▛', '▜', '▞', '▟'] {
             let rects = block_char_coverages(c).unwrap();
             assert_eq!(
@@ -2074,12 +1644,8 @@ mod block_char_coverage_tests {
 
     #[test]
     fn multi_quadrant_diagonals_have_no_overlap_or_gap() {
-        // ▚ (U+259A) and ▞ (U+259E) are the two pure diagonals - opposing
-        // quadrants only. Their rects must touch at the cell center but not
-        // overlap, otherwise we'd double-paint or leave a sub-pixel hole.
         for c in ['▚', '▞'] {
             let rects = block_char_coverages(c).unwrap();
-            // Total coverage area = exactly half the cell (two 0.5×0.5 quads).
             let total_area: f32 = rects.iter().map(|(_, _, w, h)| w * h).sum();
             assert!(
                 (total_area - 0.5).abs() < 1e-6,
@@ -2091,9 +1657,6 @@ mod block_char_coverage_tests {
 
     #[test]
     fn three_quadrant_chars_cover_three_quarters_of_cell() {
-        // ▙ ▛ ▜ ▟ each cover exactly 3 of 4 quadrants (= 0.75 of cell area).
-        // Even though they emit only 2 rects, the second rect is half-cell-wide
-        // (covering 2 quadrants in one go).
         for c in ['▙', '▛', '▜', '▟'] {
             let rects = block_char_coverages(c).unwrap();
             let total_area: f32 = rects.iter().map(|(_, _, w, h)| w * h).sum();
@@ -2105,19 +1668,9 @@ mod block_char_coverage_tests {
         }
     }
 
-    /// The US-005 extension targets exactly the codepoints found in the
-    /// `claude` 2.1.119 binary that were *not* in the original table.
-    /// If Claude Code (or another TUI) ships a new robot that uses a codepoint
-    /// outside this list, the gap will reappear and this test won't catch it -
-    /// but the pixel probe will, and the table is one match-arm away from
-    /// covering the new char.
     #[test]
     fn us005_claude_code_codepoints_all_covered() {
-        for c in [
-            '▔', // U+2594 upper 1/8
-            '▖', '▗', '▘', '▝', // single quadrants
-            '▙', '▚', '▛', '▜', '▞', '▟', // multi quadrants
-        ] {
+        for c in ['▔', '▖', '▗', '▘', '▝', '▙', '▚', '▛', '▜', '▞', '▟'] {
             assert!(
                 block_char_coverages(c).is_some(),
                 "U+{:04X} '{c}' must be covered to render Claude Code's banner gap-free",
@@ -2126,10 +1679,6 @@ mod block_char_coverage_tests {
         }
     }
 
-    /// Codepoints we deliberately *don't* cover - shaded blocks need alpha
-    /// (out of scope for this fix), geometric shapes are a different path.
-    /// Locks the boundary so a future "extend everything" edit can't sneak
-    /// half-broken coverage past review.
     #[test]
     fn shaded_and_geometric_blocks_remain_uncovered() {
         for c in ['░', '▒', '▓', '■', '□', '●', '○'] {
@@ -2142,12 +1691,6 @@ mod block_char_coverage_tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// US-002 - Window-free golden-frame net
-// ---------------------------------------------------------------------------
-
-/// Deterministic, platform-stable textual rendering of an [`Hsla`]. Fixed
-/// precision so the golden bytes never drift on float `Debug` formatting.
 #[cfg(test)]
 fn hsla_repr(c: Hsla) -> String {
     format!("hsla({:.4},{:.4},{:.4},{:.4})", c.h, c.s, c.l, c.a)
@@ -2155,12 +1698,6 @@ fn hsla_repr(c: Hsla) -> String {
 
 #[cfg(test)]
 impl LayoutState {
-    /// Window-free, deterministic textual snapshot of the entire layout state
-    /// for the golden-frame net (US-002). Does NOT rely on any GPUI `Debug`
-    /// impl - every field is rendered explicitly at fixed float precision, so
-    /// the golden is reproducible across platforms (Rust float formatting is
-    /// platform-independent) and human-reviewable on diff. Regenerate goldens
-    /// with `PANEFLOW_BLESS_GOLDEN=1 cargo test -p paneflow-app golden_frame`.
     pub(crate) fn golden_repr(&self) -> String {
         use std::fmt::Write as _;
         let mut s = String::new();
@@ -2278,12 +1815,6 @@ impl LayoutState {
 
 #[cfg(test)]
 mod golden_frame_tests {
-    //! US-002 golden-frame net: deterministic `LayoutState` snapshots over a
-    //! fixed grid, run with **no `Window`/`App`/GPU/display**. The fact these
-    //! tests construct `LayoutInputs` and call `layout_from_snapshot` directly
-    //! never touching a GPUI context - is the Window-free proof (AC-1). Each
-    //! fixture asserts against a committed golden under `golden/` (AC-2);
-    //! regenerate with `PANEFLOW_BLESS_GOLDEN=1` (AC-3).
     use super::*;
     use crate::terminal::types::{RenderableCursor, Rgb};
 
@@ -2374,8 +1905,6 @@ mod golden_frame_tests {
         }
     }
 
-    /// Build a `LayoutState` over the fixed test grid. Each call uses a fixed
-    /// theme, font, and dimensions so the output is fully deterministic.
     fn run(
         cells: Vec<Cell>,
         cursor: Option<CursorInfo>,
@@ -2482,11 +2011,8 @@ mod golden_frame_tests {
         );
     }
 
-    /// The full fixture corpus. One test so a `BLESS` run regenerates every
-    /// golden in a single pass; each fixture still asserts independently.
     #[test]
     fn golden_frame_corpus() {
-        // plain ASCII
         assert_golden(
             "plain",
             &run(
@@ -2496,7 +2022,6 @@ mod golden_frame_tests {
             ),
         );
 
-        // ANSI-16 named colors
         let ansi16 = vec![
             cell(
                 0,
@@ -2525,13 +2050,11 @@ mod golden_frame_tests {
         ];
         assert_golden("ansi16", &run(ansi16, None, None));
 
-        // DIM (SGR 2): foreground alpha reduced
         assert_golden(
             "dim",
             &run(text_row(0, "dim", default_fg(), CellFlags::DIM), None, None),
         );
 
-        // INVERSE: fg/bg swapped on the raw ANSI tags
         let inverse = vec![cell(
             0,
             0,
@@ -2542,7 +2065,6 @@ mod golden_frame_tests {
         )];
         assert_golden("inverse", &run(inverse, None, None));
 
-        // 256-color indexed (cube + grayscale): app-chosen, contrast-skipped
         let indexed = vec![
             cell(
                 0,
@@ -2571,7 +2093,6 @@ mod golden_frame_tests {
         ];
         assert_golden("indexed256", &run(indexed, None, None));
 
-        // truecolor (SGR 38;2): exact RGB, contrast-skipped
         let truecolor = vec![cell(
             0,
             0,
@@ -2586,7 +2107,6 @@ mod golden_frame_tests {
         )];
         assert_golden("truecolor", &run(truecolor, None, None));
 
-        // block / half-block chars → BlockQuads, not glyph runs
         let blocks: Vec<Cell> = "█▀▄▌▙"
             .chars()
             .enumerate()
@@ -2594,7 +2114,6 @@ mod golden_frame_tests {
             .collect();
         assert_golden("blocks", &run(blocks, None, None));
 
-        // CJK wide char + its trailing spacer (spacer must be skipped)
         let cjk = vec![
             cell(0, 0, '中', default_fg(), default_bg(), CellFlags::WIDE_CHAR),
             cell(
@@ -2608,7 +2127,6 @@ mod golden_frame_tests {
         ];
         assert_golden("cjk_spacer", &run(cjk, None, None));
 
-        // selection: linear single-line range over columns 1..=3
         let sel = SelectionRange {
             start: GridPoint::new(0, 1),
             end: GridPoint::new(0, 3),
@@ -2623,7 +2141,6 @@ mod golden_frame_tests {
             ),
         );
 
-        // each cursor shape
         let base = || text_row(0, "ab", default_fg(), CellFlags::empty());
         assert_golden(
             "cursor_block",
@@ -2655,7 +2172,6 @@ mod golden_frame_tests {
         );
         assert_golden("cursor_hidden", &run(base(), None, None));
 
-        // APCA contrast: index-0..15 fg close to a dark bg gets bumped
         let apca = vec![cell(
             0,
             0,
@@ -2667,10 +2183,6 @@ mod golden_frame_tests {
         assert_golden("apca_contrast", &run(apca, None, None));
     }
 
-    /// Structural invariant (AC-2/AC-4 of the spike risk): block-element cells
-    /// emit `BlockQuad`s and no glyph runs, and multi-quadrant chars emit two
-    /// quads each. Asserted independently of the golden text so a regression
-    /// here is legible even if a golden is re-blessed.
     #[test]
     fn block_chars_emit_quads_not_runs() {
         let blocks: Vec<Cell> = "█▀▄▌▙"
@@ -2679,7 +2191,6 @@ mod golden_frame_tests {
             .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
             .collect();
         let state = run(blocks, None, None);
-        // █ ▀ ▄ ▌ = 1 quad each, ▙ = 2 quads → 6 total
         assert_eq!(
             state.block_quads.len(),
             6,
@@ -2892,8 +2403,6 @@ mod golden_frame_tests {
         );
     }
 
-    /// Structural invariant: a WIDE_CHAR_SPACER cell never contributes its own
-    /// run or rect - it is the trailing half of the preceding wide glyph.
     #[test]
     fn wide_char_spacer_is_skipped() {
         let cjk = vec![
@@ -2916,9 +2425,6 @@ mod golden_frame_tests {
         assert_eq!(state.batched_runs[0].text, "中");
     }
 
-    /// Viewport culling: rows outside `[first_visible_row, last_visible_row)`
-    /// are dropped from the layout (mirrors the content-mask cull in
-    /// `build_layout`). Window-free - the cull range is just two integers.
     #[test]
     fn viewport_cull_drops_offscreen_rows() {
         let theme = crate::theme::paneflow_dark();
@@ -2937,7 +2443,7 @@ mod golden_frame_tests {
             desired_cols: COLS,
             desired_rows: ROWS,
             first_visible_row: 0,
-            last_visible_row: 1, // only row 0 visible
+            last_visible_row: 1,
             dims: test_dims(),
             base_font: test_font(),
             theme: &theme,

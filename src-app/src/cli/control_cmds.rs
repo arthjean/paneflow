@@ -1,19 +1,9 @@
-//! Control surface of the CLI: `new` / `select` / `split` / `focus` (US-005,
-//! orchestration-v2 US-001/US-002).
-//!
-//! Thin wrappers over `workspace.create` / `workspace.select` / `surface.split`
-//! / `surface.focus`. Each prints the server's `result` envelope as JSON so
-//! scripts can read back the new workspace index / pane count. Server-side
-//! caps (MAX_WORKSPACES, MAX_PANES) and validation (a non-existent `--cwd` is
-//! rejected with -32602) propagate as a clear message + non-zero exit.
-
 use paneflow_ipc_client::IpcTransport;
 use serde_json::json;
 
 use super::selector::resolve_target;
 use super::{CliError, EXIT_OK};
 
-/// `paneflow new [--name N] [--cwd DIR]`.
 pub fn new_workspace(
     client: &impl IpcTransport,
     name: Option<&str>,
@@ -35,7 +25,6 @@ pub fn new_workspace(
     Ok(EXIT_OK)
 }
 
-/// `paneflow select <index>`.
 pub fn select(client: &impl IpcTransport, index: u64) -> Result<i32, CliError> {
     let result = super::reject_legacy_error(
         client
@@ -46,11 +35,6 @@ pub fn select(client: &impl IpcTransport, index: u64) -> Result<i32, CliError> {
     Ok(EXIT_OK)
 }
 
-/// `paneflow split <h|v> [--target <sel>]`. `direction` is the IPC string
-/// ("horizontal" | "vertical"), already resolved from the `SplitDir` value
-/// enum by the caller. With `--target` the selector is resolved client-side
-/// (exit 3 on no/ambiguous match) and the server splits THAT leaf instead of
-/// the active workspace's first one (US-002, orchestration-v2).
 pub fn split(
     client: &impl IpcTransport,
     direction: &str,
@@ -69,9 +53,6 @@ pub fn split(
     Ok(EXIT_OK)
 }
 
-/// `paneflow focus <target>`. Pure navigation (no PTY write), so no scripting
-/// gate: resolves the selector client-side, then `surface.focus` switches the
-/// workspace, activates the hosting tab, and moves keyboard focus (US-001).
 pub fn focus(client: &impl IpcTransport, target: &str) -> Result<i32, CliError> {
     let surface_id = resolve_target(client, target)?;
     let result = super::reject_legacy_error(
@@ -89,9 +70,6 @@ mod tests {
     use serde_json::Value;
     use std::cell::RefCell;
 
-    /// Fake transport returning a preset reply, so the control commands can be
-    /// exercised without a live socket (the `IpcTransport` trait exists for
-    /// exactly this).
     struct FakeTransport(Value);
     impl IpcTransport for FakeTransport {
         fn call(&self, _method: &str, _params: Value) -> Result<Value, String> {
@@ -99,10 +77,6 @@ mod tests {
         }
     }
 
-    /// Method-routed fake: replies to `surface.list` with a fixed surface set
-    /// and records every other call (method + params) for assertions. Needed
-    /// by `focus` / `split --target`, which resolve a selector (one
-    /// `surface.list` round) before the actual mutation call.
     struct RoutedTransport {
         calls: RefCell<Vec<(String, Value)>>,
         reply: Value,
@@ -142,9 +116,6 @@ mod tests {
 
     #[test]
     fn focus_ambiguous_prefix_is_target_error_without_ipc_mutation() {
-        // "f" prefixes nothing; "backend"/"frontend" share no prefix, so use a
-        // selector matching both via cmdline-style name prefix is impossible
-        // here - exercise the no-match arm instead (exit 3, no focus call).
         let fake = RoutedTransport::new(json!({ "focused": true }));
         let err = focus(&fake, "zzz").expect_err("no match");
         assert_eq!(err.code, crate::cli::EXIT_TARGET);
@@ -169,7 +140,6 @@ mod tests {
 
     #[test]
     fn split_without_target_omits_surface_id() {
-        // Back-compat: the legacy first-leaf path must not grow a surface_id.
         let fake = RoutedTransport::new(json!({ "split": true, "panes": 2 }));
         assert_eq!(split(&fake, "horizontal", None).expect("ok"), EXIT_OK);
         let calls = fake.calls.borrow();
@@ -179,9 +149,6 @@ mod tests {
 
     #[test]
     fn split_at_cap_legacy_error_is_nonzero_exit() {
-        // The server reports MAX_PANES via a legacy `{"error": …}` result (no
-        // `_jsonrpc_error` sentinel), so it arrives as `Ok`. US-005 AC4 requires
-        // a non-zero exit, not a printed error with code 0.
         let fake = FakeTransport(json!({ "error": "Maximum pane count reached" }));
         let err = split(&fake, "horizontal", None).expect_err("legacy error must be non-zero exit");
         assert_eq!(err.code, crate::cli::EXIT_RUNTIME);
@@ -197,8 +164,6 @@ mod tests {
 
     #[test]
     fn select_success_returns_ok() {
-        // A genuine success envelope has no top-level `error` string, so the
-        // guard is transparent on the happy path.
         let fake = FakeTransport(json!({ "selected": 2 }));
         assert_eq!(select(&fake, 2).expect("ok"), EXIT_OK);
     }

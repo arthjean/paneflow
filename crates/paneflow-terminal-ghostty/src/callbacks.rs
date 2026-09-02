@@ -36,8 +36,6 @@ pub(crate) struct CallbackState {
     pending_bell_events: Cell<usize>,
     pending_notification_events: Cell<usize>,
     pending_unknown_sequence_events: Cell<usize>,
-    /// What a clipboard read is answered with. `None`, the default, denies
-    /// every read. See [`crate::DisplayTerminal::set_clipboard_readable`].
     readable_clipboard: RefCell<Option<String>>,
     size: Cell<WindowSize>,
     color_scheme: Cell<ColorScheme>,
@@ -68,8 +66,6 @@ impl CallbackState {
         *self.readable_clipboard.borrow_mut() = text;
     }
 
-    /// The text a clipboard read is answered with, if the embedder allowed
-    /// one at all.
     pub(crate) fn readable_clipboard(&self) -> Option<String> {
         self.readable_clipboard.borrow().clone()
     }
@@ -90,10 +86,6 @@ impl CallbackState {
         self.color_scheme.set(color_scheme);
     }
 
-    /// Report a working directory, dropping a repeat of the last one.
-    ///
-    /// Shells emit OSC 7 on every prompt, so most reports restate the
-    /// directory Paneflow already knows.
     pub(crate) fn push_working_directory(&self, cwd: String) {
         let mut last = self.last_working_directory.borrow_mut();
         if last.as_deref() == Some(cwd.as_str()) {
@@ -104,10 +96,6 @@ impl CallbackState {
         self.push(BackendEvent::WorkingDirectory(cwd));
     }
 
-    /// Forget the last reported working directory.
-    ///
-    /// A terminal reset drops the shell state that produced it, so the next
-    /// report must reach Paneflow even when it restates the same path.
     pub(crate) fn reset_working_directory(&self) {
         *self.last_working_directory.borrow_mut() = None;
     }
@@ -274,8 +262,6 @@ pub(crate) fn install(terminal: sys::GhosttyTerminal, state: *mut CallbackState)
         sys::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
         crate::callback_ffi::clipboard_write as *const (),
     )?;
-    // Bound the Kitty clipboard protocol to the same budget the OSC 52 path
-    // has always had; libghostty otherwise buffers up to 64 MiB per write.
     let clipboard_max_bytes = crate::callback_ffi::MAX_CLIPBOARD_BYTES;
     set(
         terminal,
@@ -337,13 +323,6 @@ fn set_callback(
     set(terminal, option, callback.cast())
 }
 
-/// Run a libghostty callback against Paneflow's registered callback state.
-///
-/// # Safety
-///
-/// If `userdata` is non-null, it must be the properly aligned pointer to the
-/// live `CallbackState` registered on the calling terminal. That allocation
-/// must remain alive and must not be mutably accessed for the duration of `f`.
 pub(crate) unsafe fn with_state(userdata: *mut c_void, f: impl FnOnce(&CallbackState)) {
     if userdata.is_null() {
         return;

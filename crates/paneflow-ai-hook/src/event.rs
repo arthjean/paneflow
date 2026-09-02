@@ -9,13 +9,6 @@ use serde_json::Value;
 
 pub(crate) const MAX_HOOK_TEXT_BYTES: usize = 4096;
 
-/// Cap on the `prompt` carried by `ai.prompt_submit`, which the app reads to
-/// name the tab after what the turn is about.
-///
-/// Much tighter than [`MAX_HOOK_TEXT_BYTES`] because a tab title is a handful
-/// of words: everything past the opening sentence is bytes crossing the socket
-/// on every single prompt for nothing. The app truncates again on its own side
-/// - this is about what the wire carries, not about trusting the length.
 pub(crate) const MAX_HOOK_PROMPT_BYTES: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,9 +171,6 @@ pub(crate) fn build_frame(
     let compact_payload = compact_hook_payload(event, &hook_payload);
     let mut params = AiHookParams::new(context.workspace_id, context.tool, compact_payload);
     params.pid = session_pid;
-    // Stamped here, in the producing process, not on arrival: the server keeps
-    // a per-session watermark and drops a frame that lost its race with a
-    // later one (an `ai.stop` overtaken by the shim's `ai.exit`, say).
     params.emitted_at_ms = paneflow_ipc_client::ai_hook::epoch_millis();
     params.surface_id = context.surface_id;
 
@@ -213,15 +203,6 @@ fn compact_hook_payload(event: HookEvent, payload: &Value) -> Value {
 
     match event {
         HookEvent::SessionStart => copy_string_field(payload, &mut compact, "cwd", 2048),
-        // The opening of the prompt, and only the opening: the app names the
-        // tab after the first thing asked of the agent, so a row reads "fix
-        // the flaky worktree test" instead of a fourth "Claude Code". Nothing
-        // else consumes it, and nothing interprets it - it is UNTRUSTED text
-        // that reaches a label, and the app sanitizes it there.
-        //
-        // Agents whose hook payload calls this field something else simply
-        // send no prompt, and their tabs keep the preset label. That is a
-        // missing nicety, not a broken session.
         HookEvent::UserPromptSubmit => {
             copy_string_field(payload, &mut compact, "prompt", MAX_HOOK_PROMPT_BYTES);
         }
@@ -460,8 +441,6 @@ mod tests {
         assert!(message.is_char_boundary(message.len()));
     }
 
-    /// A prompt is cut on a character boundary, not a byte one - the frame
-    /// would otherwise carry a half-encoded character.
     #[test]
     fn a_multibyte_prompt_is_truncated_on_a_character_boundary() {
         let payload = json!({ "prompt": "é".repeat(1_000) });
@@ -478,8 +457,6 @@ mod tests {
         );
     }
 
-    /// Nothing else rides along: an agent that puts its whole conversation in
-    /// the prompt payload must not push it all across the socket.
     #[test]
     fn payload_compaction_keeps_only_the_prompt_and_its_identifiers() {
         let payload = json!({

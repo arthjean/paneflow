@@ -1,7 +1,3 @@
-//! Cursor paint pass - primary text cursor
-//! (Vintage/Block/Beam/Underline/DoubleUnderline/HollowBlock) plus the
-//! copy-mode selection anchor cursor.
-
 use gpui::{
     App, BorderStyle, Bounds, Font, FontStyle, FontWeight, Pixels, Point, SharedString, TextAlign,
     TextRun, Window, fill, outline, px,
@@ -54,8 +50,6 @@ fn paint_cursor_info(
             window.paint_quad(fill(cursor_bounds, color));
         }
         CursorShape::Block => {
-            // Shape the cursor character first so we can size the
-            // cursor quad to fit wide/emoji glyphs.
             let shaped = cursor.text.map(|ch| {
                 let mut cursor_font = base_font.clone();
                 if cursor.bold {
@@ -78,13 +72,10 @@ fn paint_cursor_info(
                         underline: None,
                         strikethrough: None,
                     }],
-                    // Match the normal terminal text path so the glyph does
-                    // not shift when a block cursor moves over it.
                     Some(geom.cell_width),
                 )
             });
 
-            // Widen cursor to fit glyphs that exceed cell_width * 2
             if cursor.wide
                 && let Some(ref shaped) = shaped
             {
@@ -100,7 +91,6 @@ fn paint_cursor_info(
             );
             window.paint_quad(fill(cursor_bounds, color));
 
-            // Paint the character on top of the cursor quad
             if let Some(shaped) = shaped {
                 let _ = shaped.paint(
                     Point { x: cx_, y: cy },
@@ -167,13 +157,10 @@ fn paint_cursor_info(
                     .corner_radii(px(2.0)),
             );
         }
-        CursorShape::Hidden => {} // Already filtered in build_layout
+        CursorShape::Hidden => {}
     }
 }
 
-/// Paint the primary cursor at its grid position using the shape dictated by
-/// the terminal mode + config. For Block shapes, shapes the underlying
-/// character on top in the terminal's background color.
 pub fn paint_cursor(
     layout: &LayoutState,
     geom: &CellGeometry,
@@ -189,8 +176,6 @@ pub fn paint_cursor(
     paint_cursor_info(cursor, layout, geom, base_font, font_size, window, cx);
 }
 
-/// Paint the secondary selection marker using the same glyph-aware cursor pass
-/// as the primary cursor.
 pub fn paint_anchor_cursor(
     layout: &LayoutState,
     geom: &CellGeometry,

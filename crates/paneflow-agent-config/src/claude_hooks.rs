@@ -95,12 +95,6 @@ fn is_managed_handler(handler: &Value) -> bool {
         .is_some_and(is_paneflow_hook_command)
 }
 
-/// Remove only Paneflow-owned state from matcher groups.
-///
-/// A user may have added another handler to a group that also contains a
-/// Paneflow command. Dropping the whole group would destroy that handler, so
-/// managed commands and the managed marker are stripped independently. A
-/// group disappears only when that operation leaves it empty.
 fn strip_managed_handlers(groups: &mut Vec<Value>) -> bool {
     let mut removed = false;
     let mut index = 0;
@@ -170,9 +164,6 @@ pub fn reconcile_hooks(
     })
 }
 
-/// Reconcile hooks for ephemeral project-local files whose caller explicitly
-/// owns an invalid root or `hooks` container. Event values remain strict so a
-/// malformed user event is never silently replaced.
 pub fn reconcile_hooks_replacing_invalid_container(
     root: &mut Value,
     command_for_event: impl Fn(&str) -> String,
@@ -192,12 +183,6 @@ pub fn reconcile_hooks_replacing_invalid_container(
     })
 }
 
-/// Reconcile PaneFlow-owned matcher groups for an agent-specific event set.
-///
-/// Ownership and cleanup stay canonical even when an agent uses different
-/// event names or a stricter group shape. Existing mixed groups are edited
-/// surgically: PaneFlow handlers are removed while neighboring user handlers
-/// survive, then one freshly rendered managed group is appended per event.
 pub fn reconcile_matcher_hooks_replacing_invalid_container(
     root: &mut Value,
     events: &[&str],
@@ -256,18 +241,10 @@ pub fn remove_hooks(root: &mut Value) -> Result<bool, HookConfigError> {
     Ok(remove_hooks_lenient(root))
 }
 
-/// Best-effort cleanup for ephemeral shim-owned files.
-///
-/// Invalid containers are left untouched, while valid event arrays are
-/// cleaned surgically. Persistent configuration must use [`remove_hooks`]
-/// so malformed boundaries are reported instead of silently accepted.
 pub fn remove_hooks_lenient(root: &mut Value) -> bool {
     remove_matcher_hooks_lenient(root, CLAUDE_HOOK_EVENTS)
 }
 
-/// Remove PaneFlow-owned handlers from an agent-specific matcher event set.
-/// Invalid containers are retained, and user handlers sharing a matcher group
-/// with PaneFlow are preserved.
 pub fn remove_matcher_hooks_lenient(root: &mut Value, events: &[&str]) -> bool {
     let object = root.as_object_mut();
     let Some(object) = object else {

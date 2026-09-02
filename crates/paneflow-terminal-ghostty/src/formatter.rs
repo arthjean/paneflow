@@ -1,33 +1,18 @@
-//! Format terminal content as plain text, VT sequences, or HTML.
-//!
-//! This is libghostty's own view of its screen, so it handles what an
-//! ad-hoc cell walk gets wrong: soft-wrapped lines rejoined, trailing
-//! whitespace trimmed, and, in VT mode, enough state to replay the screen
-//! into another terminal.
-
 use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
 use crate::handles::check;
 use crate::{GhosttyError, Result};
 
-/// Ceiling on a single formatted output, mirroring the scrollback caps the
-/// rest of the crate applies to unbounded terminal data.
 const MAX_FORMAT_BYTES: usize = 32 * 1024 * 1024;
 
-/// Rows of history a replay capture carries, matching the cap the plain-text
-/// scrollback path has always applied.
 const MAX_REPLAY_HISTORY_ROWS: i32 = 4_000;
 
-/// The output syntax a formatter emits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FormatterFormat {
-    /// Text with no styling.
     #[default]
     Plain,
-    /// VT escape sequences that replay the screen.
     Vt,
-    /// HTML with inline styling.
     Html,
 }
 
@@ -41,45 +26,28 @@ impl FormatterFormat {
     }
 }
 
-/// Screen state to replay alongside the cells, for styled output.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ScreenExtra {
-    /// Emit the cursor position with CUP.
     pub cursor: bool,
-    /// Emit the cursor's active SGR style.
     pub style: bool,
-    /// Emit hyperlink state with OSC 8.
     pub hyperlink: bool,
-    /// Emit character protection with DECSCA.
     pub protection: bool,
-    /// Emit Kitty keyboard protocol state.
     pub kitty_keyboard: bool,
-    /// Emit character set designations.
     pub charsets: bool,
 }
 
-/// Terminal state to replay alongside the screen, for styled output.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TerminalExtra {
-    /// Emit the palette with OSC 4.
     pub palette: bool,
-    /// Emit every mode that differs from its default.
     pub modes: bool,
-    /// Emit the scrolling region with DECSTBM and DECSLRM.
     pub scrolling_region: bool,
-    /// Emit tab stops.
     pub tabstops: bool,
-    /// Emit the working directory with OSC 7.
     pub pwd: bool,
-    /// Emit keyboard modes such as `modifyOtherKeys`.
     pub keyboard: bool,
-    /// Screen-level extras.
     pub screen: ScreenExtra,
 }
 
 impl TerminalExtra {
-    /// Everything libghostty can replay. Useful with
-    /// [`FormatterFormat::Vt`] to reproduce a screen elsewhere.
     #[must_use]
     pub fn all() -> Self {
         Self {
@@ -122,22 +90,15 @@ impl TerminalExtra {
     }
 }
 
-/// How to format a terminal's active screen.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FormatterOptions {
-    /// Output syntax.
     pub emit: FormatterFormat,
-    /// Rejoin soft-wrapped lines into one logical line.
     pub unwrap: bool,
-    /// Trim trailing whitespace from non-blank lines.
     pub trim: bool,
-    /// Extra state to replay. Only meaningful for styled formats.
     pub extra: TerminalExtra,
 }
 
 impl FormatterOptions {
-    /// Plain text with wrapped lines rejoined and trailing blanks trimmed:
-    /// the shape a human or an agent wants when reading a screen back.
     #[must_use]
     pub fn plain_text() -> Self {
         Self {
@@ -149,22 +110,15 @@ impl FormatterOptions {
     }
 }
 
-/// A formatter bound to a terminal.
-///
-/// The terminal must outlive the formatter, which the borrow enforces.
 struct Formatter<'terminal> {
     raw: sys::GhosttyFormatter,
     _terminal: std::marker::PhantomData<&'terminal DisplayTerminal>,
 }
 
 impl Formatter<'_> {
-    /// Run the formatter through libghostty's allocating path, so the output
-    /// size does not have to be known in advance.
     fn into_bytes(self) -> Result<Vec<u8>> {
         let mut pointer: *mut u8 = std::ptr::null_mut();
         let mut len = 0usize;
-        // SAFETY: the formatter is live, the null allocator selects
-        // libghostty's default, and both out-parameters are valid storage.
         let result = unsafe {
             sys::ghostty_formatter_format_alloc(self.raw, std::ptr::null(), &mut pointer, &mut len)
         };
@@ -172,12 +126,7 @@ impl Formatter<'_> {
         if pointer.is_null() {
             return Ok(Vec::new());
         }
-        // The buffer belongs to libghostty's allocator, so it is copied and
-        // released here rather than adopted by Rust's allocator.
-        // SAFETY: the library reported `len` initialized bytes at `pointer`.
         let copied = unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec();
-        // SAFETY: `pointer`/`len` are exactly what `format_alloc` produced
-        // with the same (default) allocator, and nothing else owns them.
         unsafe { sys::ghostty_free(std::ptr::null(), pointer, len) };
         if copied.len() > MAX_FORMAT_BYTES {
             return Err(GhosttyError::LimitExceeded {
@@ -191,15 +140,12 @@ impl Formatter<'_> {
 
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
-        // SAFETY: `raw` came from `ghostty_formatter_terminal_new`, is
-        // private, and Drop runs exactly once.
         unsafe { sys::ghostty_formatter_free(self.raw) };
     }
 }
 
 impl DisplayTerminal {
     fn formatter(&self, options: FormatterOptions) -> Result<Formatter<'_>> {
-        // A NULL selection formats the whole active screen.
         self.formatter_over(options, None)
     }
 
@@ -217,9 +163,6 @@ impl DisplayTerminal {
             selection: selection.map_or(std::ptr::null(), |selection| selection as *const _),
         };
         let mut raw: sys::GhosttyFormatter = std::ptr::null_mut();
-        // SAFETY: the null allocator selects libghostty's default, `raw` is
-        // valid writable storage, and the terminal handle outlives the
-        // formatter through the returned borrow.
         let result = unsafe {
             sys::ghostty_formatter_terminal_new(
                 std::ptr::null(),
@@ -240,22 +183,15 @@ impl DisplayTerminal {
         })
     }
 
-    /// Format the active screen and return it as a string.
     pub fn format(&self, options: FormatterOptions) -> Result<String> {
         let bytes = self.format_bytes(options)?;
         String::from_utf8(bytes).map_err(|_| GhosttyError::InvalidUtf8("formatted screen"))
     }
 
-    /// Format the active screen into an owned byte buffer.
-    ///
-    /// Uses libghostty's allocating path, so the size does not have to be
-    /// known in advance.
     pub fn format_bytes(&self, options: FormatterOptions) -> Result<Vec<u8>> {
         let formatter = self.formatter(options)?;
         let mut pointer: *mut u8 = std::ptr::null_mut();
         let mut len = 0usize;
-        // SAFETY: the formatter is live, the null allocator selects
-        // libghostty's default, and both out-parameters are valid storage.
         let result = unsafe {
             sys::ghostty_formatter_format_alloc(
                 formatter.raw,
@@ -268,12 +204,7 @@ impl DisplayTerminal {
         if pointer.is_null() {
             return Ok(Vec::new());
         }
-        // The buffer belongs to libghostty's allocator, so it is copied and
-        // released here rather than adopted by Rust's allocator.
-        // SAFETY: the library reported `len` initialized bytes at `pointer`.
         let copied = unsafe { std::slice::from_raw_parts(pointer, len) }.to_vec();
-        // SAFETY: `pointer`/`len` are exactly what `format_alloc` produced
-        // with the same (default) allocator, and nothing else owns them.
         unsafe { sys::ghostty_free(std::ptr::null(), pointer, len) };
         if copied.len() > MAX_FORMAT_BYTES {
             return Err(GhosttyError::LimitExceeded {
@@ -284,17 +215,9 @@ impl DisplayTerminal {
         Ok(copied)
     }
 
-    /// Format the active screen into a caller-owned buffer.
-    ///
-    /// Returns the number of bytes written. When `buffer` is too small the
-    /// call fails with [`GhosttyError::Ffi`] and nothing usable is written;
-    /// prefer [`Self::format_bytes`] unless the buffer is being reused across
-    /// frames.
     pub fn format_into(&self, options: FormatterOptions, buffer: &mut [u8]) -> Result<usize> {
         let formatter = self.formatter(options)?;
         let mut written = 0usize;
-        // SAFETY: the formatter is live, `buffer` is a writable slice of the
-        // stated length, and `written` is valid storage.
         let result = unsafe {
             sys::ghostty_formatter_format_buf(
                 formatter.raw,
@@ -313,11 +236,6 @@ impl DisplayTerminal {
         Ok(written)
     }
 
-    /// Format the current selection, or `None` when nothing is selected.
-    ///
-    /// This is what a styled copy wants: the same range the user highlighted,
-    /// rendered by libghostty instead of by walking cells, so soft-wrapped
-    /// lines rejoin and a rectangular selection stays rectangular.
     pub fn format_selection(&self, options: FormatterOptions) -> Result<Option<String>> {
         let Some(selection) = self.current_selection()? else {
             return Ok(None);
@@ -329,15 +247,6 @@ impl DisplayTerminal {
             .map_err(|_| GhosttyError::InvalidUtf8("formatted selection"))
     }
 
-    /// Capture the screen and its recent history as VT sequences that replay
-    /// it into another terminal.
-    ///
-    /// Plain text loses the styling, the modes, and the cursor; these bytes
-    /// carry all three, which is what makes a restored pane look like the one
-    /// that was closed rather than like a transcript of it. History is capped
-    /// at [`MAX_REPLAY_HISTORY_ROWS`] rows, the same bound the text path has.
-    ///
-    /// Feed the result back with [`Self::feed`].
     pub fn capture_replay(&self) -> Result<Vec<u8>> {
         let Some(selection) = self.replay_selection()? else {
             return Ok(Vec::new());
@@ -345,7 +254,6 @@ impl DisplayTerminal {
         let formatter = self.formatter_over(
             FormatterOptions {
                 emit: FormatterFormat::Vt,
-                // Wrapping is part of what the screen looked like.
                 unwrap: false,
                 trim: true,
                 extra: TerminalExtra::all(),
@@ -355,8 +263,6 @@ impl DisplayTerminal {
         formatter.into_bytes()
     }
 
-    /// The range [`Self::capture_replay`] covers: the viewport plus a bounded
-    /// tail of history.
     fn replay_selection(&self) -> Result<Option<sys::GhosttySelection>> {
         let (cols, _, scrollback) = self.geometry_batch()?;
         let rows = i32::from(self.callbacks.size().rows);
@@ -375,10 +281,6 @@ impl DisplayTerminal {
         Ok(Some(selection))
     }
 
-    /// Stream the formatted screen to `sink`, which returns `false` to abort.
-    ///
-    /// This avoids materializing the whole screen when the destination is
-    /// itself a stream, such as a file or a socket.
     pub fn format_to<F: FnMut(&[u8]) -> bool>(
         &self,
         options: FormatterOptions,
@@ -386,8 +288,6 @@ impl DisplayTerminal {
     ) -> Result<()> {
         let formatter = self.formatter(options)?;
         let writer = crate::io::writer(&mut sink);
-        // SAFETY: the formatter is live and `writer` borrows `sink` for the
-        // duration of this synchronous call.
         let result = unsafe { sys::ghostty_formatter_format(formatter.raw, writer) };
         check("formatter_format", result)
     }

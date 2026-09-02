@@ -1,19 +1,3 @@
-//! Neutral type definitions shared between `terminal` (logic) and
-//! `terminal_element` (rendering).
-//!
-//! Pulling these types out of `terminal_element.rs` breaks the circular
-//! coupling where `terminal.rs` referenced `crate::terminal_element::…`
-//! for hyperlink / search / copy-mode state. Both modules now depend on
-//! this neutral leaf, allowing further decomposition (US-005 onward).
-//!
-//! ## Backend-neutral types
-//!
-//! This module owns the neutral `Point` / `CursorShape` / `Color` /
-//! `CellFlags` / `Modes` / `SelectionRange` / `Cell` / `Content` types the
-//! renderer and the input encoders consume. The Ghostty engine translates its
-//! own values into them inside `terminal/ghostty_session.rs`, so no
-//! rendering, input, or app file ever names an engine type.
-
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,11 +34,6 @@ impl ShellQuoting {
     }
 }
 
-/// Last known terminal window metrics sent to terminal clients.
-///
-/// `cols` and `rows` drive the grid size. `cell_width` and `cell_height` are
-/// needed by terminal size queries and platform PTY pixel fields, so callers
-/// must treat changes to any field as a resize notification candidate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalWindowSize {
     pub cols: usize,
@@ -75,8 +54,6 @@ impl TerminalWindowSize {
     }
 }
 
-/// Convert a measured pixel metric to the integer form used by PTY size
-/// notifications and terminal size query replies.
 #[inline]
 pub fn terminal_metric_to_u16(value: f32) -> u16 {
     if !value.is_finite() {
@@ -85,24 +62,12 @@ pub fn terminal_metric_to_u16(value: f32) -> u16 {
     value.round().clamp(0.0, u16::MAX as f32) as u16
 }
 
-// ---------------------------------------------------------------------------
-// Neutral grid coordinate
-// ---------------------------------------------------------------------------
-
-/// A grid line index. Signed, because scrollback rows are negative: row `0`
-/// is the top of the viewport and history grows downward from `-1`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Line(pub i32);
 
-/// A grid column index.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Column(pub usize);
 
-/// A grid position.
-///
-/// Depending on the producer, `line` is either grid-line coords (cursor) or
-/// viewport-line coords (cells, after the `display_offset` shift). Ordering is
-/// line-then-column.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Point {
     pub line: Line,
@@ -110,7 +75,6 @@ pub struct Point {
 }
 
 impl Point {
-    /// Construct from raw line/column integers (the common call shape).
     #[inline]
     pub fn new(line: i32, column: usize) -> Self {
         Self {
@@ -120,14 +84,6 @@ impl Point {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Neutral cursor shape
-// ---------------------------------------------------------------------------
-
-/// Cursor rendering shape. Native variants mirror `vte::ansi::CursorShape`;
-/// Paneflow adds Windows Terminal-style `Vintage` and `DoubleUnderline` for
-/// user-configured defaults. The `From` conversion is exhaustive with no
-/// wildcard arm, so a future upstream variant is caught at compile time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CursorShape {
     Vintage,
@@ -139,11 +95,6 @@ pub enum CursorShape {
     Hidden,
 }
 
-// ---------------------------------------------------------------------------
-// Neutral color
-// ---------------------------------------------------------------------------
-
-/// A 24-bit truecolor value, mirror of `vte::ansi::Rgb`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rgb {
     pub r: u8,
@@ -151,8 +102,6 @@ pub struct Rgb {
     pub b: u8,
 }
 
-/// Named palette slot. Exhaustive, which is why the renderer's `named_color`
-/// match needs no wildcard arm.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NamedColor {
     Black,
@@ -175,7 +124,6 @@ pub enum NamedColor {
     Background,
 }
 
-/// A terminal cell color, mirror of `vte::ansi::Color`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Color {
     Named(NamedColor),
@@ -183,14 +131,6 @@ pub enum Color {
     Indexed(u8),
 }
 
-// ---------------------------------------------------------------------------
-// Neutral cell attribute flags
-// ---------------------------------------------------------------------------
-
-/// Cell attribute flags: the subset of a cell's SGR state the renderer reads.
-/// Hand-rolled (no `bitflags` dep) - the API surface the element needs is just
-/// `empty`/`contains`/`insert`/`|`. `BOLD_ITALIC` is the combined mask, so
-/// `contains(BOLD_ITALIC)` requires *both* bits.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CellFlags(u16);
 
@@ -214,8 +154,6 @@ impl CellFlags {
         Self(0)
     }
 
-    /// `true` iff every bit set in `other` is also set in `self` (so the
-    /// combined `BOLD_ITALIC` mask requires both bits).
     #[inline]
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
@@ -237,15 +175,6 @@ impl std::ops::BitOrAssign for CellFlags {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Neutral terminal modes
-// ---------------------------------------------------------------------------
-
-/// Terminal private-mode flags, Paneflow-owned mirror of the `term::TermMode`
-/// subset the neutral renderer/input layers read (the element gates IME on
-/// `ALT_SCREEN`, `keys` picks app-cursor sequences, `mouse` picks the SGR/UTF-8
-/// mouse encoding). Backend adapters translate their native mode bits into
-/// this complete consumer-facing surface before any UI code sees them.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Modes(u16);
 
@@ -289,12 +218,6 @@ impl std::ops::BitOr for Modes {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Neutral selection range
-// ---------------------------------------------------------------------------
-
-/// A computed selection span. `start`/`end` carry grid coordinates (scrollback
-/// negative); `is_block` flags a rectangular selection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectionRange {
     pub start: Point,
@@ -302,38 +225,20 @@ pub struct SelectionRange {
     pub is_block: bool,
 }
 
-/// Where the rendered grid sits inside the pane, so a pointer drag can be
-/// mapped back onto cells and can tell when it has left the viewport.
-///
-/// Coordinates are pane-relative: every pointer position paired with this is
-/// measured from the grid's own top-left corner, not the window's. One
-/// snapshot serves a whole pointer event, so the cell it resolves and the
-/// geometry the engine reads cannot disagree.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SelectionGeometry {
-    /// Columns in the rendered grid.
     pub columns: usize,
-    /// Rows in the viewport.
     pub screen_lines: usize,
-    /// Rows of scrollback above the viewport.
     pub display_offset: usize,
-    /// Width of one cell in pixels.
     pub cell_width: f32,
-    /// Height of one row in pixels.
     pub line_height: f32,
 }
 
 impl SelectionGeometry {
-    /// Height of the rendered grid in pixels.
     pub fn height(&self) -> f32 {
         self.line_height * self.screen_lines as f32
     }
 
-    /// The cell under a pane-relative pointer, clamped to the grid.
-    ///
-    /// A pointer outside the pane still resolves to an edge cell: the position
-    /// itself is what carries the overshoot, and the selection engine reads it
-    /// to decide the viewport should scroll.
     pub fn cell_at(&self, position: (f32, f32)) -> Point {
         let column = if self.cell_width > 0.0 {
             (position.0.max(0.0) / self.cell_width) as usize
@@ -352,7 +257,6 @@ impl SelectionGeometry {
     }
 }
 
-/// Selection expansion policy requested by the input layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionKind {
     Simple,
@@ -360,7 +264,6 @@ pub enum SelectionKind {
     Lines,
 }
 
-/// Grid and viewport facts captured under one backend lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GridMetrics {
     pub columns: usize,
@@ -371,73 +274,39 @@ pub struct GridMetrics {
     pub cursor: Point,
 }
 
-/// One logical terminal line copied for link detection.
 pub struct GridLineText {
     pub line: Line,
     pub text: String,
     pub char_to_column: Vec<usize>,
 }
 
-// ---------------------------------------------------------------------------
-// Neutral renderable cell + cursor + content snapshot (the seam output)
-// ---------------------------------------------------------------------------
-
-/// A single grid cell snapshotted as neutral value types on the engine's
-/// runtime thread and handed to the Window-free layout pass. Carries no engine
-/// handle and no GPUI handle, so the layout pass is deterministic and testable
-/// with no GPU and no display (US-002 golden-frame net).
 #[derive(Clone, Debug)]
 pub struct Cell {
-    /// Viewport-line coordinates (scrollback rows negative), `display_offset`
-    /// already applied by the producer.
     pub point: Point,
     pub c: char,
     pub fg: Color,
     pub bg: Color,
     pub flags: CellFlags,
     pub zerowidth: Option<Vec<char>>,
-    /// Whether the cell carries an OSC 8 hyperlink. Only the boolean is
-    /// snapshotted (the renderer just needs the underline affordance); the
-    /// id/uri are resolved on demand by the hover/click path in `input.rs`, so
-    /// we avoid allocating two `String`s per OSC 8 cell every frame.
     pub hyperlink: bool,
 }
 
-/// The grid cursor as read under lock, before the element applies its
-/// focus/visibility overrides (hidden when `!cursor_visible`, hollow when
-/// unfocused) and the theme cursor color. `point` stays in raw grid-line
-/// coords (no `display_offset` shift), matching the prior `build_layout`.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderableCursor {
     pub point: Point,
     pub shape: CursorShape,
-    /// Raw foreground of the cell under the cursor, before inverse-mode swap.
     pub fg: Color,
-    /// Raw background of the cell under the cursor, before inverse-mode swap.
     pub bg: Color,
     pub flags: CellFlags,
-    /// Whether the cell under the cursor is a wide (CJK) glyph.
     pub wide: bool,
-    /// Char under the cursor (for the block-cursor inverse glyph).
     pub text: char,
     pub bold: bool,
     pub italic: bool,
 }
 
-/// A complete, neutral snapshot of the renderable terminal state, produced by
-/// the engine on its runtime thread. The element consumes this instead of
-/// reaching for the grid itself. Mirror of Zed's `TerminalContent`.
 #[derive(Clone, Debug)]
 pub struct Content {
-    /// Process-wide monotonic stamp, bumped every time a session publishes a
-    /// new grid. Two `Content` values with the same stamp are the same frame,
-    /// which is what lets the renderer skip rebuilding a layout it already
-    /// has. Never reused across sessions, so a restarted pane cannot collide
-    /// with the cache entry its predecessor left behind.
     pub generation: u64,
-    /// Grid dimensions owned by this exact snapshot. Ghostty applies host
-    /// resizes on its runtime thread, so these can briefly differ from the
-    /// latest GPUI bounds while the resize transaction is in flight.
     pub cols: usize,
     pub rows: usize,
     pub cells: Arc<[Cell]>,
@@ -447,11 +316,6 @@ pub struct Content {
     pub history_size: usize,
 }
 
-// ---------------------------------------------------------------------------
-// Rendering glue types (Paneflow-owned, neutral)
-// ---------------------------------------------------------------------------
-
-/// A search match highlight to be painted by TerminalElement.
 #[derive(Clone, PartialEq, Eq)]
 pub struct SearchHighlight {
     pub start: Point,
@@ -459,30 +323,15 @@ pub struct SearchHighlight {
     pub is_active: bool,
 }
 
-/// Where a hyperlink was detected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum HyperlinkSource {
-    /// Explicit OSC 8 escape sequence from the program.
     Osc8,
-    /// Regex pattern match on terminal output.
     Regex,
-    /// Markdown file path (`.md` / `.markdown`) - opens in the in-pane
-    /// markdown viewer via `TerminalEvent::OpenMarkdownPath`.
     FilePath,
-    /// Source-code file path (`.rs`, `.ts`, `.py`, ...) optionally followed
-    /// by `:line[:col]`. Opens in the user's `$VISUAL`/`$EDITOR` (or a probed
-    /// fallback) via `TerminalEvent::OpenCodePath`. `uri` holds the resolved
-    /// absolute path; `line` / `col` carry the optional location captured
-    /// from `path:42` or `path:42:7` style references that compilers, test
-    /// runners, and linters emit.
     CodePath,
 }
 
-/// A detected OSC 8 hyperlink zone spanning one or more cells.
-/// Fields are populated here (US-014) and consumed by hover/click (US-015/US-016).
-/// `Clone` (US-012): the press point's link is stashed on mouse-down so the
-/// open can fire on mouse-up only if no drag occurred.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct HyperlinkZone {
@@ -490,30 +339,17 @@ pub struct HyperlinkZone {
     pub id: String,
     pub start: Point,
     pub end: Point,
-    /// Whether this URL's scheme is in the openable allowlist.
     pub is_openable: bool,
-    /// How this hyperlink was detected (OSC 8 takes priority over regex).
     pub source: HyperlinkSource,
-    /// 1-based line number for `CodePath` matches (`file.rs:42` → `Some(42)`).
-    /// `None` for `Osc8`, `Regex`, `FilePath`, and `CodePath` with no `:line`
-    /// suffix in the matched text.
     pub line: Option<u32>,
-    /// 1-based column number for `CodePath` matches (`file.rs:42:7` →
-    /// `Some(7)`). Always `None` when `line` is `None`.
     pub col: Option<u32>,
 }
 
-/// Copy mode cursor state for rendering.
 #[derive(Clone, PartialEq, Eq)]
 pub struct CopyModeCursorState {
-    /// Grid-coordinate line of the copy cursor (current/end of selection)
     pub grid_line: i32,
-    /// Column of the copy cursor
     pub col: usize,
-    /// Grid-coordinate line of the selection anchor (start), when a selection is active.
-    /// Rendered as a distinct tmux-style marker so the user can see where the selection began.
     pub anchor_grid_line: Option<i32>,
-    /// Column of the selection anchor.
     pub anchor_col: usize,
 }
 
@@ -544,11 +380,6 @@ mod tests {
         assert!(!CellFlags::empty().contains(CellFlags::DIM));
     }
 
-    /// Ghostty is the only terminal engine. Alacritty was removed wholesale,
-    /// so no file under `src-app/src/` may name `alacritty_terminal` again -
-    /// re-introducing it would mean a second engine, a second set of grid
-    /// semantics, and the neutral types in this module losing their single
-    /// producer. The guard fails with the offending `file:line`.
     #[test]
     fn alacritty_is_absent_from_the_app_crate() {
         use std::path::{Path, PathBuf};
@@ -571,7 +402,6 @@ mod tests {
                     .unwrap()
                     .to_string_lossy()
                     .replace('\\', "/");
-                // This file names the crate once, in the guard's own message.
                 if rel == "terminal/types.rs" {
                     continue;
                 }

@@ -1,5 +1,3 @@
-//! Batched-text paint pass - one `shape_line` per `BatchedTextRun`.
-
 use gpui::{
     App, Bounds, Font, Pixels, Point, ShapedLine, TextAlign, TextRun, Window, point, px, size,
 };
@@ -7,22 +5,10 @@ use gpui::{
 use super::super::LayoutState;
 use super::super::geometry::CellGeometry;
 
-/// Compute the integer-pixel origin of a glyph run.
-///
-/// US-003: GPUI's `ShapedLine::paint(origin)` performs no internal pixel
-/// snapping (verified against `crates/gpui/src/text_system/line.rs`), so
-/// the caller must hand it a `Point<Pixels>` that is already on a pixel
-/// boundary if pixel-perfect rendering is desired. After US-002 made
-/// `cell_width` and `line_height` integer at measure time, `.round()`
-/// here is normally a no-op - but it is a deliberate guardrail. If a
-/// future change re-introduces a fractional residual (origin drift,
-/// non-integer cell stride from a refactor, etc.), this snap keeps
-/// glyphs aligned with their cell backgrounds without further fix.
 pub(super) fn glyph_origin(geom: &CellGeometry, line: i32, col_start: usize) -> Point<Pixels> {
     geom.cell_origin(line, col_start)
 }
 
-/// Paint all batched text runs produced during `build_layout`.
 pub fn paint_text_runs(
     layout: &LayoutState,
     geom: &CellGeometry,
@@ -37,10 +23,6 @@ pub fn paint_text_runs(
     for run in &layout.batched_runs {
         let Point { x, y } = glyph_origin(geom, run.line, run.col_start);
 
-        // PANEFLOW_PIXEL_PROBE: log glyph X/Y per run (sampled to first 16
-        // columns of each row inside the probe). Post-US-003 these are
-        // always integer; a fractional value here would mean the snap was
-        // bypassed and the renderer is back to sub-pixel offsets.
         #[cfg(debug_assertions)]
         super::super::pixel_probe::record_glyph(run.line, run.col_start, x, y);
 
@@ -140,10 +122,6 @@ fn paint_monochrome_shaped_line(
     })
 }
 
-// Gated on `debug_assertions` because the `pixel_probe` module - and its
-// `assert_pixel_aligned` helper - are themselves debug-only. Without the
-// extra cfg, `cargo test --release` (which turns `debug_assertions` off)
-// would fail to resolve the import.
 #[cfg(all(test, debug_assertions))]
 mod tests {
     use super::*;
@@ -152,8 +130,6 @@ mod tests {
 
     #[test]
     fn glyph_origin_snaps_fractional_cell_width() {
-        // 8.4 px is the canonical fractional cell_width from the PRD -
-        // (DejaVu Sans Mono at 14 pt @ 1.0 DPI on Linux).
         let origin = Point {
             x: px(0.0),
             y: px(0.0),
@@ -183,9 +159,6 @@ mod tests {
 
     #[test]
     fn glyph_origin_no_op_for_integer_cell_width() {
-        // Post-US-002 the typical case: cell_width and line_height are
-        // already integer. The snap must produce exact arithmetic equality
-        // - verifies `.round()` did not introduce drift.
         let origin = Point {
             x: px(0.0),
             y: px(0.0),
@@ -198,16 +171,12 @@ mod tests {
             line_height,
         };
         let p = glyph_origin(&geom, 5, 7);
-        assert_eq!(p.x, px(63.0)); // 9.0 * 7
-        assert_eq!(p.y, px(90.0)); // 18.0 * 5
+        assert_eq!(p.x, px(63.0));
+        assert_eq!(p.y, px(90.0));
     }
 
     #[test]
     fn glyph_origin_handles_fractional_origin() {
-        // Backstop guarantee: even when the ORIGIN drifts off-pixel (a
-        // future regression in `paint()` gutter math, say), the snap still
-        // produces an integer glyph X/Y. This is the entire point of
-        // US-003 being a defensive guardrail rather than a primary fix.
         let origin = Point {
             x: px(0.4),
             y: px(0.5),

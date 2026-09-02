@@ -1,13 +1,3 @@
-//! Toast types, helpers and rendering.
-//!
-//! Owns:
-//! - `Toast`: ephemeral bottom-right confirmation/error pop-ups.
-//! - `ToastAction`: optional buttons inside a toast (retry/open-releases).
-//! - `show_toast` / `show_update_error_toast` / `push_toast`: convenience
-//!   helpers attached to `PaneFlowApp`.
-//! - `render_toast`: the deferred rendering block used by `Render for
-//!   PaneFlowApp` to paint the active toast.
-
 use gpui::{
     Animation, AnimationExt, AnyElement, AsyncApp, Context, IntoElement, MouseButton,
     ParentElement, SharedString, Styled, WeakEntity, deferred, div, ease_in_out, prelude::*, px,
@@ -23,25 +13,13 @@ use crate::{PaneFlowApp, StartSelfUpdate, update};
 #[derive(Clone)]
 pub(crate) struct Toast {
     pub(crate) message: String,
-    /// Optional action buttons shown inside the toast. Empty for the
-    /// ordinary confirmation toasts ("Path copied", etc); populated for
-    /// update-failure toasts (US-013) with Retry / "Open releases" buttons.
     pub(crate) actions: Vec<ToastAction>,
-    /// How long the "hold" phase of the toast animation lasts, in ms.
-    /// Must match the auto-dismiss timer in [`PaneFlowApp::push_toast`] -
-    /// otherwise the exit animation plays early and the element persists
-    /// as a ghost at opacity 0 until the dismiss task fires.
     pub(crate) hold_ms: u64,
 }
 
 #[derive(Clone)]
 pub(crate) enum ToastAction {
-    /// "Retry" - re-dispatches the `StartSelfUpdate` action. The action
-    /// handler's existing guards (busy check, attempt counter) apply.
     RetryUpdate,
-    /// "Open releases" - opens the given URL in the user's browser.
-    /// Used for the 4th-attempt fallback (AC: "Download manually from the
-    /// releases page").
     OpenReleasesPage(String),
 }
 
@@ -50,9 +28,6 @@ impl PaneFlowApp {
         self.push_toast(message.into(), Vec::new(), TOAST_HOLD_MS, cx);
     }
 
-    /// Surface an update failure as a toast with a "Retry" action button
-    /// (US-013). Hold is extended so the user has time to click the button
-    /// before auto-dismiss.
     pub(crate) fn show_update_error_toast(
         &mut self,
         err: &update::UpdateError,
@@ -113,9 +88,6 @@ impl PaneFlowApp {
         ));
     }
 
-    /// Build the deferred element that paints the active toast at the
-    /// bottom-right of the window. Caller is responsible for the
-    /// `if let Some(toast) = &self.toast` guard.
     pub(crate) fn render_toast(&self, toast: &Toast, ui: UiColors) -> AnyElement {
         let has_actions = !toast.actions.is_empty();
         let is_error = has_actions || toast_message_reads_like_error(&toast.message);
