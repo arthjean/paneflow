@@ -6,7 +6,7 @@
 //! 1. `background`  - terminal background, per-cell bg rects, block quads
 //! 2. `selection`   - selection highlight rects
 //! 3. `overlay::search_highlights` - search match rects
-//! 4. `box_drawing` - connected single-stroke box glyphs
+//! 4. `sprites`     - box drawing, shades, braille, Powerline on the device grid
 //! 5. `kitty`      - graphics placements with a negative z-index
 //! 6. `decorations` - underlines and strikethroughs from the cell metrics
 //! 7. `text`        - batched `shape_line` glyph runs
@@ -26,13 +26,13 @@
 use gpui::{Font, FontWeight};
 
 pub(super) mod background;
-pub(super) mod box_drawing;
 pub(super) mod cursor;
 pub(super) mod decorations;
 pub(super) mod kitty;
 pub(super) mod overlay;
 pub(super) mod scrollbar;
 pub(super) mod selection;
+pub(super) mod sprites;
 pub(super) mod text;
 
 /// Convert terminal intensity into a distinct display weight.

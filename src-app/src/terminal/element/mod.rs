@@ -26,6 +26,7 @@ mod hyperlink;
 mod paint;
 #[cfg(debug_assertions)]
 pub(super) mod pixel_probe;
+mod sprites;
 
 use color::{convert_color, rgb_to_hsla};
 #[cfg(test)]
@@ -42,6 +43,7 @@ pub use hyperlink::{
     detect_code_paths_on_line_mapped, detect_file_paths_on_line_mapped, detect_urls_on_line_mapped,
     is_url_scheme_openable,
 };
+use sprites::{Sprite, sprite_for};
 
 // US-007: re-export APCA primitives so theme code (and theme tests) can
 // derive and verify a contrast-validated `selection_foreground` color
@@ -306,51 +308,13 @@ struct BlockQuad {
     coverage: (f32, f32, f32, f32),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct BoxDrawingShape {
-    left: bool,
-    right: bool,
-    up: bool,
-    down: bool,
-    rounded: bool,
-}
-
-struct BoxDrawingGlyph {
+/// A glyph the renderer draws itself (`sprites.rs`), placed by cell.
+struct SpriteGlyph {
     line: i32,
     col: usize,
+    num_cols: usize,
     color: Hsla,
-    shape: BoxDrawingShape,
-}
-
-/// Map the single-stroke box glyphs used by terminal TUIs to geometry. These
-/// glyphs must meet at exact cell boundaries, which font advances cannot
-/// guarantee across font fallback and fractional scaling.
-fn box_drawing_shape(c: char) -> Option<BoxDrawingShape> {
-    let shape = match c {
-        '─' => (true, true, false, false, false),
-        '│' => (false, false, true, true, false),
-        '┌' => (false, true, false, true, false),
-        '┐' => (true, false, false, true, false),
-        '└' => (false, true, true, false, false),
-        '┘' => (true, false, true, false, false),
-        '├' => (false, true, true, true, false),
-        '┤' => (true, false, true, true, false),
-        '┬' => (true, true, false, true, false),
-        '┴' => (true, true, true, false, false),
-        '┼' => (true, true, true, true, false),
-        '╭' => (false, true, false, true, true),
-        '╮' => (true, false, false, true, true),
-        '╯' => (true, false, true, false, true),
-        '╰' => (false, true, true, false, true),
-        _ => return None,
-    };
-    Some(BoxDrawingShape {
-        left: shape.0,
-        right: shape.1,
-        up: shape.2,
-        down: shape.3,
-        rounded: shape.4,
-    })
+    sprite: Sprite,
 }
 
 /// If `c` is a Unicode block element, return its fractional cell coverage as
@@ -388,6 +352,7 @@ fn block_char_coverages(c: char) -> Option<&'static [(f32, f32, f32, f32)]> {
         '▎' => Some(&[(0.0, 0.0, 2.0 / 8.0, 1.0)]), // U+258E Left 1/4
         '▏' => Some(&[(0.0, 0.0, 1.0 / 8.0, 1.0)]), // U+258F Left 1/8
         '▐' => Some(&[(0.5, 0.0, 0.5, 1.0)]), // U+2590 Right half
+        '▕' => Some(&[(7.0 / 8.0, 0.0, 1.0 / 8.0, 1.0)]), // U+2595 Right 1/8
 
         // ─── US-005 fallback extension ────────────────────────────────────
         // U+2594 - Upper 1/8 (the lone "upper edge" block, complement of ▁)
@@ -595,12 +560,15 @@ pub struct LayoutState {
     decorations: Vec<Decoration>,
     rects: Vec<LayoutRect>,
     block_quads: Vec<BlockQuad>,
-    box_drawing_glyphs: Vec<BoxDrawingGlyph>,
+    sprites: Vec<SpriteGlyph>,
     selection_rects: Vec<LayoutRect>,
     search_rects: Vec<LayoutRect>,
     cursor: Option<CursorInfo>,
     /// Secondary marker for keyboard copy mode selection.
     anchor_cursor: Option<CursorInfo>,
+    /// Only the golden fixture header reads the cell dimensions; painting
+    /// works from `TerminalFrameMetrics::metrics`.
+    #[cfg(test)]
     dimensions: CellDimensions,
     background_color: Hsla,
     scrollbar_thumb: Hsla,
@@ -1062,7 +1030,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     let mut batch = BatchAccumulator::new(base_font.clone());
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut block_quads: Vec<BlockQuad> = Vec::new();
-    let mut box_drawing_glyphs: Vec<BoxDrawingGlyph> = Vec::new();
+    let mut sprites: Vec<SpriteGlyph> = Vec::new();
     let mut current_rect: Option<LayoutRect> = None;
     let mut last_line: i32 = i32::MIN;
     let mut previous_cell_had_extras = false;
@@ -1207,16 +1175,17 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
             continue;
         }
 
-        // Render common single-stroke box drawing as connected paths. Every
-        // segment reaches the shared cell boundary, so adjacent `─` and `│`
-        // cells cannot expose font-side-bearing gaps.
-        if integrated_glyphs_enabled && let Some(shape) = box_drawing_shape(c) {
+        // Box drawing, shades, braille, and Powerline symbols are drawn on the
+        // device-pixel grid: every stroke reaches the shared cell boundary,
+        // so adjacent cells cannot expose font-side-bearing gaps.
+        if integrated_glyphs_enabled && let Some(sprite) = sprite_for(c) {
             batch.flush();
-            box_drawing_glyphs.push(BoxDrawingGlyph {
+            sprites.push(SpriteGlyph {
                 line: point.line.0,
                 col: point.column.0,
+                num_cols: cell_cols,
                 color: fg,
-                shape,
+                sprite,
             });
             previous_cell_had_extras = false;
             continue;
@@ -1443,11 +1412,12 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         decorations: batch.decorations,
         rects,
         block_quads,
-        box_drawing_glyphs,
+        sprites,
         selection_rects,
         search_rects,
         cursor: cursor_snapshot,
         anchor_cursor,
+        #[cfg(test)]
         dimensions: dims,
         background_color,
         scrollbar_thumb: theme.scrollbar_thumb,
@@ -1765,13 +1735,8 @@ impl Element for TerminalElement {
             // 2d. Block element quads (pixel-perfect, no font glyph gaps)
             paint::background::paint_block_quads(&layout, &cell_x_bounds, &cell_y_bounds, window);
 
-            // 2e. Single-stroke box drawing with shared cell-edge endpoints.
-            paint::box_drawing::paint_box_drawing_glyphs(
-                &layout,
-                &cell_x_bounds,
-                &cell_y_bounds,
-                window,
-            );
+            // 2e. Box drawing, shades, braille, Powerline on the device grid.
+            paint::sprites::paint_sprites(&layout, &geom, window);
 
             // 2f. Kitty graphics under the text.
             paint::kitty::paint_below_text(&kitty_placements, &geom, window);
@@ -2161,10 +2126,8 @@ mod block_char_coverage_tests {
         }
     }
 
-    /// Codepoints we deliberately *don't* cover - shaded blocks need alpha
-    /// (out of scope for this fix), geometric shapes are a different path.
-    /// Locks the boundary so a future "extend everything" edit can't sneak
-    /// half-broken coverage past review.
+    /// Shades are sprites (alpha over the full cell) and geometric shapes
+    /// stay font glyphs; neither belongs in the coverage table.
     #[test]
     fn shaded_and_geometric_blocks_remain_uncovered() {
         for c in ['░', '▒', '▓', '■', '□', '●', '○'] {
@@ -2249,6 +2212,18 @@ impl LayoutState {
                 d.num_cols,
                 d.kind,
                 hsla_repr(d.color),
+            );
+        }
+        let _ = writeln!(s, "sprites[{}]:", self.sprites.len());
+        for g in &self.sprites {
+            let _ = writeln!(
+                s,
+                "  L{} C{}+{}c {:?} {}",
+                g.line,
+                g.col,
+                g.num_cols,
+                g.sprite,
+                hsla_repr(g.color),
             );
         }
         let rect_line = |s: &mut String, label: &str, rects: &[LayoutRect]| {
@@ -2725,6 +2700,15 @@ mod golden_frame_tests {
         .map(|(i, flag)| cell(0, i, 'u', default_fg(), default_bg(), *flag))
         .collect();
         assert_golden("decorations", &run(decorated, None, None));
+
+        // Sprites: mixed-weight box drawing, a dash, an arc, a diagonal, a
+        // shade, braille, and a Powerline triangle.
+        let sprites: Vec<Cell> = "┣╪┄╭╳▒⣿\u{e0b0}"
+            .chars()
+            .enumerate()
+            .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
+            .collect();
+        assert_golden("sprites", &run(sprites, None, None));
     }
 
     /// Structural invariant (AC-2/AC-4 of the spike risk): block-element cells
@@ -2780,7 +2764,7 @@ mod golden_frame_tests {
             .collect();
         let state = run(boxes, None, None);
 
-        assert_eq!(state.box_drawing_glyphs.len(), 12);
+        assert_eq!(state.sprites.len(), 12);
         assert!(
             state.batched_runs.is_empty(),
             "integrated box drawing must not use font glyphs"
@@ -2796,7 +2780,7 @@ mod golden_frame_tests {
             .collect();
         let state = run_with_integrated_glyphs(boxes, None, None, false);
 
-        assert!(state.box_drawing_glyphs.is_empty());
+        assert!(state.sprites.is_empty());
         assert_eq!(state.batched_runs.len(), 1);
     }
 
@@ -2845,6 +2829,21 @@ mod golden_frame_tests {
             state.decorations[0].kind,
             DecorationKind::Underline(UnderlineKind::Single)
         );
+    }
+
+    #[test]
+    fn sprites_cover_heavy_double_shade_braille_and_powerline() {
+        let text = "━║╌╭╳░⣿\u{e0b0}";
+        let cells: Vec<Cell> = text
+            .chars()
+            .enumerate()
+            .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
+            .collect();
+        let state = run(cells, None, None);
+        assert_eq!(state.sprites.len(), 8);
+        assert!(state.batched_runs.is_empty());
+        assert!(matches!(state.sprites[5].sprite, Sprite::Shade(_)));
+        assert!(matches!(state.sprites[6].sprite, Sprite::Braille(0xff)));
     }
 
     #[test]

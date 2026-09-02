@@ -20,6 +20,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   tables. Double, dotted, dashed, and curly underlines each have their own
   shape instead of collapsing to a single line, and they are painted under
   the glyphs so descenders stay legible.
+- The renderer draws the whole box-drawing block itself (heavy, double,
+  dashed, and mixed-weight joins, arcs, diagonals), plus the `░ ▒ ▓` shades,
+  braille patterns, and the geometric Powerline symbols, at one
+  font-derived stroke thickness on the device-pixel grid. Adjacent cells
+  meet with no seam at any scale factor.
 
 ## [0.11.0] - 2026-09-02
 

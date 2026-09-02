@@ -3,6 +3,7 @@ bg=hsla(0.0000,0.0000,0.0000,0.0000) thumb=hsla(0.6000,0.2096,0.6725,0.3000) lin
 runs[1]:
   L0 C0 "hi" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
 decorations[0]:
+sprites[0]:
 rects[1]:
   L0+1ln C0+2c hsla(0.0000,0.0000,0.0000,0.0000)
 blocks[0]:
