@@ -69,7 +69,10 @@ while (($#)); do
   esac
 done
 if ((${#TARGETS[@]} == 0)); then
-  mapfile -t TARGETS < <(manifest_targets)
+  # No mapfile: macOS ships bash 3.2 at /bin/bash.
+  while IFS= read -r target; do
+    TARGETS+=("$target")
+  done < <(manifest_targets)
 fi
 
 REPOSITORY="$(manifest_string archive_release_repository)"
