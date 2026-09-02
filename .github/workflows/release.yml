@@ -92,6 +92,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_REF }}
+      - uses: ./.github/actions/fetch-libghostty
 
       - name: Install system dependencies
         run: |
@@ -212,6 +213,10 @@ jobs:
           ref: ${{ env.GHOSTTY_SHA }}
           path: .ghostty-source
           fetch-depth: 1
+
+      # Every leg links the archive for its own target, and the workspace
+      # tests validate the Linux x86_64 and macOS trees on every host.
+      - uses: ./.github/actions/fetch-libghostty
 
       - name: Install pinned Zig
         if: runner.os == 'Linux'
@@ -2358,6 +2363,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ env.RELEASE_REF }}
+      - uses: ./.github/actions/fetch-libghostty
 
       - name: Download signed Windows MSI
         uses: actions/download-artifact@v4

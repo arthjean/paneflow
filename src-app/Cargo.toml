@@ -57,6 +57,13 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # fallback, so both dependencies are unconditional.
 portable-pty = "0.9.0"
 
+# Font tables GPUI does not expose: line gap, `post` underline metrics, and
+# per-glyph ink bounds. The terminal renderer reads them from the embedded
+# faces to size the cell grid (Ghostty's `Metrics.calc`) and to constrain
+# Nerd Font icons to their cells. Already in the tree through cosmic-text's
+# fontdb, so this adds no new transitive dependency.
+ttf-parser = "0.25"
+
 # Internal crates
 paneflow-config = { path = "../crates/paneflow-config" }
 paneflow-terminal-ghostty = { path = "../crates/paneflow-terminal-ghostty", features = [

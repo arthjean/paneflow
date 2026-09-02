@@ -43,6 +43,7 @@ jobs:
         with:
           filters: |
             native:
+              - '.github/actions/fetch-libghostty/action.yml'
               - '.github/workflows/libghostty-macos.yml'
               - '.github/workflows/release.yml'
               - '.github/workflows/run_tests.yml'
@@ -146,22 +147,24 @@ jobs:
 
       # The script already fails when the produced archive diverges from the
       # manifest's `archive_sha256`. This step closes the remaining gap: it
-      # proves the *committed* archive is the one the recipe produces, so a
-      # tampered prebuilt tree cannot pass by matching a tampered manifest.
-      - name: Compare against the committed prebuilt archive
+      # proves the *published* archive is the one the recipe produces, so a
+      # tampered release asset cannot pass by matching a tampered manifest.
+      - uses: ./.github/actions/fetch-libghostty
+
+      - name: Compare against the published archive
         run: |
           set -euo pipefail
           rebuilt="target/libghostty/$TARGET/lib/libghostty-vt.a"
-          committed="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
-          for path in "$rebuilt" "$committed"; do
+          published="native/libghostty/prebuilt/$TARGET/lib/libghostty-vt.a"
+          for path in "$rebuilt" "$published"; do
             [ -f "$path" ] || { echo "::error::missing archive $path"; exit 1; }
           done
-          if ! cmp "$rebuilt" "$committed"; then
-            echo "::error::the committed macOS archive is not the one scripts/build-libghostty-macos.sh produces"
-            sha256sum "$rebuilt" "$committed"
+          if ! cmp "$rebuilt" "$published"; then
+            echo "::error::the published macOS archive is not the one scripts/build-libghostty-macos.sh produces"
+            sha256sum "$rebuilt" "$published"
             exit 1
           fi
-          sha256sum "$committed"
+          sha256sum "$published"
 
       - name: Upload rebuilt native input
         if: always()
@@ -185,6 +188,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           persist-credentials: false
+      - uses: ./.github/actions/fetch-libghostty
 
       - uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
         with:

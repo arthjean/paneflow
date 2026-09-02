@@ -56,6 +56,19 @@ impl PaneFlowApp {
             .map(|ws| ws.active_tab().surface_ids(cx))
     }
 
+    pub(super) fn session_is_seen(&self, workspace_id: u64, key: u32, cx: &gpui::App) -> bool {
+        let surface = self
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == workspace_id)
+            .and_then(|ws| ws.agent_sessions.get(&key))
+            .and_then(|session| session.surface_id);
+        completion_was_seen(
+            self.surfaces_under_user_eye(workspace_id, cx).as_ref(),
+            surface,
+        )
+    }
+
     pub(crate) fn apply_observed_agent_state(
         &mut self,
         surface_id: u64,
@@ -148,7 +161,7 @@ impl PaneFlowApp {
         .detach();
     }
 
-    fn workspace_id_for_surface(&self, surface_id: u64, cx: &gpui::App) -> Option<u64> {
+    pub(super) fn workspace_id_for_surface(&self, surface_id: u64, cx: &gpui::App) -> Option<u64> {
         self.workspaces
             .iter()
             .find(|ws| {
@@ -276,9 +289,28 @@ pub(crate) fn notification_lifecycle_event(title: &str, body: &str) -> Option<Ag
     } else {
         body.trim()
     };
-    (!message.is_empty()).then(|| AgentLifecycleEvent::Notification {
+    if message.is_empty() {
+        return None;
+    }
+    if is_turn_ended_notification(message) {
+        return Some(AgentLifecycleEvent::Idle);
+    }
+    reads_as_a_request(message).then(|| AgentLifecycleEvent::Notification {
         message: Some(message.to_owned()),
     })
+}
+
+fn is_turn_ended_notification(message: &str) -> bool {
+    message
+        .trim_end_matches('.')
+        .eq_ignore_ascii_case("Claude is waiting for your input")
+}
+
+fn reads_as_a_request(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    ["permission", "approv", "input", "confirm"]
+        .iter()
+        .any(|needle| lower.contains(needle))
 }
 
 #[cfg(test)]
@@ -339,10 +371,29 @@ mod tests {
             })
         );
         assert_eq!(
-            notification_lifecycle_event("Claude is waiting for your input", ""),
+            notification_lifecycle_event("Claude Code needs your input", ""),
             Some(AgentLifecycleEvent::Notification {
-                message: Some("Claude is waiting for your input".into())
+                message: Some("Claude Code needs your input".into())
             })
+        );
+    }
+
+    #[test]
+    fn the_idle_prompt_is_a_turn_that_ended_not_a_question() {
+        for text in [
+            "Claude is waiting for your input",
+            "Claude is waiting for your input.",
+            "claude is waiting for your input",
+        ] {
+            assert_eq!(
+                notification_lifecycle_event(text, ""),
+                Some(AgentLifecycleEvent::Idle),
+                "{text:?}"
+            );
+        }
+        assert_eq!(
+            notification_lifecycle_event("Claude Code", "Claude is waiting for your input"),
+            Some(AgentLifecycleEvent::Idle)
         );
     }
 
@@ -350,5 +401,21 @@ mod tests {
     fn an_empty_notification_is_not_an_agent_asking_for_something() {
         assert_eq!(notification_lifecycle_event("", ""), None);
         assert_eq!(notification_lifecycle_event("   ", "\n\t"), None);
+    }
+
+    #[test]
+    fn a_notification_that_asks_for_nothing_says_nothing() {
+        for text in [
+            "Build finished",
+            "Task completed",
+            "Codex turn done",
+            "ding",
+        ] {
+            assert_eq!(notification_lifecycle_event(text, ""), None, "{text:?}");
+        }
+        assert!(matches!(
+            notification_lifecycle_event("Codex", "Approval required to run a command"),
+            Some(AgentLifecycleEvent::Notification { .. })
+        ));
     }
 }

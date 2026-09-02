@@ -87,6 +87,7 @@ Paneflow pins Rust 1.98.0 through [rust-toolchain.toml](rust-toolchain.toml). Li
 ```bash
 git clone https://github.com/arthjean/paneflow.git
 cd paneflow
+scripts/fetch-libghostty.sh   # terminal engine archives, verified against native/libghostty/manifest.toml
 cargo run --release -p paneflow-app
 ```
 

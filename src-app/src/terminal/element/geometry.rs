@@ -1,19 +1,68 @@
 use gpui::{Bounds, Pixels, Point, px};
 
+use super::font::CellMetrics;
+
 #[derive(Clone, Copy)]
 pub(super) struct CellGeometry {
     pub origin: Point<Pixels>,
     pub cell_width: Pixels,
     pub line_height: Pixels,
+    pub scale_factor: f32,
+    pub metrics: CellMetrics,
 }
 
 impl CellGeometry {
+    pub(super) fn new(origin: Point<Pixels>, metrics: CellMetrics) -> Self {
+        Self {
+            origin,
+            cell_width: metrics.cell_width_px(),
+            line_height: metrics.cell_height_px(),
+            scale_factor: metrics.scale_factor,
+            metrics,
+        }
+    }
+
+    pub(super) fn x_device(&self, col: usize) -> i32 {
+        device_boundary(
+            self.origin.x,
+            self.scale_factor,
+            self.metrics.cell_width,
+            col,
+        )
+    }
+
+    pub(super) fn y_device(&self, line: i32) -> i32 {
+        device_boundary(
+            self.origin.y,
+            self.scale_factor,
+            self.metrics.cell_height,
+            line.max(0) as usize,
+        )
+    }
+
+    pub(super) fn logical(&self, device: i32) -> Pixels {
+        px(device as f32 / self.scale_factor)
+    }
+
+    pub(super) fn device_rect(&self, x: i32, y: i32, width: i32, height: i32) -> Bounds<Pixels> {
+        Bounds::new(
+            Point {
+                x: self.logical(x),
+                y: self.logical(y),
+            },
+            gpui::Size {
+                width: self.logical(width.max(0)),
+                height: self.logical(height.max(0)),
+            },
+        )
+    }
+
     pub(super) fn x_boundary(&self, col: usize) -> Pixels {
-        cell_x_boundary(self.origin.x, self.cell_width, col)
+        self.logical(self.x_device(col))
     }
 
     pub(super) fn y_boundary(&self, line: i32) -> Pixels {
-        cell_y_boundary(self.origin.y, self.line_height, line)
+        self.logical(self.y_device(line))
     }
 
     pub(super) fn cell_origin(&self, line: i32, col: usize) -> Point<Pixels> {
@@ -29,139 +78,140 @@ impl CellGeometry {
         col: usize,
         num_cols: usize,
     ) -> Bounds<Pixels> {
-        let x = self.x_boundary(col);
-        let right = self.x_boundary(col.saturating_add(num_cols));
-        let y = self.y_boundary(line);
-        let bottom = self.y_boundary(line.saturating_add(1));
-        Bounds::new(
-            Point { x, y },
-            gpui::Size {
-                width: (right - x).max(px(0.0)),
-                height: (bottom - y).max(px(0.0)),
-            },
-        )
+        let x = self.x_device(col);
+        let right = self.x_device(col.saturating_add(num_cols));
+        let y = self.y_device(line);
+        let bottom = self.y_device(line.saturating_add(1));
+        self.device_rect(x, y, right - x, bottom - y)
     }
 
     pub(super) fn x_boundaries(&self, col_count: usize) -> Vec<Pixels> {
-        cell_x_boundaries(self.origin.x, self.cell_width, col_count)
+        (0..=col_count).map(|col| self.x_boundary(col)).collect()
     }
 
     pub(super) fn y_boundaries(&self, row_count: usize) -> Vec<Pixels> {
-        cell_y_boundaries(self.origin.y, self.line_height, row_count)
+        (0..=row_count)
+            .map(|row| self.y_boundary(row as i32))
+            .collect()
     }
 }
 
-fn cell_x_boundary(origin_x: Pixels, cell_width: Pixels, col: usize) -> Pixels {
-    (origin_x + cell_width * col as f32).floor()
+fn device_boundary(origin: Pixels, scale_factor: f32, stride: i32, index: usize) -> i32 {
+    let origin_device = (origin.as_f32() * scale_factor).floor() as i32;
+    origin_device + stride.max(1) * index as i32
 }
 
-fn cell_y_boundary(origin_y: Pixels, line_height: Pixels, line: i32) -> Pixels {
-    (origin_y + line_height * line as f32).floor()
-}
-
-pub(super) fn cell_x_boundaries(
-    origin_x: Pixels,
-    cell_width: Pixels,
-    col_count: usize,
-) -> Vec<Pixels> {
-    (0..=col_count)
-        .map(|col| cell_x_boundary(origin_x, cell_width, col))
-        .collect()
-}
-
-pub(super) fn cell_y_boundaries(
-    origin_y: Pixels,
-    line_height: Pixels,
-    row_count: usize,
-) -> Vec<Pixels> {
-    (0..=row_count)
-        .map(|row| cell_y_boundary(origin_y, line_height, row as i32))
-        .collect()
-}
-
-#[cfg(all(test, debug_assertions))]
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::element::pixel_probe::assert_pixel_aligned;
+    use crate::terminal::element::font::{FaceMetrics, cell_metrics_from_face};
 
-    #[test]
-    fn cell_x_boundaries_count_matches_col_count_plus_one() {
-        let b = cell_x_boundaries(px(0.0), px(9.0), 5);
-        assert_eq!(b.len(), 6);
+    fn metrics(advance: f32, height: f32, scale_factor: f32) -> CellMetrics {
+        cell_metrics_from_face(
+            FaceMetrics {
+                ascent: height * 0.8,
+                descent: height * 0.2,
+                line_gap: 0.0,
+                advance,
+                underline_position: 0.0,
+                underline_thickness: 0.0,
+                strikethrough_position: 0.0,
+                strikethrough_thickness: 0.0,
+                x_height: 0.0,
+                cap_height: 0.0,
+            },
+            scale_factor,
+            1.0,
+            1.0,
+        )
+    }
+
+    fn geometry(origin: Point<Pixels>, advance: f32, height: f32, scale: f32) -> CellGeometry {
+        CellGeometry::new(origin, metrics(advance, height, scale))
     }
 
     #[test]
-    fn ten_cell_run_at_8_4_yields_84_px_total() {
-        let b = cell_x_boundaries(px(0.0), px(8.4), 10);
-        let total_width = b[10] - b[0];
-        assert_eq!(total_width, px(84.0));
-        for boundary in &b {
-            assert_pixel_aligned(boundary.as_f32(), "x boundary");
-        }
+    fn boundaries_count_matches_cell_count_plus_one() {
+        let geom = geometry(Point::default(), 9.0, 18.0, 1.0);
+        assert_eq!(geom.x_boundaries(5).len(), 6);
+        assert_eq!(geom.y_boundaries(3).len(), 4);
     }
 
     #[test]
-    fn adjacent_cells_have_non_negative_width() {
-        let b = cell_x_boundaries(px(0.0), px(8.4), 7);
-        for window in b.windows(2) {
-            let cell_width = window[1] - window[0];
-            assert!(
-                cell_width >= px(0.0),
-                "boundaries must be monotonic; got cell width {cell_width:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn boundaries_are_integer_with_fractional_origin() {
-        let b = cell_x_boundaries(px(0.4), px(8.4), 10);
-        for boundary in &b {
-            assert_pixel_aligned(boundary.as_f32(), "x boundary with fractional origin");
-        }
-    }
-
-    #[test]
-    fn cell_y_boundaries_18_2_yields_expected_values() {
-        let b = cell_y_boundaries(px(0.0), px(18.2), 5);
-        assert_eq!(b[0], px(0.0));
-        assert_eq!(b[1], px(18.0));
-        assert_eq!(b[2], px(36.0));
-        assert_eq!(b[3], px(54.0));
-        assert_eq!(b[4], px(72.0));
-        assert_eq!(b[5], px(91.0));
-    }
-
-    #[test]
-    fn single_cell_yields_two_element_array() {
-        let b = cell_x_boundaries(px(0.0), px(8.4), 1);
-        assert_eq!(b.len(), 2);
-        assert_eq!(b[0], px(0.0));
-        assert_eq!(b[1], px(8.0));
-    }
-
-    #[test]
-    fn integer_cell_width_is_no_op_post_us_002() {
-        let b = cell_x_boundaries(px(0.0), px(9.0), 5);
+    fn integer_strides_at_scale_one() {
+        let geom = geometry(Point::default(), 9.0, 18.0, 1.0);
         assert_eq!(
-            b,
+            geom.x_boundaries(5),
             vec![px(0.0), px(9.0), px(18.0), px(27.0), px(36.0), px(45.0)]
         );
+        assert_eq!(geom.y_boundaries(2), vec![px(0.0), px(18.0), px(36.0)]);
+    }
+
+    #[test]
+    fn fractional_advance_rounds_once_then_tiles_exactly() {
+        let geom = geometry(Point::default(), 10.4, 22.88, 1.0);
+        let b = geom.x_boundaries(10);
+        assert_eq!(b[10] - b[0], px(100.0));
+        assert_eq!(geom.y_boundaries(1)[1], px(23.0));
+    }
+
+    #[test]
+    fn edges_are_whole_device_pixels_at_fractional_scale() {
+        let geom = geometry(Point::default(), 21.0, 25.0, 1.25);
+        assert_eq!(geom.metrics.cell_width, 21);
+        assert_eq!(geom.cell_width, px(16.8));
+        for col in 0..=40 {
+            let device = geom.x_boundary(col).as_f32() * 1.25;
+            assert!(
+                (device - device.round()).abs() < 1e-3,
+                "col {col} edge {device} is not a device pixel"
+            );
+            assert_eq!(geom.x_device(col), 21 * col as i32);
+        }
+    }
+
+    #[test]
+    fn fractional_origin_floors_to_a_device_pixel() {
+        let geom = geometry(
+            Point {
+                x: px(0.4),
+                y: px(0.7),
+            },
+            8.0,
+            18.0,
+            1.0,
+        );
+        assert_eq!(geom.x_boundary(0), px(0.0));
+        assert_eq!(geom.y_boundary(0), px(0.0));
+        assert_eq!(geom.x_boundary(3), px(24.0));
     }
 
     #[test]
     fn cell_span_bounds_uses_shared_boundaries() {
-        let geom = CellGeometry {
-            origin: Point {
+        let geom = geometry(
+            Point {
                 x: px(0.4),
                 y: px(0.2),
             },
-            cell_width: px(8.4),
-            line_height: px(18.2),
-        };
+            8.4,
+            18.2,
+            1.0,
+        );
         let bounds = geom.cell_span_bounds(1, 1, 2);
         assert_eq!(bounds.origin.x, px(8.0));
         assert_eq!(bounds.origin.y, px(18.0));
-        assert_eq!(bounds.size.width, px(17.0));
+        assert_eq!(bounds.size.width, px(16.0));
         assert_eq!(bounds.size.height, px(18.0));
+    }
+
+    #[test]
+    fn device_rect_converts_through_the_scale() {
+        let geom = geometry(Point::default(), 10.0, 20.0, 2.0);
+        let bounds = geom.device_rect(3, 5, 7, 9);
+        assert_eq!(bounds.origin.x, px(1.5));
+        assert_eq!(bounds.origin.y, px(2.5));
+        assert_eq!(bounds.size.width, px(3.5));
+        assert_eq!(bounds.size.height, px(4.5));
+        assert_eq!(geom.device_rect(0, 0, -1, -1).size.width, px(0.0));
     }
 }

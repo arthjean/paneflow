@@ -1,13 +1,9 @@
-use gpui::{
-    App, Bounds, Font, Pixels, Point, ShapedLine, TextAlign, TextRun, Window, point, px, size,
-};
+use gpui::{App, Font, Pixels, Point, ShapedLine, SharedString, TextRun, Window, point, px};
 
-use super::super::LayoutState;
+use super::super::face_tables::{self, GlyphInk};
+use super::super::font::CellMetrics;
 use super::super::geometry::CellGeometry;
-
-pub(super) fn glyph_origin(geom: &CellGeometry, line: i32, col_start: usize) -> Point<Pixels> {
-    geom.cell_origin(line, col_start)
-}
+use super::super::{LayoutState, SymbolGlyph};
 
 pub fn paint_text_runs(
     layout: &LayoutState,
@@ -17,179 +13,293 @@ pub fn paint_text_runs(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let cell_width = geom.cell_width;
-    let line_height = geom.line_height;
-
     for run in &layout.batched_runs {
-        let Point { x, y } = glyph_origin(geom, run.line, run.col_start);
+        let origin = geom.cell_origin(run.line, run.col_start);
 
         #[cfg(debug_assertions)]
-        super::super::pixel_probe::record_glyph(run.line, run.col_start, x, y);
+        super::super::pixel_probe::record_glyph(run.line, run.col_start, origin.x, origin.y);
 
         let text_run = TextRun {
             len: run.text.len(),
             font: super::display_font_for_intensity(&run.font, base_font.weight),
             color: run.color,
             background_color: None,
-            underline: run.underline,
-            strikethrough: run.strikethrough,
+            underline: None,
+            strikethrough: None,
         };
         let shaped = window.text_system().shape_line(
             run.text.clone(),
             font_size,
             &[text_run],
-            Some(cell_width),
+            Some(geom.cell_width),
         );
-        let origin = Point { x, y };
-        let _ = if layout.color_emoji_enabled {
-            shaped.paint(origin, line_height, TextAlign::Left, None, window, cx)
-        } else {
-            paint_monochrome_shaped_line(&shaped, origin, line_height, run, window, cx)
-        };
+        paint_shaped_line(
+            &shaped,
+            origin,
+            run.color,
+            geom,
+            layout.color_emoji_enabled,
+            window,
+            cx,
+        );
     }
 }
 
-fn paint_monochrome_shaped_line(
+pub(super) fn paint_shaped_line(
     shaped: &ShapedLine,
-    origin: Point<Pixels>,
-    line_height: Pixels,
-    run: &super::super::BatchedTextRun,
+    cell_origin: Point<Pixels>,
+    color: gpui::Hsla,
+    geom: &CellGeometry,
+    color_emoji_enabled: bool,
     window: &mut Window,
-    cx: &mut App,
-) -> gpui::Result<()> {
+    _cx: &mut App,
+) {
     let layout = &**shaped;
-    let line_bounds = Bounds::new(origin, size(layout.width, line_height));
-    window.paint_layer(line_bounds, |window| {
-        let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
-        let baseline_offset = point(px(0.), padding_top + layout.ascent);
-        let text_system = cx.text_system().clone();
-        let mut glyph_origin = point(origin.x, origin.y);
-        let mut previous_glyph_position = Point::default();
-        let mut first_glyph_x = origin.x;
-
-        for (run_ix, shaped_run) in layout.runs.iter().enumerate() {
-            let max_glyph_size = text_system
-                .bounding_box(shaped_run.font_id, layout.font_size)
-                .size;
-
-            for (glyph_ix, glyph) in shaped_run.glyphs.iter().enumerate() {
-                glyph_origin.x += glyph.position.x - previous_glyph_position.x;
-                if glyph_ix == 0 && run_ix == 0 {
-                    first_glyph_x = glyph_origin.x;
-                }
-                previous_glyph_position = glyph.position;
-
-                let max_glyph_bounds = Bounds {
-                    origin: glyph_origin,
-                    size: max_glyph_size,
-                };
-                let content_mask = window.content_mask();
-                if max_glyph_bounds.intersects(&content_mask.bounds) {
-                    let vertical_offset = point(px(0.0), glyph.position.y);
-                    window.paint_glyph(
-                        glyph_origin + baseline_offset + vertical_offset,
-                        shaped_run.font_id,
-                        glyph.id,
-                        layout.font_size,
-                        run.color,
-                    )?;
-                }
+    let baseline = point(
+        cell_origin.x + geom.logical(geom.metrics.face_center_dx()),
+        cell_origin.y + geom.metrics.baseline_px(),
+    );
+    for run in &layout.runs {
+        for glyph in &run.glyphs {
+            let origin = point(baseline.x + glyph.position.x, baseline.y + glyph.position.y);
+            let painted = if glyph.is_emoji && color_emoji_enabled {
+                window.paint_emoji(origin, run.font_id, glyph.id, layout.font_size)
+            } else {
+                window.paint_glyph(origin, run.font_id, glyph.id, layout.font_size, color)
+            };
+            if let Err(error) = painted {
+                log::debug!("terminal glyph paint failed: {error:#}");
             }
         }
-
-        if let Some(underline) = run.underline.as_ref() {
-            window.paint_underline(
-                point(
-                    first_glyph_x,
-                    origin.y + baseline_offset.y + (layout.descent * 0.618),
-                ),
-                layout.width,
-                underline,
-            );
-        }
-        if let Some(strikethrough) = run.strikethrough.as_ref() {
-            window.paint_strikethrough(
-                point(
-                    first_glyph_x,
-                    origin.y + (((layout.ascent * 0.5) + baseline_offset.y) * 0.5),
-                ),
-                layout.width,
-                strikethrough,
-            );
-        }
-
-        Ok(())
-    })
+    }
 }
 
-#[cfg(all(test, debug_assertions))]
+pub fn paint_symbols(
+    layout: &LayoutState,
+    geom: &CellGeometry,
+    font_size: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    for symbol in &layout.symbols {
+        if symbol.line < 0
+            || symbol.line as usize >= layout.desired_rows
+            || symbol.col >= layout.desired_cols
+        {
+            continue;
+        }
+        paint_symbol(symbol, geom, font_size, window, cx);
+    }
+}
+
+fn shape_symbol(
+    text: SharedString,
+    font: &Font,
+    color: gpui::Hsla,
+    font_size: Pixels,
+    window: &Window,
+) -> ShapedLine {
+    let run = TextRun {
+        len: text.len(),
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(text, font_size, &[run], None)
+}
+
+fn paint_symbol(
+    symbol: &SymbolGlyph,
+    geom: &CellGeometry,
+    font_size: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let text = SharedString::from(symbol.ch.to_string());
+    let shaped = shape_symbol(text.clone(), &symbol.font, symbol.color, font_size, window);
+    let cell_origin = geom.cell_origin(symbol.line, symbol.col);
+
+    let Some(run) = shaped.runs.first() else {
+        return;
+    };
+    let family = window
+        .text_system()
+        .get_font_for_id(run.font_id)
+        .map(|font| font.family);
+    let ink = family
+        .as_deref()
+        .and_then(|family| face_tables::embedded_glyph_ink(family, symbol.ch));
+
+    let Some(ink) = ink else {
+        paint_shaped_line(&shaped, cell_origin, symbol.color, geom, true, window, cx);
+        return;
+    };
+
+    let m = geom.metrics;
+    let units_to_device = font_size.as_f32() * geom.scale_factor / ink.units_per_em.max(1.0);
+    let placement = constrain_icon(&m, symbol.span, &ink, units_to_device);
+    let scaled_size = px(font_size.as_f32() * placement.factor);
+    let scaled = if (placement.factor - 1.0).abs() < 1e-3 {
+        shaped
+    } else {
+        shape_symbol(text, &symbol.font, symbol.color, scaled_size, window)
+    };
+    let Some((run, glyph)) = scaled
+        .runs
+        .first()
+        .and_then(|run| run.glyphs.first().map(|glyph| (run, glyph)))
+    else {
+        return;
+    };
+
+    let cell_x = geom.x_device(symbol.col) as f32;
+    let cell_bottom = geom.y_device(symbol.line + 1) as f32;
+    let origin = point(
+        px((cell_x + placement.origin_x) / geom.scale_factor),
+        px((cell_bottom - placement.baseline_from_bottom) / geom.scale_factor),
+    );
+    let painted = if glyph.is_emoji {
+        window.paint_emoji(origin, run.font_id, glyph.id, scaled_size)
+    } else {
+        window.paint_glyph(origin, run.font_id, glyph.id, scaled_size, symbol.color)
+    };
+    if let Err(error) = painted {
+        log::debug!("terminal icon paint failed: {error:#}");
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct IconPlacement {
+    pub factor: f32,
+    pub origin_x: f32,
+    pub baseline_from_bottom: f32,
+}
+
+pub(super) fn constrain_icon(
+    m: &CellMetrics,
+    span: usize,
+    ink: &GlyphInk,
+    units_to_device: f32,
+) -> IconPlacement {
+    let glyph_w = (ink.width() * units_to_device).max(1e-3);
+    let glyph_h = (ink.height() * units_to_device).max(1e-3);
+    let span = span.max(1);
+
+    let factors = |cells: usize| {
+        let target_w = m.face_width + (cells - 1) as f32 * m.cell_width as f32;
+        let target_h = if cells > 1 {
+            m.icon_height
+        } else {
+            m.icon_height_single
+        };
+        (target_w / glyph_w).min(target_h / glyph_h)
+    };
+    let mut factor = factors(span);
+    if span > 1 && factor > 1.0 {
+        factor = factors(1).max(1.0);
+    }
+
+    let group_w = glyph_w * factor;
+    let group_h = glyph_h * factor;
+    let x = ((m.face_width - group_w) / 2.0).max(0.0);
+    let y = (m.face_y + (m.face_y + m.face_height - group_h)) / 2.0;
+
+    IconPlacement {
+        factor,
+        origin_x: x - ink.x_min * units_to_device * factor,
+        baseline_from_bottom: y - ink.y_min * units_to_device * factor,
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::element::pixel_probe::assert_pixel_aligned;
-    use gpui::px;
+    use crate::terminal::element::font::{FaceMetrics, cell_metrics_from_face};
 
-    #[test]
-    fn glyph_origin_snaps_fractional_cell_width() {
-        let origin = Point {
-            x: px(0.0),
-            y: px(0.0),
-        };
-        let cell_width = px(8.4);
-        let line_height = px(18.2);
+    fn metrics() -> CellMetrics {
+        cell_metrics_from_face(
+            FaceMetrics {
+                ascent: 16.32,
+                descent: 4.8,
+                line_gap: 0.0,
+                advance: 9.6,
+                underline_position: -2.48,
+                underline_thickness: 0.8,
+                strikethrough_position: 5.12,
+                strikethrough_thickness: 0.8,
+                x_height: 8.8,
+                cap_height: 11.68,
+            },
+            1.0,
+            1.0,
+            1.0,
+        )
+    }
 
-        for col in [0usize, 1, 5, 17, 100, 1000] {
-            let geom = CellGeometry {
-                origin,
-                cell_width,
-                line_height,
-            };
-            let p = glyph_origin(&geom, 0, col);
-            assert_pixel_aligned(p.x.as_f32(), "glyph_x");
-        }
-        for line in [0i32, 1, 10, 100] {
-            let geom = CellGeometry {
-                origin,
-                cell_width,
-                line_height,
-            };
-            let p = glyph_origin(&geom, line, 0);
-            assert_pixel_aligned(p.y.as_f32(), "glyph_y");
+    fn wide_icon() -> GlyphInk {
+        GlyphInk {
+            units_per_em: 1000.0,
+            x_min: 0.0,
+            y_min: -76.0,
+            x_max: 894.0,
+            y_max: 796.0,
         }
     }
 
     #[test]
-    fn glyph_origin_no_op_for_integer_cell_width() {
-        let origin = Point {
-            x: px(0.0),
-            y: px(0.0),
-        };
-        let cell_width = px(9.0);
-        let line_height = px(18.0);
-        let geom = CellGeometry {
-            origin,
-            cell_width,
-            line_height,
-        };
-        let p = glyph_origin(&geom, 5, 7);
-        assert_eq!(p.x, px(63.0));
-        assert_eq!(p.y, px(90.0));
+    fn wide_icon_shrinks_to_one_cell_when_followed_by_text() {
+        let p = constrain_icon(&metrics(), 1, &wide_icon(), 16.0 / 1000.0);
+        let width = 894.0 * 0.016 * p.factor;
+        assert!(
+            (width - 9.6).abs() < 1e-3,
+            "icon should fill the face width, got {width}"
+        );
+        assert!(p.factor < 1.0);
+        assert!(p.origin_x.abs() < 1e-3);
     }
 
     #[test]
-    fn glyph_origin_handles_fractional_origin() {
-        let origin = Point {
-            x: px(0.4),
-            y: px(0.5),
+    fn wide_icon_keeps_its_designed_size_over_two_cells() {
+        let p = constrain_icon(&metrics(), 2, &wide_icon(), 16.0 / 1000.0);
+        assert!((p.factor - 1.0).abs() < 1e-6, "got factor {}", p.factor);
+        assert!(p.origin_x.abs() < 1e-3);
+    }
+
+    #[test]
+    fn small_icon_grows_to_cover_its_cell_and_stays_centered() {
+        let small = GlyphInk {
+            units_per_em: 1000.0,
+            x_min: 127.0,
+            y_min: 48.0,
+            x_max: 687.0,
+            y_max: 798.0,
         };
-        let cell_width = px(9.0);
-        let line_height = px(18.0);
-        let geom = CellGeometry {
-            origin,
-            cell_width,
-            line_height,
-        };
-        let p = glyph_origin(&geom, 3, 11);
-        assert_pixel_aligned(p.x.as_f32(), "glyph_x with fractional origin");
-        assert_pixel_aligned(p.y.as_f32(), "glyph_y with fractional origin");
+        let one = constrain_icon(&metrics(), 1, &small, 16.0 / 1000.0);
+        assert!(one.factor > 1.0);
+        let two = constrain_icon(&metrics(), 2, &small, 16.0 / 1000.0);
+        assert!(
+            (one.factor - two.factor).abs() < 1e-6,
+            "no growth when a space follows"
+        );
+        let width = 560.0 * 0.016 * one.factor;
+        let ink_left = one.origin_x + 127.0 * 0.016 * one.factor;
+        assert!(
+            (ink_left - (9.6 - width) / 2.0).abs() < 1e-3,
+            "centered in the first cell"
+        );
+    }
+
+    #[test]
+    fn icon_is_centered_vertically_in_the_face() {
+        let m = metrics();
+        let p = constrain_icon(&m, 1, &wide_icon(), 16.0 / 1000.0);
+        let height = 872.0 * 0.016 * p.factor;
+        let ink_bottom = p.baseline_from_bottom + (-76.0) * 0.016 * p.factor;
+        let expected = m.face_y + (m.face_height - height) / 2.0;
+        assert!((ink_bottom - expected).abs() < 1e-3);
     }
 }

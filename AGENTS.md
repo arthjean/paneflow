@@ -95,7 +95,11 @@ the two you did.
   `aarch64-unknown-linux-gnu`, `aarch64-apple-darwin`, and
   `x86_64-pc-windows-msvc`. There is no second parser and no runtime fallback,
   so a target with no pinned archive in `native/libghostty/manifest.toml` is
-  not a shipping target and `src-app/build.rs` fails the build outright.
+  not a shipping target and `src-app/build.rs` fails the build outright. The
+  archives are release assets, not git content: `scripts/fetch-libghostty.sh`
+  (or `.ps1`) places them under `native/libghostty/prebuilt/<target>/lib/`
+  after checking the manifest hash, and every CI job that runs cargo does the
+  same through `.github/actions/fetch-libghostty`.
   The engine still sits behind `TerminalSessionBackend`
   (`src-app/src/terminal/pty_session.rs`) and `src-app/src/terminal/types.rs`
   holds the neutral mirrors: keep engine types out of the rest of the app so
@@ -120,6 +124,7 @@ the two you did.
 ## Running and testing
 
 ```bash
+scripts/fetch-libghostty.sh              # once per pin: places the libghostty-vt archives (not tracked by git)
 cargo run                                # debug build, needs Vulkan
 RUST_LOG=info cargo run                  # structured logging
 PANEFLOW_LATENCY_PROBE=1 cargo run       # keystroke to pixel latency, debug only

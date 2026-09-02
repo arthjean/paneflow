@@ -96,11 +96,25 @@ mod tests {
     }
 
     fn geometry() -> CellGeometry {
-        CellGeometry {
-            origin: point(px(10.0), px(20.0)),
-            cell_width: px(8.0),
-            line_height: px(16.0),
-        }
+        use crate::terminal::element::font::{FaceMetrics, cell_metrics_from_face};
+        let metrics = cell_metrics_from_face(
+            FaceMetrics {
+                ascent: 12.0,
+                descent: 4.0,
+                line_gap: 0.0,
+                advance: 8.0,
+                underline_position: 0.0,
+                underline_thickness: 0.0,
+                strikethrough_position: 0.0,
+                strikethrough_thickness: 0.0,
+                x_height: 0.0,
+                cap_height: 0.0,
+            },
+            1.0,
+            1.0,
+            1.0,
+        );
+        CellGeometry::new(point(px(10.0), px(20.0)), metrics)
     }
 
     #[test]

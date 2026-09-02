@@ -143,6 +143,8 @@ pub struct TerminalConfig {
     pub env: Option<HashMap<String, String>>,
     #[serde(default, deserialize_with = "lenient_opt_f32")]
     pub scroll_multiplier: Option<f32>,
+    #[serde(default, deserialize_with = "lenient_opt_f32")]
+    pub minimum_contrast: Option<f32>,
 }
 
 impl TerminalConfig {
@@ -157,12 +159,22 @@ impl TerminalConfig {
     pub const MIN_SCROLL_MULTIPLIER: f32 = 0.1;
     pub const MAX_SCROLL_MULTIPLIER: f32 = 10.0;
 
+    pub const MAX_MINIMUM_CONTRAST: f32 = 90.0;
+
     pub fn resolved_integrated_glyphs(&self) -> bool {
         self.integrated_glyphs.unwrap_or(true)
     }
 
     pub fn resolved_color_emoji(&self) -> bool {
         self.color_emoji.unwrap_or(true)
+    }
+
+    pub fn resolved_minimum_contrast(&self) -> f32 {
+        let raw = self.minimum_contrast.unwrap_or(0.0);
+        if !raw.is_finite() {
+            return 0.0;
+        }
+        raw.clamp(0.0, Self::MAX_MINIMUM_CONTRAST)
     }
 
     pub fn normalized_cursor_color(&self) -> Option<String> {

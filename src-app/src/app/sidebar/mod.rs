@@ -55,12 +55,6 @@ struct SidebarAgentSummary {
     count: usize,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SidebarServiceSummary {
-    primary: u16,
-    overflow: usize,
-}
-
 pub(crate) const SIDEBAR_ROW_MARGIN_X: f32 = 8.0;
 pub(crate) const SIDEBAR_ROW_PADDING_X: f32 = 8.0;
 pub(crate) const SIDEBAR_ROW_PADDING_Y: f32 = 6.0;
@@ -228,42 +222,11 @@ impl Drop for SidebarRenderTimeCanary {
     }
 }
 
-fn visible_service_ports(
-    active_ports: &[u16],
-    service_labels: &std::collections::HashMap<u16, crate::terminal::ServiceInfo>,
-) -> Vec<u16> {
-    active_ports
-        .iter()
-        .copied()
-        .filter(|port| service_labels.contains_key(port))
-        .collect()
-}
-
 fn tab_diffstat_visible(
     show: paneflow_config::schema::SidebarShow,
     stats: &crate::workspace::GitDiffStats,
 ) -> bool {
     show.diffstat_enabled() && (stats.insertions > 0 || stats.deletions > 0)
-}
-
-fn sidebar_service_summary(
-    active_ports: &[u16],
-    service_labels: &std::collections::HashMap<u16, crate::terminal::ServiceInfo>,
-) -> Option<SidebarServiceSummary> {
-    let visible = visible_service_ports(active_ports, service_labels);
-    let primary = visible
-        .iter()
-        .copied()
-        .find(|port| {
-            service_labels
-                .get(port)
-                .is_some_and(|info| info.is_frontend)
-        })
-        .or_else(|| visible.first().copied())?;
-    Some(SidebarServiceSummary {
-        primary,
-        overflow: visible.len().saturating_sub(1),
-    })
 }
 
 fn sidebar_agent_summary<'a, I>(sessions: I, completion_unread: bool) -> Option<SidebarAgentSummary>
@@ -855,10 +818,6 @@ impl PaneFlowApp {
             .gap(px(SIDEBAR_ROW_GAP))
             .child(title_row);
 
-        if let Some(meta_row) = self.render_workspace_meta_row(ws, ui, cx) {
-            body = body.child(meta_row);
-        }
-
         body = body.child(
             sidebar_hover_actions(group_name.clone()).child(
                 sidebar_action_button(
@@ -1134,120 +1093,6 @@ impl PaneFlowApp {
                 |el| el.children(render_sidebar_indent_guide(ui, row_agent_status.is_some())),
             )
             .child(row)
-    }
-
-    fn render_workspace_meta_row(
-        &self,
-        ws: &Workspace,
-        ui: crate::theme::UiColors,
-        cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        let service = sidebar_service_summary(&ws.active_ports, &ws.service_labels)?;
-        let mut meta_row = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4.))
-            .w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-            .max_w(px(SIDEBAR_WORKSPACE_ROW_CONTENT_WIDTH))
-            .h(px(14.))
-            .overflow_x_hidden()
-            .whitespace_nowrap()
-            .text_xs()
-            .text_color(ui.muted);
-
-        {
-            let port = service.primary;
-            let workspace_id = ws.id;
-            let info = ws.service_labels.get(&port);
-            let is_frontend = info.is_some_and(|service| service.is_frontend);
-            let service_name = info
-                .and_then(|service| service.label.clone())
-                .unwrap_or_else(|| "Local service".to_string());
-            let service_tooltip: SharedString = format!("{service_name}  :{port}").into();
-
-            if is_frontend {
-                let url = info
-                    .and_then(|service| service.url.clone())
-                    .unwrap_or_else(|| format!("http://localhost:{port}"));
-                meta_row = meta_row.child(
-                    div()
-                        .id(SharedString::from(format!("port-{workspace_id}-{port}")))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(2.))
-                        .text_size(px(10.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(ui.muted)
-                        .hover(move |style| style.text_color(ui.text))
-                        .delayed_tooltip({
-                            let label = service_tooltip.clone();
-                            move |_w, cx| {
-                                cx.new(|_| SidebarTooltip {
-                                    label: label.clone(),
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _window, cx| {
-                            this.open_workspace_service_url(&url, cx);
-                            cx.stop_propagation();
-                        }))
-                        .child(
-                            svg()
-                                .size(px(10.))
-                                .flex_none()
-                                .path("icons/world.svg")
-                                .text_color(ui.muted),
-                        )
-                        .child(format!(":{port}")),
-                );
-            } else {
-                meta_row = meta_row.child(
-                    div()
-                        .id(SharedString::from(format!(
-                            "port-{workspace_id}-{port}-info"
-                        )))
-                        .text_size(px(10.))
-                        .text_color(ui.muted)
-                        .delayed_tooltip({
-                            let label = service_tooltip.clone();
-                            move |_w, cx| {
-                                cx.new(|_| SidebarTooltip {
-                                    label: label.clone(),
-                                })
-                                .into()
-                            }
-                        })
-                        .child(format!(":{port}")),
-                );
-            }
-
-            if service.overflow > 0 {
-                let overflow = service.overflow;
-                meta_row = meta_row.child(
-                    div()
-                        .id(SharedString::from(format!("ports-{workspace_id}-overflow")))
-                        .flex_none()
-                        .text_size(px(10.))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(ui.muted)
-                        .delayed_tooltip(move |_w, cx| {
-                            cx.new(|_| SidebarTooltip {
-                                label: format!(
-                                    "{overflow} more services · Right-click workspace to view"
-                                )
-                                .into(),
-                            })
-                            .into()
-                        })
-                        .child(format!("+{overflow}")),
-                );
-            }
-        }
-
-        Some(meta_row.into_any_element())
     }
 
     fn tab_row_branch(&self, ws: &Workspace, tab: &Tab) -> String {
@@ -1784,20 +1629,18 @@ mod tests {
         SIDEBAR_ROW_MARGIN_X, SIDEBAR_ROW_PADDING_Y, SIDEBAR_ROW_SPACING, SIDEBAR_TAB_CARD_HEIGHT,
         SIDEBAR_TAB_CARD_ICON_SIZE, SIDEBAR_TAB_CARD_WIDTH, SIDEBAR_TAB_ICON_CAP,
         SIDEBAR_TAB_ICON_SIZE, SIDEBAR_TITLE_ROW_GAP, SIDEBAR_WIDTH, SidebarAgentState,
-        SidebarAgentSummary, SidebarDropSlot, SidebarRow, SidebarServiceSummary,
-        folder_row_sessions, reorder_target, sidebar_agent_summary, sidebar_drop_slots,
-        sidebar_row_shell, sidebar_service_summary, tab_diffstat_visible, tab_display_title,
-        tab_icon_cluster_split, tab_row_sessions, visible_service_ports,
+        SidebarAgentSummary, SidebarDropSlot, SidebarRow, folder_row_sessions, reorder_target,
+        sidebar_agent_summary, sidebar_drop_slots, sidebar_row_shell, tab_diffstat_visible,
+        tab_display_title, tab_icon_cluster_split, tab_row_sessions,
     };
     use crate::agent_launcher::TerminalAgent;
     use crate::ai_types::{AgentSession, AgentState};
-    use crate::terminal::ServiceInfo;
     use crate::workspace::Tab;
     use gpui::{
         AvailableSpace, InteractiveElement, ParentElement, Styled, TestAppContext, div, point, px,
         size,
     };
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     fn session(state: AgentState) -> AgentSession {
         AgentSession::new(TerminalAgent::ClaudeCode, state)
@@ -2037,108 +1880,6 @@ mod tests {
                 .unwrap_or_else(|| panic!("{selector} not painted"));
             assert_eq!(bounds.size.height, px(50.), "{selector}");
         }
-    }
-
-    #[test]
-    fn visible_service_ports_hide_unlabeled_ephemeral_ports() {
-        let labels = HashMap::from([
-            (
-                3000,
-                ServiceInfo {
-                    port: 3000,
-                    url: Some("http://localhost:3000".to_string()),
-                    label: Some("Next.js".to_string()),
-                    is_frontend: true,
-                },
-            ),
-            (
-                8000,
-                ServiceInfo {
-                    port: 8000,
-                    url: Some("http://localhost:8000".to_string()),
-                    label: Some("Fastify".to_string()),
-                    is_frontend: false,
-                },
-            ),
-        ]);
-
-        assert_eq!(
-            visible_service_ports(&[3000, 53154, 8000, 53155], &labels),
-            vec![3000, 8000]
-        );
-    }
-
-    #[test]
-    fn sidebar_service_summary_prefers_frontend_and_counts_overflow() {
-        let labels = HashMap::from([
-            (
-                3000,
-                ServiceInfo {
-                    port: 3000,
-                    url: Some("http://localhost:3000".to_string()),
-                    label: Some("API".to_string()),
-                    is_frontend: false,
-                },
-            ),
-            (
-                5173,
-                ServiceInfo {
-                    port: 5173,
-                    url: Some("http://localhost:5173".to_string()),
-                    label: Some("Vite".to_string()),
-                    is_frontend: true,
-                },
-            ),
-            (
-                8000,
-                ServiceInfo {
-                    port: 8000,
-                    url: Some("http://localhost:8000".to_string()),
-                    label: Some("Fastify".to_string()),
-                    is_frontend: false,
-                },
-            ),
-        ]);
-
-        assert_eq!(
-            sidebar_service_summary(&[3000, 53154, 5173, 8000], &labels),
-            Some(SidebarServiceSummary {
-                primary: 5173,
-                overflow: 2,
-            })
-        );
-    }
-
-    #[test]
-    fn sidebar_service_summary_falls_back_to_first_visible_service() {
-        let labels = HashMap::from([
-            (
-                3000,
-                ServiceInfo {
-                    port: 3000,
-                    url: None,
-                    label: Some("API".to_string()),
-                    is_frontend: false,
-                },
-            ),
-            (
-                8000,
-                ServiceInfo {
-                    port: 8000,
-                    url: None,
-                    label: Some("Worker".to_string()),
-                    is_frontend: false,
-                },
-            ),
-        ]);
-
-        assert_eq!(
-            sidebar_service_summary(&[3000, 8000], &labels),
-            Some(SidebarServiceSummary {
-                primary: 3000,
-                overflow: 1,
-            })
-        );
     }
 
     #[test]

@@ -31,6 +31,7 @@ struct TranscriptTurnEndNotification {
     agent: TerminalAgent,
     title: String,
     config: PaneFlowConfig,
+    seen: bool,
     executor: BackgroundExecutor,
 }
 
@@ -157,11 +158,13 @@ fn fire_turn_end_notification(
     workspace_title: &str,
     session_summary: Option<&str>,
     config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::turn_finished(agent, workspace_title, session_summary),
         config,
+        seen,
         executor,
     );
 }
@@ -171,11 +174,13 @@ fn fire_attention_notification(
     workspace_title: &str,
     message: Option<&str>,
     config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::needs_input(agent, workspace_title, message),
         config,
+        seen,
         executor,
     );
 }
@@ -396,11 +401,13 @@ fn fire_agent_exit_notification(
     workspace_title: &str,
     exit_code: i32,
     config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::agent_exited(agent, workspace_title, exit_code),
         config,
+        seen,
         executor,
     );
 }
@@ -410,11 +417,13 @@ pub(crate) fn fire_stalled_notification(
     workspace_title: &str,
     silent_secs: u64,
     config: &paneflow_config::schema::PaneFlowConfig,
+    seen: bool,
     executor: gpui::BackgroundExecutor,
 ) {
     desktop_notifications::fire_desktop_notification(
         DesktopNotification::stalled(agent, workspace_title, silent_secs),
         config,
+        seen,
         executor,
     );
 }
@@ -1689,6 +1698,7 @@ impl PaneFlowApp {
                             extracted.as_deref(),
                         ),
                         &notification.config,
+                        notification.seen,
                         notification.executor,
                     );
                 }
@@ -2771,18 +2781,19 @@ impl PaneFlowApp {
                     };
                     let ws_title = ws.title.clone();
                     cx.notify();
-                    fire_attention_notification(
-                        tool,
-                        &ws_title,
-                        message.as_deref(),
-                        &notify_config,
-                        cx.background_executor().clone(),
-                    );
                     self.bind_or_resolve_session_surface(
                         workspace_id,
                         key,
                         explicit_surface_id,
                         cx,
+                    );
+                    fire_attention_notification(
+                        tool,
+                        &ws_title,
+                        message.as_deref(),
+                        &notify_config,
+                        self.session_is_seen(workspace_id, key, cx),
+                        cx.background_executor().clone(),
                     );
                     self.sync_attention(cx);
                     self.agent_sessions_changed(cx);
@@ -2821,15 +2832,15 @@ impl PaneFlowApp {
                     ) else {
                         return stale_frame_response();
                     };
+                    let finished_surface = ws
+                        .agent_sessions
+                        .get(&session_key)
+                        .and_then(|session| session.surface_id);
+                    let seen = crate::app::agent_status::completion_was_seen(
+                        visible_surfaces.as_ref(),
+                        finished_surface,
+                    );
                     if !interrupt_stop {
-                        let finished_surface = ws
-                            .agent_sessions
-                            .get(&session_key)
-                            .and_then(|session| session.surface_id);
-                        let seen = crate::app::agent_status::completion_was_seen(
-                            visible_surfaces.as_ref(),
-                            finished_surface,
-                        );
                         ws.agent_completion_notification
                             .record_finished(seen, finished_surface);
                     }
@@ -2853,6 +2864,7 @@ impl PaneFlowApp {
                                     agent: tool,
                                     title: ws_title.clone(),
                                     config: notify_config.clone(),
+                                    seen,
                                     executor: cx.background_executor().clone(),
                                 }),
                                 cx,
@@ -2863,6 +2875,7 @@ impl PaneFlowApp {
                                 &ws_title,
                                 session_summary.as_deref(),
                                 &notify_config,
+                                seen,
                                 cx.background_executor().clone(),
                             );
                         }
@@ -2940,26 +2953,20 @@ impl PaneFlowApp {
                     };
                     let ws_title = ws.title.clone();
                     cx.notify();
+                    self.bind_or_resolve_session_surface(
+                        workspace_id,
+                        key,
+                        explicit_surface_id,
+                        cx,
+                    );
                     if errored {
                         fire_agent_exit_notification(
                             tool,
                             &ws_title,
                             exit_code,
                             &notify_config,
+                            self.session_is_seen(workspace_id, key, cx),
                             cx.background_executor().clone(),
-                        );
-                        self.bind_or_resolve_session_surface(
-                            workspace_id,
-                            key,
-                            explicit_surface_id,
-                            cx,
-                        );
-                    } else {
-                        self.bind_or_resolve_session_surface(
-                            workspace_id,
-                            key,
-                            explicit_surface_id,
-                            cx,
                         );
                     }
                     self.sync_attention(cx);

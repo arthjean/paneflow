@@ -328,8 +328,9 @@ three cases:
    `bindings_sha256` if the header or the bindings moved. Those two are global
    keys shared with the Linux trees, so a change there means every tree is
    re-pinned in the same commit.
-4. Copy the four reviewed files into
-   `native/libghostty/prebuilt/aarch64-apple-darwin/` and rerun
+4. Copy the three reviewed text files into
+   `native/libghostty/prebuilt/aarch64-apple-darwin/`, publish the archive
+   through `libghostty-bump.yml` (or place it under `lib/` locally), and rerun
    `scripts/verify-libghostty-macos.sh` plus
    `cargo test -p paneflow-libghostty-sys`.
 5. Rerun the build once more without `--allow-hash-drift`. It must now pass the
@@ -360,10 +361,12 @@ with `rust_target = aarch64-apple-darwin` and `zig_target = aarch64-macos`.
 `build_info_symbol` stays the C name `ghostty_build_info`; the script's symbol
 check accepts the Mach-O `_` prefix.
 
-## The committed tree
+## The prebuilt tree
 
 `native/libghostty/prebuilt/aarch64-apple-darwin/` carries the four files the
-macOS bundle needs, the same set the Linux trees carry:
+macOS bundle needs, the same set the Linux trees carry (`lib/libghostty-vt.a`
+is a release asset placed by `scripts/fetch-libghostty.sh`, the other three are
+committed):
 
 ```
 bindings.rs

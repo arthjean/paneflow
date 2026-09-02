@@ -60,6 +60,18 @@ ignore = [
     # rather than kept "just in case". Re-add with the same two-part
     # rationale (why it does not apply + what triggers re-evaluation)
     # if a GPUI bump reintroduces a vulnerable crate.
+    #
+    # RUSTSEC-2026-0192: `ttf-parser` is unmaintained. It has been in the
+    # tree since the first GPUI pin (fontdb -> ttf-parser, through
+    # gpui_platform's font-kit path) and the terminal renderer now reads
+    # the bundled fonts' metric tables through it directly rather than
+    # adding a second parser (`skrifa`) next to it. The only input it
+    # parses is the eight TTFs embedded in the binary, never user or
+    # network data, so an unfixed parsing bug cannot be reached with
+    # foreign input. Re-evaluate when the GPUI pin moves fontdb off
+    # ttf-parser: switch the direct dependency to the same successor and
+    # drop this entry.
+    "RUSTSEC-2026-0192",
 ]
 
 [licenses]

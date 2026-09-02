@@ -1,0 +1,26 @@
+dims 8.000x16.000 grid 12x4 off=0 hist=0 exited=None signal=None
+bg=hsla(0.0000,0.0000,0.0000,0.0000) thumb=hsla(0.6000,0.2096,0.6725,0.3000) link=hsla(0.4775,0.6000,0.5882,1.0000)
+runs[6]:
+  L0 C0 "u" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
+  L0 C1 "u" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
+  L0 C2 "u" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
+  L0 C3 "u" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
+  L0 C4 "u" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
+  L0 C5 "u" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
+decorations[6]:
+  L0 C0+1c Underline(Single) hsla(0.4306,0.1154,0.7961,1.0000)
+  L0 C1+1c Underline(Double) hsla(0.4306,0.1154,0.7961,1.0000)
+  L0 C2+1c Underline(Curly) hsla(0.4306,0.1154,0.7961,1.0000)
+  L0 C3+1c Underline(Dotted) hsla(0.4306,0.1154,0.7961,1.0000)
+  L0 C4+1c Underline(Dashed) hsla(0.4306,0.1154,0.7961,1.0000)
+  L0 C5+1c Strikethrough hsla(0.4306,0.1154,0.7961,1.0000)
+symbols[0]:
+sprites[0]:
+rects[1]:
+  L0+1ln C0+6c hsla(0.0000,0.0000,0.0000,0.0000)
+blocks[0]:
+selection_rects[0]:
+search_rects[0]:
+cursor: None
+anchor: None
+ime: None

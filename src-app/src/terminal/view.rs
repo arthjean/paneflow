@@ -200,6 +200,7 @@ pub struct TerminalView {
     pub(super) scroll_multiplier: f32,
     pub(super) integrated_glyphs_enabled: bool,
     pub(super) color_emoji_enabled: bool,
+    pub(super) minimum_contrast: f32,
     pub(super) copy_mode_active: bool,
     pub(super) copy_cursor: Point,
     pub(super) copy_mode_frozen_offset: usize,
@@ -278,6 +279,13 @@ impl TerminalView {
     pub(crate) fn set_color_emoji_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
         if self.color_emoji_enabled != enabled {
             self.color_emoji_enabled = enabled;
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn set_minimum_contrast(&mut self, minimum_contrast: f32, cx: &mut Context<Self>) {
+        if self.minimum_contrast != minimum_contrast {
+            self.minimum_contrast = minimum_contrast;
             cx.notify();
         }
     }
@@ -516,24 +524,13 @@ impl TerminalView {
                                 )));
                             }
 
-                            let notifications =
-                                std::mem::take(&mut view.terminal.pending_notifications);
-                            if !notifications.is_empty() {
-                                let pane_title = view.terminal.title.clone();
-                                for notification in notifications {
-                                    cx.emit(TerminalEvent::AgentAttention {
-                                        title: notification.title.clone(),
-                                        body: notification.body.clone(),
-                                    });
-                                    crate::agents::notifications::fire_program_notification(
-                                        crate::agents::notifications::program_notification(
-                                            notification.title,
-                                            notification.body,
-                                            &pane_title,
-                                        ),
-                                        cx.background_executor().clone(),
-                                    );
-                                }
+                            for notification in
+                                std::mem::take(&mut view.terminal.pending_notifications)
+                            {
+                                cx.emit(TerminalEvent::ProgramNotification {
+                                    title: notification.title,
+                                    body: notification.body,
+                                });
                             }
 
                             let is_busy = view.terminal.progress.is_some();
@@ -615,6 +612,7 @@ impl TerminalView {
         );
         let integrated_glyphs_enabled = terminal_config.resolved_integrated_glyphs();
         let color_emoji_enabled = terminal_config.resolved_color_emoji();
+        let minimum_contrast = terminal_config.resolved_minimum_contrast();
 
         Self {
             terminal,
@@ -648,6 +646,7 @@ impl TerminalView {
             scroll_multiplier,
             integrated_glyphs_enabled,
             color_emoji_enabled,
+            minimum_contrast,
             copy_mode_active: false,
             copy_cursor: Point::new(0, 0),
             copy_mode_frozen_offset: 0,
@@ -912,7 +911,7 @@ pub enum TerminalEvent {
     AgentProgressChanged {
         busy: bool,
     },
-    AgentAttention {
+    ProgramNotification {
         title: String,
         body: String,
     },
@@ -1287,6 +1286,7 @@ impl Render for TerminalView {
             self.cursor_color_override,
             self.integrated_glyphs_enabled,
             self.color_emoji_enabled,
+            self.minimum_contrast,
             frame_metrics,
             alt_screen,
             self.layout_cache.clone(),

@@ -71,17 +71,17 @@
     },
     "line_height": {
       "type": ["number", "null"],
-      "description": "Line height multiplier. Default 1.2.",
-      "minimum": 1.0,
+      "description": "Line height as a multiplier of the font's own line height (ascent + descent + line gap). Default 1.0.",
+      "minimum": 0.8,
       "maximum": 2.5,
-      "default": 1.2
+      "default": 1.0
     },
     "cell_width": {
       "type": ["number", "null"],
-      "description": "Cell width multiplier. Default 0.6.",
-      "minimum": 0.3,
+      "description": "Cell width as a multiplier of the font's advance. Default 1.0.",
+      "minimum": 0.8,
       "maximum": 2.0,
-      "default": 0.6
+      "default": 1.0
     },
     "unfocused_pane_opacity": {
       "type": ["number", "null"],
@@ -252,6 +252,13 @@
           "minimum": 0.1,
           "maximum": 10.0,
           "default": 1.0
+        },
+        "minimum_contrast": {
+          "type": ["number", "null"],
+          "description": "Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the theme's ANSI colors only. 0 leaves theme colors untouched. Hot-reloaded.",
+          "minimum": 0.0,
+          "maximum": 90.0,
+          "default": 0.0
         }
       }
     },

@@ -16,16 +16,19 @@ cargo run
 ```
 
 No Zig installation or local Ghostty checkout is required. Paneflow versions
-the verified native inputs for both supported Linux targets under
-`native/libghostty/prebuilt/<target>`.
+the verified headers, bindings, and build metadata for both supported Linux
+targets under `native/libghostty/prebuilt/<target>`; the archives are assets
+of the GitHub pre-release the manifest names, and
+`scripts/fetch-libghostty.sh` places them there after verifying their hashes.
 
 The native sys crate resolves its input in this order:
 
 1. `PANEFLOW_LIBGHOSTTY_DIR` when a maintainer or workflow selects an archive.
 2. `native/libghostty/prebuilt/<target>` for every standard build.
 
-`build.rs` verifies and links the prepared archive. It never downloads Ghostty
-and never invokes Zig or an external checksum or symbol-inspection command. The
+`build.rs` verifies and links the prepared archive. It never downloads
+anything and never invokes Zig or an external checksum or symbol-inspection
+command; a missing archive fails with a pointer to the fetch script. The
 manifest pins the reviewed archive hash for each target.
 
 ## CI and release
@@ -50,7 +53,8 @@ in the Linux and release workflows. Regenerate bindings and both native target
 directories, review ABI and behavioral differences, then replace the matching
 files under `native/libghostty/prebuilt/<target>`.
 
-The committed prebuilt directory for each target must contain:
+The prebuilt directory for each target must contain (the `lib/` entry is
+fetched, the rest is committed):
 
 - `bindings.rs`
 - `build-info.txt`

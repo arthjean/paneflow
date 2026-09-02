@@ -76,16 +76,6 @@ fn pane_card_background(
     }
 }
 
-fn peek_badge_line(message: &str) -> String {
-    const BADGE_MAX_CHARS: usize = 80;
-    let first = message.lines().next().unwrap_or("").trim();
-    let mut line: String = first.chars().take(BADGE_MAX_CHARS).collect();
-    if first.chars().count() > BADGE_MAX_CHARS {
-        line.push('…');
-    }
-    line
-}
-
 const HEADER_CONTENT_HEIGHT: f32 = 28.0;
 const PANE_HEADER_HEIGHT: f32 =
     HEADER_CONTENT_HEIGHT + crate::app::constants::PANE_CONTENT_INSET_Y * 2.0;
@@ -164,7 +154,6 @@ pub struct Pane {
     attention: Option<String>,
     errored: bool,
     search_hits: Option<usize>,
-    peek_expanded: bool,
     pub zoomed: bool,
     pub workspace_id: u64,
     header_hover_motion: std::collections::HashMap<SharedString, HeaderHoverMotion>,
@@ -206,7 +195,6 @@ impl Pane {
             attention: None,
             errored: false,
             search_hits: None,
-            peek_expanded: false,
             zoomed: false,
             workspace_id,
             header_hover_motion: std::collections::HashMap::new(),
@@ -229,9 +217,6 @@ impl Pane {
 
     pub fn set_attention(&mut self, attention: Option<String>, cx: &mut Context<Self>) {
         if self.attention != attention {
-            if attention.is_none() {
-                self.peek_expanded = false;
-            }
             self.attention = attention;
             cx.notify();
         }
@@ -429,49 +414,6 @@ impl Pane {
         )
     }
 
-    fn render_peek_overlay(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let question = self.attention.clone()?;
-        let ui = pane_colors();
-        let full = if question.is_empty() {
-            "waiting for input".to_string()
-        } else {
-            question
-        };
-        let shown = if self.peek_expanded {
-            full
-        } else {
-            peek_badge_line(&full)
-        };
-        Some(
-            div()
-                .id(SharedString::from(format!(
-                    "peek-{}",
-                    cx.entity().entity_id().as_u64()
-                )))
-                .absolute()
-                .top(px(PANE_HEADER_HEIGHT + 6.0))
-                .right_2()
-                .max_w(px(420.0))
-                .overflow_hidden()
-                .bg(ui.overlay)
-                .border_1()
-                .border_color(ui.vc_conflict.opacity(0.6))
-                .rounded_md()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(ui.text)
-                .on_hover(cx.listener(|this, hovered: &bool, _window, cx| {
-                    if this.peek_expanded != *hovered {
-                        this.peek_expanded = *hovered;
-                        cx.notify();
-                    }
-                }))
-                .child(shown)
-                .into_any_element(),
-        )
-    }
-
     pub fn terminals(&self) -> impl Iterator<Item = &Entity<TerminalView>> {
         self.surface.as_terminal().into_iter()
     }
@@ -502,6 +444,10 @@ impl Pane {
             .terminal
             .as_ref()
             .is_none_or(|terminal| terminal.resolved_color_emoji());
+        let minimum_contrast = config
+            .terminal
+            .as_ref()
+            .map_or(0.0, |terminal| terminal.resolved_minimum_contrast());
         let cursor_color_override = config
             .terminal
             .as_ref()
@@ -510,6 +456,7 @@ impl Pane {
         terminal.update(cx, |terminal, cx| {
             terminal.set_integrated_glyphs_enabled(integrated_glyphs_enabled, cx);
             terminal.set_color_emoji_enabled(color_emoji_enabled, cx);
+            terminal.set_minimum_contrast(minimum_contrast, cx);
             terminal.set_cursor_color_override(cursor_color_override, cx);
         });
     }
@@ -540,7 +487,7 @@ impl Pane {
                 | TerminalEvent::FontZoomChanged
                 | TerminalEvent::FleetSearchRequested { .. }
                 | TerminalEvent::AgentProgressChanged { .. }
-                | TerminalEvent::AgentAttention { .. }
+                | TerminalEvent::ProgramNotification { .. }
                 | TerminalEvent::ShellPromptReady => {}
             },
         )
@@ -1451,7 +1398,6 @@ impl Render for Pane {
 
         let has_attention = self.attention.is_some();
         let attention_color = pane_colors().vc_conflict;
-        let peek = self.render_peek_overlay(cx);
         let composer = self.render_composer_overlay(cx);
         let card_radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
@@ -1462,7 +1408,6 @@ impl Render for Pane {
             .overflow_hidden()
             .child(squircle_fill(card_radius, card_background))
             .child(content)
-            .children(peek)
             .when_some(self.broadcast_stripe, |d, idx| {
                 d.child(
                     div()
@@ -1509,8 +1454,7 @@ mod tests {
     use paneflow_terminal_ghostty::{ProgressReport, ProgressState};
 
     use super::{
-        MAX_SURFACE_TITLE_LEN, pane_card_background, peek_badge_line, progress_chip_label,
-        truncate_surface_title,
+        MAX_SURFACE_TITLE_LEN, pane_card_background, progress_chip_label, truncate_surface_title,
     };
 
     #[test]
@@ -1547,21 +1491,6 @@ mod tests {
         assert_eq!(material.a, 0.0);
         #[cfg(not(target_os = "windows"))]
         assert_eq!(material, theme.background);
-    }
-
-    #[test]
-    fn peek_badge_takes_first_line_bounded() {
-        assert_eq!(
-            peek_badge_line("Allow `cargo test`?\ndetails…"),
-            "Allow `cargo test`?"
-        );
-        let long = "x".repeat(120);
-        let badge = peek_badge_line(&long);
-        assert_eq!(badge.chars().count(), 81, "80 chars + ellipsis");
-        assert!(badge.ends_with('…'));
-        assert_eq!(peek_badge_line(""), "");
-        let accents = "é".repeat(100);
-        assert!(peek_badge_line(&accents).ends_with('…'));
     }
 
     #[test]

@@ -40,13 +40,24 @@ impl ClaudeSessionRecord {
     pub fn lifecycle_event(&self) -> AgentLifecycleEvent {
         match self.status {
             ClaudeSessionStatus::Busy | ClaudeSessionStatus::Shell => AgentLifecycleEvent::Working,
+            ClaudeSessionStatus::Waiting if self.is_user_opened_dialog() => {
+                AgentLifecycleEvent::Idle
+            }
             ClaudeSessionStatus::Waiting => AgentLifecycleEvent::Notification {
                 message: self.waiting_for.clone(),
             },
             ClaudeSessionStatus::Idle => AgentLifecycleEvent::Idle,
         }
     }
+
+    fn is_user_opened_dialog(&self) -> bool {
+        self.waiting_for
+            .as_deref()
+            .is_some_and(|reason| reason.eq_ignore_ascii_case(USER_DIALOG_REASON))
+    }
 }
+
+const USER_DIALOG_REASON: &str = "dialog open";
 
 #[derive(Debug, Deserialize)]
 struct RawRecord {
@@ -169,6 +180,36 @@ mod tests {
             AgentLifecycleEvent::Notification {
                 message: Some("input needed".into())
             }
+        );
+        for reason in [
+            "sandbox request",
+            "worker request",
+            "goal proposal",
+            "Permission",
+        ] {
+            assert_eq!(
+                event("waiting", reason),
+                AgentLifecycleEvent::Notification {
+                    message: Some(reason.into())
+                },
+                "{reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_slash_command_dialog_is_the_users_wait_not_the_agents() {
+        let event = |waiting: &str| {
+            let body = format!(r#"{{"status":"waiting","waitingFor":"{waiting}"}}"#);
+            parse_record(body.as_bytes(), 7)
+                .expect("known status parses")
+                .lifecycle_event()
+        };
+        assert_eq!(event("dialog open"), AgentLifecycleEvent::Idle);
+        assert_eq!(event("Dialog Open"), AgentLifecycleEvent::Idle);
+        assert_eq!(
+            event(""),
+            AgentLifecycleEvent::Notification { message: None }
         );
     }
 

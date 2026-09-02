@@ -361,16 +361,16 @@ impl TargetContract {
     pub(crate) fn corrective_action(&self) -> String {
         match self.platform {
             NativePlatform::Linux => format!(
-                "restore native/libghostty/prebuilt/{}, or run scripts/build-libghostty-linux.sh --target {} and set PANEFLOW_LIBGHOSTTY_DIR to its output; Cargo performs no downloads",
-                self.target, self.target
+                "run scripts/fetch-libghostty.sh --target {} to place the reviewed archive under native/libghostty/prebuilt/{}, or run scripts/build-libghostty-linux.sh --target {} and set PANEFLOW_LIBGHOSTTY_DIR to its output; Cargo performs no downloads",
+                self.target, self.target, self.target
             ),
             NativePlatform::Macos => format!(
-                "restore native/libghostty/prebuilt/{}, or run scripts/build-libghostty-macos.sh --target {} and set PANEFLOW_LIBGHOSTTY_DIR to its output; Cargo performs no downloads",
-                self.target, self.target
+                "run scripts/fetch-libghostty.sh --target {} to place the reviewed archive under native/libghostty/prebuilt/{}, or run scripts/build-libghostty-macos.sh --target {} and set PANEFLOW_LIBGHOSTTY_DIR to its output; Cargo performs no downloads",
+                self.target, self.target, self.target
             ),
             NativePlatform::Windows => format!(
-                "restore native/libghostty/prebuilt/{}, or run scripts/build-libghostty-windows.ps1 -VerifyReproducible; Cargo performs no downloads",
-                self.target
+                "run scripts/fetch-libghostty.ps1 -Target {} to place the reviewed archive under native/libghostty/prebuilt/{}, or run scripts/build-libghostty-windows.ps1 and set PANEFLOW_LIBGHOSTTY_DIR to its output; Cargo performs no downloads",
+                self.target, self.target
             ),
         }
     }

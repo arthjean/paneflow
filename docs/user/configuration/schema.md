@@ -31,12 +31,12 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `default_shell` | string or null | platform default | Unix: configured -> `$SHELL` -> `/bin/sh`. Windows: configured -> `pwsh.exe` -> `powershell.exe` -> `%ComSpec%` -> `C:\Windows\System32\cmd.exe` -> `cmd.exe`. |
 | `theme` | string or null | `Paneflow Dark` | Bundled theme name, one preset's light or dark variant. Current values: `Paneflow Dark`, `Paneflow Light`, `Vercel Dark`, `Vercel Light`, `Claude Dark`, `Claude Light`, `Cursor Dark`, `Cursor Light`. Pre-preset names (`One Dark`, `Vercel`, `Claude`, `Cursor`) still resolve. |
 | `theme_mode` | string or null | `dark` | `light`, `dark`, or `system`. |
-| `font_family` | string or null | bundled JetBrainsMono NFM | Accepts `.PaneflowMono`, `JetBrainsMono NFM`, `.PaneflowSans`, embedded family names, or installed monospace families. |
+| `font_family` | string or null | bundled JetBrainsMono Nerd Font | Accepts `.PaneflowMono`, `JetBrainsMono NF`, `JetBrainsMono NFM`, `.PaneflowSans`, embedded family names, or installed monospace families. |
 | `font_fallbacks` | array of strings or null | none | Ordered glyph fallback families for symbols, Powerline, CJK, emoji, or Nerd Font glyphs. |
 | `font_size` | number or null | `13.0` | Points, range `8.0` to `32.0`. Out-of-range values fall back to default with a warning. |
 | `font_weight` | string or null | `normal` | `thin`, `extra_light`, `light`, `semi_light`, `normal`, `medium`, `semi_bold`, `bold`, `extra_bold`, `black`, `extra_black`. |
-| `line_height` | number or null | `1.2` | Multiplier, range `1.0` to `2.5`. |
-| `cell_width` | number or null | `0.6` | Multiplier, range `0.3` to `2.0`. |
+| `line_height` | number or null | `1.0` | Multiplier of the font's own line height (ascent, descent, and line gap), range `0.8` to `2.5`. The cell is rounded to whole device pixels. |
+| `cell_width` | number or null | `1.0` | Multiplier of the font's advance, range `0.8` to `2.0`. The cell is rounded to whole device pixels. |
 | `unfocused_pane_opacity` | number or null | `0.7` | Opacity of panes without focus when a workspace has more than one pane, range `0.15` to `1.0`. `1.0` disables the dim. |
 | `reduce_motion` | boolean or null | `false` | Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. |
 | `sidebar_show` | object or null | all off | What a session tab row shows beyond its name: `branch` (boolean) adds its git branch, `diffstat` (boolean) adds its insertion and deletion counts, `pr` (boolean) turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` (boolean) draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
@@ -100,6 +100,7 @@ CLI binary.
 | `terminal.cursor_blink` | string or null | `terminal_controlled` | `on`, `off`, or `terminal_controlled`. |
 | `terminal.env` | object or null | none | Environment variables injected into new terminals. Protected keys are filtered at PTY spawn. |
 | `terminal.scroll_multiplier` | number or null | `1.0` | Mouse-wheel multiplier outside mouse-reporting and alternate-screen modes. |
+| `terminal.minimum_contrast` | number or null | `0.0` | Minimum APCA lightness contrast (Lc) enforced between text and its cell background, on the theme's ANSI colors only. `0` leaves theme colors untouched; Zed uses `45`. Range `0` to `90`. Hot-reloaded. |
 
 ```json
 {
@@ -257,8 +258,8 @@ unconditionally.
   "font_fallbacks": [],
   "font_size": 13.0,
   "font_weight": "normal",
-  "line_height": 1.2,
-  "cell_width": 0.6,
+  "line_height": 1.0,
+  "cell_width": 1.0,
   "unfocused_pane_opacity": 0.7,
   "reduce_motion": false,
   "sidebar_show": {
@@ -290,7 +291,8 @@ unconditionally.
     "cursor_shape": "block",
     "cursor_blink": "terminal_controlled",
     "env": {},
-    "scroll_multiplier": 1.0
+    "scroll_multiplier": 1.0,
+    "minimum_contrast": 0.0
   },
   "telemetry": { "enabled": null },
   "agent_panel": {

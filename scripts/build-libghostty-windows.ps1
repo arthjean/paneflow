@@ -5,7 +5,6 @@ param(
     [string]$Zig = "zig",
     [string]$ZigSourceArchive = $env:PANEFLOW_ZIG_SOURCE_ARCHIVE,
     [string]$EvidenceDir = $env:EVIDENCE_DIR,
-    [switch]$VerifyReproducible,
     [switch]$AllowHashDrift
 )
 
@@ -324,208 +323,6 @@ function Normalize-CoffArchive {
     Remove-Item -LiteralPath $work -Recurse -Force
 }
 
-function Write-Utf8Json {
-    param(
-        [string]$Path,
-        [object]$Value
-    )
-
-    $json = ConvertTo-Json -InputObject $Value -Depth 8
-    $encoding = New-Object System.Text.UTF8Encoding($false)
-    [IO.File]::WriteAllText($Path, $json + "`n", $encoding)
-}
-
-function Reset-EvidenceSubdirectory {
-    param(
-        [string]$EvidenceRoot,
-        [string]$Name
-    )
-
-    $resolvedRoot = [IO.Path]::GetFullPath($EvidenceRoot).TrimEnd('\', '/')
-    $destination = [IO.Path]::GetFullPath((Join-Path $resolvedRoot $Name))
-    if (-not $destination.StartsWith($resolvedRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
-        throw "refusing to reset evidence outside $resolvedRoot`: $destination"
-    }
-    if (Test-Path -LiteralPath $destination) {
-        Remove-Item -LiteralPath $destination -Recurse -Force
-    }
-    New-Item -ItemType Directory -Path $destination | Out-Null
-    return $destination
-}
-
-function Export-FinalArchiveMembers {
-    param(
-        [string]$Archive,
-        [string]$Destination,
-        [string]$InventoryPath,
-        [string]$LlvmAr
-    )
-
-    $memberOutput = @(& $LlvmAr t $Archive)
-    $memberExitCode = $LASTEXITCODE
-    if ($memberExitCode -ne 0 -or $memberOutput.Count -eq 0) {
-        throw "cannot enumerate final COFF members in $Archive"
-    }
-    $memberNames = @($memberOutput | ForEach-Object { $_.ToString() })
-    $memberSet = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    foreach ($memberName in $memberNames) {
-        $leaf = Split-Path $memberName -Leaf
-        if ([string]::IsNullOrWhiteSpace($leaf) -or $leaf -ne $memberName) {
-            throw "final COFF archive contains an unsafe member name: $memberName"
-        }
-        if (-not $memberSet.Add($memberName)) {
-            throw "final COFF archive contains a duplicate member name: $memberName"
-        }
-    }
-
-    New-Item -ItemType Directory -Path $Destination | Out-Null
-    Push-Location $Destination
-    try {
-        $null = & $LlvmAr x $Archive
-        $extractExitCode = $LASTEXITCODE
-        if ($extractExitCode -ne 0) {
-            throw "cannot extract final COFF members from $Archive"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-
-    $inventoryMembers = @()
-    for ($index = 0; $index -lt $memberNames.Count; $index++) {
-        $memberName = $memberNames[$index]
-        $memberPath = Join-Path $Destination $memberName
-        if (-not (Test-Path -LiteralPath $memberPath -PathType Leaf)) {
-            throw "final COFF member was not extracted: $memberName"
-        }
-        $member = Get-Item -LiteralPath $memberPath
-        $inventoryMembers += [pscustomobject][ordered]@{
-            ordinal = $index + 1
-            name = $memberName
-            size = [int64]$member.Length
-            sha256 = Get-Sha256 $member.FullName
-        }
-    }
-    $archiveFile = Get-Item -LiteralPath $Archive
-    Write-Utf8Json $InventoryPath ([ordered]@{
-        schema_version = 1
-        archive = $archiveFile.Name
-        archive_size = [int64]$archiveFile.Length
-        archive_sha256 = Get-Sha256 $archiveFile.FullName
-        members = [object[]]$inventoryMembers
-    })
-}
-
-function Export-BuildEvidence {
-    param(
-        [string]$Label,
-        [string]$Prepared,
-        [string]$EvidenceRoot,
-        [string]$LlvmAr
-    )
-
-    $buildEvidence = Reset-EvidenceSubdirectory $EvidenceRoot $Label
-    $preparedEvidence = Join-Path $buildEvidence "prepared"
-    New-Item -ItemType Directory -Path $preparedEvidence | Out-Null
-    Get-ChildItem -LiteralPath $Prepared -Force | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination $preparedEvidence -Recurse -Force
-    }
-
-    $buildRoot = Split-Path $Prepared -Parent
-    $rawArchive = Join-Path (Join-Path $buildRoot "raw") $ArchivePath
-    $finalArchive = Join-Path $Prepared $ArchivePath
-    foreach ($archive in @($rawArchive, $finalArchive)) {
-        if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
-            throw "cannot collect reproducibility evidence because archive is missing: $archive"
-        }
-    }
-
-    $rawEvidence = Join-Path $buildEvidence "archives\raw"
-    New-Item -ItemType Directory -Force -Path $rawEvidence | Out-Null
-    Copy-Item -LiteralPath $rawArchive -Destination (Join-Path $rawEvidence $ArchiveFileName)
-
-    $membersEvidence = Join-Path $buildEvidence "final-members"
-    $inventoryPath = Join-Path $buildEvidence "final-members.json"
-    Export-FinalArchiveMembers $finalArchive $membersEvidence $inventoryPath $LlvmAr
-}
-
-function Export-ReproducibilityEvidence {
-    param(
-        [string]$FirstPrepared,
-        [string]$SecondPrepared,
-        [string]$EvidenceRoot,
-        [string[]]$ComparedPaths,
-        [string]$LlvmAr
-    )
-
-    Assert-NonRootDirectory $EvidenceRoot "libghostty reproducibility evidence"
-    New-Item -ItemType Directory -Force -Path $EvidenceRoot | Out-Null
-    $comparisonPath = Join-Path $EvidenceRoot "comparison.json"
-    if (Test-Path -LiteralPath $comparisonPath) {
-        Remove-Item -LiteralPath $comparisonPath -Force
-    }
-
-    Export-BuildEvidence "build-1" $FirstPrepared $EvidenceRoot $LlvmAr
-    Export-BuildEvidence "build-2" $SecondPrepared $EvidenceRoot $LlvmAr
-
-    $comparisons = @(
-        foreach ($relative in $ComparedPaths) {
-            $left = Get-Item -LiteralPath (Join-Path $FirstPrepared $relative)
-            $right = Get-Item -LiteralPath (Join-Path $SecondPrepared $relative)
-            $leftSha = Get-Sha256 $left.FullName
-            $rightSha = Get-Sha256 $right.FullName
-            [pscustomobject][ordered]@{
-                path = $relative.Replace('\', '/')
-                left_size = [int64]$left.Length
-                left_sha256 = $leftSha
-                right_size = [int64]$right.Length
-                right_sha256 = $rightSha
-                equal = $leftSha -eq $rightSha
-            }
-        }
-    )
-    Write-Utf8Json $comparisonPath ([ordered]@{
-        schema_version = 1
-        target = $Target
-        source_sha = $SourceSha
-        source_date_epoch = $SourceDateEpoch
-        source_patch = [ordered]@{
-            path = $SourcePatchPath
-            sha256 = $SourcePatchSha
-            target = $SourcePatchTarget
-            input_sha256 = $SourcePatchInputSha
-            output_sha256 = $SourcePatchOutputSha
-        }
-        headers_normalization = $HeadersNormalization
-        toolchain = [ordered]@{
-            zig_version = $ZigVersion
-            zig_archive_url = $ZigArchiveUrl
-            zig_archive_sha256 = $ZigArchiveSha
-            zig_executable_sha256 = $ZigExecutableSha
-            zig_source_archive_url = $ZigSourceArchiveUrl
-            zig_source_archive_sha256 = $ZigSourceArchiveSha
-            zig_image_base = $ZigImageBase
-            zig_dll_characteristics = $ZigDllCharacteristics
-            msvc_toolset = $MsvcToolset
-            windows_sdk = $WindowsSdk
-            llvm_version = $LlvmVersion
-        }
-        build = [ordered]@{
-            mode = $BuildMode
-            seed = $BuildSeed
-            jobs = $BuildJobs
-            canonical_source_path = $CanonicalSourcePath
-            canonical_cache_path = "$CanonicalSourcePath/.paneflow-zig-cache"
-            canonical_prefix_path = "$CanonicalSourcePath/.paneflow-zig-output"
-            archive_normalization = $Normalization
-        }
-        left = "build-1"
-        right = "build-2"
-        files = [object[]]$comparisons
-    })
-    return $comparisons
-}
-
 if ([string]::IsNullOrWhiteSpace($SourceDir)) {
     throw "PANEFLOW_GHOSTTY_SOURCE_DIR or -SourceDir must point to the pinned Ghostty checkout"
 }
@@ -548,11 +345,6 @@ $ZigSourceArchiveUrl = Get-ManifestString "windows_zig_source_archive_url"
 $ZigSourceArchiveSha = Get-ManifestString "windows_zig_source_archive_sha256"
 $ZigImageBase = Get-ManifestString "windows_zig_image_base"
 $ZigDllCharacteristics = Get-ManifestString "windows_zig_dll_characteristics"
-$SourcePatchPath = Get-ManifestString "windows_source_patch_path"
-$SourcePatchSha = Get-ManifestString "windows_source_patch_sha256"
-$SourcePatchTarget = Get-ManifestString "windows_source_patch_target"
-$SourcePatchInputSha = Get-ManifestString "windows_source_patch_input_sha256"
-$SourcePatchOutputSha = Get-ManifestString "windows_source_patch_output_sha256"
 $HeadersNormalization = Get-ManifestString "windows_headers_normalization"
 $HeaderPath = Get-ManifestString "header_path"
 $HeaderSha = Get-ManifestString "header_sha256"
@@ -629,28 +421,6 @@ if ((Get-Sha256 $ZigSourceArchive) -ne $ZigSourceArchiveSha) {
     throw "Zig $ZigVersion source archive checksum mismatch: $ZigSourceArchive"
 }
 
-$SourcePatch = [IO.Path]::GetFullPath((Join-Path $Root $SourcePatchPath))
-if (-not $SourcePatch.StartsWith($Root + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-    -not (Test-Path -LiteralPath $SourcePatch -PathType Leaf)) {
-    throw "manifest-pinned Ghostty source patch must be a repository file: $SourcePatchPath"
-}
-if ((Get-NormalizedTextSha256 $SourcePatch) -ne $SourcePatchSha) {
-    throw "Ghostty source patch checksum mismatch at $SourcePatch"
-}
-$patchStats = @(& git -c core.autocrlf=false apply --unidiff-zero --numstat $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
-if ($LASTEXITCODE -ne 0 -or $patchStats.Count -ne 1 -or
-    $patchStats[0] -notmatch '^[0-9-]+\t[0-9-]+\t(.+)$' -or
-    $matches[1].Replace('\', '/') -ne $SourcePatchTarget.Replace('\', '/')) {
-    throw "Ghostty source patch must modify exactly $SourcePatchTarget"
-}
-$sourcePatchTargetPath = [IO.Path]::GetFullPath((Join-Path $SourceDir $SourcePatchTarget))
-if (-not $sourcePatchTargetPath.StartsWith($SourceDir + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-    -not (Test-Path -LiteralPath $sourcePatchTargetPath -PathType Leaf)) {
-    throw "manifest-pinned Ghostty source patch target is invalid: $SourcePatchTarget"
-}
-if ((Get-NormalizedTextSha256 $sourcePatchTargetPath) -ne $SourcePatchInputSha) {
-    throw "Ghostty source patch input checksum mismatch at $sourcePatchTargetPath"
-}
 if ($HeadersNormalization -ne "utf8-lf+trim-trailing-space+em-dash-to-hyphen") {
     throw "unsupported Windows header normalization: $HeadersNormalization"
 }
@@ -685,8 +455,16 @@ if ($LASTEXITCODE -ne 0 -or -not ($llvmVersionOutput -match "LLVM version $([reg
     throw "libghostty requires LLVM normalization tools $LlvmVersion"
 }
 
-if ($Normalization -ne "pinned-formatter-patch+fixed-source-cache-prefix+zig-source-lib+zig-build-seed0-j1+drop-bundled-import-libs+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order") {
-    throw "unsupported Windows archive normalization: $Normalization"
+$RecipeNormalization = "fixed-source-cache-prefix+zig-source-lib+zig-build-seed0-j1+drop-bundled-import-libs+llvm-objcopy-strip-debug+coff-timestamp-zero+llvm-ar-D+ordinal-order"
+if ($Normalization -ne $RecipeNormalization) {
+    $message = "manifest archive_normalization is `"$Normalization`"; this recipe produces `"$RecipeNormalization`""
+    if ($AllowHashDrift) {
+        Write-Warning $message
+        $Normalization = $RecipeNormalization
+    }
+    else {
+        throw $message
+    }
 }
 
 $requiredSymbols = @(
@@ -704,7 +482,7 @@ New-Item -ItemType Directory -Path $tempRoot | Out-Null
 Add-DefenderExclusion $tempRoot
 Add-DefenderExclusion ([IO.Path]::GetFullPath($CanonicalSourcePath))
 if ([string]::IsNullOrWhiteSpace($EvidenceDir)) {
-    $EvidenceDir = Join-Path $tempRoot "reproducibility-evidence"
+    $EvidenceDir = Join-Path $tempRoot "build-evidence"
 }
 else {
     $EvidenceDir = [IO.Path]::GetFullPath($EvidenceDir)
@@ -801,28 +579,6 @@ function Initialize-CanonicalSource {
     if ((Get-Sha256 (Join-Path $canonicalSource $HeaderPath)) -ne $HeaderSha) {
         throw "canonical Ghostty export has an unexpected header checksum"
     }
-    $canonicalPatchTarget = [IO.Path]::GetFullPath((Join-Path $canonicalSource $SourcePatchTarget))
-    if (-not $canonicalPatchTarget.StartsWith($canonicalSource + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase) -or
-        (Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchInputSha) {
-        throw "canonical Ghostty export has an unexpected source patch input"
-    }
-    Push-Location $canonicalSource
-    try {
-        $patchCheck = @(& git -c core.autocrlf=false apply --unidiff-zero --check --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
-        if ($LASTEXITCODE -ne 0) {
-            throw "manifest-pinned Ghostty source patch does not apply cleanly`n$($patchCheck -join "`n")"
-        }
-        $patchOutput = @(& git -c core.autocrlf=false apply --unidiff-zero --whitespace=error-all $SourcePatch 2>&1 | ForEach-Object { $_.ToString() })
-        if ($LASTEXITCODE -ne 0) {
-            throw "cannot apply manifest-pinned Ghostty source patch`n$($patchOutput -join "`n")"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-    if ((Get-NormalizedTextSha256 $canonicalPatchTarget) -ne $SourcePatchOutputSha) {
-        throw "canonical Ghostty source patch output checksum mismatch"
-    }
     return $canonicalSource
 }
 
@@ -838,7 +594,7 @@ function Invoke-NativeBuild {
     $localCache = Join-Path $cacheRoot "local"
     foreach ($fixedPath in @($cacheRoot, $zigPrefix)) {
         if (Test-Path -LiteralPath $fixedPath) {
-            throw "fixed reproducibility path is already in use: $fixedPath"
+            throw "fixed build path is already in use: $fixedPath"
         }
     }
     New-Item -ItemType Directory -Force -Path $prepared, $globalCache, $localCache | Out-Null
@@ -983,11 +739,6 @@ function Invoke-NativeBuild {
     Write-Utf8Lines $buildInfo @(
         "source_sha=$SourceSha",
         "source_date_epoch=$SourceDateEpoch",
-        "source_patch_path=$SourcePatchPath",
-        "source_patch_sha256=$SourcePatchSha",
-        "source_patch_target=$SourcePatchTarget",
-        "source_patch_input_sha256=$SourcePatchInputSha",
-        "source_patch_output_sha256=$SourcePatchOutputSha",
         "headers_normalization=$HeadersNormalization",
         "zig_version=$ZigVersion",
         "zig_archive_url=$ZigArchiveUrl",
@@ -1032,17 +783,7 @@ function Invoke-NativeBuild {
 try {
     $ZigLibDir = Initialize-ZigSourceLib
     $buildSource = Initialize-CanonicalSource
-    $first = Invoke-NativeBuild "build-1"
-    if ($VerifyReproducible) {
-        $second = Invoke-NativeBuild "build-2"
-        $comparedPaths = @($ArchivePath, "headers.sha256", "bindings.rs", "symbols.txt", "build-info.txt")
-        $comparisons = @(Export-ReproducibilityEvidence $first $second $EvidenceDir $comparedPaths $llvmAr)
-        $mismatches = @($comparisons | Where-Object { -not $_.equal })
-        if ($mismatches.Count -ne 0) {
-            $mismatch = $mismatches[0]
-            throw "reproducibility mismatch for $($mismatch.path) between clean builds (left sha256 $($mismatch.left_sha256), right sha256 $($mismatch.right_sha256)); evidence is $EvidenceDir"
-        }
-    }
+    $first = Invoke-NativeBuild "build"
 
     $actualArchiveSha = Get-Sha256 (Join-Path $first $ArchivePath)
     if ($actualArchiveSha -ne $ExpectedArchiveSha) {

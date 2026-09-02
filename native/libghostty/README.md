@@ -2,8 +2,30 @@
 
 `manifest.toml` is the single source of truth for Paneflow's native
 libghostty-vt inputs. Cargo never fetches Ghostty, runs bindgen, invokes Zig,
-or mutates an artifact. Reviewed archives live under `prebuilt/<rust-target>/`,
-so a standard checkout only verifies and links repository content.
+or mutates an artifact. Reviewed headers, bindings, and build metadata live
+under `prebuilt/<rust-target>/`; the archives themselves are not tracked by
+git. They are assets of the GitHub pre-release the manifest names
+(`archive_release_repository` and `archive_release_tag`, one
+`<target>-<archive>` asset per target), and one script places them:
+
+```sh
+scripts/fetch-libghostty.sh            # every target; --target <triple> for one
+.\scripts\fetch-libghostty.ps1          # Windows twin
+```
+
+It verifies each download against the manifest's `archive_sha256` before the
+archive reaches `prebuilt/<rust-target>/lib/`, and leaves an archive that is
+already in place with the right hash alone. `paneflow-libghostty-sys/build.rs`
+fails with a pointer to that script when an archive is missing; it performs no
+downloads itself. Every CI job that runs cargo takes the same step through
+`.github/actions/fetch-libghostty`.
+
+Provenance of a published archive is a SLSA build-provenance attestation
+signed by the bump workflow that built it:
+
+```sh
+gh attestation verify prebuilt/<rust-target>/lib/<archive> --repo arthjean/paneflow
+```
 
 The pinned source is Ghostty
 `f2d5758f6305867dc36b36293c6165d8152b853e` built with Zig 0.16.0 in
@@ -72,8 +94,7 @@ clean pinned checkout in an x64 Visual Studio environment:
 .\scripts\build-libghostty-windows.ps1 `
   -SourceDir C:\path\to\ghostty `
   -Zig C:\path\to\zig-0.16.0\zig.exe `
-  -ZigSourceArchive C:\path\to\zig-0.16.0.tar.xz `
-  -VerifyReproducible
+  -ZigSourceArchive C:\path\to\zig-0.16.0.tar.xz
 ```
 
 The reviewed recipe requires:
@@ -104,21 +125,19 @@ zig.exe build --zig-lib-dir <official-source-lib> --verbose --seed 0 -j1 -Demit-
 The CI downloads the manifest-pinned official Zig ZIP and source archive, then
 verifies both archives, the executable, and its PE metadata. The source archive
 provides the complete Zig library used by `--zig-lib-dir`; the Windows ZIP omits
-library test files that Zig 0.16.0 analyzes after the formatter is split into
-out-of-line helpers.
+library test files that Zig 0.16.0 analyzes.
 
-Clean upstream builds of `f2d5758f` are not reproducible on Windows with
-`--seed 0 -j1` alone. The drift is confined to the generated
-`ghostty-vt-static_zcu.obj` code for `PageFormatter.formatWithState`. The pinned
-`windows-formatter-determinism.patch` splits the large formatter into explicit
-out-of-line helpers before the build, and its path, input hash, output hash, and
-own hash are part of the manifest and `build-info.txt` contract. Qualification
-of this pin used six consecutive clean builds, which produced the same
-normalized archive SHA-256,
-`ad12e1177fc6bac1c39bd915baada04adccb7b24834838a26ae86b9f9357af1e`.
-The build script requires two complete clean builds per invocation. CI runs
-three independent passes, preserves all three comparisons as evidence, and
-aborts before publication on any byte difference.
+Clean upstream builds are not bit-for-bit reproducible on Windows with
+`--seed 0 -j1`: the drift sits in the generated `ghostty-vt-static_zcu.obj`
+code for `PageFormatter.formatWithState`. Paneflow used to force determinism
+with a source patch that split that formatter into out-of-line helpers, and
+retired it because the patch had to be rebased against every upstream change
+to `src/terminal/formatter.zig`. The Windows archive is therefore built once,
+by `libghostty-bump.yml`, and its provenance is the build-provenance
+attestation that run publishes with the release asset rather than a second
+matching build. The recipe still fixes every input it can (seed, jobs, paths,
+toolchain versions, normalization), which keeps the archive stable in practice
+and keeps `build-info.txt` an exact record of how it was produced.
 
 The export is built at fixed source, cache, and prefix paths. Ghostty asks Zig
 to link ntdll and kernel32 into the static library, and a static Zig link
@@ -130,11 +149,10 @@ member of Ghostty's emitted fat archive, zeros each COFF timestamp, and repacks
 ordinally sorted members with deterministic `llvm-ar rcD` mode. It deliberately
 does not replay the emitted `build-lib` command.
 Header and symbol inventories use the same ordinal, case-sensitive ordering,
-so hashes do not depend on the Windows locale. Two complete builds start from
-empty caches at the same canonical paths and must match byte for byte before
-publication. The fixed `C:\Users\Public\paneflow-libghostty-f2d5758f` source
-path is part of the hash contract; the build aborts if that path is unavailable
-or already occupied.
+so hashes do not depend on the Windows locale. The build starts from empty
+caches at the fixed `C:\Users\Public\paneflow-libghostty-f2d5758f` source
+path, which `build-info.txt` records; the build aborts if that path is
+unavailable or already occupied.
 
 The fat archive contains Ghostty's Zig objects, Zig `compiler_rt`, simdutf,
 Highway, and wuffs. Under Zig 0.15.2 its C and C++ members carried a `.drectve`
@@ -169,27 +187,24 @@ static plus reviewed system link directives.
 
 `.github/workflows/libghostty-bump.yml` performs the re-pin. It runs weekly and
 on demand (`workflow_dispatch` accepts an explicit `source_sha`, and a `dry_run`
-input builds everything without opening a pull request). It stages the manifest
-onto the target commit, regenerates the bindings, rebuilds all four reviewed
-targets with `--verify-reproducible --allow-hash-drift`, writes the hashes those
-builds produced, and opens a pull request. Nothing merges on its own.
+input builds everything without publishing). It stages the manifest onto the
+target commit, regenerates the bindings, rebuilds all four reviewed targets
+with `--allow-hash-drift` (Linux and macOS additionally with
+`--verify-reproducible`), writes the hashes those builds produced, attests the
+four archives with `actions/attest-build-provenance`, publishes them as the
+`libghostty-vt-<sha>` pre-release, and opens a pull request carrying the
+manifest, bindings, headers, and metadata. Nothing merges on its own. A bump
+that is closed unmerged leaves its pre-release behind; delete it by hand.
 
-Reproducibility is proven in the bump run itself, not on the resulting pull
-request: a pull request lane only checks a committed archive against its
+Provenance is established in the bump run itself, not on the resulting pull
+request: a pull request lane only checks a published archive against its
 manifest hash, and a bump commit writes that hash, so the pull request alone
 would be circular evidence.
 
-Two pins the workflow deliberately refuses to move, both checked in seconds
-before any build starts:
-
-- **Zig.** A commit whose `minimum_zig_version` moved also needs a new
-  distribution URL, its checksums, `windows_zig_image_base`, and
-  `windows_zig_dll_characteristics`. Re-pin Zig by hand first.
-- **The Windows formatter patch.** `patches/windows-formatter-determinism.patch`
-  is pinned to the exact bytes of its target file. When upstream touches
-  `src/terminal/formatter.zig`, rebase the patch and re-pin
-  `windows_source_patch_sha256`, `windows_source_patch_input_sha256`, and
-  `windows_source_patch_output_sha256`.
+One pin the workflow deliberately refuses to move, checked in seconds before
+any build starts: **Zig.** A commit whose `minimum_zig_version` moved also
+needs a new distribution URL, its checksums, `windows_zig_image_base`, and
+`windows_zig_dll_characteristics`. Re-pin Zig by hand first.
 
 `scripts/repin-libghostty-manifest.sh` performs the manifest edits and is the
 supported way to re-pin a field by hand. Every edit requires the key to already

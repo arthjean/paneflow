@@ -106,9 +106,10 @@ pub(crate) fn program_notification(
 
 pub(crate) fn fire_program_notification(
     notification: DesktopNotification,
+    seen: bool,
     executor: BackgroundExecutor,
 ) {
-    if window_active() {
+    if seen {
         return;
     }
     executor
@@ -121,13 +122,14 @@ pub(crate) fn fire_program_notification(
 pub(crate) fn fire_desktop_notification(
     notification: DesktopNotification,
     config: &PaneFlowConfig,
+    seen: bool,
     executor: BackgroundExecutor,
 ) {
     let gate = config.agent_panel.as_ref().map_or(
         NotifyWhenAgentWaiting::Never,
         AgentPanelConfig::resolved_notify_when_agent_waiting,
     );
-    if !should_fire_desktop_notification(gate, window_active()) {
+    if !should_fire_desktop_notification(gate, seen) {
         return;
     }
 
@@ -138,15 +140,10 @@ pub(crate) fn fire_desktop_notification(
         .detach();
 }
 
-pub(crate) fn should_fire_desktop_notification(
-    gate: NotifyWhenAgentWaiting,
-    window_active: bool,
-) -> bool {
+pub(crate) fn should_fire_desktop_notification(gate: NotifyWhenAgentWaiting, seen: bool) -> bool {
     match gate {
         NotifyWhenAgentWaiting::Never => false,
-        NotifyWhenAgentWaiting::PrimaryScreen | NotifyWhenAgentWaiting::AllScreens => {
-            !window_active
-        }
+        NotifyWhenAgentWaiting::PrimaryScreen | NotifyWhenAgentWaiting::AllScreens => !seen,
     }
 }
 
@@ -285,18 +282,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn notification_gate_honors_never_and_window_focus() {
+    fn notification_gate_honors_never_and_the_pane_under_the_users_eye() {
         assert!(!should_fire_desktop_notification(
             NotifyWhenAgentWaiting::Never,
             false
         ));
         assert!(
             !should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, true),
-            "active Paneflow window suppresses OS notifications"
+            "the pane on screen never notifies"
         );
         assert!(
             should_fire_desktop_notification(NotifyWhenAgentWaiting::PrimaryScreen, false),
-            "inactive Paneflow window notifies"
+            "a pane in another workspace, tab or an inactive window notifies"
         );
         assert!(should_fire_desktop_notification(
             NotifyWhenAgentWaiting::AllScreens,

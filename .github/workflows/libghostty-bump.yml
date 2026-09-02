@@ -1,7 +1,9 @@
 name: libghostty bump
 
-# Re-pins native/libghostty/manifest.toml onto a newer Ghostty commit and opens
-# a pull request carrying the four rebuilt archives.
+# Re-pins native/libghostty/manifest.toml onto a newer Ghostty commit,
+# publishes the four rebuilt archives as a `libghostty-vt-<sha>` pre-release
+# with a build-provenance attestation, and opens a pull request carrying the
+# manifest, bindings, headers, and metadata that point at that release.
 #
 # The build recipes read source_sha, header_sha256, bindings_sha256, and their
 # own archive hashes from the manifest and refuse to run against a checkout that
@@ -12,9 +14,12 @@ name: libghostty bump
 # Nothing here merges. The pull request goes through the ordinary
 # libghostty-{linux,macos,windows} gates, and those runs start in an
 # approval-required state because a GITHUB_TOKEN opened the pull request.
-# Reproducibility is proven here rather than there: a pull request lane only
-# checks the committed archive against the manifest hash, which a bump commit
-# writes itself, so a bump that did not prove itself would be circular.
+# Provenance is established here rather than there: Linux and macOS prove
+# bit-for-bit reproducibility with two clean builds, Windows is built once (its
+# clean builds are not reproducible upstream), and every archive is attested
+# by this run. A pull request lane only checks the published archive against
+# the manifest hash, which a bump commit writes itself, so a bump that did not
+# establish its own provenance would be circular.
 
 on:
   schedule:
@@ -103,12 +108,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      # Both preflights below cost seconds and guard hours. A Zig bump needs new
-      # distribution URLs and checksums, and a moved formatter.zig needs the
-      # Windows patch rebased by hand. Neither is something this workflow may
-      # decide on its own, and neither should surface as a Windows job failing
-      # forty minutes in.
-      - name: Preflight the pins this workflow cannot move
+      # This preflight costs seconds and guards hours. A Zig bump needs new
+      # distribution URLs and checksums, which this workflow may not decide on
+      # its own, and it should not surface as a Windows job failing forty
+      # minutes in.
+      - name: Preflight the pin this workflow cannot move
         if: steps.target.outputs.needed == 'true'
         env:
           SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
@@ -116,10 +120,6 @@ jobs:
           manifest_string() {
             sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
           }
-          normalized_sha256() {
-            perl -0pe 's/\r\n/\n/g; s/\r/\n/g' "$1" | sha256sum | awk '{print $1}'
-          }
-
           pinned_zig="$(manifest_string zig_version)"
           upstream_zig="$(
             sed -nE 's/^[[:space:]]*\.minimum_zig_version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' \
@@ -133,15 +133,7 @@ jobs:
             echo "::error::this commit needs Zig $upstream_zig but the manifest pins $pinned_zig. A Zig bump also moves windows_zig_archive_url, its checksums, windows_zig_image_base, and windows_zig_dll_characteristics, so re-pin Zig by hand first."
             exit 1
           fi
-
-          patch_target="$(manifest_string windows_source_patch_target)"
-          expected_input="$(manifest_string windows_source_patch_input_sha256)"
-          actual_input="$(normalized_sha256 "$SOURCE_DIR/$patch_target")"
-          if [ "$actual_input" != "$expected_input" ]; then
-            echo "::error::$patch_target moved upstream, so native/libghostty/patches/windows-formatter-determinism.patch no longer applies to it. Rebase the patch, then re-pin windows_source_patch_sha256, windows_source_patch_input_sha256, and windows_source_patch_output_sha256 by hand."
-            exit 1
-          fi
-          echo "Zig $pinned_zig and the Windows formatter patch both still apply"
+          echo "Zig $pinned_zig still applies"
 
       - name: Stage the manifest onto the target commit
         if: steps.target.outputs.needed == 'true'
@@ -183,6 +175,7 @@ jobs:
             --set "windows_source_date_epoch=$epoch" \
             --set "macos_canonical_source_path=${macos_root%$old_short}$SHORT_SHA" \
             --set "windows_canonical_source_path=${windows_root%$old_short}$SHORT_SHA" \
+            --set "archive_release_tag=libghostty-vt-$SOURCE_SHA" \
             --set-license "libghostty-vt:version=${api_version}-dev@$SOURCE_SHA"
 
           git --no-pager diff -- native/libghostty/manifest.toml
@@ -415,7 +408,10 @@ jobs:
         id: toolchain
         uses: ./.github/actions/libghostty-windows-toolchain
 
-      - name: Build and prove reproducibility
+      # One clean build. Windows archives are not bit-for-bit reproducible
+      # upstream, so there is no second build to compare against; the
+      # provenance of this one is the attestation the assemble job publishes.
+      - name: Build
         env:
           PANEFLOW_GHOSTTY_SOURCE_DIR: ${{ github.workspace }}\.ghostty-source
           EVIDENCE_DIR: ${{ runner.temp }}\libghostty-bump-evidence
@@ -423,7 +419,6 @@ jobs:
           & .\scripts\build-libghostty-windows.ps1 `
             -Zig "${{ steps.toolchain.outputs.zig }}" `
             -ZigSourceArchive "${{ steps.toolchain.outputs.zig-source-archive }}" `
-            -VerifyReproducible `
             -AllowHashDrift
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -434,13 +429,17 @@ jobs:
           if-no-files-found: error
 
   assemble:
-    name: Re-pin the archives and open the pull request
+    name: Publish the archives, attest them, and open the pull request
     needs: [resolve, bindings, linux, macos, windows]
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     permissions:
       contents: write
       pull-requests: write
+      # actions/attest-build-provenance signs with the job's OIDC identity and
+      # stores the attestation on this repository.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
@@ -454,10 +453,12 @@ jobs:
           pattern: libghostty-bump-*
           path: ${{ runner.temp }}/rebuilt
 
-      - name: Publish the rebuilt archives and re-pin their hashes
+      - name: Stage the rebuilt trees and re-pin their hashes
         env:
           REBUILT: ${{ runner.temp }}/rebuilt
+          RELEASE_ASSETS: ${{ runner.temp }}/release-assets
         run: |
+          mkdir -p "$RELEASE_ASSETS"
           for target in \
             x86_64-unknown-linux-gnu \
             aarch64-unknown-linux-gnu \
@@ -474,7 +475,9 @@ jobs:
             rm -rf "$dst"
             mkdir -p "$dst"
             # Copy exactly what a reviewed prebuilt tree carries. build.zig.zon
-            # and the reproducibility evidence stay out of the repository.
+            # and the build evidence stay out of the repository, and lib/ is
+            # gitignored: the archive is copied so the consumer build below
+            # links it, but it ships as a release asset, not as a commit.
             for entry in bindings.rs build-info.txt headers.sha256 symbols.txt include lib; do
               if [ -e "$src/$entry" ]; then
                 cp -r "$src/$entry" "$dst/$entry"
@@ -497,15 +500,23 @@ jobs:
             archive_sha="$(sha256sum "$dst/$archive_path" | awk '{print $1}')"
             scripts/repin-libghostty-manifest.sh \
               --set-target "$target:archive_sha256=$archive_sha"
+            # One asset per target, named the way scripts/fetch-libghostty.sh
+            # derives it: <target>-<archive basename>.
+            cp "$dst/$archive_path" "$RELEASE_ASSETS/$target-$(basename "$archive_path")"
 
             if [ "$target" = "x86_64-pc-windows-msvc" ]; then
+              # The Windows recipe names the normalization it implements in
+              # build-info.txt, and the manifest follows that file.
+              normalization="$(sed -n 's/^archive_normalization=//p' "$dst/build-info.txt")"
               scripts/repin-libghostty-manifest.sh \
+                --set-target "$target:archive_normalization=$normalization" \
                 --set-target "$target:build_info_sha256=$(sha256sum "$dst/build-info.txt" | awk '{print $1}')" \
                 --set-target "$target:headers_index_sha256=$(sha256sum "$dst/headers.sha256" | awk '{print $1}')" \
                 --set-target "$target:symbols_sha256=$(sha256sum "$dst/symbols.txt" | awk '{print $1}')"
             fi
             echo "$target: $archive_sha"
           done
+          ls -l "$RELEASE_ASSETS"
 
       # The consumer crate re-derives every hash it links against, so building
       # it here is the cheapest end-to-end check that the re-pinned manifest and
@@ -517,6 +528,38 @@ jobs:
       - name: Verify the re-pinned repository artifact
         run: cargo build -p paneflow-libghostty-sys --locked
 
+      # SLSA build provenance for the four archives, signed with this job's
+      # OIDC identity. Consumers verify it with
+      # `gh attestation verify <archive> --repo <owner>/paneflow`.
+      - name: Attest the archives
+        if: ${{ !inputs.dry_run }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/release-assets/*
+
+      # A pre-release so it never becomes the repository's `latest` release,
+      # which the in-app updater and the website read. Published before the
+      # pull request so its CI can fetch the archives; a bump that is closed
+      # unmerged leaves this release behind, and it is deleted by hand.
+      - name: Publish the archives as a pre-release
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RELEASE_ASSETS: ${{ runner.temp }}/release-assets
+        run: |
+          tag="libghostty-vt-$SOURCE_SHA"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::release $tag already exists. Delete it, or finish the bump that is already open."
+            exit 1
+          fi
+          gh release create "$tag" \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "libghostty-vt $SOURCE_SHA" \
+            --notes "Native libghostty-vt archives for Ghostty \`$SOURCE_SHA\`, built by the libghostty bump workflow (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Not a Paneflow release: \`native/libghostty/manifest.toml\` pins these assets by SHA-256 and \`scripts/fetch-libghostty.sh\` downloads them. Verify provenance with \`gh attestation verify <asset> --repo ${GITHUB_REPOSITORY}\`." \
+            "$RELEASE_ASSETS"/*
+
       - name: Open the pull request
         if: ${{ !inputs.dry_run }}
         env:
@@ -526,9 +569,9 @@ jobs:
           CURRENT_SHA: ${{ needs.resolve.outputs.current_sha }}
         run: |
           branch="bot/libghostty-$SHORT_SHA"
-          # Never overwrite an existing bump branch. A human rebasing the
-          # Windows patch or fixing a binding break works on exactly this
-          # branch, and a re-run must not throw that away.
+          # Never overwrite an existing bump branch. A human fixing a binding
+          # break works on exactly this branch, and a re-run must not throw
+          # that away.
           if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             echo "::error::$branch already exists. Delete it, or finish the bump that is already open."
             exit 1
@@ -549,11 +592,13 @@ jobs:
             echo
             echo "Upstream range: https://github.com/${GHOSTTY_REPOSITORY}/compare/${CURRENT_SHA}...${SOURCE_SHA}"
             echo
-            echo "Every archive here was rebuilt from the pinned source and proven"
-            echo "reproducible in the run that opened this pull request, on all four"
-            echo "reviewed targets. The libghostty lanes below only check a committed"
-            echo "archive against its manifest hash, and a bump commit writes that hash"
-            echo "itself, so this run is the reproducibility evidence."
+            echo "The four archives were rebuilt from the pinned source in the run that"
+            echo "opened this pull request and published as the pre-release"
+            echo "\`libghostty-vt-$SOURCE_SHA\` with a build-provenance attestation."
+            echo "Linux and macOS were additionally proven reproducible with two clean"
+            echo "builds; Windows is built once. The libghostty lanes below only check a"
+            echo "published archive against its manifest hash, and a bump commit writes"
+            echo "that hash itself, so this run is the provenance evidence."
             echo
             echo "Before merging:"
             echo

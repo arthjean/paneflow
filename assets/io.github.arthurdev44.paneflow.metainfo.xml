@@ -63,6 +63,18 @@
   <content_rating type="oars-1.1" />
 
   <releases>
+    <release version="0.11.0" date="2026-09-02">
+      <description>
+        <p>A tab binds to its own git worktree, and the terminal pipeline gets faster.</p>
+        <ul>
+          <li>Picking a branch from the New pane palette or a tab context menu creates or reuses a worktree under the workspace worktrees directory and starts the pane there</li>
+          <li>Remove worktree takes a checkout back down, refusing one with uncommitted changes, one Paneflow does not own, or one that is itself an open workspace</li>
+          <li>A Customize Sidebar menu on the rail header adds branch, pull request, diffstat and indent guide switches, all off by default, and the fold state of a workspace row survives a restart</li>
+          <li>The terminal publishes frames on a display schedule instead of the PTY schedule, skips frames a program marks as mid-redraw, memoizes per-pane layout and per-cell contrast, and converts only the rows that changed</li>
+          <li>Windows holds a 1 ms timer resolution while the window is open, launches the shell picked in Settings from its absolute install location, and starts agent panes with the user PowerShell profile loaded</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.10.0" date="2026-08-31">
       <description>
         <p>One terminal engine on every platform, self-naming tabs, and a searchable shortcuts page.</p>

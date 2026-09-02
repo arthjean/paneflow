@@ -5,6 +5,42 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- The terminal grid is now measured on the font, the way Ghostty measures
+  it: the cell is the font's widest advance by its own line height, each
+  rounded to whole device pixels, and the baseline lands on a pixel row.
+  The default JetBrains Mono at 13 pt used to be squeezed into a cell 8%
+  shorter than its face, with descenders crossing into the next row; it now
+  gets its designed spacing. `line_height` and `cell_width` are multipliers
+  of those measured strides and default to `1.0` (they used to be `1.2` and
+  `0.6` of the font size); a value carried over from an older config makes
+  the grid taller and narrower than before, so re-check it.
+- Underlines and strikethroughs are placed and sized from the font's own
+  tables. Double, dotted, dashed, and curly underlines each have their own
+  shape instead of collapsing to a single line, and they are painted under
+  the glyphs so descenders stay legible.
+- The renderer draws the whole box-drawing block itself (heavy, double,
+  dashed, and mixed-weight joins, arcs, diagonals), plus the `░ ▒ ▓` shades,
+  braille patterns, and the geometric Powerline symbols, at one
+  font-derived stroke thickness on the device-pixel grid. Adjacent cells
+  meet with no seam at any scale factor.
+- The bar, underline, and hollow cursors take their thickness from the font
+  metrics. The bar sits centered on the boundary between two characters and
+  the hollow block is the block hollowed out by that thickness.
+- The bundled font is the regular `JetBrainsMono Nerd Font` rather than the
+  `Mono` variant: icons keep their designed size and the renderer constrains
+  them to their cell, borrowing the empty cell after them when there is one
+  (Ghostty's Nerd Font rule). Configs naming `JetBrainsMono Nerd Font Mono`
+  or `JetBrainsMono NFM` keep resolving to the bundled family.
+- SGR bold uses the Bold face rather than SemiBold, and SGR faint halves the
+  foreground opacity (it used to keep 70%).
+- The APCA contrast floor applied to the theme's ANSI colors is off by
+  default and configurable as `terminal.minimum_contrast` (Zed's floor is
+  `45`). Themes render their colors as designed.
+
+## [0.11.0] - 2026-09-02
+
 ### Added
 
 - A tab binds to its own worktree. The "New pane" palette and the tab context
@@ -13,6 +49,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   reuses it, and the pane starts there. An agent that creates a branch from
   inside a pane now moves that tab alone, where it used to drag every tab of
   the workspace with it.
+
+- A tab bound to a branch offers "Remove worktree" in its context menu. The
+  sidebar could create checkouts but never take one away, so
+  `<repo>.worktrees/` grew for the life of a project with no way back. The
+  branch is never deleted, and the removal is refused for a checkout holding
+  uncommitted changes, one without Paneflow's owner marker, or one that is
+  itself an open workspace. Each refusal is a toast rather than a log line.
+  The git work runs off the render thread, and the repository's Worktree-scope
+  diff hosts are invalidated so a lane appears or disappears without a scope
+  toggle or a restart.
 
 - A Customize Sidebar menu on the rail header, with a switch per value: Branch,
   PR, Diffstat and the indent guide, all off by default. A branch that already
@@ -77,6 +123,35 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   restoring a many-pane workspace no longer re-walks `ProgramFiles` and `PATH`
   for every pane while the disk is busy. `RUST_LOG=info` now reports the shell
   each pane actually launched next to the configured value.
+
+- The last frame of a program is no longer dropped. The publish rate limit
+  applied unconditionally, so a change landing within 8 ms of the previous
+  frame waited for the runtime loop, and that loop exits as soon as the child
+  is reaped: a program's final output could disappear, and the bigger the
+  closing burst, the more of it was lost. The limit now applies only while more
+  PTY output is already queued behind the change, and the frame preceding
+  `ChildExited` is flushed explicitly on both the POSIX and the Windows
+  teardown path. The synchronized-output hold is unaffected, since a torn frame
+  is wrong however idle the PTY is.
+
+- The pull request marker works at all. `gh` has no global directory flag, so
+  `gh -C <repo> pr list` exited 1 with `unknown shorthand flag: 'C'` on every
+  call, and each failure blacklisted the repository for the rest of the
+  session because `is_stale` never asks again. The lookup now runs with the
+  repository as its working directory, and a `log::debug!` on the failing path
+  prints what `gh` said: the caller turns this error into a silent blacklist
+  entry, so a wrong invocation used to look exactly like a checkout with no
+  GitHub remote.
+
+- Windows verbatim paths no longer break worktree detection. A `\\?\`-prefixed
+  path is handed to git as an argument and compared against the paths git
+  prints, and the verbatim spelling fails at both: `git worktree add` cannot
+  create leading directories under it, and it never compares equal to git's
+  forward-slash output, so "is this checkout the repository's own?" answered no
+  for every branch on Windows. `strip_verbatim_prefix` now lives once in
+  `runtime_paths`, `workspace::git::canonicalize_or` strips too, and the two
+  private copies that had grown in the IPC `workspace.create` path and in
+  install-method detection call the shared helper.
 
 ## [0.10.0] - 2026-08-31
 

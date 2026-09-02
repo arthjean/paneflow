@@ -1,22 +1,19 @@
 use gpui::{Font, FontWeight};
 
 pub(super) mod background;
-pub(super) mod box_drawing;
 pub(super) mod cursor;
+pub(super) mod decorations;
 pub(super) mod kitty;
 pub(super) mod overlay;
 pub(super) mod scrollbar;
 pub(super) mod selection;
+pub(super) mod sprites;
 pub(super) mod text;
 
 fn display_font_for_intensity(font: &Font, base_weight: FontWeight) -> Font {
     let mut display_font = font.clone();
-    if font.weight == FontWeight::BOLD {
-        display_font.weight = if base_weight.0 >= FontWeight::BOLD.0 {
-            base_weight
-        } else {
-            FontWeight((base_weight.0 + 200.0).clamp(FontWeight::SEMIBOLD.0, FontWeight::BOLD.0))
-        };
+    if font.weight == FontWeight::BOLD && base_weight.0 >= FontWeight::BOLD.0 {
+        display_font.weight = base_weight;
     }
     display_font
 }
@@ -37,13 +34,13 @@ mod tests {
     }
 
     #[test]
-    fn ansi_bold_uses_semibold_from_normal() {
+    fn ansi_bold_uses_the_bold_face_from_normal() {
         let display = display_font_for_intensity(&font(FontWeight::BOLD), FontWeight::NORMAL);
-        assert_eq!(display.weight, FontWeight::SEMIBOLD);
+        assert_eq!(display.weight, FontWeight::BOLD);
     }
 
     #[test]
-    fn ansi_bold_uses_bold_from_medium() {
+    fn ansi_bold_uses_the_bold_face_from_medium() {
         let display = display_font_for_intensity(&font(FontWeight::BOLD), FontWeight::MEDIUM);
         assert_eq!(display.weight, FontWeight::BOLD);
     }
