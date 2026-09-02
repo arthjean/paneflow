@@ -5,6 +5,8 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-02
+
 ### Added
 
 - A tab binds to its own worktree. The "New pane" palette and the tab context
@@ -13,6 +15,16 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   reuses it, and the pane starts there. An agent that creates a branch from
   inside a pane now moves that tab alone, where it used to drag every tab of
   the workspace with it.
+
+- A tab bound to a branch offers "Remove worktree" in its context menu. The
+  sidebar could create checkouts but never take one away, so
+  `<repo>.worktrees/` grew for the life of a project with no way back. The
+  branch is never deleted, and the removal is refused for a checkout holding
+  uncommitted changes, one without Paneflow's owner marker, or one that is
+  itself an open workspace. Each refusal is a toast rather than a log line.
+  The git work runs off the render thread, and the repository's Worktree-scope
+  diff hosts are invalidated so a lane appears or disappears without a scope
+  toggle or a restart.
 
 - A Customize Sidebar menu on the rail header, with a switch per value: Branch,
   PR, Diffstat and the indent guide, all off by default. A branch that already
@@ -77,6 +89,35 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   restoring a many-pane workspace no longer re-walks `ProgramFiles` and `PATH`
   for every pane while the disk is busy. `RUST_LOG=info` now reports the shell
   each pane actually launched next to the configured value.
+
+- The last frame of a program is no longer dropped. The publish rate limit
+  applied unconditionally, so a change landing within 8 ms of the previous
+  frame waited for the runtime loop, and that loop exits as soon as the child
+  is reaped: a program's final output could disappear, and the bigger the
+  closing burst, the more of it was lost. The limit now applies only while more
+  PTY output is already queued behind the change, and the frame preceding
+  `ChildExited` is flushed explicitly on both the POSIX and the Windows
+  teardown path. The synchronized-output hold is unaffected, since a torn frame
+  is wrong however idle the PTY is.
+
+- The pull request marker works at all. `gh` has no global directory flag, so
+  `gh -C <repo> pr list` exited 1 with `unknown shorthand flag: 'C'` on every
+  call, and each failure blacklisted the repository for the rest of the
+  session because `is_stale` never asks again. The lookup now runs with the
+  repository as its working directory, and a `log::debug!` on the failing path
+  prints what `gh` said: the caller turns this error into a silent blacklist
+  entry, so a wrong invocation used to look exactly like a checkout with no
+  GitHub remote.
+
+- Windows verbatim paths no longer break worktree detection. A `\\?\`-prefixed
+  path is handed to git as an argument and compared against the paths git
+  prints, and the verbatim spelling fails at both: `git worktree add` cannot
+  create leading directories under it, and it never compares equal to git's
+  forward-slash output, so "is this checkout the repository's own?" answered no
+  for every branch on Windows. `strip_verbatim_prefix` now lives once in
+  `runtime_paths`, `workspace::git::canonicalize_or` strips too, and the two
+  private copies that had grown in the IPC `workspace.create` path and in
+  install-method detection call the shared helper.
 
 ## [0.10.0] - 2026-08-31
 
