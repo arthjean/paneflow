@@ -35,8 +35,8 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `font_fallbacks` | array of strings or null | none | Ordered glyph fallback families for symbols, Powerline, CJK, emoji, or Nerd Font glyphs. |
 | `font_size` | number or null | `13.0` | Points, range `8.0` to `32.0`. Out-of-range values fall back to default with a warning. |
 | `font_weight` | string or null | `normal` | `thin`, `extra_light`, `light`, `semi_light`, `normal`, `medium`, `semi_bold`, `bold`, `extra_bold`, `black`, `extra_black`. |
-| `line_height` | number or null | `1.2` | Multiplier, range `1.0` to `2.5`. |
-| `cell_width` | number or null | `0.6` | Multiplier, range `0.3` to `2.0`. |
+| `line_height` | number or null | `1.0` | Multiplier of the font's own line height (ascent, descent, and line gap), range `0.8` to `2.5`. The cell is rounded to whole device pixels. |
+| `cell_width` | number or null | `1.0` | Multiplier of the font's advance, range `0.8` to `2.0`. The cell is rounded to whole device pixels. |
 | `unfocused_pane_opacity` | number or null | `0.7` | Opacity of panes without focus when a workspace has more than one pane, range `0.15` to `1.0`. `1.0` disables the dim. |
 | `reduce_motion` | boolean or null | `false` | Minimize non-essential interface motion: hover transitions settle instantly and decorative animations render a static frame. |
 | `sidebar_show` | object or null | all off | What a session tab row shows beyond its name: `branch` (boolean) adds its git branch, `diffstat` (boolean) adds its insertion and deletion counts, `pr` (boolean) turns the branch icon into a pull-request glyph colored by the request's state when one exists, `indent_guide` (boolean) draws a hairline under a workspace's folder icon down its tab rows. The first two read the tab's bound worktree, or its workspace's checkout when the tab is unbound; `pr` needs the `gh` CLI and answers for GitHub remotes only. Toggled from the rail's Customize Sidebar menu. |
@@ -257,8 +257,8 @@ unconditionally.
   "font_fallbacks": [],
   "font_size": 13.0,
   "font_weight": "normal",
-  "line_height": 1.2,
-  "cell_width": 0.6,
+  "line_height": 1.0,
+  "cell_width": 1.0,
   "unfocused_pane_opacity": 0.7,
   "reduce_motion": false,
   "sidebar_show": {

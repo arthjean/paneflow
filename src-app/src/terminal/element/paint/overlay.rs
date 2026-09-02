@@ -33,29 +33,26 @@ pub fn paint_hyperlink_underline(
         return;
     };
 
-    let CellGeometry {
-        origin,
-        cell_width,
-        line_height,
-    } = *geom;
-
     let display_offset = layout.display_offset as i32;
     let screen_line = link_line + display_offset;
     if screen_line < 0 || (screen_line as usize) >= layout.desired_rows {
         return;
     }
 
-    let x_start = origin.x + cell_width * col_start as f32;
-    let x_end = origin.x + cell_width * (col_end + 1) as f32;
-    let y = origin.y + line_height * (screen_line + 1) as f32 - gpui::px(1.0);
-    let underline_bounds = Bounds::new(
-        Point { x: x_start, y },
-        gpui::Size {
-            width: x_end - x_start,
-            height: gpui::px(1.0),
-        },
-    );
-    window.paint_quad(fill(underline_bounds, layout.link_text_color));
+    // Same position and thickness as an SGR underline, so the hover cue and
+    // the OSC 8 underline coincide.
+    let m = geom.metrics;
+    let t = m.underline_thickness.max(1);
+    let y = m
+        .underline_position
+        .min(m.cell_height + m.cell_height / 4 - t);
+    let x0 = geom.x_device(col_start);
+    let x1 = geom.x_device(col_end + 1);
+    let y0 = geom.y_device(screen_line);
+    window.paint_quad(fill(
+        geom.device_rect(x0, y0 + y, x1 - x0, t),
+        layout.link_text_color,
+    ));
 }
 
 /// Register the IME `InputHandler` for this element and paint the preedit
@@ -85,6 +82,7 @@ pub fn paint_ime_preedit<H, F>(
         origin,
         cell_width,
         line_height,
+        ..
     } = *geom;
 
     let cursor_bounds = layout.ime_cursor_bounds.map(|b| {

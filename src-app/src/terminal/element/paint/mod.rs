@@ -8,13 +8,14 @@
 //! 3. `overlay::search_highlights` - search match rects
 //! 4. `box_drawing` - connected single-stroke box glyphs
 //! 5. `kitty`      - graphics placements with a negative z-index
-//! 6. `text`        - batched `shape_line` glyph runs
-//! 7. `kitty`      - graphics placements with a zero or positive z-index
-//! 8. `overlay::hyperlink` - Ctrl+hover underline
-//! 9. `cursor`      - primary cursor + copy-mode anchor cursor
-//! 10. `scrollbar`   - right-edge thumb
-//! 11. `overlay::ime` - IME handler registration + preedit overlay
-//! 12. `overlay::exit` - process-exited centered message
+//! 6. `decorations` - underlines and strikethroughs from the cell metrics
+//! 7. `text`        - batched `shape_line` glyph runs
+//! 8. `kitty`      - graphics placements with a zero or positive z-index
+//! 9. `overlay::hyperlink` - Ctrl+hover underline
+//! 10. `cursor`      - primary cursor + copy-mode anchor cursor
+//! 11. `scrollbar`   - right-edge thumb
+//! 12. `overlay::ime` - IME handler registration + preedit overlay
+//! 13. `overlay::exit` - process-exited centered message
 //!
 //! Every function here is a `pub fn` inside a `pub(super)` module - the
 //! parent module boundary gates access to `element`, and every function
@@ -27,6 +28,7 @@ use gpui::{Font, FontWeight};
 pub(super) mod background;
 pub(super) mod box_drawing;
 pub(super) mod cursor;
+pub(super) mod decorations;
 pub(super) mod kitty;
 pub(super) mod overlay;
 pub(super) mod scrollbar;

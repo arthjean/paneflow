@@ -88,8 +88,8 @@ mod tests {
                 pr: Some(true),
                 indent_guide: Some(true),
             },
-            line_height: Some(1.2),
-            cell_width: Some(0.6),
+            line_height: Some(1.0),
+            cell_width: Some(1.0),
             font_family: Some("Geist Mono".to_string()),
             font_fallbacks: Some(vec!["FiraCode Nerd Font Mono".to_string()]),
             font_size: Some(13.0),
@@ -330,7 +330,7 @@ mod tests {
             "configuration docs must publish the runtime font_size default"
         );
         assert!(
-            doc.contains("| `line_height` | number or null | `1.2` |"),
+            doc.contains("| `line_height` | number or null | `1.0` |"),
             "configuration docs must publish the runtime line_height default"
         );
         assert!(

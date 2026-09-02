@@ -5,6 +5,22 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Changed
+
+- The terminal grid is now measured on the font, the way Ghostty measures
+  it: the cell is the font's widest advance by its own line height, each
+  rounded to whole device pixels, and the baseline lands on a pixel row.
+  The default JetBrains Mono at 13 pt used to be squeezed into a cell 8%
+  shorter than its face, with descenders crossing into the next row; it now
+  gets its designed spacing. `line_height` and `cell_width` are multipliers
+  of those measured strides and default to `1.0` (they used to be `1.2` and
+  `0.6` of the font size); a value carried over from an older config makes
+  the grid taller and narrower than before, so re-check it.
+- Underlines and strikethroughs are placed and sized from the font's own
+  tables. Double, dotted, dashed, and curly underlines each have their own
+  shape instead of collapsing to a single line, and they are painted under
+  the glyphs so descenders stay legible.
+
 ## [0.11.0] - 2026-09-02
 
 ### Added

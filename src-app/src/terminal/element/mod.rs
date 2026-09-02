@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use gpui::{
     App, Bounds, ContentMask, DispatchPhase, Element, ElementId, Font, FontStyle, FontWeight,
     GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton, MouseMoveEvent,
-    Pixels, Point, SharedString, StrikethroughStyle, Style, UnderlineStyle, Window, px, relative,
+    Pixels, Point, SharedString, Style, Window, px, relative,
 };
 
 use crate::terminal::TerminalSessionBackend;
@@ -19,6 +19,7 @@ use crate::terminal::types::{
 };
 
 pub(super) mod color;
+mod face_tables;
 mod font;
 mod geometry;
 mod hyperlink;
@@ -29,12 +30,12 @@ pub(super) mod pixel_probe;
 use color::{convert_color, rgb_to_hsla};
 #[cfg(test)]
 pub(crate) use font::base_font;
+pub use font::{
+    CellMetrics, MAX_FONT_SIZE, MIN_FONT_SIZE, global_font_size, resolve_font_family,
+    resolve_frame_metrics, sanitize_font_override,
+};
 pub(crate) use font::{
     DEFAULT_CELL_WIDTH, DEFAULT_FONT_SIZE, DEFAULT_LINE_HEIGHT, normalize_font_weight_key,
-};
-pub use font::{
-    MAX_FONT_SIZE, MIN_FONT_SIZE, global_font_size, resolve_font_family, resolve_frame_metrics,
-    sanitize_font_override,
 };
 use geometry::CellGeometry;
 pub use hyperlink::{
@@ -244,6 +245,8 @@ pub struct TerminalFrameMetrics {
     pub dimensions: CellDimensions,
     pub base_font: Font,
     pub font_size: Pixels,
+    /// The integer device-pixel grid `dimensions` was rounded from.
+    pub metrics: CellMetrics,
 }
 
 struct BatchedTextRun {
@@ -253,10 +256,35 @@ struct BatchedTextRun {
     text: SharedString,
     font: Font,
     color: Hsla,
-    underline: Option<UnderlineStyle>,
-    strikethrough: Option<StrikethroughStyle>,
     line: i32,
     col_start: usize,
+}
+
+/// Underline style of a cell, one sprite each (Ghostty `special.zig`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum UnderlineKind {
+    None,
+    Single,
+    Double,
+    Curly,
+    Dotted,
+    Dashed,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DecorationKind {
+    Underline(UnderlineKind),
+    Strikethrough,
+}
+
+/// A text decoration over a span of cells, painted from the cell metrics
+/// before the glyphs so descenders stay legible over a colored underline.
+pub(super) struct Decoration {
+    line: i32,
+    col_start: usize,
+    num_cols: usize,
+    kind: DecorationKind,
+    color: Hsla,
 }
 
 struct LayoutRect {
@@ -564,6 +592,7 @@ pub(crate) struct LayoutInputs<'a> {
 
 pub struct LayoutState {
     batched_runs: Vec<BatchedTextRun>,
+    decorations: Vec<Decoration>,
     rects: Vec<LayoutRect>,
     block_quads: Vec<BlockQuad>,
     box_drawing_glyphs: Vec<BoxDrawingGlyph>,
@@ -610,8 +639,7 @@ struct CellStyle {
     italic: bool,
     fg: Hsla,
     bg: Hsla,
-    underline: bool,
-    undercurl: bool,
+    underline: UnderlineKind,
     strikethrough: bool,
 }
 
@@ -1223,19 +1251,25 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
         // flag on OSC 8 cells, so without this we'd lose the visual
         // affordance until Ctrl/Cmd is held. Matches Zed
         // `terminal_element.rs:580`.
-        let is_underline = flags.contains(CellFlags::UNDERLINE)
-            || flags.contains(CellFlags::DOUBLE_UNDERLINE)
-            || flags.contains(CellFlags::UNDERCURL)
-            || flags.contains(CellFlags::DOTTED_UNDERLINE)
-            || flags.contains(CellFlags::DASHED_UNDERLINE)
-            || *hyperlink;
+        let underline = if flags.contains(CellFlags::UNDERCURL) {
+            UnderlineKind::Curly
+        } else if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+            UnderlineKind::Double
+        } else if flags.contains(CellFlags::DOTTED_UNDERLINE) {
+            UnderlineKind::Dotted
+        } else if flags.contains(CellFlags::DASHED_UNDERLINE) {
+            UnderlineKind::Dashed
+        } else if flags.contains(CellFlags::UNDERLINE) || *hyperlink {
+            UnderlineKind::Single
+        } else {
+            UnderlineKind::None
+        };
         let style = CellStyle {
             bold: flags.contains(CellFlags::BOLD) || flags.contains(CellFlags::BOLD_ITALIC),
             italic: flags.contains(CellFlags::ITALIC) || flags.contains(CellFlags::BOLD_ITALIC),
             fg,
             bg,
-            underline: is_underline,
-            undercurl: flags.contains(CellFlags::UNDERCURL),
+            underline,
             strikethrough: flags.contains(CellFlags::STRIKEOUT),
         };
 
@@ -1406,6 +1440,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
 
     LayoutState {
         batched_runs: batch.runs,
+        decorations: batch.decorations,
         rects,
         block_quads,
         box_drawing_glyphs,
@@ -1430,14 +1465,13 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
 
 struct BatchAccumulator {
     runs: Vec<BatchedTextRun>,
+    decorations: Vec<Decoration>,
     text: String,
     style: Option<CellStyle>,
-    /// The pane's font; each run derives its own from this and its style.
     base_font: Font,
     font: Font,
     fg: Hsla,
-    underline: bool,
-    undercurl: bool,
+    underline: UnderlineKind,
     strikethrough: bool,
     line: i32,
     col_start: usize,
@@ -1448,13 +1482,13 @@ impl BatchAccumulator {
     fn new(base_font: Font) -> Self {
         Self {
             runs: Vec::new(),
+            decorations: Vec::new(),
             text: String::new(),
             style: None,
             font: base_font.clone(),
             base_font,
             fg: Hsla::default(),
-            underline: false,
-            undercurl: false,
+            underline: UnderlineKind::None,
             strikethrough: false,
             line: 0,
             col_start: 0,
@@ -1501,7 +1535,6 @@ impl BatchAccumulator {
         self.font = font;
         self.fg = style.fg;
         self.underline = style.underline;
-        self.undercurl = style.undercurl;
         self.strikethrough = style.strikethrough;
         self.style = Some(style);
         self.line = line;
@@ -1517,26 +1550,28 @@ impl BatchAccumulator {
             text: SharedString::from(std::mem::take(&mut self.text)),
             font: self.font.clone(),
             color: self.fg,
-            underline: if self.underline {
-                Some(UnderlineStyle {
-                    thickness: px(1.0),
-                    color: Some(self.fg),
-                    wavy: self.undercurl,
-                })
-            } else {
-                None
-            },
-            strikethrough: if self.strikethrough {
-                Some(StrikethroughStyle {
-                    thickness: px(1.0),
-                    color: Some(self.fg),
-                })
-            } else {
-                None
-            },
             line: self.line,
             col_start: self.col_start,
         });
+        let num_cols = self.col_end.saturating_sub(self.col_start);
+        if self.underline != UnderlineKind::None {
+            self.decorations.push(Decoration {
+                line: self.line,
+                col_start: self.col_start,
+                num_cols,
+                kind: DecorationKind::Underline(self.underline),
+                color: self.fg,
+            });
+        }
+        if self.strikethrough {
+            self.decorations.push(Decoration {
+                line: self.line,
+                col_start: self.col_start,
+                num_cols,
+                kind: DecorationKind::Strikethrough,
+                color: self.fg,
+            });
+        }
         self.style = None;
     }
 }
@@ -1645,7 +1680,6 @@ impl Element for TerminalElement {
             return;
         };
 
-        let cell_width = layout.dimensions.cell_width;
         // Offset the grid origin by the same fixed insets reserved in layout,
         // on both axes (Ghostty's `padding.left` / `padding.top`).
         let mut origin = Point {
@@ -1673,14 +1707,11 @@ impl Element for TerminalElement {
             .element_origin
             .lock()
             .unwrap_or_else(|p| p.into_inner()) = origin;
-        let line_height = layout.dimensions.line_height;
         let font_size = self.frame_metrics.font_size;
 
-        let geom = CellGeometry {
-            origin,
-            cell_width,
-            line_height,
-        };
+        let geom = CellGeometry::new(origin, self.frame_metrics.metrics);
+        let cell_width = geom.cell_width;
+        let line_height = geom.line_height;
 
         self.track_drag_beyond_the_pane(bounds, origin, cell_width, line_height, window);
 
@@ -1744,6 +1775,10 @@ impl Element for TerminalElement {
 
             // 2f. Kitty graphics under the text.
             paint::kitty::paint_below_text(&kitty_placements, &geom, window);
+
+            // 2g. Underlines and strikethroughs, under the glyphs so
+            // descenders stay readable over a colored underline.
+            paint::decorations::paint_decorations(&layout, &geom, window);
 
             // 3. Batched text runs
             paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
@@ -2196,14 +2231,24 @@ impl LayoutState {
             };
             let _ = writeln!(
                 s,
-                "  L{} C{} {:?} fg={} {} ul={} st={}",
+                "  L{} C{} {:?} fg={} {}",
                 r.line,
                 r.col_start,
                 r.text,
                 hsla_repr(r.color),
                 style,
-                r.underline.is_some(),
-                r.strikethrough.is_some(),
+            );
+        }
+        let _ = writeln!(s, "decorations[{}]:", self.decorations.len());
+        for d in &self.decorations {
+            let _ = writeln!(
+                s,
+                "  L{} C{}+{}c {:?} {}",
+                d.line,
+                d.col_start,
+                d.num_cols,
+                d.kind,
+                hsla_repr(d.color),
             );
         }
         let rect_line = |s: &mut String, label: &str, rects: &[LayoutRect]| {
@@ -2665,6 +2710,21 @@ mod golden_frame_tests {
             CellFlags::empty(),
         )];
         assert_golden("apca_contrast", &run(apca, None, None));
+
+        // Every underline style plus strikethrough, one cell each.
+        let decorated: Vec<Cell> = [
+            CellFlags::UNDERLINE,
+            CellFlags::DOUBLE_UNDERLINE,
+            CellFlags::UNDERCURL,
+            CellFlags::DOTTED_UNDERLINE,
+            CellFlags::DASHED_UNDERLINE,
+            CellFlags::STRIKEOUT,
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, flag)| cell(0, i, 'u', default_fg(), default_bg(), *flag))
+        .collect();
+        assert_golden("decorations", &run(decorated, None, None));
     }
 
     /// Structural invariant (AC-2/AC-4 of the spike risk): block-element cells
@@ -2738,6 +2798,53 @@ mod golden_frame_tests {
 
         assert!(state.box_drawing_glyphs.is_empty());
         assert_eq!(state.batched_runs.len(), 1);
+    }
+
+    #[test]
+    fn underline_styles_are_distinct_decorations() {
+        let flags = [
+            CellFlags::UNDERLINE,
+            CellFlags::DOUBLE_UNDERLINE,
+            CellFlags::UNDERCURL,
+            CellFlags::DOTTED_UNDERLINE,
+            CellFlags::DASHED_UNDERLINE,
+            CellFlags::STRIKEOUT,
+        ];
+        let cells: Vec<Cell> = flags
+            .iter()
+            .enumerate()
+            .map(|(i, flag)| cell(0, i, 'a', default_fg(), default_bg(), *flag))
+            .collect();
+        let state = run(cells, None, None);
+        let kinds: Vec<DecorationKind> = state.decorations.iter().map(|d| d.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                DecorationKind::Underline(UnderlineKind::Single),
+                DecorationKind::Underline(UnderlineKind::Double),
+                DecorationKind::Underline(UnderlineKind::Curly),
+                DecorationKind::Underline(UnderlineKind::Dotted),
+                DecorationKind::Underline(UnderlineKind::Dashed),
+                DecorationKind::Strikethrough,
+            ]
+        );
+        for (i, d) in state.decorations.iter().enumerate() {
+            assert_eq!((d.line, d.col_start, d.num_cols), (0, i, 1));
+        }
+        // Six different styles never merge into one run.
+        assert_eq!(state.batched_runs.len(), 6);
+    }
+
+    #[test]
+    fn hyperlink_cells_get_a_single_underline() {
+        let mut link = cell(0, 0, 'x', default_fg(), default_bg(), CellFlags::empty());
+        link.hyperlink = true;
+        let state = run(vec![link], None, None);
+        assert_eq!(state.decorations.len(), 1);
+        assert_eq!(
+            state.decorations[0].kind,
+            DecorationKind::Underline(UnderlineKind::Single)
+        );
     }
 
     #[test]

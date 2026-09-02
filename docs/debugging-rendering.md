@@ -34,7 +34,7 @@ residual is visible at a glance.
 
 | Record | Fields |
 |---|---|
-| `cell_dims` | `cell_width_raw`, `cell_width_snapped`, `line_height_raw`, `line_height_snapped`, `scale_factor` |
+| `cell_dims` | `cell_width_raw`, `cell_width_snapped`, `line_height_raw`, `line_height_snapped`, `scale_factor` (raw = the face's unrounded advance and line height, snapped = the whole-device-pixel cell) |
 | `origin` | `x`, `y` |
 | `glyph` | `line`, `col`, `x`, `y` (one per text run, sampled to first 16 columns of each row) |
 | `bg` | `col`, `line`, `x`, `y`, `w`, `h` (one per cell background, same row sampling) |

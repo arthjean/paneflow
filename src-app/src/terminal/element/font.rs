@@ -12,9 +12,11 @@ use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use gpui::{
-    App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Pixels, SharedString, Window, px,
+    App, Font, FontFallbacks, FontFeatures, FontId, FontStyle, FontWeight, Pixels, SharedString,
+    Window, px,
 };
 
+use super::face_tables;
 use super::{CellDimensions, TerminalFrameMetrics};
 
 // ---------------------------------------------------------------------------
@@ -23,8 +25,13 @@ use super::{CellDimensions, TerminalFrameMetrics};
 
 pub(crate) const DEFAULT_FONT_SIZE: f32 = 13.0;
 const POINTS_TO_PIXELS: f32 = 96.0 / 72.0;
-pub(crate) const DEFAULT_LINE_HEIGHT: f32 = 1.2;
-pub(crate) const DEFAULT_CELL_WIDTH: f32 = 0.6;
+/// Multiplier of the face's own line height (`ascent + descent + line gap`),
+/// Ghostty's `adjust-cell-height` expressed as a factor. `1.0` is the font's
+/// design spacing.
+pub(crate) const DEFAULT_LINE_HEIGHT: f32 = 1.0;
+/// Multiplier of the face's widest ASCII advance. `1.0` is the font's design
+/// spacing.
+pub(crate) const DEFAULT_CELL_WIDTH: f32 = 1.0;
 pub(crate) const DEFAULT_FONT_WEIGHT_KEY: &str = "normal";
 
 /// Embedded monospace family - the bundled cross-platform default. Files:
@@ -340,11 +347,11 @@ pub(super) fn cached_font_config() -> FontSettings {
     let line_height = config
         .line_height
         .map(|lh| {
-            if (1.0..=2.5).contains(&lh) {
+            if (0.8..=2.5).contains(&lh) {
                 lh
             } else {
                 log::warn!(
-                    "line_height {lh} out of range [1.0, 2.5]; using default {DEFAULT_LINE_HEIGHT}"
+                    "line_height {lh} out of range [0.8, 2.5]; using default {DEFAULT_LINE_HEIGHT}"
                 );
                 DEFAULT_LINE_HEIGHT
             }
@@ -354,11 +361,11 @@ pub(super) fn cached_font_config() -> FontSettings {
     let cell_width = config
         .cell_width
         .map(|cw| {
-            if (0.3..=2.0).contains(&cw) {
+            if (0.8..=2.0).contains(&cw) {
                 cw
             } else {
                 log::warn!(
-                    "cell_width {cw} out of range [0.3, 2.0]; using default {DEFAULT_CELL_WIDTH}"
+                    "cell_width {cw} out of range [0.8, 2.0]; using default {DEFAULT_CELL_WIDTH}"
                 );
                 DEFAULT_CELL_WIDTH
             }
@@ -546,34 +553,34 @@ pub fn resolve_frame_metrics(
         });
     }
 
-    // Cell width and line height are config-derived terminal strides, not
-    // measured glyph advances. They scale with the effective rendered size so
-    // Windows Terminal-style multipliers stay comparable across font changes.
-    let cell_width_raw = px(font_size.as_f32() * settings.cell_width);
-    let line_height_raw = px(font_size.as_f32() * settings.line_height);
+    // The grid is measured on the face, in device pixels, the way Ghostty's
+    // `Metrics.calc` does it: the widest ASCII advance and the face's own
+    // line height, each rounded to whole device pixels, with the baseline
+    // rounded to a pixel row. The config multipliers scale those measured
+    // strides (Ghostty's `adjust-cell-width` / `adjust-cell-height`).
+    let scale_factor = sanitize_scale_factor(window.scale_factor());
+    let metrics = cell_metrics_for(
+        window,
+        font_id,
+        font_size,
+        scale_factor,
+        settings.line_height,
+        settings.cell_width,
+    );
+    let cell_width = metrics.cell_width_px();
+    let line_height = metrics.cell_height_px();
 
-    // US-002: snap raw font measurements to integer pixels via `.round()`
-    // (WezTerm convention - minimizes layout-area drift on fractional
-    // advances vs `floor`/`ceil`). Quantizing the cell stride at measure
-    // time means every downstream coordinate `cell_width * col` is also
-    // integer, eliminating the fractional residual that prevents adjacent
-    // quads from sharing a pixel boundary. Trade-off: column count
-    // `viewport / cell_width` may shift by ±1 on extreme aspect ratios.
-    // Acceptable for pixel-perfect rendering (US-001 / US-003 / US-004).
-    let cell_width = cell_width_raw.round();
-    let line_height = line_height_raw.round();
-
-    // PANEFLOW_PIXEL_PROBE: record both raw and snapped cell dimensions so a
-    // future investigation can tell at a glance whether the snap was a
-    // no-op (`raw == snapped`) or quantized a fractional residual. Origin
-    // is logged separately from `paint()` via `record_origin`.
+    // PANEFLOW_PIXEL_PROBE: record the unrounded face strides next to the
+    // integer cell so a future investigation can tell at a glance how much
+    // the rounding moved the grid. Origin is logged separately from `paint()`
+    // via `record_origin`.
     #[cfg(debug_assertions)]
     super::pixel_probe::record_cell_dimensions(
-        cell_width_raw,
+        px(metrics.face_width / scale_factor),
         cell_width,
-        line_height_raw,
+        px(metrics.face_height / scale_factor),
         line_height,
-        window.scale_factor(),
+        scale_factor,
     );
 
     TerminalFrameMetrics {
@@ -583,7 +590,315 @@ pub fn resolve_frame_metrics(
         },
         base_font: font,
         font_size,
+        metrics,
     }
+}
+
+fn sanitize_scale_factor(raw: f32) -> f32 {
+    if raw.is_finite() && raw > 0.0 {
+        raw
+    } else {
+        1.0
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Cell metrics (Ghostty `src/font/Metrics.zig`)
+// ---------------------------------------------------------------------------
+
+/// Unrounded measurements of the primary face at the rendered size, in device
+/// pixels. Zero means "the font did not say", and the accessor falls back to
+/// the same estimators Ghostty's `FaceMetrics` uses.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FaceMetrics {
+    pub ascent: f32,
+    /// Positive magnitude below the baseline.
+    pub descent: f32,
+    pub line_gap: f32,
+    /// Widest advance among the printable ASCII glyphs.
+    pub advance: f32,
+    /// Top of the underline relative to the baseline, negative below it.
+    pub underline_position: f32,
+    pub underline_thickness: f32,
+    /// Top of the strikeout stroke above the baseline.
+    pub strikethrough_position: f32,
+    pub strikethrough_thickness: f32,
+    pub x_height: f32,
+    pub cap_height: f32,
+}
+
+impl FaceMetrics {
+    fn line_height(&self) -> f32 {
+        self.ascent + self.descent + self.line_gap
+    }
+
+    fn cap_height(&self) -> f32 {
+        if self.cap_height > 0.0 {
+            self.cap_height
+        } else {
+            0.75 * self.ascent
+        }
+    }
+
+    fn x_height(&self) -> f32 {
+        if self.x_height > 0.0 {
+            self.x_height
+        } else {
+            0.75 * self.cap_height()
+        }
+    }
+
+    fn underline_thickness(&self) -> f32 {
+        if self.underline_thickness > 0.0 {
+            self.underline_thickness
+        } else {
+            0.15 * self.x_height()
+        }
+    }
+
+    fn underline_position(&self) -> f32 {
+        if self.underline_position != 0.0 {
+            self.underline_position
+        } else {
+            -self.underline_thickness()
+        }
+    }
+
+    fn strikethrough_thickness(&self) -> f32 {
+        if self.strikethrough_thickness > 0.0 {
+            self.strikethrough_thickness
+        } else {
+            self.underline_thickness()
+        }
+    }
+
+    fn strikethrough_position(&self) -> f32 {
+        if self.strikethrough_position != 0.0 {
+            self.strikethrough_position
+        } else {
+            (self.x_height() + self.strikethrough_thickness()) * 0.5
+        }
+    }
+}
+
+/// The integer device-pixel grid every paint pass draws on, plus the
+/// unrounded face measurements the icon constraint needs. Every `i32` is a
+/// count of device pixels; `*_px()` converts back to GPUI logical pixels.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CellMetrics {
+    pub scale_factor: f32,
+    pub cell_width: i32,
+    pub cell_height: i32,
+    /// Distance from the cell bottom to the baseline.
+    pub cell_baseline: i32,
+    /// Distance from the cell top to the top of the underline.
+    pub underline_position: i32,
+    pub underline_thickness: i32,
+    /// Distance from the cell top to the top of the strikethrough.
+    pub strikethrough_position: i32,
+    pub strikethrough_thickness: i32,
+    pub box_thickness: i32,
+    pub cursor_thickness: i32,
+    /// Unrounded advance, for centering the face in a wider cell.
+    pub face_width: f32,
+    /// Unrounded line height, for the icon constraint.
+    pub face_height: f32,
+    /// Offset from the cell bottom to the bottom of the face box.
+    pub face_y: f32,
+    /// Icon constraint height across two cells.
+    pub icon_height: f32,
+    /// Icon constraint height inside a single cell.
+    pub icon_height_single: f32,
+}
+
+impl CellMetrics {
+    /// Logical pixels for a device-pixel count.
+    pub fn logical(&self, device: i32) -> Pixels {
+        px(device as f32 / self.scale_factor)
+    }
+
+    pub fn cell_width_px(&self) -> Pixels {
+        self.logical(self.cell_width)
+    }
+
+    pub fn cell_height_px(&self) -> Pixels {
+        self.logical(self.cell_height)
+    }
+
+    /// Distance from the cell top to the baseline, in logical pixels.
+    pub fn baseline_px(&self) -> Pixels {
+        self.logical(self.cell_height - self.cell_baseline)
+    }
+
+    /// Horizontal offset that centers the face in a cell wider than its
+    /// advance, rounded to a whole device pixel so hinting survives
+    /// (Ghostty `freetype.zig:503-512`). Zero when the cell is the advance.
+    pub fn face_center_dx(&self) -> i32 {
+        ((self.cell_width as f32 - self.face_width) / 2.0)
+            .round()
+            .max(0.0) as i32
+    }
+}
+
+/// Port of Ghostty's `Metrics.calc`: round the face strides to whole device
+/// pixels, center the face vertically in the rounded cell, and derive every
+/// decoration from the font tables with a one-pixel floor.
+pub(crate) fn cell_metrics_from_face(
+    face: FaceMetrics,
+    scale_factor: f32,
+    line_height_multiplier: f32,
+    cell_width_multiplier: f32,
+) -> CellMetrics {
+    let face_width = face.advance.max(1.0);
+    let face_height = face.line_height().max(1.0);
+
+    // `round` rather than `ceil`: at most half a pixel from the design width,
+    // so the apparent spacing matches between low and high DPI. A glyph with
+    // no side bearing may touch the next cell by a pixel, which is what such
+    // glyphs are drawn to do anyway.
+    let cell_width = (face_width * cell_width_multiplier).round().max(1.0);
+    let cell_height = (face_height * line_height_multiplier).round().max(1.0);
+
+    // Half the line gap above the face and half below, so text never bumps
+    // against either edge of the cell.
+    let face_baseline = face.line_gap / 2.0 + face.descent;
+    // Center the face in the rounded (and possibly adjusted) cell: the extra
+    // or missing height is split evenly above and below.
+    let cell_baseline = (face_baseline + (cell_height - face_height) / 2.0)
+        .round()
+        .clamp(0.0, cell_height);
+    let face_y = cell_baseline - face_baseline;
+    let top_to_baseline = cell_height - cell_baseline;
+
+    let underline_thickness = face.underline_thickness().ceil().max(1.0);
+    let strikethrough_thickness = face.strikethrough_thickness().ceil().max(1.0);
+    let underline_position = (top_to_baseline - face.underline_position()).round();
+    let strikethrough_position = (top_to_baseline - face.strikethrough_position()).round();
+
+    let cap_height = face.cap_height();
+
+    CellMetrics {
+        scale_factor,
+        cell_width: cell_width as i32,
+        cell_height: cell_height as i32,
+        cell_baseline: cell_baseline as i32,
+        underline_position: underline_position as i32,
+        underline_thickness: underline_thickness as i32,
+        strikethrough_position: strikethrough_position as i32,
+        strikethrough_thickness: strikethrough_thickness as i32,
+        box_thickness: underline_thickness as i32,
+        cursor_thickness: underline_thickness as i32,
+        face_width,
+        face_height,
+        face_y,
+        icon_height: face_height,
+        // Same heuristic as the Nerd Fonts patcher.
+        icon_height_single: (2.0 * cap_height + face_height) / 3.0,
+    }
+}
+
+/// Measure the resolved face at `font_size × scale_factor`. Embedded faces
+/// are read from their tables; a system font goes through GPUI's accessors,
+/// which carry no line gap or underline metrics, so those use the estimators.
+fn measure_face(window: &Window, font_id: FontId, size_device: f32) -> FaceMetrics {
+    let text_system = window.text_system();
+    let family = text_system.get_font_for_id(font_id).map(|font| font.family);
+    if let Some(tables) = family
+        .as_deref()
+        .and_then(face_tables::embedded_face_tables)
+    {
+        let scale = size_device / tables.units_per_em.max(1.0);
+        return FaceMetrics {
+            ascent: tables.ascent * scale,
+            descent: tables.descent * scale,
+            line_gap: tables.line_gap * scale,
+            advance: tables.advance * scale,
+            underline_position: tables.underline_position * scale,
+            underline_thickness: tables.underline_thickness * scale,
+            strikethrough_position: tables.strikethrough_position * scale,
+            strikethrough_thickness: tables.strikethrough_thickness * scale,
+            x_height: tables.x_height * scale,
+            cap_height: tables.cap_height * scale,
+        };
+    }
+
+    let size = px(size_device);
+    let advance = (0x20u32..0x7f)
+        .filter_map(char::from_u32)
+        .filter_map(|ch| text_system.advance(font_id, size, ch).ok())
+        .map(|advance| advance.width.as_f32())
+        .fold(0.0, f32::max);
+    FaceMetrics {
+        ascent: text_system.ascent(font_id, size).as_f32(),
+        // GPUI stores the descent with a platform-dependent sign.
+        descent: text_system.descent(font_id, size).as_f32().abs(),
+        line_gap: 0.0,
+        advance,
+        underline_position: 0.0,
+        underline_thickness: 0.0,
+        strikethrough_position: 0.0,
+        strikethrough_thickness: 0.0,
+        x_height: text_system.x_height(font_id, size).as_f32(),
+        cap_height: text_system.cap_height(font_id, size).as_f32(),
+    }
+}
+
+/// Exact-bits key of everything `cell_metrics_for` reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct CellMetricsKey {
+    font_id: FontId,
+    font_size: u32,
+    scale_factor: u32,
+    line_height_multiplier: u32,
+    cell_width_multiplier: u32,
+}
+
+thread_local! {
+    /// One entry: every pane of a window shares the font, and the key only
+    /// changes on a config edit, a zoom step, or a monitor move.
+    static CELL_METRICS_MEMO: std::cell::Cell<Option<(CellMetricsKey, CellMetrics)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+fn cell_metrics_for(
+    window: &Window,
+    font_id: FontId,
+    font_size: Pixels,
+    scale_factor: f32,
+    line_height_multiplier: f32,
+    cell_width_multiplier: f32,
+) -> CellMetrics {
+    let key = CellMetricsKey {
+        font_id,
+        font_size: font_size.as_f32().to_bits(),
+        scale_factor: scale_factor.to_bits(),
+        line_height_multiplier: line_height_multiplier.to_bits(),
+        cell_width_multiplier: cell_width_multiplier.to_bits(),
+    };
+    if let Some((cached_key, metrics)) = CELL_METRICS_MEMO.with(std::cell::Cell::get)
+        && cached_key == key
+    {
+        return metrics;
+    }
+    let face = measure_face(window, font_id, font_size.as_f32() * scale_factor);
+    let metrics = cell_metrics_from_face(
+        face,
+        scale_factor,
+        line_height_multiplier,
+        cell_width_multiplier,
+    );
+    log::info!(
+        "font: cell {}x{} device px at scale {scale_factor} (face {:.2}x{:.2}, baseline {} from bottom, underline y={} t={})",
+        metrics.cell_width,
+        metrics.cell_height,
+        metrics.face_width,
+        metrics.face_height,
+        metrics.cell_baseline,
+        metrics.underline_position,
+        metrics.underline_thickness,
+    );
+    CELL_METRICS_MEMO.with(|memo| memo.set(Some((key, metrics))));
+    metrics
 }
 
 #[cfg(test)]
@@ -642,14 +957,95 @@ mod tests {
     }
 
     #[test]
-    fn default_cell_width_matches_windows_terminal_multiplier() {
-        let raw = font_points_to_pixels(DEFAULT_FONT_SIZE) * DEFAULT_CELL_WIDTH;
-        assert!(
-            (raw.as_f32() - 10.4).abs() < 0.00001,
-            "13pt x 0.6 should be 10.4px, got {}",
-            raw.as_f32()
-        );
-        assert_eq!(raw.round(), px(10.0));
+    fn default_multipliers_keep_the_design_spacing() {
+        assert_eq!(DEFAULT_CELL_WIDTH, 1.0);
+        assert_eq!(DEFAULT_LINE_HEIGHT, 1.0);
+    }
+
+    /// JetBrains Mono at 13 pt (17.33 px): 0.6 em advance and 1.32 em face.
+    fn jetbrains_mono(size: f32) -> FaceMetrics {
+        let s = size / 1000.0;
+        FaceMetrics {
+            ascent: 1020.0 * s,
+            descent: 300.0 * s,
+            line_gap: 0.0,
+            advance: 600.0 * s,
+            underline_position: -155.0 * s,
+            underline_thickness: 50.0 * s,
+            strikethrough_position: 320.0 * s,
+            strikethrough_thickness: 50.0 * s,
+            x_height: 550.0 * s,
+            cap_height: 730.0 * s,
+        }
+    }
+
+    #[test]
+    fn cell_metrics_round_the_face_to_whole_device_pixels() {
+        // 17.33 px: advance 10.4 -> 10, face 22.88 -> 23, baseline 5 from
+        // the bottom (descent 5.2 + half of the 0.12 px rounding slack).
+        let m = cell_metrics_from_face(jetbrains_mono(17.333334), 1.0, 1.0, 1.0);
+        assert_eq!((m.cell_width, m.cell_height, m.cell_baseline), (10, 23, 5));
+        assert_eq!(m.cell_width_px(), px(10.0));
+        assert_eq!(m.cell_height_px(), px(23.0));
+        assert_eq!(m.baseline_px(), px(18.0));
+        // post table: top of the underline 2.7 px below the baseline.
+        assert_eq!(m.underline_position, 21);
+        assert_eq!(m.underline_thickness, 1);
+        // OS/2: top of the strikeout 5.5 px above the baseline.
+        assert_eq!(m.strikethrough_position, 12);
+        assert_eq!(m.box_thickness, 1);
+
+        // 16 px (Ghostty's Linux default): the same 10x21 grid.
+        let m = cell_metrics_from_face(jetbrains_mono(16.0), 1.0, 1.0, 1.0);
+        assert_eq!((m.cell_width, m.cell_height, m.cell_baseline), (10, 21, 5));
+    }
+
+    #[test]
+    fn cell_metrics_convert_device_pixels_back_through_the_scale() {
+        let m = cell_metrics_from_face(jetbrains_mono(34.666668), 2.0, 1.0, 1.0);
+        assert_eq!((m.cell_width, m.cell_height), (21, 46));
+        assert_eq!(m.cell_width_px(), px(10.5));
+        assert_eq!(m.cell_height_px(), px(23.0));
+        // 0.05 em at 34.67 px = 1.73 -> 2 device px = 1 logical px.
+        assert_eq!(m.underline_thickness, 2);
+        assert_eq!(m.logical(m.underline_thickness), px(1.0));
+    }
+
+    #[test]
+    fn cell_multipliers_split_the_extra_height_around_the_face() {
+        let base = cell_metrics_from_face(jetbrains_mono(16.0), 1.0, 1.0, 1.0);
+        let tall = cell_metrics_from_face(jetbrains_mono(16.0), 1.0, 1.5, 1.0);
+        assert_eq!(tall.cell_height, 32);
+        // 11 extra rows: 5 below the baseline, 6 above.
+        assert_eq!(tall.cell_baseline - base.cell_baseline, 5);
+        let wide = cell_metrics_from_face(jetbrains_mono(16.0), 1.0, 1.0, 1.4);
+        assert_eq!(wide.cell_width, 13);
+        assert_eq!(wide.face_center_dx(), 2);
+        assert_eq!(base.face_center_dx(), 0);
+    }
+
+    #[test]
+    fn cell_metrics_estimate_missing_tables_and_floor_thicknesses() {
+        let face = FaceMetrics {
+            ascent: 12.0,
+            descent: 3.0,
+            line_gap: 0.0,
+            advance: 7.0,
+            underline_position: 0.0,
+            underline_thickness: 0.0,
+            strikethrough_position: 0.0,
+            strikethrough_thickness: 0.0,
+            x_height: 0.0,
+            cap_height: 0.0,
+        };
+        let m = cell_metrics_from_face(face, 1.0, 1.0, 1.0);
+        assert_eq!((m.cell_width, m.cell_height, m.cell_baseline), (7, 15, 3));
+        // cap 9, ex 6.75, underline 1.01 -> 2 px, placed one thickness below.
+        assert_eq!(m.underline_thickness, 2);
+        assert_eq!(m.underline_position, 13);
+        assert_eq!(m.strikethrough_thickness, 2);
+        assert!(m.strikethrough_position < 12 && m.strikethrough_position > 4);
+        assert_eq!(m.cursor_thickness, 2);
     }
 
     #[test]
@@ -695,12 +1091,10 @@ mod tests {
     }
 
     #[test]
-    fn round_snap_yields_integer_for_fractional_line_height() {
-        // 13 pt x 96/72 x 1.2 multiplier = 20.8 logical px.
-        let raw_lh = font_points_to_pixels(DEFAULT_FONT_SIZE) * DEFAULT_LINE_HEIGHT;
-        let snapped = raw_lh.round();
-        assert_eq!(snapped, px(21.0));
-        assert!(snapped.as_f32().fract().abs() < 1e-6);
+    fn scale_factor_falls_back_to_one_when_unusable() {
+        assert_eq!(sanitize_scale_factor(0.0), 1.0);
+        assert_eq!(sanitize_scale_factor(f32::NAN), 1.0);
+        assert_eq!(sanitize_scale_factor(1.5), 1.5);
     }
 
     // ─── Paneflow virtual-alias resolution ────────────────────────────
