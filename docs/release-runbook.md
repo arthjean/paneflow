@@ -103,6 +103,16 @@ VERSION="X.Y.Z"   # <-- EDIT THIS before running. No `v` prefix.
 # and will inherit automatically. This sed targets workspace root only.
 sed -i "s/^version = \".*\"$/version = \"$VERSION\"/" Cargo.toml
 
+# AppStream needs a new <release> entry, and the Linux x86_64 build job fails
+# outright when the top one does not match the workspace version. This one is
+# not scriptable: open the file, copy the previous <release> block, and write a
+# one-line <p> summary plus up to five <li> bullets for this release. The
+# release notes you already wrote are the source.
+${EDITOR:-vi} assets/io.github.arthurdev44.paneflow.metainfo.xml
+test "$(awk -F'"' '/<release version=/ { print $2; exit }' assets/io.github.arthurdev44.paneflow.metainfo.xml)" = "$VERSION" \
+  || { echo "AppStream top release is not $VERSION"; exit 1; }
+appstreamcli validate --no-net --pedantic assets/io.github.arthurdev44.paneflow.metainfo.xml
+
 # Debian changelog needs a new stanza - format matters (dpkg-parsechangelog is strict).
 # Force C locale on `date` so the trailer is RFC-2822 English even on
 # a host with a non-English LANG setting (dpkg-parsechangelog rejects
@@ -123,7 +133,7 @@ cargo build -p paneflow-app --release 2>/dev/null || true
 cargo check --workspace
 
 # Commit the bump
-git add Cargo.toml Cargo.lock debian/changelog
+git add Cargo.toml Cargo.lock debian/changelog assets/io.github.arthurdev44.paneflow.metainfo.xml
 git commit -m "chore: bump version to v$VERSION"
 git push origin main
 ```
@@ -137,6 +147,7 @@ hooks or required checks don't block).
 |---|---|
 | `cargo test` fails on a flaky test | 1. Re-run the specific test with `cargo test <name> -- --nocapture`. 2. If genuinely flaky, file an issue and mark `#[ignore]` in a separate commit BEFORE tagging - don't tag a known-broken release. 3. If the failure is real, fix it and restart Step 1. |
 | Working tree not clean (leftover unstaged changes) | 1. `git stash` to park the noise. 2. `git diff` to audit each change - uncommitted work from a different branch should be committed or stashed, never force-discarded. 3. Only after `git status` is clean do you proceed. |
+| Build job fails with `AppStream top release version (...) must match workspace version (...)` | 1. The `<release>` entry for this version is missing from `assets/io.github.arthurdev44.paneflow.metainfo.xml`. 2. Add it at the top of `<releases>`, modeled on the previous block, then `appstreamcli validate --no-net --pedantic` it. 3. This fails on the Linux x86_64 build leg, which cancels every other leg, so the tag is dead: fix, commit, delete the tag locally and remotely, re-tag on the fix commit. |
 | `dpkg-parsechangelog: error: no version` when validating `debian/changelog` | 1. The changelog stanza format is strict - `name (VERSION-REVISION) DISTRIBUTION; urgency=LEVEL`. Copy the previous stanza and edit only the version/date. 2. The `-- <name> <email>  <date>` trailer needs **two** spaces before the date. 3. Validate locally with `dpkg-parsechangelog -l debian/changelog` before pushing. |
 
 ---
