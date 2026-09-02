@@ -43,7 +43,7 @@ pub use hyperlink::{
     detect_code_paths_on_line_mapped, detect_file_paths_on_line_mapped, detect_urls_on_line_mapped,
     is_url_scheme_openable,
 };
-use sprites::{Sprite, sprite_for};
+use sprites::{Sprite, is_private_use, sprite_for};
 
 // US-007: re-export APCA primitives so theme code (and theme tests) can
 // derive and verify a contrast-validated `selection_foreground` color
@@ -287,6 +287,18 @@ pub(super) struct Decoration {
     num_cols: usize,
     kind: DecorationKind,
     color: Hsla,
+}
+
+/// A Private Use Area glyph (a Nerd Font icon) the text pass scales and
+/// centers into `span` cells instead of trusting the font's placement.
+pub(super) struct SymbolGlyph {
+    line: i32,
+    col: usize,
+    /// One cell, or two when the icon may borrow the empty cell after it.
+    span: usize,
+    color: Hsla,
+    ch: char,
+    font: Font,
 }
 
 struct LayoutRect {
@@ -558,6 +570,7 @@ pub(crate) struct LayoutInputs<'a> {
 pub struct LayoutState {
     batched_runs: Vec<BatchedTextRun>,
     decorations: Vec<Decoration>,
+    symbols: Vec<SymbolGlyph>,
     rects: Vec<LayoutRect>,
     block_quads: Vec<BlockQuad>,
     sprites: Vec<SpriteGlyph>,
@@ -1031,11 +1044,15 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     let mut rects: Vec<LayoutRect> = Vec::new();
     let mut block_quads: Vec<BlockQuad> = Vec::new();
     let mut sprites: Vec<SpriteGlyph> = Vec::new();
+    let mut symbols: Vec<SymbolGlyph> = Vec::new();
     let mut current_rect: Option<LayoutRect> = None;
     let mut last_line: i32 = i32::MIN;
     let mut previous_cell_had_extras = false;
+    // Cell of the last icon on the current line, so a run of icons keeps
+    // one cell each and stays aligned (Ghostty `constraintWidth`).
+    let mut last_symbol: Option<(i32, usize)> = None;
 
-    for cell in cells.iter() {
+    for (index, cell) in cells.iter().enumerate() {
         let Cell {
             point,
             c,
@@ -1210,6 +1227,37 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
                     coverage,
                 });
             }
+            previous_cell_had_extras = false;
+            continue;
+        }
+
+        // Private Use Area icons are constrained at paint time: shrunk to
+        // fit their cell, or left at their designed size when the cell after
+        // them is empty (Ghostty `constraintWidth`).
+        if integrated_glyphs_enabled && is_private_use(c) {
+            batch.flush();
+            let next_is_empty = cells.get(index + 1).is_some_and(|next| {
+                next.point.line.0 == point.line.0
+                    && next.point.column.0 == point.column.0 + cell_cols
+                    && (next.c == ' ' || next.c == '\0')
+            });
+            let after_symbol = last_symbol
+                .is_some_and(|(line, col)| line == point.line.0 && col + 1 == point.column.0);
+            let at_line_end = point.column.0 + cell_cols >= desired_cols;
+            let span = if cell_cols == 2 || (next_is_empty && !after_symbol && !at_line_end) {
+                2
+            } else {
+                1
+            };
+            symbols.push(SymbolGlyph {
+                line: point.line.0,
+                col: point.column.0,
+                span,
+                color: fg,
+                ch: c,
+                font: base_font.clone(),
+            });
+            last_symbol = Some((point.line.0, point.column.0));
             previous_cell_had_extras = false;
             continue;
         }
@@ -1410,6 +1458,7 @@ pub(crate) fn layout_from_snapshot(inputs: LayoutInputs<'_>) -> LayoutState {
     LayoutState {
         batched_runs: batch.runs,
         decorations: batch.decorations,
+        symbols,
         rects,
         block_quads,
         sprites,
@@ -1745,8 +1794,9 @@ impl Element for TerminalElement {
             // descenders stay readable over a colored underline.
             paint::decorations::paint_decorations(&layout, &geom, window);
 
-            // 3. Batched text runs
+            // 3. Batched text runs, then the constrained icons.
             paint::text::paint_text_runs(&layout, &geom, base_font, font_size, window, cx);
+            paint::text::paint_symbols(&layout, &geom, font_size, window, cx);
 
             // 3-bis. Kitty graphics over the text.
             paint::kitty::paint_above_text(&kitty_placements, &geom, window);
@@ -2212,6 +2262,18 @@ impl LayoutState {
                 d.num_cols,
                 d.kind,
                 hsla_repr(d.color),
+            );
+        }
+        let _ = writeln!(s, "symbols[{}]:", self.symbols.len());
+        for g in &self.symbols {
+            let _ = writeln!(
+                s,
+                "  L{} C{} span={} U+{:04X} {}",
+                g.line,
+                g.col,
+                g.span,
+                g.ch as u32,
+                hsla_repr(g.color),
             );
         }
         let _ = writeln!(s, "sprites[{}]:", self.sprites.len());
@@ -2701,6 +2763,15 @@ mod golden_frame_tests {
         .collect();
         assert_golden("decorations", &run(decorated, None, None));
 
+        // Nerd Font icons: one borrowing the space after it, one boxed in
+        // by text, two in a row.
+        let icons: Vec<Cell> = "\u{f09b} a\u{e62b}b\u{ea61}\u{ea61} "
+            .chars()
+            .enumerate()
+            .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
+            .collect();
+        assert_golden("icons", &run(icons, None, None));
+
         // Sprites: mixed-weight box drawing, a dash, an arc, a diagonal, a
         // shade, braille, and a Powerline triangle.
         let sprites: Vec<Cell> = "┣╪┄╭╳▒⣿\u{e0b0}"
@@ -2829,6 +2900,48 @@ mod golden_frame_tests {
             state.decorations[0].kind,
             DecorationKind::Underline(UnderlineKind::Single)
         );
+    }
+
+    #[test]
+    fn nerd_font_icon_spans_two_cells_only_before_an_empty_cell() {
+        let icon = '\u{f09b}';
+        let row = |text: &str| -> Vec<Cell> {
+            text.chars()
+                .enumerate()
+                .map(|(i, c)| cell(0, i, c, default_fg(), default_bg(), CellFlags::empty()))
+                .collect()
+        };
+        // Icon, space, text: the icon borrows the space.
+        let state = run(row(&format!("{icon} ab")), None, None);
+        assert_eq!(state.symbols.len(), 1);
+        assert_eq!((state.symbols[0].col, state.symbols[0].span), (0, 2));
+        assert_eq!(
+            state.batched_runs.len(),
+            1,
+            "text after the icon still shapes"
+        );
+
+        // Icon directly followed by text: one cell.
+        let state = run(row(&format!("{icon}ab")), None, None);
+        assert_eq!(state.symbols[0].span, 1);
+
+        // Two icons in a row: the second stays in one cell so they align,
+        // even with an empty cell after it.
+        let state = run(row(&format!("{icon}{icon} ")), None, None);
+        assert_eq!(state.symbols.len(), 2);
+        assert_eq!(state.symbols[0].span, 1);
+        assert_eq!(state.symbols[1].span, 1);
+
+        // Last column: nothing to borrow.
+        let mut last = row(&" ".repeat(COLS));
+        last[COLS - 1].c = icon;
+        let state = run(last, None, None);
+        assert_eq!(state.symbols[0].span, 1);
+
+        // Integrated glyphs off: the icon is a plain glyph run.
+        let state = run_with_integrated_glyphs(row(&format!("{icon} ab")), None, None, false);
+        assert!(state.symbols.is_empty());
+        assert_eq!(state.batched_runs.len(), 2);
     }
 
     #[test]

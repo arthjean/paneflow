@@ -31,7 +31,7 @@ Unknown top-level keys are ignored by the runtime. The schema uses
 | `default_shell` | string or null | platform default | Unix: configured -> `$SHELL` -> `/bin/sh`. Windows: configured -> `pwsh.exe` -> `powershell.exe` -> `%ComSpec%` -> `C:\Windows\System32\cmd.exe` -> `cmd.exe`. |
 | `theme` | string or null | `Paneflow Dark` | Bundled theme name, one preset's light or dark variant. Current values: `Paneflow Dark`, `Paneflow Light`, `Vercel Dark`, `Vercel Light`, `Claude Dark`, `Claude Light`, `Cursor Dark`, `Cursor Light`. Pre-preset names (`One Dark`, `Vercel`, `Claude`, `Cursor`) still resolve. |
 | `theme_mode` | string or null | `dark` | `light`, `dark`, or `system`. |
-| `font_family` | string or null | bundled JetBrainsMono NFM | Accepts `.PaneflowMono`, `JetBrainsMono NFM`, `.PaneflowSans`, embedded family names, or installed monospace families. |
+| `font_family` | string or null | bundled JetBrainsMono Nerd Font | Accepts `.PaneflowMono`, `JetBrainsMono NF`, `JetBrainsMono NFM`, `.PaneflowSans`, embedded family names, or installed monospace families. |
 | `font_fallbacks` | array of strings or null | none | Ordered glyph fallback families for symbols, Powerline, CJK, emoji, or Nerd Font glyphs. |
 | `font_size` | number or null | `13.0` | Points, range `8.0` to `32.0`. Out-of-range values fall back to default with a warning. |
 | `font_weight` | string or null | `normal` | `thin`, `extra_light`, `light`, `semi_light`, `normal`, `medium`, `semi_bold`, `bold`, `extra_bold`, `black`, `extra_black`. |

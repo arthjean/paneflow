@@ -143,6 +143,54 @@ pub(crate) fn embedded_face_tables(family: &str) -> Option<FaceTables> {
     tables
 }
 
+/// Ink bounds of one glyph in font units, y up from the baseline.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct GlyphInk {
+    pub units_per_em: f32,
+    pub x_min: f32,
+    pub y_min: f32,
+    pub x_max: f32,
+    pub y_max: f32,
+}
+
+impl GlyphInk {
+    pub fn width(&self) -> f32 {
+        self.x_max - self.x_min
+    }
+
+    pub fn height(&self) -> f32 {
+        self.y_max - self.y_min
+    }
+}
+
+type GlyphInkCache = HashMap<(String, char), Option<GlyphInk>>;
+
+static GLYPH_INK: LazyLock<Mutex<GlyphInkCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Ink bounds of `ch` in the embedded `family`, `None` when the family is not
+/// bundled or has no outline for the character.
+pub(crate) fn embedded_glyph_ink(family: &str, ch: char) -> Option<GlyphInk> {
+    let mut cache = GLYPH_INK.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(entry) = cache.get(&(family.to_owned(), ch)) {
+        return *entry;
+    }
+    let ink = embedded_face(family)
+        .and_then(|face| Face::parse(&face.data, 0).ok())
+        .and_then(|face| {
+            let glyph = face.glyph_index(ch)?;
+            let rect = face.glyph_bounding_box(glyph)?;
+            Some(GlyphInk {
+                units_per_em: f32::from(face.units_per_em()),
+                x_min: f32::from(rect.x_min),
+                y_min: f32::from(rect.y_min),
+                x_max: f32::from(rect.x_max),
+                y_max: f32::from(rect.y_max),
+            })
+        });
+    cache.insert((family.to_owned(), ch), ink);
+    ink
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +214,20 @@ mod tests {
     #[test]
     fn unknown_family_has_no_tables() {
         assert!(embedded_face_tables("Definitely Not Bundled").is_none());
+        assert!(embedded_glyph_ink("Definitely Not Bundled", 'a').is_none());
+    }
+
+    #[test]
+    fn nerd_font_icon_ink_overflows_its_advance() {
+        // U+F09B (github) is designed wider than the 0.6 em advance in the
+        // non-Mono Nerd Font: the whole point of the icon constraint.
+        let ink = embedded_glyph_ink(EMBEDDED_MONO_FAMILY, '\u{f09b}').expect("icon outline");
+        assert!(
+            ink.width() > 600.0,
+            "icon width {} should exceed the advance",
+            ink.width()
+        );
+        let latin = embedded_glyph_ink(EMBEDDED_MONO_FAMILY, 'm').expect("latin outline");
+        assert!(latin.width() <= 600.0);
     }
 }

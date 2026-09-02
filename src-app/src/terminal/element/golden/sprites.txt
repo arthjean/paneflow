@@ -2,6 +2,7 @@ dims 8.000x16.000 grid 12x4 off=0 hist=0 exited=None signal=None
 bg=hsla(0.0000,0.0000,0.0000,0.0000) thumb=hsla(0.6000,0.2096,0.6725,0.3000) link=hsla(0.4775,0.6000,0.5882,1.0000)
 runs[0]:
 decorations[0]:
+symbols[0]:
 sprites[8]:
   L0 C0+1c Lines(Lines { up: Heavy, right: Heavy, down: Heavy, left: None }) hsla(0.4306,0.1154,0.7961,1.0000)
   L0 C1+1c Lines(Lines { up: Light, right: Double, down: Light, left: Double }) hsla(0.4306,0.1154,0.7961,1.0000)

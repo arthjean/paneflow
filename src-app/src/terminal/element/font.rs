@@ -35,7 +35,7 @@ pub(crate) const DEFAULT_CELL_WIDTH: f32 = 1.0;
 pub(crate) const DEFAULT_FONT_WEIGHT_KEY: &str = "normal";
 
 /// Embedded monospace family - the bundled cross-platform default. Files:
-/// `assets/fonts/JetBrainsMonoNerdFontMono-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`,
+/// `assets/fonts/JetBrainsMonoNerdFont-{Regular,Medium,SemiBold,Bold}{,Italic}.ttf`,
 /// registered with GPUI at startup (`main.rs` → `Assets::load_fonts` →
 /// `cx.text_system().add_fonts`).
 ///
@@ -47,7 +47,13 @@ pub(crate) const DEFAULT_FONT_WEIGHT_KEY: &str = "normal";
 /// so the system primary "renders" zero glyphs and nothing falls through. With
 /// an embedded family as primary, GPUI's text system owns the font tables
 /// end-to-end and rasterization always works.
-pub(crate) const EMBEDDED_MONO_FAMILY: &str = "JetBrainsMono Nerd Font Mono";
+pub(crate) const EMBEDDED_MONO_FAMILY: &str = "JetBrainsMono Nerd Font";
+/// Short name Nerd Fonts write in name ID 1 of the same files.
+pub(crate) const JETBRAINS_MONO_NF_ALIAS: &str = "JetBrainsMono NF";
+/// The `Mono` variant Paneflow bundled before the icons were left at their
+/// designed size and constrained by the renderer instead (Ghostty's model).
+/// Configs written against it keep resolving to the bundled family.
+pub(crate) const LEGACY_JETBRAINS_MONO_NFM_FAMILY: &str = "JetBrainsMono Nerd Font Mono";
 pub(crate) const JETBRAINS_MONO_NFM_ALIAS: &str = "JetBrainsMono NFM";
 pub(crate) const LEGACY_GEIST_MONO_FAMILY: &str = "Geist Mono";
 pub(crate) const LEGACY_EMBEDDED_MONO_FAMILY: &str = "Lilex";
@@ -65,7 +71,7 @@ pub(crate) const EMBEDDED_SANS_FAMILY: &str = "Geist";
 /// before the family name reaches GPUI - GPUI's pinned rev does not
 /// know about Paneflow-specific aliases.
 ///
-/// Users can write an alias (`".PaneflowMono"`, `"JetBrainsMono NFM"`, or
+/// Users can write an alias (`".PaneflowMono"`, `"JetBrainsMono NF"`, the legacy `"JetBrainsMono NFM"`, or
 /// `".PaneflowSans"`) or a concrete embedded family in `paneflow.json`.
 /// Keeping the alias available lets a future swap
 /// of the bundled fallback happen with a single edit to this constant
@@ -79,7 +85,10 @@ pub(crate) const PANEFLOW_SANS_ALIAS: &str = ".PaneflowSans";
 /// Paneflow boundary before the family name reaches GPUI.
 fn expand_paneflow_alias(name: &str) -> &str {
     match name {
-        PANEFLOW_MONO_ALIAS | JETBRAINS_MONO_NFM_ALIAS => EMBEDDED_MONO_FAMILY,
+        PANEFLOW_MONO_ALIAS
+        | JETBRAINS_MONO_NF_ALIAS
+        | JETBRAINS_MONO_NFM_ALIAS
+        | LEGACY_JETBRAINS_MONO_NFM_FAMILY => EMBEDDED_MONO_FAMILY,
         PANEFLOW_SANS_ALIAS => EMBEDDED_SANS_FAMILY,
         other => other,
     }
@@ -246,7 +255,7 @@ where
 
 /// The default monospace family PaneFlow uses out of the box.
 ///
-/// Uses bundled JetBrainsMono Nerd Font Mono so fresh installs are visually
+/// Uses bundled JetBrainsMono Nerd Font so fresh installs are visually
 /// consistent across Linux, macOS, and Windows while avoiding the Core Text
 /// empty-raster failure documented by commit c3e2331.
 ///
@@ -1109,10 +1118,20 @@ mod tests {
         assert_eq!(expand_paneflow_alias(".PaneflowMono"), EMBEDDED_MONO_FAMILY);
         assert_eq!(
             expand_paneflow_alias(".PaneflowMono"),
-            "JetBrainsMono Nerd Font Mono"
+            "JetBrainsMono Nerd Font"
         );
         assert_eq!(
+            expand_paneflow_alias("JetBrainsMono NF"),
+            EMBEDDED_MONO_FAMILY
+        );
+        // Names from configs written against the previously bundled `Mono`
+        // variant keep resolving to the bundled family.
+        assert_eq!(
             expand_paneflow_alias("JetBrainsMono NFM"),
+            EMBEDDED_MONO_FAMILY
+        );
+        assert_eq!(
+            expand_paneflow_alias("JetBrainsMono Nerd Font Mono"),
             EMBEDDED_MONO_FAMILY
         );
     }
@@ -1150,11 +1169,20 @@ mod tests {
         // up against the registered TTFs.
         assert_eq!(
             resolve_font_family(Some(".PaneflowMono")),
-            "JetBrainsMono Nerd Font Mono"
+            EMBEDDED_MONO_FAMILY
         );
         assert_eq!(
+            resolve_font_family(Some("JetBrainsMono NF")),
+            EMBEDDED_MONO_FAMILY
+        );
+        // Legacy names from before the swap to the non-Mono Nerd Font.
+        assert_eq!(
             resolve_font_family(Some("JetBrainsMono NFM")),
-            "JetBrainsMono Nerd Font Mono"
+            EMBEDDED_MONO_FAMILY
+        );
+        assert_eq!(
+            resolve_font_family(Some("JetBrainsMono Nerd Font Mono")),
+            EMBEDDED_MONO_FAMILY
         );
         assert_eq!(resolve_font_family(Some(".PaneflowSans")), "Geist");
     }
@@ -1168,8 +1196,8 @@ mod tests {
         // pre-DirectWrite, container without fontconfig). The short
         // circuit before the registry lookup is what makes that work.
         assert_eq!(
-            resolve_font_family(Some("JetBrainsMono Nerd Font Mono")),
-            "JetBrainsMono Nerd Font Mono"
+            resolve_font_family(Some("JetBrainsMono Nerd Font")),
+            "JetBrainsMono Nerd Font"
         );
         assert_eq!(resolve_font_family(Some("Geist Mono")), "Geist Mono");
         assert_eq!(resolve_font_family(Some("Lilex")), "Lilex");

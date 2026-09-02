@@ -28,6 +28,11 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 - The bar, underline, and hollow cursors take their thickness from the font
   metrics. The bar sits centered on the boundary between two characters and
   the hollow block is the block hollowed out by that thickness.
+- The bundled font is the regular `JetBrainsMono Nerd Font` rather than the
+  `Mono` variant: icons keep their designed size and the renderer constrains
+  them to their cell, borrowing the empty cell after them when there is one
+  (Ghostty's Nerd Font rule). Configs naming `JetBrainsMono Nerd Font Mono`
+  or `JetBrainsMono NFM` keep resolving to the bundled family.
 
 ## [0.11.0] - 2026-09-02
 

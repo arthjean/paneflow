@@ -5,6 +5,7 @@ runs[3]:
   L0 C1 "ele" fg=hsla(0.4306,0.0692,0.9490,1.0000) normal
   L0 C4 "cted" fg=hsla(0.4306,0.1154,0.7961,1.0000) normal
 decorations[0]:
+symbols[0]:
 sprites[0]:
 rects[1]:
   L0+1ln C0+8c hsla(0.0000,0.0000,0.0000,0.0000)

@@ -9,7 +9,7 @@
 //! 4. `sprites`     - box drawing, shades, braille, Powerline on the device grid
 //! 5. `kitty`      - graphics placements with a negative z-index
 //! 6. `decorations` - underlines and strikethroughs from the cell metrics
-//! 7. `text`        - batched `shape_line` glyph runs
+//! 7. `text`        - batched `shape_line` glyph runs, then constrained icons
 //! 8. `kitty`      - graphics placements with a zero or positive z-index
 //! 9. `overlay::hyperlink` - Ctrl+hover underline
 //! 10. `cursor`      - primary cursor + copy-mode anchor cursor
