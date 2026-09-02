@@ -1,10 +1,11 @@
 //! Cursor paint pass - primary text cursor
 //! (Vintage/Block/Beam/Underline/DoubleUnderline/HollowBlock) plus the
-//! copy-mode selection anchor cursor.
+//! copy-mode selection anchor cursor, drawn on the device-pixel grid with
+//! the cell metrics' cursor thickness (Ghostty `special.zig`).
 
 use gpui::{
-    App, BorderStyle, Bounds, Font, FontStyle, FontWeight, Pixels, Point, SharedString, TextAlign,
-    TextRun, Window, fill, outline, px,
+    App, BorderStyle, Font, FontStyle, FontWeight, Pixels, SharedString, TextRun, Window, fill,
+    outline,
 };
 
 use super::super::geometry::CellGeometry;
@@ -31,32 +32,30 @@ fn paint_cursor_info(
     cx: &mut App,
 ) {
     let cols = if cursor.wide { 2 } else { 1 };
-    let cell_bounds = geom.cell_span_bounds(cursor.line, cursor.col, cols);
-    let cx_ = cell_bounds.origin.x;
-    let cy = cell_bounds.origin.y;
-    let mut cw = cell_bounds.size.width;
-    let ch = cell_bounds.size.height;
+    let m = geom.metrics;
+    let x0 = geom.x_device(cursor.col);
+    let y0 = geom.y_device(cursor.line);
+    let w = geom.x_device(cursor.col + cols) - x0;
+    let h = geom.y_device(cursor.line + 1) - y0;
+    if w <= 0 || h <= 0 {
+        return;
+    }
+    let t = m.cursor_thickness.max(1);
     let color = cursor.color;
 
     match cursor.shape {
         CursorShape::Vintage => {
-            let vintage_height = (ch * 0.28).max(px(3.0));
-            let cursor_bounds = Bounds::new(
-                Point {
-                    x: cx_,
-                    y: cy + ch - vintage_height,
-                },
-                gpui::Size {
-                    width: cw,
-                    height: vintage_height,
-                },
-            );
-            window.paint_quad(fill(cursor_bounds, color));
+            let height = ((h as f32 * 0.28).round() as i32).max(t * 2).min(h);
+            window.paint_quad(fill(
+                geom.device_rect(x0, y0 + h - height, w, height),
+                color,
+            ));
         }
         CursorShape::Block => {
-            // Shape the cursor character first so we can size the
-            // cursor quad to fit wide/emoji glyphs.
-            let shaped = cursor.text.map(|ch| {
+            window.paint_quad(fill(geom.device_rect(x0, y0, w, h), color));
+            // Paint the character on top of the cursor quad, in the cell's
+            // background color, on the same baseline as the text pass.
+            if let Some(ch) = cursor.text {
                 let mut cursor_font = base_font.clone();
                 if cursor.bold {
                     cursor_font.weight = FontWeight::BOLD;
@@ -65,15 +64,15 @@ fn paint_cursor_info(
                     cursor_font.style = FontStyle::Italic;
                 }
                 let cursor_font = super::display_font_for_intensity(&cursor_font, base_font.weight);
-                let text = ch.to_string();
-                let len = text.len();
-                window.text_system().shape_line(
-                    SharedString::from(text),
+                let text = SharedString::from(ch.to_string());
+                let text_color = cursor_text_color(cursor, layout);
+                let shaped = window.text_system().shape_line(
+                    text.clone(),
                     font_size,
                     &[TextRun {
-                        len,
+                        len: text.len(),
                         font: cursor_font,
-                        color: cursor_text_color(cursor, layout),
+                        color: text_color,
                         background_color: None,
                         underline: None,
                         strikethrough: None,
@@ -81,90 +80,39 @@ fn paint_cursor_info(
                     // Match the normal terminal text path so the glyph does
                     // not shift when a block cursor moves over it.
                     Some(geom.cell_width),
-                )
-            });
-
-            // Widen cursor to fit glyphs that exceed cell_width * 2
-            if cursor.wide
-                && let Some(ref shaped) = shaped
-            {
-                cw = cw.max(shaped.width());
-            }
-
-            let cursor_bounds = Bounds::new(
-                Point { x: cx_, y: cy },
-                gpui::Size {
-                    width: cw,
-                    height: ch,
-                },
-            );
-            window.paint_quad(fill(cursor_bounds, color));
-
-            // Paint the character on top of the cursor quad
-            if let Some(shaped) = shaped {
-                let _ = shaped.paint(
-                    Point { x: cx_, y: cy },
-                    geom.line_height,
-                    TextAlign::Left,
-                    None,
+                );
+                super::text::paint_shaped_line(
+                    &shaped,
+                    geom.cell_origin(cursor.line, cursor.col),
+                    text_color,
+                    geom,
+                    layout.color_emoji_enabled,
                     window,
                     cx,
                 );
             }
         }
         CursorShape::Beam => {
-            let beam_width = px(2.0);
-            let cursor_bounds = Bounds::new(
-                Point { x: cx_, y: cy },
-                gpui::Size {
-                    width: beam_width,
-                    height: ch,
-                },
-            );
-            window.paint_quad(fill(cursor_bounds, color));
+            // Half the thickness hangs over the left edge of the cell so the
+            // bar sits between characters rather than on the first one.
+            // Rounding up: a one-pixel bar shifted left reads better.
+            let x = x0 - (t + 1) / 2;
+            window.paint_quad(fill(geom.device_rect(x, y0, t, h), color));
         }
         CursorShape::Underline => {
-            let underline_height = px(2.0);
-            let cursor_bounds = Bounds::new(
-                Point {
-                    x: cx_,
-                    y: cy + ch - underline_height,
-                },
-                gpui::Size {
-                    width: cw,
-                    height: underline_height,
-                },
-            );
-            window.paint_quad(fill(cursor_bounds, color));
+            let y = m.underline_position.min(h + h / 4 - t);
+            window.paint_quad(fill(geom.device_rect(x0, y0 + y, w, t), color));
         }
         CursorShape::DoubleUnderline => {
-            let underline_height = px(2.0);
-            let gap = px(2.0);
-            let lower_y = cy + ch - underline_height;
-            let upper_y = (lower_y - underline_height - gap).max(cy);
-            for y in [upper_y, lower_y] {
-                let cursor_bounds = Bounds::new(
-                    Point { x: cx_, y },
-                    gpui::Size {
-                        width: cw,
-                        height: underline_height,
-                    },
-                );
-                window.paint_quad(fill(cursor_bounds, color));
-            }
+            let y = m.underline_position.min(h + h / 4 - 2 * t);
+            window.paint_quad(fill(geom.device_rect(x0, y0 + (y - t).max(0), w, t), color));
+            window.paint_quad(fill(geom.device_rect(x0, y0 + y + t, w, t), color));
         }
         CursorShape::HollowBlock => {
-            let cursor_bounds = Bounds::new(
-                Point { x: cx_, y: cy },
-                gpui::Size {
-                    width: cw,
-                    height: ch,
-                },
-            );
+            // The block hollowed out by one cursor thickness.
             window.paint_quad(
-                outline(cursor_bounds, color, BorderStyle::Solid)
-                    .border_widths(1.5)
-                    .corner_radii(px(2.0)),
+                outline(geom.device_rect(x0, y0, w, h), color, BorderStyle::Solid)
+                    .border_widths(geom.logical(t)),
             );
         }
         CursorShape::Hidden => {} // Already filtered in build_layout

@@ -25,6 +25,9 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   braille patterns, and the geometric Powerline symbols, at one
   font-derived stroke thickness on the device-pixel grid. Adjacent cells
   meet with no seam at any scale factor.
+- The bar, underline, and hollow cursors take their thickness from the font
+  metrics. The bar sits centered on the boundary between two characters and
+  the hollow block is the block hollowed out by that thickness.
 
 ## [0.11.0] - 2026-09-02
 
