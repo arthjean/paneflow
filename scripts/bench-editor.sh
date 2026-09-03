@@ -22,6 +22,7 @@ Environment:
   PANEFLOW_BENCH_DIRTY       Whether the tracked worktree is dirty.
   PANEFLOW_BENCH_STAMP       UTC stamp the result records.
   PANEFLOW_BENCH_ALLOW_DEBUG Allow a debug-profile run, which the suite refuses.
+  PANEFLOW_BENCH_SKIP_SHAPE  Skip the platform shaping probe.
 USAGE
 }
 

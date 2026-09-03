@@ -15,7 +15,7 @@ use super::view::CodeView;
 use crate::diff::{ROW_HEIGHT, RowPalette};
 
 pub(crate) const CODE_ROW_HEIGHT: f32 = ROW_HEIGHT;
-const CODE_FONT_SIZE: f32 = 12.0;
+pub(crate) const CODE_FONT_SIZE: f32 = 12.0;
 const NUM_GAP: f32 = 6.0;
 const GUTTER_PAD_L: f32 = 8.0;
 const GUTTER_MIN_W: f32 = 36.0;

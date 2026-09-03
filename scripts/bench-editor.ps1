@@ -13,7 +13,8 @@ PANEFLOW_BENCH_BASELINE is the baseline the table compares against and is set
 when bench/editor-baseline.json exists (without it the table drops its
 comparison columns), PANEFLOW_BENCH_SHA, PANEFLOW_BENCH_DIRTY and
 PANEFLOW_BENCH_STAMP are recorded in the result, PANEFLOW_BENCH_ALLOW_DEBUG
-allows a debug-profile run that the suite otherwise refuses.
+allows a debug-profile run that the suite otherwise refuses, and
+PANEFLOW_BENCH_SKIP_SHAPE skips the platform shaping probe.
 
 .PARAMETER SetBaseline
 Copy the fresh result over bench/editor-baseline.json.

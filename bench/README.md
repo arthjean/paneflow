@@ -58,7 +58,8 @@ The benchmark is the ignored test `editor_pipeline_benchmark` in
 `src-app/src/app/diff_dock/code/perf_bench.rs`. It exercises the right-hand
 code editor without a GPU or a window: the rope document, the tree-sitter
 parse and highlight query, the run resolution the diff view shares, the UTF-16
-conversions the input handler makes, and the external-reload path.
+conversions the input handler makes, the external-reload path, and the
+platform shaper.
 
 | Metric | Unit | What it captures |
 |---|---|---|
@@ -72,6 +73,8 @@ conversions the input handler makes, and the external-reload path.
 | `byte_to_utf16_eof` | ns | One byte offset converted to a UTF-16 offset at the end of a 3.7 MB document, two to four times per keystroke through `EntityInputHandler`. |
 | `to_disk_string_3_7mb` | ns | The whole 3.7 MB document rendered to the string a save writes. |
 | `theme_switch` | ns | A theme change on 300 KB of Rust, which today requeries the whole document on the render thread. |
+| `shape_cold_60_rows` | ns | Sixty never-seen ASCII rows of 100 characters shaped with the editor monospace font, the cold-cache cost of one scrolled viewport. |
+| `shape_warm_60_rows` | ns | The same sixty rows shaped again, the warm-cache cost the line-layout cache serves on a second frame. |
 | `reload_200_retained_bytes` | bytes | Live allocated bytes a tab still holds after 200 external reloads of a 2 MB file: document, highlighter, and undo history. |
 
 The corpus is `src-app/src/app/diff_dock/code/bench_corpus.rs`, seeded with
@@ -80,6 +83,28 @@ sources, so a run is byte-identical everywhere: synthetic Rust sized to 295 KB
 (under the 300 KB highlight cap), 2 MB, and 3.7 MB (about 110 000 lines); a
 single-line minified JSON document of exactly 10 000 characters; and Markdown
 carrying both inline and fenced code so the injection pass has work to do.
+
+### The shaping probe and the US-013 threshold
+
+`shape_cold_60_rows` and `shape_warm_60_rows` decide whether the ASCII grid of
+US-013 is worth building. **The threshold is 1.0 ms cold per 60 rows on the
+reference machine.** Below it, `shape_line` is not what makes scrolling
+expensive and US-013 stays unbuilt; at or above it, the grid path is worth
+its complexity. Like every other timing metric, both are stored in nanoseconds
+and rendered by the table in milliseconds once they pass 1 ms, so the
+threshold reads as `1.00 ms` in the table and `1000000.0` in the document.
+
+The probe deliberately does not use GPUI's `TestAppContext`. That context
+installs `NoopTextSystem`, a stub that returns synthetic metrics for every
+font, so a measurement taken through it would describe the stub and not the
+platform shaper the editor actually pays for. The probe instead resolves the
+real platform text system through `gpui_platform::current_platform(true)` and
+shapes through a `WindowTextSystem` built on it. When that platform cannot be
+created, or when it shapes a zero-width line because no real font is
+available, both metrics are reported as unavailable through
+`PANEFLOW_BENCH_SKIP` lines, remain in the JSON with `available: false` and a
+null value, and the suite carries on. `PANEFLOW_BENCH_SKIP_SHAPE=1` skips the
+probe outright with the same unavailable result.
 
 `reload_200_retained_bytes` allocates and retains several hundred megabytes by
 design, which is the defect it measures. It runs last, after the timed

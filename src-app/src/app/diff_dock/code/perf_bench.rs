@@ -1,8 +1,13 @@
 use std::ops::Range;
 use std::path::PathBuf;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Instant;
 
-use gpui::{Hsla, hsla};
+use gpui::{
+    Font, FontFeatures, FontStyle, FontWeight, Hsla, Platform, SharedString, TextRun, TextSystem,
+    WindowTextSystem, hsla, px,
+};
 
 use crate::bench_harness::{
     Metric, SegmentTimer, live_bytes, measure, measure_segments, process_cpu_time, publish,
@@ -17,6 +22,7 @@ use super::bench_corpus::{
 use super::cursor::CodeSelection;
 use super::document::CodeDocument;
 use super::edit::{EditGroup, UndoHistory, splice};
+use super::element::CODE_FONT_SIZE;
 use super::highlight::{CodeHighlighter, HighlightOutcome};
 
 const VIEWPORT_ROWS: usize = 60;
@@ -24,6 +30,7 @@ const VIEWPORT_ROWS: usize = 60;
 const RESOLVE_RUNS_CAPTURES: usize = 3_750;
 
 const RELOADS: usize = 200;
+const SHAPE_ROW_CHARS: usize = 100;
 
 struct Corpora {
     highlighted_rust: String,
@@ -244,6 +251,112 @@ fn markdown_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     ));
 }
 
+fn editor_font() -> Font {
+    Font {
+        family: crate::terminal::element::resolve_font_family(None).into(),
+        features: FontFeatures::disable_ligatures(),
+        fallbacks: None,
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
+    }
+}
+
+fn ascii_row(salt: usize, row: usize) -> SharedString {
+    let mut text = String::with_capacity(SHAPE_ROW_CHARS);
+    text.push_str(&format!("{salt:04}:{row:04} "));
+    let alphabet = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-<>(){}[];:,.";
+    let mut cursor = salt.wrapping_mul(31).wrapping_add(row);
+    while text.len() < SHAPE_ROW_CHARS {
+        cursor = cursor.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        text.push(alphabet[(cursor >> 16) % alphabet.len()] as char);
+    }
+    text.truncate(SHAPE_ROW_CHARS);
+    text.into()
+}
+
+fn platform_text_system() -> Option<(Rc<dyn Platform>, Arc<WindowTextSystem>)> {
+    std::panic::catch_unwind(|| {
+        let platform = gpui_platform::current_platform(true);
+        let text_system = Arc::new(TextSystem::new(platform.text_system()));
+        (platform, Arc::new(WindowTextSystem::new(text_system)))
+    })
+    .ok()
+}
+
+fn ascii_rows(salt: usize) -> Vec<SharedString> {
+    (0..VIEWPORT_ROWS).map(|row| ascii_row(salt, row)).collect()
+}
+
+fn shape_rows(text_system: &WindowTextSystem, font: &Font, rows: &[SharedString]) -> f32 {
+    let mut width = 0.0f32;
+    for text in rows {
+        let text = text.clone();
+        let runs = [TextRun {
+            len: text.len(),
+            font: font.clone(),
+            color: hsla(0.0, 0.0, 0.9, 1.0),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+        let shaped = text_system.shape_line(text, px(CODE_FONT_SIZE), &runs, None);
+        width += f32::from(shaped.width());
+    }
+    width
+}
+
+fn skip_shape(metrics: &mut Vec<Metric>, reason: &'static str) {
+    println!("PANEFLOW_BENCH_SKIP shape_cold_60_rows: {reason}");
+    println!("PANEFLOW_BENCH_SKIP shape_warm_60_rows: {reason}");
+    metrics.push(Metric::unavailable("shape_cold_60_rows", "ns", reason));
+    metrics.push(Metric::unavailable("shape_warm_60_rows", "ns", reason));
+}
+
+fn shape_scenarios(metrics: &mut Vec<Metric>) {
+    if std::env::var_os("PANEFLOW_BENCH_SKIP_SHAPE").is_some() {
+        skip_shape(metrics, "PANEFLOW_BENCH_SKIP_SHAPE is set");
+        return;
+    }
+    let Some((platform, text_system)) = platform_text_system() else {
+        skip_shape(
+            metrics,
+            "the platform text system could not be created in this process",
+        );
+        return;
+    };
+    let font = editor_font();
+    let warm = ascii_rows(0);
+    if shape_rows(&text_system, &font, &warm) <= 0.0 {
+        skip_shape(
+            metrics,
+            "the platform text system shaped a zero-width line, so no real font is available",
+        );
+        return;
+    }
+    let mut salt = 0usize;
+    metrics.push(measure_segments(
+        "shape_cold_60_rows",
+        "60 never-seen ASCII rows of 100 characters shaped with the editor monospace font, the cold-cache cost of one scrolled viewport",
+        1,
+        20,
+        |timer| {
+            salt += 1;
+            let rows = ascii_rows(salt);
+            timer.time(|| std::hint::black_box(shape_rows(&text_system, &font, &rows)));
+        },
+    ));
+    metrics.push(measure_segments(
+        "shape_warm_60_rows",
+        "the same 60 rows shaped again, the warm-cache cost the line-layout cache serves on a second frame",
+        1,
+        20,
+        |timer| {
+            timer.time(|| std::hint::black_box(shape_rows(&text_system, &font, &warm)));
+        },
+    ));
+    drop(platform);
+}
+
 fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let before = live_bytes();
     let mut doc = document("bench-2mb.rs", &corpora.reload_rust);
@@ -307,6 +420,7 @@ fn editor_pipeline_benchmark() {
             cpu_share * 100.0
         );
     }
+    shape_scenarios(&mut metrics);
     reload_scenario(&mut metrics, &corpora);
 
     publish(
@@ -381,5 +495,36 @@ mod tests {
             highlighter.runs(doc.line_count()).is_empty(),
             "a row past the end must resolve to no runs"
         );
+    }
+
+    #[test]
+    fn the_shape_probe_either_measures_or_reports_itself_unavailable() {
+        let Some((platform, text_system)) = platform_text_system() else {
+            let mut metrics = Vec::new();
+            skip_shape(
+                &mut metrics,
+                "the platform text system could not be created in this process",
+            );
+            assert!(metrics.iter().all(|metric| !metric.available));
+            return;
+        };
+        let width = shape_rows(&text_system, &editor_font(), &ascii_rows(0));
+        assert!(
+            width.is_finite() && width >= 0.0,
+            "a shaped viewport must report a finite width, got {width}"
+        );
+        drop(platform);
+    }
+
+    #[test]
+    fn ascii_rows_are_distinct_and_the_advertised_width() {
+        let first = ascii_row(1, 0);
+        let second = ascii_row(1, 1);
+        assert_eq!(first.len(), SHAPE_ROW_CHARS);
+        assert_eq!(second.len(), SHAPE_ROW_CHARS);
+        assert_ne!(first, second);
+        assert_ne!(first, ascii_row(2, 0));
+        assert_eq!(first, ascii_row(1, 0));
+        assert!(first.is_ascii());
     }
 }
