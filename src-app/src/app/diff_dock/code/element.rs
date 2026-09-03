@@ -537,10 +537,8 @@ impl Element for CodeElement {
                 None
             } else {
                 let text: SharedString = text.into();
-                let runs = match hl {
-                    Some(hl) => self.text_runs(&text, hl.runs(row), self.palette.text),
-                    None => self.text_runs(&text, &[], self.palette.text),
-                };
+                let syntax = hl.map(|hl| hl.runs(row)).unwrap_or_default();
+                let runs = self.text_runs(&text, &syntax, self.palette.text);
                 let runs = match &row_sel {
                     Some((local, _)) => {
                         let fg = self.colors.selection_fg;

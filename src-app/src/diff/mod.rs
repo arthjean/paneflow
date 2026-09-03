@@ -28,7 +28,8 @@ pub(crate) use git::compute_head_diff;
 #[cfg(test)]
 pub(crate) use highlighter::highlight_lines;
 pub(crate) use highlighter::{
-    Grammar, MAX_HIGHLIGHT_BYTES, grammar_for_ext, markdown_inline_grammar, resolve_runs,
+    Grammar, MAX_CAPTURES_PER_ROW, MAX_HIGHLIGHT_BYTES, grammar_for_ext, markdown_inline_grammar,
+    resolve_runs,
 };
 pub(crate) use hit_test::row_at_offset;
 pub(crate) use hscroll::{

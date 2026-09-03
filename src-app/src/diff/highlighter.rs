@@ -220,7 +220,7 @@ fn bucket_capture(
     }
 }
 
-pub(crate) fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
+pub(crate) fn resolve_runs<T: Copy>(runs: &mut Vec<(Range<usize>, T)>) {
     let mut candidates: Vec<_> = runs
         .drain(..)
         .take(MAX_CAPTURES_PER_ROW)
@@ -246,7 +246,7 @@ pub(crate) fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
     events.sort_unstable_by_key(|event| event.0);
 
     let mut active = BTreeSet::new();
-    let mut resolved: Vec<(Range<usize>, Hsla, usize)> = Vec::with_capacity(candidates.len());
+    let mut resolved: Vec<(Range<usize>, T, usize)> = Vec::with_capacity(candidates.len());
     let mut event = 0usize;
     while event < events.len() {
         let start = events[event].0;

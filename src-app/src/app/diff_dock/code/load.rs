@@ -530,9 +530,10 @@ mod tests {
         assert_eq!(opened.indent, IndentUnit::Tab);
         assert_eq!(opened.stamp, FileStamp::read(&path));
         assert!(
-            !opened.highlighter.runs(0).is_empty(),
+            opened.highlighter.has_tree(),
             "the initial parse ran inside open_blocking, not later on the render thread"
         );
+        assert!(opened.highlighter.runs(0).is_empty());
     }
 
     #[test]

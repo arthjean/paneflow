@@ -2,7 +2,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Font, FontFeatures, FontStyle, FontWeight, Hsla, Platform, SharedString, TextRun, TextSystem,
@@ -102,7 +102,11 @@ fn open_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         || {
             let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
             let mut highlighter = CodeHighlighter::new(&doc, dark());
-            highlighter.requery_rows(&doc, 0..VIEWPORT_ROWS.min(doc.line_count()));
+            highlighter.fill_stale_rows(
+                &doc,
+                0..VIEWPORT_ROWS.min(doc.line_count()),
+                Duration::from_millis(2),
+            );
             std::hint::black_box((doc, highlighter));
         },
     ));
@@ -125,7 +129,7 @@ fn keystroke_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let mut index = 0usize;
     metrics.push(measure_segments(
         "keystroke_to_runs",
-        "render-thread work of one inserted character at a pseudo-random row on 300 KB of Rust: splice, incremental parse and the highlight requery, deferred parses excluded from the timer but their applied trees included",
+        "render-thread work of one inserted character at a pseudo-random row on 300 KB of Rust: splice, incremental parse or deferred-tree apply, then a viewport-bounded highlight fill; background parsing is excluded",
         5,
         200,
         |timer| {
@@ -133,6 +137,10 @@ fn keystroke_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
             let row = stride(index, doc.line_count());
             let offset = doc.line_to_byte(row);
             apply_ui_edit(&mut doc, &mut highlighter, offset..offset, "x", timer);
+            let end = (row + VIEWPORT_ROWS).min(doc.line_count());
+            timer.time(|| {
+                highlighter.fill_stale_rows(&doc, row..end, Duration::from_millis(2))
+            });
         },
     ));
 }
@@ -159,16 +167,78 @@ fn unclosed_comment_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let text = format!("/*\n{}", corpora.highlighted_rust);
     metrics.push(measure_segments(
         "unclosed_comment_close_ui",
-        "render-thread work of closing an unterminated block comment at the top of 300 KB of Rust, which re-tokenizes the whole file",
+        "render-thread work of closing an unterminated block comment at the top of 300 KB of Rust: edit, deferred-tree apply and first viewport fill; background parsing is excluded",
         1,
         10,
         |timer| {
             let mut doc = document("bench-300kb.rs", &text);
             let mut highlighter = CodeHighlighter::new(&doc, dark());
             apply_ui_edit(&mut doc, &mut highlighter, 2..2, "*/", timer);
+            timer.time(|| {
+                highlighter.fill_stale_rows(
+                    &doc,
+                    0..VIEWPORT_ROWS.min(doc.line_count()),
+                    Duration::from_millis(2),
+                )
+            });
             std::hint::black_box((doc, highlighter));
         },
     ));
+}
+
+fn deferred_parse_burst_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let mut doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut parses = Vec::with_capacity(50);
+    let burst_started = Instant::now();
+    let cpu_before = process_cpu_time();
+    for index in 0..50 {
+        let row = stride(index + 1, doc.line_count());
+        let offset = doc.line_to_byte(row);
+        let Some(edit) = doc.insert(offset, "x") else {
+            continue;
+        };
+        let HighlightOutcome::Deferred(parse) =
+            highlighter.edit_with_budget(&doc, &edit, Duration::ZERO)
+        else {
+            continue;
+        };
+        parses.push(smol::spawn(smol::unblock(move || parse.run())));
+    }
+    let burst_elapsed = burst_started.elapsed();
+    let mut completed = 0usize;
+    let mut latest = None;
+    for parse in parses {
+        let parsed = smol::block_on(parse);
+        completed += usize::from(!parsed.was_cancelled());
+        latest = Some(parsed);
+    }
+    let cpu = process_cpu_time() - cpu_before;
+    if let Some(parsed) = latest {
+        std::hint::black_box(highlighter.apply_parsed(&doc, parsed));
+    }
+    metrics.push(Metric::count(
+        "deferred_burst_completed_parses",
+        "count",
+        completed as f64,
+        "complete background parses after 50 zero-budget edits; superseded generations must cancel so only the latest completes",
+    ));
+    metrics.push(Metric::count(
+        "deferred_burst_cpu",
+        "ns",
+        cpu.as_nanos() as f64,
+        "process CPU spent running every deferred parse from a 50-edit burst after cancellation; target below 120 ms",
+    ));
+    metrics.push(Metric::count(
+        "deferred_burst_edit_wall",
+        "ns",
+        burst_elapsed.as_nanos() as f64,
+        "wall time to enqueue 50 zero-budget edits and their background parses; target below 200 ms",
+    ));
+    println!(
+        "PANEFLOW_BENCH_NOTE deferred edit burst built 50 generations in {:.3} ms",
+        burst_elapsed.as_secs_f64() * 1_000.0
+    );
 }
 
 fn resolve_runs_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
@@ -226,7 +296,7 @@ fn theme_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let mut index = 0usize;
     metrics.push(measure(
         "theme_switch",
-        "a theme change on 300 KB of Rust: today the whole document is requeried on the render thread",
+        "a theme change on 300 KB of Rust: rebuild capture color tables without querying tree-sitter or rewriting row runs",
         1,
         20,
         || {
@@ -408,6 +478,7 @@ fn editor_pipeline_benchmark() {
     keystroke_scenario(&mut metrics, &corpora);
     viewport_scenario(&mut metrics, &corpora);
     unclosed_comment_scenario(&mut metrics, &corpora);
+    deferred_parse_burst_scenario(&mut metrics, &corpora);
     resolve_runs_scenario(&mut metrics, &corpora);
     document_scenarios(&mut metrics, &corpora);
     theme_scenario(&mut metrics, &corpora);
@@ -439,8 +510,9 @@ mod tests {
     fn every_corpus_reaches_the_path_the_bench_claims() {
         let rust = rust_source(8_192);
         let doc = document("probe.rs", &rust);
-        let highlighter = CodeHighlighter::new(&doc, dark());
+        let mut highlighter = CodeHighlighter::new(&doc, dark());
         assert!(highlighter.is_enabled(), "the rust corpus must highlight");
+        highlighter.requery_rows(&doc, 0..doc.line_count());
         assert!(
             (0..doc.line_count()).any(|row| !highlighter.runs(row).is_empty()),
             "the rust corpus must produce colored runs"
@@ -483,9 +555,15 @@ mod tests {
         let rust = rust_source(16_384);
         let mut doc = document("probe.rs", &rust);
         let mut highlighter = CodeHighlighter::new(&doc, dark());
+        highlighter.requery_rows(&doc, 0..VIEWPORT_ROWS.min(doc.line_count()));
         let before = doc.len_bytes();
         let mut timer = SegmentTimer::default();
         apply_ui_edit(&mut doc, &mut highlighter, 0..0, "x", &mut timer);
+        highlighter.fill_stale_rows(
+            &doc,
+            0..VIEWPORT_ROWS.min(doc.line_count()),
+            Duration::from_secs(1),
+        );
         assert_eq!(doc.len_bytes(), before + 1);
         assert!(
             (0..doc.line_count()).any(|row| !highlighter.runs(row).is_empty()),

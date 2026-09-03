@@ -25,9 +25,11 @@ use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
 use super::edit::{self, EditGroup, IndentUnit};
 use super::element::{
     CODE_ROW_HEIGHT, CodeCaret, CodeColors, CodeElement, CodeGeometry, CodeHitMap, GutterMemo,
-    autoscroll_step, reveal_h_offset, reveal_offset,
+    autoscroll_step, reveal_h_offset, reveal_offset, visible_rows,
 };
-use super::highlight::{CodeHighlighter, DeferredParse, HighlightOutcome, spawn_deferred_parse};
+use super::highlight::{
+    CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, spawn_deferred_parse,
+};
 use super::load::{CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
 use super::save::{self, FileStamp};
 use crate::diff::{DiffSyntax, palette};
@@ -45,6 +47,7 @@ const DRAG_SCROLL_COLUMNS: f32 = 3.0;
 const READ_ONLY_FLASH: Duration = Duration::from_millis(600);
 
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
+const INITIAL_HIGHLIGHT_ROWS: usize = 60;
 
 actions!(
     paneflow_code_editor,
@@ -478,6 +481,24 @@ impl CodeView {
         let syntax = DiffSyntax::from_theme(&crate::theme::active_theme());
         if let Some((doc, hl)) = self.state.editable() {
             hl.set_syntax(doc, syntax);
+        }
+    }
+
+    fn fill_visible_highlights(&mut self, cx: &mut Context<Self>) {
+        let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
+            return;
+        };
+        let viewport_h = f32::from(self.scroll.bounds().size.height);
+        let content_top = f32::from(-self.scroll.offset().y).max(0.0);
+        let rows = if viewport_h > 0.0 {
+            visible_rows(content_top, viewport_h, line_count)
+        } else {
+            0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
+        };
+        if let Some((doc, highlighter)) = self.state.editable()
+            && highlighter.fill_stale_rows(doc, rows, HIGHLIGHT_FRAME_BUDGET)
+        {
+            cx.notify();
         }
     }
 
@@ -1816,6 +1837,7 @@ impl Focusable for CodeView {
 impl Render for CodeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_theme();
+        self.fill_visible_highlights(cx);
         let ui = crate::theme::ui_colors();
 
         let Some(doc) = self.state.document() else {
@@ -2456,10 +2478,11 @@ mod tests {
         cx.run_until_parked();
 
         view.update(cx, |view, _cx| {
-            let doc = view.document().expect("document");
-            let oracle =
+            let (doc, live) = view.state.editable().expect("document and highlighter");
+            live.requery_rows(doc, 0..doc.line_count());
+            let mut oracle =
                 CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
-            let live = view.highlighter().expect("highlighter");
+            oracle.requery_rows(doc, 0..doc.line_count());
             assert!(live.is_enabled(), "the grammar is loaded");
             assert!(
                 !oracle.runs(1).is_empty(),
