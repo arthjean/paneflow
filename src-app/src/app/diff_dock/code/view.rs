@@ -941,7 +941,41 @@ impl CodeView {
                 }
             });
         }
+        self.refresh_longest_line(cx);
         self.after_motion(cx);
+    }
+
+    fn refresh_longest_line(&mut self, cx: &mut Context<Self>) {
+        let Some((text, revision)) = self
+            .state
+            .document()
+            .and_then(CodeDocument::longest_line_snapshot)
+        else {
+            return;
+        };
+        let load_generation = self.slot.current();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            #[cfg(not(test))]
+            let longest = smol::unblock(move || CodeDocument::measure_longest_line(&text)).await;
+            #[cfg(test)]
+            let longest = cx
+                .background_spawn(async move { CodeDocument::measure_longest_line(&text) })
+                .await;
+            cx.update(|cx| {
+                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                    if !view.slot.accept(load_generation) {
+                        return;
+                    }
+                    let Some(doc) = view.state.document_mut() else {
+                        return;
+                    };
+                    if doc.apply_longest_line_measurement(revision, longest) {
+                        cx.notify();
+                    }
+                });
+            });
+        })
+        .detach();
     }
 
     fn flash_read_only(&mut self, cx: &mut Context<Self>) {
@@ -2200,6 +2234,37 @@ mod tests {
             assert_eq!(text_of(view), "bye world\n");
             assert_eq!(view.cursor(), 3, "the caret lands past what was inserted");
             assert!(view.is_dirty(), "an edit marks the document dirty");
+        });
+    }
+
+    #[gpui::test]
+    async fn shortening_the_longest_line_refreshes_horizontal_extent_off_thread(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = view(cx, "the longest line\nshort\n");
+        cx.executor().allow_parking();
+
+        view.update(cx, |view, cx| {
+            assert!(view.splice_all(
+                &[(0..16, "tiny".to_string())],
+                CodeSelection::at(4),
+                EditGroup::Atomic,
+                cx,
+            ));
+            assert_eq!(view.document().expect("document").longest_line_chars(), 16);
+        });
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| {
+                view.document().expect("document").longest_line_chars() == 5
+            }) {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(1)).await;
+        }
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(view.document().expect("document").longest_line_chars(), 5);
         });
     }
 

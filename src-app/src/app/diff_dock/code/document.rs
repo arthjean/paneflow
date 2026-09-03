@@ -70,6 +70,8 @@ pub(crate) struct CodeDocument {
     line_ending: LineEnding,
     read_only: Option<ReadOnlyReason>,
     longest_line_chars: usize,
+    revision: u64,
+    longest_line_stale: bool,
 }
 
 impl std::fmt::Debug for CodeDocument {
@@ -88,16 +90,18 @@ impl CodeDocument {
     pub(crate) fn new(path: PathBuf, raw: &str) -> Self {
         let line_ending = LineEnding::detect(raw);
         let ext = crate::diff::file_ext(&path.to_string_lossy());
-        let mut doc = Self {
+        let normalized = normalize_newlines(raw);
+        let longest_line_chars = measure_text_lines(&normalized);
+        Self {
             path,
             ext,
-            text: Rope::from_str(&normalize_newlines(raw)),
+            text: Rope::from_str(&normalized),
             line_ending,
             read_only: None,
-            longest_line_chars: 0,
-        };
-        doc.longest_line_chars = doc.measure_all_lines();
-        doc
+            longest_line_chars,
+            revision: 0,
+            longest_line_stale: false,
+        }
     }
 
     #[allow(dead_code)]
@@ -140,6 +144,24 @@ impl CodeDocument {
 
     pub(crate) fn longest_line_chars(&self) -> usize {
         self.longest_line_chars
+    }
+
+    pub(crate) fn longest_line_snapshot(&self) -> Option<(Rope, u64)> {
+        self.longest_line_stale
+            .then(|| (self.text.clone(), self.revision))
+    }
+
+    pub(crate) fn measure_longest_line(text: &Rope) -> usize {
+        measure_rope_lines(text)
+    }
+
+    pub(crate) fn apply_longest_line_measurement(&mut self, revision: u64, longest: usize) -> bool {
+        if revision != self.revision || !self.longest_line_stale {
+            return false;
+        }
+        self.longest_line_chars = longest;
+        self.longest_line_stale = false;
+        true
     }
 
     pub(crate) fn line_byte_range(&self, row: usize) -> Option<Range<usize>> {
@@ -196,8 +218,12 @@ impl CodeDocument {
         }
         let start_byte = self.snap_to_boundary(byte_offset);
         let start_point = self.point_at(start_byte);
+        let may_shrink_longest = normalized.contains('\n')
+            && self.line_chars(start_point.row) == self.longest_line_chars;
         let char_idx = self.text.byte_to_char(start_byte);
         self.text.insert(char_idx, &normalized);
+        self.revision = self.revision.wrapping_add(1);
+        self.longest_line_stale |= may_shrink_longest;
 
         let new_end_byte = start_byte + normalized.len();
         let new_end_point = self.point_at(new_end_byte);
@@ -223,9 +249,13 @@ impl CodeDocument {
         }
         let start_point = self.point_at(start_byte);
         let old_end_point = self.point_at(old_end_byte);
+        let may_shrink_longest = start_point.row != old_end_point.row
+            || self.line_chars(start_point.row) == self.longest_line_chars;
         let start_char = self.text.byte_to_char(start_byte);
         let end_char = self.text.byte_to_char(old_end_byte);
         self.text.remove(start_char..end_char);
+        self.revision = self.revision.wrapping_add(1);
+        self.longest_line_stale |= may_shrink_longest;
 
         self.remeasure_rows(start_point.row, start_point.row);
         Some(CodeEdit {
@@ -286,13 +316,6 @@ impl CodeDocument {
         self.line(row).map_or(0, |l| l.len_chars())
     }
 
-    fn measure_all_lines(&self) -> usize {
-        (0..self.text.len_lines())
-            .map(|row| self.line_chars(row))
-            .max()
-            .unwrap_or(0)
-    }
-
     fn remeasure_rows(&mut self, first_row: usize, last_row: usize) {
         let last = last_row.min(self.text.len_lines().saturating_sub(1));
         for row in first_row..=last {
@@ -302,6 +325,35 @@ impl CodeDocument {
             }
         }
     }
+}
+
+fn measure_text_lines(text: &str) -> usize {
+    if text.is_ascii() {
+        return text
+            .as_bytes()
+            .split(|byte| *byte == b'\n')
+            .map(<[u8]>::len)
+            .max()
+            .unwrap_or(0);
+    }
+    text.split('\n')
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0)
+}
+
+fn measure_rope_lines(text: &Rope) -> usize {
+    let mut longest = 0usize;
+    let mut current = 0usize;
+    for ch in text.chars() {
+        if ch == '\n' {
+            longest = longest.max(current);
+            current = 0;
+        } else {
+            current += 1;
+        }
+    }
+    longest.max(current)
 }
 
 pub(crate) fn normalize_newlines(text: &str) -> Cow<'_, str> {
@@ -477,12 +529,45 @@ mod tests {
         assert_eq!(d.longest_line_chars(), 10);
         d.remove(0..8).expect("remove");
         assert_eq!(d.longest_line_chars(), 10);
+        let (snapshot, revision) = d.longest_line_snapshot().expect("stale maximum");
+        let longest = CodeDocument::measure_longest_line(&snapshot);
+        assert!(d.apply_longest_line_measurement(revision, longest));
+        assert_eq!(d.longest_line_chars(), 4);
     }
 
     #[test]
     fn longest_line_counts_characters_not_bytes() {
         let d = doc("ééé\nab\n");
         assert_eq!(d.longest_line_chars(), 3);
+    }
+
+    #[test]
+    fn a_non_longest_line_edit_does_not_request_a_global_measurement() {
+        let mut d = doc("longest line\nshort\n");
+        d.remove(13..14).expect("remove from short line");
+        assert!(d.longest_line_snapshot().is_none());
+    }
+
+    #[test]
+    fn a_multiline_removal_requests_one_global_measurement() {
+        let mut d = doc("longest line\nfirst\nsecond\n");
+        d.remove(13..25).expect("remove across short lines");
+        let (snapshot, revision) = d.longest_line_snapshot().expect("stale maximum");
+        let longest = CodeDocument::measure_longest_line(&snapshot);
+        assert!(d.apply_longest_line_measurement(revision, longest));
+        assert_eq!(d.longest_line_chars(), 12);
+    }
+
+    #[test]
+    fn a_stale_longest_line_measurement_cannot_overwrite_a_newer_edit() {
+        let mut d = doc("longest\nshort\n");
+        d.remove(0..3).expect("shrink longest");
+        let (snapshot, revision) = d.longest_line_snapshot().expect("stale maximum");
+        let longest = CodeDocument::measure_longest_line(&snapshot);
+        d.insert(d.len_bytes(), "much longer now")
+            .expect("new edit");
+        assert!(!d.apply_longest_line_measurement(revision, longest));
+        assert_eq!(d.longest_line_chars(), 15);
     }
 
     #[test]

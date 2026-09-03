@@ -64,7 +64,7 @@ platform shaper.
 | Metric | Unit | What it captures |
 |---|---|---|
 | `open_300kb_highlighted` | ns | A 300 KB Rust file opened: rope build, longest-line measure, tree-sitter parse, and an explicit query of the first 60-row viewport. The current eager implementation also performs its full-document query inside this measurement. |
-| `open_3_7mb` | ns | A 3.7 MB Rust file opened, past the 300 KB highlight cap, so the value is dominated by the rope build and `measure_all_lines`. |
+| `open_3_7mb` | ns | A 3.7 MB Rust file opened past the 300 KB highlight cap, covering the rope build and the source-string longest-line scan. |
 | `open_markdown_injected` | ns | A 64 KB Markdown file opened, the only corpus that runs a second grammar pass through the inline injection. |
 | `keystroke_to_runs` | ns | Render-thread work of one inserted character at a pseudo-random row of 300 KB of Rust. Its `p95` column is the `keystroke_to_runs_p95` target of the PRD. Deferred parses run outside the timer; the `apply_parsed` requery they trigger is inside it. |
 | `viewport_query_60_rows` | ns | The highlight query for one 60-row viewport, the work a viewport-bounded requery would do per frame. |
