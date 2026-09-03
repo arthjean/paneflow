@@ -511,12 +511,20 @@ jobs:
             # Copy exactly what a reviewed prebuilt tree carries. build.zig.zon
             # and the build evidence stay out of the repository, and lib/ is
             # gitignored: the archive is copied so the consumer build below
-            # links it, but it ships as a release asset, not as a commit.
-            for entry in bindings.rs build-info.txt headers.sha256 symbols.txt include lib; do
+            # links it, but it ships as a release asset, not as a commit. Only
+            # the Windows tree tracks the full installed header set, indexed by
+            # headers.sha256; the Linux and macOS trees carry vt.h alone.
+            for entry in bindings.rs build-info.txt headers.sha256 symbols.txt lib; do
               if [ -e "$src/$entry" ]; then
                 cp -r "$src/$entry" "$dst/$entry"
               fi
             done
+            if [ "$target" = "x86_64-pc-windows-msvc" ]; then
+              cp -r "$src/include" "$dst/include"
+            else
+              mkdir -p "$dst/include/ghostty"
+              cp "$src/include/ghostty/vt.h" "$dst/include/ghostty/vt.h"
+            fi
             if [ ! -d "$dst/lib" ]; then
               echo "::error::$target produced no lib/ directory"
               exit 1
