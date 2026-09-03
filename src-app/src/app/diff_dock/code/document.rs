@@ -252,33 +252,12 @@ impl CodeDocument {
     pub(crate) fn byte_to_utf16(&self, offset: usize) -> usize {
         let offset = self.snap_to_boundary(offset);
         let char_idx = self.text.byte_to_char(offset);
-        self.text
-            .slice(..char_idx)
-            .chunks()
-            .map(utf16_len)
-            .sum::<usize>()
+        self.text.char_to_utf16_cu(char_idx)
     }
 
     pub(crate) fn utf16_to_byte(&self, target: usize) -> usize {
-        let mut units = 0usize;
-        let mut byte = 0usize;
-        for chunk in self.text.chunks() {
-            let chunk_units = utf16_len(chunk);
-            if units + chunk_units < target {
-                units += chunk_units;
-                byte += chunk.len();
-                continue;
-            }
-            for ch in chunk.chars() {
-                if units >= target {
-                    return byte;
-                }
-                units += ch.len_utf16();
-                byte += ch.len_utf8();
-            }
-            return byte;
-        }
-        byte
+        let target = target.min(self.text.len_utf16_cu());
+        self.text.char_to_byte(self.text.utf16_cu_to_char(target))
     }
 
     pub(crate) fn to_disk_string(&self) -> String {
@@ -322,14 +301,6 @@ impl CodeDocument {
                 self.longest_line_chars = chars;
             }
         }
-    }
-}
-
-fn utf16_len(chunk: &str) -> usize {
-    if chunk.is_ascii() {
-        chunk.len()
-    } else {
-        chunk.chars().map(char::len_utf16).sum()
     }
 }
 
@@ -512,6 +483,17 @@ mod tests {
     fn longest_line_counts_characters_not_bytes() {
         let d = doc("ééé\nab\n");
         assert_eq!(d.longest_line_chars(), 3);
+    }
+
+    #[test]
+    fn utf16_offsets_use_rope_metadata_and_clamp_to_character_boundaries() {
+        let d = doc("a👍🏽z");
+        assert_eq!(d.byte_to_utf16(0), 0);
+        assert_eq!(d.byte_to_utf16(1), 1);
+        assert_eq!(d.byte_to_utf16(5), 3);
+        assert_eq!(d.utf16_to_byte(2), 1);
+        assert_eq!(d.utf16_to_byte(4), 5);
+        assert_eq!(d.utf16_to_byte(usize::MAX), d.len_bytes());
     }
 
     #[test]
