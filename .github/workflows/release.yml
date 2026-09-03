@@ -2198,11 +2198,17 @@ jobs:
     steps:
       - name: Refresh zypper repos (retry on transient mirror flake)
         # Tumbleweed's container image ships with stale repo metadata
-        # roughly half the time; refresh once, retry on flake. The OSS
-        # repo also serves a large AppStream metadata blob that can exceed
-        # libzypp's default transfer timeout from GitHub-hosted runners.
+        # roughly half the time; refresh once, retry on flake. The repo
+        # files point at download.opensuse.org, which redirects every file
+        # to a community mirror that is regularly lagging or dead from
+        # US-hosted runners (60 s connect timeouts on appdata.xml.gz);
+        # downloadcontentcdn.opensuse.org is the MirrorCache origin behind
+        # Fastly and serves every file itself. Same fix as the package
+        # smoke in libghostty-linux.yml.
         run: |
           set -euo pipefail
+          sed -i 's#^baseurl=https\?://download\.opensuse\.org/#baseurl=https://downloadcontentcdn.opensuse.org/#' /etc/zypp/repos.d/*.repo
+          grep -q 'downloadcontentcdn' /etc/zypp/repos.d/*.repo
           mkdir -p /etc/zypp
           touch /etc/zypp/zypp.conf
           sed -i \

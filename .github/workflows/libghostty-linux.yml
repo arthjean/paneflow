@@ -508,19 +508,26 @@ jobs:
               notice=/usr/share/doc/paneflow/THIRD_PARTY_NOTICES.md
               ;;
             opensuse)
-              # Tumbleweed rolls daily and the mirror drops superseded repodata
-              # faster than the `:latest` image's baked cache is rebuilt, so the
-              # install fails with "not found on medium", skips the OSS repo,
-              # and then reports "No provider of 'binutils' found" (exit 104).
-              # A forced refresh re-reads repomd.xml; the retry covers the
-              # window where the mirror is mid-sync. Observed twice.
+              # download.opensuse.org and cdn.opensuse.org answer every repodata
+              # and RPM request with a 302 to a nearby community mirror, and from
+              # a US-hosted runner that mirror is regularly lagging or dead: both
+              # 2026-09-03 failures burned 60 s connect timeouts on the 9 MB
+              # appdata.xml.gz through all three retries, and a rerun on another
+              # runner passed. libzypp downloads appdata unconditionally, so the
+              # fix is the host: downloadcontentcdn.opensuse.org is the MirrorCache
+              # origin behind Fastly and serves every file itself. The `:latest`
+              # image's baked metadata still goes stale, so the forced refresh
+              # stays, and the retry now only covers a publish in progress.
+              sed -i 's#^baseurl=https\?://download\.opensuse\.org/#baseurl=https://downloadcontentcdn.opensuse.org/#' /etc/zypp/repos.d/*.repo
+              grep -q 'downloadcontentcdn' /etc/zypp/repos.d/*.repo
+              zypper --non-interactive repos --uri
               refreshed=0
               for attempt in 1 2 3; do
                 if zypper --non-interactive --no-gpg-checks refresh --force; then
                   refreshed=1
                   break
                 fi
-                echo "::warning::zypper refresh failed (attempt $attempt/3); Tumbleweed mirror is probably mid-sync"
+                echo "::warning::zypper refresh failed (attempt $attempt/3)"
                 sleep $((attempt * 20))
               done
               if [ "$refreshed" -ne 1 ]; then
