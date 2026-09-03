@@ -146,6 +146,8 @@ ZIG_LIB_DIR="$(printf '%s\n' "$ZIG_ENV" | sed -n 's/^ *\.lib_dir = "\(.*\)",$/\1
 command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 1; }
 command -v file >/dev/null || { echo "file is required to verify Mach-O members" >&2; exit 1; }
 command -v tar >/dev/null || { echo "tar is required to export the canonical source tree" >&2; exit 1; }
+command -v taskset >/dev/null || { echo "taskset from util-linux is required to pin the Zig compiler to one CPU" >&2; exit 1; }
+BUILD_CPU="$(taskset -cp $$ | sed 's/.*: //' | cut -d, -f1 | cut -d- -f1)"
 
 LLVM_BIN="${PANEFLOW_LLVM_BIN:-}"
 if [[ -z "$LLVM_BIN" ]] && command -v rustc >/dev/null; then
@@ -301,7 +303,7 @@ build_one() {
   (
     cd "$CANONICAL_ROOT"
     ZIG_GLOBAL_CACHE_DIR="$CANONICAL_CACHE/global" ZIG_LOCAL_CACHE_DIR="$CANONICAL_CACHE/local" \
-      "$CANONICAL_ZIG_ROOT/zig" build \
+      taskset -c "$BUILD_CPU" "$CANONICAL_ZIG_ROOT/zig" build \
       --zig-lib-dir "$CANONICAL_ZIG_ROOT/lib" \
       -Demit-lib-vt=true \
       -Dtarget="$target" \
@@ -319,7 +321,7 @@ build_one() {
   [[ -f "$archive" ]] || { echo "missing static archive: $archive" >&2; return 1; }
   [[ -f "$output/$HEADER_PATH" ]] || { echo "missing installed header: $output/$HEADER_PATH" >&2; return 1; }
   case "$archive_normalization" in
-    fixed-zig-source-cache-prefix+zig-build-seed*+llvm-strip-debug+llvm-ar-D-darwin) normalize_archive "$archive" ;;
+    fixed-zig-source-cache-prefix+zig-build-seed0-j1-cpu1+llvm-strip-debug+llvm-ar-D-darwin) normalize_archive "$archive" ;;
     *) echo "unsupported archive normalization: $archive_normalization" >&2; return 1 ;;
   esac
   "$LLVM_NM" -g --defined-only "$archive" | grep -E "[[:space:]]_?${build_info_symbol}$" >/dev/null || {

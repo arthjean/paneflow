@@ -20,6 +20,12 @@ name: libghostty bump
 # by this run. A pull request lane only checks the published archive against
 # the manifest hash, which a bump commit writes itself, so a bump that did not
 # establish its own provenance would be circular.
+#
+# `recipe_repin` rebuilds and republishes the archives at the commit the
+# manifest already pins, for the case where a build recipe changed and the
+# hashes have to move without a Ghostty bump. The release tag then carries the
+# Paneflow commit that holds the recipe, so it never collides with the bump
+# release of the same Ghostty commit.
 
 on:
   schedule:
@@ -34,6 +40,11 @@ on:
         type: string
       dry_run:
         description: "Build and verify without opening a pull request"
+        required: false
+        type: boolean
+        default: false
+      recipe_repin:
+        description: "Rebuild and republish the archives at the current pin after a recipe change"
         required: false
         type: boolean
         default: false
@@ -59,6 +70,8 @@ jobs:
       source_sha: ${{ steps.target.outputs.source_sha }}
       short_sha: ${{ steps.target.outputs.short_sha }}
       current_sha: ${{ steps.target.outputs.current_sha }}
+      release_tag: ${{ steps.target.outputs.release_tag }}
+      bump_id: ${{ steps.target.outputs.bump_id }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -68,6 +81,7 @@ jobs:
         id: target
         env:
           REQUESTED_SHA: ${{ inputs.source_sha }}
+          RECIPE_REPIN: ${{ inputs.recipe_repin }}
         run: |
           manifest_string() {
             sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
@@ -78,6 +92,8 @@ jobs:
               *[!0-9a-f]*) echo "::error::source_sha must be a full lowercase hex commit id"; exit 1 ;;
             esac
             target="$REQUESTED_SHA"
+          elif [ "$RECIPE_REPIN" = "true" ]; then
+            target="$current"
           else
             target="$(git ls-remote "https://github.com/${GHOSTTY_REPOSITORY}.git" HEAD | cut -f1)"
           fi
@@ -85,16 +101,33 @@ jobs:
             echo "::error::could not resolve a full Ghostty commit id (got '$target')"
             exit 1
           fi
+          short="$(printf '%s' "$target" | cut -c1-8)"
           {
             echo "current_sha=$current"
             echo "source_sha=$target"
-            echo "short_sha=$(printf '%s' "$target" | cut -c1-8)"
+            echo "short_sha=$short"
           } >> "$GITHUB_OUTPUT"
-          if [ "$current" = "$target" ]; then
+          if [ "$RECIPE_REPIN" = "true" ]; then
+            if [ "$current" != "$target" ]; then
+              echo "::error::recipe_repin republishes the current pin $current; it cannot bump to $target in the same run"
+              exit 1
+            fi
+            recipe="$(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
+            {
+              echo "needed=true"
+              echo "release_tag=libghostty-vt-$target-recipe-$recipe"
+              echo "bump_id=$short-recipe-$recipe"
+            } >> "$GITHUB_OUTPUT"
+            echo "republishing $target with the recipe at $recipe"
+          elif [ "$current" = "$target" ]; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
             echo "already pinned to $target"
           else
-            echo "needed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "needed=true"
+              echo "release_tag=libghostty-vt-$target"
+              echo "bump_id=$short"
+            } >> "$GITHUB_OUTPUT"
             echo "bumping $current -> $target"
           fi
 
@@ -141,6 +174,7 @@ jobs:
           SOURCE_DIR: ${{ github.workspace }}/.ghostty-source
           SOURCE_SHA: ${{ steps.target.outputs.source_sha }}
           SHORT_SHA: ${{ steps.target.outputs.short_sha }}
+          RELEASE_TAG: ${{ steps.target.outputs.release_tag }}
         run: |
           manifest_string() {
             sed -n "s/^$1 = \"\(.*\)\"$/\1/p" native/libghostty/manifest.toml
@@ -175,7 +209,7 @@ jobs:
             --set "windows_source_date_epoch=$epoch" \
             --set "macos_canonical_source_path=${macos_root%$old_short}$SHORT_SHA" \
             --set "windows_canonical_source_path=${windows_root%$old_short}$SHORT_SHA" \
-            --set "archive_release_tag=libghostty-vt-$SOURCE_SHA" \
+            --set "archive_release_tag=$RELEASE_TAG" \
             --set-license "libghostty-vt:version=${api_version}-dev@$SOURCE_SHA"
 
           git --no-pager diff -- native/libghostty/manifest.toml
@@ -546,9 +580,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
           RELEASE_ASSETS: ${{ runner.temp }}/release-assets
         run: |
-          tag="libghostty-vt-$SOURCE_SHA"
+          tag="$RELEASE_TAG"
           if gh release view "$tag" >/dev/null 2>&1; then
             echo "::error::release $tag already exists. Delete it, or finish the bump that is already open."
             exit 1
@@ -556,7 +591,7 @@ jobs:
           gh release create "$tag" \
             --prerelease \
             --target "$GITHUB_SHA" \
-            --title "libghostty-vt $SOURCE_SHA" \
+            --title "$tag" \
             --notes "Native libghostty-vt archives for Ghostty \`$SOURCE_SHA\`, built by the libghostty bump workflow (run ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}). Not a Paneflow release: \`native/libghostty/manifest.toml\` pins these assets by SHA-256 and \`scripts/fetch-libghostty.sh\` downloads them. Verify provenance with \`gh attestation verify <asset> --repo ${GITHUB_REPOSITORY}\`." \
             "$RELEASE_ASSETS"/*
 
@@ -567,8 +602,16 @@ jobs:
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           SHORT_SHA: ${{ needs.resolve.outputs.short_sha }}
           CURRENT_SHA: ${{ needs.resolve.outputs.current_sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          BUMP_ID: ${{ needs.resolve.outputs.bump_id }}
+          RECIPE_REPIN: ${{ inputs.recipe_repin }}
         run: |
-          branch="bot/libghostty-$SHORT_SHA"
+          branch="bot/libghostty-$BUMP_ID"
+          if [ "$RECIPE_REPIN" = "true" ]; then
+            title="chore(libghostty): republish libghostty-vt $SHORT_SHA for the recipe at $(printf '%s' "$GITHUB_SHA" | cut -c1-8)"
+          else
+            title="chore(libghostty): re-pin libghostty-vt to $SHORT_SHA"
+          fi
           # Never overwrite an existing bump branch. A human fixing a binding
           # break works on exactly this branch, and a re-run must not throw
           # that away.
@@ -584,17 +627,21 @@ jobs:
             echo "::error::the bump produced no change to commit"
             exit 1
           fi
-          git commit -m "chore(libghostty): re-pin libghostty-vt to $SHORT_SHA"
+          git commit -m "$title"
           git push origin "$branch"
 
           {
-            echo "Re-pins libghostty-vt from \`$CURRENT_SHA\` to \`$SOURCE_SHA\`."
-            echo
-            echo "Upstream range: https://github.com/${GHOSTTY_REPOSITORY}/compare/${CURRENT_SHA}...${SOURCE_SHA}"
+            if [ "$RECIPE_REPIN" = "true" ]; then
+              echo "Republishes the libghostty-vt archives at \`$SOURCE_SHA\` after a build recipe change in Paneflow \`$GITHUB_SHA\`; the Ghostty pin does not move."
+            else
+              echo "Re-pins libghostty-vt from \`$CURRENT_SHA\` to \`$SOURCE_SHA\`."
+              echo
+              echo "Upstream range: https://github.com/${GHOSTTY_REPOSITORY}/compare/${CURRENT_SHA}...${SOURCE_SHA}"
+            fi
             echo
             echo "The four archives were rebuilt from the pinned source in the run that"
             echo "opened this pull request and published as the pre-release"
-            echo "\`libghostty-vt-$SOURCE_SHA\` with a build-provenance attestation."
+            echo "\`$RELEASE_TAG\` with a build-provenance attestation."
             echo "Linux and macOS were additionally proven reproducible with two clean"
             echo "builds; Windows is built once. The libghostty lanes below only check a"
             echo "published archive against its manifest hash, and a bump commit writes"
@@ -611,7 +658,7 @@ jobs:
           } > "$RUNNER_TEMP/pr-body.md"
 
           gh pr create \
-            --title "chore(libghostty): re-pin libghostty-vt to $SHORT_SHA" \
+            --title "$title" \
             --body-file "$RUNNER_TEMP/pr-body.md" \
             --base main \
             --head "$branch"

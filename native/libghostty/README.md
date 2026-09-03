@@ -49,6 +49,17 @@ caches and compares the normalized archive, header, bindings, and build info.
 Zig cache paths are removed from ELF debug data with `eu-strip`, then members
 are repacked with deterministic `ar` mode.
 
+The `zig build` step runs under `taskset` on one CPU. `zig build -j1` only
+limits how many build steps the build runner drives at once; the
+`zig build-lib` child sizes its own thread pool from the CPU count, and with
+two or more threads the machine code it emits for
+`terminal.formatter.PageFormatter.formatWithState` in
+`libghostty-vt-static_zcu.o` differs by a few bytes between otherwise
+identical builds. Every other archive member is stable. On one CPU the whole
+archive is byte-identical from build to build, which is what the
+`zig-build-seed0-j1-cpu1` recipe token records; see
+[docs/release/libghostty-linux.md](../../docs/release/libghostty-linux.md).
+
 ## macOS arm64 archive
 
 The reviewed Apple Silicon input is `prebuilt/aarch64-apple-darwin/`. It is
@@ -73,9 +84,9 @@ the pinned tree is exported to `macos_canonical_source_path`, the Zig
 executable and `lib/` tree are staged at `macos_canonical_zig_path` and invoked
 through `--zig-lib-dir`, and the Zig cache and install prefix are nested under
 the canonical source root. Both staged roots are removed on success and on
-failure. `--seed 0 -j1` pins Zig's build order, `llvm-strip -S` strips each
-member, and `llvm-ar crsD --format=darwin` repacks them in `LC_ALL=C` basename
-order.
+failure. `--seed 0 -j1` pins Zig's build order, `taskset` pins the compiler to
+one CPU (see the Linux section), `llvm-strip -S` strips each member, and
+`llvm-ar crsD --format=darwin` repacks them in `LC_ALL=C` basename order.
 
 The produced archive hash is compared against the manifest's `archive_sha256`
 before the bundle is written; a mismatch aborts the build.
@@ -129,15 +140,19 @@ library test files that Zig 0.16.0 analyzes.
 
 Clean upstream builds are not bit-for-bit reproducible on Windows with
 `--seed 0 -j1`: the drift sits in the generated `ghostty-vt-static_zcu.obj`
-code for `PageFormatter.formatWithState`. Paneflow used to force determinism
-with a source patch that split that formatter into out-of-line helpers, and
-retired it because the patch had to be rebased against every upstream change
-to `src/terminal/formatter.zig`. The Windows archive is therefore built once,
-by `libghostty-bump.yml`, and its provenance is the build-provenance
-attestation that run publishes with the release asset rather than a second
-matching build. The recipe still fixes every input it can (seed, jobs, paths,
-toolchain versions, normalization), which keeps the archive stable in practice
-and keeps `build-info.txt` an exact record of how it was produced.
+code for `PageFormatter.formatWithState`. That drift is not Windows-specific:
+it comes from the Zig compiler's thread pool, which `zig build -j1` does not
+limit, and the Linux and macOS recipes remove it by pinning the compiler to
+one CPU (see the Linux section). Paneflow used to force determinism on
+Windows with a source patch that split that formatter into out-of-line
+helpers, and retired it because the patch had to be rebased against every
+upstream change to `src/terminal/formatter.zig`. The Windows recipe does not
+pin CPU affinity yet, so the Windows archive is still built once, by
+`libghostty-bump.yml`, and its provenance is the build-provenance attestation
+that run publishes with the release asset rather than a second matching build.
+The recipe still fixes every input it can (seed, jobs, paths, toolchain
+versions, normalization) and keeps `build-info.txt` an exact record of how it
+was produced.
 
 The export is built at fixed source, cache, and prefix paths. Ghostty asks Zig
 to link ntdll and kernel32 into the static library, and a static Zig link
@@ -186,8 +201,11 @@ static plus reviewed system link directives.
 ## Bumping the pinned source
 
 `.github/workflows/libghostty-bump.yml` performs the re-pin. It runs weekly and
-on demand (`workflow_dispatch` accepts an explicit `source_sha`, and a `dry_run`
-input builds everything without publishing). It stages the manifest onto the
+on demand (`workflow_dispatch` accepts an explicit `source_sha`; `dry_run`
+builds everything without publishing; `recipe_repin` rebuilds and republishes
+the archives at the current pin after a build recipe change, under a
+`libghostty-vt-<sha>-recipe-<paneflow sha>` tag that cannot collide with the
+bump release). It stages the manifest onto the
 target commit, regenerates the bindings, rebuilds all four reviewed targets
 with `--allow-hash-drift` (Linux and macOS additionally with
 `--verify-reproducible`), writes the hashes those builds produced, attests the

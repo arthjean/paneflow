@@ -569,8 +569,7 @@ mod tests {
         const HEADER: &str = "#define GHOSTTY_VT 1\n";
         const BINDINGS: &str = "// generated bindings\n";
         const ARCHIVE: &[u8] = b"!<arch>\nfixture";
-        const NORMALIZATION: &str =
-            "fixed-zig-source-cache-prefix+zig-build-seed0-j1+llvm-strip-debug+llvm-ar-D-darwin";
+        const NORMALIZATION: &str = "fixed-zig-source-cache-prefix+zig-build-seed0-j1-cpu1+llvm-strip-debug+llvm-ar-D-darwin";
 
         fs::create_dir_all(root.join("include/ghostty"))?;
         fs::create_dir_all(root.join("lib"))?;
