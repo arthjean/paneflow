@@ -21,7 +21,7 @@ use super::bench_corpus::{
 };
 use super::cursor::CodeSelection;
 use super::document::CodeDocument;
-use super::edit::{EditGroup, UndoHistory, splice};
+use super::edit::{EditGroup, UndoHistory, disk_splices, splice};
 use super::element::CODE_FONT_SIZE;
 use super::highlight::{CodeHighlighter, HighlightOutcome};
 
@@ -436,18 +436,23 @@ fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         let mut text = String::with_capacity(corpora.reload_rust.len() + 64);
         text.push_str(&corpora.reload_rust);
         text.push_str(&format!("const AGENT_ROUND_{round}: usize = {round};\n"));
-        let len = doc.len_bytes();
-        let Some(applied) = splice(&mut doc, 0..len, &text) else {
-            continue;
-        };
-        for change in &applied.edits {
-            if let HighlightOutcome::Deferred(parse) = highlighter.edit(&doc, change) {
-                let parsed = parse.run();
-                highlighter.apply_parsed(&doc, parsed);
+        let current = doc.text().to_string();
+        let ops = disk_splices(&current, &text);
+        let mut records = Vec::with_capacity(ops.len());
+        for (range, inserted) in ops {
+            let Some(applied) = splice(&mut doc, range, &inserted) else {
+                continue;
+            };
+            for change in &applied.edits {
+                if let HighlightOutcome::Deferred(parse) = highlighter.edit(&doc, change) {
+                    let parsed = parse.run();
+                    highlighter.apply_parsed(&doc, parsed);
+                }
             }
+            records.push(applied.record);
         }
         history.push(
-            vec![applied.record],
+            records,
             CodeSelection::at(0),
             CodeSelection::at(0),
             EditGroup::Atomic,

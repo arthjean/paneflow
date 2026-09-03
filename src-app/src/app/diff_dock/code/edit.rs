@@ -3,12 +3,18 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
+use imara_diff::intern::InternedInput;
+use imara_diff::sources::lines_with_terminator;
+use imara_diff::{Algorithm, Sink};
+
 use super::cursor::CodeSelection;
 use super::document::{CodeDocument, CodeEdit, normalize_newlines};
 
 pub(crate) const UNDO_GROUP_INTERVAL: Duration = Duration::from_millis(300);
 
 pub(crate) const MAX_UNDO_TRANSACTIONS: usize = 1000;
+
+pub(crate) const MAX_UNDO_BYTES: usize = 32 * 1024 * 1024;
 
 const INDENT_WIDTHS: Range<usize> = 2..9;
 
@@ -70,6 +76,133 @@ pub(crate) fn splice(doc: &mut CodeDocument, range: Range<usize>, text: &str) ->
     })
 }
 
+#[derive(Default)]
+struct DiskHunkCollector {
+    hunks: Vec<(Range<u32>, Range<u32>)>,
+}
+
+impl Sink for DiskHunkCollector {
+    type Out = Vec<(Range<u32>, Range<u32>)>;
+
+    fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
+        self.hunks.push((before, after));
+    }
+
+    fn finish(self) -> Self::Out {
+        self.hunks
+    }
+}
+
+pub(crate) fn disk_splices(current: &str, incoming: &str) -> Vec<(Range<usize>, String)> {
+    let incoming = normalize_newlines(incoming);
+    if current == incoming {
+        return Vec::new();
+    }
+
+    let current_lines: Vec<&str> = lines_with_terminator(current).collect();
+    let incoming_lines: Vec<&str> = lines_with_terminator(&incoming).collect();
+    let mut prefix = 0usize;
+    while prefix < current_lines.len()
+        && prefix < incoming_lines.len()
+        && current_lines[prefix] == incoming_lines[prefix]
+    {
+        prefix += 1;
+    }
+
+    let mut suffix = 0usize;
+    while suffix < current_lines.len().saturating_sub(prefix)
+        && suffix < incoming_lines.len().saturating_sub(prefix)
+        && current_lines[current_lines.len() - suffix - 1]
+            == incoming_lines[incoming_lines.len() - suffix - 1]
+    {
+        suffix += 1;
+    }
+
+    let current_start = current_lines[..prefix]
+        .iter()
+        .map(|line| line.len())
+        .sum::<usize>();
+    let incoming_start = incoming_lines[..prefix]
+        .iter()
+        .map(|line| line.len())
+        .sum::<usize>();
+    let current_end = current.len()
+        - current_lines[current_lines.len().saturating_sub(suffix)..]
+            .iter()
+            .map(|line| line.len())
+            .sum::<usize>();
+    let incoming_end = incoming.len()
+        - incoming_lines[incoming_lines.len().saturating_sub(suffix)..]
+            .iter()
+            .map(|line| line.len())
+            .sum::<usize>();
+    let current_middle = &current[current_start..current_end];
+    let incoming_middle = &incoming[incoming_start..incoming_end];
+    let current_offsets = line_offsets(current_middle);
+    let incoming_offsets = line_offsets(incoming_middle);
+    let input = InternedInput::new(
+        lines_with_terminator(current_middle),
+        lines_with_terminator(incoming_middle),
+    );
+    let hunks = imara_diff::diff(Algorithm::Histogram, &input, DiskHunkCollector::default());
+    let mut splices = Vec::with_capacity(hunks.len());
+    for (before, after) in hunks {
+        let before_start = current_start + current_offsets[before.start as usize];
+        let before_end = current_start + current_offsets[before.end as usize];
+        let after_start = incoming_offsets[after.start as usize];
+        let after_end = incoming_offsets[after.end as usize];
+        splices.push((
+            before_start..before_end,
+            incoming_middle[after_start..after_end].to_string(),
+        ));
+    }
+    splices.reverse();
+    splices
+}
+
+pub(crate) fn shift_selection_for_splices(
+    selection: CodeSelection,
+    splices_descending: &[(Range<usize>, String)],
+) -> CodeSelection {
+    CodeSelection {
+        anchor: shift_offset_for_splices(selection.anchor, splices_descending),
+        head: shift_offset_for_splices(selection.head, splices_descending),
+    }
+}
+
+fn line_offsets(text: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    offsets.push(0);
+    let mut total = 0usize;
+    for line in lines_with_terminator(text) {
+        total += line.len();
+        offsets.push(total);
+    }
+    offsets
+}
+
+fn shift_offset_for_splices(offset: usize, splices_descending: &[(Range<usize>, String)]) -> usize {
+    let mut delta = 0isize;
+    for (range, inserted) in splices_descending.iter().rev() {
+        if range.is_empty() {
+            if offset >= range.start {
+                delta += inserted.len() as isize;
+            }
+            continue;
+        }
+        if offset <= range.start {
+            break;
+        }
+        if offset >= range.end {
+            delta += inserted.len() as isize - range.len() as isize;
+            continue;
+        }
+        return (range.start as isize + delta + (offset - range.start).min(inserted.len()) as isize)
+            .max(0) as usize;
+    }
+    (offset as isize + delta).max(0) as usize
+}
+
 fn apply_forward(doc: &mut CodeDocument, record: &AppliedEdit) -> Vec<CodeEdit> {
     raw_splice(doc, record.removed_range(), &record.inserted)
 }
@@ -114,18 +247,45 @@ struct Transaction {
     after: CodeSelection,
 }
 
+impl Transaction {
+    fn bytes(&self) -> usize {
+        self.edits.iter().fold(0usize, |total, edit| {
+            total.saturating_add(edit.removed.len().saturating_add(edit.inserted.len()))
+        })
+    }
+}
+
 pub(crate) struct HistoryStep {
     pub(crate) edits: Vec<CodeEdit>,
     pub(crate) selection: CodeSelection,
 }
 
-#[derive(Default)]
 pub(crate) struct UndoHistory {
     undo: VecDeque<Transaction>,
     redo: Vec<Transaction>,
+    undo_bytes: usize,
+    redo_bytes: usize,
+    base_mark: HistoryMark,
     next_id: u64,
     open: bool,
     last_edit_at: Option<Instant>,
+    max_bytes: usize,
+}
+
+impl Default for UndoHistory {
+    fn default() -> Self {
+        Self {
+            undo: VecDeque::new(),
+            redo: Vec::new(),
+            undo_bytes: 0,
+            redo_bytes: 0,
+            base_mark: HistoryMark::Baseline,
+            next_id: 0,
+            open: false,
+            last_edit_at: None,
+            max_bytes: MAX_UNDO_BYTES,
+        }
+    }
 }
 
 impl UndoHistory {
@@ -141,6 +301,7 @@ impl UndoHistory {
             return;
         }
         self.redo.clear();
+        self.redo_bytes = 0;
 
         let joinable = group == EditGroup::Typing
             && self.open
@@ -148,23 +309,28 @@ impl UndoHistory {
                 .last_edit_at
                 .is_some_and(|last| now.saturating_duration_since(last) <= UNDO_GROUP_INTERVAL);
         if joinable && let Some(top) = self.undo.back_mut() {
+            let added_bytes = edits.iter().fold(0usize, |total, edit| {
+                total.saturating_add(edit.removed.len().saturating_add(edit.inserted.len()))
+            });
             top.edits.extend(edits);
             top.after = after;
+            self.undo_bytes = self.undo_bytes.saturating_add(added_bytes);
+            self.trim_undo();
             self.last_edit_at = Some(now);
             return;
         }
 
         let id = self.next_id;
         self.next_id += 1;
-        self.undo.push_back(Transaction {
+        let transaction = Transaction {
             id,
             edits,
             before,
             after,
-        });
-        if self.undo.len() > MAX_UNDO_TRANSACTIONS {
-            self.undo.pop_front();
-        }
+        };
+        self.undo_bytes = self.undo_bytes.saturating_add(transaction.bytes());
+        self.undo.push_back(transaction);
+        self.trim_undo();
         self.open = group == EditGroup::Typing;
         self.last_edit_at = Some(now);
     }
@@ -176,37 +342,58 @@ impl UndoHistory {
     pub(crate) fn undo(&mut self, doc: &mut CodeDocument) -> Option<HistoryStep> {
         self.open = false;
         let transaction = self.undo.pop_back()?;
+        let bytes = transaction.bytes();
+        self.undo_bytes = self.undo_bytes.saturating_sub(bytes);
         let mut edits = Vec::new();
         for record in transaction.edits.iter().rev() {
             edits.extend(apply_reverse(doc, record));
         }
         let selection = transaction.before;
         self.redo.push(transaction);
+        self.redo_bytes = self.redo_bytes.saturating_add(bytes);
         Some(HistoryStep { edits, selection })
     }
 
     pub(crate) fn redo(&mut self, doc: &mut CodeDocument) -> Option<HistoryStep> {
         self.open = false;
         let transaction = self.redo.pop()?;
+        let bytes = transaction.bytes();
+        self.redo_bytes = self.redo_bytes.saturating_sub(bytes);
         let mut edits = Vec::new();
         for record in &transaction.edits {
             edits.extend(apply_forward(doc, record));
         }
         let selection = transaction.after;
         self.undo.push_back(transaction);
+        self.undo_bytes = self.undo_bytes.saturating_add(bytes);
         Some(HistoryStep { edits, selection })
     }
 
     pub(crate) fn mark(&self) -> HistoryMark {
         match self.undo.back() {
             Some(transaction) => HistoryMark::Transaction(transaction.id),
-            None => HistoryMark::Baseline,
+            None => self.base_mark,
+        }
+    }
+
+    fn trim_undo(&mut self) {
+        while self.undo.len() > MAX_UNDO_TRANSACTIONS
+            || (self.undo_bytes > self.max_bytes && self.undo.len() > 1)
+        {
+            let Some(evicted) = self.undo.pop_front() else {
+                break;
+            };
+            self.undo_bytes = self.undo_bytes.saturating_sub(evicted.bytes());
+            self.base_mark = HistoryMark::Transaction(evicted.id);
         }
     }
 
     pub(crate) fn clear(&mut self) {
         self.undo.clear();
         self.redo.clear();
+        self.undo_bytes = 0;
+        self.redo_bytes = 0;
+        self.base_mark = HistoryMark::Baseline;
         self.open = false;
         self.last_edit_at = None;
     }
@@ -219,6 +406,19 @@ impl UndoHistory {
     #[cfg(test)]
     fn redo_len(&self) -> usize {
         self.redo.len()
+    }
+
+    #[cfg(test)]
+    fn with_max_bytes(max_bytes: usize) -> Self {
+        Self {
+            max_bytes,
+            ..Self::default()
+        }
+    }
+
+    #[cfg(test)]
+    fn retained_bytes(&self) -> usize {
+        self.undo_bytes.saturating_add(self.redo_bytes)
     }
 }
 
@@ -464,6 +664,122 @@ mod tests {
             Instant::now(),
         );
         assert_eq!(history.redo_len(), 0, "a new edit clears the redo branch");
+    }
+
+    #[test]
+    fn disk_splices_apply_disjoint_line_hunks_in_one_plan() {
+        let current = "keep\none\nmiddle\ntwo\ntail\n";
+        let incoming = "keep\nONE!\nmiddle\nTWO!\ntail\n";
+        let ops = disk_splices(current, incoming);
+        assert_eq!(ops.len(), 2, "one operation per disjoint hunk");
+        assert!(ops[0].0.start > ops[1].0.start, "offsets descend");
+
+        let mut d = doc(current);
+        for (range, inserted) in ops {
+            splice(&mut d, range, &inserted).expect("disk hunk applies");
+        }
+        assert_eq!(d.text().to_string(), incoming);
+    }
+
+    #[test]
+    fn disk_splices_normalize_crlf_and_skip_identical_text() {
+        assert!(disk_splices("one\ntwo\n", "one\r\ntwo\r\n").is_empty());
+        let ops = disk_splices("one\ntwo\n", "one\r\nTWO\r\n");
+        assert_eq!(ops, vec![(4..8, "TWO\n".to_string())]);
+    }
+
+    #[test]
+    fn disk_splices_limit_a_ten_line_reload_to_ten_lines() {
+        let current = (0..9_000)
+            .map(|row| format!("line {row:04}\n"))
+            .collect::<String>();
+        let mut incoming_lines = lines_with_terminator(&current)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        for (row, line) in incoming_lines
+            .iter_mut()
+            .enumerate()
+            .take(4_010)
+            .skip(4_000)
+        {
+            *line = format!("changed {row:04}\n");
+        }
+        let incoming = incoming_lines.concat();
+        let ops = disk_splices(&current, &incoming);
+        assert_eq!(ops.len(), 1);
+        let changed = &current[ops[0].0.clone()];
+        assert_eq!(lines_with_terminator(changed).count(), 10);
+
+        let caret = current.find("line 8000").expect("caret line") + 5;
+        let shifted = shift_selection_for_splices(CodeSelection::at(caret), &ops);
+        assert_eq!(
+            shifted.cursor(),
+            incoming.find("line 8000").expect("shifted caret line") + 5
+        );
+    }
+
+    #[test]
+    fn a_single_oversized_transaction_survives_until_the_next_push() {
+        let mut d = doc("");
+        let mut history = UndoHistory::with_max_bytes(8);
+        let sel = CodeSelection::at(0);
+        let large = splice(&mut d, 0..0, "0123456789")
+            .expect("large insert")
+            .record;
+        history.push(vec![large], sel, sel, EditGroup::Atomic, Instant::now());
+        assert_eq!(history.len(), 1);
+        assert_eq!(history.retained_bytes(), 10);
+
+        let end = d.len_bytes();
+        let next = splice(&mut d, end..end, "x").expect("next insert").record;
+        history.push(vec![next], sel, sel, EditGroup::Atomic, Instant::now());
+        assert_eq!(history.len(), 1);
+        assert_eq!(history.retained_bytes(), 1);
+    }
+
+    #[test]
+    fn an_evicted_saved_mark_is_reached_after_newer_edits_are_undone() {
+        let mut d = doc("");
+        let mut history = UndoHistory::with_max_bytes(4);
+        let sel = CodeSelection::at(0);
+        let saved_edit = splice(&mut d, 0..0, "save").expect("saved insert").record;
+        history.push(
+            vec![saved_edit],
+            sel,
+            sel,
+            EditGroup::Atomic,
+            Instant::now(),
+        );
+        let saved_mark = history.mark();
+        let newer = splice(&mut d, 4..4, "!").expect("newer insert").record;
+        history.push(vec![newer], sel, sel, EditGroup::Atomic, Instant::now());
+        assert_ne!(history.mark(), saved_mark);
+        assert_eq!(history.len(), 1, "the saved transaction was evicted");
+
+        history.undo(&mut d).expect("newer edit is undoable");
+        assert_eq!(d.text().to_string(), "save");
+        assert_eq!(history.mark(), saved_mark);
+    }
+
+    #[test]
+    fn a_new_transaction_drops_redo_bytes_before_enforcing_the_budget() {
+        let mut d = doc("");
+        let mut history = UndoHistory::with_max_bytes(16);
+        let sel = CodeSelection::at(0);
+        for text in ["aaaa", "bbbb"] {
+            let end = d.len_bytes();
+            let record = splice(&mut d, end..end, text).expect("insert").record;
+            history.push(vec![record], sel, sel, EditGroup::Atomic, Instant::now());
+        }
+        history.undo(&mut d).expect("undo");
+        assert_eq!(history.retained_bytes(), 8);
+        assert_eq!(history.redo_len(), 1);
+
+        let end = d.len_bytes();
+        let record = splice(&mut d, end..end, "c").expect("branch insert").record;
+        history.push(vec![record], sel, sel, EditGroup::Atomic, Instant::now());
+        assert_eq!(history.redo_len(), 0);
+        assert_eq!(history.retained_bytes(), 5);
     }
 
     #[test]

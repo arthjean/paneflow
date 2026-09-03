@@ -1411,22 +1411,20 @@ impl CodeView {
         let Some(doc) = self.state.document() else {
             return;
         };
-        let previous_lines = doc.line_count();
-        let len = doc.len_bytes();
+        let current = doc.text().to_string();
+        let ops = edit::disk_splices(&current, text);
+        if ops.is_empty() {
+            return;
+        }
         let scroll = self.scroll.offset();
-        let caret = self.selection;
+        let after = edit::shift_selection_for_splices(self.selection, &ops);
         let reason = doc.read_only_reason();
         if reason.is_some()
             && let Some(doc) = self.state.document_mut()
         {
             doc.set_read_only(None);
         }
-        let replaced = self.splice_all(
-            &[(0..len, text.to_string())],
-            CodeSelection::at(0),
-            EditGroup::Atomic,
-            cx,
-        );
+        let replaced = self.splice_all(&ops, after, EditGroup::Atomic, cx);
         if let Some(reason) = reason
             && let Some(doc) = self.state.document_mut()
         {
@@ -1434,13 +1432,6 @@ impl CodeView {
         }
         if !replaced {
             return;
-        }
-        let same_shape = self
-            .state
-            .document()
-            .is_some_and(|doc| doc.line_count() == previous_lines);
-        if same_shape {
-            self.selection = caret;
         }
         self.scroll.set_offset(scroll);
         cx.notify();
@@ -2222,8 +2213,21 @@ mod tests {
         Entity<CodeView>,
         &'a mut VisualTestContext,
     ) {
+        file_view_named(cx, "main.rs", text, watch)
+    }
+
+    fn file_view_named<'a>(
+        cx: &'a mut TestAppContext,
+        name: &str,
+        text: &str,
+        watch: bool,
+    ) -> (
+        tempfile::TempDir,
+        Entity<CodeView>,
+        &'a mut VisualTestContext,
+    ) {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("main.rs");
+        let path = dir.path().join(name);
         std::fs::write(&path, text).expect("seed");
         let document = build_document(path.clone(), text, false);
         let highlighter = CodeHighlighter::new(
@@ -2702,6 +2706,92 @@ mod tests {
                 text_of(view),
                 "one\ntwo\n",
                 "Ctrl+Z recovers what was replaced"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn an_external_write_keeps_a_distant_caret_and_undoes_all_hunks_once(cx: &mut TestAppContext) {
+        let original = (0..30)
+            .map(|row| format!("line {row:03}\n"))
+            .collect::<String>();
+        let mut incoming_lines = original.lines().map(str::to_string).collect::<Vec<_>>();
+        for (row, line) in incoming_lines.iter_mut().enumerate().take(8).skip(5) {
+            *line = format!("agent changed line {row:03}");
+        }
+        incoming_lines[15] = "second distant hunk".to_string();
+        let incoming = incoming_lines.join("\n") + "\n";
+        let (dir, view, cx) = file_view_named(cx, "main.txt", &original, false);
+        let path = dir.path().join("main.txt");
+        std::fs::write(&path, &incoming).expect("agent write");
+        let stamp = FileStamp::read(&path);
+        let caret = original.find("line 025").expect("caret line") + 5;
+        let expected = incoming.find("line 025").expect("shifted caret line") + 5;
+
+        view.update(cx, |view, cx| {
+            view.selection = CodeSelection::at(caret);
+            view.disk_changed(stamp, Some(incoming.clone()), cx);
+            assert_eq!(view.cursor(), expected);
+            assert_eq!(text_of(view), incoming);
+        });
+
+        view.update_in(cx, |view, window, cx| {
+            view.undo(&CeUndo, window, cx);
+            assert_eq!(text_of(view), original, "every hunk shares one transaction");
+            assert_eq!(view.cursor(), caret);
+        });
+    }
+
+    #[gpui::test]
+    fn an_identical_external_reload_pushes_no_transaction(cx: &mut TestAppContext) {
+        let (_dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        view.update(cx, |view, cx| {
+            let before = view.history.mark();
+            view.adopt_disk_text("one\r\ntwo\r\n", cx);
+            assert_eq!(view.history.mark(), before);
+            assert_eq!(text_of(view), "one\ntwo\n");
+        });
+    }
+
+    #[gpui::test]
+    fn a_crlf_reload_preserves_the_document_line_ending(cx: &mut TestAppContext) {
+        let (_dir, view, cx) = file_view(cx, "one\r\ntwo\r\n", false);
+        view.update(cx, |view, cx| {
+            view.adopt_disk_text("one\r\nTWO\r\n", cx);
+            let doc = view.document().expect("document");
+            assert_eq!(doc.to_disk_string(), "one\r\nTWO\r\n");
+        });
+    }
+
+    #[gpui::test]
+    fn a_read_only_reload_temporarily_unlocks_and_restores_the_document(cx: &mut TestAppContext) {
+        let (_dir, view, cx) = file_view(cx, "old\n", false);
+        view.update(cx, |view, cx| {
+            view.state
+                .document_mut()
+                .expect("document")
+                .set_read_only(Some(ReadOnlyReason::Permissions));
+            view.adopt_disk_text("new content\n", cx);
+            assert_eq!(text_of(view), "new content\n");
+            assert_eq!(
+                view.document().and_then(CodeDocument::read_only_reason),
+                Some(ReadOnlyReason::Permissions)
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_whole_document_reload_remeasures_the_longest_line(cx: &mut TestAppContext) {
+        let (_dir, view, cx) = file_view(cx, "this line starts longest\nx\n", false);
+        view.update(cx, |view, cx| {
+            view.adopt_disk_text("a\na much longer replacement line\n", cx);
+        });
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+        view.update(cx, |view, _cx| {
+            assert_eq!(
+                view.document().expect("document").longest_line_chars(),
+                "a much longer replacement line".len()
             );
         });
     }
