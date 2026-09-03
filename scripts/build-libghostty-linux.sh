@@ -115,6 +115,8 @@ command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 1; }
 command -v nm >/dev/null || { echo "nm is required to verify exported symbols" >&2; exit 1; }
 command -v ar >/dev/null || { echo "ar is required to normalize release archives" >&2; exit 1; }
 command -v eu-strip >/dev/null || { echo "eu-strip from elfutils is required to normalize release archives" >&2; exit 1; }
+command -v taskset >/dev/null || { echo "taskset from util-linux is required to pin the Zig compiler to one CPU" >&2; exit 1; }
+BUILD_CPU="$(taskset -cp $$ | sed 's/.*: //' | cut -d, -f1 | cut -d- -f1)"
 
 ACTUAL_HEADER_SHA256="$(sha256sum "$SOURCE_DIR/$HEADER_PATH" | awk '{print $1}')"
 [[ "$ACTUAL_HEADER_SHA256" == "$HEADER_SHA256" ]] || {
@@ -193,7 +195,7 @@ build_one() {
   mkdir -p "$output" "$cache"
   (
     cd "$SOURCE_DIR"
-    ZIG_GLOBAL_CACHE_DIR="$cache/global" ZIG_LOCAL_CACHE_DIR="$cache/local" zig build \
+    ZIG_GLOBAL_CACHE_DIR="$cache/global" ZIG_LOCAL_CACHE_DIR="$cache/local" taskset -c "$BUILD_CPU" zig build \
       --seed "$BUILD_SEED" \
       -j"$BUILD_JOBS" \
       -Demit-lib-vt=true \
@@ -205,7 +207,7 @@ build_one() {
   [[ -f "$archive" ]] || { echo "missing static archive: $archive" >&2; return 1; }
   [[ -f "$output/$HEADER_PATH" ]] || { echo "missing installed header: $output/$HEADER_PATH" >&2; return 1; }
   case "$archive_normalization" in
-    zig-build-seed0-j1+elfutils-strip-debug+ar-D) normalize_archive "$archive" ;;
+    zig-build-seed0-j1-cpu1+elfutils-strip-debug+ar-D) normalize_archive "$archive" ;;
     *) echo "unsupported archive normalization: $archive_normalization" >&2; return 1 ;;
   esac
   nm -g --defined-only "$archive" | grep -E "[[:space:]]${build_info_symbol}$" >/dev/null || {

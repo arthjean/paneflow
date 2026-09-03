@@ -41,6 +41,32 @@ supply-chain checks, not a separate product approval process.
 The notice check compares the packaged third-party notice with the manifest's
 reviewed SHA-256 and requires every statically bundled component marker.
 
+### Reproducibility
+
+`scripts/build-libghostty-linux.sh --verify-reproducible` builds the archive
+twice from clean caches and compares the two, and the workflow and the release
+pipeline then require the result to match `archive_sha256` and the published
+release asset byte for byte. That gate is only as deterministic as the build,
+and until 2026-09-03 the build was not. `zig build -j1` limits how many steps
+the build runner drives at once, but the `zig build-lib` child sizes its own
+thread pool from the CPU count, and with two or more threads the code it
+emits for `terminal.formatter.PageFormatter.formatWithState` in
+`libghostty-vt-static_zcu.o` differs by a few bytes between otherwise
+identical builds. The other eleven archive members never changed. On the
+four-vCPU GitHub runners the race usually resolved the same way, so the gate
+failed intermittently rather than always, on both Linux targets and on the
+macOS cross-build, and every failure reported one of a few recurring hashes.
+
+Measured on one x86_64 host with the same source, Zig, and paths, hashing the
+ZCU object: one CPU gave one hash across four builds, four CPUs gave three
+hashes across three builds, sixteen CPUs gave two across two. The recipe
+therefore runs `zig build` under `taskset` on a single CPU, recorded as
+`zig-build-seed0-j1-cpu1` in `archive_normalization`. Single-threaded
+analysis numbers Zig's anonymous local symbols (`__anon_N`) differently from
+the threaded build while emitting the same machine code, so the switch
+re-pins `archive_sha256` for every Zig-built target once and republishes
+the release assets.
+
 The release workflow follows the same rule for Linux x86_64 and ARM64: it
 generates the pinned archive, selects it explicitly, builds Paneflow, verifies
 static linkage, then packages it. macOS and Windows do the same with their own

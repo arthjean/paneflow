@@ -137,6 +137,24 @@ With both fixes in place, `scripts/build-libghostty-macos.sh
 canonical root, produce the same archive, header, `bindings.rs`, and
 `build-info.txt`.
 
+**Defect 4: the compiler thread pool.** `-j1` is not enough to pin Zig's
+codegen. `zig build -j1` limits how many steps the build runner drives at
+once, but the `zig build-lib` child sizes its own thread pool from the CPU
+count, and with two or more threads the code it emits for
+`terminal.formatter.PageFormatter.formatWithState` in the ZCU object differs
+by a few bytes between otherwise identical builds. Two builds on the same
+host usually agree, which is why `--verify-reproducible` passed while the
+nightly Linux-host rebuild failed the manifest gate now and then, always with
+one of a few recurring hashes; the same drift hit both Linux targets.
+Measured on one x86_64 host with everything else fixed: one CPU gave one hash
+across four builds, four CPUs gave three hashes across three builds, sixteen
+CPUs gave two across two. The recipe therefore runs `zig build` under
+`taskset` on one CPU, recorded as `zig-build-seed0-j1-cpu1`. Single-threaded
+analysis numbers Zig's anonymous local symbols (`__anon_N`) differently from
+the threaded build while emitting the same machine code, so the switch
+re-pins `archive_sha256` once and republishes the release asset; the digest
+below predates it.
+
 ```
 archive_sha256  d81dafad9975987fc582977f24af06c9255b901196c07b00be42b85ffe8dba03
 ```
@@ -215,6 +233,7 @@ table is stale.
 | Optimize mode | build flag | `ReleaseFast` |
 | Build seed | `macos_build_seed` | `0` |
 | Build jobs | `macos_build_jobs` | `1` |
+| Compiler CPUs | build flag (`taskset -c <first allowed CPU>`) | `1` |
 | Canonical source path | `macos_canonical_source_path` | `/tmp/paneflow-libghostty-f2d5758f` |
 | Canonical Zig path | `macos_canonical_zig_path` | `/tmp/paneflow-libghostty-zig-0.16.0` |
 | Archive path in the bundle | `archive_path` | `lib/libghostty-vt.a` |
@@ -266,7 +285,7 @@ into a warning and is reserved for deliberately re-pinning the recipe.
 The recipe is:
 
 ```
-archive_normalization = "fixed-zig-source-cache-prefix+zig-build-seed0-j1+llvm-strip-debug+llvm-ar-D-darwin"
+archive_normalization = "fixed-zig-source-cache-prefix+zig-build-seed0-j1-cpu1+llvm-strip-debug+llvm-ar-D-darwin"
 ```
 
 read in application order:
@@ -280,7 +299,9 @@ read in application order:
    <canonical-zig>/lib`. Every path that reaches debug info is therefore a
    constant, including the toolchain's own.
 2. `zig build -Demit-lib-vt=true -Dtarget=aarch64-macos -Doptimize=ReleaseFast --seed 0 -j1`,
-   from `macos_build_seed` and `macos_build_jobs`.
+   from `macos_build_seed` and `macos_build_jobs`, with the whole `zig build`
+   pinned to one CPU by `taskset` so the `zig build-lib` child compiles
+   single-threaded (`cpu1`).
 3. `llvm-strip -S` on each member, `-S` being `--strip-debug`. Each member is
    first confirmed to be a `Mach-O 64-bit arm64 object` with `file`, so a
    wrong-target build cannot reach the repack.
