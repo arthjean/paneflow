@@ -64,7 +64,10 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
   PR, Diffstat and the indent guide, all off by default. A branch that already
   has a pull request swaps its glyph for the PR one, in GitHub's state colors.
   Below them, Expand all / Collapse all, and the fold state of each workspace
-  row now survives a restart.
+  row now survives a restart. This rail work started from @oliviermattei's
+  [#46](https://github.com/arthjean/paneflow/pull/46), which proposed returning
+  the branch and the diffstat to the rail as an opt-in and tying each tab row
+  to its workspace with an indent guide.
 
 ### Changed
 
