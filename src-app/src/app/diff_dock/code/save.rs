@@ -11,15 +11,19 @@ pub(crate) struct FileStamp {
 }
 
 impl FileStamp {
+    pub(crate) fn from_metadata(meta: &std::fs::Metadata) -> Self {
+        Self {
+            mtime: meta.modified().ok(),
+            len: meta.len(),
+        }
+    }
+
     pub(crate) fn read(path: &Path) -> Option<Self> {
         let meta = std::fs::metadata(path).ok()?;
         if !meta.is_file() {
             return None;
         }
-        Some(Self {
-            mtime: meta.modified().ok(),
-            len: meta.len(),
-        })
+        Some(Self::from_metadata(&meta))
     }
 
     pub(crate) fn differs(&self, other: &Self) -> bool {

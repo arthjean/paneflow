@@ -18,6 +18,7 @@ use gpui::{
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 type WatchBridge = Arc<Mutex<Option<mpsc::UnboundedSender<notify::Result<notify::Event>>>>>;
+type WatchEvents = mpsc::UnboundedReceiver<notify::Result<notify::Event>>;
 
 use super::cursor::{self, CodeSelection};
 use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
@@ -299,11 +300,16 @@ impl CodeView {
                 if !view.slot.accept(generation) {
                     return;
                 }
-                view.state = CodeLoadState::from_outcome(outcome);
-                if let Some(doc) = view.state.document() {
-                    view.indent = IndentUnit::detect(doc);
+                match outcome {
+                    Ok(loaded) => {
+                        view.indent = loaded.indent;
+                        view.stamp = loaded.stamp;
+                        view.state = CodeLoadState::Ready(Box::new(loaded));
+                    }
+                    Err(err) => {
+                        view.state = CodeLoadState::Failed(err);
+                    }
                 }
-                view.stamp = FileStamp::read(&view.path);
                 view.start_watcher(cx);
                 cx.notify();
             },
@@ -1272,37 +1278,44 @@ impl CodeView {
         let Some(name) = self.path.file_name().map(|name| name.to_os_string()) else {
             return;
         };
-        if !parent.is_dir() {
-            return;
-        }
-        let (tx, mut rx) = mpsc::unbounded::<notify::Result<notify::Event>>();
-        let bridge: WatchBridge = Arc::new(Mutex::new(Some(tx)));
-        let notify_side = Arc::clone(&bridge);
-        let watcher = RecommendedWatcher::new(
-            move |res| {
-                if let Ok(guard) = notify_side.lock()
-                    && let Some(tx) = guard.as_ref()
-                {
-                    let _ = tx.unbounded_send(res);
-                }
-            },
-            notify::Config::default(),
-        );
-        let mut watcher = match watcher {
-            Ok(watcher) => watcher,
-            Err(err) => {
-                log::warn!("could not watch {} for changes: {err}", parent.display());
-                return;
-            }
-        };
-        if let Err(err) = watcher.watch(&parent, RecursiveMode::NonRecursive) {
-            log::warn!("could not watch {} for changes: {err}", parent.display());
-            return;
-        }
-        self._watcher = Some(watcher);
-        self._watch_bridge = Some(bridge);
-
+        let generation = self.slot.current();
         let path = self.path.clone();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let watched_parent = parent.clone();
+            let outcome = cx
+                .background_spawn(async move { create_file_watcher(parent) })
+                .await;
+            let (watcher, bridge, rx) = match outcome {
+                Ok(parts) => parts,
+                Err(err) => {
+                    log::warn!(
+                        "could not watch {} for changes: {err}",
+                        watched_parent.display()
+                    );
+                    return;
+                }
+            };
+            cx.update(|cx| {
+                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
+                    if !view.slot.accept(generation) {
+                        return;
+                    }
+                    view._watcher = Some(watcher);
+                    view._watch_bridge = Some(bridge);
+                    view.spawn_reload_loop(path, name, rx, cx);
+                });
+            });
+        })
+        .detach();
+    }
+
+    fn spawn_reload_loop(
+        &mut self,
+        path: PathBuf,
+        name: std::ffi::OsString,
+        mut rx: WatchEvents,
+        cx: &mut Context<Self>,
+    ) {
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
             while let Some(first) = rx.next().await {
                 if !event_is_relevant(&first, &name) {
@@ -1593,6 +1606,32 @@ fn shift_offset(offset: usize, deltas: &[(usize, isize)]) -> usize {
         }
     }
     out.max(0) as usize
+}
+
+fn create_file_watcher(
+    parent: PathBuf,
+) -> Result<(RecommendedWatcher, WatchBridge, WatchEvents), String> {
+    if !parent.is_dir() {
+        return Err("the parent directory no longer exists".to_string());
+    }
+    let (tx, rx) = mpsc::unbounded::<notify::Result<notify::Event>>();
+    let bridge: WatchBridge = Arc::new(Mutex::new(Some(tx)));
+    let notify_side = Arc::clone(&bridge);
+    let mut watcher = RecommendedWatcher::new(
+        move |result| {
+            if let Ok(guard) = notify_side.lock()
+                && let Some(tx) = guard.as_ref()
+            {
+                let _ = tx.unbounded_send(result);
+            }
+        },
+        notify::Config::default(),
+    )
+    .map_err(|err| err.to_string())?;
+    watcher
+        .watch(&parent, RecursiveMode::NonRecursive)
+        .map_err(|err| err.to_string())?;
+    Ok((watcher, bridge, rx))
 }
 
 fn event_is_relevant(result: &notify::Result<notify::Event>, target: &std::ffi::OsStr) -> bool {
@@ -1925,6 +1964,8 @@ mod tests {
             CodeLoadState::Ready(Box::new(LoadedCode {
                 document,
                 highlighter,
+                indent: IndentUnit::Spaces(4),
+                stamp: None,
             }))
         };
         cx.add_window_view(move |_window, cx| CodeView {
@@ -2167,11 +2208,13 @@ mod tests {
             &document,
             DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
         );
+        let stamp = FileStamp::read(&path);
         let state = CodeLoadState::Ready(Box::new(LoadedCode {
             document,
             highlighter,
+            indent: IndentUnit::Spaces(4),
+            stamp,
         }));
-        let stamp = FileStamp::read(&path);
         let (view, cx) = {
             let path = path.clone();
             cx.add_window_view(move |_window, cx| {
@@ -2315,6 +2358,8 @@ mod tests {
         let state = CodeLoadState::Ready(Box::new(LoadedCode {
             document,
             highlighter,
+            indent: IndentUnit::Spaces(4),
+            stamp: None,
         }));
         let (view, cx) = cx.add_window_view(move |_window, cx| CodeView {
             element_id: "code-view:test".into(),
@@ -2692,6 +2737,8 @@ mod tests {
     #[gpui::test]
     fn opening_a_real_file_registers_the_conflict_watcher(cx: &mut TestAppContext) {
         let (_dir, view, cx) = file_view(cx, "one\n", true);
+        cx.executor().allow_parking();
+        cx.run_until_parked();
         view.update(cx, |view, _cx| {
             assert!(view._watcher.is_some(), "the parent directory is watched");
             let bridge = view
@@ -2701,5 +2748,58 @@ mod tests {
             *bridge.lock().expect("bridge lock") = None;
             view._watcher = None;
         });
+    }
+
+    #[gpui::test]
+    async fn only_the_latest_rapid_open_keeps_its_watcher(cx: &mut TestAppContext) {
+        let first = tempfile::tempdir().expect("first tempdir");
+        let second = tempfile::tempdir().expect("second tempdir");
+        let first_path = first.path().join("first.rs");
+        let second_path = second.path().join("second.rs");
+        std::fs::write(&first_path, "first\n").expect("first fixture");
+        std::fs::write(&second_path, "second\n").expect("second fixture");
+        let (view, cx) = view(cx, "seed\n");
+        cx.executor().allow_parking();
+
+        view.update(cx, |view, cx| {
+            view.open(first_path, cx);
+            view.open(second_path.clone(), cx);
+        });
+        for _ in 0..100 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| {
+                view.document()
+                    .and_then(|doc| doc.line_string(0))
+                    .as_deref()
+                    == Some("second")
+                    && view._watcher.is_some()
+            }) {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(1)).await;
+        }
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(view.path(), second_path);
+            assert_eq!(
+                view.document()
+                    .and_then(|doc| doc.line_string(0))
+                    .as_deref(),
+                Some("second")
+            );
+            assert!(view._watcher.is_some());
+            if let Some(bridge) = view._watch_bridge.take() {
+                *bridge.lock().expect("bridge lock") = None;
+            }
+            view._watcher = None;
+        });
+    }
+
+    #[test]
+    fn a_removed_parent_refuses_watcher_creation() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let parent = dir.path().to_path_buf();
+        drop(dir);
+        assert!(create_file_watcher(parent).is_err());
     }
 }

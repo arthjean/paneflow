@@ -1,10 +1,13 @@
-use std::io::ErrorKind;
+use std::fs::File;
+use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use gpui::{AsyncApp, Context, WeakEntity};
 
 use super::document::{CodeDocument, ReadOnlyReason};
+use super::edit::IndentUnit;
 use super::highlight::CodeHighlighter;
+use super::save::FileStamp;
 use crate::diff::DiffSyntax;
 
 pub(crate) const MAX_FILE_BYTES: usize = crate::markdown::MAX_INPUT_BYTES;
@@ -49,20 +52,30 @@ impl CodeLoadError {
     }
 }
 
+#[cfg(test)]
 pub(crate) type CodeLoad = Result<CodeDocument, CodeLoadError>;
 
 pub(crate) struct LoadedCode {
     pub(crate) document: CodeDocument,
     pub(crate) highlighter: CodeHighlighter,
+    pub(crate) indent: IndentUnit,
+    pub(crate) stamp: Option<FileStamp>,
 }
 
 pub(crate) type CodeOpen = Result<LoadedCode, CodeLoadError>;
 
+#[cfg(test)]
 pub(crate) fn load_blocking(path: &Path) -> CodeLoad {
-    let meta = match std::fs::metadata(path) {
-        Ok(meta) => meta,
-        Err(err) => return Err(io_error(&err)),
-    };
+    load_document_and_stamp(path).map(|(document, _)| document)
+}
+
+fn load_document_and_stamp(path: &Path) -> Result<(CodeDocument, FileStamp), CodeLoadError> {
+    let path_meta = std::fs::metadata(path).map_err(|err| io_error(&err))?;
+    if !path_meta.is_file() {
+        return Err(CodeLoadError::NotAFile);
+    }
+    let mut file = File::open(path).map_err(|err| io_error(&err))?;
+    let meta = file.metadata().map_err(|err| io_error(&err))?;
     if !meta.is_file() {
         return Err(CodeLoadError::NotAFile);
     }
@@ -74,10 +87,8 @@ pub(crate) fn load_blocking(path: &Path) -> CodeLoad {
         });
     }
 
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(err) => return Err(io_error(&err)),
-    };
+    let mut bytes = Vec::with_capacity(len);
+    file.read_to_end(&mut bytes).map_err(|err| io_error(&err))?;
     if bytes.len() > MAX_FILE_BYTES {
         return Err(CodeLoadError::TooLarge {
             bytes: bytes.len(),
@@ -92,11 +103,9 @@ pub(crate) fn load_blocking(path: &Path) -> CodeLoad {
         Err(_) => return Err(CodeLoadError::NotUtf8),
     };
 
-    Ok(build_document(
-        path.to_path_buf(),
-        &text,
-        is_read_only(&meta),
-    ))
+    let stamp = FileStamp::from_metadata(&meta);
+    let document = build_document(path.to_path_buf(), &text, is_read_only(&meta));
+    Ok((document, stamp))
 }
 
 pub(crate) fn build_document(path: PathBuf, text: &str, read_only_on_disk: bool) -> CodeDocument {
@@ -114,11 +123,14 @@ pub(crate) fn build_document(path: PathBuf, text: &str, read_only_on_disk: bool)
 }
 
 pub(crate) fn open_blocking(path: &Path, syntax: DiffSyntax) -> CodeOpen {
-    let document = load_blocking(path)?;
+    let (document, stamp) = load_document_and_stamp(path)?;
+    let indent = IndentUnit::detect(&document);
     let highlighter = CodeHighlighter::new(&document, syntax);
     Ok(LoadedCode {
         document,
         highlighter,
+        indent,
+        stamp: Some(stamp),
     })
 }
 
@@ -193,6 +205,7 @@ pub(crate) enum CodeLoadState {
 }
 
 impl CodeLoadState {
+    #[cfg(test)]
     pub(crate) fn from_outcome(outcome: CodeOpen) -> Self {
         match outcome {
             Ok(loaded) => Self::Ready(Box::new(loaded)),
@@ -491,22 +504,31 @@ mod tests {
 
     fn loaded(path: &str, text: &str) -> LoadedCode {
         let document = CodeDocument::new(PathBuf::from(path), text);
+        let indent = IndentUnit::detect(&document);
         let highlighter = CodeHighlighter::new(&document, syntax());
         LoadedCode {
             document,
             highlighter,
+            indent,
+            stamp: None,
         }
     }
 
     #[test]
     fn opening_a_file_parses_it_in_the_same_blocking_pass_as_the_read() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = write(&dir, "main.rs", b"fn main() {\n    let x = 1;\n}\n");
+        let path = write(
+            &dir,
+            "main.rs",
+            b"fn main() {\n\tlet x = 1;\n\tlet y = 2;\n}\n",
+        );
 
         let opened = open_blocking(&path, syntax()).expect("open");
 
-        assert_eq!(opened.document.line_count(), 4);
+        assert_eq!(opened.document.line_count(), 5);
         assert!(opened.highlighter.is_enabled());
+        assert_eq!(opened.indent, IndentUnit::Tab);
+        assert_eq!(opened.stamp, FileStamp::read(&path));
         assert!(
             !opened.highlighter.runs(0).is_empty(),
             "the initial parse ran inside open_blocking, not later on the render thread"
