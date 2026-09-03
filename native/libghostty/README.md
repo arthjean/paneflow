@@ -146,10 +146,13 @@ limit, and the Linux and macOS recipes remove it by pinning the compiler to
 one CPU (see the Linux section). Paneflow used to force determinism on
 Windows with a source patch that split that formatter into out-of-line
 helpers, and retired it because the patch had to be rebased against every
-upstream change to `src/terminal/formatter.zig`. The Windows recipe does not
-pin CPU affinity yet, so the Windows archive is still built once, by
-`libghostty-bump.yml`, and its provenance is the build-provenance attestation
-that run publishes with the release asset rather than a second matching build.
+upstream change to `src/terminal/formatter.zig`. The Windows recipe cannot
+take the same pin: on Windows, the Zig `getCpuCount()` implementation reads
+`NumberOfProcessors` from the PEB and ignores the process affinity mask, so
+`start /affinity` would leave the compiler thread pool untouched. The Windows
+archive is therefore still built once, by `libghostty-bump.yml`, and its
+provenance is the build-provenance attestation that run publishes with the
+release asset rather than a second matching build.
 The recipe still fixes every input it can (seed, jobs, paths, toolchain
 versions, normalization) and keeps `build-info.txt` an exact record of how it
 was produced.
