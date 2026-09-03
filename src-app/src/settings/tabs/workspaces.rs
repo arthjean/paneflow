@@ -1,10 +1,3 @@
-//! "Workspaces" settings page - visual builder for reusable workspace
-//! templates backed by the existing `commands[].workspace` config surface.
-//!
-//! This is intentionally a `WorkspaceSpec`-level builder, not a `flow.toml`
-//! DAG editor: users can compose panes, agents, shell commands, cwd and prompt
-//! prefill, then launch through the same `workspace.up` path the CLI uses.
-
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, ElementId, FontWeight, Hsla, InteractiveElement,
@@ -248,8 +241,6 @@ impl PaneFlowApp {
         let summary = template_summary(workspace);
 
         setting_card(ui)
-            // A tint child, not `.bg()`: a plain background would square the
-            // card's squircle corners right back off (see `card_tint`).
             .when(selected, |d| {
                 d.child(card_tint(with_alpha(switch_blue(), 0.08)))
             })

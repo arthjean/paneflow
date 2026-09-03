@@ -1,19 +1,12 @@
-//! Review-terminal lifecycle (launch / pick / close) + per-column review menu
-//! for the Review view (US-004 code-motion). See [`super`] for `DiffView`.
-
 use super::*;
 use crate::ui_primitives::AnimatedHoverExt;
 use paneflow_config::schema::TerminalSurfaceProfile;
 
 impl DiffView {
-    /// A branch column has something to review when it's loaded with > 0 files.
     pub(super) fn column_has_changes(col: &Column) -> bool {
         matches!(&col.state, ColumnState::Loaded { file_count, .. } if *file_count > 0)
     }
 
-    /// Open/close a column's Review CLI multi-select. On open, sync the pick
-    /// toggles to the CLI list (default first-on). Clicking the same column's
-    /// Review button again (or a different one) toggles / re-targets the popover.
     pub(super) fn toggle_review_menu(&mut self, col_idx: usize, cx: &mut Context<Self>) {
         if self.review_menu_open == Some(col_idx) {
             self.review_menu_open = None;
@@ -27,7 +20,6 @@ impl DiffView {
         cx.notify();
     }
 
-    /// Toggle one CLI's inclusion in the next review.
     pub(super) fn toggle_review_pick(&mut self, i: usize, cx: &mut Context<Self>) {
         if let Some(p) = self.review_picks.get_mut(i) {
             *p = !*p;
@@ -35,10 +27,6 @@ impl DiffView {
         }
     }
 
-    /// Launch the selected CLIs to review column `col_idx`'s branch: one real
-    /// terminal per CLI, embedded UNDER the column's diff (in the Diff interface,
-    /// not the CLI mode), cwd-pinned to the worktree, with a compact review prompt
-    /// pre-filled (the human submits). Human-in-the-loop - no headless session.
     pub(super) fn launch_review(
         &mut self,
         col_idx: usize,
@@ -84,14 +72,10 @@ impl DiffView {
             .clone()
             .unwrap_or_else(|| self.base_ref.clone());
 
-        // One terminal per selected CLI; the 2nd+ get the adversarial framing so a
-        // multi-CLI panel is a real second opinion, not an echo.
         let mut created: Vec<ReviewTerminal> = Vec::new();
         let mut first_prompt: Option<String> = None;
         let mut focus_target: Option<Entity<crate::terminal::TerminalView>> = None;
         let config = paneflow_config::loader::load_config();
-        // US-011: configurable prefill delay (default 2000 ms); clipboard write
-        // (below) remains the synchronous safety net.
         let delay = config.resolved_review_prefill_delay_ms();
         for (rank, &i) in selected.iter().enumerate() {
             let cli = clis[i];
@@ -106,13 +90,9 @@ impl DiffView {
                     cx,
                 )
             });
-            // Launch the CLI in the embedded terminal's shell.
             let command = cli.launch_command(&config);
             term.read(cx).send_command(&command);
             term.update(cx, |view, _cx| view.declare_agent_from_command(&command));
-            // Pre-fill the prompt once the CLI has booted (tmux send-keys style):
-            // a delayed write with NO Enter - the human reviews + submits. The
-            // clipboard fallback (below) covers a missed timing window.
             let prefill = prompt.clone();
             let term_weak = term.downgrade();
             cx.spawn(async move |_, cx: &mut gpui::AsyncApp| {
@@ -144,7 +124,7 @@ impl DiffView {
         }
 
         if let Some(col) = self.columns.get_mut(col_idx) {
-            col.review_terminals = created; // replace any prior run (drops old PTYs)
+            col.review_terminals = created;
             col.active_review_terminal = 0;
         }
         if let Some(t) = focus_target {
@@ -156,7 +136,6 @@ impl DiffView {
         cx.notify();
     }
 
-    /// Close one embedded terminal (drops it → PTY shutdown).
     pub(super) fn close_review_terminal(
         &mut self,
         col_idx: usize,
@@ -206,9 +185,6 @@ impl DiffView {
         }
     }
 
-    /// Terminal button on a column header: open a plain shell terminal in the
-    /// branch's worktree, embedded under the diff. Just a terminal - no CLI
-    /// launch, no prefill (distinct from Review).
     pub(super) fn open_terminal_for_column(
         &mut self,
         col_idx: usize,
@@ -260,8 +236,6 @@ impl DiffView {
         cx.notify();
     }
 
-    /// Render the embedded review terminals under a column's diff body as a
-    /// tabbed dock matching the Agents bottom terminal panel.
     pub(super) fn render_review_terminals(
         &self,
         col_idx: usize,
@@ -272,11 +246,6 @@ impl DiffView {
         if col.review_terminals.is_empty() {
             return None;
         }
-        // US-049: the review prompt is pre-filled after a fixed delay, but on a
-        // slow CLI cold-start (notably Windows ConPTY) the auto-fill can miss
-        // its window. The prompt is always copied to the clipboard as a fallback
-        // - surface that explicitly so the user can paste it instead of staring
-        // at an empty input.
         let paste_key = if cfg!(target_os = "macos") {
             "⌘V"
         } else {
@@ -325,9 +294,6 @@ impl DiffView {
             .pr(px(8.))
             .bg(ui.base)
             .child(tabs)
-            // US-011: surface the clipboard safety net immediately. Kept in the
-            // dock toolbar instead of per-terminal chrome so the terminal body
-            // matches the Agents bottom panel surface.
             .when(show_prompt_hint, |d| {
                 d.child(render_review_prompt_pill(paste_key, ui))
             });
@@ -377,9 +343,6 @@ impl DiffView {
         Some(region.into_any_element())
     }
 
-    /// The Review chip's CLI multi-select popover. Lists the CLIs as toggles and
-    /// a Review button that opens one terminal pane per checked CLI under the
-    /// branch's worktree.
     pub(super) fn render_review_menu(
         &self,
         col_idx: usize,
@@ -390,7 +353,6 @@ impl DiffView {
         let mut menu = menu_surface(div().id("diff-review-menu"), ui)
             .occlude()
             .absolute()
-            // Anchored just below this branch's header.
             .top(px(COL_HEADER_HEIGHT))
             .right(px(6.))
             .w(px(256.))

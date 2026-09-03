@@ -8,13 +8,6 @@ pub(crate) struct OwnedHandle<T: Copy> {
 }
 
 impl<T: Copy> OwnedHandle<T> {
-    /// Take unique ownership of a raw libghostty handle.
-    ///
-    /// # Safety
-    ///
-    /// `raw` must be a live, non-null handle owned by the caller, and `free`
-    /// must be the exact destructor for that handle type and allocator. No
-    /// other owner may use or free `raw` after this call.
     pub(crate) unsafe fn from_raw(raw: T, free: unsafe extern "C" fn(T)) -> Self {
         Self { raw, free }
     }
@@ -26,21 +19,10 @@ impl<T: Copy> OwnedHandle<T> {
 
 impl<T: Copy> Drop for OwnedHandle<T> {
     fn drop(&mut self) {
-        // SAFETY: constructors only create this owner after libghostty returns
-        // a non-null handle. `raw` is private and Drop runs exactly once.
         unsafe { (self.free)(self.raw) };
     }
 }
 
-/// Create and uniquely own a libghostty handle using the given allocator.
-///
-/// # Safety
-///
-/// `allocator` must be null or remain valid until the returned handle is
-/// dropped. `create` must initialize an out-parameter of exactly type `T` and
-/// use that allocator. `free` must be the exact matching destructor for every
-/// non-null handle produced by `create`, and the caller must not retain
-/// another owner of that handle.
 pub(crate) unsafe fn create<T: Copy + Default + PartialEq>(
     operation: &'static str,
     allocator: *const sys::GhosttyAllocator,
@@ -48,8 +30,6 @@ pub(crate) unsafe fn create<T: Copy + Default + PartialEq>(
     free: unsafe extern "C" fn(T),
 ) -> Result<OwnedHandle<T>> {
     let mut raw = T::default();
-    // SAFETY: `raw` is valid writable storage, and the caller guarantees that
-    // `allocator` is null or valid for the lifetime of the returned handle.
     let result = unsafe { create(allocator, &mut raw) };
     check(operation, result)?;
     if raw == T::default() {
@@ -126,9 +106,6 @@ mod tests {
 
     #[test]
     fn successful_constructor_rejects_a_null_handle() {
-        // SAFETY: `create_null` has the expected `*mut usize` out-parameter,
-        // and any non-null handle it could return would come from `Box` and
-        // therefore have the matching `record_drop` destructor.
         let result = unsafe { create("fake_new", std::ptr::null(), create_null, record_drop) };
         assert!(matches!(result, Err(GhosttyError::AbiMismatch(_))));
     }

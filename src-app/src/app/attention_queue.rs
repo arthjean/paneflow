@@ -1,16 +1,3 @@
-//! Attention Queue (EP-002 US-004, CLI Cockpit).
-//!
-//! A cross-workspace overlay (theme-picker modal scaffold) listing every
-//! agent session in `WaitingForInput`: tool + workspace + the sanitized
-//! question (`AgentSession::message`, ≤512 chars, bidi-stripped at ingress -
-//! rendered as inert text, never interpreted) + relative wait time, sorted
-//! longest-waiting first. Enter / click teleports to the pane through the
-//! same mechanics as `handle_jump_next_waiting` (workspace switch + hidden
-//! tab activation + focus). The rows are derived from live session state on
-//! every render - never a snapshot - so a session that unblocks while the
-//! queue is open disappears at the next repaint, and a row whose pane died
-//! is dropped rather than left navigable.
-
 use std::collections::HashSet;
 
 use gpui::{
@@ -24,24 +11,14 @@ use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::app::workspace_ops::WorkspaceFocusTarget;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-/// One row of the queue, derived live from `agent_sessions`.
 pub(crate) struct QueueRow {
-    /// `Some` = navigable (resolved surface alive in the layout);
-    /// `None` = the session never resolved a surface - listed last,
-    /// non-navigable (US-019 orchestration-v2: navigation requires the
-    /// mapping, never a guessed pane).
     pub(crate) surface_id: Option<u64>,
     pub(crate) ws_title: String,
     pub(crate) tool_label: &'static str,
-    /// The agent's question - UNTRUSTED display-only text (already
-    /// sanitized at the IPC ingress). Rendered verbatim, single line,
-    /// ellipsized.
     pub(crate) message: Option<String>,
     pub(crate) waiting_secs: u64,
 }
 
-/// Longest wait first; sessions without a resolved surface sink to the end
-/// regardless of their wait. Pure - unit-tested.
 pub(crate) fn sort_rows(rows: &mut [QueueRow]) {
     rows.sort_by(|a, b| {
         b.surface_id
@@ -51,7 +28,6 @@ pub(crate) fn sort_rows(rows: &mut [QueueRow]) {
     });
 }
 
-/// Compact wait label: `42s`, `7m`, `1h 12m`. Pure - unit-tested.
 pub(crate) fn wait_label(secs: u64) -> String {
     if secs < 60 {
         format!("{secs}s")
@@ -63,10 +39,6 @@ pub(crate) fn wait_label(secs: u64) -> String {
 }
 
 impl PaneFlowApp {
-    /// Derive the queue rows from live session state. Sessions whose
-    /// resolved surface no longer exists in any layout (pane closed after
-    /// resolution, sweep not yet run) are dropped entirely - the queue must
-    /// never offer a navigable row to a dead pane.
     pub(crate) fn attention_queue_rows(&self, cx: &Context<Self>) -> Vec<QueueRow> {
         let mut live_surfaces: HashSet<u64> = HashSet::new();
         for ws in &self.workspaces {
@@ -86,9 +58,7 @@ impl PaneFlowApp {
                 }
                 let surface_id = match session.surface_id {
                     Some(sid) if live_surfaces.contains(&sid) => Some(sid),
-                    // Resolved but dead: drop the row (US-004 AC7).
                     Some(_) => continue,
-                    // Never resolved: listed last, non-navigable (AC4).
                     None => None,
                 };
                 rows.push(QueueRow {
@@ -143,11 +113,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Enter / click on a row: teleport to the waiting pane (workspace
-    /// switch + tab activation + focus - `handle_jump_next_waiting`
-    /// mechanics) and close the queue. The surface is re-resolved at
-    /// activation time: a pane closed between render and Enter is a clean
-    /// no-op (the row is gone at the next repaint anyway).
     pub(crate) fn attention_queue_activate(
         &mut self,
         surface_id: u64,
@@ -158,15 +123,11 @@ impl PaneFlowApp {
             cx.notify();
             return;
         };
-        // US-003 (cli-tab-hierarchy): the hit may live in a background
-        // workspace tab, so make that tab visible before focusing its pane.
         let (ws_idx, pane) = (loc.workspace_idx, loc.pane);
         if let Some(ws) = self.workspaces.get_mut(ws_idx) {
             ws.set_active_tab(loc.tab_idx);
         }
         self.activate_workspace_at(ws_idx, WorkspaceFocusTarget::Pane { pane }, window, cx);
-        // Keep the jump cycle coherent: a queue teleport counts as visiting
-        // that surface, so the next Ctrl+Shift+J continues from here.
         self.jump_cursor = Some(surface_id);
         self.close_attention_queue(cx);
     }
@@ -239,7 +200,6 @@ impl PaneFlowApp {
             );
 
         if rows.is_empty() {
-            // US-004 AC5: explicit empty state - never a silent no-op.
             card = card.child(
                 div()
                     .px(px(14.))
@@ -262,8 +222,6 @@ impl PaneFlowApp {
                 } else {
                     ui.subtle.opacity(0.0)
                 };
-                // The question is inert untrusted text: one ellipsized line,
-                // no links, no ANSI (US-004 AC8).
                 let question: SharedString = row
                     .message
                     .clone()
@@ -334,7 +292,6 @@ impl PaneFlowApp {
                         }));
                     card = card.child(r);
                 } else {
-                    // AC4: unresolved sessions are visible but inert.
                     r = r.child(
                         div()
                             .flex_none()
@@ -400,8 +357,6 @@ mod tests {
         ];
         sort_rows(&mut rows);
         let order: Vec<Option<u64>> = rows.iter().map(|r| r.surface_id).collect();
-        // Navigable rows by wait desc, the unmapped session last despite its
-        // huge wait (US-004 AC2 + AC4).
         assert_eq!(order, vec![Some(2), Some(3), Some(1), None]);
     }
 

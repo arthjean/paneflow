@@ -1,49 +1,9 @@
-//! Writing a file back to disk, and the stamp that tells the editor whether
-//! someone else got there first.
-//!
-//! prd-file-editor-2026-Q3, US-015 and US-016. Everything here is blocking:
-//! [`super::view::CodeView`] runs it on GPUI's background executor
-//! (`cx.background_spawn`), which keeps it off the render thread exactly as
-//! `smol::unblock` does for the read side, and additionally puts it under the
-//! test scheduler so the save and conflict paths can be proven from the
-//! `Ctrl+S` action rather than from this function alone.
-//!
-//! ## Why a temp file plus a rename
-//!
-//! `File::create` truncates before it writes. A crash, a full disk, or an
-//! agent reading the file mid-write then sees a truncated or half-written
-//! source file - the failure mode US-015 exists to prevent. Writing a sibling
-//! temp file and renaming it over the target makes the swap atomic on all
-//! three platforms, so a reader sees either the old file or the new one.
-//!
-//! The temp file must live in the **target's own directory**, never in
-//! `$TMPDIR`: a cross-filesystem rename is neither atomic nor always
-//! permitted. Same reasoning, same shape as `crate::config_writer`
-//! (`config_writer.rs:75-118`) and Zed's `Fs::atomic_write`
-//! (`zed/crates/fs/src/fs.rs:927-935`).
-//!
-//! ## Why the rename is also what US-016 watches
-//!
-//! The rename lands as a create or rename event on the parent directory, not
-//! as a modify on the file's inode. That is why the conflict watcher in
-//! `super::view` watches the parent directory rather than the file, and why
-//! the diff dock's own worktree watcher (`diff/view/watcher.rs:38-46`, which
-//! accepts anything that is not a metadata or access event) picks a save up
-//! and refreshes the diff without any extra wiring.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use tempfile::NamedTempFile;
 
-/// What the file looked like on disk the last time the editor agreed with it.
-///
-/// Modification time plus length, which is the pair Zed's buffer carries
-/// (`zed/crates/language/src/buffer.rs:109`, `:1453`). Length is not
-/// redundant: a filesystem with second-granularity timestamps, or an agent
-/// that rewrites a file twice within one tick, can leave the mtime unchanged
-/// while the content changed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct FileStamp {
     mtime: Option<SystemTime>,
@@ -51,8 +11,6 @@ pub(crate) struct FileStamp {
 }
 
 impl FileStamp {
-    /// Stat `path`. `None` means the file is not there (or cannot be stat'd),
-    /// which US-016 treats as "deleted on disk" rather than as an error.
     pub(crate) fn read(path: &Path) -> Option<Self> {
         let meta = std::fs::metadata(path).ok()?;
         if !meta.is_file() {
@@ -64,11 +22,6 @@ impl FileStamp {
         })
     }
 
-    /// Whether `other` describes a different file state than `self`.
-    ///
-    /// A missing mtime on either side falls back to the length alone: some
-    /// filesystems (and some network mounts) do not report one, and refusing
-    /// every save there would be worse than the narrower check.
     pub(crate) fn differs(&self, other: &Self) -> bool {
         if self.len != other.len {
             return true;
@@ -80,12 +33,6 @@ impl FileStamp {
     }
 }
 
-/// Write `contents` to `path` atomically, preserving the file's permissions,
-/// and return the stamp of what landed.
-///
-/// **Blocking.** The error is already a written sentence, in the same register
-/// as [`super::load::CodeLoadError::message`]: nothing here surfaces a
-/// debug-formatted `io::Error` to the user.
 pub(crate) fn save_blocking(path: &Path, contents: &str) -> Result<FileStamp, String> {
     let parent = parent_dir(path);
     let existing = std::fs::metadata(path).ok();
@@ -96,14 +43,8 @@ pub(crate) fn save_blocking(path: &Path, contents: &str) -> Result<FileStamp, St
     temp.as_file_mut()
         .flush()
         .map_err(|err| write_error(&err))?;
-    // Durability before the swap: a rename that beats its own data to disk can
-    // leave an empty file behind a power cut.
     temp.as_file().sync_all().map_err(|err| write_error(&err))?;
 
-    // `NamedTempFile` creates 0600. Restore the original's mode so saving does
-    // not silently strip a group-readable or executable bit. Skipped when the
-    // original is read-only: applying that to the temp would make the rename
-    // itself fail on Windows, and a read-only document never reaches here.
     if let Some(meta) = &existing {
         let permissions = meta.permissions();
         if !permissions.readonly()
@@ -121,8 +62,6 @@ pub(crate) fn save_blocking(path: &Path, contents: &str) -> Result<FileStamp, St
         .ok_or_else(|| "The file was written but could not be read back.".to_string())
 }
 
-/// Directory the temp file goes in: the target's own, falling back to the
-/// working directory for a bare file name. Never `$TMPDIR`.
 fn parent_dir(path: &Path) -> PathBuf {
     match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
@@ -130,8 +69,6 @@ fn parent_dir(path: &Path) -> PathBuf {
     }
 }
 
-/// A written explanation of a failed write. Kind-level, so no OS string and no
-/// path leak into the banner, and specific enough to act on.
 fn write_error(err: &std::io::Error) -> String {
     use std::io::ErrorKind;
     match err.kind() {
@@ -148,8 +85,6 @@ fn write_error(err: &std::io::Error) -> String {
 mod tests {
     use super::*;
 
-    /// US-015 AC: the write is atomic, it lands the exact bytes, and it leaves
-    /// no temp file behind.
     #[test]
     fn a_save_replaces_the_file_and_leaves_nothing_behind() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -175,8 +110,6 @@ mod tests {
         );
     }
 
-    /// US-015 AC: a file that does not exist yet is created, which is also how
-    /// US-016 recovers from a deletion on disk.
     #[test]
     fn a_save_recreates_a_missing_file() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -188,8 +121,6 @@ mod tests {
         assert!(FileStamp::read(&path).is_some());
     }
 
-    /// US-015 AC: a write into a folder that is not there fails with a written
-    /// sentence rather than a panic or a raw OS error.
     #[test]
     fn a_failed_write_reports_a_written_error() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -199,8 +130,6 @@ mod tests {
         assert!(err.ends_with('.'), "a sentence, not a debug dump: {err}");
     }
 
-    /// US-016: the stamp catches a rewrite of the same length through the
-    /// mtime, and a length change on its own.
     #[test]
     fn the_stamp_detects_an_external_write() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -217,7 +146,6 @@ mod tests {
         );
     }
 
-    /// US-015 AC: the original permissions survive the swap.
     #[cfg(unix)]
     #[test]
     fn a_save_preserves_the_original_mode() {

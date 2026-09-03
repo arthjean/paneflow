@@ -74,12 +74,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- Validate the input file ---------------------------------------------
-# Use `throw` consistently (mirrors sign-windows.ps1's convention) so a
-# caller piping the script into a larger pipeline gets a uniform
-# terminating-error contract. `$ErrorActionPreference = 'Stop'` above
-# guarantees `throw` aborts immediately.
-
 if (-not (Test-Path -LiteralPath $InputFile -PathType Leaf)) {
     throw "InputFile not found: $InputFile"
 }
@@ -90,13 +84,6 @@ $inputExtension = [System.IO.Path]::GetExtension($resolvedInput).ToLowerInvarian
 if ($inputExtension -notin @('.exe', '.msi')) {
     throw "InputFile must be a .exe or .msi artifact: $resolvedInput"
 }
-
-# --- Validate cert + password --------------------------------------------
-# `Set-StrictMode -Version Latest` does NOT flag an unset env-var-backed
-# default parameter as undefined - the assignment `[string]$CertPath =
-# $env:OV_CERT_PATH` succeeds with a null/empty string when the env var
-# is unset. The explicit IsNullOrEmpty check below is therefore the real
-# guard; do not remove it on the assumption that strict mode covers it.
 
 if ([string]::IsNullOrEmpty($CertPath)) {
     throw "CertPath not provided and `$env:OV_CERT_PATH is empty. Pass -CertPath or set the env var."
@@ -111,10 +98,6 @@ if ([string]::IsNullOrEmpty($CertPassword)) {
 }
 
 $resolvedCert = (Resolve-Path -LiteralPath $CertPath).Path
-
-# --- Locate signtool.exe -------------------------------------------------
-# Identical resolution logic to sign-windows.ps1 - keep the two paths
-# behaviourally aligned so an SDK upgrade affects them in lockstep.
 
 $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
 $signtool = $null
@@ -137,12 +120,6 @@ if ([string]::IsNullOrEmpty($signtool)) {
 }
 
 Write-Host "Using signtool: $signtool"
-
-# --- Sign with timestamp retry -------------------------------------------
-# Same 3-host chain as sign-windows.ps1 / US-024 AC-3. We deliberately
-# keep `acs.microsoft.com` first even on the OV path: it's a free,
-# RFC 3161-compliant timestamper Microsoft hosts for any signer, and
-# its uptime is materially better than commercial-vendor stamps.
 
 $timestampServers = @(
     'http://timestamp.acs.microsoft.com',
@@ -174,8 +151,6 @@ if (-not $signed) {
     throw "signtool sign failed against all timestamp servers. Last exit code: $lastExit."
 }
 
-# --- Verify (mirror of sign-windows.ps1) ---------------------------------
-
 Write-Host "signtool verify"
 & $signtool verify /pa /v "$resolvedInput"
 if ($LASTEXITCODE -ne 0) {
@@ -187,8 +162,6 @@ if ($sig.Status -ne 'Valid') {
     throw "Get-AuthenticodeSignature status is '$($sig.Status)' (expected 'Valid'). StatusMessage: $($sig.StatusMessage)"
 }
 
-# Anchor the publisher check to O= rather than a bare substring - same
-# rationale as sign-windows.ps1 line ~300.
 $subject = $sig.SignerCertificate.Subject
 if ($subject -notmatch '(?i)(^|,\s*)O\s*=\s*Strivex\b') {
     throw "Signer subject O= does not match 'Strivex': $subject"

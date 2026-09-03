@@ -1,8 +1,3 @@
-//! Cursor paint pass - primary text cursor
-//! (Vintage/Block/Beam/Underline/DoubleUnderline/HollowBlock) plus the
-//! copy-mode selection anchor cursor, drawn on the device-pixel grid with
-//! the cell metrics' cursor thickness (Ghostty `special.zig`).
-
 use gpui::{
     App, BorderStyle, Font, FontStyle, FontWeight, Pixels, SharedString, TextRun, Window, fill,
     outline,
@@ -53,8 +48,6 @@ fn paint_cursor_info(
         }
         CursorShape::Block => {
             window.paint_quad(fill(geom.device_rect(x0, y0, w, h), color));
-            // Paint the character on top of the cursor quad, in the cell's
-            // background color, on the same baseline as the text pass.
             if let Some(ch) = cursor.text {
                 let mut cursor_font = base_font.clone();
                 if cursor.bold {
@@ -77,8 +70,6 @@ fn paint_cursor_info(
                         underline: None,
                         strikethrough: None,
                     }],
-                    // Match the normal terminal text path so the glyph does
-                    // not shift when a block cursor moves over it.
                     Some(geom.cell_width),
                 );
                 super::text::paint_shaped_line(
@@ -93,9 +84,6 @@ fn paint_cursor_info(
             }
         }
         CursorShape::Beam => {
-            // Half the thickness hangs over the left edge of the cell so the
-            // bar sits between characters rather than on the first one.
-            // Rounding up: a one-pixel bar shifted left reads better.
             let x = x0 - (t + 1) / 2;
             window.paint_quad(fill(geom.device_rect(x, y0, t, h), color));
         }
@@ -109,19 +97,15 @@ fn paint_cursor_info(
             window.paint_quad(fill(geom.device_rect(x0, y0 + y + t, w, t), color));
         }
         CursorShape::HollowBlock => {
-            // The block hollowed out by one cursor thickness.
             window.paint_quad(
                 outline(geom.device_rect(x0, y0, w, h), color, BorderStyle::Solid)
                     .border_widths(geom.logical(t)),
             );
         }
-        CursorShape::Hidden => {} // Already filtered in build_layout
+        CursorShape::Hidden => {}
     }
 }
 
-/// Paint the primary cursor at its grid position using the shape dictated by
-/// the terminal mode + config. For Block shapes, shapes the underlying
-/// character on top in the terminal's background color.
 pub fn paint_cursor(
     layout: &LayoutState,
     geom: &CellGeometry,
@@ -137,8 +121,6 @@ pub fn paint_cursor(
     paint_cursor_info(cursor, layout, geom, base_font, font_size, window, cx);
 }
 
-/// Paint the secondary selection marker using the same glyph-aware cursor pass
-/// as the primary cursor.
 pub fn paint_anchor_cursor(
     layout: &LayoutState,
     geom: &CellGeometry,

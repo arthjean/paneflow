@@ -4,25 +4,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// Helper: write a valid minimal config file.
 fn write_valid_config(path: &PathBuf) {
     fs::write(path, r#"{"default_shell": "/bin/bash", "commands": []}"#).unwrap();
 }
 
-/// Helper: write an updated config file with a different shell.
 fn write_updated_config(path: &PathBuf) {
     fs::write(path, r#"{"default_shell": "/bin/zsh", "commands": []}"#).unwrap();
 }
 
-/// Helper: write invalid JSON to the config path.
 fn write_invalid_config(path: &PathBuf) {
     fs::write(path, "this is not valid json {{{").unwrap();
 }
 
-/// Poll `condition` every 50ms until it returns `true` or `timeout` elapses.
-/// Why: macOS FSEvents on CI runners can take >1s to deliver file events vs
-/// near-instant inotify on Linux; a fixed sleep is inherently flaky across
-/// platforms, so we poll instead.
 fn wait_for<F: FnMut() -> bool>(mut condition: F, timeout: Duration) -> bool {
     let start = Instant::now();
     while start.elapsed() < timeout {
@@ -190,8 +183,6 @@ fn test_attempt_reload_valid_config_calls_callback() {
 
 #[test]
 fn test_attempt_reload_unchanged_config_skips_callback() {
-    // US-029: a reload whose parsed result equals the current config must
-    // NOT fire the callback (a touch / whitespace-only save).
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("paneflow.json");
     write_valid_config(&path);
@@ -211,14 +202,11 @@ fn test_attempt_reload_unchanged_config_skips_callback() {
 
 #[test]
 fn test_attempt_reload_oversize_file_rejected() {
-    // US-029 negative test: the hot reload path now applies the same
-    // oversize guard as the cold loader (previously absent), so a runaway
-    // file is rejected before allocating and the previous config is kept.
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("paneflow.json");
     let big = format!(
         r#"{{"default_shell": "/bin/zsh", "_pad": "{}"}}"#,
-        "x".repeat(1_100_000) // > MAX_CONFIG_SIZE_BYTES (1 MiB)
+        "x".repeat(1_100_000)
     );
     fs::write(&path, big).unwrap();
 
@@ -257,7 +245,6 @@ fn test_watcher_detects_file_change() {
     let watcher = ConfigWatcher::new_with_path(path.clone(), cb);
     let _running = watcher.start().expect("watcher should start");
 
-    // Give the watcher time to initialize.
     thread::sleep(Duration::from_millis(100));
 
     write_updated_config(&path);
@@ -290,14 +277,11 @@ fn test_watcher_invalid_change_keeps_old() {
 
     thread::sleep(Duration::from_millis(100));
 
-    // Write invalid JSON.
     write_invalid_config(&path);
 
-    // Wait for debounce + processing.
     thread::sleep(Duration::from_millis(800));
 
     let configs = received.lock().unwrap();
-    // Callback should NOT have been called (invalid JSON is rejected).
     assert!(
         configs.is_empty(),
         "callback should not be invoked for invalid config"
@@ -320,9 +304,6 @@ fn test_watcher_survives_file_deletion_and_recreation() {
 
     thread::sleep(Duration::from_millis(100));
 
-    // Delete the file, then recreate with new content. macOS FSEvents may
-    // coalesce both into a single event batch, so we only wait on the
-    // post-recreation callback rather than pausing between steps.
     fs::remove_file(&path).unwrap();
     write_updated_config(&path);
 
@@ -355,7 +336,6 @@ fn test_debounce_coalesces_rapid_writes() {
 
     thread::sleep(Duration::from_millis(100));
 
-    // Rapid-fire writes within the debounce window.
     for i in 0..5 {
         let shell = format!("/bin/shell{i}");
         let json = format!(r#"{{"default_shell": "{shell}", "commands": []}}"#);
@@ -363,7 +343,6 @@ fn test_debounce_coalesces_rapid_writes() {
         thread::sleep(Duration::from_millis(50));
     }
 
-    // Wait for at least one callback to fire (up to 5s for macOS CI).
     let call_count_poll = Arc::clone(&call_count);
     let fired = wait_for(
         move || *call_count_poll.lock().unwrap() >= 1,
@@ -371,12 +350,9 @@ fn test_debounce_coalesces_rapid_writes() {
     );
     assert!(fired, "at least one reload should have occurred");
 
-    // Then settle for an extra second so any trailing debounce flushes.
     thread::sleep(Duration::from_secs(1));
 
     let count = *call_count.lock().unwrap();
-    // With debouncing, we should see fewer callbacks than writes.
-    // Typically 1 (all coalesced), but timing may cause 2.
     assert!(
         count <= 2,
         "debounce should coalesce rapid writes, got {count} callbacks for 5 writes"

@@ -1,5 +1,3 @@
-//! The Agents dock's render-ready data snapshot + its layout constants.
-
 use std::collections::HashSet;
 use std::rc::Rc;
 
@@ -13,45 +11,21 @@ use crate::diff::{
     unified_offsets,
 };
 
-/// Default width of the docked panel. Sized for the default split mode: two
-/// readable code columns side by side, while still leaving the terminal column
-/// usable beside it. The panel is user-resizable by dragging its left edge; the
-/// live width lives on [`crate::DiffDockState::width`], clamped to
-/// the bounds below.
 pub(crate) const DIFF_DOCK_PANEL_WIDTH: f32 = 880.0;
 
-/// Resize clamp for the diff dock's user-dragged width. The floor keeps the
-/// gutters plus a readable code column; the ceiling stops the dock from
-/// swallowing the whole main area on a wide window.
 pub(crate) const DIFF_DOCK_PANEL_MIN_WIDTH: f32 = 360.0;
 pub(super) const DIFF_DOCK_PANEL_MAX_WIDTH: f32 = 1400.0;
 
-/// How many `File` tabs the dock keeps open at once (US-017). Past the cap the
-/// oldest tab that is neither modified nor active is evicted, so a cap hit can
-/// never drop unsaved work.
 pub(crate) const MAX_DIFF_FILE_TABS: usize = 8;
 
-/// One tab of the dock's strip. `Changes` is the permanent diff tab (index 0);
-/// `Terminal` tabs are opened from the strip's `+` menu and are closable.
-/// `File` tabs host the editor of `super::code` and are closable too, with a
-/// confirmation step while the document is modified (US-017).
 #[derive(Clone)]
 pub(crate) enum DiffDockTab {
     Changes,
     Terminal(gpui::Entity<crate::terminal::TerminalView>),
-    /// Constructed only by `PaneFlowApp::open_diff_file_tab`, reached from the
-    /// Files sidebar and from the strip's `+` menu (US-017 / US-018).
     File(gpui::Entity<super::code::view::CodeView>),
-    /// A `File` tab with no document yet: what "File" opens, alongside the Files
-    /// tree that supplies the path. Without it the dock would answer "File" by
-    /// showing `Changes` - the answer to a different question - while the tree
-    /// waits for a click. At most one exists at a time, and the next document
-    /// opened takes its slot.
     PendingFile,
 }
 
-/// The chrome's read-only view of the dock state, bundled so the header and its
-/// overflow menu take one parameter instead of a long positional list.
 pub(super) struct DiffChrome<'a> {
     pub(super) data: &'a Option<DiffDockData>,
     pub(super) cwd: String,
@@ -71,30 +45,19 @@ pub(crate) struct DiffDockHScrollDrag {
     pub(super) thumb_width: f32,
 }
 
-/// Render-ready snapshot of the panel's data. Cheap to clone every frame: every
-/// row vector is shared behind an `Rc` (single-threaded GPUI state). Mirrors a
-/// single [`crate::diff`] `Column`: the full rows are kept so a collapse toggle
-/// re-derives the filtered `disp_*` views without re-shelling git.
 #[derive(Clone)]
 pub(crate) struct DiffDockData {
-    /// The working directory this diff was computed for. Used to ignore a
-    /// stale async result after the user switches threads or closes the panel.
     pub(crate) cwd: String,
     pub(super) loading: bool,
     pub(super) error: Option<String>,
     pub(super) unified_loaded: bool,
     pub(super) split_loaded: bool,
-    // Full (uncollapsed) rows + path→header-index anchors from the shared
-    // pipeline, retained so a collapse toggle re-derives the filtered views.
     pub(super) unified: Rc<Vec<DisplayRow>>,
     pub(super) split: Rc<Vec<SplitRow>>,
     pub(super) anchors_unified: Rc<Vec<(String, usize)>>,
     pub(super) anchors_split: Rc<Vec<(String, usize)>>,
-    // Raw files + row caches back fold expansion without re-shelling git.
     pub(super) files_full: Rc<Vec<FileDiff>>,
     pub(super) row_caches: Rc<Vec<FileRowCache>>,
-    // Collapse-filtered display rows + cached layout inputs (lockstep), consumed
-    // by `DiffElement` each frame.
     pub(super) disp_unified: Rc<Vec<DisplayRow>>,
     pub(super) disp_split: Rc<Vec<SplitRow>>,
     pub(super) disp_anchors_unified: Rc<Vec<(String, usize)>>,
@@ -103,9 +66,6 @@ pub(crate) struct DiffDockData {
     pub(super) disp_split_offsets: Rc<Vec<f32>>,
     pub(super) disp_unified_max_no: u32,
     pub(super) disp_split_max_no: u32,
-    /// Per-file horizontal-scroll spans (widest code line per file), kept in
-    /// lockstep with the display rows so `DiffElement` bounds each file's
-    /// horizontal offset without re-measuring rows per frame.
     pub(super) disp_unified_spans: Rc<Vec<FileSpan>>,
     pub(super) disp_split_spans: Rc<Vec<FileSpan>>,
     pub(super) paths: Vec<String>,
@@ -156,10 +116,6 @@ impl DiffDockData {
         data
     }
 
-    /// Rebuild the collapse-filtered views from the full rows + `collapsed`.
-    /// When nothing is collapsed the full rows are shared as-is (no allocation);
-    /// otherwise collapsed files keep only their header. Mirrors
-    /// [`crate::diff::DiffView`]'s `recompute_display`.
     pub(super) fn recompute(&mut self, collapsed: &HashSet<String>, expanded: &HashSet<String>) {
         if self.unified_loaded {
             self.recompute_unified(collapsed, expanded);
@@ -258,12 +214,10 @@ impl DiffDockData {
         self.disp_split_spans = Rc::new(split_file_spans(&self.disp_split));
     }
 
-    /// The file paths in this snapshot, used to drive "collapse all".
     pub(super) fn paths(&self) -> Vec<String> {
         self.paths.clone()
     }
 
-    /// Whether every file is currently folded (drives the toolbar toggle label).
     pub(super) fn all_collapsed(&self, collapsed: &HashSet<String>) -> bool {
         !self.paths.is_empty() && self.paths.iter().all(|p| collapsed.contains(p))
     }

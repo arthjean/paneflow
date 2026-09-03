@@ -44,7 +44,7 @@ paneflow mcp install
 
 This registers a local read-only MCP bridge - `list_panes`, `read_pane`, `search_pane` - for every agent it detects. The bridge cannot type into panes or control them, and terminal output comes back wrapped as untrusted data so the reading agent analyzes it instead of obeying it.
 
-[Bridge docs →](docs/mcp-bridge.md)
+[Bridge docs →](docs/user/scripting.md)
 
 ### 3. Coordinate a fleet
 

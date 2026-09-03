@@ -1,11 +1,3 @@
-//! Branch switcher for the diff dock.
-//!
-//! A Cursor-style chip in the dock's toolbar row (`git-branch  main  v`) opens a
-//! searchable list of local branches and runs `git switch` on the picked one.
-//! Both git calls are bounded subprocesses run off the render thread; the
-//! resulting branch/stat state is folded back into the workspaces and projects
-//! rooted at the dock's folder, and the dock's diff is recomputed.
-
 use gpui::{
     AnyElement, AppContext, ClickEvent, Context, Entity, FocusHandle, InteractiveElement,
     IntoElement, MouseButton, ParentElement, SharedString, StatefulInteractiveElement, Styled,
@@ -17,16 +9,9 @@ use crate::settings::components::with_alpha;
 use crate::ui_primitives::{AnimatedHoverExt, ROW_RADIUS, squircle_skin};
 use crate::widgets::text_input::TextInput;
 
-/// Wall-clock ceiling and stdout/stderr cap for the picker's `git` calls.
-/// `branch --format` and `switch` are both fast; the bounds only exist so a
-/// wedged git (a hook prompting for input, a stale lock) cannot pin a thread.
 const BRANCH_GIT_DEADLINE: std::time::Duration = std::time::Duration::from_secs(30);
 const BRANCH_GIT_OUTPUT_CAP: u64 = 512 * 1024;
 
-/// Open branch picker: the folder it targets, the checked-out branch, the local
-/// branches once listed, and the search field. `restore_focus` is whatever held
-/// keyboard focus when the chip was clicked, handed back on close (the picker's
-/// `TextInput` takes focus while open).
 pub(crate) struct DiffBranchMenuState {
     pub(crate) cwd: String,
     pub(crate) current: String,
@@ -38,8 +23,6 @@ pub(crate) struct DiffBranchMenuState {
 }
 
 impl PaneFlowApp {
-    /// Open the picker for `cwd`, listing branches off-thread. Closing is the
-    /// chip's job (see [`render_diff_branch_chip`]).
     fn open_diff_branch_menu(
         &mut self,
         cwd: String,
@@ -99,7 +82,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// Dismiss the picker and hand keyboard focus back to whoever held it.
     pub(crate) fn close_diff_branch_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(menu) = self.diff_dock.diff_branch_menu.take() {
             if let Some(handle) = menu.restore_focus {
@@ -109,9 +91,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Keyboard commands bubbling out of the focused search field: Enter
-    /// switches to an exact match, Escape dismisses. A non-matching query is a
-    /// no-op (keep filtering, or click a row).
     pub(crate) fn handle_diff_branch_menu_key_down(
         &mut self,
         event: &gpui::KeyDownEvent,
@@ -142,8 +121,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Background `git switch` to an existing branch, then refresh the cached git
-    /// state for every workspace/project rooted at `cwd` and the dock's diff.
     fn spawn_switch_diff_branch(&mut self, cwd: String, branch: String, cx: &mut Context<Self>) {
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
@@ -171,9 +148,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// The checked-out branch of the dock's folder, plus whether it is a repo at
-    /// all. Read from the workspaces rooted there, which the git refresh keeps
-    /// current (see `spawn_agents_environment_git_refresh`).
     pub(super) fn diff_branch_for_cwd(&self, cwd: &str) -> Option<(String, usize)> {
         self.workspaces
             .iter()
@@ -187,8 +161,6 @@ impl PaneFlowApp {
     }
 }
 
-/// The toolbar chip: `git-branch  <name>  v`, with the picker deferred over it
-/// when open. Renders nothing when the folder is not a git repository.
 pub(super) fn render_diff_branch_chip(
     cwd: String,
     branch: String,
@@ -201,10 +173,6 @@ pub(super) fn render_diff_branch_chip(
     let current = branch.clone();
     let chip_cwd = cwd.clone();
 
-    // The rail's row skin: `ROW_RADIUS` superellipse instead of GPUI's circular
-    // `rounded()`, the rail's own hover tint, and its 26 px row box. While the
-    // picker is up that hover fill is pinned on as the resting fill, so the chip
-    // stays lit for as long as the menu it owns.
     let rail_hover = crate::app::constants::sidebar_tab_hover_background();
 
     squircle_skin(
@@ -223,11 +191,6 @@ pub(super) fn render_diff_branch_chip(
         menu_open.then_some(rail_hover),
         Some(rail_hover),
     )
-    // Toggle on press, off the render-time `menu_open` snapshot. Both parts
-    // matter: the picker dismisses on `on_mouse_down_out` (capture phase of
-    // this very press), which repaints before the release - so an `on_click`
-    // would run against a *newer* frame whose snapshot already reads closed,
-    // and the chip would re-open the menu it just dismissed.
     .on_mouse_down(
         MouseButton::Left,
         cx.listener(move |this, _: &gpui::MouseDownEvent, window, cx| {
@@ -352,8 +315,6 @@ fn render_diff_branch_menu(
     .into_any_element()
 }
 
-/// Branch-picker search field. Editing is handled by `TextInput`, while the
-/// parent menu handles only Enter/Escape after those keys bubble.
 fn render_diff_branch_search_row(
     query_input: Entity<TextInput>,
     ui: crate::theme::UiColors,
@@ -386,8 +347,6 @@ fn render_diff_branch_search_row(
         .into_any_element()
 }
 
-/// One branch row: leading branch glyph, the name, an optional "Uncommitted: N
-/// files" sub-label on the checked-out branch, and a trailing check.
 fn render_diff_branch_item(
     idx: usize,
     branch: String,

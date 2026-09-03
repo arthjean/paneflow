@@ -1,8 +1,3 @@
-//! Filesystem watcher construction and event filtering for [`super::DiffView`].
-//!
-//! Keep path decisions component-based: notify yields native paths, so matching
-//! string literals containing `/` silently misses Windows events.
-
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Instant;

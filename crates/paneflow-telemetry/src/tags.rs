@@ -1,34 +1,3 @@
-//! Canonical-tag format invariant helper (US-013).
-//!
-//! Domain mapping (e.g. `InstallMethod` → `"deb"`/`"rpm"`/…) lives in the
-//! consumer crate where the domain types are defined; this module owns
-//! only the format contract every published tag must satisfy.
-//!
-//! The contract: a canonical telemetry tag is a non-empty string composed
-//! exclusively of lowercase ASCII letters, ASCII digits, hyphens, and
-//! dots. PostHog breakdowns are case-sensitive and do not normalize, so
-//! mixing case or whitespace would silently fragment dashboards.
-//!
-//! Use [`is_canonical_tag_format`] in unit tests of the domain-mapping
-//! functions to assert the invariant once per variant.
-//!
-//! See `tasks/compliance-analytics.md §5` for the committed vocabulary.
-
-/// Returns `true` iff `s` is a non-empty string of `[a-z0-9.-]` codepoints.
-///
-/// This is the format contract every published telemetry tag must satisfy.
-/// Domain-mapping functions in consumer crates assert it as part of their
-/// unit tests, e.g.:
-///
-/// ```
-/// use paneflow_telemetry::tags::is_canonical_tag_format;
-/// assert!(is_canonical_tag_format("deb"));
-/// assert!(is_canonical_tag_format("rpm-ostree"));
-/// assert!(is_canonical_tag_format("tar.gz"));
-/// assert!(!is_canonical_tag_format(""));
-/// assert!(!is_canonical_tag_format("DEB"));
-/// assert!(!is_canonical_tag_format("with space"));
-/// ```
 pub fn is_canonical_tag_format(s: &str) -> bool {
     if s.is_empty() {
         return false;

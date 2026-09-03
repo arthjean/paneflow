@@ -1,12 +1,3 @@
-//! Pointer-driven selection: click, double-click, triple-click, drag, and
-//! autoscroll, arbitrated by libghostty rather than reimplemented.
-//!
-//! A terminal's selection gestures carry more state than they look like they
-//! do: the click counter and its timeout, which granularity each click count
-//! maps to, the anchor that a drag pivots around, and whether a drag that has
-//! left the viewport should scroll it. libghostty owns all of that here, so
-//! Paneflow feeds it events and reads back a selection.
-
 use std::ffi::c_void;
 
 use paneflow_libghostty_sys as sys;
@@ -17,17 +8,12 @@ use crate::handles::check;
 use crate::selection::empty_selection;
 use crate::{GhosttyError, Point, Result, SelectionRange};
 
-/// What a click selects.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GestureBehavior {
-    /// Cell-granular selection.
     #[default]
     Cell,
-    /// Whole words.
     Word,
-    /// Whole lines.
     Line,
-    /// The output of a command, using OSC 133 marks.
     Output,
 }
 
@@ -66,19 +52,14 @@ impl GestureBehavior {
     }
 }
 
-/// Which granularity each click count selects at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GestureBehaviors {
-    /// Single click.
     pub single_click: GestureBehavior,
-    /// Double click.
     pub double_click: GestureBehavior,
-    /// Triple click.
     pub triple_click: GestureBehavior,
 }
 
 impl Default for GestureBehaviors {
-    /// Cell, word, line: what every terminal does.
     fn default() -> Self {
         Self {
             single_click: GestureBehavior::Cell,
@@ -98,17 +79,11 @@ impl GestureBehaviors {
     }
 }
 
-/// Where the rendered grid sits on the surface, so a drag can be mapped back
-/// onto cells and can tell when it has left the viewport.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GestureGeometry {
-    /// Columns in the rendered grid. Must be non-zero.
     pub columns: u32,
-    /// Width of one cell in surface pixels. Must be non-zero.
     pub cell_width: u32,
-    /// Left padding before the grid, in surface pixels.
     pub padding_left: u32,
-    /// Height of the rendered surface in surface pixels. Must be non-zero.
     pub screen_height: u32,
 }
 
@@ -123,15 +98,11 @@ impl GestureGeometry {
     }
 }
 
-/// Whether an active drag wants the viewport scrolled, and which way.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GestureAutoscroll {
-    /// The pointer is inside the viewport.
     #[default]
     None,
-    /// The pointer is above the viewport.
     Up,
-    /// The pointer is below the viewport.
     Down,
 }
 
@@ -155,59 +126,32 @@ impl GestureAutoscroll {
     }
 }
 
-/// The live state of a selection gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GestureState {
-    /// How many clicks the current sequence has accumulated. Zero when no
-    /// gesture is active.
     pub click_count: u8,
-    /// Whether the pointer has moved since the press.
     pub dragged: bool,
-    /// Whether the drag is asking for the viewport to scroll.
     pub autoscroll: GestureAutoscroll,
-    /// The granularity the current click count resolved to.
     pub behavior: GestureBehavior,
-    /// The cell the gesture pivots around, if one is active.
     pub anchor: Option<Point>,
 }
 
-/// Optional details of a press.
 #[derive(Clone, Debug, Default)]
 pub struct PressOptions {
-    /// Surface-space pointer position, used with `repeat_distance` to decide
-    /// whether this press continues the previous click sequence.
     pub position: Option<(f64, f64)>,
-    /// Monotonic event time. Without it a press is untimed and can only ever
-    /// be a single click.
     pub time_ns: Option<u64>,
-    /// How far the pointer may move between clicks and still count as a
-    /// repeat, in surface pixels.
     pub repeat_distance: Option<f64>,
-    /// How long a click sequence stays open, in nanoseconds.
     pub repeat_interval_ns: Option<u64>,
-    /// Which granularity each click count selects at.
     pub behaviors: Option<GestureBehaviors>,
-    /// Codepoints that separate words. Empty keeps libghostty's defaults.
     pub word_boundaries: Vec<char>,
 }
 
-/// Optional details of a drag.
 #[derive(Clone, Debug, Default)]
 pub struct DragOptions {
-    /// Surface-space pointer position.
     pub position: Option<(f64, f64)>,
-    /// Whether the drag builds a rectangular (block) selection.
     pub rectangle: bool,
-    /// Codepoints that separate words. Empty keeps libghostty's defaults.
     pub word_boundaries: Vec<char>,
 }
 
-/// A gesture handle bound to the terminal that created it.
-///
-/// `ghostty_selection_gesture_free` needs the terminal, so this stores the
-/// terminal handle alongside the gesture. It is declared before the terminal
-/// in [`DisplayTerminal`], which makes the drop order correct by
-/// construction.
 pub(crate) struct GestureHandle {
     gesture: sys::GhosttySelectionGesture,
     terminal: sys::GhosttyTerminal,
@@ -216,8 +160,6 @@ pub(crate) struct GestureHandle {
 impl GestureHandle {
     pub(crate) fn new(terminal: sys::GhosttyTerminal) -> Result<Self> {
         let mut gesture: sys::GhosttySelectionGesture = std::ptr::null_mut();
-        // SAFETY: the null allocator selects libghostty's default and
-        // `gesture` is valid writable storage.
         let result = unsafe { sys::ghostty_selection_gesture_new(std::ptr::null(), &mut gesture) };
         check("selection_gesture_new", result)?;
         if gesture.is_null() {
@@ -235,13 +177,10 @@ impl GestureHandle {
 
 impl Drop for GestureHandle {
     fn drop(&mut self) {
-        // SAFETY: both handles are live: the terminal outlives this field
-        // because it is declared after it in `DisplayTerminal`.
         unsafe { sys::ghostty_selection_gesture_free(self.gesture, self.terminal) };
     }
 }
 
-/// A gesture event, owned for the length of one dispatch.
 struct GestureEvent {
     raw: sys::GhosttySelectionGestureEvent,
 }
@@ -249,8 +188,6 @@ struct GestureEvent {
 impl GestureEvent {
     fn new(kind: sys::GhosttySelectionGestureEventType) -> Result<Self> {
         let mut raw: sys::GhosttySelectionGestureEvent = std::ptr::null_mut();
-        // SAFETY: the null allocator selects libghostty's default and `raw`
-        // is valid writable storage.
         let result =
             unsafe { sys::ghostty_selection_gesture_event_new(std::ptr::null(), &mut raw, kind) };
         check("selection_gesture_event_new", result)?;
@@ -262,19 +199,11 @@ impl GestureEvent {
         Ok(Self { raw })
     }
 
-    /// Set one option. `value` must point at the type the option documents,
-    /// or be null to clear it.
-    ///
-    /// # Safety
-    ///
-    /// `value` must match `option`'s documented input type and stay live for
-    /// the call.
     unsafe fn set(
         &mut self,
         option: sys::GhosttySelectionGestureEventOption,
         value: *const c_void,
     ) -> Result<()> {
-        // SAFETY: the caller guarantees the value type; the handle is live.
         let result = unsafe { sys::ghostty_selection_gesture_event_set(self.raw, option, value) };
         check("selection_gesture_event_set", result)
     }
@@ -288,8 +217,6 @@ impl GestureEvent {
             ptr: codepoints.as_ptr(),
             len: codepoints.len(),
         };
-        // SAFETY: the option takes a `GhosttyCodepoints*`, the codepoints
-        // outlive the call, and libghostty copies them into event storage.
         unsafe {
             self.set(
                 sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_WORD_BOUNDARY_CODEPOINTS,
@@ -303,8 +230,6 @@ impl GestureEvent {
             return Ok(());
         };
         let value = sys::GhosttySurfacePosition { x, y };
-        // SAFETY: the option takes a `GhosttySurfacePosition*` and `value`
-        // outlives the call.
         unsafe {
             self.set(
                 sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_POSITION,
@@ -316,8 +241,6 @@ impl GestureEvent {
 
 impl Drop for GestureEvent {
     fn drop(&mut self) {
-        // SAFETY: `raw` came from `selection_gesture_event_new`, is private,
-        // and Drop runs exactly once.
         unsafe { sys::ghostty_selection_gesture_event_free(self.raw) };
     }
 }
@@ -333,17 +256,9 @@ impl DisplayTerminal {
         Ok(gesture.raw())
     }
 
-    /// Apply `event`, install any resulting selection, and return it.
-    ///
-    /// A `None` result means the event produced no selection: a release, or a
-    /// press on a cell with nothing to select. The terminal's selection is
-    /// left alone in that case rather than cleared, because a release must
-    /// not wipe what the press selected.
     fn dispatch(&mut self, event: &GestureEvent) -> Result<Option<SelectionRange>> {
         let gesture = self.gesture()?;
         let mut selection = empty_selection();
-        // SAFETY: all three handles are live and `selection` is valid
-        // writable storage with its `size` field set.
         let result = unsafe {
             sys::ghostty_selection_gesture_event(
                 gesture,
@@ -364,8 +279,6 @@ impl DisplayTerminal {
 
     fn set_ref(&self, event: &mut GestureEvent, point: Point) -> Result<()> {
         let reference = self.grid_ref(point)?;
-        // SAFETY: the option takes a `GhosttyGridRef*` and `reference`
-        // outlives the call.
         unsafe {
             event.set(
                 sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REF,
@@ -374,11 +287,6 @@ impl DisplayTerminal {
         }
     }
 
-    /// Press at `point`, advancing the click counter.
-    ///
-    /// With a `time_ns` and a `repeat_interval_ns` in `options`, consecutive
-    /// presses on the same spot become double- and triple-clicks and select
-    /// at the matching granularity.
     pub fn gesture_press(
         &mut self,
         point: Point,
@@ -391,7 +299,6 @@ impl DisplayTerminal {
         event.set_position(options.position)?;
         event.set_word_boundaries(&options.word_boundaries)?;
         if let Some(time_ns) = options.time_ns {
-            // SAFETY: the option takes a `uint64_t*` that outlives the call.
             unsafe {
                 event.set(
                     sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_TIME_NS,
@@ -400,7 +307,6 @@ impl DisplayTerminal {
             }
         }
         if let Some(distance) = options.repeat_distance {
-            // SAFETY: the option takes a `double*` that outlives the call.
             unsafe {
                 event.set(
                     sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_DISTANCE,
@@ -409,7 +315,6 @@ impl DisplayTerminal {
             }
         }
         if let Some(interval) = options.repeat_interval_ns {
-            // SAFETY: the option takes a `uint64_t*` that outlives the call.
             unsafe {
                 event.set(
                     sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_REPEAT_INTERVAL_NS,
@@ -419,8 +324,6 @@ impl DisplayTerminal {
         }
         if let Some(behaviors) = options.behaviors {
             let behaviors = behaviors.raw();
-            // SAFETY: the option takes a `GhosttySelectionGestureBehaviors*`
-            // that outlives the call.
             unsafe {
                 event.set(
                     sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_BEHAVIORS,
@@ -431,8 +334,6 @@ impl DisplayTerminal {
         self.dispatch(&event)
     }
 
-    /// Drag to `point`, extending the selection from the press anchor at the
-    /// granularity the click count chose.
     pub fn gesture_drag(
         &mut self,
         point: Point,
@@ -444,8 +345,6 @@ impl DisplayTerminal {
         )?;
         self.set_ref(&mut event, point)?;
         let geometry = geometry.raw();
-        // SAFETY: the option takes a `GhosttySelectionGestureGeometry*` that
-        // outlives the call.
         unsafe {
             event.set(
                 sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY,
@@ -455,7 +354,6 @@ impl DisplayTerminal {
         event.set_position(options.position)?;
         event.set_word_boundaries(&options.word_boundaries)?;
         let rectangle = options.rectangle;
-        // SAFETY: the option takes a `bool*` that outlives the call.
         unsafe {
             event.set(
                 sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_RECTANGLE,
@@ -465,11 +363,6 @@ impl DisplayTerminal {
         self.dispatch(&event)
     }
 
-    /// Release the pointer, closing the drag but keeping the click counter so
-    /// a following press can become a double-click.
-    ///
-    /// `point` is where the release happened, or `None` when it landed
-    /// outside any cell.
     pub fn gesture_release(&mut self, point: Option<Point>) -> Result<()> {
         let mut event = GestureEvent::new(
             sys::GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_RELEASE,
@@ -477,15 +370,9 @@ impl DisplayTerminal {
         if let Some(point) = point {
             self.set_ref(&mut event, point)?;
         }
-        // A release never yields a selection; it only advances gesture state.
         self.dispatch(&event).map(|_| ())
     }
 
-    /// Advance an autoscrolling drag by one tick.
-    ///
-    /// Call this while [`Self::gesture_state`] reports an autoscroll
-    /// direction, after scrolling the viewport, passing the viewport
-    /// coordinate the pointer now maps to.
     pub fn gesture_autoscroll_tick(
         &mut self,
         viewport: Point,
@@ -506,8 +393,6 @@ impl DisplayTerminal {
                 limit: u32::MAX as usize,
             })?,
         };
-        // SAFETY: the option takes a `GhosttyPointCoordinate*` that outlives
-        // the call.
         unsafe {
             event.set(
                 sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_VIEWPORT,
@@ -515,8 +400,6 @@ impl DisplayTerminal {
             )?;
         }
         let geometry = geometry.raw();
-        // SAFETY: the option takes a `GhosttySelectionGestureGeometry*` that
-        // outlives the call.
         unsafe {
             event.set(
                 sys::GhosttySelectionGestureEventOption_GHOSTTY_SELECTION_GESTURE_EVENT_OPT_GEOMETRY,
@@ -528,8 +411,6 @@ impl DisplayTerminal {
         self.dispatch(&event)
     }
 
-    /// Deepen the current selection one granularity step, the way a
-    /// force-touch or a long press does.
     pub fn gesture_deep_press(&mut self, word_boundaries: &[char]) -> Result<Option<SelectionRange>> {
         let mut event = GestureEvent::new(
             sys::GhosttySelectionGestureEventType_GHOSTTY_SELECTION_GESTURE_EVENT_TYPE_DEEP_PRESS,
@@ -538,15 +419,12 @@ impl DisplayTerminal {
         self.dispatch(&event)
     }
 
-    /// Drop the click counter and the anchor, ending any gesture in flight.
     pub fn gesture_reset(&mut self) -> Result<()> {
         let gesture = self.gesture()?;
-        // SAFETY: both handles are live.
         unsafe { sys::ghostty_selection_gesture_reset(gesture, self.terminal.raw()) };
         Ok(())
     }
 
-    /// The gesture's live state.
     pub fn gesture_state(&mut self) -> Result<GestureState> {
         let gesture = self.gesture()?;
         let mut click_count = 0u8;
@@ -556,11 +434,6 @@ impl DisplayTerminal {
         let mut behavior =
             sys::GhosttySelectionGestureBehavior_GHOSTTY_SELECTION_GESTURE_BEHAVIOR_CELL;
         use sys as s;
-        // The anchor is read on its own because it reports
-        // `GHOSTTY_NO_VALUE` when no gesture is active, which would abort the
-        // whole batch.
-        // SAFETY: every destination matches the output type selection.h
-        // documents for its key, and all of them outlive the call.
         unsafe {
             get_multi_gesture(
                 gesture,
@@ -588,8 +461,6 @@ impl DisplayTerminal {
 
         let mut anchor: sys::GhosttyGridRef = unsafe { std::mem::zeroed() };
         anchor.size = std::mem::size_of::<sys::GhosttyGridRef>();
-        // SAFETY: the key writes a `GhosttyGridRef*` with its `size` set, and
-        // both handles are live.
         let result = unsafe {
             sys::ghostty_selection_gesture_get(
                 gesture,
@@ -615,23 +486,11 @@ impl DisplayTerminal {
     }
 }
 
-/// `ghostty_selection_gesture_get_multi` takes the terminal as a second
-/// handle, so it does not fit [`get_multi`]'s shape directly. This binds the
-/// terminal and hands the rest through.
-///
-/// # Safety
-///
-/// Both handles must be live and every slot must satisfy [`Slot::new`]'s
-/// contract.
 unsafe fn get_multi_gesture<const N: usize>(
     gesture: sys::GhosttySelectionGesture,
     terminal: sys::GhosttyTerminal,
     slots: [Slot<sys::GhosttySelectionGestureData>; N],
 ) -> Result<()> {
-    // Thread-local rather than a parameter: the shim below is a plain `fn`
-    // pointer, so the terminal has to reach it out of band. Gestures are
-    // single-threaded per terminal, which this crate already enforces by
-    // making `DisplayTerminal` neither `Send` nor `Sync`.
     thread_local! {
         static TERMINAL: std::cell::Cell<sys::GhosttyTerminal> =
             const { std::cell::Cell::new(std::ptr::null_mut()) };
@@ -645,8 +504,6 @@ unsafe fn get_multi_gesture<const N: usize>(
         out_written: *mut usize,
     ) -> sys::GhosttyResult {
         let terminal = TERMINAL.with(std::cell::Cell::get);
-        // SAFETY: the caller of `get_multi_gesture` guarantees the handles
-        // and the arrays; `get_multi` built them from the slots.
         unsafe {
             sys::ghostty_selection_gesture_get_multi(
                 gesture,
@@ -660,8 +517,6 @@ unsafe fn get_multi_gesture<const N: usize>(
     }
 
     TERMINAL.with(|slot| slot.set(terminal));
-    // SAFETY: the caller guarantees the handles and slots; `shim` forwards to
-    // the real entry point with the terminal it just stored.
     let result = unsafe { get_multi("selection_gesture_get_multi", gesture, shim, slots) };
     TERMINAL.with(|slot| slot.set(std::ptr::null_mut()));
     result
@@ -781,9 +636,6 @@ mod tests {
         assert_eq!(range.start, Point::new(0, 0));
         assert!(terminal.gesture_state().expect("state").dragged);
 
-        // Without a surface position the drag stops at the cell before the
-        // pointer: libghostty needs the pixel offset to decide whether the
-        // pointer is past the middle of its cell.
         let text = terminal
             .selection_text()
             .expect("selection text")
@@ -857,17 +709,12 @@ mod tests {
 
     #[test]
     fn a_drag_held_below_the_grid_autoscrolls_and_keeps_extending() {
-        // Ten rows through a three-row screen: seven land in history, so a
-        // viewport parked at the top has somewhere to scroll down to.
         let mut terminal = terminal(20, 3);
         terminal
             .feed(b"a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh\r\ni\r\nj")
             .expect("output must parse");
         terminal.scroll(crate::Scroll::Top);
 
-        // The grid is three 16-pixel rows, so y = 60 is a pointer held below
-        // it. Points stay screen-absolute: with seven rows of history above
-        // the viewport, its first row is line -7.
         let geometry = GestureGeometry {
             columns: 20,
             cell_width: 8,
@@ -897,11 +744,6 @@ mod tests {
             "a\nb\nc"
         );
 
-        // What the embedder does on each tick: scroll one line, then tell the
-        // gesture which viewport cell the unmoved pointer now covers. How far
-        // past the last row the pointer is held is read from the position, so
-        // the selection runs slightly ahead of the viewport rather than
-        // stopping at its bottom edge.
         terminal.scroll(crate::Scroll::Delta(-1));
         terminal
             .gesture_autoscroll_tick(Point::new(2, 1), geometry, &held_below)
@@ -962,8 +804,6 @@ mod tests {
         assert_ne!(linear_text, block_text);
         assert!(block_text.contains("bc"), "got {block_text:?}");
         assert!(block_text.contains("jk"), "got {block_text:?}");
-        // A block selection keeps the rows separate; the linear one runs
-        // through the end of the first row.
         assert!(!block_text.contains("defgh"), "got {block_text:?}");
         assert!(linear_text.contains("defgh"), "got {linear_text:?}");
     }

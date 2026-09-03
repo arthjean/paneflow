@@ -73,12 +73,6 @@ function Test-PerformanceRetryEligible {
 function Test-TeardownRetryEligible {
     param([Parameter(Mandatory = $true)][string]$LogPath)
 
-    # Only the ConPTY teardown race is retried. ConPTY's host process outlives
-    # the shell by an unbounded moment, so on a loaded runner the descendant
-    # wait can miss its deadline while nothing is actually leaking. Every other
-    # stress failure - residual RSS growth, handle growth, a non-zero exit,
-    # missing output - carries a different `phase=` marker and must fail on the
-    # first attempt, so this matches the cleanup phase and nothing else.
     if (-not (Test-Path -LiteralPath $LogPath -PathType Leaf)) {
         return $false
     }
@@ -125,9 +119,6 @@ function Invoke-CargoGate {
         [switch]$TeardownVarianceRetry
     )
 
-    # A non-zero native exit must set $LASTEXITCODE, not raise a terminating
-    # error: otherwise the bounded rerun below never happens. This is the
-    # default (pwsh 7.4), pinned here so a runner image bump cannot change it.
     $PSNativeCommandUseErrorActionPreference = $false
 
     $maximumAttempts = if ($RunnerVarianceRetry -or $TeardownVarianceRetry) { 2 } else { 1 }

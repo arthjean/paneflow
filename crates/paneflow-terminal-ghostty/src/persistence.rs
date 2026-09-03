@@ -6,8 +6,6 @@ const MAX_SCROLLBACK_CHARS: usize = 400_000;
 
 impl DisplayTerminal {
     pub fn extract_scrollback(&self) -> Result<Option<String>> {
-        // Ghostty stores history before the active screen in its page list.
-        // `scrollback_rows` is therefore the exclusive viewport boundary.
         let history_rows = self.scrollback_rows()?;
         if history_rows == 0 {
             return Ok(None);

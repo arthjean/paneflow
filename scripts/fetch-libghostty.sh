@@ -1,20 +1,4 @@
 #!/usr/bin/env bash
-# Places the reviewed libghostty-vt archive for each requested Rust target at
-# native/libghostty/prebuilt/<target>/<archive_path>.
-#
-# The archives are not tracked by git. They live on the GitHub Release that
-# native/libghostty/manifest.toml names (`archive_release_repository` and
-# `archive_release_tag`), one asset per target, and this script is the only
-# step that downloads them: `paneflow-libghostty-sys/build.rs` performs no
-# network access and fails with a pointer here when an archive is missing.
-#
-# Every download is checked against the manifest's `archive_sha256` before it
-# is moved into place, so a tampered or mismatched asset never reaches Cargo.
-# An archive already in place with the right hash is left alone, which makes
-# the script safe to run on every build.
-#
-# Usage: scripts/fetch-libghostty.sh [--target <rust-triple>]...
-#        (no --target: every target the manifest declares)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
@@ -69,7 +53,6 @@ while (($#)); do
   esac
 done
 if ((${#TARGETS[@]} == 0)); then
-  # No mapfile: macOS ships bash 3.2 at /bin/bash.
   while IFS= read -r target; do
     TARGETS+=("$target")
   done < <(manifest_targets)

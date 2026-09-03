@@ -11,7 +11,6 @@ use crate::{BackendEvent, Modes, Result, Scroll, WindowSize};
 
 const CLEAR_SCREEN_AND_SCROLLBACK: &[u8] = b"\x1b[3J\x1b[2J\x1b[H";
 
-/// The renderer geometry a mouse encoder maps positions with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MouseEncoderSize {
     pub(crate) screen_width: u32,
@@ -24,7 +23,6 @@ pub(crate) struct MouseEncoderSize {
     pub(crate) padding_left: u32,
 }
 
-/// The terminal modes a mouse encoder derives its behavior from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MouseModes {
     report_click: bool,
@@ -54,23 +52,11 @@ pub struct DisplayTerminal {
     pub(crate) row_cells: OwnedHandle<sys::GhosttyRenderStateRowCells>,
     pub(crate) row_iterator: OwnedHandle<sys::GhosttyRenderStateRowIterator>,
     pub(crate) render_state: OwnedHandle<sys::GhosttyRenderState>,
-    /// Created on first use. Declared before `terminal` so it is dropped
-    /// first: `ghostty_selection_gesture_free` needs a live terminal.
     pub(crate) gesture: Option<crate::selection_gesture::GestureHandle>,
     pub(crate) terminal: OwnedHandle<sys::GhosttyTerminal>,
     pub(crate) snapshot_cache: SnapshotCache,
-    /// The mouse modes the encoder was last configured from. libghostty's
-    /// `setopt_from_terminal` clears the encoder's last-cell memory, which is
-    /// what suppresses a motion report per pixel instead of per cell, so it
-    /// is only called when these actually change.
     pub(crate) mouse_encoder_modes: Option<MouseModes>,
-    /// The renderer geometry the mouse encoder was last configured with.
-    /// Setting it also clears the last-cell memory, so it is only pushed when
-    /// it changes.
     pub(crate) mouse_encoder_size: Option<MouseEncoderSize>,
-    /// Encoder settings that belong to the embedder rather than the terminal.
-    /// `ghostty_key_encoder_setopt_from_terminal` resets the encoder to what
-    /// the program asked for, so these are reapplied after every such call.
     pub(crate) key_encoder_overrides: crate::input_options::KeyEncoderOverrides,
     pub(crate) callbacks: Box<CallbackState>,
     pub(crate) _not_send_or_sync: PhantomData<Rc<()>>,
@@ -78,8 +64,6 @@ pub struct DisplayTerminal {
 
 impl DisplayTerminal {
     pub fn feed(&mut self, bytes: &[u8]) -> Result<()> {
-        // SAFETY: the terminal handle is owned by `self` and the slice is
-        // borrowed for the duration of the call.
         unsafe { sys::ghostty_terminal_vt_write(self.terminal.raw(), bytes.as_ptr(), bytes.len()) };
         Ok(())
     }
@@ -88,9 +72,6 @@ impl DisplayTerminal {
         let size = size.validate()?;
         let current = self.callbacks.size();
         if size.cols < current.cols && size.rows < current.rows {
-            // Ghostty before 7fa6fffb underflows while shrinking both axes
-            // when the cursor was on the old bottom row. Shrinking rows first
-            // reloads the cursor against the new bottom before column reflow.
             let rows_first = WindowSize {
                 cols: current.cols,
                 rows: size.rows,
@@ -112,8 +93,6 @@ impl DisplayTerminal {
         self.snapshot_cache.invalidate();
     }
 
-    /// Clear the viewport, scrollback, and cursor position without performing
-    /// a full terminal reset, so negotiated modes remain intact.
     pub fn clear_screen_and_scrollback(&mut self) -> Result<()> {
         self.feed(CLEAR_SCREEN_AND_SCROLLBACK)?;
         self.snapshot_cache.invalidate();
@@ -164,19 +143,11 @@ impl DisplayTerminal {
         self.snapshot_cache.invalidate();
     }
 
-    /// Whether DEC mode 2026 (synchronized output) is currently set.
-    ///
-    /// A program brackets a screen redraw with `CSI ? 2026 h` / `CSI ? 2026 l`
-    /// so a consumer can skip the frames in between instead of publishing a
-    /// half-drawn grid. Reading it on its own costs one FFI crossing, where
-    /// [`Self::modes`] costs thirteen.
     pub fn synchronized_output(&self) -> Result<bool> {
         self.mode(2026)
     }
 
     fn mode(&self, dec_mode: u16) -> Result<bool> {
-        // `GhosttyMode` packs the ANSI flag in bit 15, so a DEC private mode
-        // number is already its own mode identifier.
         let mut config = sys::GhosttyTerminalModeConfig {
             mode: dec_mode,
             value: false,
@@ -215,9 +186,6 @@ pub(crate) fn resize_terminal(terminal: sys::GhosttyTerminal, size: WindowSize) 
 mod tests {
     use super::*;
 
-    /// An OSC body long enough to exceed libghostty's OSC 52 budget once it is
-    /// base64 decoded. The length stays a multiple of four so the payload is
-    /// still decodable and the test proves the cap, not a decode failure.
     const OVERSIZED_OSC_BODY_BYTES: usize =
         crate::callback_ffi::MAX_CLIPBOARD_BYTES.div_ceil(3) * 4;
 
@@ -306,8 +274,6 @@ mod tests {
         let mut terminal = DisplayTerminal::new(size, 100, crate::TerminalAppearance::default())
             .expect("terminal must initialize");
 
-        // A determinate report followed by an error report in the same drain
-        // window: only the newest survives, the way a title report does.
         terminal.feed(b"\x1b]9;4;1;42\x07").expect("determinate report");
         terminal.feed(b"\x1b]9;4;2;80\x07").expect("error report");
 

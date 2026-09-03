@@ -1,16 +1,3 @@
-//! Per-language file icons, shared by the diff dock's file headers and the
-//! Files sidebar tree.
-//!
-//! The assets under `icons/languages/` carry their own `fill`, so they must be
-//! painted as images (`img()` / `ImgResourceLoader`), never through `svg()`,
-//! which recolors the whole glyph with the element's text color.
-
-/// Map a file's basename to its language icon asset path.
-///
-/// Full-name matches win over extensions (`Dockerfile`, `Makefile`,
-/// `angular.json`), and the React Native platform suffixes are checked before
-/// the plain `.ts`/`.js` families. Unknown names fall back to the generic
-/// document.
 pub(crate) fn language_icon_path(basename: &str) -> &'static str {
     let basename = basename.trim().to_ascii_lowercase();
     match basename.as_str() {
@@ -96,7 +83,6 @@ mod tests {
 
     #[test]
     fn dotfiles_and_unknown_names_fall_back() {
-        // A leading-dot name is all extension, so it must not be read as one.
         assert_eq!(language_icon_path(".gitignore"), "icons/languages/file.svg");
         assert_eq!(language_icon_path("LICENSE"), "icons/languages/file.svg");
         assert_eq!(

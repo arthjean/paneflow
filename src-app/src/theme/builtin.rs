@@ -1,11 +1,7 @@
-//! Bundled terminal themes and the registry used to look them up by name.
-
 use super::model::{SyntaxPalette, TerminalTheme, UiColors, h, ha};
 
 pub type ThemeEntry = (&'static str, fn() -> TerminalTheme);
 
-/// Every bundled theme, flat. Two entries per [`ThemePreset`] (its light and
-/// its dark variant); `theme` in `paneflow.json` names one of these.
 pub static THEMES: &[ThemeEntry] = &[
     ("Paneflow Dark", paneflow_dark),
     ("Paneflow Light", paneflow_light),
@@ -17,13 +13,8 @@ pub static THEMES: &[ThemeEntry] = &[
     ("Cursor Light", cursor_light),
 ];
 
-/// The theme applied when config names none (or names an unknown one).
 pub const DEFAULT_THEME: &str = "Paneflow Dark";
 
-/// One visual identity in two variants. The Themes page splits the choice into
-/// two orthogonal axes, the way Codex and VS Code do: the preset select picks
-/// the identity, the Light/Dark/System tiles pick which variant of it runs.
-/// `theme` in config always stores the resolved variant name, never the preset.
 pub struct ThemePreset {
     pub name: &'static str,
     pub light: &'static str,
@@ -59,9 +50,6 @@ pub static PRESETS: &[ThemePreset] = &[
     },
 ];
 
-/// Theme names shipped before presets existed, mapped onto their variant. Kept
-/// so a `paneflow.json` written by an older build keeps resolving - and keeps
-/// resolving to the *same pixels*, since only the names changed.
 static LEGACY_THEME_ALIASES: &[(&str, &str)] = &[
     ("One Dark", "Paneflow Dark"),
     ("PaneFlow Light", "Paneflow Light"),
@@ -70,8 +58,6 @@ static LEGACY_THEME_ALIASES: &[(&str, &str)] = &[
     ("Cursor", "Cursor Dark"),
 ];
 
-/// Resolve a config-supplied theme name to a bundled one, translating legacy
-/// names. Returns `None` for a name that matches nothing.
 pub fn canonical_theme_name(name: &str) -> Option<&'static str> {
     THEMES
         .iter()
@@ -85,7 +71,6 @@ pub fn canonical_theme_name(name: &str) -> Option<&'static str> {
         })
 }
 
-/// The preset owning `theme_name`, falling back to the default preset.
 pub fn preset_for_theme(theme_name: &str) -> &'static ThemePreset {
     let name = canonical_theme_name(theme_name).unwrap_or(DEFAULT_THEME);
     PRESETS
@@ -98,8 +83,6 @@ pub fn preset_by_name(name: &str) -> Option<&'static ThemePreset> {
     PRESETS.iter().find(|p| p.name.eq_ignore_ascii_case(name))
 }
 
-/// Whether `theme_name` is the light variant of its preset. Unknown names read
-/// as dark, matching [`DEFAULT_THEME`].
 pub fn theme_name_is_light(theme_name: &str) -> bool {
     canonical_theme_name(theme_name).is_some_and(|name| PRESETS.iter().any(|p| p.light == name))
 }
@@ -107,8 +90,6 @@ pub fn theme_name_is_light(theme_name: &str) -> bool {
 pub fn paneflow_light() -> TerminalTheme {
     let mut theme = TerminalTheme {
         ui: None,
-        // Keep the work surface fully opaque and exactly white. Native
-        // translucency is reserved for the navigation rail and title bar.
         background: h(0xffffff),
         foreground: h(0x25262b),
         bright_foreground: h(0x25262b),
@@ -116,11 +97,9 @@ pub fn paneflow_light() -> TerminalTheme {
         ansi_background: h(0xffffff),
         cursor: h(0x007aff),
         selection: ha(0x4c6fff, 0.20),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0x25262b, 0.28),
         link_text: h(0x315ecf),
-        // Opaque fallback for Linux compositors without blur support.
         title_bar_background: h(0xf3f4f9),
         title_bar_inactive_background: h(0xf5f5f8),
         black: h(0x383a42),
@@ -149,15 +128,12 @@ pub fn paneflow_dark() -> TerminalTheme {
     let mut theme = TerminalTheme {
         ui: None,
         background: h(0x282c34),
-        // Keep One Dark surfaces while using the same softer terminal text
-        // palette as Cursor and the Windows Terminal reference.
         foreground: h(0xc5d1cc),
         bright_foreground: h(0xf2eee8),
         dim_foreground: h(0x93938b),
         ansi_background: h(0x282c34),
         cursor: h(0x007aff),
         selection: ha(0x5aa6ff, 0.22),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0x9aa8bd, 0.30),
         link_text: h(0x57d5c4),
@@ -195,7 +171,6 @@ pub fn vercel_dark() -> TerminalTheme {
         ansi_background: h(0x000000),
         cursor: h(0xffffff),
         selection: ha(0xffffff, 0.18),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0xffffff, 0.24),
         link_text: h(0x3291ff),
@@ -269,7 +244,6 @@ pub fn vercel_light() -> TerminalTheme {
         ansi_background: h(0xffffff),
         cursor: h(0x000000),
         selection: ha(0x0068d6, 0.16),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0x171717, 0.24),
         link_text: h(0x0068d6),
@@ -283,8 +257,6 @@ pub fn vercel_light() -> TerminalTheme {
         magenta: h(0x7820bc),
         cyan: h(0x067f6f),
         white: h(0x666666),
-        // On a light surface the "bright" rank reads as *more* ink, not less,
-        // so the bright ANSI slots darken instead of lightening.
         bright_black: h(0x4d4d4d),
         bright_red: h(0xb3242a),
         bright_green: h(0x0b660b),
@@ -345,7 +317,6 @@ pub fn claude_dark() -> TerminalTheme {
         ansi_background: h(0x1f1f1e),
         cursor: h(0xd97757),
         selection: ha(0x5a5a5a, 0.45),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0xc3c2b7, 0.24),
         link_text: h(0xc3c2b7),
@@ -385,9 +356,6 @@ fn claude_dark_ui() -> UiColors {
         text: h(0xe3dacc),
         accent: h(0xd97757),
         tool_card_header_bg: h(0x313131),
-        // Keep Paneflow's canonical dark diff/status hues. Claude only changes
-        // the surrounding surfaces; Review/sidebar red, green and yellow must
-        // remain stable across dark themes.
         vc_added: h(0x57d992),
         vc_modified: h(0xffd166),
         vc_deleted: h(0xff6f6a),
@@ -422,7 +390,6 @@ pub fn claude_light() -> TerminalTheme {
         ansi_background: h(0xfaf9f5),
         cursor: h(0xd97757),
         selection: ha(0xd97757, 0.20),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0x3d3929, 0.24),
         link_text: h(0xc2552f),
@@ -462,9 +429,6 @@ fn claude_light_ui() -> UiColors {
         text: h(0x3d3929),
         accent: h(0xd97757),
         tool_card_header_bg: h(0xf3f0e7),
-        // Keep Paneflow's canonical light diff/status hues (Latte family).
-        // Claude only changes the surrounding surfaces; Review/sidebar red,
-        // green and yellow must remain stable across light themes.
         vc_added: h(0x40a02b),
         vc_modified: h(0xdf8e1d),
         vc_deleted: h(0xd20f39),
@@ -493,16 +457,12 @@ pub fn cursor_dark() -> TerminalTheme {
     let mut theme = TerminalTheme {
         ui: Some(cursor_dark_ui()),
         background: h(0x141414),
-        // Match the softer "Northern Forest" Windows Terminal text palette.
-        // Cursor surfaces and backgrounds stay unchanged; only terminal
-        // foreground and ANSI slots are aligned.
         foreground: h(0xc5d1cc),
         bright_foreground: h(0xffffff),
         dim_foreground: h(0x989898),
         ansi_background: h(0x141414),
         cursor: h(0xa0d0f0),
         selection: ha(0xa0d0f0, 0.24),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0xf0f0f0, 0.22),
         link_text: h(0xa0d0f0),
@@ -542,9 +502,6 @@ fn cursor_dark_ui() -> UiColors {
         text: h(0xf0f0f0),
         accent: h(0xa0d0f0),
         tool_card_header_bg: h(0x242424),
-        // Keep Paneflow's canonical dark diff/status hues. Cursor only changes
-        // the surrounding IDE surfaces; Review/sidebar status colors stay
-        // stable across dark themes.
         vc_added: h(0x57d992),
         vc_modified: h(0xffd166),
         vc_deleted: h(0xff6f6a),
@@ -579,13 +536,11 @@ pub fn cursor_light() -> TerminalTheme {
         ansi_background: h(0xffffff),
         cursor: h(0x0f6fc5),
         selection: ha(0x0f6fc5, 0.18),
-        // Filled below before returning the public theme value.
         selection_foreground: gpui::Hsla::default(),
         scrollbar_thumb: ha(0x1e1e1e, 0.24),
         link_text: h(0x0f6fc5),
         title_bar_background: h(0xf5f5f5),
         title_bar_inactive_background: h(0xf0f0f0),
-        // VS Code Light+ ANSI table, which Cursor inherits unchanged.
         black: h(0x000000),
         red: h(0xcd3131),
         green: h(0x107c10),
@@ -620,8 +575,6 @@ fn cursor_light_ui() -> UiColors {
         text: h(0x1e1e1e),
         accent: h(0x0f6fc5),
         tool_card_header_bg: h(0xeaeaea),
-        // Keep Paneflow's canonical light diff/status hues (Latte family).
-        // Cursor only changes the surrounding IDE surfaces.
         vc_added: h(0x40a02b),
         vc_modified: h(0xdf8e1d),
         vc_deleted: h(0xd20f39),
@@ -646,13 +599,6 @@ fn cursor_light_ui() -> UiColors {
     }
 }
 
-/// Look up a bundled theme by name (case-insensitive).
-///
-/// Returns a finalized theme: `selection_foreground` is computed via APCA
-/// before return. Callers may further modify the theme (e.g. via
-/// `apply_surface_overrides`) - that path also re-runs the recomputation,
-/// so the invariant `apca_contrast(selection_foreground, selection) ≥ 45.0`
-/// holds at every observation point.
 pub fn theme_by_name(name: &str) -> Option<TerminalTheme> {
     let canonical = canonical_theme_name(name)?;
     THEMES.iter().find(|(n, _)| *n == canonical).map(|(_, f)| {

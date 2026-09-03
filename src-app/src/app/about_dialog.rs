@@ -1,5 +1,3 @@
-//! About Paneflow modal, styled as a compact native application dialog.
-
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, ObjectFit,
     ParentElement, Styled, deferred, div, hsla, img, prelude::*, px, rgb, svg,

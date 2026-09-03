@@ -1,9 +1,3 @@
-//! Unified action registry.
-//!
-//! A single [`ActionMeta`] table (`ACTIONS`) replaces three parallel match
-//! statements - `action_from_name`, `context_for_action`, `action_description`
-//! so adding an action requires exactly one edit.
-
 use gpui::Action;
 
 use crate::{
@@ -21,12 +15,6 @@ use crate::{
 };
 use crate::{FontSizeDecrease, FontSizeIncrease, FontSizeReset, ToggleFleetSearch};
 
-/// The section an action belongs to on the Shortcuts settings page.
-///
-/// The registry's *order* used to carry this implicitly, which meant the
-/// settings page could only ever render one flat list and any reordering of
-/// `ACTIONS` silently reshuffled the visual grouping. Declaring the section
-/// makes it survive sorting, filtering, and insertion in the middle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ShortcutGroup {
     Panes,
@@ -41,7 +29,6 @@ pub enum ShortcutGroup {
 }
 
 impl ShortcutGroup {
-    /// Display order on the settings page, most-used first.
     pub const ALL: &'static [ShortcutGroup] = &[
         ShortcutGroup::Panes,
         ShortcutGroup::Workspaces,
@@ -69,11 +56,6 @@ impl ShortcutGroup {
     }
 }
 
-/// Metadata for a single dispatchable action.
-///
-/// Empty `context` means the action is global (no `KeyBindingContextPredicate`).
-/// `factory` boxes a fresh action instance on each call so GPUI's
-/// `KeyBinding::load` can own it.
 pub(super) struct ActionMeta {
     pub(super) name: &'static str,
     pub(super) factory: fn() -> Box<dyn Action>,
@@ -82,7 +64,6 @@ pub(super) struct ActionMeta {
     pub(super) group: ShortcutGroup,
 }
 
-/// The one source of truth for every action dispatched by `keybindings/`.
 pub(super) const ACTIONS: &[ActionMeta] = &[
     ActionMeta {
         name: "split_horizontally",
@@ -476,8 +457,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Reset terminal",
         group: ShortcutGroup::Terminal,
     },
-    // US-012: Quit menu action (bound to cmd-q on macOS via
-    // MACOS_ONLY_DEFAULTS; also reachable from PaneFlow > Quit PaneFlow).
     ActionMeta {
         name: "quit",
         factory: || Box::new(Quit),
@@ -485,9 +464,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Quit",
         group: ShortcutGroup::Application,
     },
-    // US-022: Markdown pane navigation. Scroll + copy bind on the root
-    // `Markdown` context; find-overlay actions bind on `MarkdownSearch`
-    // (active only while the search bar is open).
     ActionMeta {
         name: "markdown_scroll_page_up",
         factory: || Box::new(MarkdownScrollPageUp),
@@ -537,8 +513,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Markdown: close find bar",
         group: ShortcutGroup::Markdown,
     },
-    // US-003 (prd-git-diff-mode-2026-Q3.md): toggle the dedicated Git
-    // Diff mode (AppMode::Diff).
     ActionMeta {
         name: "open_diff_view",
         factory: || Box::new(crate::OpenDiffView),
@@ -553,9 +527,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Toggle Files sidebar",
         group: ShortcutGroup::Diff,
     },
-    // US-003 (prd-ai-in-diff-2026-Q3.md): copy the hunk under the cursor as a
-    // unified diff. Scoped to the DiffView context so Ctrl+Shift+C there never
-    // collides with the global markdown / terminal copy bindings.
     ActionMeta {
         name: "copy_diff_hunk",
         factory: || Box::new(crate::CopyDiffHunk),
@@ -563,8 +534,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Copy hunk as diff",
         group: ShortcutGroup::Diff,
     },
-    // EP-003 US-009 (review redesign): keyboard-first review loop.
-    // Keep these off embedded terminals and text widgets inside DiffView.
     ActionMeta {
         name: "diff_next_hunk",
         factory: || Box::new(crate::DiffNextHunk),
@@ -593,11 +562,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Diff: toggle scroll sync",
         group: ShortcutGroup::Diff,
     },
-    // EP-005 US-018 (prd-file-editor-2026-Q3): the diff dock's new-tab chords.
-    // Kept off terminals and text widgets - Ctrl+G is BEL and Ctrl+J is LF in a
-    // shell, so a global binding would eat both. `CodeEditor` is excluded for
-    // the same reason, and because it is the surface the file chord opens: a
-    // caret inside the editor must keep its own keystrokes.
     ActionMeta {
         name: "diff_new_file_tab",
         factory: || Box::new(crate::DiffNewFileTab),
@@ -619,8 +583,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Diff: close popover / refocus body",
         group: ShortcutGroup::Diff,
     },
-    // EP-001 (CLI Cockpit): CLI cockpit steering.
-    // Global context - the handlers gate on `AppMode::Cli` themselves.
     ActionMeta {
         name: "open_composer",
         factory: || Box::new(crate::OpenComposer),
@@ -642,7 +604,6 @@ pub(super) const ACTIONS: &[ActionMeta] = &[
         description: "Broadcast groups",
         group: ShortcutGroup::Agents,
     },
-    // EP-002 (CLI Cockpit): triage & launch.
     ActionMeta {
         name: "open_attention_queue",
         factory: || Box::new(crate::OpenAttentionQueue),
@@ -663,19 +624,16 @@ fn find(name: &str) -> Option<&'static ActionMeta> {
     ACTIONS.iter().find(|a| a.name == name)
 }
 
-/// Resolve an action name string to a boxed GPUI action.
 pub(super) fn action_from_name(name: &str) -> Option<Box<dyn Action>> {
     find(name).map(|meta| (meta.factory)())
 }
 
-/// Context predicate for a given action name. `None` is global.
 pub(super) fn context_for_action(name: &str) -> Option<&'static str> {
     find(name)
         .map(|meta| meta.context)
         .filter(|ctx| !ctx.is_empty())
 }
 
-/// Human-readable description for an action name, or `"Unknown"`.
 pub(super) fn action_description(name: &str) -> &'static str {
     find(name).map(|meta| meta.description).unwrap_or("Unknown")
 }
@@ -686,11 +644,6 @@ mod tests {
 
     #[test]
     fn every_action_group_appears_in_all() {
-        // `ShortcutGroup::ALL` is hand-maintained and is the settings page's
-        // only iteration source, so a variant tagged on actions but forgotten
-        // in `ALL` makes those rows vanish - unrebindable, with no error. A
-        // test that iterates `ALL` cannot catch that; this one starts from the
-        // actions instead.
         for meta in ACTIONS {
             assert!(
                 ShortcutGroup::ALL.contains(&meta.group),
@@ -730,8 +683,6 @@ mod tests {
 
     #[test]
     fn registry_has_unique_action_names() {
-        // A duplicate name would silently shadow another entry's context or
-        // description. Catch it early.
         let mut seen = std::collections::HashSet::new();
         for meta in ACTIONS {
             assert!(
@@ -744,10 +695,6 @@ mod tests {
 
     #[test]
     fn us012_quit_action_name_resolves() {
-        // Cross-platform: `action_from_name` must resolve "quit" to a real
-        // Action instance so MACOS_ONLY_DEFAULTS registration succeeds on
-        // macOS and user config overrides like `"quit": "secondary-alt-q"`
-        // work on any platform.
         assert!(action_from_name("quit").is_some());
     }
 }

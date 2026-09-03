@@ -1,72 +1,31 @@
-//! Pulldown-cmark event walker → owned markdown AST.
-//!
-//! pulldown-cmark 0.10 emits a flat event stream (Start/End wrap blocks and
-//! inline ranges). We walk those events with a stack of in-progress block
-//! contexts, accumulating inline `Span`s into the open block, and pop a
-//! finished node into the parent (or into the root list) on each `Event::End`.
-//!
-//! The AST is fully owned (`String`, not `CowStr`) so `MarkdownView` can keep
-//! it across re-renders without borrowing from the original input.
-
 use pulldown_cmark::{
     Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd, TextMergeStream,
 };
 
-/// Hard upper bound on input size accepted by `parse_with_limit`. Chosen per
-/// PRD AC: 10 MB → return a `TooLarge` error so the view shows a warning
-/// instead of allocating a many-million-element AST that would thrash GPUI
-/// layout. 100 KB (the AC's "fast path" budget) parses in well under 5 ms.
 pub const MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 
-/// Defensive cap on AST node count to bound heap usage on adversarial
-/// inputs. A 9.99 MB file consisting entirely of `- ` bullet markers parses
-/// inside `MAX_INPUT_BYTES` but would otherwise produce ~5M `MdNode`
-/// entries (~250 MB heap). 100 K nodes covers any realistic markdown
-/// document - the `cmark` test suite's longest spec example produces ~1500.
 pub const MAX_AST_NODES: usize = 100_000;
 
-/// Errors returned by `parse_with_limit`.
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
-    /// Input exceeded `MAX_INPUT_BYTES`. Carries the actual byte length.
     TooLarge { bytes: usize, limit: usize },
 }
 
-/// Inline character styling. Combined as we descend into nested
-/// emphasis/strong/strikethrough/code spans, recovered as we ascend.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct SpanStyle {
     pub strong: bool,
     pub emphasis: bool,
     pub strikethrough: bool,
-    /// Inline `code` span. Mutually exclusive with the surrounding paragraph
-    /// styling - code spans render as monospace on a code-cell background.
     pub code: bool,
 }
 
-/// Inline run of text with a uniform style. Adjacent spans with identical
-/// style are coalesced opportunistically by the walker; consumers can rely on
-/// each span being a single styled run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Span {
     pub text: String,
     pub style: SpanStyle,
-    /// `Some(url)` when this span is the visible label of a `Tag::Link`.
-    /// The view layer renders these underlined and routes clicks through
-    /// `open::that` (cross-platform URL/file handler).
     pub link_url: Option<String>,
 }
 
-/// Owned markdown AST node. Each variant maps 1:1 to a block-level pulldown
-/// event pair (`Start` … `End`) plus the inline spans that arrived between.
-///
-/// Inline-only structures (Strong, Emphasis, Strikethrough, Link) are folded
-/// into `Span` rather than appearing as separate nodes - they only affect
-/// styling, not block layout.
-///
-/// `Eq` is not derived because `pulldown_cmark::Alignment` only implements
-/// `PartialEq`; tests use `matches!` patterns rather than `assert_eq!` for
-/// nodes that carry it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MdNode {
     Heading {
@@ -76,9 +35,6 @@ pub enum MdNode {
     Paragraph {
         spans: Vec<Span>,
     },
-    /// Verbatim code block. `lang` is `Some` for fenced blocks with an info
-    /// string (` ```rust `), `None` for indented blocks or fences without a
-    /// language tag. Syntax highlighting is intentionally deferred (P2).
     CodeBlock {
         lang: Option<String>,
         text: String,
@@ -87,8 +43,6 @@ pub enum MdNode {
         children: Vec<MdNode>,
     },
     List {
-        /// `Some(start_num)` for ordered lists with that starting number;
-        /// `None` for bulleted lists.
         ordered_start: Option<u64>,
         items: Vec<Vec<MdNode>>,
     },
@@ -97,22 +51,13 @@ pub enum MdNode {
         header: Vec<Vec<Span>>,
         rows: Vec<Vec<Vec<Span>>>,
     },
-    /// `<hr/>` - horizontal rule.
     Rule,
-    /// Footnote definition body. `label` is the user-supplied identifier,
-    /// `children` is the rendered contents.
     Footnote {
         label: String,
         children: Vec<MdNode>,
     },
 }
 
-/// Parse `input` into an owned AST.
-///
-/// Returns `Err(ParseError::TooLarge)` when the input exceeds
-/// `MAX_INPUT_BYTES`. Smaller inputs always succeed - pulldown-cmark itself
-/// is total: any byte sequence parses (mis-formed markdown turns into a
-/// stream of plain paragraphs/text rather than an error).
 pub fn parse_with_limit(input: &str) -> Result<Vec<MdNode>, ParseError> {
     if input.len() > MAX_INPUT_BYTES {
         return Err(ParseError::TooLarge {
@@ -133,13 +78,6 @@ fn parse_inner(input: &str) -> Vec<MdNode> {
     Walker::default().drive(events)
 }
 
-// ---------------------------------------------------------------------------
-// Walker - converts the event stream to nested `MdNode` values.
-// ---------------------------------------------------------------------------
-
-/// One frame on the block-context stack. The walker pushes a frame on
-/// `Event::Start(<block tag>)` and pops it on the matching `Event::End` to
-/// install a finished `MdNode` in the parent frame (or in the root vector).
 enum Frame {
     Paragraph(Vec<Span>),
     Heading(HeadingLevel, Vec<Span>),
@@ -152,8 +90,6 @@ enum Frame {
         ordered_start: Option<u64>,
         items: Vec<Vec<MdNode>>,
     },
-    /// Currently-open list item. Inline text accumulates into a virtual
-    /// paragraph child unless a nested block opens.
     Item {
         children: Vec<MdNode>,
         inline: Vec<Span>,
@@ -176,22 +112,10 @@ enum Frame {
 struct Walker {
     stack: Vec<Frame>,
     style: SpanStyle,
-    /// When `Some`, every text/code event is also given this URL so the view
-    /// layer can render it as a hyperlink.
     link_url: Option<String>,
-    /// Pulldown emits the image alt text as nested inline events after
-    /// `Tag::Image`. We render one placeholder for the image itself, so the
-    /// nested alt stream must be drained instead of appended a second time.
     image_depth: usize,
     output: Vec<MdNode>,
-    /// Running tally of `MdNode` instances installed (in `output` or in any
-    /// child `Vec<MdNode>`). When this exceeds `MAX_AST_NODES`, the walker
-    /// stops accepting further block-installs and lets the remaining events
-    /// drain into the abyss - the partial AST we already built is what the
-    /// viewer will render.
     node_count: usize,
-    /// Set once `node_count` has crossed `MAX_AST_NODES`. Used to append a
-    /// single truncation-notice paragraph at the end of `output`.
     truncated: bool,
 }
 
@@ -246,10 +170,6 @@ impl Walker {
             Event::Code(text) => {
                 let mut style = self.style;
                 style.code = true;
-                // U-019: inline code reaches the renderer via `push_span`, NOT
-                // `push_text`, so it must be bidi/zero-width-stripped here too -
-                // otherwise `` `\u{202E}txet.exe` `` renders reversed and the AC's
-                // "every rendered span" guarantee leaks through code spans.
                 self.push_span(Span {
                     text: strip_bidi_zero_width(text.into_string()),
                     style,
@@ -257,8 +177,6 @@ impl Walker {
                 });
             }
             Event::Html(text) | Event::InlineHtml(text) => {
-                // HTML-inside-block: append as plain text. HTML *blocks* arrive
-                // wrapped in `Tag::HtmlBlock` and are handled in on_start.
                 self.push_text(text.into_string());
             }
             Event::FootnoteReference(label) => {
@@ -290,9 +208,6 @@ impl Walker {
                 });
             }
             Tag::HtmlBlock => self.stack.push(Frame::Code {
-                // Render HTML blocks as opaque code blocks tagged "html". The
-                // view layer will style them as monospace on the code-cell
-                // background - no execution, no interpretation.
                 lang: Some("html".to_string()),
                 text: String::new(),
             }),
@@ -317,10 +232,7 @@ impl Walker {
                     *in_head = true;
                 }
             }
-            Tag::TableRow | Tag::TableCell => {
-                // No frame - TableRow/Cell content accumulates into the
-                // current_row / current_cell fields of the open Table frame.
-            }
+            Tag::TableRow | Tag::TableCell => {}
             Tag::Emphasis => self.style.emphasis = true,
             Tag::Strong => self.style.strong = true,
             Tag::Strikethrough => self.style.strikethrough = true,
@@ -330,12 +242,6 @@ impl Walker {
             Tag::Image {
                 dest_url, title, ..
             } => {
-                // We don't render images inline - show "[image: <title or url>]"
-                // as a placeholder span so the user knows something was elided.
-                // `title`/`dest_url` are attacker-controlled `.md` content, so
-                // sanitise before embedding: strip bidi/zero-width code points
-                // (a U+202E override could reorder the visible label to spoof a
-                // benign path) and cap the length (US-044).
                 let raw = if title.is_empty() {
                     dest_url.as_ref()
                 } else {
@@ -349,8 +255,6 @@ impl Walker {
                 children: Vec::new(),
             }),
             Tag::MetadataBlock(_) => {
-                // YAML / TOML frontmatter - push a Paragraph frame so contents
-                // accumulate as plain text rather than panic.
                 self.stack.push(Frame::Paragraph(Vec::new()));
             }
         }
@@ -362,9 +266,7 @@ impl Walker {
             TagEnd::Strong => self.style.strong = false,
             TagEnd::Strikethrough => self.style.strikethrough = false,
             TagEnd::Link => self.link_url = None,
-            TagEnd::Image => {
-                // Handled by the `image_depth` drain at the top of `on_event`.
-            }
+            TagEnd::Image => {}
             TagEnd::TableHead => {
                 let keep_row = self.reserve_synthetic_node();
                 if let Some(Frame::Table {
@@ -413,10 +315,8 @@ impl Walker {
                 }
             }
             TagEnd::MetadataBlock(_) => {
-                // Discard frontmatter - pop without installing.
                 self.stack.pop();
             }
-            // Closing block tags: install into parent.
             TagEnd::Paragraph
             | TagEnd::Heading(_)
             | TagEnd::BlockQuote
@@ -426,11 +326,6 @@ impl Walker {
             | TagEnd::Item
             | TagEnd::Table
             | TagEnd::FootnoteDefinition => {
-                // Stack underflow on a malformed event stream is not a panic
-                // condition - the workspace lints `panic = "deny"` and the
-                // input is untrusted (any 10 MB of bytes parses). Tolerate by
-                // dropping the stray end event silently, matching the rest of
-                // the walker's malformed-input behavior.
                 if let Some(frame) = self.stack.pop()
                     && let Some(n) = self.finish_block(frame)
                 {
@@ -458,9 +353,6 @@ impl Walker {
                 inline,
             } => {
                 let keep_item = self.reserve_synthetic_node();
-                // The synthesised Paragraph for inline-only items is a node
-                // that bypasses `install()` - count it here so adversarial
-                // bullet-only inputs respect `MAX_AST_NODES`.
                 if keep_item && !inline.is_empty() {
                     if self.node_count >= MAX_AST_NODES {
                         self.truncated = true;
@@ -488,14 +380,7 @@ impl Walker {
         }
     }
 
-    /// Append text as a span to the deepest open block that accepts inline
-    /// content. CodeBlock frames receive raw text concatenated into `text`;
-    /// table cells append into `current_cell`; everything else uses `push_span`.
     fn push_text(&mut self, text: String) {
-        // U-019: strip bidi-control / zero-width code points from ALL ingress
-        // text (paragraphs, headings, list items, table cells, code) so a
-        // hostile .md can't visually reorder or hide any rendered span - not
-        // just the `[image:]` placeholder.
         let text = strip_bidi_zero_width(text);
         if text.is_empty() {
             return;
@@ -523,7 +408,6 @@ impl Walker {
 
     fn push_span(&mut self, span: Span) {
         let Some(frame) = self.stack.last_mut() else {
-            // Stray inline content at root - wrap in a one-off paragraph.
             self.output.push(MdNode::Paragraph { spans: vec![span] });
             return;
         };
@@ -537,18 +421,11 @@ impl Walker {
             Frame::Table { current_cell, .. } => {
                 merge_or_push(current_cell, span);
             }
-            // CodeBlock takes plain text via `push_text`; spans don't apply.
             Frame::Code { .. } => {}
-            // Lists and BlockQuotes don't carry inline content directly -
-            // their text arrives wrapped in a child Paragraph/Item frame.
             Frame::List { .. } | Frame::Quote(_) | Frame::Footnote { .. } => {}
         }
     }
 
-    /// Install a finished node in the deepest open block, or in the root
-    /// output vector if the stack is empty. Drops the node (sets the
-    /// `truncated` flag) once the walker has installed `MAX_AST_NODES` nodes,
-    /// to bound heap usage on adversarial inputs.
     fn install(&mut self, node: MdNode) {
         if self.node_count >= MAX_AST_NODES {
             self.truncated = true;
@@ -575,25 +452,13 @@ impl Walker {
                 }
                 children.push(node);
             }
-            // Other frames don't accept block children. A stray block (e.g. a
-            // nested heading mid-paragraph from malformed input) would land
-            // here; route it to the root rather than panic.
             _ => self.output.push(node),
         }
     }
 }
 
-/// Max characters kept from an untrusted image `title`/`dest_url` in the
-/// `[image: …]` placeholder. A real caption/URL is short; the cap is
-/// defence-in-depth so a multi-kilobyte string can't bloat a one-line marker.
 const MAX_PLACEHOLDER_CHARS: usize = 256;
 
-/// Remove bidi-control / zero-width code points from `text` (U-019). Shared by
-/// `push_text` and the inline-`Event::Code` arm so EVERY rendered span - body,
-/// heading, list item, table cell, image placeholder, AND inline code - is
-/// sanitized, not just the `[image:]` placeholder. No length cap (unlike
-/// `sanitize_placeholder`); only re-allocates when such a char is actually
-/// present, so the common (clean) path is allocation-free.
 pub(crate) fn strip_bidi_zero_width(text: String) -> String {
     if text.chars().any(is_bidi_or_zero_width) {
         text.chars()
@@ -604,33 +469,17 @@ pub(crate) fn strip_bidi_zero_width(text: String) -> String {
     }
 }
 
-/// True for Unicode bidi-control and zero-width code points. These carry no
-/// legitimate meaning inside a `[image: …]` elision marker but let hostile
-/// `.md` content reorder the visible label (bidi overrides) or hide/inflate it
-/// (zero-width). Stripped before the placeholder is built.
 fn is_bidi_or_zero_width(c: char) -> bool {
     matches!(c,
-        // Zero-width: ZWSP, ZWNJ, ZWJ, word joiner, BOM/ZWNBSP.
         '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{2060}' | '\u{FEFF}'
-        // Directional marks: LRM, RLM, ALM.
         | '\u{200E}' | '\u{200F}' | '\u{061C}'
-        // Embeddings/overrides: LRE, RLE, PDF, LRO, RLO.
         | '\u{202A}'..='\u{202E}'
-        // Isolates: LRI, RLI, FSI, PDI.
         | '\u{2066}'..='\u{2069}'
-        // Deprecated bidi/shaping format chars (still processed by some text
-        // engines): inhibit/activate symmetric swapping + Arabic form shaping,
-        // national/nominal digit shapes.
         | '\u{206A}'..='\u{206F}'
-        // Interlinear annotation anchor/separator/terminator - can hide/shift
-        // text in renderers that honour them.
         | '\u{FFF9}'..='\u{FFFB}'
     )
 }
 
-/// Sanitise untrusted text for the `[image: …]` placeholder: drop bidi/
-/// zero-width code points, then truncate to [`MAX_PLACEHOLDER_CHARS`]
-/// (char-counted, never splitting a UTF-8 sequence).
 fn sanitize_placeholder(raw: &str) -> String {
     raw.chars()
         .filter(|&c| !is_bidi_or_zero_width(c))
@@ -638,8 +487,6 @@ fn sanitize_placeholder(raw: &str) -> String {
         .collect()
 }
 
-/// Append `span` to `spans`, merging into the previous span when both styles
-/// (and link state) match - keeps the AST compact for downstream rendering.
 fn merge_or_push(spans: &mut Vec<Span>, span: Span) {
     if let Some(last) = spans.last_mut()
         && last.style == span.style
@@ -666,10 +513,6 @@ fn push_or_extend(spans: &mut Vec<Span>, text: String, style: SpanStyle, link: O
     });
 }
 
-// ---------------------------------------------------------------------------
-// Tests - pure-Rust, GPUI-free.
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -691,8 +534,6 @@ mod tests {
 
     #[test]
     fn image_node_sanitises_untrusted_url() {
-        // A U+202E in the image URL would otherwise reorder the visible
-        // `[image: …]` label to spoof a benign-looking path.
         let nodes = parse_with_limit("![](evil\u{202E}gnp.exe)").expect("parse");
         let MdNode::Paragraph { spans } = first(&nodes) else {
             panic!("expected a paragraph for a top-level image");
@@ -717,10 +558,6 @@ mod tests {
 
     #[test]
     fn body_text_strips_bidi_and_zero_width() {
-        // U-019: a U+202E (RLO) override or zero-width char embedded directly in
-        // BODY text - not just the [image:] placeholder - must be stripped
-        // before it reaches the renderer, so it can't visually reorder or hide
-        // the paragraph the user is reading.
         let nodes = parse_with_limit("safe \u{202E}txet.exe\u{200B} end").expect("parse");
         let MdNode::Paragraph { spans } = first(&nodes) else {
             panic!("expected a paragraph");
@@ -739,9 +576,6 @@ mod tests {
 
     #[test]
     fn inline_code_strips_bidi_and_zero_width() {
-        // U-019: inline code reaches the renderer via push_span (not push_text),
-        // so it must be stripped too - otherwise `` `\u{202E}txet.exe` `` renders
-        // visually reversed and the "every rendered span" guarantee leaks.
         let nodes = parse_with_limit("run `\u{202E}txet.exe\u{200B}` now").expect("parse");
         let MdNode::Paragraph { spans } = first(&nodes) else {
             panic!("expected a paragraph");
@@ -784,7 +618,6 @@ mod tests {
                 HeadingLevel::H6
             ]
         );
-        // Confirm the H1's inline text is captured.
         if let MdNode::Heading { spans, .. } = &nodes[0] {
             assert_eq!(spans.len(), 1);
             assert_eq!(spans[0].text, "H1");
@@ -847,7 +680,6 @@ mod tests {
             } => {
                 assert!(ordered_start.is_none());
                 assert_eq!(items.len(), 2);
-                // First item must contain a nested List node.
                 let first_item = &items[0];
                 let has_nested = first_item.iter().any(|n| matches!(n, MdNode::List { .. }));
                 assert!(has_nested, "expected nested list in first item");
@@ -960,7 +792,6 @@ mod tests {
 
     #[test]
     fn rejects_input_above_limit() {
-        // 10 MB + 1 byte
         let big = "a".repeat(MAX_INPUT_BYTES + 1);
         let err = parse_with_limit(&big).expect_err("must reject");
         match err {
@@ -973,10 +804,6 @@ mod tests {
 
     #[test]
     fn parses_100kb_under_budget() {
-        // AC: 100 KB rendered (parse + emit) < 200 ms. We measure parse
-        // alone; render-tree emission is negligible relative to parse
-        // walking. Debug-build budget is 60 ms, release 10 ms - both are
-        // generous vs the AC's 200 ms total budget.
         let mut src = String::new();
         while src.len() < 100 * 1024 {
             src.push_str(
@@ -1004,16 +831,11 @@ mod tests {
 
     #[test]
     fn ast_node_cap_truncates_pathological_input() {
-        // Build a markdown source that, naively parsed, would produce more
-        // than `MAX_AST_NODES` nodes. A 200 K-line bullet list weighs ~600 KB
-        // (well under the 10 MB byte cap) but would produce one MdNode per
-        // bullet plus a paragraph child each - well over 100 K nodes.
         let mut src = String::with_capacity(200_000 * 4);
         for _ in 0..200_000 {
             src.push_str("- x\n");
         }
         let nodes = parse_with_limit(&src).expect("parse");
-        // Count nodes recursively to verify the cap was respected.
         fn count(nodes: &[MdNode]) -> usize {
             let mut total = 0;
             for n in nodes {
@@ -1040,8 +862,6 @@ mod tests {
             MAX_AST_NODES + 2,
             total
         );
-        // The walker appends a "[markdown viewer: document truncated …]"
-        // notice paragraph as the last node when it hits the cap.
         let last_text = match nodes.last() {
             Some(MdNode::Paragraph { spans }) => {
                 spans.iter().map(|s| s.text.as_str()).collect::<String>()

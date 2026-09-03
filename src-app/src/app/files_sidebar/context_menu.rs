@@ -1,12 +1,3 @@
-//! Per-file right-click context menu for the Files sidebar (PRD
-//! `prd-files-tree-sidebar-2026-Q3`, EP-003 US-009).
-//!
-//! Mirrors `render_workspace_context_menu` (`deferred().priority(3)`,
-//! `occlude()`, `on_mouse_down_out` dismiss): a small two-item menu offering
-//! "Copy path" (absolute) and "Copy relative path" (relative to the workspace
-//! root) for any row - markdown, greyed file, or directory. Both write to the
-//! clipboard and surface a confirmation toast.
-
 use gpui::{
     AnyElement, ClickEvent, Context, IntoElement, MouseButton, ParentElement, Styled, deferred,
     div, prelude::*, px,
@@ -24,8 +15,6 @@ impl PaneFlowApp {
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Two items × ~25px + 8px padding. Flip above the click when there
-        // isn't room below (mirrors the workspace menu).
         let menu_height = px(66.);
         let menu_width = px(220.);
         let menu_pos =

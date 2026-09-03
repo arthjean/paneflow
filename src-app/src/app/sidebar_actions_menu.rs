@@ -1,8 +1,3 @@
-//! Bottom-of-sidebar mode tabs + Settings button. The Agents and Review
-//! sidebars share one persistent mode switch, with Settings kept as
-//! a compact utility button at the end of the row that opens the settings
-//! surface directly - no intermediate menu.
-
 use crate::app::sidebar::SIDEBAR_ROW_LINE_HEIGHT;
 use crate::ui_primitives::{ROW_RADIUS, TooltipDelayExt, squircle_skin};
 use std::time::Duration;
@@ -21,14 +16,6 @@ const SIDEBAR_UPDATE_SHIMMER_MS: u64 = 2600;
 const SIDEBAR_UPDATE_IRIS_COLORS: [u32; 5] = [0x2f6fff, 0x1da8ff, 0x8ea7ff, 0xb68cff, 0xf2f7ff];
 
 impl PaneFlowApp {
-    /// Update CTA banner at the bottom of the sidebar, above the Settings
-    /// trigger. Replaces the title-bar update pill in the cockpit modes
-    /// (Cli/Agents), where the title bar is a rail-confined overlay with no
-    /// room for pills. Same states, labels, icons, and dismiss rules as the
-    /// title-bar pill (`title_bar.rs`); same mouse-DOWN dispatch (Wayland
-    /// focus-stealing prevention silently drops the first on_click after a
-    /// cold start - see the title-bar pill comment for the full story).
-    /// `None` when no update is available.
     pub(crate) fn render_sidebar_update_banner(
         &self,
         cx: &mut Context<Self>,
@@ -123,10 +110,6 @@ impl PaneFlowApp {
                     .animated_hover(move |style, delta| {
                         style.text_color(lerp_color(muted, text, delta));
                     })
-                    // stop_propagation on BOTH mouse-down and click so the
-                    // press never reaches the banner's StartSelfUpdate
-                    // dispatch - hitting × must not start the update it
-                    // just dismissed.
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
@@ -158,10 +141,6 @@ impl PaneFlowApp {
         Some(banner)
     }
 
-    /// "IPC offline" notice at the bottom of the sidebar - the cockpit home
-    /// of the title-bar IPC pill (same rail-confinement story as the update
-    /// banner). Purely informational, like the original pill: no click
-    /// handler. `None` while the IPC server is up.
     pub(crate) fn render_sidebar_ipc_banner(&self, _cx: &mut Context<Self>) -> Option<AnyElement> {
         if self.ipc_status.state() != crate::ipc::IpcState::Disabled {
             return None;
@@ -203,19 +182,12 @@ impl PaneFlowApp {
         )
     }
 
-    /// Render the bottom footer: persistent interface tabs plus a compact
-    /// Settings trigger. The mode switch stays visible after selection so the
-    /// footer reads as primary navigation, while Settings opens the settings
-    /// surface in one click.
     pub(crate) fn render_sidebar_settings_footer(&self, cx: &mut Context<Self>) -> AnyElement {
         use paneflow_config::schema::AppMode;
 
         let ui = crate::theme::ui_colors();
         let mode = self.mode;
 
-        // Skinned exactly like a workspace card: the trigger rests on the
-        // active tint while the settings surface is up, and lifts to the hover
-        // tint otherwise, both on the rail's continuous corner.
         let active_bg = crate::app::constants::sidebar_tab_active_background();
         let hover_bg = crate::app::constants::sidebar_tab_hover_background();
         let settings_open = self.settings_section.is_some();
@@ -253,14 +225,6 @@ impl PaneFlowApp {
         type Activate = Box<dyn Fn(&mut PaneFlowApp, &mut gpui::Window, &mut Context<PaneFlowApp>)>;
         let mode_button =
             |id: &'static str, label: &'static str, is_active: bool, activate: Activate| {
-                // Equal-width compact segments keep both primary surfaces visible
-                // without letting the Settings utility reclaim the row.
-                //
-                // Same grammar as a workspace card, down to the typography: one
-                // text size, one weight, one color in every state. Exactly one
-                // segment rests filled - the current mode - and the others are
-                // pure hover affordances one tint step below it, so the fill
-                // carries the selection and the label never has to.
                 let button = squircle_skin(
                     div()
                         .id(id)
@@ -322,9 +286,6 @@ impl PaneFlowApp {
             .into_any_element();
 
         let mut footer = div().relative().flex_none().pt(px(6.)).pb(px(8.));
-        // Cockpit homes of the old title-bar pills, right above the Settings
-        // trigger, shared by both modes: the "IPC offline" notice first,
-        // then the update CTA banner.
         if let Some(banner) = self.render_sidebar_ipc_banner(cx) {
             footer = footer.child(banner);
         }

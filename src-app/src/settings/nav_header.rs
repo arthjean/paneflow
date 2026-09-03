@@ -12,11 +12,6 @@ impl PaneFlowApp {
         ui: UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // The rail's first line is the way out, not a title: settings already
-        // name themselves in the content header, so a static "Settings" label
-        // plus a lone close glyph spent a whole band saying nothing actionable.
-        // This is a normal nav row - same geometry, skin and hover as the
-        // section rows below it - so leaving reads as one more destination.
         let hover_background = crate::app::constants::sidebar_tab_hover_background();
 
         div()

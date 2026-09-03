@@ -1,5 +1,3 @@
-//! Durable main-window sizing across PaneFlow launches.
-
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -53,8 +51,6 @@ pub(crate) fn minimum_size() -> Size<Pixels> {
 }
 
 pub(crate) fn record_windowed_size(window: &Window) {
-    // macOS and X11 can expose the current display-sized bounds while maximized,
-    // so only record geometry while the window is genuinely windowed.
     if window.is_maximized() || window.is_fullscreen() {
         return;
     }

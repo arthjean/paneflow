@@ -1,11 +1,3 @@
-//! Color parsing, palette generation, and contrast math from libghostty.
-//!
-//! Paneflow keeps its own theme model, so nothing here replaces it. These are
-//! the terminal-accurate primitives: the same X11 name table and the same
-//! `#rgb`/`rgb:`/`0x` parsers a config file goes through, plus the palette
-//! generator that fills the 216-color cube and grayscale ramp from a
-//! foreground/background pair.
-
 use std::ffi::CStr;
 use std::sync::OnceLock;
 
@@ -15,10 +7,8 @@ use crate::encode::encode_with_buffer;
 use crate::handles::check;
 use crate::{ColorScheme, Result, Rgb};
 
-/// Number of entries in a terminal color palette.
 pub const PALETTE_LEN: usize = 256;
 
-/// Upper bound for an encoded color scheme report (`CSI ? 997 ; N n`).
 const MAX_COLOR_SCHEME_REPORT_BYTES: usize = 32;
 
 impl From<Rgb> for sys::GhosttyColorRgb {
@@ -31,8 +21,6 @@ impl From<Rgb> for sys::GhosttyColorRgb {
     }
 }
 
-/// A 256-bit set of palette indices, used to pin entries that palette
-/// generation must copy from the base palette instead of deriving.
 #[derive(Clone, Copy, Debug)]
 pub struct PaletteMask(sys::GhosttyColorPaletteMask);
 
@@ -51,58 +39,44 @@ impl PartialEq for PaletteMask {
 impl Eq for PaletteMask {}
 
 impl PaletteMask {
-    /// An empty mask: generation derives every index.
     #[must_use]
     pub const fn new() -> Self {
         Self(sys::GhosttyColorPaletteMask { bits: [0; 4] })
     }
 
-    /// Pin `index` to its base-palette value.
     pub fn set(&mut self, index: u8) {
         self.0.bits[usize::from(index) >> 6] |= 1u64 << (index & 63);
     }
 
-    /// Stop pinning `index`.
     pub fn unset(&mut self, index: u8) {
         self.0.bits[usize::from(index) >> 6] &= !(1u64 << (index & 63));
     }
 
-    /// Whether `index` is pinned.
     #[must_use]
     pub fn contains(&self, index: u8) -> bool {
         self.0.bits[usize::from(index) >> 6] & (1u64 << (index & 63)) != 0
     }
 }
 
-/// Parse a color specification: `#RGB`, `#RRGGBB`, `rgb:R/G/B`, an X11 name,
-/// or any other form Ghostty's config accepts.
 pub fn parse(value: &str) -> Result<Rgb> {
     let mut out = sys::GhosttyColorRgb { r: 0, g: 0, b: 0 };
-    // SAFETY: the pointer and length describe `value`'s bytes, and `out` is
-    // valid writable storage.
     let result =
         unsafe { sys::ghostty_color_parse(value.as_ptr().cast(), value.len(), &mut out) };
     check("color_parse", result)?;
     Ok(out.into())
 }
 
-/// Parse an X11 color name such as `cornflowerblue`.
 pub fn parse_x11(name: &str) -> Result<Rgb> {
     let mut out = sys::GhosttyColorRgb { r: 0, g: 0, b: 0 };
-    // SAFETY: the pointer and length describe `name`'s bytes, and `out` is
-    // valid writable storage.
     let result =
         unsafe { sys::ghostty_color_parse_x11(name.as_ptr().cast(), name.len(), &mut out) };
     check("color_parse_x11", result)?;
     Ok(out.into())
 }
 
-/// Parse a `index=color` palette override such as `0x10=#282c34`.
 pub fn parse_palette_entry(value: &str) -> Result<(u8, Rgb)> {
     let mut index = 0u8;
     let mut rgb = sys::GhosttyColorRgb { r: 0, g: 0, b: 0 };
-    // SAFETY: the pointer and length describe `value`'s bytes, and both
-    // out-parameters are valid writable storage.
     let result = unsafe {
         sys::ghostty_color_parse_palette_entry(
             value.as_ptr().cast(),
@@ -115,22 +89,13 @@ pub fn parse_palette_entry(value: &str) -> Result<(u8, Rgb)> {
     Ok((index, rgb.into()))
 }
 
-/// Ghostty's built-in 256-color palette.
 #[must_use]
 pub fn default_palette() -> [Rgb; PALETTE_LEN] {
     let mut raw = [sys::GhosttyColorRgb { r: 0, g: 0, b: 0 }; PALETTE_LEN];
-    // SAFETY: the callee writes exactly `PALETTE_LEN` entries into the array.
     unsafe { sys::ghostty_color_palette_default(raw.as_mut_ptr()) };
     raw.map(Rgb::from)
 }
 
-/// Derive the 216-color cube and grayscale ramp from `background` and
-/// `foreground`.
-///
-/// `base` supplies the ANSI 0-15 entries and anything pinned by `skip`;
-/// `None` uses Ghostty's default palette. `harmonious` keeps the
-/// background-to-foreground orientation for light themes instead of swapping
-/// it so the ramp always runs dark-to-light.
 #[must_use]
 pub fn generate_palette(
     base: Option<&[Rgb; PALETTE_LEN]>,
@@ -146,9 +111,6 @@ pub fn generate_palette(
     let background = sys::GhosttyColorRgb::from(background);
     let foreground = sys::GhosttyColorRgb::from(foreground);
     let mut out = [sys::GhosttyColorRgb { r: 0, g: 0, b: 0 }; PALETTE_LEN];
-    // SAFETY: `base_pointer` is null or points at `PALETTE_LEN` entries that
-    // outlive the call, the mask and both colors are live, and `out` is
-    // writable storage for exactly `PALETTE_LEN` entries.
     unsafe {
         sys::ghostty_color_palette_generate(
             base_pointer,
@@ -162,40 +124,29 @@ pub fn generate_palette(
     out.map(Rgb::from)
 }
 
-/// Relative luminance, as used for WCAG contrast.
 #[must_use]
 pub fn luminance(color: Rgb) -> f64 {
     let color = sys::GhosttyColorRgb::from(color);
-    // SAFETY: `color` is a live struct passed by pointer for the call only.
     unsafe { sys::ghostty_color_luminance(&raw const color) }
 }
 
-/// Perceived luminance, which weights the channels the way the eye does.
 #[must_use]
 pub fn perceived_luminance(color: Rgb) -> f64 {
     let color = sys::GhosttyColorRgb::from(color);
-    // SAFETY: `color` is a live struct passed by pointer for the call only.
     unsafe { sys::ghostty_color_perceived_luminance(&raw const color) }
 }
 
-/// WCAG contrast ratio between two colors, from 1.0 to 21.0.
 #[must_use]
 pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     let a = sys::GhosttyColorRgb::from(a);
     let b = sys::GhosttyColorRgb::from(b);
-    // SAFETY: both structs are live and passed by pointer for the call only.
     unsafe { sys::ghostty_color_contrast(&raw const a, &raw const b) }
 }
 
-/// Ghostty's X11 color name table.
-///
-/// The table is static in the library, so it is walked once and cached.
 #[must_use]
 pub fn x11_names() -> &'static [(&'static str, Rgb)] {
     static NAMES: OnceLock<Vec<(&'static str, Rgb)>> = OnceLock::new();
     NAMES.get_or_init(|| {
-        // SAFETY: both accessors read immutable static data owned by the
-        // library, so the table and its name strings live for the program.
         let (entries, count) =
             unsafe { (sys::ghostty_color_x11_names(), sys::ghostty_color_x11_name_count()) };
         if entries.is_null() {
@@ -203,13 +154,10 @@ pub fn x11_names() -> &'static [(&'static str, Rgb)] {
         }
         (0..count)
             .filter_map(|index| {
-                // SAFETY: `index` is below the count the library reported for
-                // this table, so the entry is in bounds.
                 let entry = unsafe { *entries.add(index) };
                 if entry.name.is_null() {
                     return None;
                 }
-                // SAFETY: the table's names are null-terminated statics.
                 let name = unsafe { CStr::from_ptr(entry.name) }.to_str().ok()?;
                 Some((name, Rgb::from(entry.color)))
             })
@@ -217,7 +165,6 @@ pub fn x11_names() -> &'static [(&'static str, Rgb)] {
     })
 }
 
-/// Encode a color scheme report (`CSI ? 997 ; N n`) for mode 2031 subscribers.
 pub fn encode_color_scheme_report(scheme: ColorScheme) -> Result<Vec<u8>> {
     let scheme = match scheme {
         ColorScheme::Light => sys::GhosttyColorScheme_GHOSTTY_COLOR_SCHEME_LIGHT,
@@ -231,7 +178,6 @@ pub fn encode_color_scheme_report(scheme: ColorScheme) -> Result<Vec<u8>> {
         },
     )
 }
-
 
 #[cfg(test)]
 mod tests {

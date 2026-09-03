@@ -1,7 +1,3 @@
-//! Shared CSD (Client-Side Decoration) utilities used by the main window and
-//! settings window. Avoids duplicating resize-edge hit-testing and the default
-//! window-button layout across multiple files.
-
 use gpui::{
     AnyElement, App, Bounds, ClickEvent, CursorStyle, Decorations, HitboxBehavior, Hsla,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Pixels, Point, ResizeEdge,
@@ -14,7 +10,6 @@ use crate::app::constants::{
 };
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-/// Default button layout when the DE doesn't provide one.
 pub fn default_button_layout() -> WindowButtonLayout {
     WindowButtonLayout {
         left: [None, None, None],
@@ -59,12 +54,6 @@ impl ClientDecorationGeometry {
     }
 }
 
-/// Wrap application content in a native-looking client-side decoration shell.
-///
-/// The outer inset belongs to the compositor shadow and resize hitbox, so it
-/// must stay transparent. The themed application surface lives in the inner
-/// rounded element and drops its radius, border, and padding edge-by-edge when
-/// the compositor tiles or maximizes the window.
 pub(crate) fn client_side_window_shell(
     content: impl IntoElement,
     window: &mut Window,
@@ -197,10 +186,6 @@ pub(crate) fn client_side_window_shell(
     }
 }
 
-/// Hit-test a mouse position against the CSD resize border.
-///
-/// Returns `Some(edge)` if the cursor is in a resize zone, respecting the
-/// current tiling state (tiled edges are not resizable).
 pub fn resize_edge(
     pos: Point<Pixels>,
     border: Pixels,
@@ -214,7 +199,6 @@ pub fn resize_edge(
 
     let corner = size(border * 1.5, border * 1.5);
 
-    // Corners first (larger hit zone = 1.5× border)
     if !tiling.top && !tiling.left && Bounds::new(point(px(0.), px(0.)), corner).contains(&pos) {
         return Some(ResizeEdge::TopLeft);
     }
@@ -244,7 +228,6 @@ pub fn resize_edge(
         return Some(ResizeEdge::BottomRight);
     }
 
-    // Edges
     if !tiling.top && pos.y <= border {
         Some(ResizeEdge::Top)
     } else if !tiling.bottom && pos.y >= window_size.height - border {
@@ -258,14 +241,6 @@ pub fn resize_edge(
     }
 }
 
-/// Render a group of window control buttons for one side (left or right).
-///
-/// Returns `None` if no buttons are active on this side (all slots are `None`
-/// or all are filtered out by the compositor's supported controls).
-///
-/// `on_close` is invoked when the Close button is clicked, allowing each
-/// caller (main title bar vs settings window) to dispatch its own close
-/// semantics (event emission vs `window.remove_window()`).
 pub(crate) fn render_button_group(
     side: &'static str,
     buttons: &[Option<WindowButton>; 3],
@@ -296,10 +271,6 @@ pub(crate) fn render_button_group(
             .flex()
             .flex_row()
             .items_center()
-            // Windows: full-height, flush, zero-gap cluster (native Win11
-            // caption strip). Linux mirrors Zed's GPUI title-bar geometry:
-            // compact 20px controls on a 12px internal rhythm, with 8px group
-            // edges aligned to the sidebar rows on either DE layout side.
             .when(cfg!(target_os = "windows"), |d| d.h(bar_height))
             .when(!cfg!(target_os = "windows"), |d| {
                 d.gap(TITLE_BAR_CONTROL_SPACING).px(TITLE_BAR_EDGE_INSET)
@@ -338,8 +309,6 @@ fn toggle_window_maximize(window: &Window) {
         let hwnd = window_handle.hwnd.get() as windows_sys::Win32::Foundation::HWND;
         let command = windows_maximize_command(window.is_maximized());
 
-        // GPUI's Windows `zoom()` always sends SW_MAXIMIZE, unlike its toggle
-        // contract on other platforms. Select SW_RESTORE explicitly here.
         let _ = unsafe { ShowWindowAsync(hwnd, command) };
     }
 
@@ -347,8 +316,6 @@ fn toggle_window_maximize(window: &Window) {
     window.zoom_window();
 }
 
-/// Render a single window control button. Close button clicks dispatch to
-/// the `on_close` callback; Min/Max call directly into `Window`.
 pub(crate) fn render_window_button(
     side: &'static str,
     button: WindowButton,
@@ -380,14 +347,6 @@ pub(crate) fn render_window_button(
     };
 
     let element_id = SharedString::from(format!("{id}-{side}"));
-    // Windows: native Win11 caption buttons - 46px wide, full title-bar
-    // height, square + flush, with the system hover palette (subtle white
-    // overlay for min/max, #c42b1c red on close, #c84c3f when pressed). The
-    // OS already hit-tests these regions as HT{MIN,MAX,CLOSE}, so snap
-    // layouts and the actual minimize/maximize/close are system-handled
-    // (gpui_windows events.rs) - only the pixels are ours, making them
-    // indistinguishable from the OS-drawn ones. Linux/macOS keep the compact
-    // chrome-themed pills.
     let is_windows = cfg!(target_os = "windows");
     let is_close = matches!(button, WindowButton::Close);
     let (button_width, button_height) = if is_windows {

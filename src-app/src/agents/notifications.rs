@@ -1,9 +1,3 @@
-//! Desktop notification routing for agent lifecycle events.
-//!
-//! This module owns both sides of the notification gate:
-//! - the process-wide focus flag updated by the GPUI app;
-//! - a single cross-platform `notify-rust` firing path used by `ai.*` handlers.
-
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::BackgroundExecutor;
@@ -20,18 +14,12 @@ const PANEFLOW_WINDOWS_NOTIFICATION_ICON_ASSET: &str = "icons/paneflow.png";
 #[cfg(target_os = "windows")]
 const PANEFLOW_WINDOWS_NOTIFICATION_ICON_FILE: &str = "paneflow-notification.png";
 
-/// Window-active gate updated by `cx.observe_window_activation`.
-/// `true` while the OS reports the Paneflow window as the focused one.
 static WINDOW_ACTIVE: AtomicBool = AtomicBool::new(true);
 
-/// Update the window-active flag. Called from
-/// `cx.observe_window_activation` and from the initial activation
-/// tick that GPUI fires when the observer registers.
 pub fn set_window_active(active: bool) {
     WINDOW_ACTIVE.store(active, Ordering::Relaxed);
 }
 
-/// Is the Paneflow window currently the focused surface?
 pub fn window_active() -> bool {
     WINDOW_ACTIVE.load(Ordering::Relaxed)
 }
@@ -95,11 +83,6 @@ impl DesktopNotification {
     }
 }
 
-/// Build a notification a terminal program asked for with OSC 9 or OSC 777.
-///
-/// The program supplies both strings and OSC 9 supplies no title, so an
-/// empty summary falls back to the pane's own title rather than showing a
-/// notification with no heading.
 pub(crate) fn program_notification(
     title: String,
     body: String,
@@ -121,20 +104,6 @@ pub(crate) fn program_notification(
     }
 }
 
-/// Fire a notification the running program asked for.
-///
-/// Unlike the agent notifications this ignores `notify_when_agent_waiting`:
-/// that setting is about Paneflow deciding to interrupt on an agent's behalf,
-/// and a program that emitted OSC 9 asked for this itself, so silently
-/// dropping it would break every `notify-send` style workflow.
-///
-/// The one gate is `seen`: whether the pane that asked is the one under the
-/// user's eye (window active, its workspace and tab on screen -
-/// `PaneFlowApp::surfaces_under_user_eye`). A notification from a pane the
-/// user is looking at is noise; one from another workspace is the whole
-/// point, even while the Paneflow window is active. cmux draws the line in
-/// the same place (`TerminalNotificationDeliveryDecision`: app focused AND
-/// active tab AND focused surface suppresses the banner).
 pub(crate) fn fire_program_notification(
     notification: DesktopNotification,
     seen: bool,
@@ -150,13 +119,6 @@ pub(crate) fn fire_program_notification(
         .detach();
 }
 
-/// Fire a best-effort desktop notification without blocking the GPUI thread.
-///
-/// `seen` is whether the pane the agent lives in is under the user's eye,
-/// the same test [`fire_program_notification`] takes and the completion dot
-/// keys on (`PaneFlowApp::surfaces_under_user_eye`). An agent asking for
-/// permission in a workspace the user is not looking at notifies even while
-/// the Paneflow window is active; the one on screen never does.
 pub(crate) fn fire_desktop_notification(
     notification: DesktopNotification,
     config: &PaneFlowConfig,
@@ -185,8 +147,6 @@ pub(crate) fn should_fire_desktop_notification(gate: NotifyWhenAgentWaiting, see
     }
 }
 
-/// Bound + sanitize an agent question before it is stored on the session
-/// and mirrored to notifications.
 pub(crate) fn sanitize_notification_message(raw: &str) -> String {
     crate::markdown::strip_bidi_zero_width(raw.chars().take(512).collect())
 }

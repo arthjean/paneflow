@@ -1,16 +1,3 @@
-//! EP-001/EP-003 (prd-git-diff-mode-2026-Q3.md): left git panel for the
-//! Git Diff mode ([`paneflow_config::schema::AppMode::Diff`]).
-//!
-//! US-008: the panel is the Zed-styled changed-files tree (NOT the workspace
-//! list - workspace switching stays on `Ctrl+1-9` / CLI mode). A "Changes"
-//! section header (collapse chevron + aggregate diffstat) tops a list of file rows
-//! (status-colored letter + filename + dimmed directory + +/- counts), with
-//! hover / selected states resolved from the curated `vc_*` theme slots
-//! (US-007). In multi-branch scopes the data is read per-column via
-//! `DiffView::column_file_lists` and rendered as one collapsible section per
-//! branch; single-column scopes render a flat list. The row renderer lives in
-//! `rows.rs` to keep this file under the 250-line cap.
-
 use crate::PaneFlowApp;
 use crate::app::diff_view_actions::DIFF_SIDEBAR_WIDTH;
 use crate::diff::{FileEntry, FileListState, aggregate_file_lists};
@@ -25,10 +12,6 @@ use std::collections::BTreeMap;
 mod header;
 mod rows;
 
-/// One node of the changed-files directory tree (tree mode). `subdirs` is
-/// sorted (BTreeMap) so folders render alphabetically; `files` holds indices
-/// into the per-column `visible` slice. Built per render - cheap for the
-/// changed-file counts a single diff produces.
 #[derive(Default)]
 struct DirNode {
     subdirs: BTreeMap<String, DirNode>,
@@ -41,8 +24,6 @@ const REVIEW_SIDEBAR_ROW_RADIUS: f32 = 8.0;
 const REVIEW_SIDEBAR_LIST_GAP: f32 = 4.0;
 
 impl PaneFlowApp {
-    /// Sidebar render branch for [`AppMode::Diff`](paneflow_config::schema::AppMode::Diff).
-    /// Wired into the `main.rs` mode-dispatch `match`.
     pub(crate) fn render_diff_sidebar(
         &mut self,
         window: &mut Window,
@@ -56,9 +37,6 @@ impl PaneFlowApp {
             .w(px(DIFF_SIDEBAR_WIDTH))
             .flex_shrink_0()
             .h_full()
-            // Cockpit rail (#141414), matching the Cli sidebar. No
-            // border-right: the rail and the ui.base panel separate by a
-            // luminance step, not a drawn divider.
             .bg(crate::app::constants::cockpit_chrome_background(
                 theme.title_bar_background,
                 window.is_window_active(),
@@ -71,17 +49,12 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// The "Changes" section + the changed-files list (or a centered
-    /// loading / error / empty / no-repo message). US-008.
     fn render_diff_files(&self, ui: UiColors, cx: &mut Context<Self>) -> AnyElement {
         let mounted = match self.diff_mode.diff_scope {
             crate::diff::DiffScope::MultiProject => self.diff_mode.multi_diff_view.is_some(),
             _ => self.diff_mode.diff_view.is_some(),
         };
         if !mounted {
-            // EP-003 US-012 / edge case #1: a designed no-repo state - an icon, a
-            // title, and a one-line positioning hint. The "open a project"
-            // affordance is the scope-header project picker in the breadcrumb.
             return crate::ui_primitives::panel_empty_state(
                 ui,
                 Some("icons/git-branch.svg"),
@@ -92,9 +65,6 @@ impl PaneFlowApp {
             .into_any_element();
         }
 
-        // Per-branch (column) file lists + the active column, for the scope's
-        // host. Multi-project reads the selected repo tab's columns; the other
-        // scopes the single mounted DiffView. One section per column downstream.
         let (lists, selected_col): (
             Vec<(String, usize, std::path::PathBuf, FileListState)>,
             usize,
@@ -120,9 +90,6 @@ impl PaneFlowApp {
         };
 
         if lists.is_empty() {
-            // Mounted but no columns yet - the brief cold-mount / discovery window.
-            // EP-003 US-012 / edge case #2: animated loader + the active branch
-            // being diffed, not a bare string.
             let branch = self
                 .workspaces
                 .get(self.active_idx)
@@ -148,21 +115,12 @@ impl PaneFlowApp {
 
         let collapsed = self.diff_mode.diff_files_collapsed;
 
-        // EP-003 US-012: the filter field renders only when a file list actually
-        // exists (≥ 1 changed file across the loaded columns) - filtering an
-        // empty / still-loading list is meaningless chrome.
         let has_files = lists
             .iter()
             .any(|(_, _, _, st)| matches!(st, FileListState::Loaded(f) if !f.is_empty()));
 
-        // Aggregate diffstat across every branch's files - an at-a-glance sense
-        // of the total changeset, shown in the header even when collapsed. Same
-        // source of truth as the diff view's aggregate strip (Loaded, non-empty
-        // columns only) so the two totals can never drift apart.
         let (_, _, total_added, total_removed) = aggregate_file_lists(&lists);
 
-        // Live path filter (case-insensitive substring) driven by the
-        // always-visible filter field below the header. Empty ⇒ all match.
         let filter_lc = self
             .diff_mode
             .diff_file_filter
@@ -173,9 +131,6 @@ impl PaneFlowApp {
 
         let header = self.render_diff_files_header(ui, collapsed, total_added, total_removed, cx);
 
-        // Always-on filter field (cursor-aware TextInput). Escape clears it; a
-        // clear-(×) button appears once it has content. Shares the [`filter_pill`]
-        // primitive with the CLI sidebar filter.
         let filter_field = crate::ui_primitives::filter_pill_with_arrow_clear(
             "diff-files-filter",
             "diff-files-filter-clear",
@@ -199,8 +154,6 @@ impl PaneFlowApp {
             }
         }));
 
-        // Single column ⇒ flat list (Project / one worktree); multiple ⇒ one
-        // collapsible section per branch so all branches are visible at once.
         let body: Vec<AnyElement> = if collapsed {
             Vec::new()
         } else if lists.len() == 1 {
@@ -255,11 +208,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// File rows for ONE column (branch), filtered. `is_active` marks the column
-    /// whose selection drives the body, so the selected-file highlight only
-    /// lights up in the active branch's section (a filename present in several
-    /// branches isn't highlighted everywhere). A loading / failed / empty column
-    /// yields a single muted note row.
     fn render_diff_file_rows(
         &self,
         col_idx: usize,
@@ -309,9 +257,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Tree-mode body for one column: build a nested directory tree from the
-    /// filtered files and render it (folders sorted, single-child chains merged
-    /// compact-folder style, per-directory collapse).
     fn render_diff_file_tree(
         &self,
         col_idx: usize,
@@ -326,7 +271,7 @@ impl PaneFlowApp {
             let mut segs = e.path.split('/').peekable();
             while let Some(seg) = segs.next() {
                 if segs.peek().is_none() {
-                    node.files.push(i); // last segment is the filename
+                    node.files.push(i);
                 } else {
                     node = node.subdirs.entry(seg.to_string()).or_default();
                 }
@@ -337,9 +282,6 @@ impl PaneFlowApp {
         out
     }
 
-    /// Recursively emit a directory node's folder rows (then its file rows).
-    /// Compact-folder chaining collapses `a → b → c` (each a lone child) into a
-    /// single `a/b/c` row so deep Rust paths don't waste horizontal space.
     #[allow(clippy::too_many_arguments)]
     fn render_dir_node(
         &self,
@@ -399,10 +341,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// One collapsible directory row in tree mode: chevron + folder glyph +
-    /// (compacted) directory name, indented by `depth`. Collapse is keyed by
-    /// `col_idx\0<full dir>` so the same directory in two branch sections folds
-    /// independently.
     #[allow(clippy::too_many_arguments)]
     fn render_dir_header_row(
         &self,
@@ -420,8 +358,6 @@ impl PaneFlowApp {
         div()
             .id(SharedString::from(format!("diff-dir-{col_idx}-{full}")))
             .flex_none()
-            // EP-003 US-013: match the 28px file-row height so the tree reads on
-            // one consistent vertical rhythm (file + folder rows interleave).
             .h(px(28.))
             .mx(px(REVIEW_SIDEBAR_ROW_MARGIN_X))
             .pl(px(REVIEW_SIDEBAR_ROW_PADDING_X + depth as f32 * INDENT))
@@ -472,11 +408,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// One branch section in the multi-branch sidebar: a collapsible sub-header
-    /// (branch name + file count + diffstat, active branch accented) over that
-    /// branch's filtered file rows. Collapse is keyed by `collapse_key` (the
-    /// worktree PATH, globally unique) - NOT the branch name, which collides
-    /// across repos in Multi-project scope (every repo has a `main`).
     #[allow(clippy::too_many_arguments)]
     fn render_diff_branch_section(
         &self,

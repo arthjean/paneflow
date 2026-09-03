@@ -210,7 +210,6 @@ agent CLI (claude, codex, opencode, …)
   (`Terminal < SessionRegistry < Hook`) and `upsert_session_state` enforces the
   rank, so a weaker observer never talks over a live stronger one - and a
   stronger one that falls silent hands over instead of freezing the sidebar.
-  See [docs/hooks.md](docs/hooks.md#when-hooks-cannot-run).
 - **States**: thinking, waiting for input (with the actual prompt text),
   finished, errored (non-zero exit), stalled (no hook activity past a
   threshold). Each state routes to the UI - and to your own tooling, since
@@ -278,7 +277,8 @@ other two platforms:
 
 Linux, macOS Apple Silicon, and Windows x64 ship as release artifacts today.
 macOS Intel and Windows ARM64 are not in the current release matrix; see
-[`README.md`](README.md#install) and [`docs/WINDOWS.md`](docs/WINDOWS.md) for
+[`README.md`](README.md#install) and
+[`docs/user/installation/windows.md`](docs/user/installation/windows.md) for
 the support matrix.
 
 ## Performance discipline

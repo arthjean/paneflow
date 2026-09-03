@@ -1,15 +1,3 @@
-//! Manage-custom-buttons modal - opened from the workspace card context
-//! menu in the sidebar. Lets the user add / edit / delete user-defined
-//! command buttons that appear in the workspace's tab bar, to the right
-//! of the built-in defaults (Claude / Codex).
-//!
-//! Modal overlay pattern follows the theme picker (`app/theme_picker.rs`):
-//! `deferred()` backdrop + centered card + focus-handled key input.
-//!
-//! Form text inputs are full cursor-aware `widgets::text_input::TextInput`
-//! instances, so arrow-key navigation, mouse click/drag selection, Home/End,
-//! Ctrl-A/C/V/X and IME all work as in any native single-line input.
-
 use gpui::{
     AnyElement, ClickEvent, Context, Entity, FontWeight, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString,
@@ -21,12 +9,6 @@ use crate::PaneFlowApp;
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 use crate::widgets::scrollbar;
 use crate::widgets::text_input::TextInput;
-
-// ---------------------------------------------------------------------------
-// Icon picker inventory - curated subset of the bundled tabler icons that
-// make sense for dev / terminal / git / deploy / ops commands. Claude and
-// Codex colour icons are intentionally excluded (reserved for the defaults).
-// ---------------------------------------------------------------------------
 
 pub(crate) const AVAILABLE_ICONS: &[&str] = &[
     "icons/player-play.svg",
@@ -59,8 +41,6 @@ pub(crate) const AVAILABLE_ICONS: &[&str] = &[
 ];
 
 fn default_icon() -> String {
-    // US-058: `.first()` instead of `[0]` - the const is non-empty today, but a
-    // future trim of the list must degrade gracefully, not panic.
     AVAILABLE_ICONS
         .first()
         .copied()
@@ -68,19 +48,11 @@ fn default_icon() -> String {
         .to_string()
 }
 
-// ---------------------------------------------------------------------------
-// Modal state
-// ---------------------------------------------------------------------------
-
 pub(crate) struct CustomButtonsModal {
-    /// Target workspace, identified by stable id (survives reorder / session
-    /// reload; we lookup the index lazily when we need to mutate).
     pub workspace_id: u64,
     pub view: ModalView,
-    /// Scroll state for the button list (`ModalView::List`).
     pub list_scroll: gpui::ScrollHandle,
     pub list_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
-    /// Scroll state for the edit form body (`ModalView::Form`).
     pub form_scroll: gpui::ScrollHandle,
     pub form_drag: Option<crate::widgets::scrollbar::ScrollDragState>,
 }
@@ -88,13 +60,9 @@ pub(crate) struct CustomButtonsModal {
 pub(crate) enum ModalView {
     List,
     Form {
-        /// `Some(id)` when editing an existing button, `None` when creating.
         editing_id: Option<String>,
-        /// Currently picked icon path (e.g. `"icons/rocket.svg"`).
         icon: String,
-        /// Live text input entity for the "Name" field.
         name_input: Entity<TextInput>,
-        /// Live text input entity for the "Command" field.
         command_input: Entity<TextInput>,
     },
 }
@@ -106,10 +74,6 @@ fn new_button_id() -> String {
         .unwrap_or(0);
     format!("b{millis:x}")
 }
-
-// ---------------------------------------------------------------------------
-// PaneFlowApp impl
-// ---------------------------------------------------------------------------
 
 impl PaneFlowApp {
     pub(crate) fn open_custom_buttons_modal(
@@ -195,7 +159,6 @@ impl PaneFlowApp {
             return;
         };
         modal.view = ModalView::List;
-        // Return focus to the modal shell so Escape still closes the modal.
         self.custom_buttons_modal_focus.focus(window, cx);
         cx.notify();
     }
@@ -215,8 +178,6 @@ impl PaneFlowApp {
             return;
         };
 
-        // Extract form values while holding only an immutable borrow of the
-        // modal state (we read from the entities via `cx`).
         let (editing_id, name, icon, command) = {
             let Some(modal) = self.custom_buttons_modal.as_ref() else {
                 return;
@@ -237,8 +198,6 @@ impl PaneFlowApp {
             }
         };
 
-        // Silent no-op when required fields are empty - the Save button is
-        // rendered disabled in this case, so this guard is just defensive.
         if name.is_empty() || command.is_empty() {
             return;
         }
@@ -263,7 +222,6 @@ impl PaneFlowApp {
         }
         self.save_session(cx);
 
-        // Return to the list so the user sees the result of their action.
         if let Some(modal) = self.custom_buttons_modal.as_mut() {
             modal.view = ModalView::List;
         }
@@ -325,10 +283,6 @@ impl PaneFlowApp {
         let ws = &self.workspaces[ws_idx];
         let ui = crate::theme::ui_colors();
 
-        // Codex-quiet header: no own background, no divider - the title sits
-        // directly on the card; hierarchy comes from type + spacing. The
-        // workspace context rides along as a muted suffix instead of an
-        // em-dash compound title.
         let (header_title, header_context) = match &modal.view {
             ModalView::List => ("Custom buttons", Some(ws.title.clone())),
             ModalView::Form { editing_id, .. } => {
@@ -443,8 +397,6 @@ impl PaneFlowApp {
                         let Some(modal) = this.custom_buttons_modal.as_mut() else {
                             return;
                         };
-                        // Only one drag is active at a time (one view at a
-                        // time). Try list first, then form.
                         if let Some(drag) = modal.list_drag
                             && let Some(off) =
                                 scrollbar::drag_offset(&modal.list_scroll, &drag, ev.position.y)
@@ -676,8 +628,6 @@ impl PaneFlowApp {
             }
         }
 
-        // Quiet "New button" row (the Agents "New chat" language): no border,
-        // muted at rest, fill on hover.
         let new_row = div()
             .id("cbtn-new")
             .mt(px(4.))
@@ -753,9 +703,6 @@ impl PaneFlowApp {
             .child(list)
             .when_some(bar, |d, sb| d.child(sb));
 
-        // No "Done" footer (Codex-minimal): ✕, Esc, and the backdrop click
-        // already dismiss - a primary close button was a third affordance for
-        // the same action. A small bottom pad keeps the list off the edge.
         div()
             .flex()
             .flex_col()
@@ -780,7 +727,6 @@ impl PaneFlowApp {
         let name_field = Self::render_input_field("Name", name_input.clone(), ui);
         let command_field = Self::render_input_field("Command", command_input.clone(), ui);
 
-        // Icon picker - responsive flex-wrap grid.
         let mut icon_grid = div().flex().flex_row().flex_wrap().gap(px(6.)).mt(px(4.));
         for &path in AVAILABLE_ICONS {
             let is_selected = path == icon;
@@ -815,9 +761,6 @@ impl PaneFlowApp {
                         .path(path)
                         .text_color(if is_selected { ui.text } else { ui.muted }),
                 );
-            // Selection by fill, not border (Codex): the picked tile gets the
-            // same brightest-neutral fill as every selected surface in the app
-            // (#323232); only unselected tiles animate on hover.
             let tile = if is_selected {
                 tile.bg(gpui::rgb(0x323232)).into_any_element()
             } else {
@@ -829,8 +772,6 @@ impl PaneFlowApp {
             icon_grid = icon_grid.child(tile);
         }
 
-        // Whether the primary button is enabled depends on both fields having
-        // non-whitespace content.
         let name_filled = !name_input.read(cx).value().trim().is_empty();
         let cmd_filled = !command_input.read(cx).value().trim().is_empty();
         let is_valid = name_filled && cmd_filled;
@@ -869,8 +810,6 @@ impl PaneFlowApp {
                 .into_any_element()
         };
 
-        // Quiet form footer: no divider (separation by spacing), Cancel is a
-        // bare quiet button - only the primary CTA carries weight.
         let footer = div()
             .flex()
             .flex_row()
@@ -985,10 +924,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// Label + styled container wrapping a cursor-aware `TextInput` entity.
-    /// The `TextInput` is a GPUI entity, so we hand it off as a child element
-    /// directly - its own Render produces the IBeam hit area, mouse handlers
-    /// and text shaping.
     fn render_input_field(
         label: &str,
         input: Entity<TextInput>,

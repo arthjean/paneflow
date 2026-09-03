@@ -110,7 +110,6 @@ jobs:
               - 'packaging/**'
               - 'assets/**'
               - 'scripts/**'
-              - 'docs/release-runbook.md'
               - 'docs/release/**'
             rendering:
               # GPUI Element + paint pipeline (where c3e2331 lived)

@@ -1,7 +1,3 @@
-//! Theme picker modal - command-palette style selector opened from the
-//! title-bar burger menu. Lists bundled themes from `crate::theme::THEMES`
-//! with a typeahead filter and keyboard navigation.
-
 use gpui::{
     AnyElement, ClickEvent, Context, CursorStyle, InteractiveElement, IntoElement, KeyDownEvent,
     MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement, Point, SharedString, Styled,
@@ -13,10 +9,6 @@ use crate::widgets::scrollbar;
 use crate::{PaneFlowApp, ThemeMode, config_writer};
 
 impl PaneFlowApp {
-    /// Resolve the theme currently persisted in config (or the built-in
-    /// default), canonicalized: a `paneflow.json` written before presets
-    /// existed still names `One Dark`, which is now `Paneflow Dark`.
-    /// US-014: reads the cached config, not a per-call `load_config()`.
     pub(crate) fn current_theme_name(&self) -> String {
         self.cached_config
             .theme
@@ -26,8 +18,6 @@ impl PaneFlowApp {
             .to_string()
     }
 
-    /// The preset owning the active theme. The Light/Dark/System tiles switch
-    /// variants *inside* this preset.
     pub(crate) fn current_theme_preset(&self) -> &'static crate::theme::ThemePreset {
         crate::theme::preset_for_theme(&self.current_theme_name())
     }
@@ -40,8 +30,6 @@ impl PaneFlowApp {
             .unwrap_or(0)
     }
 
-    /// Returns theme names matching the current query (case-insensitive
-    /// substring). Matches the `THEMES` table order so defaults appear first.
     fn theme_picker_matches(&self) -> Vec<&'static str> {
         let q = self.theme_picker_query.to_lowercase();
         crate::theme::THEMES
@@ -54,7 +42,6 @@ impl PaneFlowApp {
     pub(crate) fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_theme_picker = true;
         self.theme_picker_query.clear();
-        // Pre-select the currently applied theme so the list opens on it.
         self.theme_picker_selected_idx = self.current_theme_index();
         self.theme_picker_scroll = gpui::ScrollHandle::new();
         self.theme_picker_drag = None;
@@ -95,16 +82,10 @@ impl PaneFlowApp {
         true
     }
 
-    /// Apply a concrete bundled theme. `theme_mode` follows the variant that
-    /// was picked, so the Themes page's Light/Dark tiles stay in sync with
-    /// whatever the palette or the picker applied.
     pub(crate) fn apply_theme_by_name(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
         self.persist_theme_selection(ThemeMode::from_theme_name(name), name, cx)
     }
 
-    /// Apply a *preset* while keeping the current Light/Dark/System mode: the
-    /// two axes are independent, so switching identity must not flip the
-    /// light/dark choice.
     pub(crate) fn apply_theme_preset(
         &mut self,
         preset: &crate::theme::ThemePreset,
@@ -239,10 +220,6 @@ impl PaneFlowApp {
             );
         } else {
             for (idx, name) in matches.iter().enumerate() {
-                // `is_selected` is the keyboard cursor (what Enter applies);
-                // `is_current` is the theme already in effect. The cursor reads
-                // as the `select_item` whisper highlight, the current theme as a
-                // neutral trailing check - no accent-blue focus text.
                 let is_selected = idx == self.theme_picker_selected_idx;
                 let is_current = *name == current_name.as_str();
                 let label = if *name == crate::theme::DEFAULT_THEME {
@@ -283,9 +260,6 @@ impl PaneFlowApp {
             }
         }
 
-        // Estimated geometry for first-frame fallback. Each row is
-        // py(6) + line-height ≈ 13 + 12 = ~25px. The list caps at
-        // max_h(360).
         const PER_ROW: f32 = 25.0;
         let est_content = (matches.len() as f32 * PER_ROW).max(0.0);
         let max_viewport = 360.0;

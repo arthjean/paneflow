@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Cross-builds the pinned libghostty-vt static archive for Apple Silicon from a
-# Linux host. Ghostty's CombineArchivesStep only takes the Apple `libtool` path
-# when the build host is Darwin, so a Linux host keeps the same `zig ar -M`
-# combine that the Linux targets already normalize.
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MANIFEST="$ROOT/native/libghostty/manifest.toml"
 SOURCE_DIR="${PANEFLOW_GHOSTTY_SOURCE_DIR:-}"
@@ -68,8 +63,6 @@ while (($#)); do
       shift
       ;;
     --allow-hash-drift)
-      # Only for minting a new reviewed archive: it downgrades the manifest
-      # hash gate to a warning so the recipe can be re-pinned deliberately.
       ALLOW_HASH_DRIFT=1
       shift
       ;;
@@ -97,10 +90,6 @@ for key in macos_llvm_version macos_build_seed macos_build_jobs macos_canonical_
   [[ -n "$(manifest_string "$key")" ]] || { echo "manifest is missing $key" >&2; exit 1; }
 done
 
-# Debug info embeds the source, cache, and compilation directories, and
-# `llvm-strip -S` drops those sections without rewriting the addresses that
-# followed them. Path length therefore leaks into the stripped object, so every
-# build runs from one canonical prefix that no host layout can shift.
 CANONICAL_CACHE="$CANONICAL_ROOT/.paneflow-zig-cache"
 CANONICAL_PREFIX="$CANONICAL_ROOT/.paneflow-zig-output"
 case "$CANONICAL_ROOT" in
@@ -110,9 +99,6 @@ case "$CANONICAL_ROOT" in
     exit 1
     ;;
 esac
-# The Zig installation is a compilation input like the source tree: `std` and
-# `compiler_rt` objects carry their own file paths, so the toolchain location
-# shifts the same stripped addresses. Stage it at a canonical prefix too.
 case "$CANONICAL_ZIG_ROOT" in
   /*/paneflow-libghostty-zig-*) ;;
   *)
@@ -150,7 +136,6 @@ ACTUAL_ZIG="$(zig version)"
   echo "libghostty requires Zig $ZIG_VERSION, found $ACTUAL_ZIG" >&2
   exit 1
 }
-# `zig env` prints ZON; both values are absolute paths on one line each.
 ZIG_ENV="$(zig env)"
 ZIG_EXE="$(printf '%s\n' "$ZIG_ENV" | sed -n 's/^ *\.zig_exe = "\(.*\)",$/\1/p')"
 ZIG_LIB_DIR="$(printf '%s\n' "$ZIG_ENV" | sed -n 's/^ *\.lib_dir = "\(.*\)",$/\1/p')"
@@ -162,9 +147,6 @@ command -v sha256sum >/dev/null || { echo "sha256sum is required" >&2; exit 1; }
 command -v file >/dev/null || { echo "file is required to verify Mach-O members" >&2; exit 1; }
 command -v tar >/dev/null || { echo "tar is required to export the canonical source tree" >&2; exit 1; }
 
-# The normalization tools are pinned to the repository Rust toolchain's
-# llvm-tools component, so `macos_llvm_version` moves only when that toolchain
-# moves. PANEFLOW_LLVM_BIN overrides the search for a different pinned set.
 LLVM_BIN="${PANEFLOW_LLVM_BIN:-}"
 if [[ -z "$LLVM_BIN" ]] && command -v rustc >/dev/null; then
   candidate="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin"
@@ -278,8 +260,6 @@ normalize_archive() {
     echo "archive normalization found duplicate member names: $duplicates" >&2
     return 1
   }
-  # Zig may append members in parallel completion order. Rebuild from a
-  # canonical order so identical object files always produce identical bytes.
   mapfile -t basenames < <(printf '%s\n' "${basenames[@]}" | LC_ALL=C sort)
 
   rm -rf "$normalize_dir" "$normalized"
@@ -293,12 +273,8 @@ normalize_archive() {
         echo "archive member is not a Mach-O arm64 object: $basename" >&2
         exit 1
       }
-      # -S is --strip-debug: it drops every __debug* section and leaves the
-      # symbol table, which is what the static link still needs.
       "$LLVM_STRIP" -S "$basename" || exit 1
     done
-    # llvm-ar infers the archive flavor from its inputs, and that inference can
-    # fall back to the host default when cross-hosting, so name it explicitly.
     "$LLVM_AR" crsD --format=darwin "$normalized" "${basenames[@]}" || exit 1
   ) || {
     local status=$?
@@ -346,8 +322,6 @@ build_one() {
     fixed-zig-source-cache-prefix+zig-build-seed*+llvm-strip-debug+llvm-ar-D-darwin) normalize_archive "$archive" ;;
     *) echo "unsupported archive normalization: $archive_normalization" >&2; return 1 ;;
   esac
-  # Mach-O prefixes C symbols with an underscore, so the manifest keeps the C
-  # name and the check accepts either spelling.
   "$LLVM_NM" -g --defined-only "$archive" | grep -E "[[:space:]]_?${build_info_symbol}$" >/dev/null || {
     echo "archive does not export $build_info_symbol: $archive" >&2
     return 1
@@ -383,7 +357,6 @@ report_archive_divergence() {
   local first="$1"
   local second="$2"
   local offset
-  # GNU cmp reports "differ: char N", BSD cmp reports "differ: byte N".
   offset="$(LC_ALL=C cmp "$first" "$second" 2>&1 | sed -n 's/.*differ: [^0-9]*\([0-9][0-9]*\).*/\1/p')"
   echo "macOS archive is not reproducible; first differing byte offset: ${offset:-unknown}" >&2
 
@@ -425,8 +398,6 @@ for rust_target in "${TARGETS[@]}"; do
 
   if ((VERIFY_REPRODUCIBLE)); then
     archive_path="$(target_manifest_string "$rust_target" archive_path)"
-    # The build always runs from the canonical prefix, so the second pass has to
-    # reuse the same output directory too. Keep the first result aside instead.
     FIRST_PASS="$(mktemp -d)"
     cp -R "$output/." "$FIRST_PASS/"
     build_one "$rust_target" "$output"

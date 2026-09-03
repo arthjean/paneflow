@@ -17,16 +17,7 @@
   "excludeFiles": [
     "CLAUDE.md",
     "AGENTS.md",
-    "devto-v0.3.4-hardening.md",
-    "debugging-rendering.md",
-    "pkg-repo-runbook.md",
-    "release-runbook.md",
-    "release-signing.md",
-    "self-update-signing.md",
-    "validation-aarch64.md",
-    "WINDOWS.md",
-    "WINDOWS-SMOKE-TEST.md",
-    "ZED_AGENT_REFERENCE.md"
+    "devto-v0.3.4-hardening.md"
   ],
   "rules": [
     "Paneflow is a GPU-native terminal multiplexer rendered via GPUI (Zed's Rust UI framework). It is NOT a TUI and NOT an Electron app.",

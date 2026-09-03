@@ -67,8 +67,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- Validate the input file ---------------------------------------------
-
 if (-not (Test-Path -LiteralPath $InputFile -PathType Leaf)) {
     Write-Error "InputFile not found: $InputFile"
     exit 1
@@ -81,10 +79,6 @@ if ($inputExtension -notin @('.exe', '.msi')) {
     Write-Error "InputFile must be a .exe or .msi artifact: $resolvedInput"
     exit 1
 }
-
-# --- Validate required env vars (AC-5) -----------------------------------
-# Collect all missing names first so the operator sees the full list in one
-# CI run, rather than fixing them one at a time over several retries.
 
 $requiredVars = @(
     'AZURE_TENANT_ID',
@@ -109,24 +103,11 @@ if ($missingVars.Count -gt 0) {
     exit 1
 }
 
-# --- Temp workspace -------------------------------------------------------
-# One directory per invocation; cleaned up on exit regardless of success. We
-# write metadata.json into this dir, and if we need to fetch the NuGet
-# package we extract it here too. Using a fresh dir per run is belt-and-
-# braces against cross-run contamination on a self-hosted runner.
-
 $tempRoot = $null
 
 try {
     $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("paneflow-sign-" + [System.Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-
-    # --- Resolve dlib path ------------------------------------------------
-    # Prefer a caller-supplied path (CI can cache the NuGet package across
-    # runs to avoid re-downloading on every tag). Otherwise fetch
-    # Microsoft.ArtifactSigning.Client from NuGet.org and find the x64 dll
-    # inside. The package was renamed from Microsoft.Trusted.Signing.Client
-    # in early 2026 -- the old name is deprecated.
 
     $ExpectedDlibSha256 = $ExpectedDlibSha256.ToUpperInvariant()
     if ($ExpectedDlibSha256 -notmatch '^[0-9A-F]{64}$') {
@@ -145,10 +126,6 @@ try {
         $packagesDir = Join-Path $tempRoot 'nuget'
         New-Item -ItemType Directory -Path $packagesDir -Force | Out-Null
 
-        # Pin exact version so a malicious new release on nuget.org cannot be
-        # silently adopted. Bump this intentionally when Microsoft ships a new
-        # Artifact Signing Client and we've verified the delta. Last pinned:
-        # 1.0.128 (2026-Q1 latest per NuGet.org).
         $ArtifactSigningClientVersion = '1.0.128'
 
         Write-Host "Fetching Microsoft.ArtifactSigning.Client $ArtifactSigningClientVersion to $packagesDir"
@@ -164,9 +141,6 @@ try {
 
         $dlibCandidate = Join-Path $packagesDir 'Microsoft.ArtifactSigning.Client\bin\x64\Azure.CodeSigning.Dlib.dll'
         if (-not (Test-Path -LiteralPath $dlibCandidate -PathType Leaf)) {
-            # Fall back to a glob in case the package layout shifts across
-            # minor versions. We target x64 explicitly -- signtool is x64 on
-            # the windows-2022 runner and the architectures must match.
             $dlibCandidate = Get-ChildItem -Path $packagesDir -Recurse -Filter 'Azure.CodeSigning.Dlib.dll' |
                 Where-Object { $_.FullName -match '\\x64\\' } |
                 Select-Object -First 1 -ExpandProperty FullName
@@ -193,13 +167,6 @@ try {
 
     Write-Host "Using dlib: $DlibPath"
 
-    # --- Write metadata.json ---------------------------------------------
-    # ExcludeCredentials narrows DefaultAzureCredential to EnvironmentCredential
-    # only. Without this, on a runner without a managed identity the dlib can
-    # hang for minutes probing IMDS and other credential sources before
-    # falling back to EnvironmentCredential. Explicitly excluding them makes
-    # the auth path deterministic and fast.
-
     $metadata = [ordered]@{
         Endpoint               = $env:AZURE_TRUSTED_SIGNING_ENDPOINT
         CodeSigningAccountName = $env:AZURE_TRUSTED_SIGNING_ACCOUNT
@@ -220,12 +187,6 @@ try {
     $metadataPath = Join-Path $tempRoot 'metadata.json'
     $metadata | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $metadataPath -Encoding UTF8
 
-    # --- Locate signtool.exe ---------------------------------------------
-    # The windows-2022 runner ships several Windows SDKs under Windows Kits.
-    # The Azure dlib requires signtool >= 10.0.22621.755; we resolve the
-    # highest installed version dynamically rather than pinning a path so
-    # this script keeps working when the runner image bumps SDK versions.
-
     $sdkRoot = 'C:\Program Files (x86)\Windows Kits\10\bin'
     $signtool = $null
     if (Test-Path -LiteralPath $sdkRoot) {
@@ -236,8 +197,6 @@ try {
     }
 
     if ([string]::IsNullOrEmpty($signtool)) {
-        # Fallback: maybe the runner put signtool on PATH (e.g. via the
-        # add-signtool-action or a custom image).
         $onPath = Get-Command -Name signtool.exe -ErrorAction SilentlyContinue
         if ($null -ne $onPath) {
             $signtool = $onPath.Source
@@ -250,13 +209,6 @@ try {
 
     Write-Host "Using signtool: $signtool"
 
-    # --- Sign with timestamp retry (AC-1, AC-4) --------------------------
-    # signtool accepts only one /tr per invocation, so fallback is a retry
-    # loop -- not multiple /tr flags. Primary is Azure's own RFC 3161 server;
-    # DigiCert and Sectigo are widely-used alternates. Rotating through them
-    # survives short-lived Azure timestamp outages (documented in the
-    # failure-mode playbook in memory/project_windows_signing.md).
-
     $timestampServers = @(
         'http://timestamp.acs.microsoft.com',
         'http://timestamp.digicert.com',
@@ -264,15 +216,9 @@ try {
     )
 
     $signed = $false
-    # -1 so a never-entered loop (e.g. empty $timestampServers) reports as
-    # "did not run" rather than masking as success.
     $lastExit = -1
     foreach ($tr in $timestampServers) {
         Write-Host "signtool sign (timestamp=$tr)"
-        # Flag order matches Microsoft Learn's canonical invocation (/v right
-        # after `sign`, then the required flag block, then the file). Matches
-        # the AC-1 shape in tasks/prd-windows-port.md; /v is an additive
-        # verbosity flag per the 2026 docs.
         & $signtool sign /v `
             /fd SHA256 `
             /tr $tr `
@@ -293,34 +239,17 @@ try {
         throw "signtool sign failed against all timestamp servers. Last exit code: $lastExit."
     }
 
-    # --- signtool verify (AC-3) ------------------------------------------
-    # /pa selects the Default Authentication Verification Policy, which is
-    # what Windows itself uses when Explorer or msiexec checks a signature.
-    # /v gives us the full cert chain in the CI log -- useful for confirming
-    # the Strivex chain made it through.
-
     Write-Host "signtool verify"
     & $signtool verify /pa /v "$resolvedInput"
     if ($LASTEXITCODE -ne 0) {
         throw "signtool verify failed with exit code $LASTEXITCODE"
     }
 
-    # --- Get-AuthenticodeSignature check (AC-6) --------------------------
-    # Complementary to signtool verify -- tests the same signature through
-    # PowerShell's Authenticode API, which is the API Windows Defender and
-    # AppLocker query. Catches the "signtool says OK but Defender rejects"
-    # failure mode, which usually means a broken cert chain.
-
     $sig = Get-AuthenticodeSignature -LiteralPath $resolvedInput
     if ($sig.Status -ne 'Valid') {
         throw "Get-AuthenticodeSignature status is '$($sig.Status)' (expected 'Valid'). StatusMessage: $($sig.StatusMessage)"
     }
 
-    # Anchor the publisher check to the O= (Organization) RDN rather than a
-    # bare substring. A bare `-match 'Strivex'` would pass on a hostile
-    # subject like `CN=Strivex-Evil-Clone`; anchoring to `O=Strivex` keeps
-    # the check meaningful even if the runner's trust store is ever
-    # compromised. Case-insensitive since DN casing is not normative.
     $subject = $sig.SignerCertificate.Subject
     if ($subject -notmatch '(?i)(^|,\s*)O\s*=\s*Strivex\b') {
         throw "Signer subject O= does not match 'Strivex': $subject"
@@ -331,10 +260,6 @@ try {
     Write-Host "  Subject: $subject"
 }
 finally {
-    # Best-effort cleanup. If the removal itself fails (e.g., a file held
-    # open briefly by AV), don't mask the real error from the try block.
-    # $tempRoot is $null if we failed before New-Item ran -- skip cleanup then
-    # so we don't throw a second error inside the finally.
     if ($null -ne $tempRoot -and (Test-Path -LiteralPath $tempRoot)) {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }

@@ -1,7 +1,3 @@
-//! Layout presets, JSON layout application, zoom, and split-equalize.
-//!
-//! Part of the US-023 workspace_ops decomposition.
-
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
@@ -31,7 +27,6 @@ impl PaneFlowApp {
                 pane.read(cx).focus_handle(cx).focus(window, cx);
             }
         } else {
-            // Zoom: save the full tree, replace root with the focused pane
             let Some(root) = &ws.active_tab().root else {
                 return;
             };
@@ -54,7 +49,6 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// Apply a layout preset: collect all panes, rebuild tree with the given factory.
     fn apply_layout_preset(
         &mut self,
         build: impl FnOnce(Vec<Entity<Pane>>) -> Option<LayoutTree>,
@@ -73,15 +67,11 @@ impl PaneFlowApp {
         };
         let panes = root.collect_leaves();
 
-        // No-op for single pane
         if panes.len() <= 1 {
             ws.active_tab_mut().root = Some(root);
             return;
         }
 
-        // Rebuild tree and focus first pane
-        // (root is consumed by collect_leaves moving entities out - but collect_leaves
-        //  clones Entity refs, so root is still valid. We drop it explicitly.)
         drop(root);
         ws.active_tab_mut().root = build(panes);
         if let Some(ref r) = ws.active_tab().root {
@@ -91,17 +81,11 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// Apply a layout from a `LayoutNode` (deserialized JSON) to the active workspace.
-    ///
-    /// Handles pane count mismatch: spawns new panes when the layout has more
-    /// leaves than available, drops extras when fewer. Exits zoom first.
     pub(crate) fn apply_layout_from_json(
         &mut self,
         layout: &mut LayoutNode,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
-        // Validate the layout (clamp ratios, prune excess branches, and
-        // collapse malformed splits).
         paneflow_config::schema::validate_layout(layout);
 
         let needed = layout.leaf_count();
@@ -120,7 +104,6 @@ impl PaneFlowApp {
             return Err("No active workspace".into());
         };
 
-        // Collect existing panes and drop the old tree
         let existing: Vec<Entity<Pane>> = ws
             .active_tab_mut()
             .root
@@ -128,7 +111,6 @@ impl PaneFlowApp {
             .map(|r| r.collect_leaves())
             .unwrap_or_default();
 
-        // Keep only the panes we need; extras are dropped with the old tree
         let mut pane_deque: VecDeque<Entity<Pane>> = existing.into_iter().take(needed).collect();
 
         let ws_id = ws.id;
@@ -198,7 +180,6 @@ impl PaneFlowApp {
             return;
         }
 
-        // The main pane is the focused one, or the first leaf
         let main_pane = root
             .focused_pane(window, cx)
             .or_else(|| root.first_leaf())

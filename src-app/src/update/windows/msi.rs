@@ -1,50 +1,3 @@
-//! Windows MSI self-update pipeline (US-010).
-//!
-//! Flow:
-//!   1. Download the `.msi` to `%TEMP%\paneflow-update-<pid>.msi` via
-//!      ureq with the 30-second per-call timeout (US-001).
-//!   2. Verify the asset's detached **minisign** signature (`.minisig`
-//!      sibling) against a key baked into this binary (US-001), then
-//!      `WinVerifyTrust` on the Authenticode chain (US-005) - both
-//!      **before** msiexec runs. A missing/invalid signature deletes the
-//!      partial and bails; replaces the old same-host `.sha256`.
-//!   3. Copy the current `paneflow.exe` to `%TEMP%` as a tiny native relay.
-//!   4. The GUI saves state, spawns that copied relay with
-//!      `CREATE_BREAKAWAY_FROM_JOB`, and exits before the MSI runs.
-//!   5. The relay waits for the current PID to disappear, runs
-//!      `msiexec.exe /i <msi> /qb /norestart /l*v <log>` (via `runas`
-//!      when the install lives under Program Files), deletes the scratch
-//!      MSI, and relaunches the installed `paneflow.exe` on success.
-//!
-//! The older synchronous path is still kept for testability and CLI-style
-//! callers: resolve `%SystemRoot%\System32\msiexec.exe` first, fall back to
-//! PATH (PATHEXT-aware - the `which` crate already handles this), run it,
-//! and map exit codes:
-//!      - `0` → success, return the canonical installed binary path.
-//!      - `1602` → `InstallDeclined` ("Update cancelled - administrator
-//!        permission required") - the well-known "user declined UAC"
-//!        code.
-//!      - `1603` → `InstallFailed { log_path }` - fatal Windows Installer
-//!        error; log captures the cause.
-//!      - other → `Other` with exit code + log-path hint for triage.
-//!   6. Delete the MSI scratch file; keep the log on failure so bug
-//!      reports can attach it.
-//!
-//! **Cross-platform compile.** The module is built on every target so
-//! the enclosing crate is a single compile-closure. `msiexec.exe` only
-//! exists on Windows; the dispatcher only routes `InstallMethod::WindowsMsi`
-//! here, and that variant is produced solely by Windows path detection
-//! (`%ProgramFiles%\PaneFlow\`),
-//! so on Linux/macOS the function compiles but is runtime-unreachable.
-//!
-//! **The running-.exe-lock caveat.** Windows refuses to overwrite a
-//! running `paneflow.exe`. The GUI flow therefore never runs `msiexec`
-//! while the app is alive: it stages the verified MSI, starts a relay
-//! outside Paneflow's kill-on-close Job Object, exits, then lets the
-//! relay install and relaunch. That avoids the native Restart Manager
-//! "applications should be closed" dialog and ensures restart ownership
-//! is outside the process being replaced.
-
 #[cfg(target_os = "windows")]
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -57,17 +10,11 @@ use anyhow::{Context, Result, bail};
 
 use super::super::error::UpdateError;
 
-/// Upper bound on any single HTTP call (US-001).
 const UPDATE_HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Relay should only wait briefly for the GUI process it spawned from to exit.
-/// If that process is still alive after this, continuing is safer than wedging
-/// the detached relay forever.
 #[cfg(target_os = "windows")]
 const PARENT_EXIT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
-/// Native MSI execution can legitimately take minutes, but it must remain
-/// bounded so the relay eventually logs, cleans up, and relaunches the app.
 const MSIEXEC_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[cfg(target_os = "windows")]
@@ -78,17 +25,10 @@ const NATIVE_STDOUT_CAP: u64 = 64 * 1024;
 #[cfg(target_os = "windows")]
 const WINDOWS_PUBLISHER_ORGANIZATION: &str = "StriveX";
 
-/// 500 MB ceiling on the MSI download. Real PaneFlow MSIs are ~60-100 MB;
-/// a malicious mirror returning an unbounded stream would otherwise fill
-/// `%TEMP%` before we notice.
 const MAX_MSI_BYTES: u64 = 500 * 1024 * 1024;
 
-// Well-known msiexec exit codes (see
-// https://learn.microsoft.com/en-us/windows/win32/msi/error-codes).
-/// ERROR_INSTALL_USEREXIT - user declined UAC or cancelled the dialog.
 #[allow(dead_code)]
 const MSIEXEC_EXIT_USER_CANCEL: i32 = 1602;
-/// ERROR_INSTALL_FAILURE - a fatal error occurred during installation.
 #[allow(dead_code)]
 const MSIEXEC_EXIT_FATAL: i32 = 1603;
 
@@ -105,8 +45,6 @@ const RELAY_RESTART_ARG: &str = "--restart";
 #[cfg(target_os = "windows")]
 const RELAY_LOG_ARG: &str = "--relay-log";
 
-/// Verified MSI staged on disk, plus the path the relay should launch after
-/// `msiexec` succeeds.
 #[derive(Clone, Debug)]
 pub struct StagedMsiUpdate {
     msi_path: PathBuf,
@@ -114,23 +52,15 @@ pub struct StagedMsiUpdate {
     restart_path: PathBuf,
 }
 
-/// Run the MSI self-update end-to-end. Returns the canonical installed
-/// binary path for `cx.set_restart_path()` on success.
 #[allow(dead_code)]
 pub fn install(asset_url: &str) -> Result<PathBuf> {
     let restart_path = super::super::installed_binary_path()?;
     let staged = stage_with_restart_path(asset_url, restart_path)?;
     install_with(&staged.msi_path, &staged.log_path, &MsiexecProcessRunner)?;
-    // Success - tidy up the scratch MSI. Keep the log until the next
-    // run so a crash-later recovery can still examine it (msiexec
-    // already appends to `/l*v` on subsequent invocations).
     let _ = std::fs::remove_file(&staged.msi_path);
     Ok(staged.restart_path)
 }
 
-/// Download and verify the MSI, but do not run it yet. The GUI uses this
-/// while Paneflow is still alive, then hands the staged update to a relay
-/// process that runs after the GUI exits.
 pub fn stage(asset_url: &str, install_path: &Path) -> Result<StagedMsiUpdate> {
     stage_with_restart_path(asset_url, binary_path_in_install_dir(install_path))
 }
@@ -143,20 +73,10 @@ fn stage_with_restart_path(asset_url: &str, restart_path: PathBuf) -> Result<Sta
 
     let download_result = download_with_verification(asset_url, &msi_path);
     if let Err(e) = download_result {
-        // AC4: the partial never survives a verification failure. The
-        // verifier already tried to clean up its `.partial`, but the
-        // main MSI path may also exist from a prior run - drop it too
-        // so the next attempt starts clean.
         let _ = std::fs::remove_file(&msi_path);
         return Err(e);
     }
 
-    // US-005: OS-native Authenticode check as a second, independent layer on
-    // top of the minisign verification above. Fail-closed - an unsigned or
-    // untrusted MSI is deleted and aborted before msiexec ever sees it. No
-    // publisher-name string compare (forgeable); we trust the result of
-    // `WinVerifyTrust` chaining to a trusted root. Compiled out on non-Windows
-    // (the MSI path is unreachable there).
     #[cfg(target_os = "windows")]
     if let Err(e) = windows_verify_trust(&msi_path) {
         let _ = std::fs::remove_file(&msi_path);
@@ -170,11 +90,6 @@ fn stage_with_restart_path(asset_url: &str, restart_path: PathBuf) -> Result<Sta
     })
 }
 
-/// Testable core. Parameterised on:
-/// - `msi_path`: already-downloaded MSI.
-/// - `log_path`: the `/l*v` destination msiexec writes to.
-/// - `runner`: abstracts `msiexec` invocation so tests can inject exit
-///   codes without spawning the real tool.
 #[allow(dead_code)]
 fn install_with(msi_path: &Path, log_path: &Path, runner: &dyn Msiexec) -> Result<()> {
     match runner.run_installer(msi_path, log_path) {
@@ -191,9 +106,6 @@ fn install_with(msi_path: &Path, log_path: &Path, runner: &dyn Msiexec) -> Resul
     }
 }
 
-/// Spawn a detached relay that waits for this GUI process to exit, runs the
-/// staged MSI, and relaunches Paneflow on success. This must be called only
-/// after the session is saved and immediately before `cx.quit()`.
 pub fn spawn_relay(staged: StagedMsiUpdate) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
@@ -493,8 +405,6 @@ fn wait_for_parent_exit(parent_pid: u32, relay_log_path: &Path) {
     use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
     use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
 
-    // SAFETY: OpenProcess does not retain Rust pointers; parent_pid is the
-    // process id passed by the GUI before it exits.
     let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, parent_pid) };
     if handle.is_null() {
         append_relay_log(
@@ -508,13 +418,11 @@ fn wait_for_parent_exit(parent_pid: u32, relay_log_path: &Path) {
     let started = std::time::Instant::now();
     let mut wait_result;
     loop {
-        // SAFETY: handle is a valid process handle from OpenProcess.
         wait_result = unsafe { WaitForSingleObject(handle, WINDOWS_WAIT_SLICE_MS) };
         if wait_result != WAIT_TIMEOUT || started.elapsed() >= PARENT_EXIT_TIMEOUT {
             break;
         }
     }
-    // SAFETY: handle is no longer used after this call.
     unsafe {
         let _ = CloseHandle(handle);
     }
@@ -645,8 +553,6 @@ fn shell_execute_wait_elevated(
     let parameters = shell_execute_parameters(args);
     let parameters = wide_null(OsStr::new(&parameters));
 
-    // SAFETY: zero-init is valid for SHELLEXECUTEINFOW; all pointer fields are
-    // either set to live NUL-terminated buffers or left null.
     let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
     info.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
     info.fMask = SEE_MASK_NO_CONSOLE | SEE_MASK_NOASYNC | SEE_MASK_NOCLOSEPROCESS;
@@ -655,8 +561,6 @@ fn shell_execute_wait_elevated(
     info.lpParameters = parameters.as_ptr();
     info.nShow = 0;
 
-    // SAFETY: the SHELLEXECUTEINFOW pointers outlive the call; Windows copies
-    // the command line before returning.
     let ok = unsafe { ShellExecuteExW(&mut info) };
     if ok == 0 {
         let err = std::io::Error::last_os_error();
@@ -678,17 +582,12 @@ fn shell_execute_wait_elevated(
     let started = std::time::Instant::now();
     let mut wait_result;
     loop {
-        // SAFETY: hProcess is owned by this SHELLEXECUTEINFOW result when
-        // SEE_MASK_NOCLOSEPROCESS succeeds.
         wait_result = unsafe { WaitForSingleObject(info.hProcess, WINDOWS_WAIT_SLICE_MS) };
         if wait_result != WAIT_TIMEOUT || started.elapsed() >= MSIEXEC_TIMEOUT {
             break;
         }
     }
     if wait_result == WAIT_TIMEOUT {
-        // SAFETY: hProcess is a live process handle from ShellExecuteExW. A
-        // timeout means the relay cannot wait usefully anymore; terminate
-        // best-effort, then close the handle below.
         unsafe {
             let _ = TerminateProcess(info.hProcess, 1);
         }
@@ -817,8 +716,6 @@ fn schedule_relay_cleanup(relay_log_path: &Path) {
         return;
     };
     let exe = wide_null(current_exe.as_os_str());
-    // SAFETY: `exe` is a live NUL-terminated path; null destination with
-    // MOVEFILE_DELAY_UNTIL_REBOOT schedules deletion after this process exits.
     let ok = unsafe { MoveFileExW(exe.as_ptr(), std::ptr::null(), MOVEFILE_DELAY_UNTIL_REBOOT) };
     if ok == 0 {
         append_relay_log(
@@ -832,20 +729,6 @@ fn schedule_relay_cleanup(relay_log_path: &Path) {
     }
 }
 
-/// Verify the Authenticode signature chain of `msi` with `WinVerifyTrust`
-/// (US-005). Fail-closed: any result other than "trusted" returns a tagged
-/// `IntegrityMismatch` so the toast reads "corrupt or tampered".
-///
-/// This is defense-in-depth on top of US-001's minisign check - it validates
-/// the Microsoft Authenticode chain (our signing certificate → a trusted
-/// root), which minisign does not cover. We trust `WinVerifyTrust`'s chain
-/// result, never a forgeable publisher-name string compare.
-///
-/// Two-pass `VERIFY` then `CLOSE` is the documented usage (the second call
-/// frees `hWVTStateData`). Untestable on the Linux/macOS CI legs (no
-/// `wintrust.dll`, no signed-MSI fixture); the Windows release leg exercises
-/// it against the real signed artifact. Struct/const names pinned against
-/// windows-sys 0.59.
 #[cfg(target_os = "windows")]
 fn windows_verify_trust(msi: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -855,20 +738,14 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
         WTD_UI_NONE, WinVerifyTrust,
     };
 
-    // Wide, NUL-terminated path. Must outlive the WinVerifyTrust call (it
-    // backs the `pcwszFilePath` pointer below).
     let wide: Vec<u16> = msi
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
 
-    // No parent window - WTD_UI_NONE means WinVerifyTrust never shows UI.
     let hwnd: windows_sys::Win32::Foundation::HWND = std::ptr::null_mut();
 
-    // SAFETY: zero-init is a valid bit pattern for these `repr(C)` structs
-    // (null pointers, zero enums); we then set every field WinVerifyTrust
-    // reads for a file check.
     let mut file_info: WINTRUST_FILE_INFO = unsafe { std::mem::zeroed() };
     file_info.cbStruct = std::mem::size_of::<WINTRUST_FILE_INFO>() as u32;
     file_info.pcwszFilePath = wide.as_ptr();
@@ -878,14 +755,11 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
     data.dwUIChoice = WTD_UI_NONE;
     data.fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN;
     data.dwUnionChoice = WTD_CHOICE_FILE;
-    // Writing a union field is safe (only reads are unsafe).
     data.Anonymous.pFile = &mut file_info;
     data.dwStateAction = WTD_STATEACTION_VERIFY;
     data.dwProvFlags = WTD_SAFER_FLAG;
 
     let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-    // SAFETY: standard WinVerifyTrust FFI. `action`/`data` outlive the call;
-    // `wide` + `file_info` back the pointers reachable through `data`.
     let status = unsafe {
         WinVerifyTrust(
             hwnd,
@@ -896,10 +770,7 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
 
     let publisher_organization = (status == 0).then(|| windows_signer_organization(&data));
 
-    // Always run the CLOSE pass to free the provider state. Publisher
-    // inspection must happen before this pass because hWVTStateData is freed.
     data.dwStateAction = WTD_STATEACTION_CLOSE;
-    // SAFETY: same data block; CLOSE frees `hWVTStateData`.
     unsafe {
         WinVerifyTrust(
             hwnd,
@@ -920,8 +791,6 @@ fn windows_verify_trust(msi: &Path) -> Result<()> {
         }));
     }
 
-    // Any nonzero HRESULT (TRUST_E_NOSIGNATURE, TRUST_E_SUBJECT_NOT_TRUSTED,
-    // CERT_E_UNTRUSTEDROOT, …) is a fail-closed rejection.
     Err(anyhow::Error::new(super::super::error::IntegrityMismatch {
         expected: "trusted Authenticode signature".to_string(),
         got: format!("WinVerifyTrust returned 0x{:08X}", status as u32),
@@ -939,32 +808,24 @@ fn windows_signer_organization(
         WTHelperGetProvCertFromChain, WTHelperGetProvSignerFromChain, WTHelperProvDataFromStateData,
     };
 
-    // SAFETY: data.hWVTStateData is owned by WinVerifyTrust after a successful
-    // VERIFY pass and remains valid until the caller runs CLOSE.
     let provider = unsafe { WTHelperProvDataFromStateData(data.hWVTStateData) };
     if provider.is_null() {
         bail!("WinVerifyTrust returned no provider state");
     }
-    // SAFETY: provider is non-null and owned by the WinTrust provider state.
     let signer = unsafe { WTHelperGetProvSignerFromChain(provider, 0, 0, 0) };
     if signer.is_null() {
         bail!("WinVerifyTrust returned no primary signer");
     }
-    // SAFETY: signer is non-null and points into the provider state.
     let cert = unsafe { WTHelperGetProvCertFromChain(signer, 0) };
     if cert.is_null() {
         bail!("WinVerifyTrust returned no signer certificate");
     }
-    // SAFETY: cert is non-null and pCert points to a CERT_CONTEXT owned by the
-    // provider state until CLOSE.
     let context = unsafe { (*cert).pCert };
     if context.is_null() {
         bail!("WinVerifyTrust signer certificate has no context");
     }
 
     let oid = szOID_ORGANIZATION_NAME as *const core::ffi::c_void;
-    // SAFETY: context is a live CERT_CONTEXT and oid is a static NUL-terminated
-    // C string for the organizationName attribute.
     let required = unsafe {
         CertGetNameStringW(
             context,
@@ -979,7 +840,6 @@ fn windows_signer_organization(
         bail!("Windows signer certificate has no Organization attribute");
     }
     let mut buf = vec![0u16; required as usize];
-    // SAFETY: buf has the exact capacity requested by the probe call above.
     let written = unsafe {
         CertGetNameStringW(
             context,
@@ -997,12 +857,6 @@ fn windows_signer_organization(
     Ok(String::from_utf16_lossy(&buf[..nul]))
 }
 
-/// Download the MSI, verify its detached **minisign** signature (US-001),
-/// and persist at `dest` on success. Mirrors the shared pattern in
-/// `targz.rs` / `macos/dmg.rs` - see them for rationale on each guard
-/// (partial→rename, size cap, RO body stream). The signature, not a
-/// same-host `.sha256`, is the trust anchor and is checked **before**
-/// msiexec is ever invoked.
 fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
     super::super::verified_download::download_verified_asset(
         asset_url,
@@ -1013,8 +867,6 @@ fn download_with_verification(asset_url: &str, dest: &Path) -> Result<()> {
     )
 }
 
-/// Map a non-zero msiexec exit code onto the right `UpdateError` variant.
-/// Pure - unit-tested without spawning.
 #[allow(dead_code)]
 fn map_exit_code(code: i32, log_path: &Path) -> anyhow::Error {
     match code {
@@ -1031,8 +883,6 @@ fn map_exit_code(code: i32, log_path: &Path) -> anyhow::Error {
     }
 }
 
-/// Why `msiexec` failed. `NotFound`, `Timeout`, and `NonZeroExit` route to
-/// specific `UpdateError` variants; `RunFailed` retains the typed process cause.
 #[derive(Debug)]
 #[allow(dead_code)]
 enum MsiexecError {
@@ -1042,13 +892,8 @@ enum MsiexecError {
     NonZeroExit { code: i32 },
 }
 
-/// Abstraction over `msiexec` invocation so tests can inject exit
-/// codes without spawning the real tool (it doesn't exist on Linux CI).
 #[allow(dead_code)]
 trait Msiexec {
-    /// Run `msiexec /i <msi> /qb /norestart /l*v <log>` and block until
-    /// it exits. Returns `Ok(())` on exit code 0 - every other outcome
-    /// is an error the caller classifies.
     fn run_installer(&self, msi: &Path, log: &Path) -> std::result::Result<(), MsiexecError>;
 }
 
@@ -1059,9 +904,6 @@ impl Msiexec for MsiexecProcessRunner {
     fn run_installer(&self, msi: &Path, log: &Path) -> std::result::Result<(), MsiexecError> {
         let msiexec = msiexec_exe().ok_or(MsiexecError::NotFound)?;
 
-        // Bound the native installer with the same process-tree runner used by
-        // other external tools. Capture overflow and timeout both terminate the
-        // run, so `msiexec` cannot wedge the relay forever.
         let mut cmd = Command::new(&msiexec);
         cmd.arg("/i")
             .arg(msi)
@@ -1078,10 +920,6 @@ impl Msiexec for MsiexecProcessRunner {
         if out.status.success() {
             return Ok(());
         }
-        // `code()` is `None` only when the process was terminated by a
-        // signal - on Windows that essentially can't happen for a
-        // subprocess we started synchronously, but fall back to -1 so
-        // the classifier doesn't drop the error on the floor.
         Err(MsiexecError::NonZeroExit {
             code: out.status.code().unwrap_or(-1),
         })
@@ -1245,12 +1083,8 @@ mod tests {
         )));
     }
 
-    // ── Exit-code classification ─────────────────────────────────────
-
     #[test]
     fn map_exit_code_1602_is_install_declined() {
-        // AC6: the canonical "user declined UAC" code must surface the
-        // exact mandated toast copy.
         let log = PathBuf::from("C:\\Temp\\test.log");
         let err = map_exit_code(MSIEXEC_EXIT_USER_CANCEL, &log);
         match UpdateError::classify(&err) {
@@ -1267,8 +1101,6 @@ mod tests {
 
     #[test]
     fn map_exit_code_1603_is_install_failed_with_log_path() {
-        // AC7: fatal install error carries the verbose log path through
-        // for the bug-report attachment.
         let log = PathBuf::from("C:\\Temp\\paneflow-msi-999.log");
         let err = map_exit_code(MSIEXEC_EXIT_FATAL, &log);
         match UpdateError::classify(&err) {
@@ -1293,11 +1125,6 @@ mod tests {
         }
     }
 
-    // ── install_with() with stubbed msiexec ──────────────────────────
-
-    /// Stub that records a single invocation and returns a pre-loaded
-    /// result. `spawn_count` proves that exit-code paths actually
-    /// reach the classifier vs. short-circuiting in download.
     struct StubMsiexec {
         outcome: Cell<Option<std::result::Result<(), MsiexecError>>>,
         spawn_count: Cell<usize>,
@@ -1312,18 +1139,8 @@ mod tests {
         }
     }
 
-    /// AC9: msiexec missing maps to EnvironmentBroken with a specific
-    /// message (not a generic "update failed"). This is distinct from
-    /// InstallDeclined and InstallFailed because the user hasn't even
-    /// been asked to install - the environment itself is broken.
-    ///
-    /// Uses the direct MsiexecError → install_with error-path logic
-    /// (not a full download leg, which needs a live HTTP server). We
-    /// exercise the classification contract instead.
     #[test]
     fn msiexec_not_found_maps_to_environment_broken() {
-        // Construct the same error install_with would produce on the
-        // NotFound branch and verify classification.
         let err = anyhow::Error::new(UpdateError::EnvironmentBroken {
             message: "msiexec.exe not found in System32 or on PATH - Windows system install appears broken. Reinstall PaneFlow manually from the releases page.".to_string(),
         });
@@ -1336,8 +1153,6 @@ mod tests {
         }
     }
 
-    /// StubMsiexec plumbing sanity - confirms the trait object is
-    /// actually invoked when present and the outcome surfaces cleanly.
     #[test]
     fn stub_msiexec_records_invocations() {
         let stub = StubMsiexec {
@@ -1350,14 +1165,6 @@ mod tests {
         assert_eq!(stub.spawn_count.get(), 1);
     }
 
-    /// StubMsiexec returning 1602 round-trips through install_with's
-    /// error mapping into InstallDeclined - the full AC6 chain.
-    /// Exercises install_with by short-circuiting the download via an
-    /// HTTP URL that ureq will fail fast on (no actual network).
-    /// Since we can't stub ureq without a framework, test the
-    /// classification layer directly via map_exit_code (covered above)
-    /// and the trait wiring separately (covered here). The full path
-    /// is exercised by the CI windows-check job in release.yml.
     #[test]
     fn stub_msiexec_nonzero_exit_surfaces_to_caller() {
         let stub = StubMsiexec {

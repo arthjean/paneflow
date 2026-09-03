@@ -1,28 +1,16 @@
-//! Neutral result types for in-buffer scrollback search.
-//!
-//! The scan itself lives in the Ghostty session (`terminal/ghostty_session.rs`,
-//! backed by `paneflow_terminal_ghostty::SearchEngine`). This module only
-//! carries the grid-coordinate spans that `TerminalElement` highlights, so the
-//! UI layer never names an engine type.
-
 use crate::terminal::types::Point;
 
-/// Maximum query length (bytes).
 pub const MAX_QUERY_LEN: usize = paneflow_terminal_ghostty::MAX_QUERY_LEN;
 
-/// A single search match: start and end points in the terminal grid.
 #[derive(Clone, Debug)]
 pub struct SearchMatch {
     pub start: Point,
     pub end: Point,
 }
 
-/// Result of a search operation.
 pub struct SearchResult {
     pub matches: Vec<SearchMatch>,
-    /// If regex mode and the pattern is invalid, contains the error message.
     pub regex_error: Option<String>,
-    /// The cell or match budget stopped the scan before the grid ended.
     pub truncated: bool,
 }
 

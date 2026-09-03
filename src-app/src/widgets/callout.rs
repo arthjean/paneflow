@@ -1,26 +1,9 @@
-//! Local Callout stub -- Paneflow substitute for Zed's `ui::Callout`.
-//!
-//! Builder-style helper that renders a small banner with severity, icon,
-//! title, optional description, and optional actions slot. Mirrors the
-//! Zed shape Paneflow ports use, e.g.
-//! `Callout::new(severity, title).icon(...).description(...).actions_slot(...).render()`.
-//!
-//! Built for `prd-agent-ui-visual-parity-2026-Q3.md` US-025 (Auth
-//! required Callout) and reused by US-026 (Load error Callout). Keep
-//! stateless: callers compose the data, the helper returns a GPUI
-//! element with no click handlers attached.
-
 use crate::theme::ui_colors;
 use gpui::{
     AnyElement, FontWeight, Hsla, IntoElement, ParentElement, SharedString, Styled, div, hsla, px,
     svg,
 };
 
-/// Severity tier driving the icon tint and the accent border colour.
-/// Mirrors Zed's `ui::Severity` (Info / Warning / Error). Paneflow
-/// only consumes Info + Error today (auth flow + load failure); the
-/// Warning slot is added preemptively so future ports do not need
-/// to extend the enum.
 #[allow(dead_code)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CalloutSeverity {
@@ -29,21 +12,14 @@ pub(crate) enum CalloutSeverity {
     Error,
 }
 
-/// Icon glyph displayed on the left of the banner. Each variant maps
-/// to one of Paneflow's bundled icons (see `src-app/assets/icons/`).
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub(crate) enum CalloutIcon {
-    /// Bulb glyph -- closest Paneflow analog to Zed `IconName::Info`.
     Info,
-    /// Outlined X glyph -- Zed `IconName::XCircleFilled` substitute.
     XCircle,
-    /// Triangle-alert -- alternative error glyph (matches the
-    /// existing edit-tool failure indicator).
     TriangleAlert,
 }
 
-/// Builder for [`render_callout`]. Optional slots default to `None`.
 pub(crate) struct Callout {
     severity: CalloutSeverity,
     icon: Option<CalloutIcon>,
@@ -76,25 +52,18 @@ impl Callout {
         self
     }
 
-    /// Rich description -- caller-supplied element rendered below the
-    /// title in place of the simple `description` string. When both
-    /// are set, `description_slot` wins (mirrors Zed where
-    /// `description_slot` replaces `description`).
     #[allow(dead_code)]
     pub(crate) fn description_slot(mut self, slot: AnyElement) -> Self {
         self.description_slot = Some(slot);
         self
     }
 
-    /// Trailing actions cluster (right side of the banner). Typically
-    /// a row of buttons or a single spinner during a pending state.
     #[allow(dead_code)]
     pub(crate) fn actions_slot(mut self, slot: AnyElement) -> Self {
         self.actions_slot = Some(slot);
         self
     }
 
-    /// Materialise the builder into a GPUI element.
     pub(crate) fn render(self) -> AnyElement {
         let ui = ui_colors();
         let accent: Hsla = match self.severity {

@@ -1,12 +1,3 @@
-//! Sprite paint pass: box drawing, shades, braille, and Powerline symbols
-//! drawn on the integer device-pixel grid.
-//!
-//! Every straight stroke is a rectangle placed by the same arithmetic as
-//! Ghostty's `box.zig`, so two adjacent cells meet at the shared boundary
-//! with no seam and every stroke shares the font-derived `box_thickness`.
-//! Arcs, diagonals, and the Powerline shapes go through `PathBuilder`, which
-//! is the one place anti-aliasing is wanted.
-
 use gpui::{Hsla, PathBuilder, Pixels, Point, Window, fill, point, px};
 
 use super::super::LayoutState;
@@ -65,8 +56,6 @@ pub fn paint_sprites(layout: &LayoutState, geom: &CellGeometry, window: &mut Win
     }
 }
 
-/// One cell's drawing surface in device pixels, origin at the cell's
-/// top-left corner.
 struct Canvas<'a> {
     geom: &'a CellGeometry,
     window: &'a mut Window,
@@ -74,7 +63,6 @@ struct Canvas<'a> {
     y0: i32,
     width: i32,
     height: i32,
-    /// Light stroke thickness (`box_thickness`).
     thickness: i32,
     color: Hsla,
 }
@@ -88,7 +76,6 @@ impl Canvas<'_> {
         self.thickness * 2
     }
 
-    /// Filled rectangle from `(x, y)` with the given size.
     fn rect(&mut self, x: i32, y: i32, width: i32, height: i32) {
         let color = self.color;
         self.rect_colored(x, y, width, height, color);
@@ -104,12 +91,10 @@ impl Canvas<'_> {
         self.window.paint_quad(fill(bounds, color));
     }
 
-    /// Filled rectangle between two corners, right and bottom exclusive.
     fn boxed(&mut self, x1: i32, y1: i32, x2: i32, y2: i32) {
         self.rect(x1, y1, x2 - x1, y2 - y1);
     }
 
-    /// Logical window point for a device coordinate relative to the cell.
     fn pt(&self, x: f32, y: f32) -> Point<Pixels> {
         point(
             px((self.x0 as f32 + x) / self.geom.scale_factor),
@@ -127,9 +112,6 @@ impl Canvas<'_> {
         }
     }
 
-    /// Ghostty `box.zig` `linesChar`: each arm runs from its edge to the
-    /// center, and the arm ends are chosen so that mixed weights and double
-    /// lines join without stubs or gaps.
     fn lines(&mut self, lines: Lines) {
         let (w, h) = (self.width, self.height);
         let light = self.light();
@@ -301,13 +283,10 @@ impl Canvas<'_> {
         }
     }
 
-    /// Dashes with half a gap at each edge, so a run of cells reads as one
-    /// evenly dashed line.
     fn dash_horizontal(&mut self, count: u8, heavy: bool, gap: DashGap) {
         let count = i32::from(count.clamp(2, 4));
         let thick = if heavy { self.heavy() } else { self.light() };
         let w = self.width;
-        // A dash and a gap each need a pixel; otherwise draw a solid line.
         if w < count * 2 {
             self.lines(Lines {
                 up: Arm::None,
@@ -317,7 +296,6 @@ impl Canvas<'_> {
             });
             return;
         }
-        // Gaps never take more than half the width, or the dashes look wrong.
         let gap_width = self.desired_gap(gap).min(w / (2 * count));
         let total_dash = w - gap_width * count;
         let dash_width = total_dash / count;
@@ -326,7 +304,6 @@ impl Canvas<'_> {
         let mut x = gap_width / 2;
         for _ in 0..count {
             let mut x1 = x + dash_width;
-            // Leftover pixels go into dashes, where they are less visible.
             if extra > 0 {
                 extra -= 1;
                 x1 += 1;
@@ -336,8 +313,6 @@ impl Canvas<'_> {
         }
     }
 
-    /// Dashes with one full gap at the bottom: joins to a solid cell above
-    /// without a visible half gap.
     fn dash_vertical(&mut self, count: u8, heavy: bool, gap: DashGap) {
         let count = i32::from(count.clamp(2, 4));
         let thick = if heavy { self.heavy() } else { self.light() };
@@ -368,8 +343,6 @@ impl Canvas<'_> {
         }
     }
 
-    /// Quarter arc whose straight ends sit on the light stroke centers, so it
-    /// joins `─` and `│` in the neighboring cells.
     fn arc(&mut self, corner: Corner) {
         let thick = self.light();
         let (w, h) = (self.width as f32, self.height as f32);
@@ -377,7 +350,6 @@ impl Canvas<'_> {
         let cx = ((self.width - thick).max(0) / 2) as f32 + t / 2.0;
         let cy = ((self.height - thick).max(0) / 2) as f32 + t / 2.0;
         let r = w.min(h) / 2.0;
-        // Fraction of the radius the middle control points sit from the center.
         let s = 0.25;
 
         let mut path = PathBuilder::stroke(self.stroke_width(thick));
@@ -426,8 +398,6 @@ impl Canvas<'_> {
         self.paint_path(path);
     }
 
-    /// Corner-to-corner strokes overshoot the cell by half a pixel along
-    /// their own slope, so tiled diagonals join without a notch.
     fn diagonal_slopes(&self) -> (f32, f32) {
         let (w, h) = (self.width as f32, self.height as f32);
         ((w / h).min(1.0), (h / w).min(1.0))
@@ -451,8 +421,6 @@ impl Canvas<'_> {
         self.paint_path(path);
     }
 
-    /// Ghostty `braille.zig`: a 2x4 dot grid whose dot size, spacing, and
-    /// margins absorb the leftover pixels in a fixed order of preference.
     fn braille(&mut self, pattern: u8) {
         let (width, height) = (self.width, self.height);
         let mut w = (width / 4).min(height / 8);
@@ -464,13 +432,11 @@ impl Canvas<'_> {
         let mut x_left = width - 2 * x_margin - x_spacing - 2 * w;
         let mut y_left = height - 2 * y_margin - 3 * y_spacing - 4 * w;
 
-        // First, a visible dot.
         if x_left >= 2 && y_left >= 4 && w == 0 {
             w += 1;
             x_left -= 2;
             y_left -= 4;
         }
-        // Second, a margin.
         if x_left >= 2 && x_margin == 0 {
             x_margin = 1;
             x_left -= 2;
@@ -479,7 +445,6 @@ impl Canvas<'_> {
             y_margin = 1;
             y_left -= 2;
         }
-        // Third, spacing.
         if x_left >= 1 {
             x_spacing += 1;
             x_left -= 1;
@@ -488,7 +453,6 @@ impl Canvas<'_> {
             y_spacing += 1;
             y_left -= 3;
         }
-        // Fourth, margins again.
         if x_left >= 2 {
             x_margin += 1;
             x_left -= 2;
@@ -497,7 +461,6 @@ impl Canvas<'_> {
             y_margin += 1;
             y_left -= 2;
         }
-        // Last, a bigger dot.
         if x_left >= 2 && y_left >= 4 {
             w += 1;
         }
@@ -511,7 +474,6 @@ impl Canvas<'_> {
             ys[i] = ys[i - 1] + w + y_spacing;
         }
 
-        // Bit layout of U+28xx: tl, ul, ll, tr, ur, lr, bl, br.
         let dots = [
             (0x01, 0, 0),
             (0x02, 0, 1),
@@ -575,7 +537,6 @@ impl Canvas<'_> {
         self.paint_path(path);
     }
 
-    /// Circular-arc approximation constant for a cubic Bézier.
     const ARC_C: f32 = (std::f32::consts::SQRT_2 - 1.0) * 4.0 / 3.0;
 
     fn half_circle(&mut self, mirrored: bool) {
@@ -600,9 +561,6 @@ impl Canvas<'_> {
         self.paint_path(path);
     }
 
-    /// The filled half circle's outline, stroked inside its silhouette: the
-    /// path is inset by half the thickness so a centered stroke stays within
-    /// the cell and its ends are cut square at the top and bottom edges.
     fn half_circle_outline(&mut self, mirrored: bool) {
         let (w, h) = (self.width as f32, self.height as f32);
         let t = self.light() as f32;

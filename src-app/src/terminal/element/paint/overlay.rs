@@ -1,11 +1,3 @@
-//! Overlay paint passes - search highlights, hyperlink underline,
-//! IME preedit, process-exit banner, and the debug latency probe bookends.
-//!
-//! These layers draw on top of text and cursor; they're grouped here because
-//! each one is conditional (rendered only when the relevant state is active)
-//! and they all compose over the primary cell grid rather than participating
-//! in cell-level layout.
-
 use gpui::{App, Bounds, Font, Pixels, Point, SharedString, TextAlign, TextRun, Window, fill, px};
 #[cfg(debug_assertions)]
 use gpui::{BorderStyle, hsla, outline};
@@ -14,7 +6,6 @@ use super::super::LayoutState;
 use super::super::TerminalElement;
 use super::super::geometry::CellGeometry;
 
-/// Search match highlight rects (`.floor()` / `.ceil()` matches background).
 pub fn paint_search_highlights(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
     for rect in &layout.search_rects {
         let rect_bounds = geom.cell_span_bounds(rect.line, rect.col, rect.num_cols);
@@ -22,7 +13,6 @@ pub fn paint_search_highlights(layout: &LayoutState, geom: &CellGeometry, window
     }
 }
 
-/// Paint the Ctrl+hover hyperlink underline.
 pub fn paint_hyperlink_underline(
     element: &TerminalElement,
     layout: &LayoutState,
@@ -39,8 +29,6 @@ pub fn paint_hyperlink_underline(
         return;
     }
 
-    // Same position and thickness as an SGR underline, so the hover cue and
-    // the OSC 8 underline coincide.
     let m = geom.metrics;
     let t = m.underline_thickness.max(1);
     let y = m
@@ -55,11 +43,6 @@ pub fn paint_hyperlink_underline(
     ));
 }
 
-/// Register the IME `InputHandler` for this element and paint the preedit
-/// composition overlay (when focused and a composition is in progress).
-///
-/// `make_handler` is a closure that constructs the concrete input handler -
-/// keeping the `TerminalInputHandler` type private to `mod.rs`.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_ime_preedit<H, F>(
     element: &TerminalElement,
@@ -97,7 +80,6 @@ pub fn paint_ime_preedit<H, F>(
     let handler = make_handler(cursor_bounds);
     window.handle_input(&element.focus_handle, handler, cx);
 
-    // Paint preedit overlay
     if !element.ime_marked_text.is_empty()
         && let Some(cb) = cursor_bounds
     {
@@ -119,7 +101,6 @@ pub fn paint_ime_preedit<H, F>(
             &[ime_run],
             Some(cell_width),
         );
-        // Background erase behind preedit
         let preedit_width = shaped.width();
         let preedit_bg = Bounds::new(
             cb.origin,
@@ -129,14 +110,10 @@ pub fn paint_ime_preedit<H, F>(
             },
         );
         window.paint_quad(fill(preedit_bg, layout.background_color));
-        // Paint preedit text
         let _ = shaped.paint(cb.origin, line_height, TextAlign::Left, None, window, cx);
     }
 }
 
-/// Paint the centered "[Process exited with code N]" message when the shell
-/// child has exited. `exit_fg` is the Catppuccin Overlay6 grey passed in so
-/// the overlay module stays free of color-helper imports.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_exit_overlay(
     layout: &LayoutState,
@@ -158,9 +135,6 @@ pub fn paint_exit_overlay(
         ..
     } = *geom;
 
-    // US-004: distinguish a signal kill (crash) from a clean non-zero exit.
-    // `exit_signal` carries "N (Name)" (e.g. "11 (Segmentation fault)") - the
-    // numeric signal recovered in `pty_loops` plus portable-pty's readable name.
     let msg = match &layout.exit_signal {
         Some(sig) => format!("[Process terminated by signal: {sig}]"),
         None => format!("[Process exited with code {code}]"),
@@ -176,7 +150,6 @@ pub fn paint_exit_overlay(
     let shaped = window
         .text_system()
         .shape_line(SharedString::from(msg), font_size, &[run], None);
-    // Center the message in the terminal bounds
     let text_width = shaped.width();
     let x = origin.x + (bounds.size.width - text_width) * 0.5;
     let y = origin.y + (bounds.size.height - line_height) * 0.5;
@@ -190,25 +163,6 @@ pub fn paint_exit_overlay(
     );
 }
 
-/// Pixel-probe visual overlay: thin red borders on every cell, painted
-/// after the text pass so they sit above glyphs. Activated only by
-/// `PANEFLOW_PIXEL_PROBE_OVERLAY=1` (independent of the log-only probe).
-///
-/// Uses the same `floor(x)`-shared-boundary math (US-004) so the borders
-/// align with the underlying rects - any visible misalignment is a real
-/// rendering signal, not an overlay artifact.
-///
-/// Iterates the entire visible grid (`rows × cols`) unconditionally - the
-/// log probe samples the first 16 columns of each row to bound stdout, but
-/// the visual overlay needs full coverage to expose alignment artifacts at
-/// any location. On a 220×60 terminal this issues ~13 200 `paint_quad`
-/// calls per frame; acceptable because the overlay is opt-in via env var
-/// and only present in debug builds.
-///
-/// `border_widths` is divided by `scale_factor` so the rendered border is
-/// exactly one *physical* pixel - at 2× HiDPI a 1.0 logical width would
-/// produce a 2-physical-px border that visually obscures the very 1-px
-/// gaps the probe is meant to expose.
 #[cfg(debug_assertions)]
 pub fn paint_pixel_probe_overlay(layout: &LayoutState, geom: &CellGeometry, window: &mut Window) {
     let rows = layout.desired_rows;

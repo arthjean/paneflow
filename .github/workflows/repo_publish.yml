@@ -120,7 +120,7 @@ jobs:
           echo "  workflow_run.conclusion='${WORKFLOW_RUN_CONCLUSION:-<unset>}'"
           echo "  resolved TAG='${TAG:-<unset>}'"
           if [ -z "${TAG:-}" ]; then
-            echo "::error::TAG is empty. Probable cause: workflow_run.head_branch did not populate (see release-runbook.md troubleshooting)."
+            echo "::error::TAG is empty. Probable cause: workflow_run.head_branch did not populate."
             exit 1
           fi
           # Semver with optional -qualifier (alpha, beta, rc.N, etc).
@@ -185,7 +185,6 @@ jobs:
           [ -z "${CLOUDFLARE_AUTH_KEY:-}" ] && missing+=("CLOUDFLARE_AUTH_KEY")
           if [ "${#missing[@]}" -gt 0 ]; then
             echo "::error::Missing required secrets (US-017 + R2 + Cloudflare setup): ${missing[*]}" >&2
-            echo "::error::See docs/pkg-repo-runbook.md for the full list + how to populate them." >&2
             exit 1
           fi
           # GPG_KEY_ID must be the 40-char hex fingerprint. Short 16-char

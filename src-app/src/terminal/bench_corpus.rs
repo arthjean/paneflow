@@ -1,10 +1,3 @@
-//! Deterministic VT streams and process counters for the terminal benchmarks.
-//!
-//! The streams are generated, never recorded, so a benchmark run is
-//! reproducible from `CORPUS_SEED` alone and no fixture file has to be kept in
-//! sync with the engine. Nothing here touches a terminal backend: the same
-//! bytes feed the Ghostty stress scenarios and the GPUI input-to-frame probe.
-
 use std::time::Duration;
 
 pub(crate) const CORPUS_SEED: u64 = 0x5041_4e45_464c_4f57;
@@ -12,7 +5,6 @@ const CORPUS_FAMILIES: usize = 27;
 const CORPUS_VARIANTS: usize = 5;
 const CORPUS_SIZE: usize = CORPUS_FAMILIES * CORPUS_VARIANTS;
 
-/// The full stream set, one entry per family/variant pair.
 pub(crate) fn deterministic_streams() -> Vec<Vec<u8>> {
     let mut streams = Vec::with_capacity(CORPUS_SIZE);
     for index in 0..CORPUS_SIZE {
@@ -118,10 +110,8 @@ pub(crate) fn resident_set_bytes() -> u64 {
     };
     use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-    // SAFETY: zeroed C POD with its byte size set before the current-process query.
     let mut memory: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
     memory.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-    // SAFETY: the current-process pseudo handle and writable counter buffer are valid.
     let result = unsafe {
         GetProcessMemoryInfo(
             GetCurrentProcess(),
@@ -165,12 +155,10 @@ pub(crate) fn process_cpu_time() -> Duration {
     use windows_sys::Win32::Foundation::FILETIME;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 
-    // SAFETY: FILETIME is a C POD and all four buffers are initialized before use.
     let mut creation: FILETIME = unsafe { std::mem::zeroed() };
     let mut exit: FILETIME = unsafe { std::mem::zeroed() };
     let mut kernel: FILETIME = unsafe { std::mem::zeroed() };
     let mut user: FILETIME = unsafe { std::mem::zeroed() };
-    // SAFETY: the current-process pseudo handle and writable FILETIME buffers are valid.
     let result = unsafe {
         GetProcessTimes(
             GetCurrentProcess(),

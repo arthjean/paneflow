@@ -5,20 +5,10 @@ use crate::hooks::{
 use std::path::Path;
 
 fn command_preserves_event_arg(command: &str, event: &str) -> bool {
-    // The event is the last argument, but what surrounds it depends on the
-    // platform: Unix passes it bare, Windows wraps the whole invocation in a
-    // PowerShell `-Command "..."` string, so the token can carry a trailing
-    // quote (escaped or not) once it has been through JSON.
     command
         .split_whitespace()
         .any(|token| token.trim_matches(['"', '\\', '\'']) == event)
 }
-
-// ---------- US-005: HookConfigGuard ----------
-//
-// All tests call `HookConfigGuard::install_at` with a tempdir-backed
-// `.claude/` path rather than mutating `std::env::current_dir()` - the
-// same env-free discipline used by US-002/003 tests.
 
 use serde_json::json;
 
@@ -51,13 +41,6 @@ fn install_at_creates_file_with_all_five_events() {
             "expected exactly one matcher-group for {event}"
         );
 
-        // The exact command shape (bare name vs. absolute path) depends on
-        // whether `current_exe()` finds a sibling `paneflow-ai-hook` -
-        // which it does NOT in `cargo test` (test binary lives under
-        // `target/debug/deps/`, hook binary lives under `target/debug/`).
-        // Assert the contract instead of the format: it must be detectable
-        // by `is_paneflow_hook_command`, and it must preserve the event
-        // name so Claude Code dispatches to the correct handler.
         let cmd = handlers[0]
             .pointer("/hooks/0/command")
             .and_then(|v| v.as_str())
@@ -78,10 +61,6 @@ fn install_at_creates_file_with_all_five_events() {
             "timeout is in seconds per Claude Code docs"
         );
 
-        // The marker sits on the OUTER matcher-group wrapper, not on
-        // the inner Claude-Code-native handler (we don't pollute the
-        // handler object with custom fields that Claude Code would
-        // ignore anyway).
         assert_eq!(
             handlers[0].get("_paneflow_managed"),
             Some(&json!(true)),
@@ -94,7 +73,6 @@ fn install_at_creates_file_with_all_five_events() {
     }
 
     drop(guard);
-    // We created both the dir and the file - cleanup must remove both.
     assert!(!claude_dir.join("settings.local.json").exists());
     assert!(!claude_dir.exists());
 }
@@ -104,11 +82,6 @@ fn install_at_creates_file_with_all_five_events() {
 fn install_at_refuses_symlinked_config_dir() {
     use std::os::unix::fs::symlink;
 
-    // Attacker plants `.claude` as a DIRECTORY symlink (as git does on
-    // checkout) pointing at a sibling dir OUTSIDE the project. `is_dir()`
-    // follows it, so without the symlink_metadata guard `install_at`
-    // would write `settings.local.json` into the target dir, crossing the
-    // project boundary (CWE-59 / f004).
     let td = tempfile::TempDir::new().unwrap();
     let outside = td.path().join("outside");
     std::fs::create_dir_all(&outside).unwrap();
@@ -132,8 +105,6 @@ fn install_at_preserves_existing_user_hooks_and_permissions() {
     let claude_dir = td.path().join(".claude");
     std::fs::create_dir_all(&claude_dir).unwrap();
 
-    // Pre-existing settings: user config + one of their own hooks on
-    // UserPromptSubmit that must survive both install and cleanup.
     let initial = json!({
         "permissions": { "allow": ["Bash(ls:*)"] },
         "hooks": {
@@ -150,7 +121,6 @@ fn install_at_preserves_existing_user_hooks_and_permissions() {
 
     let guard = HookConfigGuard::install_at(&claude_dir).unwrap();
 
-    // After install: user entry + PaneFlow entry side-by-side.
     let root = read_settings(&claude_dir);
     let arr = root["hooks"]["UserPromptSubmit"].as_array().unwrap();
     assert_eq!(arr.len(), 2, "user + paneflow entries coexist");
@@ -158,20 +128,16 @@ fn install_at_preserves_existing_user_hooks_and_permissions() {
         arr.iter().filter(|v| is_paneflow_matcher_group(v)).count(),
         1
     );
-    // Unrelated sections untouched.
     assert_eq!(root["permissions"]["allow"][0], json!("Bash(ls:*)"));
 
     drop(guard);
 
-    // After drop: only the user's hook remains; the file persists
-    // because the user's content is non-empty.
     let root = read_settings(&claude_dir);
     let arr = root["hooks"]["UserPromptSubmit"].as_array().unwrap();
     assert_eq!(arr.len(), 1);
     let surviving_cmd = arr[0].pointer("/hooks/0/command").unwrap();
     assert_eq!(surviving_cmd, &json!("echo user-hook"));
     assert_eq!(root["permissions"]["allow"][0], json!("Bash(ls:*)"));
-    // We did NOT create `.claude/`, so cleanup must leave it in place.
     assert!(claude_dir.exists());
 }
 
@@ -181,7 +147,6 @@ fn install_at_is_idempotent_on_reinstall() {
     let claude_dir = td.path().join(".claude");
 
     let first = HookConfigGuard::install_at(&claude_dir).unwrap();
-    // Second install on top of the first must NOT duplicate entries.
     let second = HookConfigGuard::install_at(&claude_dir).unwrap();
 
     let root = read_settings(&claude_dir);
@@ -194,7 +159,7 @@ fn install_at_is_idempotent_on_reinstall() {
     }
 
     drop(second);
-    drop(first); // idempotent drop: second pass reads the already-cleaned file
+    drop(first);
 }
 
 #[test]
@@ -250,10 +215,6 @@ fn install_refuses_non_array_event_without_rewriting_the_file() {
 
 #[test]
 fn cleanup_removes_managed_entries_even_when_marker_was_stripped() {
-    // Simulate Claude Code re-serializing and stripping the
-    // `_paneflow_managed` marker from the inner hook object. The
-    // belt-and-suspenders prefix check on `command` must still detect
-    // and clean up the handler. (anthropics/claude-code#5886)
     let td = tempfile::TempDir::new().unwrap();
     let claude_dir = td.path().join(".claude");
     std::fs::create_dir_all(&claude_dir).unwrap();
@@ -262,7 +223,6 @@ fn cleanup_removes_managed_entries_even_when_marker_was_stripped() {
         "hooks": {
             "Stop": [
                 {
-                    // `_paneflow_managed` on the outer wrapper is gone.
                     "hooks": [
                         {
                             "type": "command",
@@ -280,13 +240,9 @@ fn cleanup_removes_managed_entries_even_when_marker_was_stripped() {
     )
     .unwrap();
 
-    // Install (no-op - detects our entry via command prefix) then drop.
     let guard = HookConfigGuard::install_at(&claude_dir).unwrap();
     drop(guard);
 
-    // The managed handler is gone, but this fixture predates the guard and
-    // carries no durable PaneFlow ownership evidence. Cleanup must preserve
-    // the user's file rather than infer ownership from its now-empty shape.
     let settings = claude_dir.join("settings.local.json");
     assert!(settings.exists());
     let root: serde_json::Value =
@@ -296,9 +252,6 @@ fn cleanup_removes_managed_entries_even_when_marker_was_stripped() {
 
 #[test]
 fn cleanup_handles_preexisting_claude_dir_without_deleting_it() {
-    // The user created `.claude/` themselves (for other Claude Code
-    // files). Cleanup must NOT rmdir it, even when our settings file
-    // was the only item inside.
     let td = tempfile::TempDir::new().unwrap();
     let claude_dir = td.path().join(".claude");
     std::fs::create_dir_all(&claude_dir).unwrap();
@@ -307,8 +260,6 @@ fn cleanup_handles_preexisting_claude_dir_without_deleting_it() {
     assert!(claude_dir.join("settings.local.json").exists());
     drop(guard);
 
-    // Settings file gone (was only managed entries), but the directory
-    // that the user already owned must remain.
     assert!(!claude_dir.join("settings.local.json").exists());
     assert!(
         claude_dir.exists(),
@@ -335,8 +286,6 @@ fn cleanup_preserves_preexisting_empty_config_file() {
 
 #[test]
 fn install_at_tolerates_corrupt_existing_json() {
-    // A corrupt settings file (mid-edit save, interrupted write)
-    // shouldn't abort the shim - we overwrite and proceed.
     let td = tempfile::TempDir::new().unwrap();
     let claude_dir = td.path().join(".claude");
     std::fs::create_dir_all(&claude_dir).unwrap();
@@ -373,7 +322,6 @@ fn merge_does_not_clobber_user_hooks_in_other_events() {
     let root = read_settings(&claude_dir);
     let arr = root["hooks"]["PreToolUse"].as_array().unwrap();
     assert_eq!(arr.len(), 2, "user's Bash matcher + PaneFlow entry");
-    // User's matcher preserved byte-for-byte.
     assert_eq!(arr[0]["matcher"], json!("Bash"));
     assert_eq!(
         arr[0].pointer("/hooks/0/command"),

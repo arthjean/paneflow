@@ -1,29 +1,8 @@
-//! Color conversion + APCA contrast enforcement for the terminal renderer.
-//!
-//! Two responsibilities, related only because both translate terminal colors
-//! into final `Hsla` values for painting:
-//!
-//! 1. **APCA contrast** (`ensure_minimum_contrast`): fixes foreground/background
-//!    pairs that fail the APCA (Accessible Perceptual Contrast Algorithm) Lc
-//!    threshold. Polarity-aware and perceptually uniform - more accurate than
-//!    WCAG 2.0 on dark backgrounds. Matches Zed's algorithm.
-//! 2. **Color resolution** (`convert_color`, `named_color`, `indexed_color`):
-//!    translates the neutral [`crate::terminal::types::Color`] (Named / Spec /
-//!    Indexed) into themed `Hsla`, covering the xterm-256color palette.
-//!
-//! Extracted from `terminal_element.rs` per US-009 of the src-app refactor PRD.
-
 use gpui::{Hsla, Rgba};
 
 use crate::terminal::types::{Color, NamedColor};
 use crate::theme::TerminalTheme;
 
-// ---------------------------------------------------------------------------
-// Minimum contrast (APCA - Accessible Perceptual Contrast Algorithm)
-// ---------------------------------------------------------------------------
-
-/// APCA constants (0.0.98G-4g W3 compatible).
-/// https://github.com/Myndex/apca-w3
 struct ApcaConstants {
     main_trc: f32,
     s_rco: f32,
@@ -70,12 +49,6 @@ fn srgb_to_y(color: Hsla) -> f32 {
     APCA.s_rco * r_linear + APCA.s_gco * g_linear + APCA.s_bco * b_linear
 }
 
-/// APCA Lightness Contrast (`Lc`) between `text` foreground and `bg`. Sign
-/// indicates polarity (positive = light text on dark bg, negative = dark
-/// text on light bg). Tests and theme-load code assert on `.abs() >= 45.0`.
-///
-/// Visibility: `pub(crate)` (was private pre-US-007) so theme tests can
-/// verify the `selection_foreground` invariant directly.
 pub(crate) fn apca_contrast(text: Hsla, bg: Hsla) -> f32 {
     let text_y = srgb_to_y(text);
     let bg_y = srgb_to_y(bg);
@@ -110,16 +83,6 @@ pub(crate) fn apca_contrast(text: Hsla, bg: Hsla) -> f32 {
     }
 }
 
-/// Adjust `fg` lightness using APCA so that perceptual contrast against `bg`
-/// meets `min_lc`. Returns `fg` unchanged if contrast is already sufficient.
-///
-/// Three-stage fallback matching Zed's approach:
-/// 1. Adjust lightness only (preserves hue + saturation)
-/// 2. Reduce saturation + adjust lightness
-/// 3. Fall back to black or white
-///
-/// Visibility: `pub(crate)` (was `pub(super)` pre-US-007) so theme code can
-/// derive a contrast-validated `selection_foreground` at theme-load time.
 pub(crate) fn ensure_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     if min_lc <= 0.0 {
         return fg;
@@ -127,14 +90,6 @@ pub(crate) fn ensure_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     contrast_cache_get_or_insert(fg, bg, min_lc)
 }
 
-/// Number of slots in the direct-mapped contrast cache.
-///
-/// A terminal grid holds tens of thousands of cells drawn from a handful of
-/// distinct (foreground, background) pairs, so a small table absorbs
-/// essentially all of the traffic. Direct-mapped rather than a `HashMap`
-/// because a collision here costs one recomputation, which is exactly what the
-/// uncached path already did, while a map would cost an allocation and
-/// unbounded growth over a long session.
 const CONTRAST_CACHE_SLOTS: usize = 128;
 
 #[derive(Clone, Copy)]
@@ -144,17 +99,10 @@ struct ContrastEntry {
 }
 
 thread_local! {
-    /// Thread-local because the layout pass is single-threaded per window;
-    /// sharing it would trade `powf` calls for lock traffic on the hottest
-    /// loop in the renderer.
     static CONTRAST_CACHE: std::cell::RefCell<[Option<ContrastEntry>; CONTRAST_CACHE_SLOTS]> =
         const { std::cell::RefCell::new([None; CONTRAST_CACHE_SLOTS]) };
 }
 
-/// Exact bit pattern of the three inputs.
-///
-/// Compared for equality, never interpreted, so `-0.0` versus `0.0` and NaN
-/// only ever cost a miss.
 fn contrast_key(fg: Hsla, bg: Hsla, min_lc: f32) -> [u32; 9] {
     [
         fg.h.to_bits(),
@@ -169,7 +117,6 @@ fn contrast_key(fg: Hsla, bg: Hsla, min_lc: f32) -> [u32; 9] {
     ]
 }
 
-/// FNV-1a over the key, folded to a slot index.
 fn contrast_slot(key: &[u32; 9]) -> usize {
     let mut hash = 0xcbf2_9ce4_8422_2325_u64;
     for word in key {
@@ -197,19 +144,16 @@ fn contrast_cache_get_or_insert(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     })
 }
 
-/// The uncached three-stage search. See [`ensure_minimum_contrast`].
 fn compute_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     if apca_contrast(fg, bg).abs() >= min_lc {
         return fg;
     }
 
-    // Stage 1: adjust lightness only
     let adjusted = adjust_lightness_for_apca(fg, bg, min_lc);
     if apca_contrast(adjusted, bg).abs() >= min_lc {
         return adjusted;
     }
 
-    // Stage 2: reduce saturation + adjust lightness
     for &sat_mult in &[0.8, 0.6, 0.4, 0.2, 0.0] {
         let desat = Hsla {
             s: fg.s * sat_mult,
@@ -221,7 +165,6 @@ fn compute_minimum_contrast(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
         }
     }
 
-    // Stage 3: black or white
     let black = Hsla {
         h: 0.0,
         s: 0.0,
@@ -279,17 +222,9 @@ fn adjust_lightness_for_apca(fg: Hsla, bg: Hsla, min_lc: f32) -> Hsla {
     Hsla { l: best_l, ..fg }
 }
 
-// ---------------------------------------------------------------------------
-// Color conversion
-// ---------------------------------------------------------------------------
-
 pub(super) fn convert_color(color: Color, theme: &TerminalTheme) -> Hsla {
     match color {
         Color::Named(name) => named_color(name, theme),
-        // Truecolor RGB values are kept as-is. A previous special case mapped
-        // `Spec(0,0,0)` to `theme.black`, but that silently hijacked apps that
-        // chose a literal `#000000` (intentional pure black) and replaced it
-        // with the slightly-lighter ANSI "black" slot from the theme.
         Color::Spec(rgb) => rgb_to_hsla(rgb.r, rgb.g, rgb.b),
         Color::Indexed(i) => indexed_color(i, theme),
     }
@@ -318,10 +253,8 @@ fn named_color(name: NamedColor, theme: &TerminalTheme) -> Hsla {
     }
 }
 
-/// Convert the xterm-256color indexed palette to HSLA.
 fn indexed_color(i: u8, theme: &TerminalTheme) -> Hsla {
     if i < 16 {
-        // Standard 16 colors - map to named
         return named_color(
             match i {
                 0 => NamedColor::Black,
@@ -347,7 +280,6 @@ fn indexed_color(i: u8, theme: &TerminalTheme) -> Hsla {
     }
 
     if i < 232 {
-        // 6x6x6 color cube (indices 16-231)
         let idx = i - 16;
         let r_idx = idx / 36;
         let g_idx = (idx % 36) / 6;
@@ -358,7 +290,6 @@ fn indexed_color(i: u8, theme: &TerminalTheme) -> Hsla {
         return rgb_to_hsla(r, g, b);
     }
 
-    // Grayscale ramp (indices 232-255)
     let gray = 8 + 10 * (i - 232);
     rgb_to_hsla(gray, gray, gray)
 }
@@ -376,10 +307,6 @@ pub(super) fn rgb_to_hsla(r: u8, g: u8, b: u8) -> Hsla {
 mod tests {
     use super::*;
 
-    /// The cache is transparent or it is a rendering bug: every hit must
-    /// return exactly what the uncached search would have. Sweeps enough
-    /// distinct pairs to overflow `CONTRAST_CACHE_SLOTS`, so evictions and
-    /// index collisions are covered too.
     #[test]
     fn the_contrast_cache_never_changes_the_answer() {
         let min_lc = 45.0;
@@ -410,7 +337,6 @@ mod tests {
                 "cache diverged for fg={fg:?} bg={bg:?}"
             );
         }
-        // Second pass: now served from the table rather than computed.
         for (fg, bg) in &pairs {
             let cached = ensure_minimum_contrast(*fg, *bg, min_lc);
             let direct = compute_minimum_contrast(*fg, *bg, min_lc);
@@ -421,8 +347,6 @@ mod tests {
         }
     }
 
-    /// `min_lc` is part of the key: two call sites asking for different
-    /// thresholds on the same colors must not share an entry.
     #[test]
     fn the_contrast_cache_keys_on_the_threshold_too() {
         let fg = Hsla {

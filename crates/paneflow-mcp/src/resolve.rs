@@ -1,21 +1,9 @@
-//! Name → surface_id resolution for the bridge tools (US-009).
-//!
-//! The Paneflow IPC server resolves a surface name by exact match only. The
-//! bridge does better: exact → case-insensitive → unique prefix, with
-//! ambiguity and no-match errors that list the candidates so the agent can
-//! re-target. All pure and unit-tested.
-
-/// Minimal view of a surface entry from `surface.list` - only what name
-/// resolution needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SurfaceRef {
     pub surface_id: u64,
     pub name: String,
 }
 
-/// Resolve a name query to a single `surface_id`, in precedence order:
-/// exact → case-insensitive exact → unique case-insensitive prefix.
-/// Ambiguity or no match yields a candidate-listing error.
 pub fn resolve_target(surfaces: &[SurfaceRef], query: &str) -> Result<u64, String> {
     if query.trim().is_empty() {
         return Err("surface name must not be empty".to_string());
@@ -111,8 +99,6 @@ mod tests {
 
     #[test]
     fn exact_wins_over_prefix_siblings() {
-        // "cargo-run" exactly matches one entry even though it's also a prefix
-        // of "cargo-run-2"; the exact match must short-circuit.
         let set = [s(1, "cargo-run"), s(2, "cargo-run-2")];
         assert_eq!(resolve_target(&set, "cargo-run"), Ok(1));
     }

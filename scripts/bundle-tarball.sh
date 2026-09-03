@@ -1,21 +1,4 @@
 #!/usr/bin/env bash
-# Bundle PaneFlow into a Zed-style user-local tar.gz.
-#
-# Output layout:
-#   paneflow.app/
-#     bin/paneflow
-#     share/applications/paneflow.desktop
-#     share/icons/hicolor/{16,32,48,128,256,512}x{..}/apps/paneflow.png
-#     share/metainfo/io.github.arthurdev44.paneflow.metainfo.xml
-#     LICENSE
-#     THIRD_PARTY_NOTICES.md
-#     README.md
-#     install.sh
-#
-# Usage:
-#   scripts/bundle-tarball.sh                  # reads version from Cargo.toml
-#   scripts/bundle-tarball.sh 0.1.7            # explicit version
-#   TARGET=x86_64-unknown-linux-gnu scripts/bundle-tarball.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
@@ -72,7 +55,6 @@ install -m 644 "$REPO_ROOT/native/libghostty/THIRD_PARTY_NOTICES.md" \
                "$APP/THIRD_PARTY_NOTICES.md"
 install -m 755 "$SCRIPT_DIR/tarball-install.sh" "$APP/install.sh"
 
-# Reproducible tar: sorted entries, fixed ownership, fixed mtime.
 MTIME="${SOURCE_DATE_EPOCH:-$(date +%s)}"
 ( cd "$BUNDLE_DIR" \
   && tar \

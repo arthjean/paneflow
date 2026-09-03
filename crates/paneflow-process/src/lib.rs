@@ -1,9 +1,3 @@
-//! Bounded external-process execution shared across Paneflow crates.
-//!
-//! [`run_with_timeout`] gives non-interactive subprocesses a wall-clock deadline
-//! and strict stdout/stderr capture limits. It is synchronous and is meant to
-//! run on a background thread, never on the GPUI render thread.
-
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 use std::error::Error;
@@ -15,31 +9,13 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
-/// Upper bound on captured stderr. stderr is diagnostics-only, so a small fixed
-/// cap is enough. Exceeding it fails the run instead of returning partial data.
 const STDERR_CAP: u64 = 64 * 1024;
 
-/// How often [`run_with_timeout`] polls the child for exit. Small enough that a
-/// fast command returns promptly, large enough that a multi-minute deadline
-/// does not spin the CPU.
 const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
-/// Windows `CREATE_NO_WINDOW` process-creation flag (`winbase.h`, `0x0800_0000`).
-/// Paneflow runs as a GUI-subsystem process with no console of its own, so every
-/// console subprocess it spawns (the `git diff --shortstat` poller, agent CLIs,
-/// MCP probes) would otherwise get a freshly-allocated, *visible* console window
-/// that flashes open and shut for the child's lifetime. Suppressing it is always
-/// correct for `run_with_timeout` callers: they pipe stdout/stderr and null
-/// stdin, so the child is non-interactive by construction and never needs a
-/// console.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Output from a bounded process run.
-///
-/// `stdout` and `stderr` are complete. A process that exceeds either capture
-/// limit fails with [`ProcError::OutputLimitExceeded`] instead of returning
-/// partial data as a successful result.
 #[derive(Debug)]
 pub struct BoundedOutput {
     pub status: ExitStatus,
@@ -47,7 +23,6 @@ pub struct BoundedOutput {
     pub stderr: Vec<u8>,
 }
 
-/// Captured subprocess stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OutputStream {
     Stdout,
@@ -63,35 +38,25 @@ impl fmt::Display for OutputStream {
     }
 }
 
-/// Why a bounded run did not produce a normal [`BoundedOutput`].
 #[derive(Debug)]
 pub enum ProcError {
-    /// The child could not be spawned.
     Spawn(io::Error),
-    /// The platform process-tree guard could not be installed.
     ProcessTree(io::Error),
-    /// A configured capture limit cannot be represented safely on this target.
     InvalidOutputLimit(u64),
-    /// The internal supervisor could not be prepared or reached an invalid
-    /// lifecycle state.
     Supervision(io::Error),
-    /// A dedicated stream reader thread could not be started.
     ReaderSpawn {
         stream: OutputStream,
         source: io::Error,
     },
-    /// Polling the child's status failed.
     Wait(io::Error),
-    /// Capturing one of the child's streams failed.
     Read {
         stream: OutputStream,
         source: io::Error,
     },
-    /// The child produced more bytes than the configured capture limit.
-    OutputLimitExceeded { stream: OutputStream, cap: u64 },
-    /// The deadline elapsed before the child and its inherited pipes completed.
-    /// The child tree was terminated best-effort and cleanup was detached so the
-    /// caller is released by the deadline.
+    OutputLimitExceeded {
+        stream: OutputStream,
+        cap: u64,
+    },
     Timeout,
 }
 
@@ -136,18 +101,6 @@ impl Error for ProcError {
     }
 }
 
-/// Run `cmd` to completion under a wall-clock `deadline`, capturing at most
-/// `stdout_cap` bytes of stdout (and a small fixed cap of stderr).
-///
-/// The deadline starts after the child is successfully spawned. Process creation
-/// itself is owned by the OS and may still block on platform-level executable
-/// lookup or antivirus hooks.
-///
-/// - stdin is `/dev/null` so the child can never block waiting on a prompt.
-/// - stdout/stderr are read on dedicated threads; exceeding either cap closes
-///   the pipe, terminates the run, and returns [`ProcError::OutputLimitExceeded`].
-/// - the child is placed in a process group/job where the platform supports it;
-///   every error path terminates that tree best-effort before cleanup is detached.
 pub fn run_with_timeout(
     mut cmd: Command,
     deadline: Duration,
@@ -160,11 +113,6 @@ pub fn run_with_timeout(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    // GUI-subsystem callers have no console of their own, so a console child
-    // spawned without this flag pops a visible window that flashes open and shut
-    // for the child's lifetime. The crate-level note on CREATE_NO_WINDOW explains
-    // why suppression is always correct here (piped stdio + null stdin → the child
-    // is non-interactive by construction and never needs a console).
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -172,17 +120,11 @@ pub fn run_with_timeout(
     }
 
     configure_process_tree(&mut cmd);
-    // Prepare the reaper before spawning the child. Once a process exists,
-    // every error path can hand it to this already-running thread without
-    // risking a late thread-spawn failure or blocking the caller's deadline.
     let cleanup = spawn_cleanup_worker()?;
     let child = cmd.spawn().map_err(ProcError::Spawn)?;
     let start = Instant::now();
     let mut process = RunningProcess::new(child, cleanup)?;
 
-    // Hand the pipe ends to reader threads before polling: if we polled while
-    // the child filled a ~64 KiB pipe buffer it would block on write and we'd
-    // kill a child that was not actually hung.
     let stdout_pipe = process
         .child_mut()?
         .stdout
@@ -370,8 +312,6 @@ fn send_cleanup(
 ) {
     let resources = CleanupResources { child, reader };
     if let Err(mpsc::SendError(mut resources)) = sender.send(resources) {
-        // The worker only disconnects if it panics. Never replace the caller's
-        // wall-clock bound with a synchronous wait in that exceptional path.
         let _ = resources.child.try_wait();
     }
 }
@@ -580,39 +520,12 @@ fn drain_ready_reader_messages(
     }
 }
 
-/// How often the detached reaper re-checks the children it holds. The thread
-/// blocks on the channel while it holds none, so this only costs a wake-up
-/// while at least one launch is still running.
 const DETACHED_REAP_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Channel to the shared detached-child reaper. `None` when the reaper thread
-/// could not be started, in which case [`spawn_detached`] degrades to the plain
-/// `Command::spawn` behavior rather than dropping the launch.
 static DETACHED_REAPER: OnceLock<Option<mpsc::Sender<Child>>> = OnceLock::new();
 
-/// Spawn a process Paneflow launches but never observes (an editor, a file
-/// manager) and hand its exit status to a shared reaper thread.
-///
-/// `std::process::Child` has no reaping `Drop`: the standard library documents
-/// that it "does *not* automatically wait on child processes (not even if the
-/// `Child` is dropped)". On Unix, dropping the handle therefore leaves the child
-/// as a zombie holding a PID slot for the parent's whole lifetime. CLI launchers
-/// make that immediate: `zed .` hands the path to the already-running instance
-/// over a socket and exits within milliseconds, so every launch used to leak one
-/// permanent `<defunct>` entry.
-///
-/// Windows has no zombie semantics, but routing every platform through the same
-/// helper keeps the call sites identical, and the process handle is released the
-/// same way once the child exits.
-///
-/// This never waits synchronously: it returns as soon as the spawn itself
-/// succeeds or fails, so it is safe to call from the render thread. Only spawn
-/// errors are reported; the child's exit code is deliberately discarded.
 pub fn spawn_detached(command: &mut Command) -> io::Result<()> {
     let child = command.spawn()?;
-    // A missing or dead reaper is not worth failing the launch over: the child
-    // is already running and the caller wanted it running. Dropping the handle
-    // here is exactly the pre-existing behavior.
     if let Some(sender) = DETACHED_REAPER.get_or_init(start_detached_reaper).as_ref() {
         let _ = sender.send(child);
     }
@@ -628,12 +541,6 @@ fn start_detached_reaper() -> Option<mpsc::Sender<Child>> {
         .map(|_| sender)
 }
 
-/// Hold every spawned child until it exits.
-///
-/// Polling beats a blocking `wait()` per child here: one long-lived launch (a
-/// file manager that outlives the click, an `xdg-open` handler that `exec`s the
-/// browser instead of returning) must not block the reaping of every launch
-/// queued behind it. One thread serves all call sites.
 fn reap_detached_children(receiver: &Receiver<Child>) {
     let mut pending: Vec<Child> = Vec::new();
     let mut connected = true;
@@ -650,8 +557,6 @@ fn reap_detached_children(receiver: &Receiver<Child>) {
                 Err(RecvTimeoutError::Disconnected) => connected = false,
             }
         }
-        // A `try_wait` error (ECHILD, a PID already reaped elsewhere) is
-        // terminal for that handle: retrying it would never succeed.
         pending.retain_mut(|child| matches!(child.try_wait(), Ok(None)));
     }
 }
@@ -660,7 +565,6 @@ fn reap_detached_children(receiver: &Receiver<Child>) {
 mod tests {
     use super::*;
 
-    /// Shell wrapper so the behavior tests stay readable across platforms.
     #[cfg(unix)]
     fn sh(script: &str) -> Command {
         let mut c = Command::new("sh");
@@ -778,8 +682,6 @@ mod tests {
         let out = run_with_timeout(stdout_command(), Duration::from_secs(5), 1 << 20)
             .expect("fast command should complete");
         assert!(out.status.success());
-        // printf has no trailing newline on Unix; cmd `echo` would add CRLF, so
-        // assert on a prefix to stay platform-tolerant.
         assert!(
             out.stdout.starts_with(b"hello"),
             "stdout was {:?}",
@@ -789,8 +691,6 @@ mod tests {
 
     #[test]
     fn sleeping_child_is_killed_at_the_deadline() {
-        // A 30 s sleeper under a 150 ms deadline must return ~immediately with
-        // Timeout, not block for 30 s.
         let start = Instant::now();
         let res = run_with_timeout(sleep_command(), Duration::from_millis(150), 1 << 20);
         assert!(
@@ -849,9 +749,6 @@ mod tests {
         remove_marker_artifacts(&marker);
     }
 
-    /// stdout cap: a 1 MB producer under a 4 KiB cap fails as soon as the reader
-    /// sees byte 4097. The process tree is terminated instead of draining an
-    /// unbounded stream after its retained output is already unusable.
     #[cfg(unix)]
     #[test]
     fn stdout_cap_fails_without_oom_or_hang() {
@@ -933,11 +830,6 @@ mod tests {
         assert_eq!(err.kind(), io::ErrorKind::NotFound);
     }
 
-    /// Count the caller's own children currently in state `Z`.
-    ///
-    /// `/proc/<pid>/stat` is `pid (comm) state ppid ...`, and `comm` may itself
-    /// contain spaces and parentheses, so the fields are read after the LAST
-    /// `)` rather than by splitting the whole line.
     #[cfg(target_os = "linux")]
     fn zombie_child_count() -> usize {
         let me = std::process::id();
@@ -961,12 +853,6 @@ mod tests {
             .count()
     }
 
-    /// The regression this helper exists for: a child that exits immediately
-    /// must not stay `<defunct>` once its handle goes out of scope.
-    ///
-    /// Asserting "zero zombie children" rather than a delta keeps the test
-    /// immune to the transient zombies other tests in this module produce
-    /// between a child's exit and its `try_wait`.
     #[cfg(target_os = "linux")]
     #[test]
     fn spawn_detached_reaps_short_lived_children() {

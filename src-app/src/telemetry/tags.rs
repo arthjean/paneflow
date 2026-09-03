@@ -1,18 +1,7 @@
-//! Stable canonical tags for the v1 desktop events (US-013).
-//!
-//! The enums `InstallMethod` (`src-app/src/update/install_method.rs`) and
-//! `UpdateError` (`src-app/src/update/error.rs`) exist to drive the
-//! in-app updater UX - their variant names are tuned for the renderer,
-//! not for analytics. This module is the one place the internal variants
-//! flatten into closed telemetry enums. The domain mapping stays here because
-//! it depends on `crate::update::*` types. Exhaustive matches force every new
-//! updater variant to choose an explicit analytics value.
-
 use crate::update::error::UpdateError;
 use crate::update::install_method::{InstallMethod, PackageManager};
 use paneflow_telemetry::event::{InstallMethod as TelemetryInstallMethod, UpdateErrorCategory};
 
-/// Closed install-method value for desktop telemetry events.
 pub fn install_method_value(method: &InstallMethod) -> TelemetryInstallMethod {
     match method {
         InstallMethod::SystemPackage { manager } => match manager {
@@ -25,26 +14,15 @@ pub fn install_method_value(method: &InstallMethod) -> TelemetryInstallMethod {
         InstallMethod::TarGz { .. } => TelemetryInstallMethod::TarGz,
         InstallMethod::AppBundle { .. } => TelemetryInstallMethod::Dmg,
         InstallMethod::WindowsMsi { .. } => TelemetryInstallMethod::Msi,
-        // Sandboxed runtimes (Flatpak / Snap) and packager-baked
-        // `PANEFLOW_UPDATE_EXPLANATION` builds report a coarse tag
-        // - the in-app updater is disabled for these so finer-grained
-        // attribution would only confuse downstream dashboards.
         InstallMethod::ExternallyManaged { .. } => TelemetryInstallMethod::ExternallyManaged,
         InstallMethod::Unknown => TelemetryInstallMethod::Unknown,
     }
 }
 
-/// Canonical error-category tag for the `error_category` property on
-/// failed `update_installed` events (US-013 AC #4). Buckets every
-/// internal failure variant into one of the four documented labels; any
-/// variant that doesn't fit cleanly lands in `"unknown"` - a deliberate
-/// coarse default so the PRD's four-bucket contract stays honest.
 pub fn update_error_category(err: &UpdateError) -> UpdateErrorCategory {
     match err {
         UpdateError::Network(_) => UpdateErrorCategory::Network,
         UpdateError::ReleaseAssetMissing { .. } => UpdateErrorCategory::Network,
-        // A stalled download/install buckets with network: the dominant cause
-        // is a half-open TCP or a mirror that accepts then stalls (U-002).
         UpdateError::Timeout => UpdateErrorCategory::Network,
         UpdateError::IntegrityMismatch { .. } => UpdateErrorCategory::Signature,
         UpdateError::DiskFull { .. } => UpdateErrorCategory::Disk,

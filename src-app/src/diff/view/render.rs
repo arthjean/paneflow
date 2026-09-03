@@ -1,5 +1,3 @@
-//! Render-oriented helpers shared by the DiffView host and its column model.
-
 use super::*;
 use crate::ui_primitives::TooltipDelayExt;
 use crate::ui_primitives::{
@@ -70,7 +68,6 @@ impl DiffView {
             .h(height)
             .bg(ui.accent.opacity(0.22))
             .border_2()
-            // EP-002 US-008: theme accent instead of a hardcoded sky-blue hex.
             .border_color(ui.accent.opacity(0.75))
             .rounded(px(6.));
         let overlay = overlay
@@ -163,7 +160,6 @@ impl Render for DiffView {
             .on_action(cx.listener(|this, _: &crate::CopyDiffHunk, window, cx| {
                 this.copy_hovered_hunk(window, cx);
             }))
-            // EP-003 US-009: keyboard-first review loop (DiffView && !Terminal).
             .on_action(cx.listener(|this, _: &crate::DiffNextHunk, window, cx| {
                 this.goto_hunk(true, window, cx);
             }))
@@ -213,10 +209,6 @@ impl Render for DiffView {
         let mode = self.effective_mode(window);
         self.last_effective_mode = mode;
         self.ensure_visible_mode_loaded(mode, cx);
-        // Consume the host-pushed scope breadcrumb (push-only contract: the
-        // host re-pushes it every frame before this render runs). Rendered
-        // even on the empty state - it carries the scope/project/branches
-        // pickers, the only way OUT of an empty scope.
         let scope_slot = self.scope_slot.take();
 
         if self.columns.is_empty() {
@@ -249,8 +241,6 @@ impl Render for DiffView {
 }
 
 impl DiffView {
-    /// EP-003 US-009: flip Unified ⇄ Split (the `u` binding). Mirrors the
-    /// segmented control's inline writes.
     fn toggle_view_mode(&mut self, cx: &mut Context<Self>) {
         let next = match self.mode {
             ViewMode::Unified => ViewMode::Split,
@@ -264,8 +254,6 @@ impl DiffView {
         cx.notify();
     }
 
-    /// EP-003 US-009: `Esc` - close any open popover/menu and refocus the body so
-    /// the keyboard loop continues. Order-independent.
     fn dismiss_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.base_picker_open = false;
         self.review_menu_open = None;
@@ -284,8 +272,6 @@ impl DiffView {
         let ui = crate::theme::ui_colors();
         let palette = palette(ui);
 
-        // Review is offered per branch: live only when this column has changes,
-        // highlighted while its own CLI-picker popover is open.
         let col_has_changes = Self::column_has_changes(col);
         let review_open = self.review_menu_open == Some(idx);
 
@@ -299,13 +285,7 @@ impl DiffView {
             },
         };
 
-        // Selected column drives the sidebar file list + jump-to-file. Only
-        // visually distinguished when there is more than one column.
         let selected = self.selected_column == idx && self.visible_count() > 1;
-        // Per-column base toggle chip: shows what this column diffs against (the
-        // shared base, or `HEAD~1` when overridden) and flips between the two on
-        // click - one branch can show just its latest-commit delta while siblings
-        // keep the whole-branch-vs-base view.
         let overridden = col.base_override.is_some();
         let eff_base = col
             .base_override
@@ -352,22 +332,14 @@ impl DiffView {
                     .text_color(if overridden { ui.accent } else { ui.muted })
                     .child(base_short),
             );
-        // EP-002 US-005: three-tier surface scale. The column header sits at a
-        // distinct chrome tier from the body (`ui.base`) and the file cards
-        // (`ui.surface`) on BOTH themes - `overlay` is darker than the body on
-        // dark, but equal to it on light, so light falls back to `subtle`.
         let chrome_tier = if ui.base.l > 0.5 {
             ui.subtle
         } else {
             ui.overlay
         };
-        // Grab handle for drag-to-rearrange (inc 5): the branch name is the drag
-        // payload's ghost label. Click still selects (GPUI distinguishes click
-        // from drag by a move threshold).
         let branch_drag = SharedString::from(col.branch.clone());
         let header = div()
             .id(SharedString::from(format!("diff-col-head-{idx}")))
-            // Positioned ancestor for the Review CLI-picker popover below.
             .relative()
             .flex()
             .flex_row()
@@ -375,9 +347,6 @@ impl DiffView {
             .gap(px(6.))
             .px(px(8.))
             .py(px(4.))
-            // EP-002 US-008: selected = accent-tinted header + a 3px left accent
-            // bar (below), replacing the ~invisible 1px bottom accent border.
-            // The bottom border is now a neutral hierarchy divider only.
             .bg(if selected {
                 ui.accent.opacity(0.08)
             } else {
@@ -398,7 +367,6 @@ impl DiffView {
             })
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.select_column(idx, cx);
-                // US-009: focus the body so the keyboard review loop is live.
                 window.focus(&this.focus_handle, cx);
             }))
             .on_drag(
@@ -426,16 +394,8 @@ impl DiffView {
                     .text_color(ui.muted)
                     .child(summary),
             )
-            // EP-004 US-015: agent attribution badge between the file-count chip
-            // and the base chip. Zero-width slot when no session matched.
             .children(self.render_attribution_badge(col, ui))
             .when(has_base, move |d| d.child(base_chip))
-            // Review this branch: launch one or more CLIs against its diff. Sits
-            // beside the terminal button (prd-ai-in-diff-2026-Q3.md); live only
-            // when the column has changes.
-            // EP-003 US-010: the signature "Review this branch" action is a
-            // labeled pill (sparkles + text), not a bare eye icon - it reads as
-            // the primary AI affordance instead of a mystery glyph.
             .when(col_has_changes, |d| {
                 d.child(
                     crate::ui_primitives::toolbar_pill(
@@ -459,8 +419,6 @@ impl DiffView {
                     .child("Review"),
                 )
             })
-            // Open a plain terminal in this branch's worktree, embedded under the
-            // diff (prd-ai-in-diff-2026-Q3.md).
             .child(
                 div()
                     .id(SharedString::from(format!("diff-col-term-{idx}")))
@@ -496,9 +454,6 @@ impl DiffView {
                         style.text_color(lerp_color(ui.muted, ui.text, delta));
                     })
                     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
-                        // Worktree scope: deselect the branch from the scope (the
-                        // host drops it + rebuilds) so it's strictly shown-or-not.
-                        // Other scopes keep the in-place hide.
                         if this.close_removes {
                             if let Some(col) = this.columns.get(idx) {
                                 cx.emit(DiffViewEvent::CloseColumn {
@@ -511,13 +466,11 @@ impl DiffView {
                     }))
                     .child("×"),
             )
-            // Per-branch Review CLI-picker popover, anchored under this header.
             .when(review_open, |d| {
                 d.child(self.render_review_menu(idx, ui, cx))
             });
 
         let body: AnyElement = match &col.state {
-            // EP-002 US-008: designed loading + failure states, not raw strings.
             ColumnState::Loading => crate::ui_primitives::panel_empty_state(
                 ui,
                 Some("icons/loader-circle.svg"),
@@ -542,8 +495,6 @@ impl DiffView {
                 .into_any_element(),
             ColumnState::Loaded { file_count, .. } if *file_count == 0 => {
                 let b = col.base_override.as_deref().unwrap_or(&self.base_ref);
-                // EP-003 US-012 / edge case #4: a designed "Clean" state, not a
-                // raw centered string.
                 panel_empty_state(
                     ui,
                     Some("icons/check.svg"),
@@ -562,13 +513,6 @@ impl DiffView {
             )
             .into_any_element(),
             ColumnState::Loaded { .. } => {
-                // Custom direct-paint element hosted in an overflow-scroll div:
-                // the element reports full content height; the div clips/scrolls
-                // and supplies the viewport clip the element culls against. Renders
-                // the collapse-filtered views (`disp_*`). The scroll-wheel listener
-                // marks this column the sync driver; the click listener maps the
-                // click Y to a row and toggles that file's collapse if it landed
-                // on a file header.
                 let body = match mode {
                     ViewMode::Split => DiffBody::Split {
                         rows: col.disp_split.clone(),
@@ -612,8 +556,6 @@ impl DiffView {
                     .on_click(cx.listener(move |this, ev: &ClickEvent, window, cx| {
                         this.handle_body_click(idx, ev, window, cx);
                     }))
-                    // Track the pointer for `Ctrl+Shift+C` (hunk under cursor)
-                    // without turning changed lines into hover-driven controls.
                     .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _window, _cx| {
                         this.last_body_pos = Some((idx, ev.position));
                     }))
@@ -632,38 +574,16 @@ impl DiffView {
 
         div()
             .flex_1()
-            // `h_full` + `min_h_0`: pin the column to the (definite) height of the
-            // horizontally-scrolling columns row. Without a definite height the
-            // `overflow_y_scroll` host can't clip, so `DiffElement` (which reports
-            // full content height) would paint every row instead of culling to the
-            // viewport - the scroll lag. With it, only the ~viewport rows paint.
             .h_full()
             .min_h_0()
-            // Panes shrink to share the split evenly (inc 5); the DiffElement
-            // clips long lines per-pane, so a narrow pane shows fewer columns of
-            // code rather than overflowing. Borders are drawn by the arrangement
-            // walk between siblings, so the column itself draws none.
             .min_w_0()
             .flex()
             .flex_col()
-            // Codex redesign: the column header only earns its row when there
-            // are multiple columns to tell apart. Solo column: the branch is
-            // already in the breadcrumb + sidebar; its Review/Terminal actions
-            // live in the toolbar (see `render_toolbar`).
             .children((self.visible_count() > 1).then_some(header))
             .child(body)
-            // Embedded review CLIs render UNDER the diff body, in the Diff
-            // interface (prd-ai-in-diff-2026-Q3.md, terminal-launch revision).
             .children(self.render_review_terminals(idx, col, ui, cx))
     }
 
-    /// The single Diff-mode chrome row (Codex redesign): scope breadcrumb
-    /// (host-pushed `scope_slot`) › base selector on the left; hunk nav +
-    /// list actions + view-mode on the right. No own background and no
-    /// border - it sits directly on the panel (`ui.base`), separation by
-    /// spacing. The diffstat is gone from here: it lives ONCE, in the
-    /// sidebar "Changes" header. In single-column scopes the per-column
-    /// Review/Terminal buttons migrate here (the column header is hidden).
     fn render_toolbar(
         &self,
         effective: ViewMode,
@@ -672,38 +592,24 @@ impl DiffView {
     ) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
         let hidden = self.columns.len() - self.visible_count();
-        // Derived live (not a cached flag) so the chip can never disagree with the
-        // real per-column collapse state.
         let all_collapsed = self.all_visible_collapsed();
 
-        // Single-column scope: the column header row is not rendered, so its
-        // Review / Terminal actions surface here instead.
         let solo_idx = (self.visible_count() == 1)
             .then(|| self.selected_or_first_visible())
             .flatten();
 
-        // Hunk-nav state for the selected column: (total hunks, current index by
-        // scroll position). `None` / total 0 hides the control. Stateless - read
-        // from the live scroll offset so it tracks manual scrolling.
         let hunk_nav = self
             .selected_or_first_visible()
             .and_then(|i| self.columns.get(i))
             .map(|col| {
                 let tops = col.hunk_tops(effective);
                 let cur_y = f32::from(-col.el_scroll.offset().y).max(0.0);
-                // US-009: report the hunk parked at/above the viewport top by
-                // `goto_hunk` (it lands a hunk's first line HUNK_JUMP_MARGIN px
-                // below the top), NOT a cumulative count of every hunk scrolled
-                // past. Pivoting on `cur_y + HUNK_JUMP_MARGIN` makes the counter
-                // read exactly the hunk the nav last jumped to.
                 let pivot = cur_y + HUNK_JUMP_MARGIN;
                 let current = tops.partition_point(|&t| t <= pivot + 4.0);
                 (tops.len(), current)
             })
             .filter(|(total, _)| *total > 0);
 
-        // Pill control (icon + label). `active` paints the resting highlight
-        // (open popover / toggle on).
         let control =
             |id: &'static str, active: bool| crate::ui_primitives::toolbar_pill(id, ui, active);
         let icon = |path: &'static str| {
@@ -714,11 +620,6 @@ impl DiffView {
                 .text_color(ui.muted)
         };
 
-        // One segment of the Unified|Split control. Monochrome translucent
-        // language (matches the CLI/Diff/Agents toggle) so it adapts to any
-        // theme; the active segment is filled. Captures only `ui` (not `cx`) so
-        // it can't tangle with the `cx` borrows elsewhere in the chain - the
-        // click is attached by the caller for the inactive segment only.
         let seg =
             |id: &'static str, label: &'static str, icon_path: &'static str, is_active: bool| {
                 let resting_text = if is_active {
@@ -763,7 +664,6 @@ impl DiffView {
             .h(px(36.))
             .flex_none()
             .px(px(10.))
-            // --- left: scope breadcrumb (host slot) › base branch ---
             .when_some(scope_slot, |d, slot| {
                 d.child(slot).child(
                     gpui::svg()
@@ -797,9 +697,6 @@ impl DiffView {
             .when(self.base_picker_open, |d| {
                 d.child(deferred(self.render_base_popover(cx)).with_priority(10))
             })
-            // (No diffstat / proportion bar here - purely informational; it
-            // lives once, in the sidebar "Changes" header.)
-            // --- hunk navigation: prev / counter / next ---
             .when_some(hunk_nav, |d, (total, current)| {
                 let shown = current.clamp(1, total);
                 let nav_btn = |id: &'static str, icon_path: &'static str| {
@@ -841,8 +738,6 @@ impl DiffView {
                         ),
                 )
             })
-            // EP-004 US-017: aggregated estimated cost across attributed
-            // worktrees. Hidden when nothing is priced (no fabricated total).
             .when_some(self.attribution_total(), |d, (total, n)| {
                 let cost = crate::pricing::format_cost(total);
                 d.child(
@@ -869,11 +764,7 @@ impl DiffView {
                         }),
                 )
             })
-            // --- spacer ---
             .child(div().flex_1())
-            // --- single-column: per-branch Review / Terminal actions, migrated
-            // from the (hidden) column header. The Review popover anchors to
-            // its button's relative wrapper.
             .when_some(solo_idx, |d, idx| {
                 let col_has_changes = self.columns.get(idx).is_some_and(Self::column_has_changes);
                 let review_open = self.review_menu_open == Some(idx);
@@ -882,8 +773,6 @@ impl DiffView {
                         div()
                             .relative()
                             .child(
-                                // EP-003 US-010: labeled Review pill (sparkles +
-                                // text), matching the per-column header action.
                                 crate::ui_primitives::toolbar_pill(
                                     "diff-toolbar-review",
                                     ui,
@@ -926,7 +815,6 @@ impl DiffView {
                     )),
                 )
             })
-            // --- right: list actions ---
             .child(
                 control("diff-collapse-all", false)
                     .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
@@ -966,7 +854,6 @@ impl DiffView {
                         .child(icon("icons/link.svg")),
                 )
             })
-            // --- right: view-mode segmented control ---
             .child(
                 div()
                     .flex_none()

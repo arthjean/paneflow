@@ -1,11 +1,3 @@
-//! The diff dock's "new tab" menu: the popover the tab strip's `+` opens.
-//!
-//! Codex-app shape (the closest match to Paneflow's own chrome): a floating
-//! rounded surface, one row per surface a tab can host, each carrying its icon,
-//! its label and its shortcut hint. Cursor's Browser and Canvas rows have no
-//! counterpart here, and its "Open any file, URL" search field belongs to a
-//! command palette Paneflow does not have.
-
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
     ParentElement, StatefulInteractiveElement, Styled, deferred, div, px, svg,
@@ -14,8 +6,6 @@ use gpui::{
 use crate::PaneFlowApp;
 use crate::settings::components::{menu_surface, select_item};
 
-/// Width of the popover. Sized so the widest label and its shortcut hint sit on
-/// one line with the gutter Codex leaves between the two columns.
 const MENU_WIDTH: f32 = 236.0;
 
 impl PaneFlowApp {
@@ -32,8 +22,6 @@ impl PaneFlowApp {
     }
 }
 
-/// The popover, deferred over the `+` trigger while open. Anchored to the
-/// trigger's left edge so it unfolds into the dock rather than off its side.
 pub(super) fn render_diff_new_tab_menu(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
@@ -45,9 +33,6 @@ pub(super) fn render_diff_new_tab_menu(
         .p(px(4.))
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        // Dismiss on release, not on press: `on_mouse_down_out` runs in the
-        // capture phase, which would close the menu before a row's click can
-        // bubble (same reasoning as the overflow menu next door).
         .on_mouse_up_out(
             MouseButton::Left,
             cx.listener(|this, _: &MouseUpEvent, _w, cx| {
@@ -93,12 +78,6 @@ pub(super) fn render_diff_new_tab_menu(
     .into_any_element()
 }
 
-/// One surface row: icon, label, then the shortcut hint pinned right. The
-/// caller attaches the click, so each row states for itself what it opens.
-/// `shortcut` is the binding as `keybindings::defaults` declares it, not a
-/// pre-rendered label: `secondary-` resolves to Ctrl on Linux and Windows and
-/// to Cmd on macOS, so the row has to be formatted here or it advertises a
-/// chord that does not exist on one of the three platforms.
 fn menu_row(
     id: &'static str,
     icon: &'static str,

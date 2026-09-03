@@ -1,7 +1,3 @@
-//! US-008 (prd-git-diff-mode-2026-Q3.md): one changed-file row for the Git
-//! Diff mode git panel. Split out of `diff_sidebar/mod.rs` to keep that file
-//! under the 250-line cap.
-
 use crate::PaneFlowApp;
 use crate::diff::{FileChange, FileEntry};
 use crate::theme::UiColors;
@@ -14,13 +10,6 @@ use gpui::{
 use super::{REVIEW_SIDEBAR_ROW_MARGIN_X, REVIEW_SIDEBAR_ROW_PADDING_X, REVIEW_SIDEBAR_ROW_RADIUS};
 
 impl PaneFlowApp {
-    /// One changed-file row: status-colored letter + filename + dimmed
-    /// directory + +/- counts. Click selects `col_idx`'s branch AND scrolls its
-    /// diff body to the file (so clicking a file in any branch section focuses
-    /// that branch); no re-diff. `is_active` is whether `col_idx` is the column
-    /// currently driving the body - only then does the selected-file highlight
-    /// light up, so a filename present in several branches isn't highlighted in
-    /// every section.
     pub(super) fn render_diff_file_row(
         &self,
         entry: &FileEntry,
@@ -30,8 +19,6 @@ impl PaneFlowApp {
         ui: UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Shared diff palette (Codex green/red on dark, theme vc_* on light) so
-        // the sidebar status hues match the diff body and the Agents dock.
         let diff = ui.diff_colors();
         let (letter, color) = match entry.change {
             FileChange::Added => ("A", diff.added),
@@ -43,11 +30,6 @@ impl PaneFlowApp {
             Some(i) => (entry.path[..i].to_string(), entry.path[i + 1..].to_string()),
             None => (String::new(), entry.path.clone()),
         };
-        // For a rename, show the source path as the dimmed tail (`← old`) instead
-        // of the destination directory, so the move is legible at a glance. In
-        // tree mode (indent > 0) the enclosing directory is already the folder
-        // node above, so the plain dir tail is redundant and dropped - renames
-        // still keep their `← old` source.
         let dir = match (entry.change, &entry.old_path) {
             (FileChange::Renamed, Some(old)) => format!("← {old}"),
             _ if indent_px > 0.0 => String::new(),
@@ -70,8 +52,6 @@ impl PaneFlowApp {
         };
 
         div()
-            // Include `col_idx` so the same file path in two branch sections
-            // doesn't collide on a duplicate element id.
             .id(SharedString::from(format!(
                 "diff-file-{col_idx}-{}",
                 entry.path
@@ -90,9 +70,6 @@ impl PaneFlowApp {
             .animated_hover_bg(resting_background, row_background)
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.diff_mode.diff_selected_file = Some(path.clone());
-                // Select that branch's column AND scroll its body to this file.
-                // Multi-project routes through the selected repo tab; the other
-                // scopes through the single mounted DiffView.
                 match this.diff_mode.diff_scope {
                     crate::diff::DiffScope::MultiProject => {
                         if let Some(mv) = this.diff_mode.multi_diff_view.clone() {
@@ -118,8 +95,6 @@ impl PaneFlowApp {
                     .font_weight(FontWeight::BOLD)
                     .child(letter),
             )
-            // Middle: filename (prominent) + dimmed directory tail. Takes the
-            // remaining width so the +/- counts always pin to the right edge.
             .child(
                 div()
                     .flex_1()

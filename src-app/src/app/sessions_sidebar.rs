@@ -1,19 +1,3 @@
-//! Agent-sessions right sidebar (PRD `prd-agent-sessions-sidebar-2026-Q3`,
-//! EP-001).
-//!
-//! Docked panel that replaces the former anchored popover: it lists the active
-//! terminal's cwd-scoped sessions for every enabled agent with a documented
-//! local list+resume contract as stacked groups. Toggled by the tab-bar sessions button via
-//! `PaneEvent::ToggleAgentSessions`; it stays open while you work because it is
-//! a layout child of the root row, not a `deferred()` overlay. Clicking a row
-//! issues the agent's `--resume` command into the bound pane and keeps the
-//! sidebar open.
-//!
-//! Reuses the session data layer verbatim (`SessionMeta`,
-//! `read_sessions_for_cwd`, `enabled_session_agents`). Per-group cap-5 /
-//! "Show more" / collapse caret and the per-group "new session" affordance land
-//! in EP-002 - this slice swaps the surface and renders flat groups.
-
 use crate::ui_primitives::TooltipDelayExt;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, Hsla, InteractiveElement, IntoElement,
@@ -28,27 +12,16 @@ use crate::app::ipc_handler::find_pane_by_surface_id;
 use crate::pane_drag::{DragPreview, SessionDrag};
 use crate::ui_primitives::{AnimatedHoverExt, lerp_color};
 
-/// Fixed sidebar width - between the CLI (220) and Agents (280) left sidebars,
-/// matching VS Code's secondary-bar default. Resizable width is deferred.
 pub(crate) const SESSIONS_SIDEBAR_WIDTH: f32 = 300.;
 const ROW_HEIGHT: Pixels = px(30.);
 
 impl PaneFlowApp {
-    /// Open (or re-target) the sessions sidebar for `pane`: resolve the
-    /// pane's terminal cwd, bind the resume target, reset per-group state,
-    /// and kick the per-agent scans. Shared by the tab-bar toggle
-    /// (`PaneEvent::ToggleAgentSessions`) and the workspace switch
-    /// (`select_workspace` re-targets an open sidebar to the new active
-    /// workspace through this same path).
     pub(crate) fn open_sessions_sidebar_for_pane(
         &mut self,
         pane: &gpui::Entity<crate::pane::Pane>,
         focus_window: Option<&mut Window>,
         cx: &mut Context<Self>,
     ) {
-        // Resolve the active terminal's cwd: prefer the OSC 7 push
-        // (`current_cwd`), fall back to the on-demand `cwd_now()` syscall for
-        // shells that don't emit OSC 7.
         let terminal = pane.read(cx).active_terminal_opt();
         let surface_id = terminal.as_ref().map(|tv| tv.entity_id().as_u64());
         let cwd_str = terminal.as_ref().and_then(|tv| {
@@ -60,14 +33,10 @@ impl PaneFlowApp {
             })
         });
 
-        // Mutual exclusion: only one right column. Opening sessions closes
-        // the Files sidebar (and vice-versa, in `toggle_files_sidebar`).
         if self.files_sidebar_open {
             self.close_files_sidebar(cx);
         }
 
-        // Close floating dropdowns so they don't paint over the newly opened
-        // docked sidebar.
         self.dismiss_transient_surfaces();
 
         self.set_sessions_sidebar_open(true, cx);
@@ -76,8 +45,6 @@ impl PaneFlowApp {
         for sessions in &mut self.agent_sessions.sessions_by_agent {
             sessions.clear();
         }
-        // Fresh per-group state for this open: all expanded, capped at 5,
-        // not-yet-scanning (each spawned scan flips its own flag below).
         self.agent_sessions.sessions_omitted = [0; crate::agent_sessions::SESSION_AGENT_COUNT];
         self.agent_sessions.sessions_group_collapsed =
             [false; crate::agent_sessions::SESSION_AGENT_COUNT];
@@ -90,8 +57,6 @@ impl PaneFlowApp {
         let scan_generation = self.agent_sessions.sessions_scan_generation;
         let enabled_agents =
             crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config);
-        // Fresh handle so a previous scroll offset doesn't bleed into the new
-        // sidebar.
         self.agent_sessions.sessions_scroll = gpui::ScrollHandle::new();
 
         if let Some(window) = focus_window {
@@ -99,16 +64,6 @@ impl PaneFlowApp {
         }
 
         if let Some(cwd) = cwd_str {
-            // Parallel scans. Each supported agent owns a documented native
-            // contract (JSONL store or CLI list command) and writes to its own
-            // Vec on the main thread. The sidebar may be closed or re-targeted
-            // against a different cwd before any scan finishes, so stale
-            // results are dropped by checking the target cwd and scan
-            // generation before applying.
-            //
-            // Scans for agents the user has hidden in Settings → AI Agent are
-            // skipped: with no UI to surface them the disk read would just be
-            // wasted I/O.
             for agent in enabled_agents {
                 self.spawn_sessions_scan(agent, cwd.clone(), scan_generation, cx);
             }
@@ -161,8 +116,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// Render the docked sessions sidebar (right edge of the root `flex_row`).
-    /// Only called while the sidebar is open or animating closed.
     pub(crate) fn render_sessions_sidebar(
         &self,
         window: &Window,
@@ -179,8 +132,6 @@ impl PaneFlowApp {
             .h_full()
             .track_focus(&self.agent_sessions.sessions_focus)
             .on_key_down(cx.listener(Self::handle_sessions_sidebar_key_down))
-            // Match the app's other navigation rails: optional native material
-            // on Windows, platform default on macOS, and a light/dark tint on Linux.
             .bg(crate::app::constants::cockpit_chrome_background(
                 theme.title_bar_background,
                 window.is_window_active(),
@@ -203,8 +154,6 @@ impl PaneFlowApp {
             .items_center()
             .justify_between()
             .gap(px(8.))
-            // Quiet header - no divider (Codex: separation by spacing, not
-            // borders). Slightly taller to carry the cwd wayfinding line.
             .h(px(46.))
             .flex_none()
             .px(px(12.))
@@ -291,10 +240,6 @@ impl PaneFlowApp {
                 .into_any_element();
         }
 
-        // US-008: an agent can be toggled off in Settings while the sidebar is
-        // open. The list is driven by the cached config snapshot, so a disabled
-        // agent's group disappears on the next render after propagation; if the
-        // user disables them all, show an empty state rather than a blank panel.
         let enabled =
             crate::agent_sessions::enabled_session_agents_from_config(&self.cached_config);
         if enabled.is_empty() {
@@ -318,8 +263,6 @@ impl PaneFlowApp {
             .flex_col()
             .flex_1()
             .py(px(6.))
-            // US-009: vertical scroll only - never let a long row title push the
-            // panel into horizontal scrolling.
             .overflow_x_hidden()
             .overflow_y_scroll()
             .track_scroll(&self.agent_sessions.sessions_scroll);
@@ -366,19 +309,12 @@ impl PaneFlowApp {
         let scanning = self.agent_sessions.sessions_scanning[idx];
         let sessions = self.sessions_for(agent);
         let omitted = self.sessions_omitted_for(agent);
-        // Distinct chevron per state (US-006): right = collapsed, down =
-        // expanded - a static swap, not a tween, so it reads under reduced
-        // motion.
         let chevron = if collapsed {
             "icons/chevron-right.svg"
         } else {
             "icons/chevron-down.svg"
         };
 
-        // US-006: the whole header toggles the group's collapse. Styled as a
-        // section eyebrow: small semibold muted
-        // label, brand glyph kept in its native accent - the only color in
-        // the rail, carrying real signal (which tool).
         let header = div()
             .id(SharedString::from(format!(
                 "sessions-group-{}",
@@ -406,7 +342,6 @@ impl PaneFlowApp {
                     .text_color(ui.muted)
                     .child(agent_label(agent)),
             )
-            // Collapse chevron, sitting just after the agent name.
             .child(
                 svg()
                     .size(px(12.))
@@ -417,13 +352,11 @@ impl PaneFlowApp {
 
         let mut group = div().flex().flex_col().child(header);
 
-        // Collapsed → header only (US-006).
         if collapsed {
             return group.into_any_element();
         }
 
         if sessions.is_empty() {
-            // US-004: distinguish a pending scan from a genuinely empty group.
             let msg: SharedString = if scanning {
                 SharedString::from("Scanning\u{2026}")
             } else {
@@ -439,7 +372,6 @@ impl PaneFlowApp {
                     .child(msg),
             );
         } else {
-            // US-005: cap at 5, reveal the rest behind "Show N more".
             let (visible, remaining) = visible_window(sessions.len(), show_all, CAP);
             for session in sessions.iter().take(visible) {
                 group = group.child(self.sessions_row(
@@ -542,9 +474,6 @@ impl PaneFlowApp {
             .unwrap_or_else(|| short_session_id(&session_id))
             .into();
 
-        // Drag payload: dropping this row on a pane spawns a fresh terminal at
-        // the session's cwd running its resume command (drop-to-split / append
-        // as a tab). The ghost reuses the tab-drag preview.
         let drag_payload = SessionDrag {
             agent,
             session_id: session_id.clone(),
@@ -574,20 +503,13 @@ impl PaneFlowApp {
             .animated_hover(move |style, delta| {
                 style.bg(lerp_color(resting_background, hover_background, delta));
             })
-            // US-007 (partial): resume into the bound pane; the docked sidebar
-            // stays open (unlike the old popover).
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.agent_sessions.sessions_focus.focus(window, cx);
                 this.select_session_row(agent, &session_id);
                 this.resume_session_from_sidebar(agent, &session_id, cx);
                 cx.stop_propagation();
             }))
-            // Per-session agent glyph in its brand accent - a touch smaller
-            // than the group-header mark so the header still reads as the
-            // section anchor.
             .child(agent_icon_element(agent, px(13.), ui))
-            // Title takes the slack and ellipsizes; the relative time is pinned
-            // to the trailing edge on the same line (US-009 row stays one line).
             .child(
                 div()
                     .flex_1()
@@ -665,8 +587,6 @@ impl PaneFlowApp {
             return ResumeSendResult::WrongCwd;
         }
         terminal.read(cx).send_command(command);
-        // A resume command names its agent - declare it so the surface's logo
-        // updates with the resume instead of one scan tick later.
         terminal.update(cx, |view, _cx| view.declare_agent_from_command(command));
         ResumeSendResult::Sent
     }
@@ -888,9 +808,6 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// Start closing the sidebar and invalidate in-flight scans immediately.
-    /// The visible rows are cleared only after the width animation reaches
-    /// zero, so the closing panel never flashes an empty-state body.
     pub(crate) fn close_sessions_sidebar(&mut self, cx: &mut Context<Self>) {
         self.agent_sessions.sessions_scan_generation =
             self.agent_sessions.sessions_scan_generation.wrapping_add(1);
@@ -898,7 +815,6 @@ impl PaneFlowApp {
     }
 }
 
-/// Default per-group row cap before "Show more" (US-005).
 const CAP: usize = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -944,16 +860,10 @@ fn should_apply_scan_result(
     sidebar_open && current_cwd == Some(expected_cwd) && current_generation == expected_generation
 }
 
-/// Stable group index for the per-agent state arrays. Shared with
-/// `event_handlers` so the scan-in-flight flag and the render read the same
-/// slot.
 pub(crate) fn agent_index(agent: SessionAgent) -> usize {
     agent.index()
 }
 
-/// Given a group of `len` rows, the cap, and whether the group is expanded,
-/// return `(visible, remaining)`: how many rows to render and how many are
-/// hidden behind "Show more". Pure - unit-tested (US-005).
 fn visible_window(len: usize, show_all: bool, cap: usize) -> (usize, usize) {
     if show_all || len <= cap {
         (len, 0)
@@ -995,20 +905,14 @@ fn agent_id_prefix(agent: SessionAgent) -> &'static str {
     agent.terminal_agent().tag()
 }
 
-/// Display name for a group header.
 fn agent_label(agent: SessionAgent) -> &'static str {
     agent.label()
 }
 
-/// Brand glyph for a group/session - the same monochrome (`currentColor`) SVGs
-/// the tab-bar launcher buttons use, tinted at the call site.
 fn agent_icon_path(agent: SessionAgent) -> &'static str {
     agent.icon_path()
 }
 
-/// Accent for a group's brand glyph - matches the launcher buttons in
-/// `pane.rs` (Claude orange, Codex blue). OpenCode's mark is monochrome, so it
-/// rides the theme text color to stay legible on dark and light surfaces.
 fn agent_brand_color(agent: SessionAgent, ui: crate::theme::UiColors) -> Hsla {
     agent
         .terminal_agent()
@@ -1033,20 +937,10 @@ fn agent_icon_element(agent: SessionAgent, size: Pixels, ui: crate::theme::UiCol
     }
 }
 
-/// True when Settings -> AI Agent has `claude_code_bypass_permissions` toggled
-/// on in the caller's config snapshot.
 fn claude_bypass_enabled(config: &paneflow_config::schema::PaneFlowConfig) -> bool {
     config.claude_code_bypass_permissions.unwrap_or(false)
 }
 
-/// Build the command sent to the bound terminal when a session row is clicked.
-/// For Claude, honor `claude_code_bypass_permissions` so resumed sessions match
-/// a fresh launch from the tab-bar button.
-///
-/// Returns `None` when `session_id` fails the strict allow-list - a last gate
-/// before interpolation so a tampered record that somehow bypassed the scanner
-/// filter (`*_sessions.rs`) can never inject a second shell command. Callers
-/// skip the send on `None`.
 pub(crate) fn resume_command(
     agent: SessionAgent,
     session_id: &str,
@@ -1133,13 +1027,6 @@ mod tests {
 
     #[test]
     fn resume_command_neutralizes_flag_shaped_session_id() {
-        // US-019: `resume_command` is the single builder that interpolates a
-        // persisted/restored `session_id` into a PTY command line. It must
-        // re-gate via `is_valid_session_id` so a flag-shaped value (one that
-        // could inject e.g. `--dangerously-skip-permissions`) is refused at
-        // the builder boundary - the call sites skip the send on `None`.
-        // This proves the integration, not just the predicate
-        // (`agent_sessions::valid_session_id_rejects_leading_dash_*`).
         let cfg = paneflow_config::schema::PaneFlowConfig::default();
         for agent in SessionAgent::ALL {
             assert_eq!(
@@ -1151,7 +1038,6 @@ mod tests {
             assert_eq!(resume_command(agent, "ses_x; rm -rf ~", &cfg), None);
             assert_eq!(resume_command(agent, "$(reboot)", &cfg), None);
         }
-        // A legitimate UUID session id still builds a command for every agent.
         let valid = "019dc9ea-38d7-7372-9cc4-253ce944d41b";
         for agent in SessionAgent::ALL {
             assert!(resume_command(agent, valid, &cfg).is_some());

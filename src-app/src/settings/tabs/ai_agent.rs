@@ -1,19 +1,3 @@
-//! "AI Agent" settings page - compact toggles for the built-in AI launcher
-//! buttons rendered in every tab bar. The Permissions and AI access sections
-//! live on the General page: they gate what an agent may do to the machine and
-//! to its peer panes, which is a workspace-level decision rather than a
-//! per-launcher one.
-//!
-//! Sections use lowercase eyebrows followed by `setting_card` groups of toggles,
-//! separated by `hairline()` dividers. Only the switch is interactive - the row
-//! itself does not hover or click.
-//!
-//! Persistence goes through [`PaneFlowApp::persist_setting`] - it mutates the
-//! cached config for instant feedback and writes `paneflow.json` off the main
-//! thread; `pane.rs` picks up the new state via the ConfigWatcher propagation so
-//! the tab bar reflects changes without a restart. The MCP bridge installer
-//! lives on its own page (`settings::tabs::mcp`).
-
 use gpui::{
     AnyElement, Context, Hsla, IntoElement, ParentElement, SharedString, Styled, div, img, px, rgb,
     svg,
@@ -148,7 +132,6 @@ const AGENT_TOGGLE_ROWS: &[AgentToggleRow] = &[
 
 impl PaneFlowApp {
     pub(crate) fn render_ai_agent_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        // Read the cached config (no per-frame `load_config()`).
         let config = &self.cached_config;
         let ui = crate::theme::ui_colors();
 
@@ -157,10 +140,6 @@ impl PaneFlowApp {
             if idx > 0 {
                 buttons_card = buttons_card.child(hairline(ui));
             }
-            // Effective state, not the raw key: an absent key defaults to
-            // "shown only if the agent's CLI is installed" (see
-            // `TerminalAgent::is_visible`). Toggling writes an explicit
-            // `Some(..)` that pins the choice regardless of install state.
             buttons_card = buttons_card.child(toggle_row(
                 row.id,
                 row.title,
@@ -187,10 +166,6 @@ impl PaneFlowApp {
     }
 }
 
-/// The agent's logo for its settings row, rendered identically to the tab
-/// bar: multi-color logos via `img()` (native palette preserved), monochrome
-/// logos via a `text_color`-tinted `svg()` mask (brand accent if any, else
-/// the theme's primary text color).
 fn agent_icon_el(agent: TerminalAgent, ui: crate::theme::UiColors) -> AnyElement {
     let path = SharedString::from(agent.icon_path());
     if agent.icon_multicolor() {

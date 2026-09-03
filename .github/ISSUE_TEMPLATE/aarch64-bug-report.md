@@ -9,7 +9,7 @@ assignees: []
 <!--
 Thanks for filing an aarch64-specific report! PaneFlow's ARM64 build
 ships from a native `ubuntu-22.04-arm` CI runner without on-device
-runtime testing (see `docs/validation-aarch64.md`), so bugs that only
+runtime testing, so bugs that only
 surface on real hardware are especially valuable - please fill in as
 much of the context below as you can.
 

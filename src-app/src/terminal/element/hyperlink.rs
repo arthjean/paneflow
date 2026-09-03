@@ -1,33 +1,15 @@
-//! URL and file-path detection for the terminal renderer.
-//!
-//! Two scanners share the same line-scoped, char-to-column mapped pattern:
-//! - `detect_urls_on_line_mapped`  - Zed-style URL regex (US-015).
-//! - `detect_file_paths_on_line_mapped` - `.md` / `.markdown` paths with
-//!   existence check + heuristics (US-019).
-//!
-//! Both return `HyperlinkZone`; the scheme allowlist (`is_url_scheme_openable`)
-//! guards what `TerminalView` will actually open.
-
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 pub use crate::terminal::types::{HyperlinkSource, HyperlinkZone};
 
-/// URL regex pattern matching Zed's terminal_hyperlinks.rs.
-/// Excludes C0/C1 control chars, whitespace, angle brackets, quotes, and other
-/// non-URL characters. Box-drawing chars (U+2500-U+257F) are not valid URL
-/// characters and won't match the allowed character class.
 pub(super) const URL_REGEX_PATTERN: &str = r#"(mailto:|gemini://|gopher://|https://|http://|news:|git://|ssh:|ftp://|ipfs:|ipns:|magnet:)[^\x00-\x1f\x7f-\x9f<>"\s{}\^⟨⟩`']+"#;
 
-/// Lazily compiled URL regex (compiled once, reused across all calls).
 pub(super) fn url_regex() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     RE.get_or_init(|| regex::Regex::new(URL_REGEX_PATTERN).expect("URL regex compilation failed"))
 }
 
-/// Detect URLs on a single terminal line via regex with char-to-column mapping.
-/// `char_to_col` maps each character index in `line_text` to its grid column,
-/// accounting for wide-char spacers that were skipped during text extraction.
 pub fn detect_urls_on_line_mapped(
     line_text: &str,
     line: crate::terminal::types::Line,
@@ -36,12 +18,7 @@ pub fn detect_urls_on_line_mapped(
     let re = url_regex();
     re.find_iter(line_text)
         .filter_map(|m| {
-            // Convert byte offsets to char indices for column lookup
             let char_start = line_text[..m.start()].chars().count();
-            // US-020: trim trailing punctuation / unbalanced close-parens the
-            // regex over-captures in prose (e.g. `(see https://x.com/p).`).
-            // `char_end` is recomputed from the TRIMMED length so the hover
-            // zone ends on the last clickable char, not on the stripped tail.
             let trimmed = sanitize_url_punctuation(m.as_str());
             let char_end = (char_start + trimmed.chars().count()).saturating_sub(1);
             let col_start = char_to_col.get(char_start)?;
@@ -62,19 +39,6 @@ pub fn detect_urls_on_line_mapped(
         .collect()
 }
 
-/// Strip trailing punctuation a URL almost never intends when it appears in
-/// free-form prose (US-020). Returns a sub-slice of the input (zero alloc).
-///
-/// Algorithm mirrors Zed's terminal `sanitize_url_punctuation`, adapted to
-/// operate on a `&str` instead of a grid `Match`:
-/// - count `(`/`)` and `[`/`]` over the WHOLE match first (so balanced pairs
-///   are known before trimming);
-/// - walk from the right, stripping `. , : ; ! ? ( [` unconditionally and a
-///   trailing `)` / `]` only while its closes still exceed its opens.
-///
-/// So `https://example.com/path).` → `https://example.com/path`, but
-/// `https://en.wikipedia.org/wiki/Example_(disambiguation)` is preserved.
-/// Paneflow extends Zed with `! ?` (PRD) and `]` (Markdown link tails).
 pub(super) fn sanitize_url_punctuation(url: &str) -> &str {
     let (open_parens, mut close_parens, open_brackets, mut close_brackets) = url.chars().fold(
         (0usize, 0usize, 0usize, 0usize),
@@ -109,14 +73,6 @@ pub(super) fn sanitize_url_punctuation(url: &str) -> &str {
     &url[..end]
 }
 
-/// Check if a URL scheme is in the allowlist for opening.
-///
-/// Mirrors the regex above: all schemes captured by `URL_REGEX_PATTERN` are
-/// considered openable, since `open::that` ultimately defers to the OS handler
-/// (`xdg-open` / `open` / `start`) which knows whether a scheme is registered.
-/// `file://` is intentionally excluded from the generic URL path. Local files
-/// must go through the canonicalized file/code scanners instead of OS scheme
-/// dispatch.
 pub fn is_url_scheme_openable(uri: &str) -> bool {
     if uri.starts_with("http://")
         || uri.starts_with("https://")
@@ -135,10 +91,6 @@ pub fn is_url_scheme_openable(uri: &str) -> bool {
     }
     false
 }
-
-// ---------------------------------------------------------------------------
-// File-path scanner (US-019)
-// ---------------------------------------------------------------------------
 
 const MARKDOWN_EXTENSIONS: &[&str] = &["md", "markdown"];
 
@@ -188,11 +140,8 @@ fn extension_tail_ok(line_text: &str, ext_end: usize) -> bool {
     !line_text[ext_end..].starts_with('.')
 }
 
-/// Minimum stem length (basename without extension) for candidates that have
-/// no path separator. `123.md` → rejected; `/foo/bar.md` accepted regardless.
 const MIN_BARE_STEM_LEN: usize = 4;
 
-/// Returns true if `path_str` looks like a Windows absolute path (`C:\foo` or `C:/foo`).
 fn is_windows_absolute(path_str: &str) -> bool {
     let bytes = path_str.as_bytes();
     if bytes.len() >= 3
@@ -214,20 +163,15 @@ fn is_windows_absolute(path_str: &str) -> bool {
     false
 }
 
-/// Returns true if `path_str` looks like a POSIX absolute path (`/foo`).
 fn is_posix_absolute(path_str: &str) -> bool {
     path_str.starts_with('/')
 }
 
-/// Returns true if any character in `s` is a C0/C1 control or DEL.
 fn contains_control_char(s: &str) -> bool {
     s.chars()
         .any(|c| (c as u32) < 0x20 || (0x7f..=0x9f).contains(&(c as u32)))
 }
 
-/// Returns the file stem (portion before the last `.`) length in chars.
-/// For multi-segment paths, only the basename is considered.
-/// Example: `/foo/bar/README.md` → 6 (the stem `README`).
 fn stem_len(path_str: &str) -> usize {
     let basename = path_str
         .rsplit_once(['/', '\\'])
@@ -240,13 +184,6 @@ fn stem_len(path_str: &str) -> usize {
     stem.chars().count()
 }
 
-/// Returns true if `candidate` is prefixed with a URL-style scheme (`http:`,
-/// `file:`, `mailto:`, `ssh:`, …) - i.e. two or more ASCII letters followed by
-/// `:`. Single-letter prefixes (`C:`, `D:`) are Windows drive letters, not
-/// schemes, and are NOT classified as schemes here. Used to bar terminal
-/// output like `file:///etc/passwd.md` from being passed to `open::that`,
-/// where `xdg-open` would honour the URI scheme rather than treat it as a
-/// local file.
 fn has_url_scheme_prefix(candidate: &str) -> bool {
     let Some(colon_idx) = candidate.find(':') else {
         return false;
@@ -265,16 +202,6 @@ fn expand_tilde_path(path_str: &str) -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(rest))
 }
 
-/// Resolve `path_str` against `cwd` and canonicalize the result. Returns the
-/// canonical absolute path when:
-/// - the candidate is a POSIX or Windows absolute path that exists, or
-/// - the candidate is relative and joins-with-`cwd` to an existing path.
-///
-/// `Path::canonicalize` resolves symlinks, normalises `..`/`.` segments, and
-/// returns `Err` when the file does not exist - combining the existence check
-/// with normalisation in a single call. The canonicalised string is what gets
-/// passed to `open::that`, so the user opens the actual resolved target rather
-/// than a misleading traversal path printed by the terminal.
 fn resolve_path(path_str: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     let candidate = if let Some(expanded) = expand_tilde_path(path_str) {
         expanded
@@ -287,11 +214,6 @@ fn resolve_path(path_str: &str, cwd: Option<&Path>) -> Option<PathBuf> {
     candidate.canonicalize().ok()
 }
 
-/// Returns true if `path` ends with `.md` or `.markdown` (case-insensitive),
-/// after canonicalisation may have changed the byte sequence (e.g. case fold
-/// on Windows). Used as a defence-in-depth check after `canonicalize` so a
-/// symlink target without the right extension cannot be opened as if it were
-/// a markdown file.
 fn canonical_has_md_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|s| s.to_str())
@@ -369,18 +291,6 @@ fn zone_for_candidate(
     })
 }
 
-/// Detect `.md` / `.markdown` file paths on a single terminal line.
-///
-/// `char_to_col` maps each character index in `line_text` to its grid column,
-/// matching the URL scanner's wide-char-aware mapping. `cwd` is used to resolve
-/// relative paths; if `None`, only absolute paths are eligible.
-///
-/// Returned zones have `source = HyperlinkSource::FilePath`, `is_openable = true`,
-/// and `uri` set to the resolved absolute path. Anti-false-positive rules:
-/// - Stem (basename without extension) must be ≥ 4 chars when the candidate
-///   has no path separator. `123.md` → rejected; `/foo/bar.md` accepted.
-/// - Candidate must not contain ANSI control chars.
-/// - Candidate must resolve to an existing file on disk.
 pub fn detect_file_paths_on_line_mapped(
     line_text: &str,
     line: crate::terminal::types::Line,
@@ -421,20 +331,6 @@ pub fn detect_file_paths_on_line_mapped(
     zones
 }
 
-// ---------------------------------------------------------------------------
-// Code-file scanner (file:line:col)
-// ---------------------------------------------------------------------------
-
-// The code-path scanner detects a known source extension, expands possible
-// path starts to the left, then validates the resolved file before emitting a
-// link. Location suffixes accept `:line[:col]`, `(line,col)`, and `(line:col)`.
-// `.md` / `.markdown` are deliberately absent: the markdown scanner routes
-// those to the in-pane markdown viewer.
-
-/// US-013: Python traceback frame `File "path", line N`. The path is quoted and
-/// the line number lives in a separate clause, so the generic code-path regex
-/// would match the bare filename and lose the line. A dedicated pattern with
-/// named captures recovers both.
 const PYTHON_TRACEBACK_REGEX_PATTERN: &str = r#"File "(?P<path>[^"]+)", line (?P<line>\d+)"#;
 
 fn python_traceback_regex() -> &'static regex::Regex {
@@ -445,14 +341,7 @@ fn python_traceback_regex() -> &'static regex::Regex {
     })
 }
 
-/// Peel `:line[:col]` off the right of `matched`, returning
-/// `(path, line, col)`. Walks at most two `:`-separated pure-digit
-/// suffixes; stops at the first non-digit segment so Windows drive
-/// letters (`C:`) and path segments containing colons stay intact.
 fn split_path_and_location(matched: &str) -> (&str, Option<u32>, Option<u32>) {
-    // US-013: paren-location form `file(42,7)` / `file:(12,3)` (tsc, C#,
-    // MSBuild). Peel a trailing `(N,M)` / `:(N,M)` group before falling back to
-    // the colon-suffix walk below.
     if let Some(without_close) = matched.strip_suffix(')')
         && let Some(open) = without_close.rfind('(')
     {
@@ -461,7 +350,6 @@ fn split_path_and_location(matched: &str) -> (&str, Option<u32>, Option<u32>) {
         if let (Some(l), Some(c)) = (parts.next(), parts.next())
             && let (Ok(line), Ok(col)) = (l.parse::<u32>(), c.parse::<u32>())
         {
-            // Drop the `(` and an optional preceding `:` from the path.
             let mut path_end = open;
             if without_close[..path_end].ends_with(':') {
                 path_end -= 1;
@@ -488,7 +376,6 @@ fn split_path_and_location(matched: &str) -> (&str, Option<u32>, Option<u32>) {
     match nums.as_slice() {
         [] => (path, None, None),
         [line] => (path, Some(*line), None),
-        // `nums` collected right-to-left: [col, line]
         [col, line] => (path, Some(*line), Some(*col)),
         _ => (path, None, None),
     }
@@ -561,10 +448,6 @@ fn code_candidate_display_end(line_text: &str, path_end: usize) -> usize {
     }
 }
 
-/// Returns true if the canonicalised path's extension is a recognised
-/// code extension. Defence-in-depth against symlinks (`good.rs ->
-/// /usr/bin/sudo`) - without this, a malicious link in terminal output
-/// could route a system binary through the editor open path.
 fn canonical_has_code_extension(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
         return false;
@@ -573,27 +456,12 @@ fn canonical_has_code_extension(path: &Path) -> bool {
     CODE_EXTENSIONS.contains(&lower.as_str())
 }
 
-/// Detect source-code file paths with optional `:line[:col]` on a single
-/// terminal line. Mirrors `detect_file_paths_on_line_mapped`'s anti-false-
-/// positive rules (left boundary, control chars, URL-scheme reject,
-/// bare-stem minimum length, canonical resolve + extension recheck) and
-/// adds the path/location split.
-///
-/// Returned zones have `source = HyperlinkSource::CodePath`,
-/// `is_openable = true`, and `line`/`col` populated when the matched
-/// text carried a `:N(:M)?` suffix. `uri` is the canonical absolute
-/// path (location stripped); the editor open path adds it back via
-/// argv when invoking the editor.
 pub fn detect_code_paths_on_line_mapped(
     line_text: &str,
     line: crate::terminal::types::Line,
     char_to_col: &[usize],
     cwd: Option<&Path>,
 ) -> Vec<HyperlinkZone> {
-    // US-013: Python traceback frames (`File "x.py", line N`) first, so they
-    // win on the quoted path. The generic scan below also matches the bare
-    // filename but with no line number; the hover `find` returns the first
-    // (Python) match, which carries the correct line.
     let mut zones: Vec<HyperlinkZone> = python_traceback_regex()
         .captures_iter(line_text)
         .filter_map(|cap| {
@@ -662,12 +530,9 @@ mod tests {
         crate::terminal::types::Line(0)
     }
 
-    /// Builds a 1-to-1 char→column map for ASCII-only test text.
     fn ascii_map(text: &str) -> Vec<usize> {
         (0..text.chars().count()).collect()
     }
-
-    // ── US-020: URL trailing-punctuation / unbalanced-paren trimming ────────
 
     #[test]
     fn sanitize_strips_trailing_dot_and_comma() {
@@ -683,7 +548,6 @@ mod tests {
 
     #[test]
     fn sanitize_strips_unbalanced_paren_then_dot() {
-        // `).` - `)` is unbalanced (0 opens, 1 close) then `.`.
         assert_eq!(
             sanitize_url_punctuation("https://example.com/path)."),
             "https://example.com/path"
@@ -698,7 +562,6 @@ mod tests {
 
     #[test]
     fn sanitize_trims_one_of_two_unbalanced_close_parens() {
-        // 1 open, 2 close → strip exactly one `)`.
         assert_eq!(
             sanitize_url_punctuation("https://example.com/a(b))"),
             "https://example.com/a(b)"
@@ -774,9 +637,6 @@ mod tests {
         p
     }
 
-    /// Resolve `p` to a display string that stays readable in test output.
-    /// Windows canonicalization may prepend `\\?\`; stripping it keeps tests
-    /// independent from the host's verbatim-path formatting.
     fn canonical_display(p: &Path) -> String {
         let canonical = p.canonicalize().expect("canonicalize");
         let s = canonical.to_string_lossy().into_owned();
@@ -801,7 +661,6 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_absolute_uses_same_unix_path() {
-        // macOS uses POSIX paths; same code path as Linux.
         let tmp = tempfile::tempdir().expect("tempdir");
         let md = write_md(tmp.path(), "Users_foo.md");
         let line_text = format!("open {}", md.to_string_lossy());
@@ -812,8 +671,6 @@ mod tests {
 
     #[test]
     fn windows_absolute_path_classified_correctly() {
-        // Pure regex/classification check - file does not need to exist on
-        // the host filesystem since `resolve_path` will reject it.
         assert!(is_windows_absolute("C:\\Users\\arthur\\doc.md"));
         assert!(is_windows_absolute("D:/repo/README.md"));
         assert!(is_windows_absolute(r"\\server\share\README.md"));
@@ -888,7 +745,6 @@ mod tests {
 
     #[test]
     fn short_numeric_stem_is_rejected() {
-        // Bare `123.md` with no separator - stem `123` (3 chars) < 4.
         let tmp = tempfile::tempdir().expect("tempdir");
         write_md(tmp.path(), "123.md");
         let line_text = "open 123.md";
@@ -899,7 +755,6 @@ mod tests {
 
     #[test]
     fn short_stem_with_path_separator_is_accepted() {
-        // `./os.md` has a separator, so the length heuristic does not apply.
         let tmp = tempfile::tempdir().expect("tempdir");
         write_md(tmp.path(), "os.md");
         let line_text = "open ./os.md";
@@ -930,26 +785,14 @@ mod tests {
 
     #[test]
     fn control_chars_disqualify_match() {
-        // A path-shaped token that contains an ANSI escape must be rejected.
-        // We construct it directly because regex won't match the escape; the
-        // helper is the safety net for unusual inputs.
         assert!(contains_control_char("\x1b[31m/foo.md"));
         assert!(!contains_control_char("/foo/bar.md"));
     }
 
     #[test]
     fn osc8_priority_does_not_overlap_filepath_scanner() {
-        // The scanner does not consider OSC 8 zones - priority is enforced
-        // at the call site (handle_mouse_move tries OSC 8 first, then URLs,
-        // then file paths). This test documents that the scanner itself does
-        // not emit zones for arbitrary OSC 8 cells: it only returns matches
-        // from regex over the line text. Pure plain text behaves identically
-        // whether or not the cell carries an OSC 8 hyperlink.
         let tmp = tempfile::tempdir().expect("tempdir");
         let md_path = write_md(tmp.path(), "doc.md");
-        // `canonical_display` resolves Windows 8.3 short names + strips the
-        // `\\?\` UNC prefix so the file-path regex character class accepts
-        // every byte. On Unix it's a thin wrapper around canonicalize.
         let display = canonical_display(&md_path);
         let line_text = format!("file {display}");
         let map = ascii_map(&line_text);
@@ -959,24 +802,14 @@ mod tests {
 
     #[test]
     fn boundary_rejects_mid_token_match() {
-        // `xyz/foo.md` - the slash makes the regex match `xyz/foo.md`, but if
-        // the candidate is preceded by `prefix-` (no whitespace), boundary
-        // check rejects. Confirm that whitespace boundary works.
         let tmp = tempfile::tempdir().expect("tempdir");
         let md_path = write_md(tmp.path(), "foo.md");
-        // Same Windows-friendly long-form path the OSC-8 test uses.
         let display = canonical_display(&md_path);
         let line_text = format!("ok {display}");
         let map = ascii_map(&line_text);
         let zones = detect_file_paths_on_line_mapped(&line_text, line0(), &map, None);
         assert_eq!(zones.len(), 1);
 
-        // Embedded mid-word: `prefixfoo.md` (no slash, no boundary delim
-        // around but at start of string => start-of-line counts as boundary,
-        // so this match is allowed at column 0). However we still want the
-        // existence check to reject when the file does not exist. This is a
-        // pure regex-string check - no real file involved - so it stays
-        // cross-platform without any UNC-strip dance.
         let line_text2 = "blob/junk.md";
         let map2 = ascii_map(line_text2);
         let zones2 = detect_file_paths_on_line_mapped(line_text2, line0(), &map2, Some(tmp.path()));
@@ -993,21 +826,14 @@ mod tests {
 
     #[test]
     fn url_scheme_prefix_is_rejected() {
-        // `file:///etc/shadow.md` ends in `.md` and matches the regex char
-        // class, but the URL-scheme guard must reject it before resolve_path
-        // runs - otherwise `open::that` would honour the file:// scheme.
         assert!(has_url_scheme_prefix("file:///etc/shadow.md"));
         assert!(has_url_scheme_prefix("http://evil.example/x.md"));
         assert!(has_url_scheme_prefix("ssh:host.md"));
-        // Windows drive letters are single-letter prefixes - NOT schemes.
         assert!(!has_url_scheme_prefix("C:/repo/README.md"));
         assert!(!has_url_scheme_prefix("D:\\proj\\readme.md"));
-        // Bare filenames have no colon → no prefix.
         assert!(!has_url_scheme_prefix("README.md"));
         assert!(!has_url_scheme_prefix("./foo.md"));
 
-        // End-to-end: scanner refuses to emit a zone even if the URL-shaped
-        // string would otherwise canonicalise to an existing file.
         let line_text = "open file:///tmp/doc.md please";
         let map = ascii_map(line_text);
         let zones = detect_file_paths_on_line_mapped(line_text, line0(), &map, None);
@@ -1016,34 +842,22 @@ mod tests {
 
     #[test]
     fn canonicalize_resolves_dot_dot_traversal() {
-        // A relative candidate with `..` segments must canonicalise: the URI
-        // emitted to the click handler should be the canonical (real) path,
-        // not the misleading traversal string printed by the terminal.
         let tmp = tempfile::tempdir().expect("tempdir");
         let nested = tmp.path().join("nested");
         fs::create_dir_all(&nested).expect("create nested");
         let md = write_md(tmp.path(), "real.md");
         let canonical = md.canonicalize().expect("canonicalize");
 
-        // From `nested/`, the path `../real.md` must resolve to canonical.
         let line_text = "see ../real.md";
         let map = ascii_map(line_text);
         let zones = detect_file_paths_on_line_mapped(line_text, line0(), &map, Some(&nested));
         assert_eq!(zones.len(), 1);
         assert_eq!(PathBuf::from(&zones[0].uri), canonical);
-        // The emitted URI must NOT contain `..` - it has been normalised.
         assert!(!zones[0].uri.contains(".."));
     }
 
     #[test]
     fn perf_scan_200_lines_under_budget() {
-        // AC budget: 200×80 grid scan < 5 ms (release).
-        // Debug builds are ~5-10× slower; we assert release < 5 ms strictly
-        // on Linux/macOS and apply a 25 ms ceiling in debug as a regression
-        // guard. On Windows the hosted runners are 2-3× slower at the same
-        // workload (US-004 AC5), so we relax to 15 ms in release without
-        // weakening the regression intent - anything significantly above
-        // 15 ms still surfaces as a perf regression.
         let tmp = tempfile::tempdir().expect("tempdir");
         let md_path = write_md(tmp.path(), "perf.md");
         let target = canonical_display(&md_path);
@@ -1085,10 +899,6 @@ mod tests {
         );
     }
 
-    // ---------------------------------------------------------------------
-    // Code-path scanner - split_path_and_location + scanner end-to-end
-    // ---------------------------------------------------------------------
-
     #[test]
     fn split_location_bare_path_no_location() {
         let (p, l, c) = split_path_and_location("foo.rs");
@@ -1115,7 +925,6 @@ mod tests {
 
     #[test]
     fn split_location_preserves_windows_drive_letter() {
-        // C:\foo\bar.rs - the `C:` must NOT be peeled off as a location.
         let (p, l, c) = split_path_and_location(r"C:\foo\bar.rs");
         assert_eq!(p, r"C:\foo\bar.rs");
         assert_eq!(l, None);
@@ -1132,8 +941,6 @@ mod tests {
 
     #[test]
     fn split_location_stops_at_non_digit_segment() {
-        // `path.rs:42:notnum:7` - peels off `7` only, leaves the rest as path.
-        // The downstream canonicalize check rejects the bogus path.
         let (p, l, c) = split_path_and_location("path.rs:42:notnum:7");
         assert_eq!(p, "path.rs:42:notnum");
         assert_eq!(l, Some(7));
@@ -1142,7 +949,6 @@ mod tests {
 
     #[test]
     fn split_location_paren_form_tsc() {
-        // US-013: tsc `app.ts(42,7)` → line 42, col 7.
         let (p, l, c) = split_path_and_location("src/app.ts(42,7)");
         assert_eq!(p, "src/app.ts");
         assert_eq!(l, Some(42));
@@ -1151,7 +957,6 @@ mod tests {
 
     #[test]
     fn split_location_paren_form_with_colon_prefix() {
-        // US-013: the `:?` allows `file.ts:(12,3)`.
         let (p, l, c) = split_path_and_location("file.ts:(12,3)");
         assert_eq!(p, "file.ts");
         assert_eq!(l, Some(12));
@@ -1160,7 +965,6 @@ mod tests {
 
     #[test]
     fn split_location_paren_colon_separator() {
-        // US-013: C#/MSBuild also emit `(line:col)`.
         let (p, l, c) = split_path_and_location("Program.cs(10:5)");
         assert_eq!(p, "Program.cs");
         assert_eq!(l, Some(10));
@@ -1169,8 +973,6 @@ mod tests {
 
     #[test]
     fn split_location_non_numeric_paren_is_not_a_location() {
-        // US-013 adversarial: `foo.rs(copy)` must NOT yield a false line/col;
-        // the non-numeric paren stays attached so canonicalize rejects it.
         let (p, l, c) = split_path_and_location("foo.rs(copy)");
         assert_eq!(p, "foo.rs(copy)");
         assert_eq!(l, None);
@@ -1179,7 +981,6 @@ mod tests {
 
     #[test]
     fn code_path_scanner_matches_paren_location() {
-        // US-013 end-to-end: tsc-style `app.ts(42,7)`.
         let tmp = tempfile::tempdir().expect("tempdir");
         let ts_path = write_md(tmp.path(), "app.ts");
         let display = canonical_display(&ts_path);
@@ -1197,7 +998,6 @@ mod tests {
 
     #[test]
     fn code_path_scanner_matches_python_traceback() {
-        // US-013: `File "main.py", line 10` → line 10 on the quoted path.
         let tmp = tempfile::tempdir().expect("tempdir");
         let py_path = write_md(tmp.path(), "main.py");
         let display = canonical_display(&py_path);
@@ -1214,9 +1014,6 @@ mod tests {
 
     #[test]
     fn code_path_scanner_still_matches_update_paren_wrap() {
-        // US-013 regression: Claude-Code `Update(src/cool.rs)` must still match
-        // the inner path (leading `(` is a left boundary; the trailing `)` is
-        // not a numeric paren-location, so the path is `cool.rs`, line None).
         let tmp = tempfile::tempdir().expect("tempdir");
         let rs_path = write_md(tmp.path(), "cool.rs");
         let display = canonical_display(&rs_path);
@@ -1234,7 +1031,7 @@ mod tests {
     #[test]
     fn code_path_scanner_matches_rust_at_line_col() {
         let tmp = tempfile::tempdir().expect("tempdir");
-        let rs_path = write_md(tmp.path(), "lib.rs"); // re-use the .md writer for any file
+        let rs_path = write_md(tmp.path(), "lib.rs");
         let display = canonical_display(&rs_path);
         let line_text = format!("error at {display}:42:7");
         let map = ascii_map(&line_text);
@@ -1297,8 +1094,6 @@ mod tests {
 
     #[test]
     fn code_path_scanner_skips_markdown() {
-        // .md files belong to the FilePath scanner (markdown viewer route).
-        // The code-path scanner must NOT emit a zone for them.
         let tmp = tempfile::tempdir().expect("tempdir");
         write_md(tmp.path(), "README.md");
         let line_text = format!("see {}/README.md", tmp.path().to_string_lossy());

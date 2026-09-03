@@ -1,10 +1,3 @@
-//! Shared plumbing for the per-agent writers (EP-003).
-//!
-//! - Config-path resolution (cross-platform, `dirs`-based).
-//! - Format-specific install / uninstall / status built on the tested
-//!   [`crate::merge`] + [`crate::io`] primitives, so every writer is
-//!   idempotent and no-clobber without repeating the logic.
-
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
@@ -14,20 +7,12 @@ use paneflow_agent_config::jsonc;
 use crate::agents::{InstallOutcome, StatusOutcome, UninstallOutcome};
 use crate::{io, merge};
 
-/// The entry name every writer registers under its container key.
 pub(crate) const ENTRY: &str = "paneflow";
 
-// ---------------------------------------------------------------------------
-// Config paths (resolved against the real home / XDG dirs)
-// ---------------------------------------------------------------------------
-
-/// `~/.claude.json` - where `claude mcp add -s user` stores user-scope MCP
-/// servers (verified 2026: NOT `~/.claude/settings.json`).
 pub(crate) fn claude_config() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".claude.json"))
 }
 
-/// `$CODEX_HOME/config.toml`, falling back to `~/.codex/config.toml`.
 pub(crate) fn codex_config() -> Option<PathBuf> {
     codex_config_from(dirs::home_dir(), std::env::var_os("CODEX_HOME"))
 }
@@ -40,14 +25,10 @@ fn codex_config_from(home: Option<PathBuf>, codex_home: Option<OsString>) -> Opt
         .map(|h| h.join("config.toml"))
 }
 
-/// `~/.gemini/settings.json`.
 pub(crate) fn gemini_config() -> Option<PathBuf> {
     dirs::home_dir().map(|h| h.join(".gemini").join("settings.json"))
 }
 
-/// opencode global config candidates. Current opencode supports JSONC and
-/// custom config env vars; the first existing candidate wins, otherwise the
-/// first candidate is used for a new install.
 pub(crate) fn opencode_configs() -> Vec<PathBuf> {
     opencode_configs_from(
         dirs::home_dir(),
@@ -111,14 +92,6 @@ fn push_opencode_names(out: &mut Vec<PathBuf>, config_base: PathBuf) {
     out.push(dir.join("opencode.json"));
 }
 
-// ---------------------------------------------------------------------------
-// JSON install / uninstall / status (Claude Code, Gemini, opencode)
-// ---------------------------------------------------------------------------
-
-/// Upsert `root[container][paneflow] = entry` at `path`, idempotently and
-/// no-clobber. Returns `Installed` (new), `Updated` (entry changed), or
-/// `AlreadyCurrent` (no-op). A present-but-invalid file is an error (never
-/// overwritten).
 pub(crate) fn json_install(
     path: &Path,
     container: &str,
@@ -161,8 +134,6 @@ pub(crate) fn json_install(
     })
 }
 
-/// Remove `root[container][paneflow]` at `path`. No-op when the file or
-/// entry is absent.
 pub(crate) fn json_uninstall(path: &Path, container: &str) -> Result<UninstallOutcome> {
     if !path.exists() {
         return Ok(UninstallOutcome::NothingToRemove);
@@ -191,10 +162,6 @@ pub(crate) fn json_uninstall(path: &Path, container: &str) -> Result<UninstallOu
     })
 }
 
-/// Read-only state of the `paneflow` JSON entry at `path`. `extract`
-/// pulls the command path out of the entry (string for most agents, first
-/// array element for opencode). `expected` is the current bridge path used
-/// to flag staleness when it is available.
 pub(crate) fn json_status(
     path: &Path,
     container: &str,
@@ -229,11 +196,6 @@ fn read_jsonc_source(path: &Path) -> Result<String> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// TOML install / uninstall / status (Codex)
-// ---------------------------------------------------------------------------
-
-/// Codex's parent table for MCP servers.
 pub(crate) const CODEX_TABLE: &str = "mcp_servers";
 
 pub(crate) fn toml_install(path: &Path, command: &str) -> Result<InstallOutcome> {
@@ -299,16 +261,10 @@ pub(crate) fn toml_status(path: &Path, expected: Option<&Path>) -> Result<Status
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Command-path extractors
-// ---------------------------------------------------------------------------
-
-/// `command` as a plain string (Claude Code, Gemini).
 pub(crate) fn string_command(entry: &serde_json::Value) -> Option<String> {
     entry.get("command")?.as_str().map(str::to_string)
 }
 
-/// `command` as an array whose first element is the binary path (opencode).
 pub(crate) fn array_command(entry: &serde_json::Value) -> Option<String> {
     entry
         .get("command")?
@@ -318,12 +274,6 @@ pub(crate) fn array_command(entry: &serde_json::Value) -> Option<String> {
         .map(str::to_string)
 }
 
-// ---------------------------------------------------------------------------
-// Shared helpers
-// ---------------------------------------------------------------------------
-
-/// Compare a found command path and entry shape against the expected bridge
-/// path, when that path is available.
 pub(crate) fn classify_entry(
     found: Option<String>,
     expected: Option<&Path>,
@@ -423,12 +373,10 @@ mod tests {
             json_install(&p, "mcpServers", entry.clone()).unwrap(),
             InstallOutcome::Installed
         );
-        // Re-run with identical entry → no-op.
         assert_eq!(
             json_install(&p, "mcpServers", entry).unwrap(),
             InstallOutcome::AlreadyCurrent
         );
-        // Different path → Updated.
         assert_eq!(
             json_install(&p, "mcpServers", json!({ "command": "/q", "args": [] })).unwrap(),
             InstallOutcome::Updated
@@ -462,7 +410,6 @@ mod tests {
         let p = dir.path().join("settings.json");
         std::fs::write(&p, b"{ broken").unwrap();
         assert!(json_install(&p, "mcpServers", json!({})).is_err());
-        // The invalid file was NOT overwritten.
         assert_eq!(std::fs::read(&p).unwrap(), b"{ broken");
     }
 
@@ -486,7 +433,6 @@ mod tests {
         let after: serde_json::Value = serde_json::from_slice(&std::fs::read(&p).unwrap()).unwrap();
         assert!(after["mcpServers"].get("paneflow").is_none());
         assert_eq!(after["mcpServers"]["other"]["command"], json!("x"));
-        // Second uninstall → nothing to remove.
         assert_eq!(
             json_uninstall(&p, "mcpServers").unwrap(),
             UninstallOutcome::NothingToRemove
@@ -586,12 +532,10 @@ mod tests {
         assert!(txt.contains("# my codex config"));
         assert!(txt.contains("model = \"gpt-5\""));
         assert!(txt.contains("paneflow"));
-        // Idempotent.
         assert_eq!(
             toml_install(&p, "/p").unwrap(),
             InstallOutcome::AlreadyCurrent
         );
-        // Updated path.
         assert_eq!(toml_install(&p, "/q").unwrap(), InstallOutcome::Updated);
     }
 

@@ -1,28 +1,4 @@
-//! Codex-style git diff side panel for the CLI cockpit.
-//!
-//! A right-docked panel (toggled from a pane header, see
-//! [`crate::app::cli_diff_dock`]) that shows what the agent changed
-//! in a workspace folder: the working-tree diff against `HEAD` (staged +
-//! unstaged tracked changes) plus untracked files.
-//!
-//! EP-001 (review redesign, US-001/US-002): the dock no longer
-//! has its own diff renderer or unified-diff parser. It renders through the
-//! exact same path as the full-screen Review view ([`crate::diff`]): the shared
-//! git pipeline ([`crate::diff::compute_head_diff`]), the shared row model
-//! ([`crate::diff::build_display_rows`] / `build_split_rows`) and the shared
-//! direct-paint [`crate::diff::DiffElement`] hosted in an `overflow_y_scroll`
-//! div. The dock keeps the cheap HEAD-relative semantic (the right "what did the
-//! agent just touch" base, vs the Review view's `merge-base(HEAD, base)`), but
-//! shares everything else - so a visual change to the diff body is made once.
-//!
-//! Split (US-004) into seams: [`git`] (off-thread build), [`model`]
-//! ([`DiffDockData`] + layout constants) and [`render`] (chrome render
-//! helpers). This module owns the [`PaneFlowApp`] panel orchestration: the
-//! open/refresh/collapse lifecycle, the panel + body render, and the body click.
-
 mod branch;
-// prd-file-editor-2026-Q3, EP-001: the editable-document layer behind the
-// dock's `File` tabs (US-017).
 pub(crate) mod code;
 mod git;
 mod model;
@@ -62,14 +38,8 @@ use crate::diff::{
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
 
 impl PaneFlowApp {
-    /// Open the Codex-style diff dock on `cwd`, computing the diff off-thread.
-    /// Closing (see [`Self::close_diff_dock_panel`]) drops the retained
-    /// snapshot so a large hidden dock cannot keep old rows alive.
     pub(crate) fn open_diff_dock_panel(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
-        // The single door to an open dock, so the single place that records
-        // which session owns it - `sync_diff_dock_session` would otherwise read
-        // the open as a drift and park it on the next frame.
         self.diff_dock.owner = self.active_session_id();
         let split = self.diff_dock.split;
         let has_current_snapshot = self.diff_dock.data.as_ref().is_some_and(|data| {
@@ -96,9 +66,6 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// Recompute the diff for `cwd`, parking a loading state first. Shared by the
-    /// open path and the panel's refresh button. The async result is dropped if
-    /// the cached slot has since rebound to a different cwd.
     pub(crate) fn refresh_diff_dock(&mut self, cwd: String, cx: &mut Context<Self>) {
         let cwd = cwd.trim().to_string();
         let generation = self.diff_dock.generation.wrapping_add(1);
@@ -160,8 +127,6 @@ impl PaneFlowApp {
     }
 
     fn spawn_diff_dock_build(&mut self, cwd: String, generation: u64, cx: &mut Context<Self>) {
-        // Capture the theme on the main thread (the syntax pass needs it) and
-        // move it into the worker, exactly as the Review view does.
         let theme = crate::theme::active_theme();
         let theme_generation = crate::theme::theme_generation();
         cx.spawn(
@@ -173,8 +138,6 @@ impl PaneFlowApp {
                 .await;
                 let _ = cx.update(|cx| {
                     this.update(cx, |app, cx| {
-                        // Apply even while the dock is hidden so the next reopen can
-                        // render from the warm snapshot instead of flashing a loader.
                         let still_current = app
                             .diff_dock
                             .data
@@ -184,8 +147,6 @@ impl PaneFlowApp {
                         if !still_current {
                             return;
                         }
-                        // Read the live collapse set (it may have changed during
-                        // the async build) so the first paint honors it.
                         let collapsed = app.diff_dock.collapsed.clone();
                         let expanded = app.diff_dock.expanded_folds.clone();
                         match result {
@@ -232,8 +193,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// Re-derive the cached collapse-filtered display rows after a collapse /
-    /// split change (no git work - just re-filters the retained full rows).
     fn recompute_diff_dock_display(&mut self) {
         let collapsed = self.diff_dock.collapsed.clone();
         let expanded = self.diff_dock.expanded_folds.clone();
@@ -257,7 +216,6 @@ impl PaneFlowApp {
         self.refresh_diff_dock(data.cwd.clone(), cx);
     }
 
-    /// Fold / unfold a single file in the diff dock (click on its header row).
     pub(crate) fn toggle_diff_file_collapsed(&mut self, path: String, cx: &mut Context<Self>) {
         if !self.diff_dock.collapsed.remove(&path) {
             discard_expanded_folds_for_path(&mut self.diff_dock.expanded_folds, &path);
@@ -267,8 +225,6 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// "Collapse all" / "expand all" for the diff dock. `collapse == true` folds
-    /// every file in `paths`; `false` clears the whole collapse set.
     pub(crate) fn set_all_diff_collapsed(
         &mut self,
         paths: &[String],
@@ -285,8 +241,6 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// Switch the diff dock between unified and split views. Both row models are
-    /// warmed by the off-thread load, so this is a paint-only toggle.
     pub(crate) fn set_diff_dock_split(&mut self, split: bool, cx: &mut Context<Self>) {
         if self.diff_dock.split == split {
             return;
@@ -296,12 +250,6 @@ impl PaneFlowApp {
         cx.notify();
     }
 
-    /// The docked diff panel: a header over the body. Reads the live snapshot
-    /// from state (cloned cheaply) so the caller keeps its `self` borrow short.
-    ///
-    /// `width` is the width the dock renders at and `max_width` the widest the
-    /// main panel can give it (see `cli_diff_dock::diff_dock_fit`) - neither is
-    /// `self.diff_dock.width`, which is only the user's preference.
     pub(crate) fn render_diff_dock_panel(
         &mut self,
         width: f32,
@@ -309,10 +257,6 @@ impl PaneFlowApp {
         ui: crate::theme::UiColors,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // First open of the session: the dock asks what to show instead of
-        // dropping into the diff. Gated on `Cli` because the flag is set by the
-        // pane-header toggle - the Agents dock is opened from its own chrome,
-        // already on a chosen surface, and must never inherit the question.
         if self.diff_dock.picker && matches!(self.mode, paneflow_config::schema::AppMode::Cli) {
             return self.render_diff_dock_picker(width, max_width, ui, cx);
         }
@@ -332,17 +276,9 @@ impl PaneFlowApp {
             ui,
             cx,
         );
-        // A terminal tab owns the whole body: the files toolbar describes the
-        // diff (scope, +/- totals, branch, layout menu) and has nothing to say
-        // about a shell.
         let (toolbar, body) = match tabs.get(active) {
             Some(DiffDockTab::Terminal(terminal)) => (None, terminal.clone().into_any_element()),
-            // No toolbar either: the file header describes an open document,
-            // and this tab is the one that has none yet.
             Some(DiffDockTab::PendingFile) => (None, render::render_pending_file_body(ui)),
-            // A file tab swaps the diff's files toolbar for its own header
-            // (US-018): same 36 px band, describing the open document instead
-            // of the working tree.
             Some(DiffDockTab::File(view)) => {
                 let (icon, path, line, column) = {
                     let view = view.read(cx);
@@ -370,11 +306,6 @@ impl PaneFlowApp {
             ),
         };
 
-        // The dock is a floating card beside the pane grid, drawn with the same
-        // silhouette the panes use (see `crate::pane`): a superellipse fill
-        // under the subtree and a hairline over it. Nothing between the two may
-        // paint its own background, or it repaints the corners square - GPUI
-        // clips no child to a parent radius.
         let radius = crate::app::constants::PANE_CARD_RADIUS;
         div()
             .relative()
@@ -392,10 +323,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// The dock drawn on its surface picker: same card silhouette, same resize
-    /// handle, but the tab strip and the body are replaced by the question. The
-    /// panel is rebuilt here rather than branched inside the main renderer so
-    /// the picker never pays for the diff snapshot it is not showing.
     fn render_diff_dock_picker(
         &mut self,
         width: f32,
@@ -419,17 +346,8 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// Apply a live resize drag: set the dock width so its left edge tracks the
-    /// cursor. Driven by the CLI dock wrapper's `on_mouse_move` (a full-height
-    /// capture surface, so the drag survives the cursor leaving the dock for the
-    /// pane grid beside it). No-op when no drag is in progress.
     pub(crate) fn drag_diff_dock_resize(&mut self, cursor_x: f32, cx: &mut Context<Self>) {
         if let Some((anchor_x, anchor_w, max_w)) = self.diff_dock.resize {
-            // The panel docks right and the handle is on its left edge, so
-            // dragging left (cursor_x shrinks) widens the dock. The stored
-            // width never passes the ceiling the panel can render: letting it
-            // run past what is on screen would leave the handle unresponsive
-            // until the cursor came back over the overshoot.
             let delta = anchor_x - cursor_x;
             let ceiling = max_w.clamp(DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_MAX_WIDTH);
             self.diff_dock.width = (anchor_w + delta).clamp(DIFF_DOCK_PANEL_MIN_WIDTH, ceiling);
@@ -437,9 +355,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// End a diff-dock resize drag (mouse up / button released mid-move). Returns
-    /// whether a drag was actually in progress, so the caller can skip a
-    /// redundant notify.
     pub(crate) fn end_diff_dock_resize(&mut self, cx: &mut Context<Self>) -> bool {
         if self.diff_dock.resize.take().is_some() {
             cx.notify();
@@ -449,9 +364,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// The always-present summary row under the title strip. Owns the branch
-    /// chip (which needs `self` for the picker state) and hands the rest of the
-    /// dock state to the row renderer as a [`DiffChrome`].
     fn render_diff_toolbar(
         &mut self,
         cwd: &str,
@@ -482,9 +394,6 @@ impl PaneFlowApp {
         render_diff_files_toolbar(&chrome, chip, ui, cx)
     }
 
-    /// The diff body: the shared [`DiffElement`] in an `overflow_y_scroll` host
-    /// (the same render path as the Review view). Empty, loading and error
-    /// states render a centered placeholder instead.
     fn render_diff_dock_body(
         &mut self,
         data: &Option<DiffDockData>,
@@ -510,9 +419,6 @@ impl PaneFlowApp {
 
         let split = self.diff_dock.split;
 
-        // Horizontal offsets, lazily resized to the current mode's slot count.
-        // Unified uses one slot per file; split keeps detached left/right slots.
-        // Cloned into the element each frame.
         let file_count = if split {
             data.disp_split_spans.len()
         } else {
@@ -528,8 +434,6 @@ impl PaneFlowApp {
         }
         let h_offsets = self.diff_dock.h_offsets.clone();
 
-        // Collapse-filtered rows + cached layout inputs (recomputed only on a
-        // collapse / split change), handed to the direct-paint element.
         let body = if split {
             DiffBody::Split {
                 rows: data.disp_split.clone(),
@@ -550,29 +454,6 @@ impl PaneFlowApp {
         let pal = palette(ui);
         let scroll = self.diff_dock.scroll.clone();
 
-        // Custom direct-paint element hosted in a scroll-tracked div, exactly
-        // like the Review view (`diff/view/render.rs`): `overflow_y_scroll` so
-        // GPUI's native handler owns VERTICAL - it translates the child's origin
-        // by the scroll offset, which is the ONLY thing that moves `DiffElement`
-        // (it positions every row off its prepainted `bounds.origin`, never off
-        // `window.element_offset()`; under `overflow_hidden` that origin never
-        // moves and the body looks frozen). `track_scroll` keeps the handle's
-        // `offset()`/`bounds()`/`max_offset()` live for the click→row mapping.
-        //
-        // `restrict_scroll_to_axis = Some(true)` is the Zed opt-in (style.rs doc;
-        // used by markdown.rs / thread_view.rs / data_table.rs) that stops a
-        // vertical wheel from bleeding into a horizontally-scrollable child - and,
-        // crucially here, stops the native Y handler back-filling `delta_y` from
-        // `delta.x` under Shift+wheel (div.rs: the `else if !restrict_scroll_to_axis
-        // && overflow.x != Scroll` fallback). On Linux/Windows the platform layer
-        // already swaps Shift+wheel onto the X axis (delta.x set, delta.y zeroed),
-        // so without this flag a Shift gesture would scroll the list vertically.
-        // With it: Shift → native does nothing, our handler scrolls horizontal.
-        //
-        // HORIZONTAL stays per-file and fully custom: `overflow.x` is Hidden, so
-        // the native handler never touches X; `apply_diff_dock_wheel` reads
-        // `delta.x` (the platform-swapped Shift value, or a trackpad swipe) and
-        // shifts the file under the cursor. A body click toggles a file's collapse.
         let mut element = div()
             .id("diff-dock-scroll")
             .flex_1()
@@ -596,8 +477,6 @@ impl PaneFlowApp {
                 this.apply_diff_dock_wheel(ev, window, cx);
             }))
             .child(DiffElement::new(body, pal));
-        // Not exposed as a builder method on the pinned fork - set on the style
-        // refinement directly, the same raw mutation Zed uses.
         element.style().restrict_scroll_to_axis = Some(true);
 
         div()
@@ -611,18 +490,6 @@ impl PaneFlowApp {
             .into_any_element()
     }
 
-    /// Wheel gesture over the diff body. Handles ONLY the per-file HORIZONTAL
-    /// axis; the host's `overflow_y_scroll` native handler owns vertical (it both
-    /// translates the `DiffElement` and updates the scroll handle - duplicating
-    /// it here would double-scroll the list). `restrict_scroll_to_axis` on the
-    /// host keeps the native handler off the X axis and stops it bleeding a Shift
-    /// gesture into vertical - see the host comment in `render_diff_dock_body`.
-    ///
-    /// The horizontal delta always arrives on `delta.x`: the platform layer swaps
-    /// Shift+wheel onto X (Linux X11/Wayland + Windows; `delta.y` is zeroed under
-    /// Shift), and a trackpad horizontal swipe is natively on X. So read `delta.x`
-    /// unconditionally - no `modifiers.shift` branch. A bare `delta.y` (plain
-    /// vertical wheel) is ignored here and handled natively.
     fn apply_diff_dock_wheel(
         &mut self,
         ev: &ScrollWheelEvent,
@@ -655,8 +522,6 @@ impl PaneFlowApp {
                     .get(offset_idx)
                     .copied()
                     .unwrap_or(0.0);
-                // GPUI scroll deltas go negative toward the end; subtract to grow
-                // our positive offset and reveal the right of the line.
                 set_file_side_offset(
                     std::rc::Rc::make_mut(&mut self.diff_dock.h_offsets),
                     &spans,
@@ -667,9 +532,6 @@ impl PaneFlowApp {
                     width,
                 );
             }
-            // Only horizontal scroll mutates our state here; vertical is native
-            // (it notifies on its own). Notifying unconditionally would double-
-            // render every plain vertical wheel tick.
             cx.notify();
         }
     }
@@ -833,9 +695,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// File owning the display row at content pixel `content_y` (0 = first row),
-    /// in the current view mode. `None` when there is no diff or `content_y`
-    /// lands past the last row.
     fn diff_dock_file_at_content_y(&self, content_y: f32, split: bool) -> Option<usize> {
         let data = self.diff_dock.data.as_ref()?;
         let (offsets, spans) = if split {
@@ -847,8 +706,6 @@ impl PaneFlowApp {
         file_at_row(spans, row)
     }
 
-    /// The per-file scroll spans for the current view mode (empty `Rc` when no
-    /// diff is loaded), cloned for the wheel handler that mutates offsets.
     fn diff_dock_spans(&self, split: bool) -> std::rc::Rc<Vec<crate::diff::FileSpan>> {
         self.diff_dock
             .data
@@ -863,9 +720,6 @@ impl PaneFlowApp {
             .unwrap_or_default()
     }
 
-    /// Map a body click to a row and, if it landed on a file header, toggle that
-    /// file's collapse. Mirrors the Review view's header-collapse path (the dock
-    /// has no click-to-ask, so a non-header click is a no-op).
     fn handle_diff_dock_body_click(&mut self, ev: &ClickEvent, cx: &mut Context<Self>) {
         let split = self.diff_dock.split;
         if self.handle_diff_dock_h_scrollbar_click(ev.position(), split, cx) {
@@ -888,7 +742,7 @@ impl PaneFlowApp {
                 &data.disp_unified_offsets
             };
             let Some(row) = row_at_offset(offsets, target) else {
-                return; // click past the last row
+                return;
             };
             row
         };
@@ -934,7 +788,7 @@ impl PaneFlowApp {
                 .map(|(p, _)| p.clone())
         };
         let Some(path) = path else {
-            return; // not a file header - nothing to collapse
+            return;
         };
         self.toggle_diff_file_collapsed(path, cx);
     }

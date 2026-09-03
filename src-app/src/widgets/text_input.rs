@@ -1,15 +1,3 @@
-//! Cursor-aware single-line text input widget for PaneFlow.
-//!
-//! Adapted from GPUI's upstream `examples/input.rs` (pinned via the Zed git
-//! dep) with three goals: (1) paneflow theme colours instead of the demo's
-//! hardcoded greys, (2) a caller-supplied styled wrapper (so modal / settings
-//! contexts can control padding, border, font), (3) cross-platform ctrl/cmd
-//! clipboard bindings (Linux-first but macOS-correct).
-//!
-//! Supports: mouse click to position cursor, click-drag to select, shift+click
-//! to extend selection, arrow keys (+ shift to select), Home / End, Backspace /
-//! Delete, Ctrl/Cmd+A / C / V / X, IME composition (CJK, dead keys).
-
 use std::ops::Range;
 
 use gpui::{
@@ -40,11 +28,7 @@ actions!(
     ]
 );
 
-/// Register the keybindings that drive every `TextInput` instance.
-/// Must be called once during app startup, **after** GPUI's App has been
-/// created, and before any `TextInput` receives keyboard input.
 pub fn register_keybindings(cx: &mut App) {
-    // Platform-agnostic bindings (arrows, edit keys, selection extension).
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, Some("TextInput")),
         KeyBinding::new("delete", Delete, Some("TextInput")),
@@ -56,8 +40,6 @@ pub fn register_keybindings(cx: &mut App) {
         KeyBinding::new("end", End, Some("TextInput")),
     ]);
 
-    // Primary-modifier clipboard bindings. macOS uses Cmd, Linux/Windows use
-    // Ctrl - matching the platform convention (and OS text-input expectations).
     #[cfg(target_os = "macos")]
     cx.bind_keys([
         KeyBinding::new("cmd-a", SelectAll, Some("TextInput")),
@@ -75,10 +57,6 @@ pub fn register_keybindings(cx: &mut App) {
     ]);
 }
 
-// ---------------------------------------------------------------------------
-// TextInput entity
-// ---------------------------------------------------------------------------
-
 pub struct TextInput {
     pub focus_handle: FocusHandle,
     content: SharedString,
@@ -92,7 +70,6 @@ pub struct TextInput {
 }
 
 impl TextInput {
-    /// Create a new input with an initial value and placeholder.
     pub fn new(
         initial: impl Into<SharedString>,
         placeholder: impl Into<SharedString>,
@@ -113,14 +90,10 @@ impl TextInput {
         }
     }
 
-    /// Current content as an owned `String`.
     pub fn value(&self) -> String {
         self.content.to_string()
     }
 
-    /// Replace the entire input value from app code and move the cursor to
-    /// the end. Clears IME composition state because the marked bytes no
-    /// longer describe the new content.
     pub fn set_value(&mut self, value: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.content = value.into();
         let cursor = self.content.len();
@@ -233,10 +206,6 @@ impl TextInput {
 
     fn paste(&mut self, _: &TextInputPaste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            // US-035: single-line input - coerce newlines to spaces. Collapse
-            // CRLF to one space first, then any lone CR/LF, so a Windows-style
-            // paste doesn't leave a stray `\r` that snaps the cursor to column
-            // 0 and visually corrupts the field.
             let sanitized = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
             self.replace_text_in_range(None, &sanitized, window, cx);
         }
@@ -497,10 +466,6 @@ impl EntityInputHandler for TextInput {
     ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
         let last_layout = self.last_layout.as_ref()?;
-        // US-033: an empty field lays out the *placeholder* ("Filter files…"),
-        // so `last_layout.text` legitimately differs from `self.content`. The
-        // old `assert_eq!` turned an OS-driven IME/hit-test on an empty field
-        // into a SIGABRT. Bail gracefully instead.
         if last_layout.text != self.content {
             return None;
         }
@@ -509,17 +474,10 @@ impl EntityInputHandler for TextInput {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Low-level element - shapes the line and paints text + caret + selection.
-// ---------------------------------------------------------------------------
-
 struct TextElement {
     input: Entity<TextInput>,
-    /// Caret colour, usually `ui.accent`.
     caret_color: Hsla,
-    /// Selection highlight colour, usually `ui.accent` at low alpha.
     selection_color: Hsla,
-    /// Placeholder text colour.
     placeholder_color: Hsla,
 }
 
@@ -629,8 +587,6 @@ impl Element for TextElement {
                 Some(fill(
                     Bounds::new(
                         point(bounds.left() + cursor_pos, bounds.top()),
-                        // 1px hairline caret (Codex-quiet) - 2px read as a
-                        // block on small input text.
                         size(px(1.), bounds.bottom() - bounds.top()),
                     ),
                     self.caret_color,
@@ -704,16 +660,9 @@ impl Element for TextElement {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Render impl - just the key/mouse hit area; caller styles the outer box.
-// ---------------------------------------------------------------------------
-
 impl Render for TextInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ui = crate::theme::ui_colors();
-        // Selection highlight: accent colour at low alpha. GPUI's `Hsla`
-        // literal copy + alpha override keeps the hue aligned with the
-        // active theme (so it stays coherent across One Dark / PaneFlow Light).
         let selection = hsla(ui.accent.h, ui.accent.s, ui.accent.l, 0.28);
 
         div()
@@ -740,8 +689,6 @@ impl Render for TextInput {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .child(TextElement {
                 input: cx.entity(),
-                // White caret (ui.text), not accent - the accent stays reserved
-                // for status; a blue caret shouted in every input.
                 caret_color: ui.text,
                 selection_color: selection,
                 placeholder_color: ui.muted,

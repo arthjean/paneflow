@@ -1,6 +1,3 @@
-//! Focus navigation: directional movement through normalized layout geometry
-//! plus first/last leaf focus helpers.
-
 use std::cmp::Ordering;
 
 use gpui::{App, Entity, Focusable, Window};
@@ -139,7 +136,6 @@ impl LayoutTree {
         }
     }
 
-    /// Focus the first (leftmost/topmost) leaf in the tree.
     pub fn focus_first(&self, window: &mut Window, cx: &mut App) {
         match self {
             LayoutTree::Leaf(pane) => {
@@ -153,7 +149,6 @@ impl LayoutTree {
         }
     }
 
-    /// Move focus in the given direction. Returns the navigation result.
     pub fn focus_in_direction(
         &self,
         dir: FocusDirection,

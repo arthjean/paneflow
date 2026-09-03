@@ -1,20 +1,3 @@
-//! `paneflow flow run <file>` - the local-first agent-orchestration engine
-//! (EP-003, prd-orchestration-v2 - US-011 executor, US-012 gated feeds,
-//! US-013 fan-out/fan-in, US-014 captures, US-015 reporting).
-//!
-//! The engine lives in the CLI process and drives the running instance
-//! through public IPC only: `workspace.up` bootstraps the flow's own
-//! workspace with the root spawn steps, later spawn steps arrive via the
-//! spawn-capable `surface.split`, feeds go through `surface.send_text`
-//! (double-gated when submitting), and every `ready` barrier is a
-//! `surface.read` poll - the same machinery as `paneflow wait`. Ctrl-C stops
-//! the ORCHESTRATION: panes and agents always survive the engine (FR-06).
-//!
-//! Scheduling is a single-threaded tick loop (no threads, no async): each
-//! tick advances the settling/polling units and starts every unit whose
-//! dependencies are READY. Wall-clock resolution is `TICK` (500 ms), with
-//! settling based on `output_generation` instead of text diffs.
-
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,33 +12,17 @@ use super::flow_spec::{self, FlowPlan, OnFailure, Unit, UnitAction};
 use super::up_cmd::{self, WorktreePlan};
 use super::{CliError, EXIT_OK, EXIT_RUNTIME, EXIT_TIMEOUT};
 
-/// Scheduler tick. 500 ms = the documented `paneflow wait` poll cycle (NFR:
-/// barrier polls reuse that cadence, not a faster one) - scheduling latency
-/// is irrelevant against steps that run for minutes.
 const TICK: Duration = Duration::from_millis(500);
-/// Barrier poll window - mirrors `paneflow wait` (bounded under the client's
-/// response cap; new output lands at the tail).
 const READ_WINDOW_LINES: u64 = 500;
-/// Settle detection before a feed: floor + stability mirror the server-side
-/// prefill constants (US-010 of cli-agent-orchestration), using the public
-/// `surface.read.output_generation` signal so a large scrollback does not need
-/// to be string-compared on every tick.
 const SETTLE_FLOOR: Duration = Duration::from_millis(1800);
 const SETTLE_MAX: Duration = Duration::from_millis(8000);
 const SETTLE_WINDOW_LINES: u64 = 50;
-/// `surface.send_text` payload cap (server-enforced); substituted texts are
-/// truncated to fit, with an explicit marker (US-014).
 const MAX_SEND_LEN: usize = 64 * 1024;
 
-/// EP-004 US-014 (agent-control-plane): the settle/bailout decision. Fire when
-/// the pane output has been stable across >=2 reads past the floor, OR
-/// unconditionally at `max` (the bailout for output that never settles, e.g. a
-/// spinner). Pure, so the bailout is unit-tested without an 8 s wall-clock wait.
 fn settle_fire(elapsed: Duration, stable: u8, floor: Duration, max: Duration) -> bool {
     elapsed >= max || (stable >= 2 && elapsed >= floor)
 }
 
-/// `paneflow flow run <file> [--dry-run] [--json]`.
 pub fn run(
     client: &impl IpcTransport,
     file: &str,
@@ -73,8 +40,6 @@ pub fn run(
         check_orchestration_gate(client, dry_run)?;
     }
 
-    // US-012: a submitting flow is refused up-front - run AND dry-run - when
-    // the instance gate is off. Never a silent downgrade to non-submitted.
     if plan.requires_submit() {
         check_scripting_gate(client, dry_run)?;
     }
@@ -99,10 +64,6 @@ pub fn run(
     .execute()
 }
 
-/// Probe `system.capabilities` for the orchestration gate. An older server
-/// without the field falls through to the runtime `-32601` translation; an
-/// unreachable instance only degrades to a warning under `--dry-run` (the
-/// plan itself needs no instance).
 fn check_orchestration_gate(client: &impl IpcTransport, dry_run: bool) -> Result<(), CliError> {
     match client.call("system.capabilities", json!({})) {
         Ok(caps) => {
@@ -127,10 +88,6 @@ fn check_orchestration_gate(client: &impl IpcTransport, dry_run: bool) -> Result
     }
 }
 
-/// Probe `system.capabilities` for the scripting gate. An older server
-/// without the field falls through to the runtime `-32601` translation; an
-/// unreachable instance only degrades to a warning under `--dry-run` (the
-/// plan itself needs no instance).
 fn check_scripting_gate(client: &impl IpcTransport, dry_run: bool) -> Result<(), CliError> {
     match client.call("system.capabilities", json!({})) {
         Ok(caps) => match caps.get("scripting").and_then(Value::as_bool) {
@@ -205,9 +162,6 @@ fn prepare_runs(
     config: &PaneFlowConfig,
     port_is_free: impl Fn(u16) -> bool,
 ) -> Result<Vec<UnitRun>, CliError> {
-    // Resolve agent launch commands (PATH-checked), worktree plans, and
-    // `${port_offset}` env values for every spawn unit - atomic: any failure
-    // aborts before side effects.
     let mut commands: Vec<Option<String>> = Vec::with_capacity(plan.units.len());
     let mut worktree_plans: Vec<Option<WorktreePlan>> = Vec::with_capacity(plan.units.len());
     let mut port_refs: Vec<bool> = Vec::with_capacity(plan.units.len());
@@ -224,8 +178,6 @@ fn prepare_runs(
         worktree_plans.push(worktree);
         port_refs.push(port_ref);
     }
-    // Same static dedup as `up`: two units on one worktree path would fail
-    // at the second `git worktree add` MID-FLOW otherwise (non-atomic).
     up_cmd::check_worktree_conflicts(&mut worktree_plans)?;
     let port_offsets = up_cmd::allocate_port_offsets(&port_refs, plan.port_base, port_is_free)?;
 
@@ -247,20 +199,13 @@ fn substitute_unit_env(mut unit: Unit, port_offset: Option<u16>) -> Unit {
     unit
 }
 
-// ---------------------------------------------------------------------------
-// Executor state machine (US-011)
-// ---------------------------------------------------------------------------
-
 enum State {
     Pending,
-    /// Waiting for the target pane's output to settle before feeding text
-    /// (send units, and spawn units submitting their prompt).
     Settling {
         last_generation: Option<u64>,
         stable: u8,
         since: Instant,
     },
-    /// `ready` barrier poll.
     Polling {
         deadline: Instant,
         re: Regex,
@@ -321,7 +266,6 @@ struct ReadSnapshot {
     output_generation: Option<u64>,
 }
 
-/// What a barrier/settle poll saw.
 enum Read {
     Snapshot(ReadSnapshot),
     Gone,
@@ -337,21 +281,14 @@ struct Engine<'c, T: IpcTransport> {
     started: Instant,
     json_out: bool,
     split_count: usize,
-    /// First wave-0 surface - later spawns split off it.
     anchor: Option<u64>,
 }
 
 impl<T: IpcTransport> Engine<'_, T> {
     fn execute(mut self) -> Result<i32, CliError> {
-        // Ctrl-C stops the orchestration, never the panes (US-015): the
-        // handler flips a flag the tick loop reads, so we exit through the
-        // normal partial-report path instead of being killed mid-print.
         let interrupted = Arc::new(AtomicBool::new(false));
         {
             let flag = interrupted.clone();
-            // A second Ctrl-C falls back to the default disposition via the
-            // handler being a no-op flag set - best-effort; failure to
-            // install (exotic env) is not fatal to the flow.
             let _ = ctrlc::set_handler(move || flag.store(true, Ordering::SeqCst));
         }
 
@@ -370,9 +307,6 @@ impl<T: IpcTransport> Engine<'_, T> {
             }
             self.propagate_and_schedule()?;
             if self.on_failure == OnFailure::FailFast && self.any_failed() {
-                // Fail-fast: stop orchestrating NOW. In-flight units stay
-                // alive in their panes (never killed); pending ones are
-                // skipped for the report.
                 self.skip_pending_after_fail_fast();
                 break None;
             }
@@ -385,9 +319,6 @@ impl<T: IpcTransport> Engine<'_, T> {
         self.report(aborted)
     }
 
-    /// Spawn every root unit in one `workspace.up` call: the flow gets its
-    /// own workspace, panes are created together under the layout preset,
-    /// and the response's `surface_ids` map back to the units in order.
     fn bootstrap_wave0(&mut self) -> Result<(), CliError> {
         let roots: Vec<usize> = (0..self.runs.len())
             .filter(|&i| self.runs[i].unit.needs.is_empty())
@@ -415,8 +346,6 @@ impl<T: IpcTransport> Engine<'_, T> {
                 ),
                 "command": r.command,
                 "profile": if s.pane.agent.is_some() { "agent" } else { "normal" },
-                // A submitting prompt is fed by the engine after its own
-                // settle wait - never double-prefilled by the server.
                 "prompt": if r.unit.submit { None } else { s.pane.prompt.clone() },
                 "focus": s.pane.focus,
                 "env": s.pane.env,
@@ -466,8 +395,6 @@ impl<T: IpcTransport> Engine<'_, T> {
         Ok(())
     }
 
-    /// After a unit's action fired (pane spawned / text ready to feed): a
-    /// submitting spawn settles first, then barriers poll, else READY.
     fn enter_post_action_state(&mut self, i: usize) {
         let r = &self.runs[i];
         let needs_settle = match &r.unit.action {
@@ -490,7 +417,6 @@ impl<T: IpcTransport> Engine<'_, T> {
         match &self.runs[i].unit.ready {
             Some((pattern, timeout)) => State::Polling {
                 deadline: Instant::now() + Duration::from_secs(*timeout),
-                // Validated at parse - unreachable in practice.
                 re: Regex::new(pattern).expect("ready.pattern validated at parse"),
                 baseline,
             },
@@ -498,8 +424,6 @@ impl<T: IpcTransport> Engine<'_, T> {
         }
     }
 
-    /// Advance settling + polling units. `Err` aborts the whole flow
-    /// (instance unreachable - US-015 AC5).
     fn progress(&mut self) -> Result<(), String> {
         for i in 0..self.runs.len() {
             if self.on_failure == OnFailure::FailFast && self.any_failed() {
@@ -564,10 +488,6 @@ impl<T: IpcTransport> Engine<'_, T> {
                                 } else {
                                     stable = 0;
                                 }
-                                // EP-004 US-014: settle once stable past the
-                                // floor; `settle_fire` also carries the bailout
-                                // (exercised by the initial check above, and
-                                // unit-tested) so the rule lives in one place.
                                 fire = settle_fire(elapsed, stable, SETTLE_FLOOR, SETTLE_MAX);
                                 if !fire {
                                     self.runs[i].state = State::Settling {
@@ -589,8 +509,6 @@ impl<T: IpcTransport> Engine<'_, T> {
         Ok(())
     }
 
-    /// Feed the unit's text (send.text or the submitting prompt) into its
-    /// surface, then enter the barrier (or READY).
     fn fire_feed(&mut self, i: usize) -> Result<(), String> {
         let r = &self.runs[i];
         let raw = match &r.unit.action {
@@ -664,10 +582,7 @@ impl<T: IpcTransport> Engine<'_, T> {
         }
     }
 
-    /// Skip the dependents of failed/skipped groups, then start every
-    /// pending unit whose dependency groups are all READY.
     fn propagate_and_schedule(&mut self) -> Result<(), CliError> {
-        // Group status snapshot: (all_ready, any_failed_or_skipped).
         let mut groups: HashMap<&str, (bool, bool)> = HashMap::new();
         for r in &self.runs {
             let e = groups.entry(r.unit.group.as_str()).or_insert((true, false));
@@ -713,8 +628,6 @@ impl<T: IpcTransport> Engine<'_, T> {
         Ok(())
     }
 
-    /// Start a non-root unit: spawn its pane via the spawn-capable
-    /// `surface.split`, or resolve a send target.
     fn start_unit(&mut self, i: usize) -> Result<(), CliError> {
         self.runs[i].started = Some(Instant::now());
         match &self.runs[i].unit.action {
@@ -771,8 +684,6 @@ impl<T: IpcTransport> Engine<'_, T> {
                 }
             }
             UnitAction::Send { target, .. } => {
-                // Flow-owned aliases take precedence; fall back to the
-                // instance-wide selector for arbitrary panes.
                 let target = target.clone();
                 let sid = match self.resolve_flow_target(&target) {
                     Some(result) => result,
@@ -835,9 +746,6 @@ impl<T: IpcTransport> Engine<'_, T> {
     fn read_window(&self, sid: u64, lines: u64) -> Result<Read, String> {
         match self.client.call(
             "surface.read",
-            // EP-003 US-011: barriers parse raw output and settling reads
-            // output_generation from the same response. The untrusted fence
-            // would corrupt regex matching, so opt out here.
             json!({ "surface_id": sid, "lines": lines, "fenced": false }),
         ) {
             Ok(result) => {
@@ -900,8 +808,6 @@ impl<T: IpcTransport> Engine<'_, T> {
                     .map(|e| format!(" ({e})"))
                     .unwrap_or_default()
             );
-            // Live transitions go to stderr under --json so stdout stays a
-            // single machine-readable document (US-015).
             if self.json_out {
                 eprintln!("{line}");
             } else {
@@ -910,9 +816,6 @@ impl<T: IpcTransport> Engine<'_, T> {
         }
     }
 
-    /// Final report + exit code (US-015): 0 all READY, 4 when a barrier
-    /// timed out, 1 for any other failure / abort. Always printed - also on
-    /// abort paths (partial report).
     fn report(self, aborted: Option<String>) -> Result<i32, CliError> {
         let any_timeout = self
             .runs
@@ -1020,10 +923,6 @@ fn new_text_since_baseline(baseline: &str, current: &str) -> String {
         .join("\n")
 }
 
-/// Substitute `${var}` tokens from the capture store. `${item}` was resolved
-/// at expansion, so every remaining token must be a captured variable -
-/// unknown means the capturing step failed or was skipped (US-014). The
-/// result is bounded to the `send_text` cap with an explicit marker.
 fn substitute_vars(text: &str, vars: &HashMap<String, String>) -> Result<String, String> {
     let tokens = up_cmd::extract_tokens(text)?;
     let mut out = text.to_string();
@@ -1046,7 +945,6 @@ fn substitute_vars(text: &str, vars: &HashMap<String, String>) -> Result<String,
     Ok(out)
 }
 
-/// Last `n` lines of a read window (capture payload).
 fn last_lines(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(n);
@@ -1060,8 +958,6 @@ mod tests {
 
     #[test]
     fn settle_fire_bails_at_max_and_fires_when_stable_past_floor() {
-        // EP-004 US-014 AC2: output that never settles (stable stays 0) must
-        // NOT fire before the max, and MUST bail out at the max regardless.
         assert!(
             !settle_fire(Duration::from_millis(7999), 0, SETTLE_FLOOR, SETTLE_MAX),
             "below max with no stability keeps waiting"
@@ -1070,7 +966,6 @@ mod tests {
             settle_fire(SETTLE_MAX, 0, SETTLE_FLOOR, SETTLE_MAX),
             "bailout fires at the max even if the output never settled"
         );
-        // The settled path: stable across >=2 reads AND past the floor.
         assert!(
             !settle_fire(Duration::from_millis(1799), 9, SETTLE_FLOOR, SETTLE_MAX),
             "stable but below the floor keeps waiting"
@@ -1204,12 +1099,6 @@ mod tests {
         );
     }
 
-    // --- end-to-end engine run over a scripted fake transport -------------
-
-    /// Routed fake instance: workspace.up returns surface ids; surface.read
-    /// returns per-surface scripted text that changes over time (a counter);
-    /// send_text logs. Enough to drive a 2-step flow through spawn → barrier
-    /// → feed → barrier → READY without a live instance.
     struct FakeInstance {
         calls: RefCell<Vec<(String, Value)>>,
         reads: RefCell<HashMap<u64, Vec<String>>>,
@@ -1262,8 +1151,6 @@ mod tests {
         }
     }
 
-    /// A submitting flow against a gate-off instance is refused before any
-    /// mutation (US-012) - including under --dry-run.
     #[test]
     fn submitting_flow_refused_when_gate_off() {
         let dir = tempfile::tempdir().expect("tmp");
@@ -1280,7 +1167,6 @@ mod tests {
             "got: {}",
             err.message
         );
-        // Only the capabilities probe ran - no mutation.
         let calls = fake.calls.borrow();
         assert!(calls.iter().all(|(m, _)| m == "system.capabilities"));
     }
@@ -1305,7 +1191,6 @@ mod tests {
         assert!(calls.iter().all(|(m, _)| m == "system.capabilities"));
     }
 
-    /// Dry-run prints the plan and never mutates the instance (US-010).
     #[test]
     fn dry_run_makes_no_mutating_call() {
         let dir = tempfile::tempdir().expect("tmp");
@@ -1343,10 +1228,6 @@ mod tests {
         assert_eq!(ui_env["PORT"], "4120");
     }
 
-    /// Full happy path: root spawns (workspace.up), barrier matches,
-    /// capture feeds the second step, feed is sent, flow exits 0 (US-011/
-    /// US-012/US-014). The fake's read script: first read misses, second
-    /// matches - exercising at least one real poll wait.
     #[test]
     fn two_step_flow_runs_to_ready() {
         let dir = tempfile::tempdir().expect("tmp");
@@ -1375,8 +1256,6 @@ mod tests {
         assert_eq!(sent[0]["surface_id"], 1, "fed into impl's pane");
     }
 
-    /// A barrier that never matches times out, fails the step, and fail_fast
-    /// skips the dependents - exit 4 (US-011/US-015).
     #[test]
     fn timeout_fails_step_and_exits_4() {
         let dir = tempfile::tempdir().expect("tmp");
@@ -1390,7 +1269,6 @@ mod tests {
         fake.push_reads(1, &["nope"]);
         let code = run(&fake, file.to_str().unwrap(), false, true).expect("report");
         assert_eq!(code, EXIT_TIMEOUT);
-        // The dependent never fed anything.
         assert!(
             fake.calls
                 .borrow()

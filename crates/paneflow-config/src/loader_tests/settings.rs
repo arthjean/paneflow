@@ -3,17 +3,12 @@ use crate::schema::*;
 
 #[test]
 fn test_telemetry_missing_block() {
-    // No `telemetry` key at all → outer None (never asked).
     let config = parse_and_validate(r#"{"default_shell": "/bin/sh"}"#);
     assert!(config.telemetry.is_none());
 }
 
 #[test]
 fn test_telemetry_enabled_null_and_empty() {
-    // Both `{"enabled": null}` and `{}` must parse to the same state:
-    // block present, enabled unresolved. Both forms are expected in
-    // the wild (users editing by hand vs. the modal writing `{}` before
-    // the user clicks).
     let via_null = parse_and_validate(r#"{"telemetry": {"enabled": null}}"#);
     let via_empty = parse_and_validate(r#"{"telemetry": {}}"#);
 
@@ -32,8 +27,6 @@ fn test_telemetry_enabled_true() {
         })
     );
 
-    // Round-trip: re-serialize then re-parse - the consent answer
-    // must survive without loss so the modal never re-prompts.
     let json = serde_json::to_string(&config).unwrap();
     let reparsed = parse_and_validate(&json);
     assert_eq!(reparsed.telemetry, config.telemetry);
@@ -53,15 +46,6 @@ fn test_telemetry_enabled_false() {
     let reparsed = parse_and_validate(&json);
     assert_eq!(reparsed.telemetry, config.telemetry);
 }
-
-// ─── Terminal config - ligatures (US-008) ─────────────────────────────
-//
-// Behavior contract:
-//   - block missing                   → terminal = None    (default off)
-//   - {"terminal": {}}                → terminal = Some(TerminalConfig { ligatures: None })
-//   - {"terminal": {"ligatures": null}} → terminal = Some(TerminalConfig { ligatures: None })
-//   - {"terminal": {"ligatures": true}}  → ligatures opt-in
-//   - {"terminal": {"ligatures": false}} → explicit opt-out (same as default)
 
 #[test]
 fn test_terminal_block_missing_defaults_off() {
@@ -124,8 +108,6 @@ fn test_terminal_ligatures_true() {
         })
     );
 
-    // Survive a serialize → parse round-trip so the user's opt-in
-    // isn't dropped if Paneflow rewrites the config file.
     let json = serde_json::to_string(&config).unwrap();
     let reparsed = parse_and_validate(&json);
     assert_eq!(reparsed.terminal, config.terminal);
@@ -244,7 +226,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         integrated_glyphs: None,
         color_emoji: None,
         cursor_color: None,
-        scrollback_lines: Some(50), // below MIN_SCROLLBACK_LINES
+        scrollback_lines: Some(50),
         cursor_shape: None,
         cursor_blink: None,
         env: None,
@@ -260,7 +242,7 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
         integrated_glyphs: None,
         color_emoji: None,
         cursor_color: None,
-        scrollback_lines: Some(20_000_000), // way above MAX
+        scrollback_lines: Some(20_000_000),
         cursor_shape: None,
         cursor_blink: None,
         env: None,
@@ -273,7 +255,6 @@ fn test_terminal_scrollback_lines_clamps_out_of_range() {
     );
 }
 
-// US-014: global terminal.env round-trips through parse + serialize.
 #[test]
 fn test_terminal_env_round_trip() {
     let config = parse_and_validate(
@@ -290,13 +271,11 @@ fn test_terminal_env_round_trip() {
         Some("sk-x")
     );
 
-    // Survive a serialize → parse round-trip.
     let json = serde_json::to_string(&config).unwrap();
     let reparsed = parse_and_validate(&json);
     assert_eq!(reparsed.terminal, config.terminal);
 }
 
-// US-014: an absent env block resolves to None (no injection).
 #[test]
 fn test_terminal_env_absent_is_none() {
     let config = parse_and_validate(r#"{"terminal": {}}"#);
@@ -310,7 +289,6 @@ fn test_terminal_env_absent_is_none() {
     );
 }
 
-// US-022: scroll_multiplier resolver - default, clamp, in-range, round-trip.
 #[test]
 fn test_scroll_multiplier_resolver_default_and_clamp() {
     assert_eq!(
@@ -411,8 +389,6 @@ fn test_scroll_multiplier_serde_roundtrip() {
 
 #[test]
 fn test_terminal_ligatures_wrong_type_falls_back_to_defaults() {
-    // A typo in one terminal field must not discard siblings or the whole
-    // config. The bad bool resolves as absent, while valid neighbours stay.
     let config = parse_and_validate(
         r#"{"theme": "One Dark", "terminal": {"ligatures": "yes", "color_emoji": false}}"#,
     );
@@ -421,7 +397,3 @@ fn test_terminal_ligatures_wrong_type_falls_back_to_defaults() {
     assert_eq!(terminal.ligatures, None);
     assert_eq!(terminal.color_emoji, Some(false));
 }
-
-// SessionState carries the top-level UI `mode`. The tests below cover
-// round-trip with mixed state, backward compatibility with a session.json
-// that predates the field, and AppMode serialisation.

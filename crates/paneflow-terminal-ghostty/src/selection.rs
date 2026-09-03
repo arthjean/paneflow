@@ -1,10 +1,3 @@
-//! The parts of libghostty's selection API beyond word and line selection.
-//!
-//! Word and line selection live in [`crate::navigation`]. This module covers
-//! the rest: selecting everything, selecting the output of a command through
-//! OSC 133 marks, extending a selection by keyboard, and comparing or
-//! reordering selections.
-
 use paneflow_libghostty_sys as sys;
 
 use crate::engine::DisplayTerminal;
@@ -12,28 +5,17 @@ use crate::handles::check;
 use crate::snapshot_ffi::ghostty_point;
 use crate::{GhosttyError, Point, Result, SelectionRange};
 
-/// How to move a selection's active end.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionAdjust {
-    /// One cell left.
     Left,
-    /// One cell right.
     Right,
-    /// One row up.
     Up,
-    /// One row down.
     Down,
-    /// To the first cell of the row.
     BeginningOfLine,
-    /// To the last cell of the row.
     EndOfLine,
-    /// To the top of the scrollback.
     Home,
-    /// To the bottom of the screen.
     End,
-    /// One viewport up.
     PageUp,
-    /// One viewport down.
     PageDown,
 }
 
@@ -57,17 +39,11 @@ impl SelectionAdjust {
     }
 }
 
-/// The direction a selection runs in, which tells a caller which end is the
-/// anchor and which one a drag is moving.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SelectionOrder {
-    /// Start precedes end.
     Forward,
-    /// End precedes start.
     Reverse,
-    /// A rectangular selection whose start is the top-left corner.
     MirroredForward,
-    /// A rectangular selection whose start is the top-right corner.
     MirroredReverse,
 }
 
@@ -105,46 +81,22 @@ impl SelectionOrder {
 }
 
 impl DisplayTerminal {
-    /// Select the whole screen, scrollback included.
-    ///
-    /// Returns `false` when the screen holds nothing to select.
     pub fn select_all(&mut self) -> Result<bool> {
         let mut selection = empty_selection();
-        // SAFETY: the terminal handle is live and `selection` is valid
-        // writable storage with its `size` field set.
         let result =
             unsafe { sys::ghostty_terminal_select_all(self.terminal.raw(), &mut selection) };
         self.install_optional_selection(result, &selection)
     }
 
-    /// Select the output of the command containing `point`, using the OSC 133
-    /// marks the shell emitted.
-    ///
-    /// Returns `false` when the row is not inside a command's output, which
-    /// includes every shell without shell integration.
     pub fn select_output(&mut self, point: Point) -> Result<bool> {
         let reference = self.grid_ref(point)?;
         let mut selection = empty_selection();
-        // SAFETY: the terminal handle is live, `reference` was derived from
-        // it, and `selection` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_select_output(self.terminal.raw(), reference, &mut selection)
         };
         self.install_optional_selection(result, &selection)
     }
 
-    /// The nearest selectable word between `start` and `end`, searching from
-    /// `start` toward `end` and stopping at the first word found.
-    ///
-    /// This is the primitive for double-click-and-drag: asking for the word
-    /// directly under the pointer makes the selection flicker or collapse
-    /// whenever the pointer sits between two words. Instead ask in both
-    /// directions and union the two ranges, as [`Self::select_words_between`]
-    /// does.
-    ///
-    /// `boundaries` overrides which codepoints separate words; an empty slice
-    /// keeps libghostty's defaults. The result is a snapshot and is not
-    /// installed as the terminal's selection.
     pub fn nearest_word_between(
         &self,
         start: Point,
@@ -160,8 +112,6 @@ impl DisplayTerminal {
             boundary_codepoints_len: codepoints.len(),
         };
         let mut selection = empty_selection();
-        // SAFETY: the terminal handle is live, the boundary slice outlives
-        // the call, and `selection` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_select_word_between(
                 self.terminal.raw(),
@@ -176,14 +126,6 @@ impl DisplayTerminal {
         self.selection_range_of(&selection).map(Some)
     }
 
-    /// Select every word spanned by a double-click drag from `start` to
-    /// `end`, expanding to whole words at both ends.
-    ///
-    /// Built from two [`Self::nearest_word_between`] probes, one in each
-    /// direction, so a pointer resting between words keeps the last word it
-    /// passed instead of collapsing the selection.
-    ///
-    /// Returns `false` when neither end finds a word.
     pub fn select_words_between(
         &mut self,
         start: Point,
@@ -193,8 +135,6 @@ impl DisplayTerminal {
         let forward = self.nearest_word_between(start, end, boundaries)?;
         let backward = self.nearest_word_between(end, start, boundaries)?;
         let (Some(forward), Some(backward)) = (forward, backward) else {
-            // One direction finding nothing means the drag never crossed a
-            // word, so there is nothing to widen to.
             return Ok(false);
         };
         let mut points = [forward.start, forward.end, backward.start, backward.end];
@@ -207,7 +147,6 @@ impl DisplayTerminal {
         Ok(true)
     }
 
-    /// Convert a libghostty selection into viewport-relative coordinates.
     pub(crate) fn selection_range_of(
         &self,
         selection: &sys::GhosttySelection,
@@ -219,12 +158,8 @@ impl DisplayTerminal {
         })
     }
 
-    /// Resolve a grid ref back to a viewport-relative point, the inverse of
-    /// [`crate::engine::DisplayTerminal::grid_ref`].
     pub(crate) fn point_from_grid_ref(&self, reference: &sys::GhosttyGridRef) -> Result<Point> {
         let mut coordinate = sys::GhosttyPointCoordinate { x: 0, y: 0 };
-        // SAFETY: the terminal handle is live, `reference` came from it, and
-        // `coordinate` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_point_from_grid_ref(
                 self.terminal.raw(),
@@ -243,15 +178,10 @@ impl DisplayTerminal {
         Ok(Point::new(line, usize::from(coordinate.x)))
     }
 
-    /// Move the active end of the current selection.
-    ///
-    /// Returns `false` when there is no selection to adjust.
     pub fn adjust_selection(&mut self, adjustment: SelectionAdjust) -> Result<bool> {
         let Some(mut selection) = self.current_selection()? else {
             return Ok(false);
         };
-        // SAFETY: the terminal handle is live and `selection` is a live
-        // selection this terminal produced.
         let result = unsafe {
             sys::ghostty_terminal_selection_adjust(
                 self.terminal.raw(),
@@ -264,14 +194,11 @@ impl DisplayTerminal {
         Ok(true)
     }
 
-    /// The direction the current selection runs in.
     pub fn selection_order(&self) -> Result<Option<SelectionOrder>> {
         let Some(selection) = self.current_selection()? else {
             return Ok(None);
         };
         let mut order = sys::GhosttySelectionOrder_GHOSTTY_SELECTION_ORDER_FORWARD;
-        // SAFETY: the terminal handle is live, `selection` came from it, and
-        // `order` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_selection_order(self.terminal.raw(), &selection, &mut order)
         };
@@ -279,17 +206,11 @@ impl DisplayTerminal {
         SelectionOrder::from_raw(order).map(Some)
     }
 
-    /// Rewrite the current selection so it runs in `desired` order, without
-    /// changing which cells it covers.
-    ///
-    /// Returns `false` when there is no selection.
     pub fn order_selection(&mut self, desired: SelectionOrder) -> Result<bool> {
         let Some(selection) = self.current_selection()? else {
             return Ok(false);
         };
         let mut ordered = empty_selection();
-        // SAFETY: the terminal handle is live, `selection` came from it, and
-        // `ordered` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_selection_ordered(
                 self.terminal.raw(),
@@ -303,7 +224,6 @@ impl DisplayTerminal {
         Ok(true)
     }
 
-    /// Whether the current selection covers `point`.
     pub fn selection_contains(&self, point: Point) -> Result<bool> {
         let Some(selection) = self.current_selection()? else {
             return Ok(false);
@@ -323,8 +243,6 @@ impl DisplayTerminal {
             point.column,
         )?;
         let mut contains = false;
-        // SAFETY: the terminal handle is live, `selection` came from it, and
-        // `contains` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_selection_contains(
                 self.terminal.raw(),
@@ -337,11 +255,6 @@ impl DisplayTerminal {
         Ok(contains)
     }
 
-    /// Whether the current selection covers exactly the same cells as
-    /// `range`.
-    ///
-    /// Two selections can describe the same cells with their ends swapped, so
-    /// this is not a field comparison.
     pub fn selection_equals(&self, range: &SelectionRange) -> Result<bool> {
         let Some(current) = self.current_selection()? else {
             return Ok(false);
@@ -353,8 +266,6 @@ impl DisplayTerminal {
             rectangle: range.rectangle,
         };
         let mut equal = false;
-        // SAFETY: the terminal handle is live, both selections reference it,
-        // and `equal` is valid writable storage.
         let result = unsafe {
             sys::ghostty_terminal_selection_equal(
                 self.terminal.raw(),
@@ -367,10 +278,6 @@ impl DisplayTerminal {
         Ok(equal)
     }
 
-    /// Write the selected text into `buffer`, returning the byte count.
-    ///
-    /// Returns `None` when there is no selection. Fails rather than
-    /// truncating when the buffer is too small.
     pub fn selection_text_into(&self, buffer: &mut [u8]) -> Result<Option<usize>> {
         let options = sys::GhosttyTerminalSelectionFormatOptions {
             size: std::mem::size_of::<sys::GhosttyTerminalSelectionFormatOptions>(),
@@ -380,8 +287,6 @@ impl DisplayTerminal {
             selection: std::ptr::null(),
         };
         let mut written = 0usize;
-        // SAFETY: the terminal handle is live, `buffer` is a writable slice
-        // of the stated length, and `written` is valid storage.
         let result = unsafe {
             sys::ghostty_terminal_selection_format_buf(
                 self.terminal.raw(),
@@ -404,11 +309,8 @@ impl DisplayTerminal {
         Ok(Some(written))
     }
 
-    /// The current selection as neutral coordinates, or `None`.
     pub(crate) fn current_selection(&self) -> Result<Option<sys::GhosttySelection>> {
         let mut selection = empty_selection();
-        // SAFETY: the terminal handle is live and `selection` is valid
-        // writable storage with its `size` field set.
         let result = unsafe {
             sys::ghostty_terminal_get(
                 self.terminal.raw(),
@@ -425,8 +327,6 @@ impl DisplayTerminal {
 }
 
 pub(crate) fn empty_selection() -> sys::GhosttySelection {
-    // SAFETY: `GhosttySelection` is a plain-old-data struct whose fields are
-    // all valid when zeroed; `size` is set immediately after.
     let mut selection: sys::GhosttySelection = unsafe { std::mem::zeroed() };
     selection.size = std::mem::size_of::<sys::GhosttySelection>();
     selection
@@ -505,8 +405,6 @@ mod tests {
                 .expect("output must parse");
             terminal
         };
-        // Searching forward from inside "beta" finds "beta" itself, not the
-        // whole span: this probe is one half of a drag, not the drag.
         let forward = terminal
             .nearest_word_between(Point::new(0, 7), Point::new(0, 12), &[])
             .expect("forward probe")
@@ -514,10 +412,6 @@ mod tests {
         assert_eq!(forward.start.column, 6);
         assert_eq!(forward.end.column, 9);
 
-        // A run of spaces is itself a selectable word in Ghostty's rules, so
-        // a probe that starts on one returns that run rather than skipping to
-        // the next text. Unioning both directions is what turns this into a
-        // sensible drag.
         let from_space = terminal
             .nearest_word_between(Point::new(0, 10), Point::new(0, 15), &[])
             .expect("probe from a space")
@@ -531,7 +425,6 @@ mod tests {
         terminal
             .feed(b"alpha beta gamma")
             .expect("output must parse");
-        // Start inside "beta", end inside "gamma".
         assert!(
             terminal
                 .select_words_between(Point::new(0, 7), Point::new(0, 12), &[])

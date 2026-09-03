@@ -1,6 +1,3 @@
-// The PTY smoke runs on every POSIX shipping target. Linux and macOS drive
-// the same `/bin/sh`, the same `stty size` resize probe, and the same
-// `libc::kill` reaping check, so keeping two copies would only let them drift.
 #[cfg(unix)]
 mod posix {
     use std::io::{Read, Write};
@@ -113,7 +110,6 @@ mod posix {
                 bail!("package smoke child exited with {}", status.exit_code())
             }
 
-            // SAFETY: signal 0 performs a read-only process existence check.
             let process_exists = unsafe { libc::kill(pid as i32, 0) } == 0;
             if process_exists || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
             {

@@ -1,5 +1,3 @@
-//! Minimal typed MCP server over newline-delimited JSON-RPC 2.0 stdio.
-
 use std::io::{self, BufRead, Write};
 
 use paneflow_ipc_client::IpcTransport;

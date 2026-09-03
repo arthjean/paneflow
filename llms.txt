@@ -8,8 +8,8 @@
 - [README](README.md) - product overview, install paths, core workflows, safety model.
 - [Architecture](ARCHITECTURE.md) - runtime architecture, threading, terminal pipeline, IPC, security posture.
 - [Agent Instructions](AGENTS.md) - repository rules for coding agents working in this codebase.
-- [MCP Bridge](docs/mcp-bridge.md) - read-only pane inspection tools for agents.
-- [Windows Guide](docs/WINDOWS.md) - Windows support matrix, install path, and known platform caveats.
+- [MCP Bridge](docs/user/scripting.md) - read-only pane inspection tools for agents.
+- [Windows Guide](docs/user/installation/windows.md) - Windows install path and known platform caveats.
 
 ## User-Facing Concepts
 
@@ -36,7 +36,6 @@
 - [Linux signing](docs/release/linux-signing.md)
 - [macOS signing](docs/release/macos-signing.md)
 - [Windows signing](docs/release/windows-signing.md)
-- [Release runbook](docs/release-runbook.md)
 
 ## Agent Safety Notes
 

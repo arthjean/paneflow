@@ -1,28 +1,6 @@
-//! File-tree model + pure fs helpers for the docked Files sidebar
-//! (PRD `prd-files-tree-sidebar-2026-Q3`, EP-001).
-//!
-//! Holds the in-memory tree state ([`FilesTreeState`]) and the
-//! interaction-time directory read ([`read_dir_sorted`]), plus the pure
-//! functions the render path leans on: the folders-first comparator
-//! ([`compare_nodes`]) and the
-//! flatten that turns (root + expanded set + cached listings) into the ordered
-//! list of visible rows ([`flatten_visible`]). The pure functions carry the
-//! crate's `cargo test` coverage; the render + watch wiring lives in
-//! `files_sidebar.rs`.
-
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// One entry in a directory listing. Ignored and hidden entries are filtered
-/// before becoming nodes; the flags remain for callers that construct nodes in
-/// tests or future "show ignored" UI.
-///
-/// `size` is the byte length reported by the directory read (0 for
-/// directories, and 0 when the stat fails). US-019 needs it to tell, without
-/// touching the disk again on the render thread, whether the editor would
-/// refuse the file for being over [`code::load::MAX_FILE_BYTES`].
-///
-/// [`code::load::MAX_FILE_BYTES`]: crate::app::diff_dock::code::load::MAX_FILE_BYTES
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FileNode {
     pub path: PathBuf,
@@ -32,9 +10,6 @@ pub(crate) struct FileNode {
     pub size: u64,
 }
 
-/// A flattened, render-ready row: the node, its indentation depth (component
-/// distance from the root's children), and whether it is an expanded directory
-/// (drives the chevron direction). Pure output of [`flatten_visible`].
 #[cfg(test)]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct VisibleRow {
@@ -50,9 +25,6 @@ pub(crate) struct VisibleRowRef<'a> {
     pub expanded: bool,
 }
 
-/// In-memory tree state for the open Files sidebar. Rebuilt on open and on
-/// workspace re-root; cleared on close. `children` is a lazy cache keyed by
-/// directory path - a directory is read on first expand and kept thereafter.
 #[derive(Default)]
 pub(crate) struct FilesTreeState {
     pub root: PathBuf,
@@ -61,11 +33,6 @@ pub(crate) struct FilesTreeState {
 }
 
 impl FilesTreeState {
-    /// US-018: a root-only shell - the root marked expanded but with no
-    /// directory listings read yet. Shown synchronously the instant the sidebar
-    /// opens so the panel renders without blocking, while
-    /// [`crate::PaneFlowApp::spawn_files_hydration`] fills the listings and
-    /// installs the non-recursive watcher on a background task.
     pub(crate) fn root_shell(root: PathBuf) -> Self {
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
@@ -76,18 +43,10 @@ impl FilesTreeState {
         }
     }
 
-    /// Whether the root directory has completed its first listing read. A
-    /// root shell intentionally starts without this entry so the UI can show
-    /// a transient loading state instead of a false empty folder.
     pub(crate) fn root_listing_ready(&self) -> bool {
         self.children.contains_key(&self.root)
     }
 
-    /// Build a state rooted at `root`, restoring `persisted` expanded
-    /// directories (US-007). The root is always expanded; each persisted path
-    /// is restored only if it still resolves to a directory under the root -
-    /// stale paths (deleted folders) are silently dropped. Every restored dir's
-    /// listing is read so the flatten has a cache to walk.
     pub(crate) fn hydrated(root: PathBuf, persisted: &[PathBuf]) -> Self {
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
@@ -108,26 +67,14 @@ impl FilesTreeState {
     }
 }
 
-/// Extensions whose bytes are binary by construction. Presentation-only
-/// heuristic: the editor still sniffs the actual bytes when the file is opened
-/// ([`code::load::looks_binary`]), so a mis-classified extension costs a dimmed
-/// row, never a wrong read.
-///
-/// [`code::load::looks_binary`]: crate::app::diff_dock::code::load
 const BINARY_EXTENSIONS: &[&str] = &[
-    // images
-    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif", "tiff", "tif", "psd", "heic",
-    // audio / video
-    "mp3", "wav", "flac", "ogg", "m4a", "aac", "mp4", "mkv", "mov", "avi", "webm", "wmv",
-    // archives
-    "zip", "gz", "bz2", "xz", "zst", "7z", "rar", "tar", "tgz", "jar", "whl",
-    // executables / objects
-    "exe", "dll", "so", "dylib", "o", "a", "lib", "obj", "pdb", "class", "wasm", "bin", "msi",
-    "appimage", "dmg", "deb", "rpm", // fonts / documents / databases
+    "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "avif", "tiff", "tif", "psd", "heic", "mp3",
+    "wav", "flac", "ogg", "m4a", "aac", "mp4", "mkv", "mov", "avi", "webm", "wmv", "zip", "gz",
+    "bz2", "xz", "zst", "7z", "rar", "tar", "tgz", "jar", "whl", "exe", "dll", "so", "dylib", "o",
+    "a", "lib", "obj", "pdb", "class", "wasm", "bin", "msi", "appimage", "dmg", "deb", "rpm",
     "ttf", "otf", "woff", "woff2", "eot", "pdf", "db", "sqlite", "sqlite3", "bcmap", "pyc",
 ];
 
-/// Case-insensitive "this extension is binary" predicate.
 pub(crate) fn is_binary_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -138,16 +85,12 @@ pub(crate) fn is_binary_extension(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// US-019: would the editor refuse this file? Refused rows stay dimmed in the
-/// sidebar but remain clickable - opening one surfaces the US-003 error inside
-/// the tab rather than silently doing nothing.
 pub(crate) fn editor_refuses(node: &FileNode) -> bool {
     !node.is_dir
         && (is_binary_extension(&node.path)
             || node.size > crate::app::diff_dock::code::load::MAX_FILE_BYTES as u64)
 }
 
-/// Display name (the final path component) of a node, lossy for non-UTF-8.
 pub(crate) fn node_name(node: &FileNode) -> String {
     node.path
         .file_name()
@@ -155,9 +98,7 @@ pub(crate) fn node_name(node: &FileNode) -> String {
         .unwrap_or_default()
 }
 
-/// Folders first, then case-insensitive by name (Zed / VS Code convention).
 pub(crate) fn compare_nodes(a: &FileNode, b: &FileNode) -> std::cmp::Ordering {
-    // `true > false`, so directories (true) sort ahead of files.
     b.is_dir.cmp(&a.is_dir).then_with(|| {
         node_name(a)
             .to_ascii_lowercase()
@@ -165,10 +106,6 @@ pub(crate) fn compare_nodes(a: &FileNode, b: &FileNode) -> std::cmp::Ordering {
     })
 }
 
-/// Read a directory into sorted [`FileNode`]s. Non-panicking: an unreadable
-/// directory (permissions / removed) yields an empty listing rather than an
-/// error. `root` anchors the gitignore matcher so root-level patterns
-/// (`target/`, `node_modules/`, …) tint nested entries too.
 pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
     let gitignore = build_gitignore(root, dir);
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -187,11 +124,6 @@ pub(crate) fn read_dir_sorted(root: &Path, dir: &Path) -> Vec<FileNode> {
             if is_hidden || is_ignored {
                 return None;
             }
-            // Stat only what survives the filter, and only for files: the
-            // sort, the gitignore pass and the watcher are untouched, this
-            // just carries the size US-019 dims on. A failed stat reads as 0,
-            // i.e. "not too large" - `code::load` still checks the real length
-            // when the file is actually opened.
             let size = if is_dir {
                 0
             } else {
@@ -232,12 +164,6 @@ fn has_windows_hidden_attribute(_entry: &std::fs::DirEntry) -> bool {
     false
 }
 
-/// Build a gitignore matcher rooted at `root` that folds in every `.gitignore`
-/// from the root down to `dir`. Approximation: all globs are evaluated against
-/// `root` (a nested `.gitignore`'s dir-relative semantics aren't fully
-/// reproduced), which is sufficient for the dominant case: the repo-root
-/// `.gitignore` filtering `target/` / `node_modules/` before render and watch
-/// registration.
 fn build_gitignore(root: &Path, dir: &Path) -> Option<ignore::gitignore::Gitignore> {
     let mut builder = ignore::gitignore::GitignoreBuilder::new(root);
     let mut cur = root.to_path_buf();
@@ -251,10 +177,6 @@ fn build_gitignore(root: &Path, dir: &Path) -> Option<ignore::gitignore::Gitigno
     builder.build().ok()
 }
 
-/// Flatten (root + expanded set + cached listings) into the ordered list of
-/// visible rows, skipping collapsed (or uncached) subtrees. Pure - the root
-/// itself is rendered by the header, so this starts at the root's children at
-/// depth 0.
 #[cfg(test)]
 pub(crate) fn flatten_visible(
     root: &Path,
@@ -266,9 +188,6 @@ pub(crate) fn flatten_visible(
     out
 }
 
-/// Path relative to the workspace root for "Copy relative path" (US-009).
-/// Falls back to the absolute path when `path` is not under `root` (e.g. a
-/// symlink resolving outside the tree). Pure / unit-tested.
 pub(crate) fn workspace_relative_path(root: &Path, path: &Path) -> String {
     match path.strip_prefix(root) {
         Ok(rel) => rel.to_string_lossy().into_owned(),
@@ -276,10 +195,6 @@ pub(crate) fn workspace_relative_path(root: &Path, path: &Path) -> String {
     }
 }
 
-/// Coalesce a batch of affected directory paths into the minimal set to
-/// re-read (US-005): dedup, then drop any path that has an ancestor also in
-/// the set - a parent re-read subsumes its queued descendants (the burst-safe
-/// "parent change drops queued child events" rule). Pure / unit-tested.
 pub(crate) fn coalesce_by_prefix(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut dirs = dirs;
     dirs.sort();
@@ -430,7 +345,6 @@ mod tests {
             root.clone(),
             vec![dir("/r/src"), dir("/r/docs"), file("/r/a.md")],
         );
-        // Only /r/src is cached + expanded; /r/docs stays collapsed.
         children.insert("/r/src".into(), vec![file("/r/src/main.rs")]);
         let mut expanded = HashSet::new();
         expanded.insert(root.clone());
@@ -527,8 +441,6 @@ mod tests {
 
     #[test]
     fn coalesce_does_not_treat_name_prefix_as_ancestor() {
-        // `/r/src2` is NOT under `/r/src` - string-prefix would wrongly fold
-        // it, but `Path::starts_with` is component-wise so both survive.
         let mut out = coalesce_by_prefix(vec![PathBuf::from("/r/src"), PathBuf::from("/r/src2")]);
         out.sort();
         assert_eq!(out, vec![PathBuf::from("/r/src"), PathBuf::from("/r/src2")]);
@@ -567,8 +479,6 @@ mod tests {
         );
     }
 
-    // ── US-019: editor-refusal tiers ────────────────────────────────────────
-
     #[test]
     fn binary_extensions_are_recognized_case_insensitively() {
         assert!(is_binary_extension(Path::new("/w/logo.PNG")));
@@ -599,7 +509,6 @@ mod tests {
         source.size = 4_096;
         assert!(!editor_refuses(&source));
 
-        // A directory is never "refused" - it toggles, it never opens.
         let mut d = dir("/w/target");
         d.size = limit + 1;
         assert!(!editor_refuses(&d));

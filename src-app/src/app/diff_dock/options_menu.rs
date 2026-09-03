@@ -1,11 +1,3 @@
-//! The diff dock's overflow menu: the `...` header button and the popover it
-//! opens (layout, expand/collapse, refresh).
-//!
-//! Modeled on Cursor's changes-panel menu: a "Layout" row carrying the current
-//! value and opening a side submenu, a divider, then the plain actions. Only the
-//! dock's real capabilities are listed - Cursor's whitespace/word-wrap toggles
-//! and in-diff search have no counterpart here.
-
 use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, MouseButton, MouseUpEvent,
     ParentElement, StatefulInteractiveElement, Styled, deferred, div, prelude::FluentBuilder, px,
@@ -17,13 +9,9 @@ use crate::PaneFlowApp;
 use crate::settings::components::{menu_divider_color, menu_surface, select_item};
 use crate::ui_primitives::{ROW_RADIUS, squircle_skin};
 
-/// Width of the overflow popover. Sized so "Refresh Changes" and the "Layout /
-/// Split" pair breathe without the menu overhanging a narrow dock.
 const MENU_WIDTH: f32 = 232.0;
 
 impl PaneFlowApp {
-    /// Drive the dock's `...` menu to `open`. Closing it also folds the layout
-    /// submenu, so reopening always starts collapsed.
     fn set_diff_options_menu(&mut self, open: bool, cx: &mut Context<Self>) {
         self.diff_dock.diff_options_menu_open = open;
         if !open {
@@ -41,16 +29,12 @@ impl PaneFlowApp {
     }
 }
 
-/// The header's `...` trigger, with the popover deferred over it while open.
 pub(super) fn render_diff_options_button(
     chrome: &DiffChrome<'_>,
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
     let open = chrome.options_open;
-    // Same skin as the sidebar's rail actions (28 px box, `ROW_RADIUS`
-    // superellipse, rail hover tint); while the menu is up the hover fill is
-    // pinned on as the resting fill so the trigger stays lit.
     let hover = crate::app::constants::sidebar_tab_hover_background();
 
     squircle_skin(
@@ -67,10 +51,6 @@ pub(super) fn render_diff_options_button(
         Some(hover),
     )
     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-    // Toggle off the render-time `open` snapshot, not the live state: while
-    // the menu is up, its `on_mouse_up_out` fires on this same release and has
-    // already cleared the flag, so a live toggle would re-open it and a second
-    // press on the trigger could never close the menu.
     .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
         this.set_diff_options_menu(!open, cx);
     }))
@@ -99,9 +79,6 @@ fn render_diff_options_menu(
     let submenu_open = chrome.layout_submenu_open;
     let cwd = chrome.cwd.clone();
 
-    // Built on `menu_surface` rather than `select_menu`: the latter bakes in an
-    // `overflow_y_scroll` host, and the layout submenu has to fly out of the
-    // menu's own box.
     let mut menu = menu_surface(div().id("diff-dock-options-menu"), ui)
         .flex()
         .flex_col()
@@ -109,12 +86,6 @@ fn render_diff_options_menu(
         .p(px(4.))
         .w(px(MENU_WIDTH))
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        // Dismiss on release, not on press: `on_mouse_down_out` runs in the
-        // capture phase (no bubble `stop_propagation` can hold it back), and the
-        // layout submenu flies out of this menu's own bounds - so a press on a
-        // submenu row read as "outside", closed the menu, and the row's click
-        // died with the frame. Closing on mouse-up keeps that click alive,
-        // because the capture close and the bubble click share one event.
         .on_mouse_up_out(
             MouseButton::Left,
             cx.listener(|this, _: &MouseUpEvent, _w, cx| {
@@ -172,9 +143,6 @@ fn render_diff_options_menu(
     .into_any_element()
 }
 
-/// "Layout  <value> >": the current mode on the right, a chevron opening the
-/// side submenu. The submenu anchors to the row so it flies out leftward,
-/// clearing the dock's right edge.
 fn render_layout_row(
     split: bool,
     submenu_open: bool,

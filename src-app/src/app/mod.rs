@@ -1,7 +1,3 @@
-//! App-layer modules extracted from `main.rs`.
-//!
-//! See `tasks/prd-src-app-refactor.md` for the ongoing decomposition plan.
-
 pub mod about_dialog;
 pub mod actions;
 pub mod agent_status;

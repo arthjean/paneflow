@@ -1,14 +1,3 @@
-//! Terminal settings that belong to the embedder rather than to the program.
-//!
-//! The constructor pins what every Paneflow terminal needs; these are the
-//! knobs a host decides per session: the palette its theme defines, the
-//! terminfo entry it advertises, the cursor a `CSI 0 q` resets to, and the
-//! two protocol surfaces that are off until someone opts in.
-//!
-//! Several of them are deliberately off by default because they hand a
-//! running program a capability it can turn against the user. Each such
-//! setter says which risk it reopens.
-
 use std::ffi::c_void;
 
 use paneflow_libghostty_sys as sys;
@@ -18,11 +7,8 @@ use crate::handles::check;
 use crate::modes::Mode;
 use crate::{CursorShape, GhosttyError, PALETTE_LEN, Result, Rgb};
 
-/// Longest terminfo entry name libghostty accepts.
 const MAX_TERMINFO_NAME_BYTES: usize = 128;
 
-/// Capture budget per unsupported sequence, applied by
-/// [`DisplayTerminal::capture_unknown_sequences`].
 const MAX_UNKNOWN_SEQUENCE_BYTES: usize = 4096;
 
 fn cursor_style(shape: CursorShape) -> sys::GhosttyTerminalCursorStyle {
@@ -39,20 +25,8 @@ fn cursor_style(shape: CursorShape) -> sys::GhosttyTerminalCursorStyle {
 }
 
 impl DisplayTerminal {
-    /// Replace the 256-color palette a program's indexed colors resolve
-    /// against.
-    ///
-    /// Without this, libghostty answers `OSC 4` queries and resolves indexed
-    /// colors from its own built-in palette while the renderer paints the
-    /// host's theme, so the two disagree about what color 1 is.
-    ///
-    /// [`crate::generate_palette`] derives the 216-color cube and the
-    /// grayscale ramp from a theme's ANSI 0-15, which is what makes a full
-    /// palette out of the sixteen colors a theme actually defines.
     pub fn set_palette(&mut self, palette: &[Rgb; PALETTE_LEN]) -> Result<()> {
         let raw = palette.map(sys::GhosttyColorRgb::from);
-        // SAFETY: the terminal handle is live and `raw` is exactly the
-        // 256-entry array the option documents, live for the call.
         let result = unsafe {
             self.set_terminal_option(
                 "terminal_set_color_palette",
@@ -60,15 +34,11 @@ impl DisplayTerminal {
                 raw.as_ptr().cast::<c_void>(),
             )
         };
-        // Indexed cells resolve through the palette, so every cached cell
-        // color is now stale.
         self.snapshot_cache.invalidate();
         result
     }
 
-    /// Restore libghostty's built-in palette.
     pub fn reset_palette(&mut self) -> Result<()> {
-        // SAFETY: the option documents a null value pointer as the reset.
         let result = unsafe {
             self.set_terminal_option(
                 "terminal_reset_color_palette",
@@ -80,14 +50,8 @@ impl DisplayTerminal {
         result
     }
 
-    /// Set what `CSI 0 q` resets the cursor to.
-    ///
-    /// This is the host's configured cursor. A program can still pick another
-    /// shape with `DECSCUSR`; what changes is where a reset lands.
     pub fn set_default_cursor(&mut self, shape: CursorShape, blink: bool) -> Result<()> {
         let style = cursor_style(shape);
-        // SAFETY: the terminal handle is live and each value has the input
-        // type its option documents, live for the call.
         unsafe {
             self.set_terminal_option(
                 "terminal_set_default_cursor_style",
@@ -102,11 +66,6 @@ impl DisplayTerminal {
         }
     }
 
-    /// Advertise the terminfo entry this terminal emulates.
-    ///
-    /// Answers an `XTGETTCAP` query for `TN`. libghostty cannot know what the
-    /// host puts in `TERM`, so it reports nothing until told, which makes a
-    /// program's capability probe fail closed.
     pub fn set_terminfo_name(&mut self, name: &str) -> Result<()> {
         if name.len() > MAX_TERMINFO_NAME_BYTES {
             return Err(GhosttyError::LimitExceeded {
@@ -118,8 +77,6 @@ impl DisplayTerminal {
             ptr: name.as_ptr(),
             len: name.len(),
         };
-        // SAFETY: the terminal handle is live and `value` borrows `name` for
-        // the call, which copies the bytes.
         unsafe {
             self.set_terminal_option(
                 "terminal_set_terminfo_name",
@@ -129,23 +86,13 @@ impl DisplayTerminal {
         }
     }
 
-    /// Cap the scrollback's memory as well as its line count.
-    ///
-    /// The line budget alone is not a memory budget: a wide viewport or heavy
-    /// styling makes each retained line cost far more. Whichever limit is hit
-    /// first prunes. `None` removes the byte limit; zero erases the history.
     pub fn set_scrollback_max_bytes(&mut self, bytes: Option<usize>) -> Result<()> {
-        // The limit has to outlive the call, so it is bound here: taking the
-        // address of a closure parameter would hand libghostty a pointer to a
-        // temporary that is already gone.
         let limit = bytes.unwrap_or_default();
         let value = if bytes.is_some() {
             (&raw const limit).cast::<c_void>()
         } else {
             std::ptr::null()
         };
-        // SAFETY: the terminal handle is live, the option documents `size_t *`
-        // and a null pointer as "no limit", and `bytes` outlives the call.
         let result = unsafe {
             self.set_terminal_option(
                 "terminal_set_scrollback_max_bytes",
@@ -153,25 +100,16 @@ impl DisplayTerminal {
                 value,
             )
         };
-        // Lowering the budget prunes history right away, which moves every
-        // viewport row a cached snapshot recorded.
         self.snapshot_cache.invalidate();
         result
     }
 
-    /// Report unsupported sequences through
-    /// [`crate::BackendEvent::UnknownSequence`].
-    ///
-    /// Off by default. Diagnostics only: nothing acts on the payload, and it
-    /// is escaped before it becomes an event. Zero turns capture back off.
     pub fn capture_unknown_sequences(&mut self, enabled: bool) -> Result<()> {
         let limit = if enabled {
             MAX_UNKNOWN_SEQUENCE_BYTES
         } else {
             0
         };
-        // SAFETY: the terminal handle is live and the option documents
-        // `size_t *`, with `limit` live for the call.
         unsafe {
             self.set_terminal_option(
                 "terminal_set_unknown_max_bytes",
@@ -181,26 +119,11 @@ impl DisplayTerminal {
         }
     }
 
-    /// Answer clipboard reads with `text`.
-    ///
-    /// `None`, the default, denies every read. A program that can read the
-    /// clipboard can exfiltrate whatever the user last copied from anywhere
-    /// on the system, so this is a snapshot the host hands over deliberately,
-    /// not a live clipboard handle: libghostty's read callback is
-    /// synchronous inside [`DisplayTerminal::feed`], with no room to ask.
     pub fn set_clipboard_readable(&mut self, text: Option<String>) {
         self.callbacks.set_readable_clipboard(text);
     }
 
-    /// Answer `CSI 21 t` with the current window title.
-    ///
-    /// Off by default, and it should stay off for a terminal running
-    /// untrusted output: a program sets the title to a command, queries it
-    /// back into the input stream, and the shell runs it the next time the
-    /// user presses enter.
     pub fn set_title_reports(&mut self, enabled: bool) -> Result<()> {
-        // SAFETY: the terminal handle is live and the option documents
-        // `bool *`, with `enabled` live for the call.
         unsafe {
             self.set_terminal_option(
                 "terminal_set_title_report",
@@ -210,12 +133,7 @@ impl DisplayTerminal {
         }
     }
 
-    /// Handle Glyph Protocol APC sequences.
-    ///
-    /// Disabling also clears the session's glyph glossary.
     pub fn set_glyph_protocol(&mut self, enabled: bool) -> Result<()> {
-        // SAFETY: the terminal handle is live and the option documents
-        // `bool *`, with `enabled` live for the call.
         unsafe {
             self.set_terminal_option(
                 "terminal_set_glyph_protocol",
@@ -225,10 +143,6 @@ impl DisplayTerminal {
         }
     }
 
-    /// Set a mode's current value, as if the program had asked for it.
-    ///
-    /// A full reset still restores the mode's own default; use
-    /// [`Self::set_mode_default`] to move that too.
     pub fn set_mode(&mut self, mode: Mode, value: bool) -> Result<()> {
         self.write_mode(
             "terminal_set_mode",
@@ -238,11 +152,6 @@ impl DisplayTerminal {
         )
     }
 
-    /// Set what a full reset (`RIS`) restores a mode to, and apply it now.
-    ///
-    /// This is how a host preference survives the reset a program performs on
-    /// startup. Modes that mirror other terminal state cannot be defaulted
-    /// and fail with [`GhosttyError::Ffi`].
     pub fn set_mode_default(&mut self, mode: Mode, value: bool) -> Result<()> {
         self.write_mode(
             "terminal_set_mode_default",
@@ -263,8 +172,6 @@ impl DisplayTerminal {
             mode: mode.raw(),
             value,
         };
-        // SAFETY: the terminal handle is live and both options document
-        // `GhosttyTerminalModeConfig *`, with `config` live for the call.
         let result = unsafe {
             self.set_terminal_option(operation, option, (&raw const config).cast::<c_void>())
         };
@@ -272,18 +179,12 @@ impl DisplayTerminal {
         result
     }
 
-    /// # Safety
-    ///
-    /// `value` must be null where the option allows it, or point to a live
-    /// value of the option's documented input type.
     unsafe fn set_terminal_option(
         &mut self,
         operation: &'static str,
         option: sys::GhosttyTerminalOption,
         value: *const c_void,
     ) -> Result<()> {
-        // SAFETY: the terminal handle is live and the caller guarantees the
-        // value's type.
         let result = unsafe { sys::ghostty_terminal_set(self.terminal.raw(), option, value) };
         check(operation, result)
     }
@@ -317,7 +218,6 @@ mod tests {
     fn contains(haystack: &[u8], needle: &[u8]) -> bool {
         haystack.windows(needle.len()).any(|window| window == needle)
     }
-
 
     #[test]
     fn the_embedder_palette_answers_osc4_queries() {
@@ -394,7 +294,6 @@ mod tests {
     #[test]
     fn a_terminfo_name_answers_xtgettcap_and_is_length_checked() {
         let mut terminal = terminal(20, 4);
-        // "TN" hex-encoded, the capability an application probes for.
         terminal.feed(b"\x1bP+q544e\x1b\\").expect("XTGETTCAP query");
         assert!(replies(&mut terminal).is_empty());
 
@@ -402,7 +301,6 @@ mod tests {
             .set_terminfo_name("xterm-256color")
             .expect("name must apply");
         terminal.feed(b"\x1bP+q544e\x1b\\").expect("XTGETTCAP query");
-        // The reply echoes the capability name and the value, both in hex.
         assert!(contains(
             &replies(&mut terminal),
             b"544E=787465726D2D323536636F6C6F72"
@@ -433,12 +331,10 @@ mod tests {
     fn clipboard_reads_are_denied_until_the_host_hands_over_a_snapshot() {
         let mut terminal = terminal(20, 4);
         terminal.feed(b"\x1b]52;c;?\x07").expect("OSC 52 read");
-        // A denied read still answers, with an empty clipboard.
         assert_eq!(replies(&mut terminal), b"\x1b]52;c;\x07");
 
         terminal.set_clipboard_readable(Some("secret".into()));
         terminal.feed(b"\x1b]52;c;?\x07").expect("OSC 52 read");
-        // "secret" base64-encoded.
         assert_eq!(replies(&mut terminal), b"\x1b]52;c;c2VjcmV0\x07");
 
         terminal.set_clipboard_readable(None);
@@ -515,7 +411,6 @@ mod tests {
             .expect("OSC 777 must notify");
         assert_eq!(notification, ("Build".to_owned(), "done in 3s".to_owned()));
 
-        // OSC 9 has no title.
         terminal.feed(b"\x1b]9;body only\x07").expect("OSC 9");
         let notification = terminal
             .drain_events()
@@ -547,17 +442,12 @@ mod tests {
             terminal.snapshot().expect("snapshot").history_size
         };
 
-        // libghostty's built-in byte budget prunes long before a 50,000-line
-        // budget does, so a line count on its own is not what bounds history.
         let built_in = retained(None);
         assert!(built_in < 2_000, "got {built_in}");
 
-        // Lifting the byte limit is what lets the line budget apply.
         let unlimited = retained(Some(None));
         assert!(unlimited > 4_000, "got {unlimited}");
 
-        // A generous budget behaves like no limit, a tight one prunes. Both
-        // land on page granularity rather than the exact byte count.
         assert_eq!(retained(Some(Some(4 * 1024 * 1024))), unlimited);
         assert!(retained(Some(Some(64 * 1024))) < unlimited);
     }

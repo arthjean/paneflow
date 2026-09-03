@@ -1,8 +1,3 @@
-//! Tree-shrinking mutations: `close_focused` (focus-driven removal with
-//! neighbour-focus propagation) and `remove_pane` (entity-identity removal).
-//!
-//! Kept separate from `mutations.rs` to respect the 280-LOC cap (US-029).
-
 use gpui::{App, Entity, Focusable, Window};
 
 use crate::pane::Pane;
@@ -10,11 +5,6 @@ use crate::pane::Pane;
 use super::tree::{LayoutChild, LayoutTree, normalize_ratios, redistribute_equal};
 
 impl LayoutTree {
-    /// Close the focused pane. Consumes self and returns:
-    /// - `tree`: the surviving layout (None if the last pane was closed)
-    /// - `closed`: whether a pane was actually closed
-    /// - `focus_neighbor`: the pane that should receive focus (previous sibling,
-    ///   or next sibling if the closed pane was first)
     pub fn close_focused(
         self,
         window: &Window,
@@ -49,7 +39,6 @@ impl LayoutTree {
                     if was_closed {
                         closed = true;
                         closed_idx = Some(i);
-                        // Propagate focus neighbor from deeper levels
                         focus_neighbor = nested_focus;
                         if let Some(node) = new_node {
                             new_children.push(LayoutChild {
@@ -57,7 +46,6 @@ impl LayoutTree {
                                 ratio: child.ratio,
                             });
                         } else {
-                            // Direct child leaf was removed - record its ratio
                             removed_ratio = child.ratio.get();
                         }
                     } else {
@@ -82,15 +70,11 @@ impl LayoutTree {
                     );
                 }
 
-                // Cancel any in-progress drag before structural changes
                 drag.set(None);
 
-                // Determine focus neighbor when a direct child was removed
-                // (only if no nested focus was already determined)
                 if focus_neighbor.is_none()
                     && let Some(idx) = closed_idx
                 {
-                    // Prefer previous sibling, fall back to next
                     if idx > 0 {
                         focus_neighbor = new_children.get(idx - 1).and_then(|c| c.node.last_leaf());
                     } else {
@@ -101,12 +85,10 @@ impl LayoutTree {
                 match new_children.len() {
                     0 => (None, true, None),
                     1 => {
-                        // Collapse single-child container
                         let child = new_children.into_iter().next().unwrap();
                         (Some(child.node), true, focus_neighbor)
                     }
                     _ => {
-                        // Redistribute removed child's ratio equally
                         if removed_ratio > 0.0 {
                             redistribute_equal(&new_children, removed_ratio);
                         } else {
@@ -128,8 +110,6 @@ impl LayoutTree {
         }
     }
 
-    /// Remove a specific pane entity from the tree. Consumes `self` and returns
-    /// the surviving tree plus whether a pane was removed.
     pub fn remove_pane(self, target: &Entity<Pane>) -> (Option<LayoutTree>, bool) {
         match self {
             LayoutTree::Leaf(ref pane) => {
@@ -175,7 +155,6 @@ impl LayoutTree {
                     );
                 }
 
-                // Cancel any in-progress drag before structural changes.
                 drag.set(None);
 
                 let tree = match new_children.len() {

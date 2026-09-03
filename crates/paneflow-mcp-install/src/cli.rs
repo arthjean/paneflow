@@ -1,18 +1,3 @@
-//! `paneflow mcp <subcommand>` CLI front-end (EP-002 US-005).
-//!
-//! [`run_cli`] is the single entry point `main.rs` calls before the GUI
-//! starts. It parses the subcommand, delegates orchestration to
-//! [`crate::api`], formats a scriptable per-agent report, and returns a
-//! process exit code:
-//!
-//! - `0` - success (including "no agents detected", which writes nothing).
-//! - `1` - install refused (bridge binary missing) or ≥1 agent errored.
-//! - `2` - usage error (missing / unknown subcommand).
-//!
-//! Output is line-oriented `<agent-id>: <message>` so the command is
-//! scriptable; diagnostics go to stderr, the report to stdout. The GUI
-//! (EP-004) bypasses this formatter and consumes [`crate::api`] directly.
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -45,10 +30,6 @@ impl Command {
     }
 }
 
-/// Entry point. `args` is everything *after* `paneflow mcp` (i.e. the
-/// subcommand and its flags). `bridge_path` is the stable bridge location
-/// resolved by the caller (`runtime_paths::bridge_binary_path()`), or
-/// `None` when `data_dir()` is unresolvable.
 #[must_use]
 pub fn run_cli(args: &[String], bridge_path: Option<PathBuf>) -> i32 {
     let writers = agents::default_writers();
@@ -61,9 +42,6 @@ pub fn run_cli(args: &[String], bridge_path: Option<PathBuf>) -> i32 {
     )
 }
 
-/// Testable core: output sinks and the writer set are injected so unit
-/// tests drive it with mock agents and capture buffers (no real configs,
-/// no real PATH).
 pub(crate) fn run_with(
     args: &[String],
     bridge_path: Option<&Path>,

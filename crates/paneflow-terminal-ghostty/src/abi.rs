@@ -62,12 +62,6 @@ pub(crate) fn validate() -> Result<()> {
     crate::abi_layout::validate(layout_types(&document)?)
 }
 
-/// Unwrap the type map from the ABI manifest returned by `ghostty_type_json`.
-///
-/// The manifest wraps the per-type descriptors in an envelope whose shape is
-/// pinned by its `schema` number. Refusing an unknown number keeps a future
-/// reshuffle a loud startup failure instead of a silent layout check that
-/// matches nothing.
 fn layout_types(document: &serde_json::Value) -> Result<&serde_json::Value> {
     const EXPECTED_SCHEMA: u64 = 1;
 

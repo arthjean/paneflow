@@ -1,10 +1,3 @@
-//! Anonymous per-installation telemetry identifier.
-//!
-//! A UUID v4 is published at `<base>/telemetry_id` on first use. Publication
-//! writes and syncs a temporary file before a no-clobber persist, so concurrent
-//! initializers converge on one complete identifier and existing files are never
-//! overwritten.
-
 use std::io::{self, Write};
 use std::path::Path;
 
@@ -19,12 +12,6 @@ enum ReadState {
     Unusable(String),
 }
 
-/// Read or initialize the telemetry-id file under `base`. Returns
-/// `(id, is_first_run)`, where `is_first_run` is true only for the process that
-/// successfully published a new file.
-///
-/// Unreadable or invalid existing files are preserved. Persistence failures
-/// return a session-scoped UUID with `is_first_run = false`.
 pub fn telemetry_id_at(base: &Path) -> (String, bool) {
     let file = base.join(TELEMETRY_ID_FILE);
     match read_persisted_id(&file) {
@@ -34,7 +21,6 @@ pub fn telemetry_id_at(base: &Path) -> (String, bool) {
     }
 }
 
-/// Return a fresh UUID v4 for a session-scoped fallback and log the reason.
 pub fn ephemeral_id(reason: &str) -> String {
     log::debug!("paneflow: telemetry running session-scoped ({reason})");
     Uuid::new_v4().to_string()

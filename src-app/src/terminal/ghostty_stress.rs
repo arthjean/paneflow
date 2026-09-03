@@ -14,8 +14,6 @@ const CYCLES: usize = 200;
 const WARMUP_CYCLES: usize = 5;
 #[cfg(target_os = "windows")]
 const PANES: usize = 32;
-// QG-007 fixes one release sample set at five warmups followed by 100
-// sequential host creations on the same controlled runner.
 #[cfg(target_os = "windows")]
 const HOST_CREATION_WARMUP_SAMPLES: usize = 5;
 #[cfg(target_os = "windows")]
@@ -25,19 +23,6 @@ const HOST_CREATION_P95_LIMIT: Duration = Duration::from_millis(500);
 const RESIZES_PER_CYCLE: usize = 200;
 const RESOURCE_LIMIT_PERCENT: usize = 5;
 const CYCLE_TIMEOUT: Duration = Duration::from_secs(8);
-/// Deadline for a process and its descendants to leave the process table.
-///
-/// Windows gets a wider window than the other targets. ConPTY's host process
-/// outlives the shell by an unbounded moment, and a loaded CI runner routinely
-/// schedules that teardown past eight seconds: this is what turned
-/// `ghostty_spawn_resize_close_stress_has_no_residual_growth` red twice on
-/// `libghostty Windows` with `phase=cleanup`, once needing three attempts.
-///
-/// Widening a teardown wait can only make the check more patient, never more
-/// permissive. What this test exists to catch is residual growth, and that is
-/// asserted separately against RSS and handle counts, not against how quickly
-/// the kernel reaps a child. The happy path is unaffected because
-/// `wait_process_inactive` returns as soon as the process is gone.
 #[cfg(target_os = "windows")]
 const CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 #[cfg(not(target_os = "windows"))]
@@ -383,12 +368,6 @@ fn run_cycle(surface_id: u64) -> (Duration, usize) {
         "scenario=cycle surface={surface_id} pid={} phase=output bytes_before={output_before} bytes_after={output_after}",
         pane.pid,
     );
-    // `wait_for_exit` already waited out the shell's own PID, but nothing
-    // waited out its descendants. On Windows the ConPTY host outlives the
-    // shell by an unbounded moment, so an instantaneous check here fails
-    // whenever a loaded runner schedules that teardown late. One deadline is
-    // shared across the whole set: every descendant must be gone within the
-    // same cleanup window, not granted a fresh one each.
     let cleanup_deadline = Instant::now() + CLEANUP_TIMEOUT;
     for descendant in &descendants {
         assert!(
@@ -406,9 +385,6 @@ fn measure_host_creation(surface_id: u64) -> Duration {
     let started = Instant::now();
     let mut pane = StressPane::spawn(surface_id, blocked_spec());
     let elapsed = started.elapsed();
-    // End the shell through its PTY so cleanup observes a normal child exit.
-    // Forcing shutdown here can race the reader and misclassify our own
-    // teardown as a runtime failure after a valid host-creation sample.
     pane.write(b"exit\r".to_vec());
     pane.wait_for_exit(CYCLE_TIMEOUT, false)
         .unwrap_or_else(|failure| panic!("scenario=host_creation failure={failure}"));
@@ -424,14 +400,11 @@ fn process_active(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    // SAFETY: the handle is read-only for synchronization and closed below.
     let handle = unsafe { OpenProcess(SYNCHRONIZE, 0, pid) };
     if handle.is_null() {
         return false;
     }
-    // SAFETY: `handle` is valid and the zero timeout is non-blocking.
     let wait = unsafe { WaitForSingleObject(handle, 0) };
-    // SAFETY: close the handle exactly once.
     unsafe {
         CloseHandle(handle);
     }
@@ -443,7 +416,6 @@ fn process_active(pid: u32) -> bool {
     let Ok(pid) = i32::try_from(pid) else {
         return false;
     };
-    // SAFETY: signal 0 only probes process existence.
     let result = unsafe { libc::kill(pid, 0) };
     result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
@@ -466,26 +438,21 @@ fn process_entries() -> Vec<(u32, u32)> {
         TH32CS_SNAPPROCESS,
     };
 
-    // SAFETY: the snapshot handle is closed on every valid-handle path.
     let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
     if snapshot == INVALID_HANDLE_VALUE {
         return Vec::new();
     }
     let mut entries = Vec::with_capacity(256);
-    // SAFETY: the Win32 structure is zero-initialized and its size set before use.
     let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
     entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-    // SAFETY: snapshot and entry satisfy the ToolHelp iteration contract.
     if unsafe { Process32FirstW(snapshot, &mut entry) } != 0 {
         loop {
             entries.push((entry.th32ProcessID, entry.th32ParentProcessID));
-            // SAFETY: same snapshot and initialized entry as above.
             if unsafe { Process32NextW(snapshot, &mut entry) } == 0 {
                 break;
             }
         }
     }
-    // SAFETY: close the snapshot exactly once.
     unsafe {
         CloseHandle(snapshot);
     }
@@ -543,7 +510,6 @@ fn resource_snapshot() -> ResourceSnapshot {
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
 
     let mut handles = 0u32;
-    // SAFETY: pseudo handle is always valid; output pointer references initialized storage.
     let handle_result = unsafe { GetProcessHandleCount(GetCurrentProcess(), &mut handles) };
     assert_ne!(
         handle_result,
@@ -551,10 +517,8 @@ fn resource_snapshot() -> ResourceSnapshot {
         "scenario=resources phase=handles os_error={:?}",
         std::io::Error::last_os_error().raw_os_error(),
     );
-    // SAFETY: zeroed C POD with the documented byte size passed to the API.
     let mut memory: PROCESS_MEMORY_COUNTERS = unsafe { std::mem::zeroed() };
     memory.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-    // SAFETY: pseudo handle and writable counter buffer satisfy the API contract.
     let memory_result = unsafe {
         GetProcessMemoryInfo(
             GetCurrentProcess(),
@@ -590,8 +554,6 @@ fn current_process_handles() -> Result<Vec<SystemHandleEntry>, i32> {
         let mut buffer = vec![0usize; words];
         let buffer_bytes = buffer.len() * std::mem::size_of::<usize>();
         let mut returned_bytes = 0u32;
-        // SAFETY: the aligned vector is writable for `buffer_bytes`, and the
-        // kernel reports the number of initialized bytes through the final pointer.
         let status = unsafe {
             NtQuerySystemInformation(
                 SYSTEM_EXTENDED_HANDLE_INFORMATION,
@@ -618,8 +580,6 @@ fn current_process_handles() -> Result<Vec<SystemHandleEntry>, i32> {
             return Err(STATUS_INFO_LENGTH_MISMATCH);
         }
         let base = buffer.as_ptr().cast::<u8>();
-        // SAFETY: a successful query initializes the two-word header. Read it
-        // unaligned so this remains correct independently of allocator alignment.
         let handle_count = unsafe { std::ptr::read_unaligned(base.cast::<usize>()) };
         let entry_bytes = std::mem::size_of::<SystemHandleEntry>();
         let available_entries = (buffer_bytes - header_bytes) / entry_bytes;
@@ -630,8 +590,6 @@ fn current_process_handles() -> Result<Vec<SystemHandleEntry>, i32> {
         let mut handles = Vec::new();
         for index in 0..handle_count {
             let offset = header_bytes + index * entry_bytes;
-            // SAFETY: the bounds check above proves the complete entry lies in
-            // the initialized snapshot buffer. The native structure may be unaligned.
             let entry =
                 unsafe { std::ptr::read_unaligned(base.add(offset).cast::<SystemHandleEntry>()) };
             if entry.process_id == process_id {
@@ -654,8 +612,6 @@ fn windows_object_type_name(handle: usize) -> Option<String> {
         let mut buffer = vec![0usize; words];
         let buffer_bytes = buffer.len() * std::mem::size_of::<usize>();
         let mut returned_bytes = 0u32;
-        // SAFETY: the handle came from a current-process system snapshot, and
-        // the aligned vector is writable for the supplied byte length.
         let status = unsafe {
             NtQueryObject(
                 handle as windows_sys::Win32::Foundation::HANDLE,
@@ -672,12 +628,10 @@ fn windows_object_type_name(handle: usize) -> Option<String> {
         if status < 0 || buffer_bytes < std::mem::size_of::<UnicodeString>() {
             return None;
         }
-        // SAFETY: ObjectTypeInformation starts with a UNICODE_STRING descriptor.
         let name = unsafe { std::ptr::read_unaligned(buffer.as_ptr().cast::<UnicodeString>()) };
         if name.buffer.is_null() || name.length == 0 || name.length % 2 != 0 {
             return None;
         }
-        // SAFETY: NtQueryObject returned a live UTF-16 buffer for `length` bytes.
         let units =
             unsafe { std::slice::from_raw_parts(name.buffer, usize::from(name.length) / 2) };
         return Some(String::from_utf16_lossy(units));
@@ -758,13 +712,9 @@ fn resource_snapshot() -> ResourceSnapshot {
 
 #[cfg(all(unix, not(target_os = "linux")))]
 fn resource_snapshot() -> ResourceSnapshot {
-    // Darwin and the other BSDs expose no `/proc/self/fd`, so probe the
-    // descriptor table directly. `F_GETFD` is a pure query on `fd`.
-    // SAFETY: `sysconf` reads a process limit and returns -1 when unavailable.
     let limit = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
     let max_fd = i32::try_from(limit.clamp(0, 4096)).unwrap_or(4096);
     let handles = (0..max_fd)
-        // SAFETY: `F_GETFD` only reads the descriptor flags of `fd`.
         .filter(|fd| unsafe { libc::fcntl(*fd, libc::F_GETFD) } != -1)
         .count() as u64;
     ResourceSnapshot {
@@ -1020,19 +970,6 @@ fn windows_ghostty_lifecycle_scenario_matrix_is_bounded() {
         );
     }
 
-    // A `ctrl_c` scenario used to sit here. It wrote `0x03` into the pane and
-    // expected the blocked child to die, and it never passed on a real Windows
-    // host even though Ctrl+C interrupts correctly when a user presses it.
-    // Every programmatic route was measured and none reproduces the keystroke:
-    // the raw byte, the keyboard path (`write_key` - the runtime encodes with
-    // `encode_key` and then writes bytes, so it lands in the same place),
-    // win32-input-mode sequences with and without DECSET 9001, a bare
-    // `portable-pty` ConPTY probe, and `AttachConsole` +
-    // `GenerateConsoleCtrlEvent` from another process (returns success, no
-    // effect). Interrupt behaviour therefore stays covered where it is
-    // observable - `docs/WINDOWS-SMOKE-TEST.md` scenario 8 and CP-1, both
-    // driven by a real keystroke - rather than by an assertion that only ever
-    // reported a difference between injection and typing.
     let mut worker_failure = StressPane::spawn(20_005, blocked_spec());
     assert!(
         worker_failure.session.simulate_worker_crash_for_test(),

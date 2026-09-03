@@ -1,5 +1,3 @@
-// US-017: Config schema types
-
 mod agent_panel;
 mod config;
 mod layout;
@@ -67,8 +65,6 @@ mod tests {
             },
         );
 
-        // Deliberately exhaustive struct literals: adding a Rust config field
-        // fails this test at compile time until the public schema is updated.
         let config = PaneFlowConfig {
             shortcuts: HashMap::new(),
             default_shell: Some("sh".to_string()),
@@ -389,20 +385,16 @@ mod tests {
 
     #[test]
     fn agent_stall_settings_resolve_with_defaults_and_clamp() {
-        // EP-004 US-011 + US-013: default ON, threshold 60 s (tightened from
-        // 300 s so a lost ai.stop surfaces in seconds, not minutes).
         let cfg = PaneFlowConfig::default();
         assert!(cfg.agent_stall_detection_enabled());
         assert_eq!(cfg.resolved_agent_stall_threshold_secs(), 60);
 
-        // Kill switch.
         let cfg = PaneFlowConfig {
             agent_stall_detection: Some(false),
             ..Default::default()
         };
         assert!(!cfg.agent_stall_detection_enabled());
 
-        // Clamp both ends.
         let cfg = PaneFlowConfig {
             agent_stall_threshold_secs: Some(1),
             ..Default::default()
@@ -478,30 +470,25 @@ mod tests {
 
     #[test]
     fn unfocused_pane_dim_alpha_inverts_clamps_and_disables() {
-        // The accessor is the single point of inversion: opacity -> fill alpha.
         assert!(
             (PaneFlowConfig::default().resolved_unfocused_pane_dim_alpha() - 0.3).abs() < 1e-6,
             "default 0.7 opacity must paint a 0.3 overlay"
         );
-        // 1.0 is the off switch: no layer at all.
         let cfg = PaneFlowConfig {
             unfocused_pane_opacity: Some(1.0),
             ..Default::default()
         };
         assert_eq!(cfg.resolved_unfocused_pane_dim_alpha(), 0.0);
-        // Below the floor clamps up to 0.15 opacity -> 0.85 overlay.
         let cfg = PaneFlowConfig {
             unfocused_pane_opacity: Some(-4.0),
             ..Default::default()
         };
         assert!((cfg.resolved_unfocused_pane_dim_alpha() - 0.85).abs() < 1e-6);
-        // Above the ceiling clamps down to the off switch.
         let cfg = PaneFlowConfig {
             unfocused_pane_opacity: Some(12.0),
             ..Default::default()
         };
         assert_eq!(cfg.resolved_unfocused_pane_dim_alpha(), 0.0);
-        // NaN falls back to the default instead of poisoning the layer alpha.
         let cfg = PaneFlowConfig {
             unfocused_pane_opacity: Some(f32::NAN),
             ..Default::default()
@@ -511,25 +498,20 @@ mod tests {
 
     #[test]
     fn submit_paste_delay_resolves_with_default_and_clamp() {
-        // EP-001 US-001 (agent-control-plane-hardening): default 70 ms,
-        // clamped to [10, 5000].
         assert_eq!(
             PaneFlowConfig::default().resolved_submit_paste_delay_ms(),
             70
         );
-        // Below the floor clamps up.
         let cfg = PaneFlowConfig {
             submit_paste_delay_ms: Some(0),
             ..Default::default()
         };
         assert_eq!(cfg.resolved_submit_paste_delay_ms(), 10);
-        // Above the ceiling clamps down.
         let cfg = PaneFlowConfig {
             submit_paste_delay_ms: Some(u64::MAX),
             ..Default::default()
         };
         assert_eq!(cfg.resolved_submit_paste_delay_ms(), 5_000);
-        // In-range passes through untouched.
         let cfg = PaneFlowConfig {
             submit_paste_delay_ms: Some(120),
             ..Default::default()
@@ -539,13 +521,10 @@ mod tests {
 
     #[test]
     fn submit_paste_delay_serde_roundtrips() {
-        // The knob travels through the public JSON shape unchanged
-        // (`#[serde(default)]` on the struct fills every other field).
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"submit_paste_delay_ms": 90}"#).expect("valid config");
         assert_eq!(cfg.submit_paste_delay_ms, Some(90));
         assert_eq!(cfg.resolved_submit_paste_delay_ms(), 90);
-        // Absent -> None -> default.
         let cfg: PaneFlowConfig = serde_json::from_str("{}").expect("empty config");
         assert!(cfg.submit_paste_delay_ms.is_none());
         assert_eq!(cfg.resolved_submit_paste_delay_ms(), 70);
@@ -553,22 +532,16 @@ mod tests {
 
     #[test]
     fn ai_access_toggles_default_safe_and_tolerate_garbage() {
-        // EP-003 US-008 AC #1/#5: a fresh config never opens free-access and
-        // always fences.
         let cfg = PaneFlowConfig::default();
         assert!(!cfg.ai_unrestricted_enabled(), "unrestricted defaults OFF");
         assert!(cfg.ai_injection_fence_enabled(), "fence defaults ON");
 
-        // Explicit booleans round-trip through the lenient deserializer.
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"ai_unrestricted": true, "ai_injection_fence": false}"#)
                 .unwrap();
         assert!(cfg.ai_unrestricted_enabled());
         assert!(!cfg.ai_injection_fence_enabled());
 
-        // AC #3: a non-boolean value fails CLOSED (unrestricted -> false, fence
-        // -> true) instead of erroring the whole parse, and does NOT wipe the
-        // sibling settings the all-or-nothing loader fallback would have lost.
         let cfg: PaneFlowConfig = serde_json::from_str(
             r#"{"theme": "One Dark", "ai_unrestricted": "yes", "ai_injection_fence": 0}"#,
         )
@@ -590,8 +563,6 @@ mod tests {
 
     #[test]
     fn sidebar_show_is_off_by_default_and_tolerant() {
-        // Both lines were taken out of the rail deliberately; an absent key
-        // must leave them out.
         let cfg: PaneFlowConfig = serde_json::from_str(r#"{}"#).unwrap();
         assert!(!cfg.sidebar_show.branch_enabled());
         assert!(!cfg.sidebar_show.diffstat_enabled());
@@ -599,22 +570,17 @@ mod tests {
         assert!(!cfg.sidebar_show.indent_guide_enabled());
         assert!(!cfg.sidebar_show.any_enabled());
 
-        // Each line is its own switch: one on does not turn the other on.
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"sidebar_show": {"branch": true}}"#).unwrap();
         assert!(cfg.sidebar_show.branch_enabled());
         assert!(!cfg.sidebar_show.diffstat_enabled());
         assert!(cfg.sidebar_show.any_enabled());
 
-        // The pull-request marker replaces the branch icon rather than adding
-        // a line, so on its own it draws nothing.
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"sidebar_show": {"pr": true}}"#).unwrap();
         assert!(cfg.sidebar_show.pr_enabled());
         assert!(!cfg.sidebar_show.any_enabled());
 
-        // A malformed field costs that field, never its sibling and never the
-        // rest of the file.
         let cfg: PaneFlowConfig = serde_json::from_str(
             r#"{"theme": "One Dark", "sidebar_show": {"branch": "yes", "diffstat": true}}"#,
         )
@@ -623,7 +589,6 @@ mod tests {
         assert!(cfg.sidebar_show.diffstat_enabled());
         assert_eq!(cfg.theme.as_deref(), Some("One Dark"));
 
-        // A wholly malformed object costs the setting, not the file.
         let cfg: PaneFlowConfig =
             serde_json::from_str(r#"{"theme": "One Dark", "sidebar_show": "detailed"}"#).unwrap();
         assert!(!cfg.sidebar_show.any_enabled());
@@ -656,7 +621,6 @@ mod tests {
 
     #[test]
     fn agent_panel_thinking_display_pascal_case_roundtrip() {
-        // US-109 AC #1: PascalCase tags as documented in the PRD.
         let raw = r#"{"thinking_display": "Preview"}"#;
         let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
         assert_eq!(cfg.thinking_display, Some(ThinkingDisplayMode::Preview));
@@ -682,9 +646,6 @@ mod tests {
 
     #[test]
     fn agent_panel_thinking_display_unknown_falls_back_to_auto() {
-        // US-109 AC #7: unknown string deserialises as Auto (the
-        // custom deserialiser logs a warn! line; this test asserts
-        // only the surface behavior since `warn!` is not captured).
         let raw = r#"{"thinking_display": "Bogus"}"#;
         let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
         assert_eq!(cfg.thinking_display, Some(ThinkingDisplayMode::Auto));
@@ -692,8 +653,6 @@ mod tests {
 
     #[test]
     fn agent_panel_thinking_display_missing_resolves_to_auto() {
-        // US-109 AC #1: missing field resolves to Auto via the
-        // resolver (the on-disk Option stays `None`).
         let raw = r#"{}"#;
         let cfg: AgentPanelConfig = serde_json::from_str(raw).unwrap();
         assert!(cfg.thinking_display.is_none());
@@ -702,7 +661,6 @@ mod tests {
 
     #[test]
     fn cursor_shape_and_blink_config_serde() {
-        // US-007 / US-008: snake_case config values + historical defaults.
         assert_eq!(CursorShapeConfig::default(), CursorShapeConfig::Block);
         assert_eq!(
             CursorBlinkConfig::default(),
@@ -728,7 +686,6 @@ mod tests {
             serde_json::from_str(r#"{"cursor_shape": "filled_box"}"#).unwrap();
         assert_eq!(cfg.cursor_shape, Some(CursorShapeConfig::Block));
 
-        // Missing → None → resolves to historical defaults.
         let cfg: TerminalConfig = serde_json::from_str(r#"{}"#).unwrap();
         assert!(cfg.cursor_shape.is_none() && cfg.cursor_blink.is_none());
         assert_eq!(
@@ -743,10 +700,6 @@ mod tests {
 
     #[test]
     fn unknown_terminal_enum_values_fail_safe_without_dropping_the_document() {
-        // US-017: a terminal enum typo must cost that one setting and nothing
-        // else. A derived `Deserialize` would abort the whole document and
-        // `parse_and_validate` would hand back defaults, silently wiping the
-        // theme, shell, shortcuts, and agent settings.
         let typo: PaneFlowConfig = serde_json::from_str(
             r#"{
                 "theme": "One Dark",

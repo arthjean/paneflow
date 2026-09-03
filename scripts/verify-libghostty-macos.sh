@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Mach-O analog of scripts/verify-libghostty-package.sh. It proves that a
-# packaged macOS binary is Apple Silicon, links the pinned libghostty-vt
-# archive statically, and carries the reviewed native notice. The Linux script
-# is deliberately untouched: the two share a contract, not an implementation.
-
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 BINARY=""
 NOTICE=""
@@ -21,9 +16,6 @@ done
 [[ -f "$NOTICE" ]] || { echo "missing libghostty third-party notice: $NOTICE" >&2; exit 1; }
 command -v file >/dev/null || { echo "file is required to identify the Mach-O binary" >&2; exit 1; }
 
-# macOS ships shasum, Linux ships sha256sum, and this script has to run on both
-# a release runner and a maintainer laptop. Resolve one of them up front rather
-# than degrading to an unchecked notice.
 if command -v sha256sum >/dev/null; then
   sha256_of() { sha256sum "$1" | awk '{print $1}'; }
 elif command -v shasum >/dev/null; then
@@ -33,8 +25,6 @@ else
   exit 1
 fi
 
-# otool is the Apple spelling, llvm-objdump the portable one. Never skip the
-# load-command inspection: a missing toolchain is a failure, not a pass.
 if command -v otool >/dev/null; then
   DYLIBS="$(otool -L "$BINARY")" || {
     echo "packaged PaneFlow binary has unreadable Mach-O load commands" >&2
@@ -50,9 +40,6 @@ else
   exit 1
 fi
 
-# `file` word order differs between Apple file(1) ("Mach-O 64-bit executable
-# arm64") and GNU file(1) ("Mach-O 64-bit arm64 executable"), so match the
-# three tokens independently instead of one host-specific phrase.
 FILE_DESC="$(file -b "$BINARY")"
 case "$FILE_DESC" in
   *universal*)
@@ -93,9 +80,6 @@ NOTICE_SHA="$(sed -n 's/^notice_sha256 = "\(.*\)"$/\1/p' "$ROOT/native/libghostt
   echo "manifest contains an invalid native notice hash" >&2
   exit 1
 }
-# Guard the shape too: an empty SOURCE_SHA would turn the linkage proof below
-# into `grep -aFq ""`, which matches every byte stream and passes a binary with
-# no engine linked at all.
 [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
   echo "manifest contains an invalid pinned Ghostty source SHA" >&2
   exit 1
@@ -106,9 +90,6 @@ ACTUAL_NOTICE_SHA="$(sha256_of "$NOTICE")"
   exit 1
 }
 
-# `paneflow-terminal-ghostty` embeds the whole pinned manifest through
-# include_str! under cfg(ghostty_native), so the pinned source SHA is present
-# only when the engine is actually linked. A build without it fails here.
 grep -aFq "$SOURCE_SHA" "$BINARY" || {
   echo "packaged binary does not contain the pinned Ghostty build identity" >&2
   exit 1

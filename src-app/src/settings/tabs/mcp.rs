@@ -1,15 +1,3 @@
-//! "MCP Servers" settings page - registers the embedded `paneflow-mcp` bridge
-//! with every detected CLI agent (Claude Code, Codex, Gemini, opencode) so they
-//! can read other panes' output.
-//!
-//! One button plus a per-agent recap. The state (status snapshot, last install
-//! result, busy flag) is cached on `PaneFlowApp` and refreshed off the GPUI
-//! main thread, so this render does zero config I/O. Warmed when the page is
-//! opened (`select_settings_section`) and after each install.
-//!
-//! Moved out of the AI-agent tab into its own Codex-style page during the
-//! inline-settings migration.
-
 use gpui::{
     ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString,
     Styled, div, prelude::*, px,
@@ -33,7 +21,6 @@ impl PaneFlowApp {
             .as_deref()
             .map(paneflow_mcp_install::overall_state);
 
-        // Button label + whether the click is live.
         let (label, enabled): (SharedString, bool) = if self.mcp_busy {
             ("Installing…".into(), false)
         } else {
@@ -89,8 +76,6 @@ impl PaneFlowApp {
 
         let mut card = setting_card(ui).child(header_row);
 
-        // Per-agent recap: prefer the last install result; else the cached
-        // status snapshot. Each row is one agent + a short state.
         let recap_lines = self.mcp_recap_lines();
         if let Some(error) = self.mcp_install_error() {
             card = card.child(hairline(ui)).child(
@@ -120,8 +105,6 @@ impl PaneFlowApp {
             .child(card)
     }
 
-    /// The refusal message from the last install, if it failed wholesale
-    /// (bridge missing / data dir unresolved).
     fn mcp_install_error(&self) -> Option<SharedString> {
         match &self.mcp_install {
             Some(Err(msg)) => Some(SharedString::from(msg.clone())),
@@ -129,8 +112,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Per-agent recap lines `(text, is_error)`. Uses the last install result
-    /// when present, else the cached status snapshot.
     fn mcp_recap_lines(&self) -> Vec<(SharedString, bool)> {
         if let Some(Ok(results)) = &self.mcp_install {
             return results
@@ -170,9 +151,6 @@ impl PaneFlowApp {
         }
     }
 
-    /// Refresh the cached MCP bridge status off the main thread. Reads each
-    /// agent's config (no writes), then stores the snapshot + repaints. Called
-    /// when the settings page opens and when the MCP page is selected.
     pub(crate) fn refresh_mcp_status(&self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let status = smol::unblock(|| {
@@ -188,9 +166,6 @@ impl PaneFlowApp {
         .detach();
     }
 
-    /// Install the bridge into every detected agent, off the main thread.
-    /// Extracts the bridge binary first (so the registered path exists), then
-    /// runs the install + a fresh status probe, and stores both.
     fn start_mcp_install(&mut self, cx: &mut Context<Self>) {
         if self.mcp_busy {
             return;
@@ -224,9 +199,6 @@ impl PaneFlowApp {
     }
 }
 
-/// Error-text color for the MCP recap. `UiColors` has no danger slot and the
-/// settings chrome is theme-independent, so a fixed One Dark red keeps the cue
-/// readable on every bundled theme.
 fn danger_color() -> gpui::Hsla {
     gpui::rgb(0xE0_6C_75).into()
 }

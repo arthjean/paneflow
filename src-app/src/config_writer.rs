@@ -1,42 +1,14 @@
-//! Config file I/O: read-modify-write helpers for `paneflow.json`.
-//!
-//! All functions operate on raw JSON to preserve unknown fields and formatting.
-
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-/// US-016: serialize every read-modify-write of `paneflow.json`.
-///
-/// Settings-tab control handlers persist off the GPUI main thread - each
-/// `persist_setting` spawns its own `cx.background_spawn → smol::unblock` task
-/// (`settings/window.rs`). Without this lock two rapid toggles run two
-/// independent `load_raw_config → mutate → write_config_checked` cycles on the
-/// blocking pool: they read the same pre-change file and the later `rename`
-/// wins, silently dropping the other key's update (CWE-362 lost update). They
-/// also share the PID-suffixed temp path, so concurrent writes can clobber it.
-/// Holding this guard across the whole load→write of each writer makes the RMW
-/// atomic w.r.t. other writers, so each one observes the previous one's result.
-///
-/// (It does NOT order two writes of the *same* key - the last task to acquire
-/// wins regardless of spawn order - but `cached_config` in memory stays the
-/// source of truth for the live session, so a same-key reorder only matters
-/// across a restart, and is self-healed by the next write or external reload.)
 static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
 
-/// Acquire the config-write lock, recovering from a poisoned mutex (the guarded
-/// value is `()`, so a prior panic-while-held left nothing to corrupt). Avoids
-/// an `.unwrap()` on the lock per the repo's prod-unwrap lint.
 fn config_write_guard() -> MutexGuard<'static, ()> {
     CONFIG_WRITE_LOCK
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Load the raw JSON config.
-///
-/// Missing file means a fresh empty object. Existing but unreadable, oversized,
-/// non-regular, or syntactically invalid files are rejected so a settings write
-/// cannot overwrite the user's recoverable `paneflow.json` with `{}`.
 fn load_raw_config(path: &Path) -> Result<serde_json::Value, ()> {
     match paneflow_config::loader::read_config_string(path) {
         Ok(None) => Ok(serde_json::json!({})),
@@ -64,14 +36,10 @@ fn load_raw_config(path: &Path) -> Result<serde_json::Value, ()> {
     }
 }
 
-/// Write a JSON value back to the config file, creating parent dirs if needed.
 fn write_config(path: &PathBuf, value: &serde_json::Value) {
     let _ = write_config_checked(path, value);
 }
 
-/// Result-returning variant of [`write_config`]. Returns `true` on
-/// successful write, `false` otherwise (serialization or I/O error -
-/// logged at WARN in both cases).
 fn write_config_checked(path: &PathBuf, value: &serde_json::Value) -> bool {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -84,16 +52,7 @@ fn write_config_checked(path: &PathBuf, value: &serde_json::Value) -> bool {
         }
     };
 
-    // US-031: write atomically (tmp + rename) so a crash mid-write can't
-    // truncate `paneflow.json`. A truncated file parses as invalid JSON, which
-    // `load_raw_config` silently swallows as an empty object - discarding the
-    // user's entire config. The temp file is PID-suffixed and lives in the
-    // target's own directory so the rename stays on one filesystem (a
-    // cross-FS rename is neither atomic nor, on some platforms, permitted).
-    // `std::fs::rename` replaces the destination atomically on all three OSes.
     let Some(parent) = path.parent() else {
-        // No parent component (not expected for a real config path): fall back
-        // to a best-effort direct write rather than refusing outright.
         return std::fs::write(path, &json_str)
             .inspect_err(|e| log::warn!("config: failed to write: {e}"))
             .is_ok();
@@ -118,17 +77,10 @@ fn write_config_checked(path: &PathBuf, value: &serde_json::Value) -> bool {
     }
 }
 
-/// Save a top-level config field, returning `true` on success and `false`
-/// when the config path could not be resolved or the file write failed.
-///
-/// Callers that need to surface persistence failures to the user (e.g. the
-/// telemetry consent modal in US-011, which must honor the choice
-/// in-memory and show a toast when the disk write fails) use this variant.
 pub fn save_config_value_checked(key: &str, value: serde_json::Value) -> bool {
     save_config_values_checked([(key, value)])
 }
 
-/// Save several top-level config fields in one read-modify-write cycle.
 pub fn save_config_values_checked<const N: usize>(values: [(&str, serde_json::Value); N]) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
@@ -150,16 +102,6 @@ pub fn save_config_values_checked<const N: usize>(values: [(&str, serde_json::Va
     write_config_checked(&path, &json)
 }
 
-/// Pure read-modify-write of the `shortcuts` map. Extracted from
-/// [`save_shortcut`] so the dedupe + collision semantics can be unit-tested
-/// without touching the real config path (mirrors [`apply_terminal_field`]).
-///
-/// Removes (a) any prior binding for `action_name` (so a remap doesn't leave
-/// the old key live) and (b) any binding whose key collides with `new_key`
-/// (US-021: `new_key` now belongs to `action_name`, so its previous owner
-/// loses it - otherwise two user entries on the same physical chord would
-/// produce a GPUI-ambiguous double binding). The collision test is
-/// normalization-aware (`ctrl+shift+f` stored vs `ctrl-shift-f` recorded).
 fn merge_shortcut(
     shortcuts_obj: &mut serde_json::Map<String, serde_json::Value>,
     new_key: &str,
@@ -182,10 +124,6 @@ fn merge_shortcut(
     );
 }
 
-/// Save a single shortcut override to `paneflow.json`.
-///
-/// Merges the new binding into `shortcuts`, removing any previous key for the
-/// same action and any other action that already held `new_key`.
 pub fn save_shortcut_checked(new_key: &str, action_name: &str) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
@@ -196,13 +134,10 @@ pub fn save_shortcut_checked(new_key: &str, action_name: &str) -> bool {
         return false;
     };
 
-    // Guard rather than `.expect()` so a future loader contract change cannot
-    // panic on the UI thread.
     let Some(root) = json.as_object_mut() else {
         log::warn!("config: root is not a JSON object, not saving shortcut");
         return false;
     };
-    // Ensure `shortcuts` exists and is an object (replace a non-object).
     let shortcuts = root
         .entry("shortcuts")
         .or_insert_with(|| serde_json::json!({}));
@@ -218,7 +153,6 @@ pub fn save_shortcut_checked(new_key: &str, action_name: &str) -> bool {
     write_config_checked(&path, &json)
 }
 
-/// Remove all user shortcut overrides from `paneflow.json`, restoring defaults.
 pub fn reset_shortcuts() {
     let Some(path) = paneflow_config::loader::config_path() else {
         return;
@@ -233,14 +167,10 @@ pub fn reset_shortcuts() {
     write_config(&path, &json);
 }
 
-/// Pure read-modify-write of the `"terminal"` sub-object. Extracted from
-/// [`save_terminal_field_checked`] so the nesting/removal semantics can be unit-tested
-/// without resolving (or touching) the real config path.
 fn apply_terminal_field(json: &mut serde_json::Value, key: &str, value: serde_json::Value) {
     let Some(root) = json.as_object_mut() else {
         return;
     };
-    // Ensure `terminal` exists and is an object (replace a non-object).
     let terminal = root
         .entry("terminal")
         .or_insert_with(|| serde_json::json!({}));
@@ -256,9 +186,6 @@ fn apply_terminal_field(json: &mut serde_json::Value, key: &str, value: serde_js
     }
 }
 
-/// Pure read-modify-write of the `"agent_panel"` sub-object. Mirrors
-/// [`apply_terminal_field`] for settings that are scoped to the Agents panel,
-/// such as the native OS notification gate.
 fn apply_agent_panel_field(json: &mut serde_json::Value, key: &str, value: serde_json::Value) {
     let Some(root) = json.as_object_mut() else {
         return;
@@ -278,12 +205,6 @@ fn apply_agent_panel_field(json: &mut serde_json::Value, key: &str, value: serde
     }
 }
 
-/// US-016: return a copy of `config` with a single field updated *in memory*,
-/// mirroring the on-disk merge of [`save_config_value`] / [`save_terminal_field_checked`]
-/// without touching disk. A settings handler uses this to refresh its render
-/// cache instantly, then persists asynchronously. `nested` routes the field
-/// into the `terminal` block; a `Null` value clears it. The config is the typed
-/// view (no unknown fields), so the JSON round-trip is lossless for it.
 pub fn with_field(
     config: &paneflow_config::schema::PaneFlowConfig,
     nested: bool,
@@ -303,7 +224,6 @@ pub fn with_field(
     serde_json::from_value(json).unwrap_or_else(|_| config.clone())
 }
 
-/// In-memory companion for [`save_agent_panel_field_checked`].
 pub fn with_agent_panel_field(
     config: &paneflow_config::schema::PaneFlowConfig,
     key: &str,
@@ -314,9 +234,6 @@ pub fn with_agent_panel_field(
     serde_json::from_value(json).unwrap_or_else(|_| config.clone())
 }
 
-/// In-memory companion for [`save_commands_checked`]. Replaces the full
-/// user-defined command/template list while preserving every other config
-/// field.
 pub fn with_commands(
     config: &paneflow_config::schema::PaneFlowConfig,
     commands: Vec<paneflow_config::schema::CommandDefinition>,
@@ -326,10 +243,6 @@ pub fn with_commands(
     next
 }
 
-/// Save a single field inside the `"terminal": { ... }` block in `paneflow.json`
-/// (US-016 Terminal settings tab). A `Null` value removes the key (restoring
-/// the schema default on next load); the `"terminal"` object itself is left in
-/// place (an empty block is harmless - `#[serde(default)]` handles it).
 pub fn save_terminal_field_checked(key: &str, value: serde_json::Value) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
@@ -343,8 +256,6 @@ pub fn save_terminal_field_checked(key: &str, value: serde_json::Value) -> bool 
     write_config_checked(&path, &json)
 }
 
-/// Save a single field inside the `"agent_panel": { ... }` block in
-/// `paneflow.json`, preserving sibling agent-panel settings and unknown fields.
 pub fn save_agent_panel_field_checked(key: &str, value: serde_json::Value) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
@@ -358,8 +269,6 @@ pub fn save_agent_panel_field_checked(key: &str, value: serde_json::Value) -> bo
     write_config_checked(&path, &json)
 }
 
-/// Save the full `commands` array in `paneflow.json`, preserving unknown
-/// top-level keys and sibling settings.
 pub fn save_commands_checked(commands: Vec<paneflow_config::schema::CommandDefinition>) -> bool {
     let Some(path) = paneflow_config::loader::config_path() else {
         log::warn!("config: cannot determine config path, not saving");
@@ -392,8 +301,6 @@ mod tests {
 
     #[test]
     fn write_config_is_atomic_and_leaves_no_temp() {
-        // US-031: the write goes through tmp+rename, the target ends up with
-        // the full content, and no temp file is left behind in the directory.
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("paneflow.json");
         assert!(write_config_checked(
@@ -412,7 +319,6 @@ mod tests {
 
     #[test]
     fn write_config_does_not_truncate_on_repeated_writes() {
-        // A second write fully replaces the first (no partial/truncated file).
         let dir = tempfile::TempDir::new().unwrap();
         let p = dir.path().join("paneflow.json");
         assert!(write_config_checked(&p, &json!({"a": 1})));
@@ -454,7 +360,6 @@ mod tests {
 
     #[test]
     fn merge_shortcut_dedupes_prior_key_for_same_action() {
-        // Rebinding an action moves its key: the old key must not stay live.
         let mut m = shortcuts(&[("ctrl-alt-h", "split_horizontally")]);
         merge_shortcut(&mut m, "ctrl-alt-j", "split_horizontally");
         assert!(!m.contains_key("ctrl-alt-h"), "old key should be removed");
@@ -464,8 +369,6 @@ mod tests {
 
     #[test]
     fn merge_shortcut_collision_evicts_other_action() {
-        // US-021: binding a key already owned by another action must evict the
-        // previous owner, not leave both entries live (GPUI double binding).
         let mut m = shortcuts(&[("ctrl-shift-f", "toggle_search")]);
         merge_shortcut(&mut m, "ctrl-shift-f", "close_pane");
         assert_eq!(m["ctrl-shift-f"], json!("close_pane"));
@@ -474,8 +377,6 @@ mod tests {
 
     #[test]
     fn merge_shortcut_collision_is_normalization_aware() {
-        // A stored "+"-separated key and a recorded "-"-separated key denote
-        // the same chord; the collision filter must collapse them.
         let mut m = shortcuts(&[("ctrl+shift+f", "toggle_search")]);
         merge_shortcut(&mut m, "ctrl-shift-f", "close_pane");
         assert!(

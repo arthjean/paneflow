@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# PaneFlow user-local installer.
-#
-# Runs from inside an extracted `paneflow.app/` directory and installs to
-# $HOME/.local/paneflow.app/, following the Zed distribution model.
-#
-# No sudo. No writes outside $HOME. Safe to re-run (atomic swap).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
@@ -25,18 +19,6 @@ ICONS="$LOCAL/share/icons/hicolor"
 
 mkdir -p "$LOCAL" "$BIN" "$APPS"
 
-# --- atomic swap ---------------------------------------------------------
-# 1. Copy new tree into a sibling staging dir.
-# 2. Validate the staged binary exists and is executable.
-# 3. If a previous install exists, rename it to .app.old.
-# 4. Rename staging to $APP.
-# 5. On failure after step 3, restore .app.old to $APP.
-# 6. On success, remove .app.old.
-# ------------------------------------------------------------------------
-
-# If a prior install died after moving live to .old, restore it before doing
-# any new work. If both live and .old exist, refuse to guess which tree should
-# win.
 if [ -e "$APP_OLD" ]; then
     if [ ! -e "$APP" ]; then
         mv "$APP_OLD" "$APP"
@@ -82,13 +64,11 @@ fi
 
 mv "$APP_NEW" "$APP"
 
-# Staging succeeded - clear the failure trap and remove the old backup.
 trap - EXIT
 if [ "$HAD_PREVIOUS" -eq 1 ]; then
     rm -rf "$APP_OLD"
 fi
 
-# --- symlink, desktop entry, icons --------------------------------------
 ln -sfn "$APP/bin/paneflow" "$BIN/paneflow"
 
 DESKTOP_SRC="$APP/share/applications/paneflow.desktop"
@@ -107,7 +87,6 @@ if [ -d "$APP/share/icons/hicolor" ]; then
     done
 fi
 
-# --- best-effort cache refresh ------------------------------------------
 if command -v gtk-update-icon-cache >/dev/null 2>&1; then
     gtk-update-icon-cache -f -t "$ICONS" >/dev/null 2>&1 || true
 fi

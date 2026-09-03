@@ -81,9 +81,6 @@ fn paneflow_links_the_native_ghostty_engine_unconditionally() {
         })
         .unwrap_or_else(|| panic!("paneflow-app no longer depends on the Ghostty engine"));
 
-    // Ghostty is the only terminal engine, so nothing may make it optional or
-    // leave it on the stub: a build that resolves without `native` would link a
-    // terminal that cannot run a shell.
     assert_eq!(
         engine["optional"],
         serde_json::Value::Bool(false),

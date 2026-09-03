@@ -14,8 +14,6 @@ impl DisplayTerminal {
     pub(crate) fn render_dimensions(&self) -> Result<(usize, usize)> {
         let mut cols = 0u16;
         let mut rows = 0u16;
-        // SAFETY: both destinations are the `uint16_t` render.h documents for
-        // these keys, and both outlive the call.
         unsafe {
             get_multi(
                 "render_state_get_multi",

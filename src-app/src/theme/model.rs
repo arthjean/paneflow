@@ -1,17 +1,9 @@
-//! Terminal theme data model and UI palette.
-
 use gpui::{Hsla, Rgba};
 
 use crate::terminal::element::{MIN_APCA_CONTRAST, ensure_minimum_contrast};
 
-/// Terminal color theme with an optional app-wide UI palette plus 36 terminal slots:
-/// 5 base + cursor + selection + selection_foreground + scrollbar_thumb +
-/// link_text + 2 title bar + 24 ANSI (8 hues x 3 intensities).
 #[derive(Clone, Copy)]
 pub struct TerminalTheme {
-    /// Optional app-wide UI palette. Legacy themes derive their chrome colors
-    /// from light/dark defaults; bundled custom themes can opt into exact UI
-    /// tokens so the theme affects the whole app, not just ANSI colors.
     pub ui: Option<UiColors>,
     pub background: Hsla,
     pub foreground: Hsla,
@@ -20,19 +12,11 @@ pub struct TerminalTheme {
     pub ansi_background: Hsla,
     pub cursor: Hsla,
     pub selection: Hsla,
-    /// US-007: foreground color for text inside the selection rect,
-    /// guaranteed to satisfy APCA Lc ≥ `MIN_APCA_CONTRAST` against
-    /// `selection`. Computed once at theme-load time by
-    /// [`TerminalTheme::recompute_selection_foreground`] from the theme's
-    /// regular `foreground`. Used by `build_layout` to override the
-    /// per-cell `fg` for cells inside the selection.
     pub selection_foreground: Hsla,
     pub scrollbar_thumb: Hsla,
-    /// Color for hyperlink underline and text on Ctrl+hover.
     pub link_text: Hsla,
     pub title_bar_background: Hsla,
     pub title_bar_inactive_background: Hsla,
-    // 8 hues x 3 intensities = 24 ANSI colors
     pub black: Hsla,
     pub red: Hsla,
     pub green: Hsla,
@@ -49,20 +33,9 @@ pub struct TerminalTheme {
     pub bright_magenta: Hsla,
     pub bright_cyan: Hsla,
     pub bright_white: Hsla,
-    /// Per-language syntax-highlighting colors for the diff view
-    /// (prd-diff-syntax-palette-2026-Q3.md, EP-001). A dedicated semantic
-    /// palette - NOT the 8-hue ANSI set above - so diff syntax can mirror the
-    /// coverage of a modern editor's `SyntaxTheme` (≈18 distinct hues).
-    /// `Copy`, snapshotted once per diff load via `DiffSyntax::from_theme`.
     pub syntax: SyntaxPalette,
 }
 
-/// Semantic syntax-highlighting palette for the diff view, mirroring the
-/// *structure and coverage* of Zed's `SyntaxTheme` (a `name → color` map) in
-/// Paneflow's Catppuccin brand. Each slot is one tree-sitter capture family;
-/// `diff/syntax.rs::color_for_capture` resolves a capture name to a slot with
-/// longest-prefix fallback. Color-only for v1 (no font-style); `Copy` and
-/// allocation-free (~30 × `Hsla`).
 #[derive(Clone, Copy)]
 pub struct SyntaxPalette {
     pub comment: Hsla,
@@ -98,9 +71,6 @@ pub struct SyntaxPalette {
 }
 
 impl SyntaxPalette {
-    /// Dark diff syntax palette (`paneflow_dark()`), tuned from the Codex App diff
-    /// reference while keeping the existing semantic slot structure. ≥ 18
-    /// distinct values.
     pub fn catppuccin_mocha() -> Self {
         Self {
             comment: h(0x989898),
@@ -136,45 +106,41 @@ impl SyntaxPalette {
         }
     }
 
-    /// Catppuccin Latte - the light-theme syntax palette. Darker, saturated
-    /// hues that read on the white editor surface; ≥ 18 distinct values.
     pub fn catppuccin_latte() -> Self {
         Self {
-            comment: h(0x9ca0b0),             // Overlay0
-            comment_doc: h(0x8c8fa1),         // Overlay1
-            keyword: h(0x8839ef),             // Mauve
-            function: h(0x1e66f5),            // Blue
-            r#type: h(0x179299),              // Teal
-            r#enum: h(0x179299),              // Teal
-            constructor: h(0x1e66f5),         // Blue
-            string: h(0x40a02b),              // Green
-            string_escape: h(0x04a5e5),       // Sky
-            string_special: h(0xea76cb),      // Pink
-            number: h(0xfe640b),              // Peach
-            boolean: h(0xfe640b),             // Peach
-            constant: h(0xdf8e1d),            // Yellow
-            constant_builtin: h(0x209fb5),    // Sapphire
-            property: h(0xd20f39),            // Red
-            variable: h(0x4c4f69),            // Text
-            variable_builtin: h(0xfe640b),    // Peach
-            operator: h(0x04a5e5),            // Sky
-            punctuation: h(0x5c5f77),         // Subtext1
-            punctuation_special: h(0xe64553), // Maroon
-            attribute: h(0x1e66f5),           // Blue
-            tag: h(0xd20f39),                 // Red
-            label: h(0xdc8a78),               // Rosewater
-            namespace: h(0x7287fd),           // Lavender
-            title: h(0xd20f39),               // Red
-            text_literal: h(0x40a02b),        // Green
-            link_uri: h(0x04a5e5),            // Sky
-            link_text: h(0x1e66f5),           // Blue
-            emphasis: h(0xe64553),            // Maroon
-            emphasis_strong: h(0xdd7878),     // Flamingo
+            comment: h(0x9ca0b0),
+            comment_doc: h(0x8c8fa1),
+            keyword: h(0x8839ef),
+            function: h(0x1e66f5),
+            r#type: h(0x179299),
+            r#enum: h(0x179299),
+            constructor: h(0x1e66f5),
+            string: h(0x40a02b),
+            string_escape: h(0x04a5e5),
+            string_special: h(0xea76cb),
+            number: h(0xfe640b),
+            boolean: h(0xfe640b),
+            constant: h(0xdf8e1d),
+            constant_builtin: h(0x209fb5),
+            property: h(0xd20f39),
+            variable: h(0x4c4f69),
+            variable_builtin: h(0xfe640b),
+            operator: h(0x04a5e5),
+            punctuation: h(0x5c5f77),
+            punctuation_special: h(0xe64553),
+            attribute: h(0x1e66f5),
+            tag: h(0xd20f39),
+            label: h(0xdc8a78),
+            namespace: h(0x7287fd),
+            title: h(0xd20f39),
+            text_literal: h(0x40a02b),
+            link_uri: h(0x04a5e5),
+            link_text: h(0x1e66f5),
+            emphasis: h(0xe64553),
+            emphasis_strong: h(0xdd7878),
         }
     }
 
-    /// Vercel-inspired dark syntax palette: mostly monochrome neutrals with a
-    /// few crisp product-style accents for code structure.
     pub fn vercel_dark() -> Self {
         Self {
             comment: h(0x737373),
@@ -210,8 +176,6 @@ impl SyntaxPalette {
         }
     }
 
-    /// Claude Desktop-inspired dark syntax palette: graphite neutrals, ivory
-    /// text, and restrained Claude orange accents.
     pub fn claude_dark() -> Self {
         Self {
             comment: h(0x75736d),
@@ -247,8 +211,6 @@ impl SyntaxPalette {
         }
     }
 
-    /// Cursor-inspired dark syntax palette: near-black editor neutrals,
-    /// blue-white IDE accents, and Paneflow's stable status hues.
     pub fn cursor_dark() -> Self {
         Self {
             comment: h(0x6f6f6f),
@@ -284,8 +246,6 @@ impl SyntaxPalette {
         }
     }
 
-    /// Vercel-inspired light syntax palette: near-black structure on white,
-    /// with the Geist accent hues darkened enough to read on a light surface.
     pub fn vercel_light() -> Self {
         Self {
             comment: h(0x6b7280),
@@ -321,8 +281,6 @@ impl SyntaxPalette {
         }
     }
 
-    /// Claude Desktop-inspired light syntax palette: warm ink on the cream
-    /// paper surface, with Claude orange carrying keywords and emphasis.
     pub fn claude_light() -> Self {
         Self {
             comment: h(0x8f8b7d),
@@ -358,8 +316,6 @@ impl SyntaxPalette {
         }
     }
 
-    /// Cursor-inspired light syntax palette: the VS Code Light+ identity the
-    /// editor ships by default, kept recognizable token family by token family.
     pub fn cursor_light() -> Self {
         Self {
             comment: h(0x008000),
@@ -395,8 +351,6 @@ impl SyntaxPalette {
         }
     }
 
-    /// All slots as a flat array - for tests counting distinct hues and for any
-    /// future iteration over the palette.
     #[cfg(test)]
     pub(crate) fn all_slots(&self) -> [Hsla; 30] {
         [
@@ -448,7 +402,6 @@ pub(super) fn ha(hex: u32, alpha: f32) -> Hsla {
 }
 
 const CHROME_BACKGROUND_HEX: u32 = 0x141414;
-// Shared right-panel background for terminals, tab bars, Diff, and Agents.
 const TERMINAL_BACKGROUND_HEX: u32 = 0x181818;
 const BORDER_HEX: u32 = 0x252525;
 
@@ -457,20 +410,7 @@ fn is_light_theme(theme: &TerminalTheme) -> bool {
 }
 
 impl TerminalTheme {
-    /// US-007: recompute [`Self::selection_foreground`] from the current
-    /// `foreground` and `selection` colors so APCA Lc(selection_fg, selection)
-    /// ≥ [`MIN_APCA_CONTRAST`]. Called at theme-load time (and on every
-    /// hot-reload). Reusing the same `ensure_minimum_contrast` algorithm as
-    /// per-cell text guarantees consistent visual semantics - selected text
-    /// is no harder to read than non-selected text on near-luminance themes.
     pub(crate) fn recompute_selection_foreground(&mut self) {
-        // The `selection` slot's alpha represents how the selection blends
-        // with the cell background underneath. For contrast purposes we
-        // approximate the perceived selection background as the opaque
-        // version of `selection` (alpha = 1.0). A future refinement could
-        // alpha-composite against the actual cell `background` for a
-        // tighter contrast estimate, but the simple opaque-bg model is
-        // what `MIN_APCA_CONTRAST` was tuned for in the per-cell path.
         let selection_bg_opaque = Hsla {
             a: 1.0,
             ..self.selection
@@ -482,9 +422,6 @@ impl TerminalTheme {
 
 pub(super) fn apply_surface_overrides(mut theme: TerminalTheme) -> TerminalTheme {
     if theme.ui.is_some() || is_light_theme(&theme) {
-        // US-007: light themes skip surface overrides but still need their
-        // selection_foreground populated; do it here so every theme exiting
-        // this function has a valid value regardless of branch taken.
         theme.recompute_selection_foreground();
         return theme;
     }
@@ -505,62 +442,27 @@ pub(super) fn apply_surface_overrides(mut theme: TerminalTheme) -> TerminalTheme
     theme
 }
 
-// ---------------------------------------------------------------------------
-// UI color palette - derived from the active terminal theme
-// ---------------------------------------------------------------------------
-
-/// Colors for the app chrome (sidebar, settings, badges, etc.).
 #[derive(Clone, Copy)]
 pub struct UiColors {
-    /// Use the theme's `vc_*` washes directly for the Diff surface. Default
-    /// dark themes keep Paneflow's historical opaque Codex-style diff washes;
-    /// custom bundled themes opt into their own line backgrounds.
     pub use_theme_diff_washes: bool,
-    pub base: Hsla,    // deepest background (settings sidebar, app bg)
-    pub surface: Hsla, // card/panel background
-    pub overlay: Hsla, // dropdown/popover bg
-    pub border: Hsla,  // borders, dividers
-    pub subtle: Hsla,  // hover bg, badge bg
-    pub muted: Hsla,   // secondary text, labels
-    pub text: Hsla,    // primary text
-    pub accent: Hsla,  // active indicator, highlighted items
-    /// Distinct background for the `WaitingForConfirmation` tool-card
-    /// header (US-110 AC #2 of `tasks/prd-agent-ui-refactor-2026-Q3.md`).
-    /// Mirrors Zed's `tool_card_header_bg` -- an accent-tinted variant
-    /// of the card surface that signals "this row is actionable" at a
-    /// glance without redrawing the whole card.
+    pub base: Hsla,
+    pub surface: Hsla,
+    pub overlay: Hsla,
+    pub border: Hsla,
+    pub subtle: Hsla,
+    pub muted: Hsla,
+    pub text: Hsla,
+    pub accent: Hsla,
     pub tool_card_header_bg: Hsla,
-    // US-007 (prd-git-diff-mode-2026-Q3.md): curated version-control
-    // colors for the Git Diff surface, mirroring Zed's `StatusColors`
-    // model (`crates/theme/src/styles/status.rs`) - first-class slots,
-    // NOT terminal-ANSI-derived. Light/dark variants are resolved in
-    // `ui_colors_with`. `vc_*` are the foreground (status icons, file
-    // labels, hunk gutter); `*_background` default to the foreground at
-    // 0.25 alpha (Zed's `*_background` convention) for line washes;
-    // `vc_word_*` are the stronger intra-line word-diff emphasis.
-    /// Added / created (green).
     pub vc_added: Hsla,
-    /// Modified / changed (yellow).
     pub vc_modified: Hsla,
-    /// Deleted / removed (red).
     pub vc_deleted: Hsla,
-    /// Merge conflict (orange - distinct from delete-red).
     pub vc_conflict: Hsla,
-    /// Added-line background wash.
     pub vc_added_background: Hsla,
-    /// Deleted-line background wash.
     pub vc_deleted_background: Hsla,
-    /// Modified-line background wash.
     pub vc_modified_background: Hsla,
-    /// Intra-line word-diff emphasis (added side).
     pub vc_word_added: Hsla,
-    /// Intra-line word-diff emphasis (deleted side).
     pub vc_word_deleted: Hsla,
-    // EP-001 (CLI Cockpit, US-002): broadcast-group
-    // stripe palette - eight first-class slots so render code never inlines a
-    // hex (FR-08). Positional identity colors (not semantic status colors):
-    // they only need to stay mutually distinguishable and readable as a 3px
-    // pane-edge stripe on both bundled themes.
     pub group_1: Hsla,
     pub group_2: Hsla,
     pub group_3: Hsla,
@@ -569,32 +471,12 @@ pub struct UiColors {
     pub group_6: Hsla,
     pub group_7: Hsla,
     pub group_8: Hsla,
-    // EP-004 (CLI Cockpit): agent terminal-state
-    // slots (FR-08 - no inline hex in render code). Both are deliberately
-    // distinct from `vc_conflict` (the attention/waiting dot) so a crashed
-    // agent never reads as "needs input".
-    /// US-010: `AgentState::Errored` - tab dot + sidebar badge (red).
     pub agent_error: Hsla,
-    /// US-011: `AgentState::Stalled` - sidebar badge (muted grey-blue:
-    /// "silent", not "failing").
     pub agent_stalled: Hsla,
-    // EP-005 US-013: per-tool identity colors, promoted from the inline
-    // hexes the sidebar spinner rows used (FR-08). Brand hues, identical
-    // on both themes by design (they tint text on the theme surface).
-    /// Claude rows/spinner (Anthropic salmon).
     pub agent_claude: Hsla,
-    /// Codex rows/spinner (Codex indigo).
     pub agent_codex: Hsla,
 }
 
-/// Effective version-control diff colors for the Git Diff / Review surfaces.
-///
-/// On dark themes the foreground plus the line and gutter washes are the
-/// Codex-app-sampled green/red, a deliberate override of the muted `vc_*` theme
-/// slots (which read too desaturated on the dense diff body). On light themes
-/// they fall through to the theme `vc_*` slots. Single source for the Agents
-/// diff dock, the Diff/Review view, and the diff sidebar so the three never
-/// drift.
 #[derive(Clone, Copy)]
 pub struct DiffColors {
     pub added: Hsla,
@@ -606,9 +488,6 @@ pub struct DiffColors {
 }
 
 impl UiColors {
-    /// Resolve the canonical diff color set (see [`DiffColors`]). Dark/light is
-    /// keyed off `base.l` so any render path holding a `UiColors` can call it
-    /// without re-locking the theme cache.
     pub fn diff_colors(&self) -> DiffColors {
         if self.base.l > 0.5 || self.use_theme_diff_washes {
             return DiffColors {
@@ -621,7 +500,6 @@ impl UiColors {
             };
         }
         DiffColors {
-            // Codex-inspired dark diff panel, softened for the neutral shell.
             added: h(0x57d992),
             deleted: h(0xff6f6a),
             added_background: h(0x1d3a2b),
@@ -631,9 +509,6 @@ impl UiColors {
         }
     }
 
-    /// Stripe color for broadcast-group slot `idx` (0-based). Wraps modulo 8
-    /// so an out-of-range index (impossible via the picker, which caps group
-    /// creation at 8) can never panic the render path.
     pub fn group_color(&self, idx: usize) -> Hsla {
         match idx % 8 {
             0 => self.group_1,
@@ -648,23 +523,11 @@ impl UiColors {
     }
 }
 
-/// Derive UI colors from the active terminal theme.
-///
-/// Light themes get light UI; dark themes get dark UI. Calls
-/// [`ui_colors_with`] under the hood after a single theme lookup --
-/// render paths that already have a `TerminalTheme` in hand should
-/// call [`ui_colors_with`] directly to avoid re-locking the theme
-/// cache (Composer / ThreadView render do this).
 pub fn ui_colors() -> UiColors {
     let theme = super::watcher::active_theme();
     ui_colors_with(&theme)
 }
 
-/// Derive UI colors from an already-resolved terminal theme. Identical
-/// output to [`ui_colors`] but skips the global theme-cache lock --
-/// the agents UI calls `ui_colors` once per render entry and again
-/// for every visible item, so passing the cached theme through saves
-/// O(visible_items) mutex acquisitions per frame.
 pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
     if let Some(ui) = theme.ui {
         return ui;
@@ -674,9 +537,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
     if is_light {
         UiColors {
             use_theme_diff_washes: false,
-            // Codex-style light shell: the right-hand work area is pure white,
-            // while controls use neutral, near-white layers for hierarchy. Every
-            // grey here is hue-free by design (see the dark arm below).
             base: h(0xffffff),
             surface: h(0xf7f7f7),
             overlay: h(0xffffff),
@@ -685,25 +545,16 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             muted: h(0x6a6a6a),
             text: h(0x262626),
             accent: h(0x4c6fff),
-            // Light theme: a surface one step darker than the card so the
-            // awaiting-confirmation row stands out without overwhelming the
-            // chat stream.
             tool_card_header_bg: h(0xf1f1f1),
-            // Curated diff palette (Catppuccin Latte family) - darker,
-            // saturated hues that read on a light surface.
             vc_added: h(0x40a02b),
             vc_modified: h(0xdf8e1d),
             vc_deleted: h(0xd20f39),
             vc_conflict: h(0xfe640b),
-            // Subtle line wash (Zed editor_diff_hunk_*_background, light a=0x29=0.16);
-            // the opaque gutter hunk bar carries the strong status signal.
             vc_added_background: ha(0x40a02b, 0.16),
             vc_deleted_background: ha(0xd20f39, 0.16),
             vc_modified_background: ha(0xdf8e1d, 0.16),
             vc_word_added: ha(0x40a02b, 0.40),
             vc_word_deleted: ha(0xd20f39, 0.40),
-            // Broadcast stripes (Catppuccin Latte family) - saturated hues
-            // that hold up as a thin stripe on a light pane edge.
             group_1: h(0x1e66f5),
             group_2: h(0x40a02b),
             group_3: h(0xdf8e1d),
@@ -712,8 +563,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_6: h(0x179299),
             group_7: h(0xfe640b),
             group_8: h(0x7287fd),
-            // Agent state (Latte family): saturated red for a crash, the
-            // neutral overlay grey for a silent session.
             agent_error: h(0xd20f39),
             agent_stalled: h(0x808080),
             agent_claude: h(0xe89271),
@@ -722,11 +571,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
     } else {
         UiColors {
             use_theme_diff_washes: false,
-            // Every neutral in the shell is hue-free: greys carry no blue
-            // cast, so color in the UI only ever means status (`vc_*`),
-            // identity (`group_*`) or the accent. The greys below hold the
-            // luminance the blue-tinted ones had, so contrast is unchanged -
-            // only the hue is gone.
             base: h(TERMINAL_BACKGROUND_HEX),
             surface: h(0x212121),
             overlay: h(CHROME_BACKGROUND_HEX),
@@ -735,24 +579,16 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             muted: h(0xa0a0a0),
             text: h(0xdddddd),
             accent: h(0x57d5c4),
-            // Dark theme: a touch lighter than the card surface so the
-            // awaiting row reads even at a glance.
             tool_card_header_bg: h(0x2e2e2e),
-            // Premium dark diff palette: Codex-like red/green intent,
-            // softened to sit inside the neutral terminal surface.
             vc_added: h(0x57d992),
             vc_modified: h(0xffd166),
             vc_deleted: h(0xff6f6a),
             vc_conflict: h(0xffa657),
-            // Subtle line wash (Zed editor_diff_hunk_*_background, dark a=0x1f=0.12);
-            // the opaque gutter hunk bar carries the strong status signal.
             vc_added_background: ha(0x57d992, 0.12),
             vc_deleted_background: ha(0xff6f6a, 0.12),
             vc_modified_background: ha(0xffd166, 0.12),
             vc_word_added: ha(0x57d992, 0.40),
             vc_word_deleted: ha(0xff6f6a, 0.40),
-            // Broadcast stripes: high-luminance accents that keep their
-            // identity against the neutral pane edge.
             group_1: h(0x7eb6ff),
             group_2: h(0x57d992),
             group_3: h(0xffd166),
@@ -761,7 +597,6 @@ pub fn ui_colors_with(theme: &TerminalTheme) -> UiColors {
             group_6: h(0x57d5c4),
             group_7: h(0xffa657),
             group_8: h(0x9ea7ff),
-            // Agent state: clear, bright marks on the muted cockpit shell.
             agent_error: h(0xff6f6a),
             agent_stalled: h(0xa0a0a0),
             agent_claude: h(0xffa657),
@@ -876,10 +711,6 @@ mod tests {
         }
     }
 
-    /// US-007 invariant: for any theme exiting `apply_surface_overrides` or
-    /// `theme_by_name`, the selection foreground must satisfy the same
-    /// APCA Lc threshold the per-cell contrast pass uses. A near-luminance
-    /// theme without this invariant would render selected text illegibly.
     fn assert_selection_invariant(theme: &TerminalTheme, label: &str) {
         let bg_opaque = Hsla {
             a: 1.0,
@@ -894,7 +725,6 @@ mod tests {
 
     #[test]
     fn bundled_themes_satisfy_selection_contrast_invariant() {
-        // All bundled themes must produce a readable selection foreground.
         for (label, theme) in [
             ("Paneflow Dark", apply_surface_overrides(paneflow_dark())),
             ("Paneflow Light", apply_surface_overrides(paneflow_light())),
@@ -911,9 +741,6 @@ mod tests {
 
     #[test]
     fn theme_by_name_returns_invariant_satisfying_themes() {
-        // theme_by_name is the public entry point; users may call it without
-        // going through apply_surface_overrides, so it must finalize on the
-        // way out. Iterate the live table so the test tracks the bundled set.
         for (name, _) in crate::theme::builtin::THEMES {
             let theme = theme_by_name(name).expect("bundled theme not found");
             assert_selection_invariant(&theme, name);
@@ -922,35 +749,24 @@ mod tests {
 
     #[test]
     fn adversarial_selection_close_to_red_text_still_legible() {
-        // Construct a synthetic theme whose `selection` background is a
-        // strong red, the same hue as theme.foreground, then assert the
-        // recomputed selection_foreground still satisfies the invariant.
-        // This is the canonical "user picked a clashing selection color"
-        // failure mode US-007 must guard against.
         let mut theme = paneflow_dark();
-        theme.foreground = h(0xff0000); // bright red text
-        theme.selection = ha(0xff0000, 0.4); // selection of the same hue
+        theme.foreground = h(0xff0000);
+        theme.selection = ha(0xff0000, 0.4);
         theme.recompute_selection_foreground();
         assert_selection_invariant(&theme, "adversarial-red-on-red");
     }
 
     #[test]
     fn adversarial_selection_close_to_white_on_light_theme() {
-        // Light theme + near-white selection background. The algorithm must
-        // pick a dark foreground for legibility.
         let mut theme = paneflow_light();
-        theme.foreground = h(0xeeeeee); // near-white text
-        theme.selection = ha(0xf0f0f0, 0.5); // very pale selection
+        theme.foreground = h(0xeeeeee);
+        theme.selection = ha(0xf0f0f0, 0.5);
         theme.recompute_selection_foreground();
         assert_selection_invariant(&theme, "adversarial-white-on-light");
     }
 
     #[test]
     fn vc_diff_slots_distinct_with_subtle_zed_alpha_backgrounds() {
-        // US-007 (prd-git-diff-mode-2026-Q3.md): the curated diff slots are
-        // distinct hues. The line-wash backgrounds are subtle (Zed's
-        // editor_diff_hunk_*_background: 0.12 dark / 0.16 light) - the opaque
-        // gutter hunk bar carries the strong status signal, not the wash.
         let dark = ui_colors_with(&paneflow_dark());
         assert_ne!(dark.vc_added, dark.vc_deleted);
         assert_ne!(dark.vc_added, dark.vc_modified);
@@ -966,8 +782,6 @@ mod tests {
                 bg.a
             );
         }
-        // The light theme resolves a distinct (darker, saturated) palette with
-        // a slightly stronger wash to read on the light editor surface.
         let light = ui_colors_with(&paneflow_light());
         assert_ne!(light.vc_added, dark.vc_added);
         for bg in [
@@ -1014,9 +828,6 @@ mod tests {
 
     #[test]
     fn recompute_is_idempotent() {
-        // Running the recompute twice must yield the same value - guards
-        // against accidental mutation of `foreground` or `selection` during
-        // the algorithm.
         let mut theme = paneflow_dark();
         theme.recompute_selection_foreground();
         let first = theme.selection_foreground;
@@ -1025,14 +836,6 @@ mod tests {
         assert_eq!(first, second);
     }
 
-    // ------------------------------------------------------------------
-    // EP-001 / US-001 + US-007 (prd-diff-syntax-palette-2026-Q3.md):
-    // the per-language syntax palette must be richly populated on bundled
-    // themes and stay readable on the light theme.
-    // ------------------------------------------------------------------
-
-    /// Count pairwise-distinct colors. `Hsla` is `PartialEq` but neither `Eq`
-    /// nor `Hash`, so a `HashSet` is out; O(n²) over 30 slots is trivial.
     fn distinct_count(colors: &[Hsla]) -> usize {
         let mut seen: Vec<Hsla> = Vec::new();
         for &c in colors {
@@ -1045,7 +848,6 @@ mod tests {
 
     #[test]
     fn bundled_themes_populate_at_least_18_distinct_syntax_hues() {
-        // US-001 AC #1/#5: ≥ 18 distinct color values per theme (up from 8).
         for (label, theme) in [
             ("Paneflow Dark", paneflow_dark()),
             ("Paneflow Light", paneflow_light()),
@@ -1066,9 +868,6 @@ mod tests {
 
     #[test]
     fn no_syntax_slot_equals_default_or_foreground() {
-        // US-001 AC #2/#5 (unhappy path): a slot left at the default `Hsla`
-        // (transparent black) or equal to the theme foreground would render
-        // that token family invisible / indistinguishable from plain text.
         let default = Hsla::default();
         for (label, theme) in [
             ("Paneflow Dark", paneflow_dark()),
@@ -1092,8 +891,6 @@ mod tests {
 
     #[test]
     fn light_theme_comment_and_punctuation_perceptibly_off_foreground() {
-        // US-001 AC #4: on the light theme, comment and punctuation must clear
-        // a perceptible APCA margin from the row foreground (not just `!=`).
         let theme = paneflow_light();
         for (slot_label, slot) in [
             ("comment", theme.syntax.comment),
@@ -1109,10 +906,6 @@ mod tests {
 
     #[test]
     fn latte_core_slots_distinct_and_clear_of_background() {
-        // US-007 AC #1/#2: the highest-traffic families (comment / string /
-        // keyword / operator) are mutually distinct and distinct from
-        // foreground on the light theme; and NO family near-equals the light
-        // editor background (a slot collapsing onto bg = invisible category).
         let theme = paneflow_light();
         let p = theme.syntax;
         let core = [p.comment, p.string, p.keyword, p.operator];

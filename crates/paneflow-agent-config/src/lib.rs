@@ -1,9 +1,3 @@
-//! Shared, dependency-light coding-agent configuration primitives.
-//!
-//! Both the long-lived installer and the size-constrained shim depend on this
-//! crate, so cross-process locking and Claude hook shapes have one canonical
-//! implementation.
-
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 
 pub mod claude_hooks;

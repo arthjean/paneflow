@@ -1,11 +1,3 @@
-# Windows twin of scripts/fetch-libghostty.sh: places the reviewed
-# libghostty-vt archive for each requested Rust target at
-# native\libghostty\prebuilt\<target>\<archive_path>, downloading it from the
-# GitHub Release named by native\libghostty\manifest.toml and verifying the
-# manifest's archive_sha256 before it is moved into place. Idempotent.
-#
-# Usage: .\scripts\fetch-libghostty.ps1 [-Target <rust-triple>[,<rust-triple>]]
-#        (no -Target: every target the manifest declares)
 [CmdletBinding()]
 param(
     [string[]]$Target = @()

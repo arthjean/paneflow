@@ -1,11 +1,5 @@
 use std::path::{Path, PathBuf};
 
-/// Resolve the cwd to use when the caller did not request one explicitly.
-///
-/// GUI launches can inherit the filesystem root as the process cwd on macOS.
-/// Treat that as an unhelpful implicit cwd and prefer the user's home dir,
-/// while still preserving an explicitly requested `/` or drive root because
-/// those paths bypass this helper.
 pub(crate) fn implicit_launch_cwd() -> PathBuf {
     resolve_implicit_launch_cwd(std::env::current_dir().ok(), dirs::home_dir())
 }

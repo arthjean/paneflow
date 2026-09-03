@@ -69,9 +69,6 @@ fn decode_codepoint(value: u32) -> char {
     }
 }
 
-/// Resolve the same background precedence as Ghostty's `Style.bg`: an erased
-/// cell can carry its background in the cell content even when its style is
-/// default. Keeping palette values indexed lets Paneflow apply its own theme.
 fn cell_background(
     cell: sys::GhosttyCell,
     content_tag: sys::GhosttyCellContentTag,
@@ -87,4 +84,3 @@ fn cell_background(
         _ => style_color(style),
     }
 }
-

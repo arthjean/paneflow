@@ -7,20 +7,6 @@
         clippy::panic
     )
 )]
-//! paneflow-ipc-client - blocking JSON-RPC client for Paneflow's local IPC socket.
-//!
-//! Mirrors the server wire protocol at `src-app/src/ipc.rs`: newline-delimited
-//! JSON-RPC 2.0 over an `interprocess` local socket (Unix domain socket /
-//! Windows named pipe). Unlike `paneflow-ai-hook` (fire-and-forget), this
-//! client is request/response - it reads back the one-line response the
-//! server writes on the same connection.
-//!
-//! One connection per request: simple and robust (a stale connection can't
-//! wedge the caller). The server's peer-UID check passes because the client
-//! runs as the same user that launched Paneflow.
-//!
-//! Shared crate (no GPUI / `src-app` dependency): consumed both by the MCP
-//! bridge (`paneflow-mcp`) and the `paneflow` CLI subcommands.
 
 pub mod ai_hook;
 
@@ -34,31 +20,16 @@ use std::time::Instant;
 use interprocess::local_socket::{prelude::*, GenericFilePath, Stream};
 use serde_json::{json, Value};
 
-/// Maximum size of one newline-delimited JSON-RPC frame on the local socket.
 pub const MAX_FRAME_BYTES: usize = 256 * 1024;
 
-/// Wire timeout for a single request/response round-trip. The server always
-/// writes a response (it can synthesize a `-32002` dispatch timeout
-/// envelope), so a stall this long means the process is wedged.
 const IPC_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// U-029: per-reply read cap on the untrusted IPC socket. Mirrors the server's
-/// `MAX_REQUEST_LEN` (`src-app/src/ipc.rs`). The recv timeout bounds wall-clock
-/// time but not memory - a same-UID peer can deliver many GB before the
-/// deadline - so the read is also byte-bounded and a reply that hits the cap
-/// without a terminating newline is a framing error, not a partial parse.
 const MAX_RESPONSE_LEN: u64 = MAX_FRAME_BYTES as u64;
 
-/// Abstraction over "send a JSON-RPC request to Paneflow, get the `result`".
-/// Lets callers (MCP layer, CLI) be unit-tested against a fake transport with
-/// no live socket.
 pub trait IpcTransport {
-    /// Call a Paneflow IPC method. Returns the `result` value on success, or
-    /// `Err(message)` on transport failure or a JSON-RPC `error` envelope.
     fn call(&self, method: &str, params: Value) -> Result<Value, String>;
 }
 
-/// Live client bound to a resolved socket path.
 pub struct IpcClient {
     socket: PathBuf,
     next_id: AtomicU64,
@@ -87,7 +58,6 @@ impl IpcTransport for IpcClient {
     }
 }
 
-/// Build a JSON-RPC 2.0 request frame.
 pub(crate) fn build_request(id: u64, method: &str, params: Value) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -97,8 +67,6 @@ pub(crate) fn build_request(id: u64, method: &str, params: Value) -> Value {
     })
 }
 
-/// Extract the `result` from a JSON-RPC response line, or translate an
-/// `error` envelope / malformed line into `Err(message)`.
 pub(crate) fn parse_response(line: &str) -> Result<Value, String> {
     let value: Value = serde_json::from_str(line.trim())
         .map_err(|e| format!("invalid JSON-RPC response from paneflow: {e}"))?;
@@ -126,20 +94,6 @@ fn jsonrpc_error_message_from_value(value: &Value) -> Option<String> {
     Some(format!("paneflow error {code}: {message}"))
 }
 
-/// Open a connection, write the newline-terminated request, and read back one
-/// newline-delimited response line.
-///
-/// US-023: the read deadline is enforced at the OS level on Unix and through
-/// bounded, cancelable Win32 overlapped I/O operations on Windows.
-/// The previous scratch-thread + `recv_timeout` pattern leaked one OS thread
-/// and one socket FD on every timeout - the spawned reader owned `stream` and
-/// stayed blocked in `read_line` forever (no deadline ever reached it), so an
-/// agent retrying `read_pane` against a wedged Paneflow exhausted the
-/// long-lived bridge's threads/FDs. With an OS deadline, `read_line` returns
-/// the error itself, the owning `BufReader` drops, and the FD is released.
-/// Collapse an `ErrorKind::Unsupported` result to `Ok(())` - used only for
-/// optional Unix socket-deadline setters. Any other error is forwarded
-/// unchanged.
 #[cfg(any(not(windows), test))]
 fn tolerate_unsupported(r: io::Result<()>) -> io::Result<()> {
     match r {
@@ -150,8 +104,6 @@ fn tolerate_unsupported(r: io::Result<()>) -> io::Result<()> {
 
 fn send_and_receive(socket: &Path, request: &Value) -> io::Result<String> {
     let mut stream = connect_request_stream(socket)?;
-    // Bound both directions on the same deadline: a peer that never drains our
-    // write could otherwise wedge `write_all`.
     #[cfg(not(windows))]
     {
         tolerate_unsupported(stream.set_recv_timeout(Some(IPC_TIMEOUT)))?;
@@ -175,18 +127,12 @@ fn send_and_receive(socket: &Path, request: &Value) -> io::Result<String> {
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
-        // U-029: cap the reply read at MAX_RESPONSE_LEN (Take rebuilt per call, so
-        // the limit is per-reply) and treat hitting the cap without a terminating
-        // newline as a framing error rather than feeding a truncated line to the
-        // parser.
         match reader.by_ref().take(MAX_RESPONSE_LEN).read_line(&mut line) {
             Ok(n) if n as u64 >= MAX_RESPONSE_LEN && !line.ends_with('\n') => Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "paneflow response exceeded the size cap",
             )),
             Ok(_) => Ok(line),
-            // SO_RCVTIMEO surfaces as EAGAIN/`WouldBlock` on Unix and `TimedOut`
-            // on Windows - normalize both to a friendly timeout message.
             Err(e)
                 if matches!(
                     e.kind(),
@@ -224,8 +170,6 @@ mod windows_pipe {
 
     impl Event {
         fn new() -> io::Result<Self> {
-            // SAFETY: default attributes and no name; the returned handle is
-            // checked before it is wrapped.
             let handle = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
             if handle.is_null() {
                 Err(io::Error::last_os_error())
@@ -237,7 +181,6 @@ mod windows_pipe {
 
     impl Drop for Event {
         fn drop(&mut self) {
-            // SAFETY: this is the live event handle created by Event::new.
             unsafe { CloseHandle(self.0) };
         }
     }
@@ -256,8 +199,6 @@ mod windows_pipe {
     }
 
     fn cancel_and_reap(handle: HANDLE, overlapped: &OVERLAPPED) {
-        // SAFETY: handle and overlapped belong to the pending operation in the
-        // caller. Reaping before return keeps the stack-backed OVERLAPPED live.
         let _ = unsafe { CancelIoEx(handle, overlapped) };
         let mut transferred = 0;
         let _ = unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 1) };
@@ -269,7 +210,6 @@ mod windows_pipe {
         timeout: Duration,
     ) -> io::Result<()> {
         let timeout_ms = timeout.as_millis().min(u32::MAX as u128) as u32;
-        // SAFETY: the event is owned by the live OVERLAPPED operation.
         match unsafe { WaitForSingleObject(overlapped.hEvent, timeout_ms) } {
             WAIT_OBJECT_0 => Ok(()),
             WAIT_TIMEOUT => {
@@ -303,12 +243,9 @@ mod windows_pipe {
 
         while !payload.is_empty() {
             let event = Event::new()?;
-            // SAFETY: a zeroed OVERLAPPED is valid after attaching the event.
             let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
             overlapped.hEvent = event.0;
             let wanted = payload.len().min(u32::MAX as usize) as u32;
-            // SAFETY: the pipe handle is valid for this borrowed stream and the
-            // payload and OVERLAPPED remain live until completion is reaped.
             let started = unsafe {
                 WriteFile(
                     handle,
@@ -328,7 +265,6 @@ mod windows_pipe {
             }
 
             let mut transferred = 0;
-            // SAFETY: same live handle and OVERLAPPED as the WriteFile call.
             if unsafe { GetOverlappedResult(handle, &overlapped, &mut transferred, 1) } == 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -357,12 +293,9 @@ mod windows_pipe {
 
         let handle = pipe_handle(stream);
         let event = Event::new()?;
-        // SAFETY: a zeroed OVERLAPPED is valid after attaching the event.
         let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
         overlapped.hEvent = event.0;
         let wanted = buffer.len().min(u32::MAX as usize) as u32;
-        // SAFETY: the pipe handle is valid for this borrowed stream and the
-        // buffer and OVERLAPPED remain live until completion is reaped.
         let started = unsafe {
             ReadFile(
                 handle,
@@ -385,7 +318,6 @@ mod windows_pipe {
         }
 
         let mut transferred = 0;
-        // SAFETY: same live handle and OVERLAPPED as the ReadFile call.
         if unsafe { GetOverlappedResult(handle, &overlapped, &mut transferred, 1) } == 0 {
             let error = io::Error::last_os_error();
             return if closed_pipe(&error) {
@@ -476,12 +408,6 @@ fn append_capped_response_chunk(out: &mut Vec<u8>, chunk: &[u8]) -> io::Result<O
     Ok(None)
 }
 
-/// EP-002 (agent-control-plane): open a persistent `events.subscribe` stream.
-/// Writes the subscribe request, then invokes `on_line` for every newline-
-/// delimited event the server pushes, until the connection closes (server side)
-/// or `on_line` returns `false`. Unlike [`send_and_receive`], the read side is
-/// NOT deadline-bounded: an idle stream is normal (the server heartbeats every
-/// 30 s), so only a real disconnect (EOF / error) ends the loop.
 pub fn subscribe_stream(
     socket: &Path,
     params: Value,
@@ -547,34 +473,12 @@ where
     }
 }
 
-/// What a single read slice of [`subscribe_stream_timed`] yielded.
 pub enum StreamEvent<'a> {
-    /// A complete, non-empty event line from the server (JSON).
     Line(&'a str),
-    /// `slice` elapsed with no complete line: the caller's quiescence tick.
-    /// This is the signal a bare [`subscribe_stream`] cannot deliver.
     Tick,
-    /// EOF or a mid-stream socket error: the server vanished.
     Closed,
 }
 
-/// EP-003 US-007 (agent-control-plane-hardening): a [`subscribe_stream`] variant
-/// whose read side IS deadline-bounded by `slice`. Where `subscribe_stream`
-/// blocks forever between events, this wakes every `slice` with a
-/// [`StreamEvent::Tick`] so the caller can detect the ABSENCE of events (output
-/// quiescence) - the basis of `wait --idle`, with zero client-side polling of
-/// pane content. A complete line yields [`StreamEvent::Line`]; EOF or a
-/// mid-stream socket error yields [`StreamEvent::Closed`] then returns `Ok(())`
-/// (the caller maps it to a clean "server gone" exit). Only a failed connect /
-/// subscribe-write returns `Err` (no instance). `on_event` returns `false` to
-/// stop.
-///
-/// Unlike [`send_and_receive`], the recv deadline here is REQUIRED, not
-/// best-effort: the `Tick` contract is impossible without it, and a platform
-/// that drops the timeout (Windows named pipes -> `Unsupported`) would block
-/// forever in `read_line` instead of ticking - a hang past the caller's overall
-/// deadline. So an `Unsupported` recv timeout is surfaced as `Err`; callers that
-/// still need quiescence can fall back to another deterministic clock.
 pub fn subscribe_stream_timed(
     socket: &Path,
     params: Value,
@@ -583,8 +487,6 @@ pub fn subscribe_stream_timed(
 ) -> io::Result<()> {
     let name = socket.to_fs_name::<GenericFilePath>()?;
     let mut stream = Stream::connect(name)?;
-    // REQUIRED (see the doc note): without a recv deadline the read below would
-    // block forever between events, so refuse rather than hang.
     stream.set_recv_timeout(Some(slice)).map_err(|e| {
         if e.kind() == io::ErrorKind::Unsupported {
             io::Error::new(
@@ -604,31 +506,18 @@ pub fn subscribe_stream_timed(
     stream.flush()?;
 
     let mut reader = BufReader::new(stream);
-    // BYTES, not a `String`: `read_line` validates UTF-8 on every read, so a
-    // multibyte codepoint bisected by a recv-slice boundary would surface as
-    // `InvalidData` and be mis-read as a disconnect. `read_until(b'\n')` defers
-    // validation to the complete line. Reused across slices so a split line is
-    // reassembled rather than fed in halves.
     let mut buf: Vec<u8> = Vec::new();
     loop {
-        // Bound each line at the same 256 KiB cap as a request/response reply,
-        // so a same-UID server flooding one unterminated line can't grow `buf`
-        // without bound (parity with `send_and_receive`). `remaining` shrinks as
-        // the line accumulates across slices.
         let remaining = MAX_RESPONSE_LEN.saturating_sub(buf.len() as u64);
         if remaining == 0 {
-            // One line exceeded the cap without terminating: framing abuse - the
-            // server is not speaking our protocol, treat it as gone.
             on_event(StreamEvent::Closed);
             return Ok(());
         }
         match reader.by_ref().take(remaining).read_until(b'\n', &mut buf) {
-            // Clean EOF: the server closed the stream.
             Ok(0) => {
                 on_event(StreamEvent::Closed);
                 return Ok(());
             }
-            // A whole line landed (terminated by the newline).
             Ok(_) if buf.last() == Some(&b'\n') => {
                 let keep = {
                     let line = String::from_utf8_lossy(&buf);
@@ -640,14 +529,10 @@ pub fn subscribe_stream_timed(
                     return Ok(());
                 }
             }
-            // `Ok(n>0)` with no trailing newline = EOF mid-line (or the cap was
-            // hit, handled by `remaining == 0` next pass): server gone.
             Ok(_) => {
                 on_event(StreamEvent::Closed);
                 return Ok(());
             }
-            // The recv slice elapsed with no (further) bytes: a quiescence tick.
-            // Any partial bytes already read stay in `buf` for the next slice.
             Err(e)
                 if matches!(
                     e.kind(),
@@ -658,8 +543,6 @@ pub fn subscribe_stream_timed(
                     return Ok(());
                 }
             }
-            // A mid-stream socket error means the peer vanished; surface it as
-            // Closed (a clean caller exit), not Err (which means "no instance").
             Err(_) => {
                 on_event(StreamEvent::Closed);
                 return Ok(());
@@ -668,11 +551,6 @@ pub fn subscribe_stream_timed(
     }
 }
 
-/// Resolve the Paneflow IPC socket path. `PANEFLOW_SOCKET_PATH` (inherited
-/// from the Paneflow PTY through the agent that launched this process) is
-/// authoritative - it carries the exact path the running instance bound.
-/// Falls back to the current build profile's default (`paneflow-dev` in debug,
-/// `paneflow` in release), mirroring `src-app/src/runtime_paths.rs`.
 pub fn resolve_socket_path() -> Option<PathBuf> {
     if let Some(p) = socket_path_from_env(std::env::var("PANEFLOW_SOCKET_PATH").ok().as_deref()) {
         return Some(p);
@@ -680,15 +558,11 @@ pub fn resolve_socket_path() -> Option<PathBuf> {
     default_socket_path()
 }
 
-/// Validate a `PANEFLOW_SOCKET_PATH` value: present and absolute. A relative
-/// path means the env was clobbered or we're outside a Paneflow PTY.
 pub(crate) fn socket_path_from_env(raw: Option<&str>) -> Option<PathBuf> {
     let path = PathBuf::from(raw?);
     path.is_absolute().then_some(path)
 }
 
-/// Best-effort default socket path, mirroring `src-app/src/runtime_paths.rs`.
-/// Uses raw env (no `dirs` dep) to keep the dependency tree minimal.
 #[cfg(unix)]
 fn default_socket_path() -> Option<PathBuf> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
@@ -699,10 +573,6 @@ fn default_socket_path() -> Option<PathBuf> {
                 .map(PathBuf::from)
                 .filter(|p| !p.as_os_str().is_empty())
         })
-        // 4th level, mirroring the server's `dirs::cache_dir().join("run")`
-        // (`runtime_paths::runtime_dir`). Without this, a client whose $TMPDIR
-        // is stripped (launchd/cron) returned None - "IPC unreachable" - even
-        // though the server had bound under the cache dir.
         .or_else(cache_run_dir)?;
     let subdir = if cfg!(debug_assertions) {
         "paneflow-dev"
@@ -717,10 +587,6 @@ fn default_socket_path() -> Option<PathBuf> {
     Some(runtime.join(subdir).join(socket_file))
 }
 
-/// Compute `<cache_dir>/run` from raw env, mirroring the server's last-resort
-/// fallback without taking a `dirs` dependency (the whole point of this crate's
-/// minimal tree). Linux: `$XDG_CACHE_HOME` or `$HOME/.cache`; macOS:
-/// `$HOME/Library/Caches`.
 #[cfg(unix)]
 fn cache_run_dir() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
@@ -738,8 +604,6 @@ fn cache_run_dir() -> Option<PathBuf> {
     }
 }
 
-/// Windows default: the named-pipe path for the current build profile. Mirrors
-/// `runtime_paths::socket_path` on Windows.
 #[cfg(windows)]
 fn default_socket_path() -> Option<PathBuf> {
     Some(PathBuf::from(if cfg!(debug_assertions) {
@@ -755,10 +619,6 @@ mod tests {
 
     #[test]
     fn tolerate_unsupported_swallows_only_unsupported() {
-        // Regression (prd-windows-port): Windows named pipes reject I/O
-        // deadlines with ErrorKind::Unsupported. That must NOT fail the IPC
-        // call (it silently broke the MCP bridge + CLI on Windows); any other
-        // error must still propagate.
         assert!(tolerate_unsupported(Ok(())).is_ok());
         assert!(
             tolerate_unsupported(Err(io::Error::from(io::ErrorKind::Unsupported))).is_ok(),
@@ -837,11 +697,6 @@ mod tests {
 
     #[test]
     fn socket_path_from_env_requires_absolute() {
-        // "Absolute" is platform-specific: a Unix domain-socket path on Unix,
-        // the named-pipe device path on Windows (`Path::is_absolute` accepts
-        // `\\.\pipe\…`). The previous Unix-only literal made this test fail on
-        // Windows, where `/run/...` is NOT absolute (no drive) and
-        // `socket_path_from_env` correctly returned None.
         #[cfg(not(windows))]
         let absolute = "/run/user/1000/paneflow/paneflow.sock";
         #[cfg(windows)]
@@ -927,11 +782,6 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
-    /// US-005 AC: a full request/response round-trip over a real local socket
-    /// (not just the pure helpers). Spins up an `interprocess` listener that
-    /// speaks the Paneflow framing - read one newline-delimited request, echo
-    /// its `id` back in a JSON-RPC `result` envelope. Unix-only: the test path
-    /// is a filesystem socket, not a Windows `\\.\pipe\` name.
     #[cfg(unix)]
     #[test]
     fn ipc_client_round_trips_against_a_live_socket() {
@@ -950,7 +800,6 @@ mod tests {
             let mut line = String::new();
             reader.read_line(&mut line).expect("read request");
             let request: Value = serde_json::from_str(line.trim()).expect("parse request");
-            // Echo the client's id back, mirroring the real server contract.
             let response = json!({
                 "jsonrpc": "2.0",
                 "id": request["id"].clone(),

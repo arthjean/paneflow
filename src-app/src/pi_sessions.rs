@@ -1,11 +1,3 @@
-//! Pi Coding Agent session discovery.
-//!
-//! Pi documents its local session store under `~/.pi/agent/sessions/` with a
-//! JSONL header record:
-//! `{"type":"session","version":3,"id":"...","timestamp":"...","cwd":"..."}`.
-//! The reader uses that public contract, never Pi internals beyond it, and
-//! normalises matching sessions into [`SessionMeta`](crate::agent_sessions::SessionMeta).
-
 use std::collections::VecDeque;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};

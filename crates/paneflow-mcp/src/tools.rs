@@ -1,5 +1,3 @@
-//! MCP tool schemas and thin adapters over the typed bridge core.
-
 use paneflow_ipc_client::IpcTransport;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;

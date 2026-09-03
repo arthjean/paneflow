@@ -2,23 +2,12 @@ use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Error, ErrorKind, Result};
 use std::path::{Path, PathBuf};
 
-/// Crash-safe lifetime lease for an agent configuration resource.
-///
-/// Each live session holds a shared OS lock. Cleanup upgrades to an exclusive
-/// lock only after the final shared holder exits. The kernel releases locks on
-/// process termination, so a killed shim cannot strand a stale lease marker.
-///
-/// The lock file carries no payload. Windows shared locks forbid writes to the
-/// locked range for *every* process, the lock holder included, so writing the
-/// ownership bit into the locked file fails with `ERROR_LOCK_VIOLATION` there.
-/// The bit is therefore a sibling file whose presence is the whole state.
 pub struct ConfigLease {
     file: Option<File>,
     marker: PathBuf,
 }
 
 pub struct LastConfigLease {
-    /// Held for its exclusive lock, never read: dropping it releases the lock.
     _file: File,
     marker: PathBuf,
 }
@@ -40,8 +29,6 @@ impl ConfigLease {
         })
     }
 
-    /// Release this session's shared lock and become the exclusive last owner.
-    /// `None` means another live session still owns the resource.
     pub fn try_take_last(&mut self) -> Result<Option<LastConfigLease>> {
         let Some(file) = self.file.take() else {
             return Ok(None);
@@ -57,10 +44,6 @@ impl ConfigLease {
         }
     }
 
-    /// Persist that the leased resource was created by PaneFlow.
-    ///
-    /// Callers serialize this update with their configuration lock. The bit
-    /// survives process crashes and is consumed by the eventual last owner.
     pub fn mark_created(&mut self) -> Result<()> {
         if self.file.is_none() {
             return Err(Error::new(
@@ -78,10 +61,6 @@ impl ConfigLease {
 }
 
 impl LastConfigLease {
-    /// Consume and clear the durable resource-ownership bit.
-    ///
-    /// Clearing before cleanup makes a crash conservative: it may leave a
-    /// managed file behind, but it cannot later delete a user-created file.
     pub fn take_created(&mut self) -> Result<bool> {
         match std::fs::remove_file(&self.marker) {
             Ok(()) => Ok(true),

@@ -149,8 +149,6 @@ fn push_match(
 
 #[cfg(ghostty_native)]
 impl crate::engine::DisplayTerminal {
-    /// Copy a bounded slice of complete rows from the live grid for search
-    /// outside the terminal worker.
     pub fn search_chunk(&self, start_row: usize, max_cells: usize) -> Result<SearchChunk> {
         let geometry = self.grid_geometry()?;
         if start_row > geometry.total_rows {

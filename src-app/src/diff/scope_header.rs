@@ -1,14 +1,3 @@
-//! US-012 (prd-git-diff-mode-2026-Q3.md): the app-level scope-selector header
-//! for Git Diff mode. A trigger shows the active scope and opens a popover
-//! listing Project / Multi-project / Worktree (a check marks the active one);
-//! choosing one rebuilds the mounted view. The base-ref picker deliberately
-//! stays in the `DiffView` toolbar (it is single-repo state owned by the view),
-//! so it is not duplicated here.
-//!
-//! This renders `PaneFlowApp` (app-level) state, so the `impl` lives on
-//! `PaneFlowApp` even though the file sits in the `diff` module next to the
-//! other scope types.
-
 use crate::PaneFlowApp;
 use crate::diff::DiffScope;
 use crate::settings::components::{menu_surface, select_item};
@@ -116,22 +105,11 @@ impl PaneFlowApp {
                     ),
                 );
             }
-            // Paint in the top layer: as a plain `.absolute()` child the popover
-            // is painted before - and thus UNDER - the diff body (the later
-            // sibling in `render_diff_main`), so it was invisible. `deferred`
-            // hoists it above everything (the pattern every other Paneflow menu
-            // uses); `.occlude()` stops clicks falling through to the body.
             Some(deferred(menu).with_priority(4).into_any_element())
         } else {
             None
         };
 
-        // Project selector - only for the single-repo scopes (Project /
-        // Worktree). Multi-project has its own repo tab bar, so it owns repo
-        // switching there. This lets the user pick *which* open workspace's repo
-        // the diff follows from inside Diff mode (it routes through
-        // `select_workspace`, the same path `Ctrl+1-9` uses), instead of being
-        // stuck on whatever workspace happened to be active on entry.
         let show_project = active != DiffScope::MultiProject;
         let project_open = self.diff_mode.diff_project_picker_open;
         let project_trigger_bg = if project_open {
@@ -159,8 +137,6 @@ impl PaneFlowApp {
             .rounded(px(5.))
             .bg(project_trigger_bg)
             .text_size(crate::ui_primitives::BODY)
-            // EP-003 US-012: secondary context label - muted, demoted under the
-            // primary scope chip in the `scope › project › branches` hierarchy.
             .text_color(ui.muted)
             .animated_hover_bg(project_trigger_bg, ui.subtle)
             .on_click(cx.listener(|this, _: &ClickEvent, _w, cx| {
@@ -201,8 +177,6 @@ impl PaneFlowApp {
                         cx.notify();
                     }
                 }));
-            // Every open workspace that resolves to a git repo (worktrees of one
-            // repo each list separately, disambiguated by their branch).
             let repo_workspaces: Vec<(usize, String, String)> = self
                 .workspaces
                 .iter()
@@ -237,9 +211,6 @@ impl PaneFlowApp {
                         .cursor(CursorStyle::Arrow)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             this.diff_mode.diff_project_picker_open = false;
-                            // Routes through the standard workspace switch
-                            // (re-roots files tree, saves session, rebuilds
-                            // the diff via `reconcile_diff_after_workspace_change`).
                             this.select_workspace(idx, window, cx);
                             cx.notify();
                         }))
@@ -273,9 +244,6 @@ impl PaneFlowApp {
             None
         };
 
-        // Branches multi-select - Worktree scope only. Lets the user CHOOSE which
-        // of the repo's worktrees show as columns (default: all). Unchosen
-        // branches are never diffed (the chosen set filters `rebuild_diff_view`).
         let repo_root = self
             .workspaces
             .get(self.active_idx)
@@ -285,11 +253,6 @@ impl PaneFlowApp {
         let (branches_trigger, branches_popover): (Option<AnyElement>, Option<AnyElement>) =
             match repo_root.clone().filter(|_| show_branches) {
                 Some(root) => {
-                    // EP-003 US-012: a state badge ("4/6 branches") readable
-                    // WITHOUT opening the picker. The total comes from the
-                    // available-worktrees list eagerly fetched on Worktree-scope
-                    // entry (`rebuild_diff_view`); when it isn't yet known for
-                    // this repo, degrade to the chosen count / "All branches".
                     let total = (self.diff_mode.diff_available_repo.as_deref()
                         == Some(root.as_path()))
                     .then_some(self.diff_mode.diff_available_worktrees.len())
@@ -318,7 +281,6 @@ impl PaneFlowApp {
                         .rounded(px(5.))
                         .bg(trigger_bg)
                         .text_size(crate::ui_primitives::BODY)
-                        // EP-003 US-012: secondary context label - muted, demoted.
                         .text_color(ui.muted)
                         .animated_hover_bg(trigger_bg, ui.subtle)
                         .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
@@ -348,10 +310,6 @@ impl PaneFlowApp {
                         );
 
                     let popover: Option<AnyElement> = if branches_open {
-                        // Shell paints and clamps, an inner host scrolls: GPUI
-                        // pushes a scroll container's offset onto every child,
-                        // absolute ones included, so the surface path would
-                        // otherwise slide out from under its own rows.
                         let shell = menu_surface(div().id("diff-branches-popover"), ui)
                             .occlude()
                             .absolute()
@@ -449,11 +407,6 @@ impl PaneFlowApp {
                 None => (None, None),
             };
 
-        // Breadcrumb FRAGMENT - scope › project › branches. No bar of its own
-        // (no height / bg / padding): it is INJECTED into the single unified
-        // toolbar (DiffView toolbar in single-repo scopes, the repo-tab strip
-        // in Multi-project) via the `scope_slot` push, so the whole Diff mode
-        // has exactly one row of chrome.
         div()
             .relative()
             .flex()
@@ -472,8 +425,6 @@ impl PaneFlowApp {
                         .text_color(ui.muted),
                 )
                 .child(
-                    // Relative wrapper so the popover anchors directly under the
-                    // project trigger (its x depends on the scope chip width).
                     div()
                         .relative()
                         .child(project_trigger)
@@ -489,8 +440,6 @@ impl PaneFlowApp {
                         .text_color(ui.muted),
                 )
                 .child(
-                    // Relative wrapper so the branches popover anchors under its
-                    // own trigger (scope › project › branches).
                     div()
                         .relative()
                         .children(branches_trigger)

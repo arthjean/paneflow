@@ -1,11 +1,3 @@
-//! Underline and strikethrough paint pass, from the cell metrics.
-//!
-//! Positions and thicknesses come from the font tables through
-//! [`super::super::font::CellMetrics`], and every style is its own sprite
-//! (single, double, dotted, dashed, curly), following Ghostty's
-//! `src/font/sprite/draw/special.zig`. Painted before the glyphs so
-//! descenders stay legible over a colored underline.
-
 use gpui::{PathBuilder, Window, fill, px};
 
 use super::super::geometry::CellGeometry;
@@ -18,8 +10,6 @@ pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut
     let m = geom.metrics;
     let cell_w = m.cell_width.max(1);
     let cell_h = m.cell_height.max(1);
-    // A decoration may dip below its cell by up to a quarter cell (Ghostty's
-    // canvas padding) but never further, so bad tables cannot hide it.
     let padding = cell_h / 4;
 
     for d in &layout.decorations {
@@ -49,8 +39,6 @@ pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut
                 window.paint_quad(fill(geom.device_rect(x0, y0 + y, span_w, t), d.color));
             }
             DecorationKind::Underline(UnderlineKind::Double) => {
-                // One line above and one below the single position, so the
-                // single underline becomes the gap between them.
                 let t = m.underline_thickness.max(1);
                 let y = m.underline_position.min(cell_h + padding - 2 * t);
                 window.paint_quad(fill(
@@ -76,9 +64,6 @@ pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut
                 }
             }
             DecorationKind::Underline(UnderlineKind::Dotted) => {
-                // Diameter sqrt(2) times the thickness: plain-thickness dots
-                // look anemic. Enough dots that the gaps match the diameter,
-                // never so many that a gap is under a radius or a pixel.
                 let t = m.underline_thickness.max(1) as f32;
                 let w = cell_w as f32;
                 let radius = std::f32::consts::FRAC_1_SQRT_2 * t;
@@ -113,8 +98,6 @@ pub fn paint_decorations(layout: &LayoutState, geom: &CellGeometry, window: &mut
                 }
             }
             DecorationKind::Underline(UnderlineKind::Curly) => {
-                // One wave per cell peaking at its center, amplitude w/pi,
-                // curvature 0.4: adjacent cells continue the same wave.
                 let t = m.underline_thickness.max(1) as f32;
                 let w = cell_w as f32;
                 let amplitude = w / std::f32::consts::PI;

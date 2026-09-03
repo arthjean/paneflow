@@ -6,9 +6,6 @@ use serde_json::{json, Map, Value};
 const MCP_SCOPE_ENV: &str = "PANEFLOW_MCP_SCOPE";
 const WORKSPACE_ENV: &str = "PANEFLOW_WORKSPACE_ID";
 
-/// Read boundary for the bridge. Instance-wide access is only enabled by an
-/// explicit environment opt-in; every other launch requires the stable
-/// workspace identity inherited from a Paneflow PTY.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgeScope {
     All,

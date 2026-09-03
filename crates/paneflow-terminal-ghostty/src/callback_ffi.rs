@@ -17,8 +17,6 @@ pub(crate) unsafe extern "C" fn write_pty(
     data: *const u8,
     len: usize,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             if len > MAX_CALLBACK_BYTES || (len > 0 && data.is_null()) {
@@ -36,8 +34,6 @@ pub(crate) unsafe extern "C" fn write_pty(
 }
 
 pub(crate) unsafe extern "C" fn bell(_: sys::GhosttyTerminal, userdata: *mut c_void) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe { with_state(userdata, |state| state.push(BackendEvent::Bell)) };
 }
 
@@ -45,8 +41,6 @@ pub(crate) unsafe extern "C" fn title_changed(
     terminal: sys::GhosttyTerminal,
     userdata: *mut c_void,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             let mut title = sys::GhosttyString {
@@ -80,8 +74,6 @@ pub(crate) unsafe extern "C" fn pwd_changed(
     terminal: sys::GhosttyTerminal,
     userdata: *mut c_void,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             let mut pwd = sys::GhosttyString {
@@ -100,9 +92,6 @@ pub(crate) unsafe extern "C" fn pwd_changed(
             {
                 return;
             }
-            // The terminal stores the bytes the shell emitted verbatim, so
-            // OSC 9 and OSC 1337 deliver a bare path here. Paneflow only
-            // trusts the OSC 7 `file://` form, which carries the host.
             let bytes = std::slice::from_raw_parts(pwd.ptr, pwd.len);
             let Ok(raw) = std::str::from_utf8(bytes) else {
                 return;
@@ -120,8 +109,6 @@ pub(crate) unsafe extern "C" fn clipboard_write(
     userdata: *mut c_void,
     write: *const sys::GhosttyClipboardWrite,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             let Some(request) = write.as_ref() else {
@@ -143,18 +130,10 @@ pub(crate) unsafe extern "C" fn clipboard_write(
     }
 }
 
-/// Store the text representation of an atomic clipboard write.
-///
-/// # Safety
-///
-/// `request` must be a live clipboard write request whose reported `size`
-/// covers `contents` and `contents_len`, borrowed for the callback duration.
 unsafe fn store_clipboard_write(
     state: &crate::callbacks::CallbackState,
     request: &sys::GhosttyClipboardWrite,
 ) -> sys::GhosttyClipboardWriteResult {
-    // A zero-length contents array clears the destination, which Paneflow
-    // stores as an empty selection just like an empty OSC 52 payload.
     if request.contents_len == 0 {
         state.push(BackendEvent::ClipboardStore(String::new()));
         return sys::GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_SUCCESS;
@@ -186,9 +165,6 @@ unsafe fn store_clipboard_write(
     sys::GhosttyClipboardWriteResult_GHOSTTY_CLIPBOARD_WRITE_RESULT_UNSUPPORTED
 }
 
-/// # Safety
-///
-/// `mime` must be a borrowed string valid for the callback duration.
 unsafe fn is_text_mime(mime: sys::GhosttyString) -> bool {
     if mime.len == 0 || mime.ptr.is_null() {
         return false;
@@ -202,8 +178,6 @@ pub(crate) unsafe extern "C" fn desktop_notification(
     userdata: *mut c_void,
     notification: *const sys::GhosttyTerminalDesktopNotification,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             let Some(request) = notification.as_ref() else {
@@ -212,8 +186,6 @@ pub(crate) unsafe extern "C" fn desktop_notification(
             if request.size < size_of::<sys::GhosttyTerminalDesktopNotification>() {
                 return;
             }
-            // OSC 9 carries a body and no title, so an empty title is normal
-            // rather than a malformed request.
             let (Some(title), Some(body)) = (
                 borrowed_text(request.title, MAX_METADATA_BYTES),
                 borrowed_text(request.body, MAX_METADATA_BYTES),
@@ -233,16 +205,11 @@ pub(crate) unsafe extern "C" fn unknown_sequence(
     userdata: *mut c_void,
     sequence: *const sys::GhosttyTerminalUnknownSequence,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             let Some(report) = sequence.as_ref() else {
                 return;
             };
-            // APC is the only tag libghostty reports today, and the value is a
-            // union: reading the wrong arm for a tag added later would be
-            // reading the wrong type.
             if report.tag != sys::GhosttyTerminalUnknownSequenceTag_GHOSTTY_TERMINAL_UNKNOWN_SEQUENCE_APC
             {
                 return;
@@ -264,8 +231,6 @@ pub(crate) unsafe extern "C" fn clipboard_read(
     userdata: *mut c_void,
     read: *const sys::GhosttyClipboardRead,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             let Some(request) = read.as_ref() else {
@@ -277,8 +242,6 @@ pub(crate) unsafe extern "C" fn clipboard_read(
             let Some(answer) = request.reply else {
                 return;
             };
-            // Denied is the default: a program that can read the clipboard can
-            // exfiltrate whatever the user last copied anywhere on the system.
             let Some(text) = state.readable_clipboard() else {
                 answer(read, &denied_read());
                 return;
@@ -295,8 +258,6 @@ pub(crate) unsafe extern "C" fn clipboard_read(
                 contents_len: 1,
                 available: &available,
                 available_len: 1,
-                // Remembering would let one grant answer every later read from
-                // the same program, which is the opposite of a per-read gate.
                 remember: false,
             };
             answer(read, &reply);
@@ -304,7 +265,6 @@ pub(crate) unsafe extern "C" fn clipboard_read(
     }
 }
 
-/// The single representation Paneflow answers a clipboard read with.
 const TEXT_MIME: &[u8] = b"text/plain;charset=utf-8";
 
 fn denied_read() -> sys::GhosttyClipboardReadReply {
@@ -326,11 +286,6 @@ fn string_of(bytes: &[u8]) -> sys::GhosttyString {
     }
 }
 
-/// Borrow a libghostty string as bytes, rejecting anything over `limit`.
-///
-/// # Safety
-///
-/// `text` must be borrowed for at least the duration of the callback.
 unsafe fn borrowed_bytes(text: sys::GhosttyString, limit: usize) -> Option<&'static [u8]> {
     if text.len == 0 {
         return Some(&[]);
@@ -338,25 +293,14 @@ unsafe fn borrowed_bytes(text: sys::GhosttyString, limit: usize) -> Option<&'sta
     if text.ptr.is_null() || text.len > limit {
         return None;
     }
-    // SAFETY: the caller guarantees the borrow, and the returned slice is
-    // consumed before the callback returns.
     Some(unsafe { std::slice::from_raw_parts(text.ptr, text.len) })
 }
 
-/// # Safety
-///
-/// `text` must be borrowed for at least the duration of the callback.
 unsafe fn borrowed_text(text: sys::GhosttyString, limit: usize) -> Option<String> {
-    // SAFETY: forwarded from this function's own contract.
     let bytes = unsafe { borrowed_bytes(text, limit) }?;
     std::str::from_utf8(bytes).ok().map(str::to_owned)
 }
 
-/// Render a captured sequence for a log line.
-///
-/// The payload is attacker-controlled, so control characters are escaped
-/// rather than passed through to a terminal or a log viewer, and invalid
-/// UTF-8 becomes the replacement character instead of being dropped.
 fn escape_content(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .chars()
@@ -397,8 +341,6 @@ pub(crate) unsafe extern "C" fn size(
     out: *mut sys::GhosttySizeReportSize,
 ) -> bool {
     let mut filled = false;
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             if let Some(out) = out.as_mut() {
@@ -422,8 +364,6 @@ pub(crate) unsafe extern "C" fn color_scheme(
     out: *mut sys::GhosttyColorScheme,
 ) -> bool {
     let mut filled = false;
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             if let Some(out) = out.as_mut() {
@@ -444,14 +384,10 @@ pub(crate) unsafe extern "C" fn device_attributes(
     out: *mut sys::GhosttyDeviceAttributes,
 ) -> bool {
     let mut filled = false;
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |_| {
             if let Some(out) = out.as_mut() {
                 *out = std::mem::zeroed();
-                // Match Ghostty's native VT220 profile. Paneflow supports ANSI
-                // color and write-only OSC 52 clipboard storage.
                 out.primary.conformance_level = sys::GHOSTTY_DA_CONFORMANCE_VT220 as u16;
                 out.primary.features[0] = sys::GHOSTTY_DA_FEATURE_ANSI_COLOR as u16;
                 out.primary.features[1] = sys::GHOSTTY_DA_FEATURE_CLIPBOARD as u16;
@@ -471,8 +407,6 @@ pub(crate) unsafe extern "C" fn progress_report(
     userdata: *mut c_void,
     report: *const sys::GhosttyTerminalProgressReport,
 ) {
-    // SAFETY: libghostty supplies the userdata pointer registered by
-    // `callbacks::install`; the boxed state outlives the terminal callback.
     unsafe {
         with_state(userdata, |state| {
             let Some(report) = report.as_ref() else {
@@ -492,10 +426,6 @@ pub(crate) unsafe extern "C" fn progress_report(
     }
 }
 
-/// Map a libghostty progress state onto the neutral mirror.
-///
-/// An unrecognized state means the pinned library grew a variant Paneflow does
-/// not model yet, so the report is dropped rather than guessed at.
 fn progress_state(state: sys::GhosttyTerminalProgressState) -> Option<ProgressState> {
     match state {
         sys::GhosttyTerminalProgressState_GHOSTTY_TERMINAL_PROGRESS_STATE_REMOVE => {

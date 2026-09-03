@@ -1,31 +1,11 @@
-//! Pure diff-to-text serialization (US-001, prd-ai-in-diff-2026-Q3.md).
-//!
-//! Turns the read-only diff value types (`FileDiff` / `DiffHunk` from `git.rs` /
-//! `engine.rs`) back into a byte-correct unified diff string, with no GPUI, no
-//! I/O, no `self`. This is the load-bearing primitive under every "copy hunk",
-//! "send to agent", and "review" gesture (EP-001..003): by generating the diff
-//! deterministically here, the agent never sees a hallucinated `@@` header -
-//! the #1 failure mode of LLM-*generated* patches is designed out because the
-//! model only ever *consumes* a diff we produced.
-//!
-//! Row indices in `DiffHunk` are 0-based half-open ranges into the line
-//! sequence produced by `imara_diff::sources::lines_with_terminator` (see
-//! `engine::compute_hunks`); [`lines_inclusive`] reproduces exactly that
-//! segmentation so the `@@` math stays aligned with the rendered rows.
-
 use std::fmt::Write as _;
 use std::ops::Range;
 
 use super::engine::DiffHunk;
 use super::git::{FileChange, FileDiff};
 
-/// Context lines emitted on each side of a changed region, matching the
-/// `diff -U3` / git default. Hunks whose context windows touch are merged into a
-/// single `@@` block so the output is always a valid unified diff.
 const CONTEXT: u32 = 3;
 
-/// Serialize a whole [`FileDiff`] into a git-style unified diff (raw, no fence).
-/// Suitable for "copy file diff" and for an agent review payload.
 pub(crate) fn file_to_unified(file: &FileDiff) -> String {
     let mut out = String::new();
     let old_disp = if file.change == FileChange::Renamed {
@@ -59,9 +39,6 @@ pub(crate) fn file_to_unified(file: &FileDiff) -> String {
     out
 }
 
-/// Serialize a single [`DiffHunk`] into a fenced ```` ```diff ```` block,
-/// prefixed by a `path:Lstart-Lend` tag so an agent knows exactly which lines
-/// the change touches. Suitable for "copy hunk" and `@diff`-style handoff.
 pub(crate) fn hunk_to_unified(file: &FileDiff, hunk: &DiffHunk) -> String {
     let tag = hunk_tag(file, hunk);
     if file.is_binary {
@@ -83,8 +60,6 @@ pub(crate) fn hunk_to_unified(file: &FileDiff, hunk: &DiffHunk) -> String {
     format!("{tag}\n```diff\n{body}```\n")
 }
 
-/// `--- a/x` / `+++ b/x` labels, substituting `/dev/null` for the absent side of
-/// an Added or Deleted file (git's convention).
 fn dev_null_labels(file: &FileDiff) -> (String, String) {
     match file.change {
         FileChange::Added => ("/dev/null".to_string(), format!("b/{}", file.path)),
@@ -97,9 +72,6 @@ fn dev_null_labels(file: &FileDiff) -> (String, String) {
     }
 }
 
-/// `path:Lstart-Lend` tag (1-based, inclusive), anchored on the new side when it
-/// has content, else on the base side (a pure deletion). `pub(crate)` so the
-/// "copy hunk" confirmation toast (US-003) can label exactly which lines landed.
 pub(crate) fn hunk_tag(file: &FileDiff, hunk: &DiffHunk) -> String {
     let (start, end) = if hunk.new_row_range.start != hunk.new_row_range.end {
         (hunk.new_row_range.start + 1, hunk.new_row_range.end)
@@ -109,17 +81,12 @@ pub(crate) fn hunk_tag(file: &FileDiff, hunk: &DiffHunk) -> String {
     format!("{}:L{start}-L{end}", file.path)
 }
 
-/// One merged hunk group: the union row span (already context-expanded) on each
-/// side plus the changed hunks it covers, in order.
 struct HunkGroup {
     base: Range<u32>,
     new: Range<u32>,
     hunks: Vec<DiffHunk>,
 }
 
-/// Expand each hunk by [`CONTEXT`] lines (clamped to file bounds) and merge hunks
-/// whose windows touch, so every emitted `@@` block is a valid, non-overlapping
-/// unified-diff hunk. Hunks arrive in row order from `compute_hunks`.
 fn group_hunks(hunks: &[DiffHunk], base_lines: u32, new_lines: u32) -> Vec<HunkGroup> {
     let mut groups: Vec<HunkGroup> = Vec::new();
     for h in hunks {
@@ -145,7 +112,6 @@ fn group_hunks(hunks: &[DiffHunk], base_lines: u32, new_lines: u32) -> Vec<HunkG
     groups
 }
 
-/// Emit one `@@` header + interleaved context/removed/added body for a group.
 fn emit_group(out: &mut String, group: &HunkGroup, base_lines: &[&str], new_lines: &[&str]) {
     let bc = group.base.end - group.base.start;
     let nc = group.new.end - group.new.start;
@@ -158,8 +124,6 @@ fn emit_group(out: &mut String, group: &HunkGroup, base_lines: &[&str], new_line
 
     let mut bcur = group.base.start;
     for h in &group.hunks {
-        // Leading context: unchanged lines (identical + equal-length on both
-        // sides) between the cursor and this hunk; emit from the base side.
         for r in bcur..h.base_row_range.start {
             push_line(out, ' ', base_lines[r as usize]);
         }
@@ -171,14 +135,11 @@ fn emit_group(out: &mut String, group: &HunkGroup, base_lines: &[&str], new_line
         }
         bcur = h.base_row_range.end;
     }
-    // Trailing context.
     for r in bcur..group.base.end {
         push_line(out, ' ', base_lines[r as usize]);
     }
 }
 
-/// Unified-diff range field: `start+1,count`, or `start,0` for an empty side
-/// (git anchors an empty hunk on the line *before* which content is inserted).
 fn fmt_range(start: u32, count: u32) -> String {
     if count == 0 {
         format!("{start},0")
@@ -187,9 +148,6 @@ fn fmt_range(start: u32, count: u32) -> String {
     }
 }
 
-/// Push one diff line `<prefix><content>`, appending a `\ No newline at end of
-/// file` marker when the source line lacks its terminator (only the final line
-/// of a side can).
 fn push_line(out: &mut String, prefix: char, line: &str) {
     out.push(prefix);
     out.push_str(line);
@@ -199,10 +157,6 @@ fn push_line(out: &mut String, prefix: char, line: &str) {
     }
 }
 
-/// Split `text` into lines *including* their `\n` terminator, reproducing
-/// `imara_diff::sources::lines_with_terminator` so `DiffHunk` row indices slice
-/// correctly: the empty string yields zero lines, and a missing final terminator
-/// yields a final line without `\n`.
 fn lines_inclusive(text: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut start = 0usize;
@@ -251,7 +205,6 @@ mod tests {
         assert!(out.contains("diff --git a/src/new.rs b/src/new.rs\n"));
         assert!(out.contains("--- /dev/null\n"));
         assert!(out.contains("+++ b/src/new.rs\n"));
-        // Empty base side -> `0,0`; two added lines -> `1,2`.
         assert!(out.contains("@@ -0,0 +1,2 @@\n"), "got:\n{out}");
         assert!(out.contains("+a\n"));
         assert!(out.contains("+b\n"));
@@ -262,7 +215,6 @@ mod tests {
     fn pure_deletion_keeps_context_and_counts() {
         let f = modified("x.rs", "a\nb\nc\n", "a\nc\n");
         let out = file_to_unified(&f);
-        // 3 base lines shown, 2 new lines shown.
         assert!(out.contains("@@ -1,3 +1,2 @@\n"), "got:\n{out}");
         assert!(out.contains(" a\n"));
         assert!(out.contains("-b\n"));
@@ -311,7 +263,6 @@ mod tests {
 
     #[test]
     fn missing_final_newline_marker() {
-        // new_text's last line lacks a terminator.
         let f = modified("x.rs", "a\nb\n", "a\nb");
         let out = file_to_unified(&f);
         assert!(
@@ -322,7 +273,6 @@ mod tests {
 
     #[test]
     fn far_hunks_split_near_hunks_merge() {
-        // Two changes far apart -> two @@ blocks.
         let base = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n";
         let new = "X\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\nY\n";
         let f = modified("x.rs", base, new);
@@ -333,7 +283,6 @@ mod tests {
             "far hunks must not merge:\n{out}"
         );
 
-        // Two changes one line apart -> a single merged @@ block.
         let base2 = "a\nb\nc\nd\ne\n";
         let new2 = "A\nb\nc\nd\nE\n";
         let f2 = modified("y.rs", base2, new2);

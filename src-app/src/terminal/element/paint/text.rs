@@ -1,7 +1,3 @@
-//! Glyph paint pass: one `shape_line` per `BatchedTextRun`, painted glyph
-//! by glyph on the integer baseline of the cell metrics, then the Private
-//! Use Area icons constrained to their cells.
-
 use gpui::{App, Font, Pixels, Point, ShapedLine, SharedString, TextRun, Window, point, px};
 
 use super::super::face_tables::{self, GlyphInk};
@@ -9,7 +5,6 @@ use super::super::font::CellMetrics;
 use super::super::geometry::CellGeometry;
 use super::super::{LayoutState, SymbolGlyph};
 
-/// Paint all batched text runs produced during `build_layout`.
 pub fn paint_text_runs(
     layout: &LayoutState,
     geom: &CellGeometry,
@@ -21,10 +16,6 @@ pub fn paint_text_runs(
     for run in &layout.batched_runs {
         let origin = geom.cell_origin(run.line, run.col_start);
 
-        // PANEFLOW_PIXEL_PROBE: log glyph X/Y per run (sampled to first 16
-        // columns of each row inside the probe). Cell edges are device
-        // pixels by construction; a fractional value here would mean the
-        // geometry was bypassed.
         #[cfg(debug_assertions)]
         super::super::pixel_probe::record_glyph(run.line, run.col_start, origin.x, origin.y);
 
@@ -54,10 +45,6 @@ pub fn paint_text_runs(
     }
 }
 
-/// Paint a shaped line with its baseline on the cell metrics' pixel row,
-/// instead of GPUI's centering of `ascent + descent` inside the line height,
-/// which lands the baseline between pixels and lets descenders cross into
-/// the next row.
 pub(super) fn paint_shaped_line(
     shaped: &ShapedLine,
     cell_origin: Point<Pixels>,
@@ -87,8 +74,6 @@ pub(super) fn paint_shaped_line(
     }
 }
 
-/// Paint the Private Use Area icons, each scaled and placed by
-/// [`constrain_icon`].
 pub fn paint_symbols(
     layout: &LayoutState,
     geom: &CellGeometry,
@@ -149,8 +134,6 @@ fn paint_symbol(
         .as_deref()
         .and_then(|family| face_tables::embedded_glyph_ink(family, symbol.ch));
 
-    // A glyph from a font whose tables are not bundled keeps the font's own
-    // placement.
     let Some(ink) = ink else {
         paint_shaped_line(&shaped, cell_origin, symbol.color, geom, true, window, cx);
         return;
@@ -189,22 +172,13 @@ fn paint_symbol(
     }
 }
 
-/// Where a constrained icon's glyph origin goes, in device pixels relative
-/// to the cell's left edge and bottom edge.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct IconPlacement {
-    /// Uniform scale applied to the font size.
     pub factor: f32,
-    /// Glyph origin X from the cell's left edge.
     pub origin_x: f32,
-    /// Baseline height above the cell's bottom edge.
     pub baseline_from_bottom: f32,
 }
 
-/// Ghostty's Nerd Font rule (`Glyph.zig` `fit_cover1`, height `icon`,
-/// alignment `center1`): scale the ink to cover a single cell, or down to fit
-/// its span; center it in the first cell horizontally, left-aligned once it
-/// is wider than a cell, and center it vertically in the face.
 pub(super) fn constrain_icon(
     m: &CellMetrics,
     span: usize,
@@ -226,16 +200,12 @@ pub(super) fn constrain_icon(
     };
     let mut factor = factors(span);
     if span > 1 && factor > 1.0 {
-        // Scale up only as far as a single cell would: an icon must not
-        // grow when a space opens after it.
         factor = factors(1).max(1.0);
     }
 
     let group_w = glyph_w * factor;
     let group_h = glyph_h * factor;
-    // `center1`: centered in the first cell, never protruding left.
     let x = ((m.face_width - group_w) / 2.0).max(0.0);
-    // Centered in the face, whose bottom sits `face_y` above the cell bottom.
     let y = (m.face_y + (m.face_y + m.face_height - group_h)) / 2.0;
 
     IconPlacement {
@@ -250,7 +220,6 @@ mod tests {
     use super::*;
     use crate::terminal::element::font::{FaceMetrics, cell_metrics_from_face};
 
-    /// JetBrains Mono at 16 px: 10x21 cell, face 9.6x21.12.
     fn metrics() -> CellMetrics {
         cell_metrics_from_face(
             FaceMetrics {
@@ -271,7 +240,6 @@ mod tests {
         )
     }
 
-    /// The github icon of the bundled Nerd Font: 894 units wide, 872 tall.
     fn wide_icon() -> GlyphInk {
         GlyphInk {
             units_per_em: 1000.0,
@@ -291,7 +259,6 @@ mod tests {
             "icon should fill the face width, got {width}"
         );
         assert!(p.factor < 1.0);
-        // Centered in the cell: ink starts at 0 (face width == ink width).
         assert!(p.origin_x.abs() < 1e-3);
     }
 
@@ -299,7 +266,6 @@ mod tests {
     fn wide_icon_keeps_its_designed_size_over_two_cells() {
         let p = constrain_icon(&metrics(), 2, &wide_icon(), 16.0 / 1000.0);
         assert!((p.factor - 1.0).abs() < 1e-6, "got factor {}", p.factor);
-        // Wider than one cell: left-aligned on the cell edge.
         assert!(p.origin_x.abs() < 1e-3);
     }
 

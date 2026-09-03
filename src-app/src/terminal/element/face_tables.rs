@@ -1,13 +1,3 @@
-//! Font tables read straight from the embedded faces.
-//!
-//! GPUI's `TextSystem` exposes ascent, descent, x-height, cap height, and
-//! advances, but not the line gap, the `post` underline metrics, the `OS/2`
-//! strikeout metrics, or a glyph's ink bounds. Ghostty sizes its grid and
-//! constrains its Nerd Font icons from exactly those tables
-//! (`src/font/Metrics.zig`, `src/font/Glyph.zig`), so the terminal parses the
-//! bundled `.ttf` files itself. A system font the user configured has no
-//! bytes here and falls back to the estimators in `font.rs`.
-
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
@@ -16,7 +6,6 @@ use ttf_parser::{Face, name_id};
 
 struct EmbeddedFace {
     family: String,
-    /// Upright, regular-weight face: the one the grid is measured on.
     regular: bool,
     data: Cow<'static, [u8]>,
 }
@@ -53,9 +42,6 @@ fn load_embedded_faces() -> Vec<EmbeddedFace> {
     faces
 }
 
-/// Typographic family (name ID 16) when present, else the legacy family
-/// (name ID 1): the same precedence GPUI's font databases use to register the
-/// face, so the name the renderer resolves is the name looked up here.
 fn family_name(face: &Face<'_>) -> Option<String> {
     let mut legacy = None;
     for name in face.names() {
@@ -82,21 +68,15 @@ fn embedded_face(family: &str) -> Option<&'static EmbeddedFace> {
         .or_else(|| faces.iter().find(|face| face.family == family))
 }
 
-/// Vertical and horizontal metrics of a face, in font units.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FaceTables {
     pub units_per_em: f32,
     pub ascent: f32,
-    /// Positive magnitude below the baseline.
     pub descent: f32,
     pub line_gap: f32,
-    /// Widest advance among the printable ASCII glyphs.
     pub advance: f32,
-    /// Top of the underline relative to the baseline, negative below it.
-    /// Zero when the `post` table carries nothing usable.
     pub underline_position: f32,
     pub underline_thickness: f32,
-    /// Top of the strikeout stroke above the baseline, zero when absent.
     pub strikethrough_position: f32,
     pub strikethrough_thickness: f32,
     pub x_height: f32,
@@ -130,7 +110,6 @@ fn read_face_tables(face: &Face<'_>) -> FaceTables {
 static FACE_TABLES: LazyLock<Mutex<HashMap<String, Option<FaceTables>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Tables of the embedded `family`, or `None` when the family is not bundled.
 pub(crate) fn embedded_face_tables(family: &str) -> Option<FaceTables> {
     let mut cache = FACE_TABLES.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(entry) = cache.get(family) {
@@ -143,7 +122,6 @@ pub(crate) fn embedded_face_tables(family: &str) -> Option<FaceTables> {
     tables
 }
 
-/// Ink bounds of one glyph in font units, y up from the baseline.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct GlyphInk {
     pub units_per_em: f32,
@@ -167,8 +145,6 @@ type GlyphInkCache = HashMap<(String, char), Option<GlyphInk>>;
 
 static GLYPH_INK: LazyLock<Mutex<GlyphInkCache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
-/// Ink bounds of `ch` in the embedded `family`, `None` when the family is not
-/// bundled or has no outline for the character.
 pub(crate) fn embedded_glyph_ink(family: &str, ch: char) -> Option<GlyphInk> {
     let mut cache = GLYPH_INK.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(entry) = cache.get(&(family.to_owned(), ch)) {
@@ -200,7 +176,6 @@ mod tests {
     fn embedded_mono_family_is_measurable() {
         let tables = embedded_face_tables(EMBEDDED_MONO_FAMILY).expect("bundled family parses");
         assert_eq!(tables.units_per_em, 1000.0);
-        // JetBrains Mono: 0.6 em advance, 1.32 em face (1020 + 300 + 0).
         assert_eq!(tables.advance, 600.0);
         assert_eq!(tables.ascent, 1020.0);
         assert_eq!(tables.descent, 300.0);
@@ -219,8 +194,6 @@ mod tests {
 
     #[test]
     fn nerd_font_icon_ink_overflows_its_advance() {
-        // U+F09B (github) is designed wider than the 0.6 em advance in the
-        // non-Mono Nerd Font: the whole point of the icon constraint.
         let ink = embedded_glyph_ink(EMBEDDED_MONO_FAMILY, '\u{f09b}').expect("icon outline");
         assert!(
             ink.width() > 600.0,

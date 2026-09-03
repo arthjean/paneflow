@@ -1,14 +1,3 @@
-//! `paneflow <verb>` scriptable CLI (EP-001, prd-cli-agent-orchestration).
-//!
-//! Talks to a RUNNING Paneflow instance over the existing IPC JSON-RPC socket
-//! (`paneflow-ipc-client`) and exits before any GPUI init. `main.rs` dispatches
-//! here only when `argv[1]` names a known verb ([`is_cli_verb`]) - mirroring the
-//! `paneflow mcp …` intercept - so every other invocation (no args, unknown
-//! args, `--help`/`--version`/`--update-and-exit`) is left untouched and the GUI
-//! launch path is preserved. clap therefore never has to own the "no subcommand
-//! => launch the GUI" default, and never eats the manually-parsed top-level
-//! flags handled above it.
-
 use clap::{Parser, Subcommand, ValueEnum};
 use paneflow_ipc_client::IpcClient;
 use serde_json::Value;
@@ -24,26 +13,11 @@ mod wait_cmd;
 mod watch_cmd;
 mod workspace_spec;
 
-/// Process exit codes. Kept distinct so scripts can branch on the failure
-/// kind. clap owns `2` for its own usage/parse errors (and `0` for
-/// `--help`/`--version`), so the runtime codes start at `1` and avoid `2`.
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_RUNTIME: i32 = 1;
 pub const EXIT_TARGET: i32 = 3;
-/// `wait` reached its deadline without the pattern appearing. Distinct from
-/// EXIT_TARGET (no/ambiguous match) and EXIT_RUNTIME (instance down / pane
-/// closed) so scripts can tell a timeout apart from a hard failure.
 pub const EXIT_TIMEOUT: i32 = 4;
 
-/// The verbs this CLI owns. `main.rs` gates the whole CLI dispatch (and the
-/// manual `--help`/`--version` scans) on membership here so the GUI launch
-/// path stays byte-for-byte unchanged for any other `argv[1]`.
-///
-/// EP-005 US-011: the trailing `list_panes`/`read_pane`/`search_pane` are the
-/// `paneflow` MCP tool names, accepted as CLI aliases (clap maps each to its
-/// canonical subcommand via `#[command(alias = ...)]`) so a conductor that types
-/// the tool name reaches the matching verb instead of tripping the GUI
-/// single-instance guard. This list only gates the `main.rs` intercept.
 const VERBS: &[&str] = &[
     "ls",
     "read",
@@ -65,22 +39,10 @@ const VERBS: &[&str] = &[
     "search_pane",
 ];
 
-/// True when `argv[1]` names one of our subcommands (including the MCP-tool
-/// aliases above).
 pub fn is_cli_verb(arg: Option<&str>) -> bool {
     matches!(arg, Some(v) if VERBS.contains(&v))
 }
 
-/// True when `argv[1]` is shaped like a subcommand (present, non-empty, and not
-/// a `-`/`--` flag) but is NOT one this CLI owns. `main.rs` calls this only
-/// AFTER the `mcp`/`hooks`/known-verb intercepts have each had their chance and
-/// exited, so a `true` here is an unmistakable typo (`paneflow blah`, a
-/// mistyped `paneflow searh`): it prints an actionable "unknown verb" error and
-/// exits non-zero instead of falling through to the GUI launch, which would
-/// otherwise trip the single-instance guard with no message (EP-005 US-011).
-/// A bare `paneflow` (argv[1] is `None`) returns `false` so the GUI still
-/// launches, and a leading-`-` token is a flag, not a verb, so it stays on the
-/// GUI/global-flag path.
 pub fn looks_like_unknown_verb(arg: Option<&str>) -> bool {
     matches!(arg, Some(v) if !v.is_empty() && !v.starts_with('-') && !VERBS.contains(&v))
 }
@@ -90,9 +52,6 @@ pub fn looks_like_unknown_verb(arg: Option<&str>) -> bool {
     name = "paneflow",
     version,
     about = "Drive a running Paneflow instance from the shell",
-    // The GUI launch (no subcommand) is handled in main.rs, never here, so a
-    // bare `paneflow` never reaches clap. `Option<Commands>` keeps clap from
-    // forcing `subcommand_required` / `arg_required_else_help` regardless.
     subcommand_required = false,
     arg_required_else_help = false
 )]
@@ -103,208 +62,229 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// List terminal surfaces.
-    // EP-005 US-011: `list_panes` is the MCP tool name; accept it as a hidden
-    // alias so a conductor can type either.
-    #[command(alias = "list_panes")]
+    #[command(alias = "list_panes", about = "List terminal surfaces")]
     Ls {
-        /// Human-readable table instead of the default JSON.
-        #[arg(long)]
+        #[arg(long, help = "Human-readable table instead of the default JSON")]
         human: bool,
     },
-    /// Print a pane's scrollback (raw text by default).
-    #[command(alias = "read_pane")]
+    #[command(
+        alias = "read_pane",
+        about = "Print a pane's scrollback (raw text by default)"
+    )]
     Read {
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
+        #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
         target: String,
-        /// Number of trailing lines (server clamps to 1..4000).
-        #[arg(long)]
+        #[arg(long, help = "Number of trailing lines (server clamps to 1..4000)")]
         lines: Option<u64>,
-        /// Offset from the end of the buffer.
-        #[arg(long)]
+        #[arg(long, help = "Offset from the end of the buffer")]
         offset: Option<u64>,
-        /// Emit the `{text, lines, total_lines, eof}` envelope as JSON.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Emit the `{text, lines, total_lines, eof}` envelope as JSON"
+        )]
         json: bool,
-        /// Return raw scrollback, bypassing the anti-injection fence that
-        /// otherwise wraps the output as `<untrusted_terminal_output>` (the
-        /// fence is on by default; see the ai_injection_fence setting).
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Return raw scrollback, bypassing the anti-injection fence that otherwise wraps the output as `<untrusted_terminal_output>` (the fence is on by default; see the ai_injection_fence setting)"
+        )]
         raw: bool,
     },
-    /// Search a pane's scrollback for a substring/pattern.
-    #[command(alias = "search_pane")]
+    #[command(
+        alias = "search_pane",
+        about = "Search a pane's scrollback for a substring/pattern"
+    )]
     Search {
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
+        #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
         target: String,
-        /// Pattern to search for.
+        #[arg(help = "Pattern to search for")]
         pattern: String,
-        /// Cap the number of matches (server clamps to 1..1000).
-        #[arg(long)]
+        #[arg(long, help = "Cap the number of matches (server clamps to 1..1000)")]
         max: Option<u64>,
-        /// Human-readable lines instead of the default JSON.
-        #[arg(long)]
+        #[arg(long, help = "Human-readable lines instead of the default JSON")]
         human: bool,
     },
-    /// List running agents across the fleet (pid, tool, state, pane).
+    #[command(about = "List running agents across the fleet (pid, tool, state, pane)")]
     Ps {
-        /// Emit the `{agents:[…]}` envelope as JSON instead of a table.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Emit the `{agents:[…]}` envelope as JSON instead of a table"
+        )]
         json: bool,
     },
-    /// Read one surface's agent state (thinking / waiting / idle / errored / …).
+    #[command(about = "Read one surface's agent state (thinking / waiting / idle / errored / …)")]
     Status {
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
+        #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
         target: String,
-        /// Emit the status envelope as JSON instead of a one-line summary.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Emit the status envelope as JSON instead of a one-line summary"
+        )]
         json: bool,
     },
-    /// Create a new workspace.
+    #[command(about = "Create a new workspace")]
     New {
-        /// Workspace title.
-        #[arg(long)]
+        #[arg(long, help = "Workspace title")]
         name: Option<String>,
-        /// Working directory for the first pane (must exist).
-        #[arg(long)]
+        #[arg(long, help = "Working directory for the first pane (must exist)")]
         cwd: Option<String>,
     },
-    /// Select a workspace by index.
+    #[command(about = "Select a workspace by index")]
     Select {
-        /// Zero-based workspace index.
+        #[arg(help = "Zero-based workspace index")]
         index: u64,
     },
-    /// Split the active pane horizontally or vertically.
+    #[command(about = "Split the active pane horizontally or vertically")]
     Split {
-        /// `h`/`horizontal` (panes stacked) or `v`/`vertical` (side by side).
+        #[arg(help = "`h`/`horizontal` (panes stacked) or `v`/`vertical` (side by side)")]
         direction: SplitDir,
-        /// Split the pane hosting this target instead of the first leaf.
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Split the pane hosting this target instead of the first leaf. Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`"
+        )]
         target: Option<String>,
     },
-    /// Inject text into a pane WITHOUT submitting it (human-in-loop).
-    ///
-    /// Requires `PANEFLOW_IPC_SCRIPTING=1` on the running instance; the text is
-    /// written verbatim with no trailing newline so the user/agent reviews and
-    /// presses Enter themselves - unless `--submit` is passed explicitly.
+    #[command(
+        about = "Inject text into a pane WITHOUT submitting it (human-in-loop)",
+        long_about = "Inject text into a pane WITHOUT submitting it (human-in-loop).\n\nRequires `PANEFLOW_IPC_SCRIPTING=1` on the running instance; the text is written verbatim with no trailing newline so the user/agent reviews and presses Enter themselves - unless `--submit` is passed explicitly."
+    )]
     Send {
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
+        #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
         target: String,
-        /// Text to inject (no trailing carriage return is added by default).
+        #[arg(help = "Text to inject (no trailing carriage return is added by default)")]
         text: String,
-        /// Send to EVERY pane matching the target (a multi-match selector is
-        /// an error without this flag). Prints a `{sent, failed}` report.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Send to EVERY pane matching the target (a multi-match selector is an error without this flag). Prints a `{sent, failed}` report"
+        )]
         broadcast: bool,
-        /// Submit the text (append a carriage return). Explicit opt-in: this
-        /// is the ONLY way the CLI ever submits on the user's behalf, and it
-        /// still requires the instance-side scripting gate.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Submit the text (append a carriage return). Explicit opt-in: this is the ONLY way the CLI ever submits on the user's behalf, and it still requires the instance-side scripting gate"
+        )]
         submit: bool,
-        /// Force bracketed-paste delivery: the text is wrapped in
-        /// `ESC[200~`/`ESC[201~` and, with `--submit`, the carriage return is
-        /// sent separately after a calibrated delay so a TUI agent does not
-        /// swallow it (EP-001). `--submit` toward an agent pane enables this
-        /// automatically; pass `--paste` to force it (e.g. toward a shell) or
-        /// `--paste` alone to wrap a non-submitted inject.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Force bracketed-paste delivery: the text is wrapped in `ESC[200~`/`ESC[201~` and, with `--submit`, the carriage return is sent separately after a calibrated delay so a TUI agent does not swallow it (EP-001). `--submit` toward an agent pane enables this automatically; pass `--paste` to force it (e.g. toward a shell) or `--paste` alone to wrap a non-submitted inject"
+        )]
         paste: bool,
-        /// Ask the agent to write its complete result to this file and print
-        /// `REPORT_DONE <path>` after the file is fully written. The path is
-        /// resolved relative to the caller's current directory.
-        #[arg(long, value_name = "PATH")]
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Ask the agent to write its complete result to this file and print `REPORT_DONE <path>` after the file is fully written. The path is resolved relative to the caller's current directory"
+        )]
         report_file: Option<String>,
     },
-    /// Give a targeted surface the keyboard focus.
+    #[command(about = "Give a targeted surface the keyboard focus")]
     Focus {
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
+        #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
         target: String,
     },
-    /// Send a named keystroke (e.g. `escape`, `ctrl-c`, `tab`) to a pane.
-    ///
-    /// Requires `PANEFLOW_IPC_SCRIPTING=1` on the running instance. Keystrokes
-    /// that would submit a line (`enter`, `ctrl-m`, `ctrl-j`) are refused -
-    /// submission is exclusive to `send --submit`.
+    #[command(
+        about = "Send a named keystroke (e.g. `escape`, `ctrl-c`, `tab`) to a pane",
+        long_about = "Send a named keystroke (e.g. `escape`, `ctrl-c`, `tab`) to a pane.\n\nRequires `PANEFLOW_IPC_SCRIPTING=1` on the running instance. Keystrokes that would submit a line (`enter`, `ctrl-m`, `ctrl-j`) are refused - submission is exclusive to `send --submit`."
+    )]
     Key {
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
+        #[arg(help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`")]
         target: String,
-        /// Dash-separated keystroke description ("escape", "ctrl-c", "alt-f").
+        #[arg(help = "Dash-separated keystroke description (\"escape\", \"ctrl-c\", \"alt-f\")")]
         keystroke: String,
     },
-    /// Run a declarative agent DAG from a `flow.toml` (orchestration engine).
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        about = "Run a declarative agent DAG from a `flow.toml` (orchestration engine)"
+    )]
     Flow(FlowCommand),
-    /// Spawn a declarative agent workspace from a TOML file ("compose for agents").
+    #[command(
+        about = "Spawn a declarative agent workspace from a TOML file (\"compose for agents\")"
+    )]
     Up {
-        /// Path to a `paneflow.workspace.toml` spec.
+        #[arg(help = "Path to a `paneflow.workspace.toml` spec")]
         file: String,
-        /// Validate + print the resolved plan without touching the instance.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Validate + print the resolved plan without touching the instance"
+        )]
         dry_run: bool,
     },
-    /// Block until a pane goes idle, or a regex appears in its output (orchestration).
+    #[command(
+        about = "Block until a pane goes idle, or a regex appears in its output (orchestration)"
+    )]
     Wait {
-        /// Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`.
-        /// Note: `cmdline:` matches the full argv on Linux but only the
-        /// executable basename on macOS/Windows; prefer `cwd:` or a name for a
-        /// portable selector.
-        #[arg(long = "match", value_name = "SELECTOR")]
+        #[arg(
+            long = "match",
+            value_name = "SELECTOR",
+            help = "Target: surface id, name, `cmdline:<substr>`, or `cwd:<path>`. Note: `cmdline:` matches the full argv on Linux but only the executable basename on macOS/Windows; prefer `cwd:` or a name for a portable selector"
+        )]
         selector: String,
-        /// Regex to wait for in the pane's recent scrollback. Required unless
-        /// `--idle` is set. With `--idle` it is an optional sentinel: it is
-        /// checked on each new output and EITHER signal (pattern match OR going
-        /// idle) returns first (EP-003 US-008).
-        #[arg(long, required_unless_present = "idle")]
+        #[arg(
+            long,
+            required_unless_present = "idle",
+            help = "Regex to wait for in the pane's recent scrollback. Required unless `--idle` is set. With `--idle` it is an optional sentinel: it is checked on each new output and EITHER signal (pattern match OR going idle) returns first (EP-003 US-008)"
+        )]
         pattern: Option<String>,
-        /// Wait until the pane's output goes quiet (no `output_generation`
-        /// change for `--for` ms) by subscribing to the push stream - zero
-        /// client-side polling (EP-003 US-007). Single-target.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Wait until the pane's output goes quiet (no `output_generation` change for `--for` ms) by subscribing to the push stream - zero client-side polling (EP-003 US-007). Single-target"
+        )]
         idle: bool,
-        /// With `--idle`: the quiescence window in milliseconds (default 1000).
-        /// The pane must produce no new output for this long to count as idle.
-        #[arg(long = "for", value_name = "MS")]
+        #[arg(
+            long = "for",
+            value_name = "MS",
+            help = "With `--idle`: the quiescence window in milliseconds (default 1000). The pane must produce no new output for this long to count as idle"
+        )]
         for_ms: Option<u64>,
-        /// Max seconds to wait before giving up (default 300).
-        #[arg(long)]
+        #[arg(long, help = "Max seconds to wait before giving up (default 300)")]
         timeout: Option<u64>,
-        /// Succeed as soon as ANY matching pane matches (selector may hit
-        /// several). `--pattern` mode only; ignored with `--idle`.
-        #[arg(long, conflicts_with = "all")]
+        #[arg(
+            long,
+            conflicts_with = "all",
+            help = "Succeed as soon as ANY matching pane matches (selector may hit several). `--pattern` mode only; ignored with `--idle`"
+        )]
         any: bool,
-        /// Require ALL matching panes to match the pattern. `--pattern` mode only.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Require ALL matching panes to match the pattern. `--pattern` mode only"
+        )]
         all: bool,
     },
-    /// Stream lifecycle events from the running instance as JSONL (EP-002).
+    #[command(about = "Stream lifecycle events from the running instance as JSONL (EP-002)")]
     Watch {
-        /// Only stream events for this pane (selector). Omit for all panes.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Only stream events for this pane (selector). Omit for all panes"
+        )]
         surface: Option<String>,
-        /// Only stream these event types (repeatable). Omit for all types.
-        #[arg(long = "type", value_name = "TYPE")]
+        #[arg(
+            long = "type",
+            value_name = "TYPE",
+            help = "Only stream these event types (repeatable). Omit for all types"
+        )]
         types: Vec<String>,
-        /// Hide subscription protocol frames and print user events only.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Hide subscription protocol frames and print user events only"
+        )]
         events_only: bool,
     },
 }
 
 #[derive(Subcommand, Debug)]
 enum FlowCommand {
-    /// Execute (or validate with --dry-run) a flow file against the running
-    /// instance. Spawns panes, waits on `ready` barriers, feeds steps -
-    /// submission only with explicit `submit = true` + the scripting gate.
+    #[command(
+        about = "Execute (or validate with --dry-run) a flow file against the running instance. Spawns panes, waits on `ready` barriers, feeds steps - submission only with explicit `submit = true` + the scripting gate"
+    )]
     Run {
-        /// Path to a `flow.toml`.
+        #[arg(help = "Path to a `flow.toml`")]
         file: String,
-        /// Validate + print the resolved plan without touching the instance.
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Validate + print the resolved plan without touching the instance"
+        )]
         dry_run: bool,
-        /// Final machine-readable report on stdout (live transitions move to
-        /// stderr).
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Final machine-readable report on stdout (live transitions move to stderr)"
+        )]
         json: bool,
     },
 }
@@ -318,7 +298,6 @@ enum SplitDir {
 }
 
 impl SplitDir {
-    /// The `direction` string the `surface.split` IPC method expects.
     fn as_ipc(self) -> &'static str {
         match self {
             SplitDir::Horizontal => "horizontal",
@@ -327,7 +306,6 @@ impl SplitDir {
     }
 }
 
-/// A CLI failure carrying the process exit code to surface for it.
 #[derive(Debug)]
 pub struct CliError {
     pub code: i32,
@@ -350,23 +328,15 @@ impl CliError {
     }
 }
 
-/// Entry point invoked by `main.rs` when `argv[1]` is a known verb. Parses the
-/// args with clap, opens a client to the running instance, dispatches, and
-/// returns the process exit code.
 pub fn run() -> i32 {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
-        // clap prints `--help`/`--version` (exit 0) and usage errors (exit 2)
-        // itself; we just relay its code rather than letting `parse()` abort
-        // the process from inside a GUI binary.
         Err(e) => {
             let _ = e.print();
             return e.exit_code();
         }
     };
 
-    // `command` is always `Some` here: main.rs only calls `run` when argv[1]
-    // is a known verb. The `None` arm is unreachable in practice.
     let Some(command) = cli.command else {
         return EXIT_OK;
     };
@@ -388,10 +358,6 @@ pub fn run() -> i32 {
     }
 }
 
-/// Resolve the socket path and build a client. The path is resolved eagerly
-/// (honoring `PANEFLOW_SOCKET_PATH`), but a missing instance only surfaces as
-/// an "unreachable … is Paneflow running?" error on the first `call`, so a
-/// resolvable-but-dead socket is not a `connect` failure.
 fn connect() -> Result<IpcClient, String> {
     let socket = paneflow_ipc_client::resolve_socket_path().ok_or_else(|| {
         "paneflow: cannot locate the IPC socket; is Paneflow running? \
@@ -401,11 +367,6 @@ fn connect() -> Result<IpcClient, String> {
     Ok(IpcClient::new(socket))
 }
 
-/// Route a parsed subcommand to its handler. Handlers land per story:
-/// `read`/`search` + the target selector (US-003/US-004), `new`/`select`/`split`
-/// (US-005), `send` (US-006). The scaffold (US-002) wires the surface and the
-/// transport; each arm returns an explicit "not yet implemented" runtime error
-/// until its story fills it in.
 fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
     match command {
         Commands::Ls { human } => read_cmds::ls(client, human),
@@ -465,13 +426,8 @@ fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
             all,
         } => {
             if idle {
-                // EP-003 US-007: push-based quiescence; optional sentinel (US-008).
                 wait_cmd::wait_idle(client, &selector, for_ms, timeout, pattern.as_deref())
             } else {
-                // Pattern-only poll path (unchanged). clap's
-                // `required_unless_present="idle"` guarantees `Some` here; guard
-                // defensively so a future flag change can't smuggle an empty
-                // (match-everything) regex through.
                 let Some(pattern) = pattern else {
                     return Err(CliError::runtime(
                         "wait requires --pattern <regex> unless --idle is set",
@@ -495,9 +451,6 @@ fn dispatch(command: Commands, client: &IpcClient) -> Result<i32, CliError> {
     }
 }
 
-/// Render a JSON-RPC `result` value as pretty JSON to stdout. Shared by the
-/// read and control command modules so every machine-readable output uses one
-/// renderer.
 pub(super) fn print_json(value: &Value) -> Result<(), CliError> {
     let rendered = serde_json::to_string_pretty(value)
         .map_err(|e| CliError::runtime(format!("failed to render JSON: {e}")))?;
@@ -505,20 +458,6 @@ pub(super) fn print_json(value: &Value) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Reject a server reply that carries a *legacy* application error.
-///
-/// A handful of server handlers signal cap/validation failures (split at
-/// `MAX_PANES`, `select` out-of-range, `send_text` over the 64 KiB limit) with
-/// an ad-hoc `{"error": "<message>"}` payload that does NOT use the
-/// `_jsonrpc_error` sentinel. The dispatcher therefore promotes them under
-/// `result`, so the transport's `parse_response` returns `Ok` and the command
-/// would otherwise print the error and exit 0 - breaking the scriptability
-/// contract (US-005 AC4 "code non-zéro", US-006 AC3). Calling this on every
-/// `result` before printing maps that legacy shape to a non-zero `CliError`.
-///
-/// No success envelope on these verbs carries a top-level `error` string
-/// (`{index,…}`, `{selected}`, `{split,…}`, `{sent,…}`, `{surfaces,…}`,
-/// `{text,…}`, `{matches,…}`), so the check can't false-positive on real data.
 pub(super) fn reject_legacy_error(result: Value) -> Result<Value, CliError> {
     if let Some(message) = result.get("error").and_then(Value::as_str) {
         return Err(CliError::runtime(message.to_string()));
@@ -543,12 +482,9 @@ mod tests {
 
     #[test]
     fn mcp_tool_names_alias_to_their_verbs() {
-        // EP-005 US-011: the MCP tool names gate the CLI dispatch in main.rs...
         assert!(is_cli_verb(Some("search_pane")));
         assert!(is_cli_verb(Some("read_pane")));
         assert!(is_cli_verb(Some("list_panes")));
-        // ...and clap routes each alias to its canonical subcommand, so a
-        // conductor that types the MCP name never lands on the GUI launch path.
         let cli = Cli::try_parse_from(["paneflow", "search_pane", "backend", "needle"])
             .expect("parse search_pane");
         assert!(matches!(cli.command, Some(Commands::Search { .. })));
@@ -561,18 +497,13 @@ mod tests {
 
     #[test]
     fn unknown_verb_detected_but_bare_and_flags_are_not() {
-        // EP-005 US-011: a verb-shaped typo is flagged so main.rs errors
-        // actionably instead of launching the GUI / tripping the singleton.
         assert!(looks_like_unknown_verb(Some("blah")));
         assert!(looks_like_unknown_verb(Some("searh")));
-        // Known verbs and MCP aliases are NOT unknown.
         assert!(!looks_like_unknown_verb(Some("search")));
         assert!(!looks_like_unknown_verb(Some("search_pane")));
         assert!(!looks_like_unknown_verb(Some("ls")));
-        // A bare `paneflow` (None) and an empty token still launch the GUI.
         assert!(!looks_like_unknown_verb(None));
         assert!(!looks_like_unknown_verb(Some("")));
-        // Flags stay on the global-flag / GUI path, never the unknown-verb error.
         assert!(!looks_like_unknown_verb(Some("--help")));
         assert!(!looks_like_unknown_verb(Some("-v")));
         assert!(!looks_like_unknown_verb(Some("--update-and-exit")));
@@ -582,7 +513,6 @@ mod tests {
     fn ps_parses_with_optional_json_flag() {
         let cli = Cli::try_parse_from(["paneflow", "ps", "--json"]).expect("parse");
         assert!(matches!(cli.command, Some(Commands::Ps { json: true })));
-        // Default is the human table (like Unix `ps`), JSON is opt-in.
         let cli = Cli::try_parse_from(["paneflow", "ps"]).expect("parse");
         assert!(matches!(cli.command, Some(Commands::Ps { json: false })));
     }
@@ -597,8 +527,6 @@ mod tests {
 
     #[test]
     fn send_flags_default_off() {
-        // The human-in-loop default: no broadcast, no submit, no paste unless
-        // explicit (EP-001 US-002: absent `--paste`, the server auto-decides).
         let cli = Cli::try_parse_from(["paneflow", "send", "backend", "hi"]).expect("parse");
         assert!(matches!(
             cli.command,
@@ -620,7 +548,6 @@ mod tests {
                 ..
             })
         ));
-        // EP-001 US-002 AC2: `--paste` is an explicit, parseable override.
         let cli =
             Cli::try_parse_from(["paneflow", "send", "--paste", "agent", "hi"]).expect("parse");
         assert!(matches!(
@@ -665,8 +592,6 @@ mod tests {
 
     #[test]
     fn wait_idle_and_pattern_parsing() {
-        // EP-003 US-007: `--idle` parses WITHOUT `--pattern` (the sentinel is
-        // optional in idle mode); `--for` carries the quiescence window.
         let cli = Cli::try_parse_from([
             "paneflow", "wait", "--match", "agent", "--idle", "--for", "500",
         ])
@@ -680,7 +605,6 @@ mod tests {
                 ..
             })
         ));
-        // US-008: `--idle` + `--pattern` coexist (OR semantics, first to fire).
         let cli = Cli::try_parse_from([
             "paneflow",
             "wait",
@@ -694,7 +618,6 @@ mod tests {
         assert!(
             matches!(cli.command, Some(Commands::Wait { idle: true, pattern: Some(p), .. }) if p == "DONE")
         );
-        // `--pattern` alone (no `--idle`) still parses (the existing poll path).
         let cli = Cli::try_parse_from(["paneflow", "wait", "--match", "a", "--pattern", "DONE"])
             .expect("parse");
         assert!(matches!(
@@ -705,8 +628,6 @@ mod tests {
                 ..
             })
         ));
-        // Neither `--idle` nor `--pattern` -> clap usage error (exit 2), never a
-        // silent empty-regex that matches everything.
         let err = Cli::try_parse_from(["paneflow", "wait", "--match", "a"]).expect_err("usage");
         assert_eq!(err.exit_code(), 2);
     }
@@ -775,15 +696,12 @@ mod tests {
 
     #[test]
     fn read_requires_a_target() {
-        // Missing the required positional `target` is a clap usage error (2).
         let err = Cli::try_parse_from(["paneflow", "read"]).expect_err("usage");
         assert_eq!(err.exit_code(), 2);
     }
 
     #[test]
     fn no_subcommand_parses_to_none() {
-        // Defensive: a bare invocation never reaches `run` (main.rs gates on a
-        // known verb), but clap must not force-error on it.
         let cli = Cli::try_parse_from(["paneflow"]).expect("parse");
         assert!(cli.command.is_none());
     }

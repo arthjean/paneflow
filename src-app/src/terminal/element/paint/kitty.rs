@@ -1,21 +1,12 @@
-//! Kitty graphics placements.
-//!
-//! The session runtime resolved the geometry and uploaded the textures; this
-//! only positions them. Placements arrive sorted by z-index, which decides
-//! both the layer they draw in and their order within it: negative z goes
-//! under the text, zero and above over it.
-
 use gpui::{Bounds, Corners, Pixels, Window, point, px, size};
 
 use crate::terminal::element::geometry::CellGeometry;
 use crate::terminal::kitty::KittyPlacement;
 
-/// Draw the placements whose z-index puts them under the text.
 pub fn paint_below_text(placements: &[KittyPlacement], geom: &CellGeometry, window: &mut Window) {
     paint_layer(placements, geom, window, |z| z < 0);
 }
 
-/// Draw the placements whose z-index puts them over the text.
 pub fn paint_above_text(placements: &[KittyPlacement], geom: &CellGeometry, window: &mut Window) {
     paint_layer(placements, geom, window, |z| z >= 0);
 }
@@ -30,9 +21,6 @@ fn paint_layer(
         let Some((destination, image_bounds)) = resolve(placement, geom) else {
             continue;
         };
-        // `bounds` clips, `image_bounds` positions and scales: their
-        // intersection is what actually appears, which is how a source
-        // rectangle is expressed without a second texture.
         let _ = window.paint_image(
             destination,
             image_bounds,
@@ -44,11 +32,6 @@ fn paint_layer(
     }
 }
 
-/// Where the placement lands, and where the whole image would have to sit for
-/// its source rectangle to line up with that.
-///
-/// Returns `None` for a degenerate placement, which is a program asking for a
-/// zero-area draw rather than an error.
 fn resolve(
     placement: &KittyPlacement,
     geom: &CellGeometry,
@@ -69,8 +52,6 @@ fn resolve(
         size(px(placement.width as f32), px(placement.height as f32)),
     );
 
-    // The rendered size covers the source rectangle, so the whole image is
-    // that much larger and offset by where the rectangle starts inside it.
     let scale_x = placement.width as f32 / placement.source_width as f32;
     let scale_y = placement.height as f32 / placement.source_height as f32;
     let image_size = placement.image.size(0);
@@ -116,7 +97,6 @@ mod tests {
 
     fn geometry() -> CellGeometry {
         use crate::terminal::element::font::{FaceMetrics, cell_metrics_from_face};
-        // An 8x16 cell: advance 8, ascent 12 + descent 4.
         let metrics = cell_metrics_from_face(
             FaceMetrics {
                 ascent: 12.0,
@@ -141,24 +121,18 @@ mod tests {
     fn a_full_image_placement_maps_one_to_one() {
         let (destination, image_bounds) =
             resolve(&placement(20, 10, (0, 0, 20, 10)), &geometry()).expect("resolvable");
-        // origin + 2 columns, + 1 row.
         assert_eq!(destination.origin, point(px(26.0), px(36.0)));
         assert_eq!(destination.size, size(px(20.0), px(10.0)));
-        // Nothing is cropped, so the image sits exactly where it is drawn.
         assert_eq!(image_bounds, destination);
     }
 
     #[test]
     fn a_source_rectangle_shifts_and_scales_the_whole_image() {
-        // The right half of a 20x10 image, drawn at twice its size.
         let (destination, image_bounds) =
             resolve(&placement(20, 20, (10, 0, 10, 10)), &geometry()).expect("resolvable");
         assert_eq!(destination.size, size(px(20.0), px(20.0)));
-        // 2x scale, so the full image is 40x20 and starts 20px left of the
-        // destination: exactly enough for its right half to land in it.
         assert_eq!(image_bounds.size, size(px(40.0), px(20.0)));
         assert_eq!(image_bounds.origin, point(px(6.0), px(36.0)));
-        // The visible region is the destination, which is the source rect.
         assert_eq!(destination.intersect(&image_bounds), destination);
     }
 
@@ -167,7 +141,6 @@ mod tests {
         let mut scrolled = placement(20, 10, (0, 0, 20, 10));
         scrolled.row = -2;
         let (destination, _) = resolve(&scrolled, &geometry()).expect("resolvable");
-        // Two rows above the origin, which the content mask then clips.
         assert_eq!(destination.origin.y, px(20.0 - 32.0));
     }
 
