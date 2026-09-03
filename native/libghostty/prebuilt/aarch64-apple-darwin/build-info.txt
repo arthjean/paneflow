@@ -6,5 +6,5 @@ rust_target=aarch64-apple-darwin
 zig_target=aarch64-macos
 optimize=ReleaseFast
 archive_normalization=fixed-zig-source-cache-prefix+zig-build-seed0-j1-cpu1+llvm-strip-debug+llvm-ar-D-darwin
-archive_sha256=d81dafad9975987fc582977f24af06c9255b901196c07b00be42b85ffe8dba03
+archive_sha256=c317032b490d25a14ff355ca56148af8d6618a976e2835739d1e16d1f7c00f33
 build_info_symbol=ghostty_build_info
