@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::OnceLock;
 
@@ -8,6 +9,8 @@ use tree_sitter::{Language, Parser, Query, QueryCursor};
 use super::syntax::DiffSyntax;
 
 pub(crate) const MAX_HIGHLIGHT_BYTES: usize = 300_000;
+
+pub(crate) const MAX_CAPTURES_PER_ROW: usize = 4_096;
 
 pub(crate) struct Grammar {
     pub(crate) language: Language,
@@ -218,12 +221,11 @@ fn bucket_capture(
 }
 
 pub(crate) fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
-    if runs.len() < 2 {
-        return;
-    }
     let mut candidates: Vec<_> = runs
         .drain(..)
+        .take(MAX_CAPTURES_PER_ROW)
         .enumerate()
+        .filter(|(_, (range, _))| range.start < range.end)
         .map(|(order, (range, color))| (range, color, order))
         .collect();
     candidates.sort_by(|a, b| {
@@ -236,44 +238,55 @@ pub(crate) fn resolve_runs(runs: &mut Vec<(Range<usize>, Hsla)>) {
             .then(a.2.cmp(&b.2))
     });
 
-    let mut kept: Vec<(Range<usize>, Hsla)> = Vec::with_capacity(candidates.len());
-    let mut covered: Vec<Range<usize>> = Vec::with_capacity(candidates.len());
-    for (range, color, _) in candidates {
-        if range.start >= range.end {
+    let mut events = Vec::with_capacity(candidates.len() * 2);
+    for (candidate, (range, _, _)) in candidates.iter().enumerate() {
+        events.push((range.start, true, candidate));
+        events.push((range.end, false, candidate));
+    }
+    events.sort_unstable_by_key(|event| event.0);
+
+    let mut active = BTreeSet::new();
+    let mut resolved: Vec<(Range<usize>, Hsla, usize)> = Vec::with_capacity(candidates.len());
+    let mut event = 0usize;
+    while event < events.len() {
+        let start = events[event].0;
+        while event < events.len() && events[event].0 == start {
+            let (_, begins, candidate) = events[event];
+            if begins {
+                active.insert(candidate);
+            } else {
+                active.remove(&candidate);
+            }
+            event += 1;
+        }
+        let Some(end) = events.get(event).map(|next| next.0) else {
+            break;
+        };
+        let Some(&candidate) = active.first() else {
+            continue;
+        };
+        if start == end {
             continue;
         }
-        let mut fragments = vec![range];
-        for cover in &covered {
-            let mut next = Vec::new();
-            for fragment in fragments {
-                if cover.end <= fragment.start || cover.start >= fragment.end {
-                    next.push(fragment);
-                    continue;
-                }
-                if fragment.start < cover.start {
-                    next.push(fragment.start..cover.start);
-                }
-                if cover.end < fragment.end {
-                    next.push(cover.end..fragment.end);
-                }
-            }
-            fragments = next;
-            if fragments.is_empty() {
-                break;
-            }
+        if let Some((last, _, last_candidate)) = resolved.last_mut()
+            && *last_candidate == candidate
+            && last.end == start
+        {
+            last.end = end;
+            continue;
         }
-        for fragment in fragments {
-            covered.push(fragment.clone());
-            kept.push((fragment, color));
-        }
-        covered.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        resolved.push((start..end, candidates[candidate].1, candidate));
     }
-    kept.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
-    *runs = kept;
+    *runs = resolved
+        .into_iter()
+        .map(|(range, color, _)| (range, color))
+        .collect();
 }
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use super::*;
     use crate::theme::paneflow_dark;
 
@@ -400,6 +413,122 @@ mod tests {
         assert_eq!(ranges, vec![0..2, 2..5, 5..7, 7..9, 9..10]);
         assert_eq!(runs[1].1, palette.emphasis_strong);
         assert_eq!(runs[3].1, palette.link_text);
+    }
+
+    fn resolve_runs_legacy(runs: &mut Vec<(Range<usize>, Hsla)>) {
+        let mut candidates: Vec<_> = runs
+            .drain(..)
+            .enumerate()
+            .map(|(order, (range, color))| (range, color, order))
+            .collect();
+        candidates.sort_by(|a, b| {
+            let a_len = a.0.end.saturating_sub(a.0.start);
+            let b_len = b.0.end.saturating_sub(b.0.start);
+            a_len
+                .cmp(&b_len)
+                .then(a.0.start.cmp(&b.0.start))
+                .then(a.0.end.cmp(&b.0.end))
+                .then(a.2.cmp(&b.2))
+        });
+
+        let mut kept = Vec::with_capacity(candidates.len());
+        let mut covered: Vec<Range<usize>> = Vec::with_capacity(candidates.len());
+        for (range, color, _) in candidates {
+            if range.start >= range.end {
+                continue;
+            }
+            let mut fragments = vec![range];
+            for cover in &covered {
+                let mut next = Vec::new();
+                for fragment in fragments {
+                    if cover.end <= fragment.start || cover.start >= fragment.end {
+                        next.push(fragment);
+                        continue;
+                    }
+                    if fragment.start < cover.start {
+                        next.push(fragment.start..cover.start);
+                    }
+                    if cover.end < fragment.end {
+                        next.push(cover.end..fragment.end);
+                    }
+                }
+                fragments = next;
+                if fragments.is_empty() {
+                    break;
+                }
+            }
+            for fragment in fragments {
+                covered.push(fragment.clone());
+                kept.push((fragment, color));
+            }
+            covered.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
+        }
+        kept.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
+        *runs = kept;
+    }
+
+    #[test]
+    fn resolve_runs_matches_the_previous_semantics_on_ten_thousand_inputs() {
+        let palette = paneflow_dark().syntax;
+        let colors = [
+            palette.text_literal,
+            palette.emphasis_strong,
+            palette.link_text,
+            palette.keyword,
+        ];
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            state ^= state << 7;
+            state ^= state >> 9;
+            state ^= state << 8;
+            state
+        };
+
+        for case in 0..10_000 {
+            let count = (next() as usize % 24) + 1;
+            let mut input = Vec::with_capacity(count);
+            for index in 0..count {
+                let start = next() as usize % 80;
+                let mode = next() % 8;
+                let end = match mode {
+                    0 => start,
+                    1 => start.saturating_sub((next() as usize % 8) + 1),
+                    2 => start + 1,
+                    _ => next() as usize % 80,
+                };
+                input.push((start..end, colors[index % colors.len()]));
+            }
+            let mut expected = input.clone();
+            let mut actual = input;
+            resolve_runs_legacy(&mut expected);
+            resolve_runs(&mut actual);
+            assert_eq!(actual, expected, "case {case}");
+        }
+    }
+
+    #[test]
+    fn resolve_runs_ignores_captures_past_the_row_cap() {
+        let color = paneflow_dark().syntax.text_literal;
+        let mut runs: Vec<_> = (0..MAX_CAPTURES_PER_ROW + 512)
+            .map(|index| (index * 2..index * 2 + 1, color))
+            .collect();
+        let started = Instant::now();
+        resolve_runs(&mut runs);
+        assert_eq!(runs.len(), MAX_CAPTURES_PER_ROW);
+        assert_eq!(runs.last().map(|run| run.0.clone()), Some(8190..8191));
+        assert!(started.elapsed() < Duration::from_millis(5));
+    }
+
+    #[test]
+    fn resolve_runs_drops_empty_and_reversed_ranges() {
+        let color = paneflow_dark().syntax.text_literal;
+        let mut runs = vec![0..0, Range { start: 4, end: 2 }, 1..3]
+            .into_iter()
+            .map(|range| (range, color))
+            .collect();
+        resolve_runs(&mut runs);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].0, 1..3);
     }
 
     #[test]
