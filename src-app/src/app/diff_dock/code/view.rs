@@ -190,6 +190,8 @@ pub(crate) struct CodeView {
     click_chain: Option<ClickChain>,
     last_motion: Instant,
     blink_visible: bool,
+    focused: bool,
+    focus_observers_installed: bool,
     theme_generation: u64,
     geometry: Rc<Cell<CodeGeometry>>,
     gutter_memo: Rc<Cell<GutterMemo>>,
@@ -225,6 +227,8 @@ impl CodeView {
             click_chain: None,
             last_motion: Instant::now(),
             blink_visible: true,
+            focused: false,
+            focus_observers_installed: false,
             theme_generation: crate::theme::theme_generation(),
             geometry: Rc::new(Cell::new(CodeGeometry::default())),
             gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
@@ -253,14 +257,72 @@ impl CodeView {
         };
         let phase = global.0.clone();
         cx.observe(&phase, |view: &mut Self, phase, cx: &mut Context<Self>| {
-            let visible =
-                view.last_motion.elapsed() < CURSOR_BLINK_INTERVAL || phase.read(cx).visible;
-            if visible != view.blink_visible {
-                view.blink_visible = visible;
+            let caret_visible = view.caret_is_visible();
+            if view.apply_blink_phase(phase.read(cx).visible, caret_visible) {
                 cx.notify();
             }
         })
         .detach();
+    }
+
+    fn ensure_focus_observers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_focus_state(self.focus.is_focused(window));
+        if self.focus_observers_installed {
+            return;
+        }
+        self.focus_observers_installed = true;
+        let focus = self.focus.clone();
+        cx.on_focus(&focus, window, |view, _window, cx| {
+            view.sync_focus_state(true);
+            cx.notify();
+        })
+        .detach();
+        cx.on_blur(&focus, window, |view, _window, cx| {
+            view.sync_focus_state(false);
+            cx.notify();
+        })
+        .detach();
+    }
+
+    fn sync_focus_state(&mut self, focused: bool) {
+        if focused && !self.focused {
+            self.last_motion = Instant::now();
+            self.blink_visible = true;
+        }
+        self.focused = focused;
+    }
+
+    fn caret_is_visible(&self) -> bool {
+        if !self.focused {
+            return false;
+        }
+        let Some(doc) = self.state.document() else {
+            return false;
+        };
+        let viewport_h = f32::from(self.scroll.bounds().size.height);
+        if viewport_h <= 0.0 {
+            return false;
+        }
+        let content_top = f32::from(-self.scroll.offset().y).max(0.0);
+        let row = doc.byte_to_line(self.selection.cursor());
+        Self::row_intersects_viewport(row, content_top, viewport_h)
+    }
+
+    fn row_intersects_viewport(row: usize, content_top: f32, viewport_h: f32) -> bool {
+        let row_top = row as f32 * CODE_ROW_HEIGHT;
+        row_top < content_top + viewport_h && row_top + CODE_ROW_HEIGHT > content_top
+    }
+
+    fn apply_blink_phase(&mut self, phase_visible: bool, caret_visible: bool) -> bool {
+        if !self.focused || !caret_visible {
+            return false;
+        }
+        let visible = self.last_motion.elapsed() < CURSOR_BLINK_INTERVAL || phase_visible;
+        if visible == self.blink_visible {
+            return false;
+        }
+        self.blink_visible = visible;
+        true
     }
 
     pub(crate) fn open(&mut self, path: PathBuf, cx: &mut Context<Self>) {
@@ -1827,6 +1889,7 @@ impl Focusable for CodeView {
 
 impl Render for CodeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ensure_focus_observers(window, cx);
         self.sync_theme();
         self.fill_visible_highlights(cx);
         let ui = crate::theme::ui_colors();
@@ -1996,6 +2059,8 @@ mod tests {
             click_chain: None,
             last_motion: Instant::now(),
             blink_visible: true,
+            focused: false,
+            focus_observers_installed: false,
             theme_generation: 0,
             geometry: Rc::new(Cell::new(CodeGeometry::default())),
             gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
@@ -2012,6 +2077,65 @@ mod tests {
             _watcher: None,
             _watch_bridge: None,
         })
+    }
+
+    #[gpui::test]
+    fn blink_phase_is_ignored_while_the_view_is_unfocused(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "one\ntwo\n");
+
+        view.update(cx, |view, _cx| {
+            view.focused = false;
+            view.last_motion = Instant::now() - CURSOR_BLINK_INTERVAL;
+            view.blink_visible = true;
+            assert!(!view.apply_blink_phase(false, true));
+            assert!(view.blink_visible);
+        });
+    }
+
+    #[gpui::test]
+    fn blink_phase_is_ignored_while_the_caret_is_outside_the_viewport(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "one\ntwo\n");
+
+        view.update(cx, |view, _cx| {
+            view.focused = true;
+            view.last_motion = Instant::now() - CURSOR_BLINK_INTERVAL;
+            view.blink_visible = true;
+            let caret_visible = CodeView::row_intersects_viewport(2, 0.0, CODE_ROW_HEIGHT * 2.0);
+            assert!(!caret_visible);
+            assert!(!view.apply_blink_phase(false, caret_visible));
+            assert!(view.blink_visible);
+        });
+    }
+
+    #[gpui::test]
+    fn blink_phase_notifies_only_when_a_visible_caret_changes(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "one\ntwo\n");
+
+        view.update(cx, |view, _cx| {
+            view.focused = true;
+            view.last_motion = Instant::now() - CURSOR_BLINK_INTERVAL;
+            view.blink_visible = true;
+            let caret_visible = CodeView::row_intersects_viewport(1, 0.0, CODE_ROW_HEIGHT * 2.0);
+            assert!(caret_visible);
+            assert!(view.apply_blink_phase(false, caret_visible));
+            assert!(!view.blink_visible);
+            assert!(!view.apply_blink_phase(false, caret_visible));
+        });
+    }
+
+    #[gpui::test]
+    fn returning_focus_makes_the_caret_visible_immediately(cx: &mut TestAppContext) {
+        let (view, cx) = view(cx, "one\ntwo\n");
+
+        view.update(cx, |view, _cx| {
+            view.focused = false;
+            view.last_motion = Instant::now() - CURSOR_BLINK_INTERVAL;
+            view.blink_visible = false;
+            view.sync_focus_state(true);
+            assert!(view.focused);
+            assert!(view.blink_visible);
+            assert!(view.last_motion.elapsed() < CURSOR_BLINK_INTERVAL);
+        });
     }
 
     #[gpui::test]
@@ -2259,6 +2383,8 @@ mod tests {
                     click_chain: None,
                     last_motion: Instant::now(),
                     blink_visible: true,
+                    focused: false,
+                    focus_observers_installed: false,
                     theme_generation: 0,
                     geometry: Rc::new(Cell::new(CodeGeometry::default())),
                     gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
@@ -2402,6 +2528,8 @@ mod tests {
             click_chain: None,
             last_motion: Instant::now(),
             blink_visible: true,
+            focused: false,
+            focus_observers_installed: false,
             theme_generation: 0,
             geometry: Rc::new(Cell::new(CodeGeometry::default())),
             gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
