@@ -1,13 +1,15 @@
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use gpui::{Font, FontStyle, FontWeight, px};
 use paneflow_terminal_ghostty as ghostty;
 
-use super::bench_corpus::{
-    CORPUS_SEED, cpu_model, deterministic_streams, percentile_duration, process_cpu_time,
+use crate::bench_harness::{
+    Direction, Metric, allocation_counters, measure, process_cpu_time, publish,
+    refuse_debug_profile,
 };
+
+use super::bench_corpus::{CORPUS_SEED, deterministic_streams};
 use super::element::{CellDimensions, LayoutInputs, base_font, layout_from_snapshot};
 use super::ghostty_session::{
     CellMirror, RUNTIME_LOOP_ATTENTIVE_REASONS, RUNTIME_LOOP_GATE_WAITS, RUNTIME_LOOP_IDLE_WAITS,
@@ -16,138 +18,6 @@ use super::ghostty_session::{
 };
 use super::pty_session::TerminalState;
 use super::types::{Content, Point};
-
-struct CountingAllocator;
-
-static ALLOCATED_BYTES: AtomicU64 = AtomicU64::new(0);
-static ALLOCATION_CALLS: AtomicU64 = AtomicU64::new(0);
-
-unsafe impl GlobalAlloc for CountingAllocator {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
-        ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
-        ALLOCATED_BYTES.fetch_add(layout.size() as u64, Ordering::Relaxed);
-        ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
-        unsafe { System.alloc_zeroed(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        ALLOCATED_BYTES.fetch_add(
-            new_size.saturating_sub(layout.size()) as u64,
-            Ordering::Relaxed,
-        );
-        ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
-#[global_allocator]
-static GLOBAL: CountingAllocator = CountingAllocator;
-
-fn allocation_counters() -> (u64, u64) {
-    (
-        ALLOCATED_BYTES.load(Ordering::Relaxed),
-        ALLOCATION_CALLS.load(Ordering::Relaxed),
-    )
-}
-
-#[derive(Clone, Copy)]
-enum Direction {
-    LowerIsBetter,
-    HigherIsBetter,
-}
-
-struct Metric {
-    name: &'static str,
-    unit: &'static str,
-    direction: Direction,
-    value: f64,
-    p95: Option<f64>,
-    mean: Option<f64>,
-    alloc_bytes_per_iter: Option<f64>,
-    allocs_per_iter: Option<f64>,
-    iters: usize,
-    note: &'static str,
-}
-
-impl Metric {
-    fn count(name: &'static str, unit: &'static str, value: f64, note: &'static str) -> Self {
-        Self {
-            name,
-            unit,
-            direction: Direction::LowerIsBetter,
-            value,
-            p95: None,
-            mean: None,
-            alloc_bytes_per_iter: None,
-            allocs_per_iter: None,
-            iters: 1,
-            note,
-        }
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::json!({
-            "metric": self.name,
-            "unit": self.unit,
-            "direction": match self.direction {
-                Direction::LowerIsBetter => "lower_is_better",
-                Direction::HigherIsBetter => "higher_is_better",
-            },
-            "value": self.value,
-            "p95": self.p95,
-            "mean": self.mean,
-            "alloc_bytes_per_iter": self.alloc_bytes_per_iter,
-            "allocs_per_iter": self.allocs_per_iter,
-            "iters": self.iters,
-            "note": self.note,
-        })
-    }
-}
-
-fn measure(
-    name: &'static str,
-    note: &'static str,
-    warmup: usize,
-    iters: usize,
-    mut op: impl FnMut(),
-) -> Metric {
-    for _ in 0..warmup {
-        op();
-    }
-    let mut samples = Vec::with_capacity(iters);
-    let (bytes_before, calls_before) = allocation_counters();
-    let started = Instant::now();
-    for _ in 0..iters {
-        let iteration = Instant::now();
-        op();
-        samples.push(iteration.elapsed());
-    }
-    let total = started.elapsed();
-    let (bytes_after, calls_after) = allocation_counters();
-    samples.sort_unstable();
-    let iters_f = iters.max(1) as f64;
-    Metric {
-        name,
-        unit: "ns",
-        direction: Direction::LowerIsBetter,
-        value: percentile_duration(&samples, 50).as_nanos() as f64,
-        p95: Some(percentile_duration(&samples, 95).as_nanos() as f64),
-        mean: Some(total.as_nanos() as f64 / iters_f),
-        alloc_bytes_per_iter: Some((bytes_after - bytes_before) as f64 / iters_f),
-        allocs_per_iter: Some((calls_after - calls_before) as f64 / iters_f),
-        iters,
-        note,
-    }
-}
 
 const SCROLLBACK_LINES: usize = 10_000;
 
@@ -447,143 +317,14 @@ fn pipeline_scenario(metrics: &mut Vec<Metric>) {
         allocs_per_iter: Some((calls_after - calls_before) as f64 / publishes as f64),
         iters: publishes,
         note: "corpus streams fed one per batch with a publish after each: parse plus snapshot plus conversion throughput",
+        available: true,
     });
-}
-
-fn env_or(name: &str, fallback: &str) -> String {
-    std::env::var(name).unwrap_or_else(|_| fallback.to_owned())
-}
-
-fn document(metrics: &[Metric]) -> serde_json::Value {
-    let generated_unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0);
-    serde_json::json!({
-        "schema": 1,
-        "suite": "paneflow-terminal-bench",
-        "generated_unix": generated_unix,
-        "stamp": env_or("PANEFLOW_BENCH_STAMP", "unknown"),
-        "git_sha": env_or("PANEFLOW_BENCH_SHA", "unknown"),
-        "git_dirty": env_or("PANEFLOW_BENCH_DIRTY", "unknown"),
-        "os": std::env::consts::OS,
-        "arch": std::env::consts::ARCH,
-        "cpu": cpu_model(),
-        "profile": if cfg!(debug_assertions) { "debug" } else { "release" },
-        "corpus_seed": format!("0x{CORPUS_SEED:016x}"),
-        "metrics": metrics.iter().map(Metric::to_json).collect::<Vec<_>>(),
-    })
-}
-
-fn format_value(value: f64, unit: &str) -> String {
-    match unit {
-        "ns" if value >= 1_000_000.0 => format!("{:.2} ms", value / 1_000_000.0),
-        "ns" if value >= 1_000.0 => format!("{:.1} us", value / 1_000.0),
-        "ns" => format!("{value:.0} ns"),
-        "MiB/s" => format!("{value:.1} MiB/s"),
-        _ => format!("{value:.0} {unit}"),
-    }
-}
-
-fn format_bytes(value: f64) -> String {
-    if value >= 1024.0 * 1024.0 {
-        format!("{:.2} MiB", value / (1024.0 * 1024.0))
-    } else if value >= 1024.0 {
-        format!("{:.1} KiB", value / 1024.0)
-    } else {
-        format!("{value:.0} B")
-    }
-}
-
-fn comparison_table(current: &[Metric], baseline: &serde_json::Value) -> String {
-    let baseline_metrics = baseline
-        .get("metrics")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let find = |name: &str| {
-        baseline_metrics
-            .iter()
-            .find(|metric| metric.get("metric").and_then(serde_json::Value::as_str) == Some(name))
-    };
-    let mut table = String::new();
-    table.push_str(&format!(
-        "Baseline `{}` ({}) versus `{}` ({}), {} {} on {}.\n\n",
-        baseline
-            .get("git_sha")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown"),
-        baseline
-            .get("stamp")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown"),
-        env_or("PANEFLOW_BENCH_SHA", "unknown"),
-        env_or("PANEFLOW_BENCH_STAMP", "unknown"),
-        std::env::consts::OS,
-        std::env::consts::ARCH,
-        cpu_model(),
-    ));
-    table.push_str("| Metric | Baseline | Now | Change | Alloc/iter baseline | Alloc/iter now |\n");
-    table.push_str("|---|---|---|---|---|---|\n");
-    for metric in current {
-        let Some(previous) = find(metric.name) else {
-            table.push_str(&format!(
-                "| `{}` | n/a | {} | new | n/a | {} |\n",
-                metric.name,
-                format_value(metric.value, metric.unit),
-                metric
-                    .alloc_bytes_per_iter
-                    .map(format_bytes)
-                    .unwrap_or_else(|| "n/a".into()),
-            ));
-            continue;
-        };
-        let before = previous
-            .get("value")
-            .and_then(serde_json::Value::as_f64)
-            .unwrap_or(f64::NAN);
-        let before_alloc = previous
-            .get("alloc_bytes_per_iter")
-            .and_then(serde_json::Value::as_f64);
-        let change = if before.is_finite() && before > 0.0 {
-            let ratio = match metric.direction {
-                Direction::LowerIsBetter => before / metric.value,
-                Direction::HigherIsBetter => metric.value / before,
-            };
-            let percent = (metric.value - before) / before * 100.0;
-            format!("{percent:+.1}% ({ratio:.2}x)")
-        } else {
-            "n/a".to_owned()
-        };
-        table.push_str(&format!(
-            "| `{}` | {} | {} | {} | {} | {} |\n",
-            metric.name,
-            format_value(before, metric.unit),
-            format_value(metric.value, metric.unit),
-            change,
-            before_alloc
-                .map(format_bytes)
-                .unwrap_or_else(|| "n/a".into()),
-            metric
-                .alloc_bytes_per_iter
-                .map(format_bytes)
-                .unwrap_or_else(|| "n/a".into()),
-        ));
-    }
-    table
 }
 
 #[test]
 #[ignore = "terminal performance benchmark: run through scripts/bench-terminal"]
-#[allow(
-    clippy::assertions_on_constants,
-    reason = "the benchmark refuses a debug-profile run unless asked to allow it"
-)]
 fn terminal_pipeline_benchmark() {
-    assert!(
-        !cfg!(debug_assertions) || std::env::var_os("PANEFLOW_BENCH_ALLOW_DEBUG").is_some(),
-        "run this benchmark with cargo test --release (or set PANEFLOW_BENCH_ALLOW_DEBUG=1)"
-    );
+    refuse_debug_profile();
 
     let mut metrics = Vec::new();
     let timed_started = Instant::now();
@@ -607,62 +348,12 @@ fn terminal_pipeline_benchmark() {
         idle_scenarios(&mut metrics);
     }
 
-    for metric in &metrics {
-        println!("PANEFLOW_BENCH_METRIC {}", metric.to_json());
-    }
-    let mut document = document(&metrics);
-    document["cpu_share"] = serde_json::json!(cpu_share);
-    println!("PANEFLOW_BENCH_DOCUMENT {document}");
-
-    if let Some(path) = std::env::var_os("PANEFLOW_BENCH_OUT") {
-        let pretty = serde_json::to_string_pretty(&document).expect("document serializes");
-        if let Some(parent) = std::path::Path::new(&path).parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        std::fs::write(&path, pretty).expect("benchmark output must be writable");
-        println!("PANEFLOW_BENCH_WRITTEN {}", path.to_string_lossy());
-    }
-
-    if let Some(path) = std::env::var_os("PANEFLOW_BENCH_BASELINE")
-        && let Ok(text) = std::fs::read_to_string(&path)
-        && let Ok(baseline) = serde_json::from_str::<serde_json::Value>(&text)
-    {
-        println!("PANEFLOW_BENCH_TABLE_BEGIN");
-        print!("{}", comparison_table(&metrics, &baseline));
-        println!("PANEFLOW_BENCH_TABLE_END");
-    }
+    publish("paneflow-terminal-bench", CORPUS_SEED, &metrics, cpu_share);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn comparison_table_reports_speedups_from_the_baseline() {
-        let now = [Metric {
-            name: "publish_scroll_220x60",
-            unit: "ns",
-            direction: Direction::LowerIsBetter,
-            value: 500_000.0,
-            p95: None,
-            mean: None,
-            alloc_bytes_per_iter: Some(1024.0),
-            allocs_per_iter: Some(1.0),
-            iters: 1,
-            note: "",
-        }];
-        let baseline = serde_json::json!({
-            "git_sha": "abc",
-            "stamp": "t0",
-            "metrics": [{
-                "metric": "publish_scroll_220x60",
-                "value": 1_000_000.0,
-                "alloc_bytes_per_iter": 2048.0
-            }]
-        });
-        let table = comparison_table(&now, &baseline);
-        assert!(table.contains("| `publish_scroll_220x60` | 1.00 ms | 500.0 us | -50.0% (2.00x) | 2.0 KiB | 1.0 KiB |"), "{table}");
-    }
 
     #[test]
     fn the_gate_simulation_never_publishes_more_than_once_per_chunk() {

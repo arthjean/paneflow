@@ -285,7 +285,7 @@ impl CodeHighlighter {
         first..(last + 1).min(lines)
     }
 
-    fn requery_rows(&mut self, doc: &CodeDocument, rows: Range<usize>) {
+    pub(crate) fn requery_rows(&mut self, doc: &CodeDocument, rows: Range<usize>) {
         let lines = doc.line_count();
         if self.rows.len() != lines {
             self.rows.resize(lines, Vec::new());

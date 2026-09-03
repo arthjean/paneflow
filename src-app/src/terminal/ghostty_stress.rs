@@ -706,7 +706,7 @@ fn resource_snapshot() -> ResourceSnapshot {
         handles: std::fs::read_dir("/proc/self/fd")
             .map(|entries| entries.count() as u64)
             .unwrap_or(0),
-        rss: super::bench_corpus::resident_set_bytes(),
+        rss: crate::bench_harness::resident_set_bytes(),
     }
 }
 
@@ -719,7 +719,7 @@ fn resource_snapshot() -> ResourceSnapshot {
         .count() as u64;
     ResourceSnapshot {
         handles,
-        rss: super::bench_corpus::resident_set_bytes(),
+        rss: crate::bench_harness::resident_set_bytes(),
     }
 }
 
@@ -789,8 +789,8 @@ fn windows_ghostty_host_creation_performance_gate() {
         ));
     }
     durations.sort_unstable();
-    let median = super::bench_corpus::percentile_duration(&durations, 50);
-    let p95 = super::bench_corpus::percentile_duration(&durations, 95);
+    let median = crate::bench_harness::percentile_duration(&durations, 50);
+    let p95 = crate::bench_harness::percentile_duration(&durations, 95);
     println!(
         "{{\"scenario\":\"windows_ghostty_host_creation\",\"warmup_samples\":{HOST_CREATION_WARMUP_SAMPLES},\"samples\":{HOST_CREATION_SAMPLES},\"median_us\":{},\"p95_us\":{},\"p95_limit_ms\":{},\"profile\":\"release\"}}",
         median.as_micros(),
@@ -833,8 +833,8 @@ fn ghostty_spawn_resize_close_stress_has_no_residual_growth() {
     println!(
         "{{\"scenario\":\"ghostty_spawn_resize_close\",\"warmup_cycles\":{WARMUP_CYCLES},\"cycles\":{CYCLES},\"resizes_per_cycle\":{RESIZES_PER_CYCLE},\"descendants_observed\":{descendants_observed},\"campaign_ms\":{},\"cycle_median_us\":{},\"cycle_p95_us\":{},\"max_cycle_ms\":{},\"handles_baseline\":{},\"handles_end\":{},\"handles_limit\":{},\"rss_baseline_bytes\":{},\"rss_end_bytes\":{},\"rss_limit_bytes\":{},\"resource_limit_percent\":{RESOURCE_LIMIT_PERCENT}}}",
         elapsed.as_millis(),
-        super::bench_corpus::percentile_us(&cycle_durations, 50),
-        super::bench_corpus::percentile_us(&cycle_durations, 95),
+        crate::bench_harness::percentile_us(&cycle_durations, 50),
+        crate::bench_harness::percentile_us(&cycle_durations, 95),
         max_cycle.as_millis(),
         baseline.handles,
         recovered.handles,
@@ -920,8 +920,8 @@ fn windows_ghostty_32_pane_resize_and_close_orders_are_bounded() {
     println!(
         "{{\"scenario\":\"windows_ghostty_32_panes\",\"warmup_cycles\":{WARMUP_CYCLES},\"panes\":{PANES},\"resizes_per_pane\":{RESIZES_PER_CYCLE},\"descendants_observed\":{descendants_observed},\"campaign_ms\":{},\"close_median_us\":{},\"close_p95_us\":{},\"handles_baseline\":{},\"handles_end\":{},\"handles_limit\":{},\"rss_baseline_bytes\":{},\"rss_end_bytes\":{},\"rss_limit_bytes\":{},\"resource_limit_percent\":{RESOURCE_LIMIT_PERCENT}}}",
         elapsed.as_millis(),
-        super::bench_corpus::percentile_us(&close_durations, 50),
-        super::bench_corpus::percentile_us(&close_durations, 95),
+        crate::bench_harness::percentile_us(&close_durations, 50),
+        crate::bench_harness::percentile_us(&close_durations, 95),
         baseline.handles,
         recovered.handles,
         limits.handles,

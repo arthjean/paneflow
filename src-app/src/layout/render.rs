@@ -281,11 +281,9 @@ mod tests {
     };
 
     use super::super::tree::LayoutChild;
+    use crate::bench_harness::{cpu_model, percentile_us, process_cpu_time, resident_set_bytes};
     use crate::pane::Pane;
-    use crate::terminal::bench_corpus::{
-        CORPUS_SEED, cpu_model, deterministic_streams, percentile_us, process_cpu_time,
-        resident_set_bytes,
-    };
+    use crate::terminal::bench_corpus::{CORPUS_SEED, deterministic_streams};
     use crate::terminal::{
         TerminalView, start_render_content_timing_probe, take_render_content_lock_durations,
     };

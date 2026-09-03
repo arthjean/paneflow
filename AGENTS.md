@@ -142,7 +142,11 @@ Performance claims need evidence: a heaptrack diff for a memory claim, a
 `cargo flamegraph` profile for a CPU claim. Do not ship a perf number you did
 not measure. For the terminal pipeline, `scripts/bench-terminal.sh` (or
 `.ps1`) runs the reproducible suite in `src-app/src/terminal/perf_bench.rs`
-and prints a comparison against `bench/baseline.json`; see
+and prints a comparison against `bench/baseline.json`. For the code editor,
+`scripts/bench-editor.sh` (or `.ps1`) runs the suite in
+`src-app/src/app/diff_dock/code/perf_bench.rs` and compares against
+`bench/editor-baseline.json`. Both share the harness and the single
+`#[global_allocator]` in `src-app/src/bench_harness.rs`; see
 [bench/README.md](bench/README.md).
 
 `tasks/` is a local, untracked scratch area for PRDs and story status files. It

@@ -15,6 +15,8 @@ mod ai_hooks;
 mod ai_types;
 mod app;
 mod assets;
+#[cfg(test)]
+mod bench_harness;
 mod claude_session_registry;
 mod claude_sessions;
 mod cli;
