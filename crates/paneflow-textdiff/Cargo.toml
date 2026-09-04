@@ -1,0 +1,15 @@
+[package]
+name = "paneflow-textdiff"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "IntelliJ-style line and word comparison pipeline on top of imara-diff, shared by the Paneflow diff dock and the editor gutter"
+
+[dependencies]
+imara-diff = { version = "0.2", default-features = false }
+
+[lints]
+workspace = true

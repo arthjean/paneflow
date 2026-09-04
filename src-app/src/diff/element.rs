@@ -11,6 +11,7 @@ use gpui::{
 };
 
 use super::align::CellKind;
+use super::engine::ChangeTone;
 use super::hscroll::{
     H_SCROLLBAR_TRACK_HEIGHT, file_at_row, file_side_offset, h_scrollbar_segments,
 };
@@ -46,6 +47,37 @@ const PHANTOM_HATCH_SPACING: f32 = 8.0;
 const PHANTOM_HATCH_STROKE: f32 = 1.0;
 const SPLIT_DIVIDER_W: f32 = 3.0;
 const PAD2: f32 = 6.0;
+pub(crate) const REVERT_CHIP_W: f32 = 56.0;
+pub(crate) const REVERT_CHIP_H: f32 = 16.0;
+pub(crate) const REVERT_CHIP_PAD_R: f32 = 10.0;
+const REVERT_CHIP_LABEL: &str = "Revert";
+
+pub(crate) fn revert_chip_bounds(
+    row_origin: Point<Pixels>,
+    row_width: Pixels,
+    row_h: Pixels,
+) -> Bounds<Pixels> {
+    let x = row_origin.x + row_width - px(REVERT_CHIP_PAD_R + REVERT_CHIP_W);
+    let y = row_origin.y + (row_h - px(REVERT_CHIP_H)) / 2.0;
+    Bounds::new(point(x, y), size(px(REVERT_CHIP_W), px(REVERT_CHIP_H)))
+}
+
+pub(super) fn for_each_word_rect(
+    runs: &[Range<usize>],
+    x_for_index: impl Fn(usize) -> f32,
+    code_x: f32,
+    clip_left: f32,
+    clip_right: f32,
+    mut emit: impl FnMut(f32, f32),
+) {
+    for run in runs {
+        let x0 = (code_x + x_for_index(run.start)).max(clip_left);
+        let x1 = (code_x + x_for_index(run.end)).min(clip_right);
+        if x1 > x0 {
+            emit(x0, x1);
+        }
+    }
+}
 
 pub enum DiffBody {
     Unified {
@@ -140,6 +172,8 @@ pub struct DiffPrepaint {
     images: Vec<ImagePaint>,
     glyphs: Vec<Glyphs>,
     hatches: Vec<HatchPath>,
+    chips: Vec<RoundedQuad>,
+    chip_glyphs: Vec<Glyphs>,
     scrollbars: Vec<RoundedQuad>,
     sticky_quads: Vec<Quad>,
     sticky_images: Vec<ImagePaint>,
@@ -153,6 +187,7 @@ pub struct DiffElement {
     font_size: Pixels,
     line_height: Pixels,
     gutter_w: Pixels,
+    revert_chip: Option<usize>,
 }
 
 impl DiffElement {
@@ -175,7 +210,38 @@ impl DiffElement {
             font_size: px(12.),
             line_height: px(ROW_HEIGHT),
             gutter_w: px(GUTTER_W),
+            revert_chip: None,
         }
+    }
+
+    pub fn with_revert_chip(mut self, row: Option<usize>) -> Self {
+        self.revert_chip = row;
+        self
+    }
+
+    fn push_revert_chip(
+        &self,
+        window: &mut Window,
+        row_origin: Point<Pixels>,
+        row_width: Pixels,
+        row_h: Pixels,
+        chips: &mut Vec<RoundedQuad>,
+        chip_glyphs: &mut Vec<Glyphs>,
+    ) {
+        let bounds = revert_chip_bounds(row_origin, row_width, row_h);
+        chips.push(RoundedQuad {
+            bounds,
+            color: self.palette.chip_bg,
+            corners: Corners::all(bounds.size.height / 2.0),
+        });
+        let label = self.shape_plain(window, REVERT_CHIP_LABEL.into(), self.palette.chip_fg);
+        let x = bounds.origin.x + ((bounds.size.width - label.width()) / 2.0).max(px(0.));
+        let y = bounds.origin.y + (bounds.size.height - self.line_height) / 2.0;
+        chip_glyphs.push(Glyphs {
+            origin: point(x, y),
+            line: label,
+            clip: None,
+        });
     }
 
     fn text_runs(
@@ -438,6 +504,45 @@ impl DiffElement {
         window
             .text_system()
             .shape_line(text, self.font_size, &runs, None)
+    }
+
+    fn change_colors(&self, added: bool, tone: ChangeTone) -> (Hsla, Hsla, Option<Hsla>) {
+        let p = &self.palette;
+        match (added, tone) {
+            (true, ChangeTone::Full) => (p.add_bg, p.add_bar, Some(p.word_add)),
+            (false, ChangeTone::Full) => (p.del_bg, p.del_bar, Some(p.word_del)),
+            (true, ChangeTone::Muted) => (p.add_bg_muted, p.add_bar_muted, None),
+            (false, ChangeTone::Muted) => (p.del_bg_muted, p.del_bar_muted, None),
+            (true, ChangeTone::Plain) => (p.context_bg, p.add_bar, None),
+            (false, ChangeTone::Plain) => (p.context_bg, p.del_bar, None),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_word_rects(
+        &self,
+        line: &ShapedLine,
+        runs: &[Range<usize>],
+        code_x: Pixels,
+        clip_left: Pixels,
+        clip_right: Pixels,
+        y: Pixels,
+        color: Hsla,
+        quads: &mut Vec<Quad>,
+    ) {
+        for_each_word_rect(
+            runs,
+            |index| f32::from(line.x_for_index(index)),
+            f32::from(code_x),
+            f32::from(clip_left),
+            f32::from(clip_right),
+            |x0, x1| {
+                quads.push(Quad {
+                    bounds: Bounds::new(point(px(x0), y), size(px(x1 - x0), self.line_height)),
+                    color,
+                });
+            },
+        );
     }
 
     fn push_hunk_bar(
@@ -758,17 +863,21 @@ impl DiffElement {
                 );
             }
             RowKind::Context | RowKind::Added | RowKind::Removed => {
-                let (bg, gutter_bg, bar_color) = match row.kind {
-                    RowKind::Added => (Some(p.add_bg), p.add_gutter_bg, Some(p.add_bar)),
-                    RowKind::Removed => (Some(p.del_bg), p.del_gutter_bg, Some(p.del_bar)),
-                    _ => (Some(p.context_bg), p.gutter_bg, None),
+                let (bg, gutter_bg, bar_color, word_color) = match row.kind {
+                    RowKind::Added => {
+                        let (bg, bar, word) = self.change_colors(true, row.tone);
+                        (bg, p.add_gutter_bg, Some(bar), word)
+                    }
+                    RowKind::Removed => {
+                        let (bg, bar, word) = self.change_colors(false, row.tone);
+                        (bg, p.del_gutter_bg, Some(bar), word)
+                    }
+                    _ => (p.context_bg, p.gutter_bg, None, None),
                 };
-                if let Some(bg) = bg {
-                    quads.push(Quad {
-                        bounds: row_bounds,
-                        color: bg,
-                    });
-                }
+                quads.push(Quad {
+                    bounds: row_bounds,
+                    color: bg,
+                });
                 quads.push(Quad {
                     bounds: Bounds::new(origin, size(px(BAR_W + PAD2) + self.gutter_w, row_h)),
                     color: gutter_bg,
@@ -794,6 +903,18 @@ impl DiffElement {
                 let code_x = text_x - h_offset;
                 if !row.text.is_empty() {
                     let line = self.shape(window, &row.text, &row.syntax_runs, p.text);
+                    if let Some(word) = word_color {
+                        self.push_word_rects(
+                            &line,
+                            &row.change_runs,
+                            code_x,
+                            text_x,
+                            row_bounds.right(),
+                            origin.y,
+                            word,
+                            quads,
+                        );
+                    }
                     glyphs.push(Glyphs {
                         origin: point(code_x, origin.y),
                         line,
@@ -926,18 +1047,22 @@ impl DiffElement {
         let p = &self.palette;
         let lh = self.line_height;
         let half_bounds = Bounds::new(origin, size(width, lh));
-        let (bg, gutter_bg, bar_color) = match cell.kind {
-            CellKind::Added => (Some(p.add_bg), p.add_gutter_bg, Some(p.add_bar)),
-            CellKind::Removed => (Some(p.del_bg), p.del_gutter_bg, Some(p.del_bar)),
-            CellKind::Phantom => (Some(p.phantom_bg), p.gutter_bg, None),
-            CellKind::Context => (Some(p.context_bg), p.gutter_bg, None),
+        let (bg, gutter_bg, bar_color, word_color) = match cell.kind {
+            CellKind::Added => {
+                let (bg, bar, word) = self.change_colors(true, cell.tone);
+                (bg, p.add_gutter_bg, Some(bar), word)
+            }
+            CellKind::Removed => {
+                let (bg, bar, word) = self.change_colors(false, cell.tone);
+                (bg, p.del_gutter_bg, Some(bar), word)
+            }
+            CellKind::Phantom => (p.phantom_bg, p.gutter_bg, None, None),
+            CellKind::Context => (p.context_bg, p.gutter_bg, None, None),
         };
-        if let Some(bg) = bg {
-            quads.push(Quad {
-                bounds: half_bounds,
-                color: bg,
-            });
-        }
+        quads.push(Quad {
+            bounds: half_bounds,
+            color: bg,
+        });
         if matches!(cell.kind, CellKind::Phantom) {
             let hatch_x = origin.x + px(BAR_W + HALF_PAD) + self.gutter_w;
             let hatch_w = (half_bounds.right() - hatch_x).max(px(0.));
@@ -971,6 +1096,18 @@ impl DiffElement {
         let code_x = text_x - h_offset;
         if !cell.text.is_empty() {
             let line = self.shape(window, &cell.text, &cell.syntax_runs, p.text);
+            if let Some(word) = word_color {
+                self.push_word_rects(
+                    &line,
+                    &cell.change_runs,
+                    code_x,
+                    text_x,
+                    half_bounds.right(),
+                    origin.y,
+                    word,
+                    quads,
+                );
+            }
             glyphs.push(Glyphs {
                 origin: point(code_x, origin.y),
                 line,
@@ -1080,6 +1217,8 @@ impl Element for DiffElement {
         let mut images = Vec::with_capacity(visible_rows / 12);
         let mut glyphs = Vec::with_capacity(visible_rows.saturating_mul(if split { 4 } else { 2 }));
         let mut hatches = Vec::with_capacity(visible_rows);
+        let mut chips = Vec::new();
+        let mut chip_glyphs = Vec::new();
         let mut scrollbars = Vec::new();
         let mut sticky_quads = Vec::with_capacity(2);
         let mut sticky_images = Vec::with_capacity(1);
@@ -1236,6 +1375,21 @@ impl Element for DiffElement {
             }
         }
 
+        if let Some(row) = self.revert_chip
+            && row >= first
+            && row < last
+            && let (Some(top), Some(bottom)) = (offsets.get(row), offsets.get(row + 1))
+        {
+            self.push_revert_chip(
+                window,
+                point(bounds.origin.x, bounds.origin.y + px(*top)),
+                width,
+                px(bottom - top),
+                &mut chips,
+                &mut chip_glyphs,
+            );
+        }
+
         let segments = h_scrollbar_segments(
             &spans,
             &offsets,
@@ -1270,6 +1424,8 @@ impl Element for DiffElement {
             images,
             glyphs,
             hatches,
+            chips,
+            chip_glyphs,
             scrollbars,
             sticky_quads,
             sticky_images,
@@ -1331,6 +1487,21 @@ impl Element for DiffElement {
                         .paint(g.origin, lh, TextAlign::Left, None, window, cx);
                 }
             }
+            for q in &layout.chips {
+                window.paint_quad(quad(
+                    q.bounds,
+                    q.corners,
+                    q.color,
+                    px(0.),
+                    q.color,
+                    BorderStyle::Solid,
+                ));
+            }
+            for g in layout.chip_glyphs {
+                let _ = g
+                    .line
+                    .paint(g.origin, lh, TextAlign::Left, None, window, cx);
+            }
             for q in &layout.sticky_quads {
                 window.paint_quad(fill(q.bounds, q.color));
             }
@@ -1380,5 +1551,85 @@ impl IntoElement for DiffElement {
 
     fn into_element(self) -> Self::Element {
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rects(
+        runs: &[Range<usize>],
+        code_x: f32,
+        clip_left: f32,
+        clip_right: f32,
+    ) -> Vec<(f32, f32)> {
+        let mut out = Vec::new();
+        for_each_word_rect(
+            runs,
+            |index| index as f32 * 7.0,
+            code_x,
+            clip_left,
+            clip_right,
+            |x0, x1| out.push((x0, x1)),
+        );
+        out
+    }
+
+    #[test]
+    fn word_rects_follow_shaped_positions() {
+        assert_eq!(
+            rects(&[2..5, 8..10], 100.0, 100.0, 1000.0),
+            vec![(114.0, 135.0), (156.0, 170.0)]
+        );
+    }
+
+    #[test]
+    fn word_rects_are_clipped_to_the_cell_when_scrolled() {
+        assert_eq!(
+            rects(std::slice::from_ref(&(2..5)), 90.0, 100.0, 1000.0),
+            vec![(104.0, 125.0)]
+        );
+        assert_eq!(
+            rects(std::slice::from_ref(&(2..5)), 100.0, 100.0, 120.0),
+            vec![(114.0, 120.0)]
+        );
+        assert!(rects(std::slice::from_ref(&(2..5)), 0.0, 100.0, 1000.0).is_empty());
+        assert!(rects(std::slice::from_ref(&(20..30)), 100.0, 100.0, 200.0).is_empty());
+    }
+
+    #[test]
+    fn the_revert_chip_sits_at_the_right_edge_of_the_row() {
+        let bounds = revert_chip_bounds(point(px(100.), px(200.)), px(400.), px(ROW_HEIGHT));
+        assert_eq!(
+            bounds.origin.x,
+            px(100. + 400. - REVERT_CHIP_PAD_R - REVERT_CHIP_W)
+        );
+        assert_eq!(bounds.origin.y, px(201.));
+        assert_eq!(bounds.size.width, px(REVERT_CHIP_W));
+        assert_eq!(bounds.size.height, px(REVERT_CHIP_H));
+        assert!(bounds.contains(&point(px(440.), px(210.))));
+        assert!(!bounds.contains(&point(px(300.), px(210.))));
+    }
+
+    #[test]
+    fn word_rects_span_the_displayed_width_of_a_tab() {
+        let tab_width = |index: usize| {
+            if index == 0 {
+                0.0
+            } else {
+                32.0 + (index as f32 - 1.0) * 7.0
+            }
+        };
+        let mut out = Vec::new();
+        for_each_word_rect(
+            std::slice::from_ref(&(0..1)),
+            tab_width,
+            100.0,
+            100.0,
+            1000.0,
+            |x0, x1| out.push((x0, x1)),
+        );
+        assert_eq!(out, vec![(100.0, 132.0)]);
     }
 }

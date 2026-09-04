@@ -1,11 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use gpui::Pixels;
 
+use super::code::save::FileStamp;
 use super::git::DiffDockBuilt;
 use crate::diff::{
-    DisplayRow, FileDiff, FileRowCache, FileSpan, SplitRow, apply_collapse_split,
+    DiffOptions, DisplayRow, FileDiff, FileRowCache, FileSpan, SplitRow, apply_collapse_split,
     apply_collapse_unified, apply_expanded_split_with_sources, apply_expanded_unified_with_sources,
     split_file_spans, split_max_line_no, split_offsets, unified_file_spans, unified_max_line_no,
     unified_offsets,
@@ -26,13 +28,29 @@ pub(crate) enum DiffDockTab {
     PendingFile,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DiffOptionsSubmenu {
+    Layout,
+    Highlight,
+    Whitespace,
+}
+
 pub(super) struct DiffChrome<'a> {
     pub(super) data: &'a Option<DiffDockData>,
     pub(super) cwd: String,
     pub(super) split: bool,
+    pub(super) options: DiffOptions,
     pub(super) options_open: bool,
-    pub(super) layout_submenu_open: bool,
+    pub(super) options_submenu: Option<DiffOptionsSubmenu>,
     pub(super) collapsed: &'a HashSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DiffHover {
+    pub(super) split: bool,
+    pub(super) path: String,
+    pub(super) hunk: usize,
+    pub(super) chip_row: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -74,6 +92,10 @@ pub(crate) struct DiffDockData {
     pub(super) removed: u32,
     pub(super) theme_generation: u64,
     pub(super) fingerprint: u64,
+    pub(super) options: DiffOptions,
+    pub(super) toplevel: Option<PathBuf>,
+    pub(super) head_sha: Option<String>,
+    pub(super) stamps: Rc<HashMap<String, FileStamp>>,
 }
 
 impl DiffDockData {
@@ -106,7 +128,15 @@ impl DiffDockData {
             removed: 0,
             theme_generation: crate::theme::theme_generation(),
             fingerprint: 0,
+            options: DiffOptions::default(),
+            toplevel: None,
+            head_sha: None,
+            stamps: Rc::new(HashMap::new()),
         }
+    }
+
+    pub(super) fn has_rows(&self) -> bool {
+        self.unified_loaded || self.split_loaded
     }
 
     pub(super) fn message(cwd: String, error: String) -> Self {
@@ -147,6 +177,10 @@ impl DiffDockData {
         self.removed = built.removed;
         self.theme_generation = built.theme_generation;
         self.fingerprint = built.fingerprint;
+        self.options = built.options;
+        self.toplevel = built.toplevel;
+        self.head_sha = built.head_sha;
+        self.stamps = Rc::new(built.stamps);
         self.files_full = Rc::new(built.files_full);
         self.row_caches = Rc::new(built.row_caches);
 

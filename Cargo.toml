@@ -13,6 +13,7 @@ members = [
     "crates/paneflow-shim",
     "crates/paneflow-telemetry",
     "crates/paneflow-terminal-ghostty",
+    "crates/paneflow-textdiff",
     "src-app",
 ]
 # Scope bare `cargo run` / `cargo build` / `cargo test` to the desktop app.
@@ -62,6 +63,7 @@ paneflow-config = { path = "crates/paneflow-config" }
 paneflow-ipc-client = { path = "crates/paneflow-ipc-client" }
 paneflow-process = { path = "crates/paneflow-process" }
 paneflow-telemetry = { path = "crates/paneflow-telemetry" }
+paneflow-textdiff = { path = "crates/paneflow-textdiff" }
 
 # Workspace-wide clippy lint policy (US-007). Mirrors the mandatory
 # CLAUDE.md cherry-picked restriction set. `warn` is preferred over `deny`

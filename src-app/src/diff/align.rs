@@ -104,6 +104,9 @@ mod tests {
             base_row_range: b,
             new_row_range: n,
             status,
+            tone: super::super::engine::ChangeTone::Full,
+            base_runs: Vec::new(),
+            new_runs: Vec::new(),
         }
     }
 

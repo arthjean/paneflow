@@ -5,6 +5,33 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ## [Unreleased]
 
+### Added
+
+- The Changes tab highlights the words that differ inside a modified block,
+  on top of the line wash, so a one-word edit on a long line reads at a
+  glance. The comparison is a port of IntelliJ's pipeline on imara-diff:
+  lines carrying three or more non-blank characters are matched first,
+  short lines are paired in the gaps between them, block boundaries slide
+  onto empty lines, and each modified block gets a word pass with
+  punctuation matching. Two submenus join the dock Options menu next to
+  Layout: Highlight (Words, Lines, None) and Whitespace (Default, Trim,
+  Ignore), so an agent's reformat can be read with the indentation changes
+  muted. Both last for the session, like Split and Unified, and a block
+  whose two sides differ only by whitespace is painted muted.
+
+- A file opened in a dock tab shows its changes against `HEAD` in the
+  gutter: a bar for an added or modified block, a dot for a deletion.
+  Typing shifts the blocks without a diff, and only the touched blocks are
+  re-diffed off the render thread after a short pause. Clicking a marker
+  opens a popup with the block's previous text, syntax highlighted, with
+  Copy and Revert; a revert is a single undo step. Escape, a click outside,
+  or an agent rewriting the file closes the popup.
+
+- Hovering a block of a modified file in the Changes tab shows a Revert
+  chip. It writes the `HEAD` lines back through the atomic save path and
+  refreshes the dock, and refuses when the file has unsaved changes in a
+  dock tab or changed on disk since the dock was built.
+
 ### Changed
 
 - The terminal grid is now measured on the font, the way Ghostty measures

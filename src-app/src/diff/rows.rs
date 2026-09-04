@@ -3,6 +3,7 @@ use std::ops::Range;
 
 use gpui::{Hsla, SharedString};
 
+use super::engine::{ChangeTone, DiffHunk};
 use super::git::{FileChange, FileDiff};
 use super::syntax::DiffSyntax;
 
@@ -181,6 +182,8 @@ pub struct DisplayRow {
     pub old_no: Option<u32>,
     pub new_no: Option<u32>,
     pub syntax_runs: Vec<(Range<usize>, Hsla)>,
+    pub change_runs: Vec<Range<usize>>,
+    pub tone: ChangeTone,
     pub header: Option<HeaderParts>,
     pub fold_key: Option<SharedString>,
     pub fold_base_start: Option<u32>,
@@ -239,8 +242,43 @@ pub struct RowPalette {
     pub add_gutter_bg: Hsla,
     pub del_gutter_bg: Hsla,
     pub cursor_line_bg: Hsla,
+    pub add_bg_muted: Hsla,
+    pub del_bg_muted: Hsla,
+    pub add_bar_muted: Hsla,
+    pub del_bar_muted: Hsla,
+    pub word_add: Hsla,
+    pub word_del: Hsla,
+    pub chip_bg: Hsla,
+    pub chip_fg: Hsla,
 }
 
+fn context_row(
+    lines: &[&str],
+    idx: u32,
+    old_no: Option<u32>,
+    new_no: Option<u32>,
+    syntax_runs: Vec<(Range<usize>, Hsla)>,
+) -> DisplayRow {
+    content_row(
+        lines,
+        idx,
+        RowKind::Context,
+        old_no,
+        new_no,
+        syntax_runs,
+        &[],
+        ChangeTone::Full,
+    )
+}
+
+fn clip_runs(runs: &[Range<usize>], text_len: usize) -> Vec<Range<usize>> {
+    runs.iter()
+        .map(|run| run.start.min(text_len)..run.end.min(text_len))
+        .filter(|run| run.start < run.end)
+        .collect()
+}
+
+#[allow(clippy::too_many_arguments)]
 fn content_row(
     lines: &[&str],
     idx: u32,
@@ -248,18 +286,18 @@ fn content_row(
     old_no: Option<u32>,
     new_no: Option<u32>,
     syntax_runs: Vec<(Range<usize>, Hsla)>,
+    change_runs: &[Range<usize>],
+    tone: ChangeTone,
 ) -> DisplayRow {
+    let text = lines.get(idx as usize).copied().unwrap_or("");
     DisplayRow {
         kind,
-        text: lines
-            .get(idx as usize)
-            .copied()
-            .unwrap_or("")
-            .to_string()
-            .into(),
+        text: text.to_string().into(),
         old_no,
         new_no,
         syntax_runs,
+        change_runs: clip_runs(change_runs, text.len()),
+        tone,
         header: None,
         fold_key: None,
         fold_base_start: None,
@@ -293,6 +331,8 @@ fn folded_display_row(path: &str, base_start: u32, new_start: u32, count: u32) -
         old_no: None,
         new_no: None,
         syntax_runs: Vec::new(),
+        change_runs: Vec::new(),
+        tone: ChangeTone::Full,
         header: None,
         fold_key: Some(fold_key(path, base_start, new_start, count)),
         fold_base_start: Some(base_start),
@@ -320,6 +360,8 @@ fn truncated_display_row(dropped: usize) -> DisplayRow {
         old_no: None,
         new_no: None,
         syntax_runs: Vec::new(),
+        change_runs: Vec::new(),
+        tone: ChangeTone::Full,
         header: None,
         fold_key: None,
         fold_base_start: None,
@@ -432,7 +474,31 @@ pub fn palette(ui: crate::theme::UiColors) -> RowPalette {
         add_gutter_bg: diff.added_gutter_background,
         del_gutter_bg: diff.deleted_gutter_background,
         cursor_line_bg: ui.text.opacity(0.05),
+        add_bg_muted: diff.added.opacity(MUTED_WASH_ALPHA),
+        del_bg_muted: diff.deleted.opacity(MUTED_WASH_ALPHA),
+        add_bar_muted: ui.base.blend(diff.added).opacity(MUTED_BAR_ALPHA),
+        del_bar_muted: ui.base.blend(diff.deleted).opacity(MUTED_BAR_ALPHA),
+        word_add: ui.vc_word_added,
+        word_del: ui.vc_word_deleted,
+        chip_bg: crate::app::constants::sidebar_tab_hover_background(),
+        chip_fg: ui.text,
     }
+}
+
+pub const MUTED_WASH_ALPHA: f32 = 0.08;
+
+pub const MUTED_BAR_ALPHA: f32 = 0.5;
+
+pub(crate) fn hunk_for_base_line(hunks: &[DiffHunk], line: u32) -> Option<&DiffHunk> {
+    let index = hunks.partition_point(|h| h.base_row_range.end <= line);
+    hunks
+        .get(index)
+        .filter(|h| h.base_row_range.contains(&line))
+}
+
+pub(crate) fn hunk_for_new_line(hunks: &[DiffHunk], line: u32) -> Option<&DiffHunk> {
+    let index = hunks.partition_point(|h| h.new_row_range.end <= line);
+    hunks.get(index).filter(|h| h.new_row_range.contains(&line))
 }
 
 #[cfg(test)]
@@ -468,6 +534,8 @@ pub fn build_display_rows_with_caches(
             old_no: None,
             new_no: None,
             syntax_runs: Vec::new(),
+            change_runs: Vec::new(),
+            tone: ChangeTone::Full,
             header: Some(HeaderParts {
                 dir_prefix: dir_prefix.into(),
                 basename: basename.into(),
@@ -488,6 +556,8 @@ pub fn build_display_rows_with_caches(
                 old_no: None,
                 new_no: None,
                 syntax_runs: Vec::new(),
+                change_runs: Vec::new(),
+                tone: ChangeTone::Full,
                 header: None,
                 fold_key: None,
                 fold_base_start: None,
@@ -522,10 +592,9 @@ pub fn build_display_rows_with_caches(
         };
 
         let ctx = |bi: u32, ni: u32| {
-            content_row(
+            context_row(
                 &new_lines,
                 ni,
-                RowKind::Context,
                 Some(bi + 1),
                 Some(ni + 1),
                 line_syntax(syn_new, ni),
@@ -560,6 +629,8 @@ pub fn build_display_rows_with_caches(
                         Some(r + 1),
                         None,
                         line_syntax(syn_old, r),
+                        h.base_line_runs(r),
+                        h.tone,
                     ),
                     &mut rows,
                     &mut dropped,
@@ -575,6 +646,8 @@ pub fn build_display_rows_with_caches(
                         None,
                         Some(r + 1),
                         line_syntax(syn_new, r),
+                        h.new_line_runs(r),
+                        h.tone,
                     ),
                     &mut rows,
                     &mut dropped,
@@ -608,6 +681,8 @@ pub struct HalfCell {
     pub no: Option<u32>,
     pub text: SharedString,
     pub syntax_runs: Vec<(Range<usize>, Hsla)>,
+    pub change_runs: Vec<Range<usize>>,
+    pub tone: ChangeTone,
 }
 
 #[derive(Clone)]
@@ -618,24 +693,30 @@ pub enum SplitRow {
     Pair { left: HalfCell, right: HalfCell },
 }
 
-fn resolve_half(cell: Cell, lines: &[&str], syntax: &[Vec<(Range<usize>, Hsla)>]) -> HalfCell {
-    let (no, text, syntax_runs) = match cell.kind {
+fn resolve_half(
+    cell: Cell,
+    lines: &[&str],
+    syntax: &[Vec<(Range<usize>, Hsla)>],
+    change: Option<(&[Range<usize>], ChangeTone)>,
+) -> HalfCell {
+    let (no, text, syntax_runs, change_runs, tone) = match cell.kind {
         CellKind::Phantom => (
             None,
             SharedString::default(),
             Vec::<(Range<usize>, Hsla)>::new(),
+            Vec::new(),
+            ChangeTone::Full,
         ),
         _ => {
             let idx = cell.line.unwrap_or(0);
+            let text = lines.get(idx as usize).copied().unwrap_or("");
+            let (runs, tone) = change.unwrap_or((&[], ChangeTone::Full));
             (
                 Some(idx + 1),
-                lines
-                    .get(idx as usize)
-                    .copied()
-                    .unwrap_or("")
-                    .to_string()
-                    .into(),
+                text.to_string().into(),
                 line_syntax(syntax, idx),
+                clip_runs(runs, text.len()),
+                tone,
             )
         }
     };
@@ -644,6 +725,8 @@ fn resolve_half(cell: Cell, lines: &[&str], syntax: &[Vec<(Range<usize>, Hsla)>]
         no,
         text,
         syntax_runs,
+        change_runs,
+        tone,
     }
 }
 
@@ -654,10 +737,23 @@ fn split_pair_row(
     new_lines: &[&str],
     syn_old: &[Vec<(Range<usize>, Hsla)>],
     syn_new: &[Vec<(Range<usize>, Hsla)>],
+    hunks: &[DiffHunk],
 ) -> SplitRow {
+    let left_change = match (left.kind, left.line) {
+        (CellKind::Removed, Some(line)) => {
+            hunk_for_base_line(hunks, line).map(|h| (h.base_line_runs(line), h.tone))
+        }
+        _ => None,
+    };
+    let right_change = match (right.kind, right.line) {
+        (CellKind::Added, Some(line)) => {
+            hunk_for_new_line(hunks, line).map(|h| (h.new_line_runs(line), h.tone))
+        }
+        _ => None,
+    };
     SplitRow::Pair {
-        left: resolve_half(left, base_lines, syn_old),
-        right: resolve_half(right, new_lines, syn_new),
+        left: resolve_half(left, base_lines, syn_old, left_change),
+        right: resolve_half(right, new_lines, syn_new, right_change),
     }
 }
 
@@ -676,7 +772,13 @@ fn build_split_rows_from_hunk_windows(
             *dropped += 1;
         } else {
             rows.push(split_pair_row(
-                left, right, base_lines, new_lines, syn_old, syn_new,
+                left,
+                right,
+                base_lines,
+                new_lines,
+                syn_old,
+                syn_new,
+                &file.hunks,
             ));
         }
     };
@@ -889,6 +991,7 @@ pub fn build_split_rows_with_caches(
                     &new_lines,
                     syn_old,
                     syn_new,
+                    &file.hunks,
                 ));
             }
         };
@@ -1032,10 +1135,9 @@ fn unified_fold_rows(
         .map(|k| {
             let bi = base_start + k;
             let ni = new_start + k;
-            content_row(
+            context_row(
                 &new_lines,
                 ni,
-                RowKind::Context,
                 Some(bi + 1),
                 Some(ni + 1),
                 line_syntax(&cache.syn_new, ni),
@@ -1068,6 +1170,7 @@ fn split_fold_rows(
                 &new_lines,
                 &cache.syn_old,
                 &cache.syn_new,
+                &file.hunks,
             )
         })
         .collect()
@@ -1198,7 +1301,221 @@ pub fn apply_expanded_split_with_sources(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::diff::engine::DiffHunkStatus;
+
+    fn modified_file(base: &str, new: &str) -> FileDiff {
+        FileDiff {
+            path: "a.rs".into(),
+            change: FileChange::Modified,
+            old_path: None,
+            base_text: base.to_string(),
+            new_text: new.to_string(),
+            hunks: crate::diff::engine::compute_hunks(base, new),
+            is_binary: false,
+        }
+    }
+
+    #[test]
+    fn unified_rows_carry_change_runs_on_both_sides_of_a_modified_block() {
+        let file = modified_file("let x = old;\n", "let x = new;\n");
+        let (rows, _) = build_display_rows(std::slice::from_ref(&file), None);
+        let removed = rows
+            .iter()
+            .find(|r| r.kind == RowKind::Removed)
+            .expect("removed row");
+        let added = rows
+            .iter()
+            .find(|r| r.kind == RowKind::Added)
+            .expect("added row");
+        assert_eq!(removed.change_runs, vec![8..11]);
+        assert_eq!(added.change_runs, vec![8..11]);
+        assert_eq!(removed.tone, ChangeTone::Full);
+        assert_eq!(added.tone, ChangeTone::Full);
+        assert!(
+            rows.iter()
+                .filter(|r| r.kind == RowKind::Context)
+                .all(|r| r.change_runs.is_empty())
+        );
+    }
+
+    #[test]
+    fn unified_insertion_rows_have_no_change_runs() {
+        let file = modified_file("a\nc\n", "a\nb\nc\n");
+        let (rows, _) = build_display_rows(std::slice::from_ref(&file), None);
+        let added: Vec<&DisplayRow> = rows.iter().filter(|r| r.kind == RowKind::Added).collect();
+        assert_eq!(added.len(), 1);
+        assert!(added[0].change_runs.is_empty());
+        assert_eq!(added[0].tone, ChangeTone::Full);
+    }
+
+    #[test]
+    fn split_pairs_carry_change_runs_left_and_right() {
+        let file = modified_file("fn a() -> u8 {\n", "fn b() -> u16 {\n");
+        let (rows, _) = build_split_rows(std::slice::from_ref(&file), None);
+        let pair = rows
+            .iter()
+            .find_map(|row| match row {
+                SplitRow::Pair { left, right }
+                    if left.kind == CellKind::Removed && right.kind == CellKind::Added =>
+                {
+                    Some((left, right))
+                }
+                _ => None,
+            })
+            .expect("changed pair");
+        assert!(!pair.0.change_runs.is_empty(), "left side has runs");
+        assert!(!pair.1.change_runs.is_empty(), "right side has runs");
+        assert!(
+            pair.0
+                .change_runs
+                .iter()
+                .all(|r| r.end <= pair.0.text.len())
+        );
+        assert!(
+            pair.1
+                .change_runs
+                .iter()
+                .all(|r| r.end <= pair.1.text.len())
+        );
+    }
+
+    #[test]
+    fn split_phantom_and_insertion_cells_have_no_runs() {
+        let file = modified_file("a\nc\n", "a\nb\nc\n");
+        let (rows, _) = build_split_rows(std::slice::from_ref(&file), None);
+        let (left, right) = rows
+            .iter()
+            .find_map(|row| match row {
+                SplitRow::Pair { left, right } if right.kind == CellKind::Added => {
+                    Some((left, right))
+                }
+                _ => None,
+            })
+            .expect("insertion pair");
+        assert_eq!(left.kind, CellKind::Phantom);
+        assert!(left.change_runs.is_empty());
+        assert!(right.change_runs.is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_block_rows_are_muted() {
+        let base = "a\nb\n";
+        let new = "a\n   \nb\n";
+        let options = crate::diff::DiffOptions {
+            highlight: crate::diff::HighlightPolicy::Words,
+            whitespace: crate::diff::ComparisonPolicy::IgnoreWhitespaces,
+        };
+        let mut file = modified_file(base, new);
+        file.hunks = crate::diff::engine::compute_hunks_with(base, new, options);
+        let (rows, _) = build_display_rows(std::slice::from_ref(&file), None);
+        let changed: Vec<&DisplayRow> = rows
+            .iter()
+            .filter(|r| matches!(r.kind, RowKind::Added | RowKind::Removed))
+            .collect();
+        assert_eq!(changed.len(), 1);
+        assert!(changed.iter().all(|r| r.tone == ChangeTone::Muted));
+        assert!(changed.iter().all(|r| r.change_runs.is_empty()));
+        let (split, _) = build_split_rows(std::slice::from_ref(&file), None);
+        assert!(split.iter().any(|row| matches!(
+            row,
+            SplitRow::Pair { left, right }
+                if left.kind == CellKind::Phantom && right.tone == ChangeTone::Muted
+        )));
+    }
+
+    #[test]
+    fn binary_file_rows_have_no_runs_and_the_dock_keeps_building() {
+        let binary = FileDiff {
+            path: "blob.bin".into(),
+            change: FileChange::Modified,
+            old_path: None,
+            base_text: String::new(),
+            new_text: String::new(),
+            hunks: Vec::new(),
+            is_binary: true,
+        };
+        let text = modified_file("x\n", "y\n");
+        let (rows, _) = build_display_rows(&[binary, text], None);
+        assert!(rows.iter().any(|r| r.kind == RowKind::Binary));
+        assert!(rows.iter().any(|r| r.kind == RowKind::Added));
+        assert!(
+            rows.iter()
+                .filter(|r| r.kind != RowKind::Added && r.kind != RowKind::Removed)
+                .all(|r| r.change_runs.is_empty())
+        );
+    }
+
+    #[test]
+    fn long_line_runs_stay_inside_the_text_and_the_row_cap_holds() {
+        let base = format!("{}\n", "x".repeat(10_000));
+        let new = format!("{}y\n", "x".repeat(10_000));
+        let mut base_text = base.clone();
+        let mut new_text = new.clone();
+        for i in 0..(MAX_DISPLAY_ROWS + 20) {
+            base_text.push_str(&format!("old{i}\n"));
+            new_text.push_str(&format!("new{i}\n"));
+        }
+        let file = modified_file(&base_text, &new_text);
+        let (rows, dropped) = build_display_rows(std::slice::from_ref(&file), None);
+        assert!(dropped > 0);
+        assert_eq!(rows.len(), MAX_DISPLAY_ROWS + 1);
+        for row in &rows {
+            for run in &row.change_runs {
+                assert!(run.end <= row.text.len());
+            }
+        }
+    }
+
+    #[test]
+    fn clip_runs_bounds_every_run_to_the_text() {
+        assert_eq!(clip_runs(&[2..5, 8..40, 50..60], 10), vec![2..5, 8..10]);
+        assert!(clip_runs(std::slice::from_ref(&(10..12)), 10).is_empty());
+    }
+
+    fn unified_line_numbers(file: &FileDiff) -> (Vec<u32>, Vec<u32>) {
+        let (rows, _) = build_display_rows(std::slice::from_ref(file), None);
+        (
+            rows.iter().filter_map(|r| r.old_no).collect(),
+            rows.iter().filter_map(|r| r.new_no).collect(),
+        )
+    }
+
+    fn split_line_numbers(file: &FileDiff) -> (Vec<u32>, Vec<u32>) {
+        let (rows, _) = build_split_rows(std::slice::from_ref(file), None);
+        let mut left = Vec::new();
+        let mut right = Vec::new();
+        for row in &rows {
+            if let SplitRow::Pair { left: l, right: r } = row {
+                left.extend(l.no);
+                right.extend(r.no);
+            }
+        }
+        (left, right)
+    }
+
+    #[test]
+    fn a_line_matched_against_the_phantom_last_line_still_reaches_the_rows() {
+        let file = modified_file(
+            "\t \n,c,\nac  yy\n;x1;\n,cx1\t,\n",
+            "b,  \t\n\n\na \nyyc;  \n\nb \n",
+        );
+        let expected = ((1..=5).collect::<Vec<u32>>(), (1..=7).collect::<Vec<u32>>());
+        assert_eq!(unified_line_numbers(&file), expected);
+        assert_eq!(split_line_numbers(&file), expected);
+    }
+
+    #[test]
+    fn a_trailing_line_left_unpaired_by_the_policy_still_reaches_the_rows() {
+        let base = "alpha\nbeta\n   ";
+        let new = "gamma\n";
+        let options = crate::diff::DiffOptions {
+            highlight: crate::diff::HighlightPolicy::Words,
+            whitespace: crate::diff::ComparisonPolicy::TrimWhitespaces,
+        };
+        let mut file = modified_file(base, new);
+        file.hunks = crate::diff::engine::compute_hunks_with(base, new, options);
+        assert_eq!(unified_line_numbers(&file), (vec![1, 2, 3], vec![1]));
+        assert_eq!(split_line_numbers(&file), (vec![1, 2, 3], vec![1]));
+    }
 
     #[test]
     fn split_header_path_separates_dir_from_basename() {
@@ -1575,11 +1892,10 @@ mod tests {
             old_path: None,
             base_text: base,
             new_text: new,
-            hunks: vec![crate::diff::engine::DiffHunk {
-                base_row_range: changed..changed + 1,
-                new_row_range: changed..changed + 1,
-                status: DiffHunkStatus::Modified,
-            }],
+            hunks: vec![crate::diff::engine::DiffHunk::plain(
+                changed..changed + 1,
+                changed..changed + 1,
+            )],
             is_binary: false,
         };
 
@@ -1640,16 +1956,14 @@ mod tests {
             base_text: base,
             new_text: new,
             hunks: vec![
-                crate::diff::engine::DiffHunk {
-                    base_row_range: first_changed..first_changed + 1,
-                    new_row_range: first_changed..first_changed + 1,
-                    status: DiffHunkStatus::Modified,
-                },
-                crate::diff::engine::DiffHunk {
-                    base_row_range: second_changed..second_changed + 1,
-                    new_row_range: second_changed..second_changed + 1,
-                    status: DiffHunkStatus::Modified,
-                },
+                crate::diff::engine::DiffHunk::plain(
+                    first_changed..first_changed + 1,
+                    first_changed..first_changed + 1,
+                ),
+                crate::diff::engine::DiffHunk::plain(
+                    second_changed..second_changed + 1,
+                    second_changed..second_changed + 1,
+                ),
             ],
             is_binary: false,
         };

@@ -85,6 +85,9 @@ platform shaper.
 | `pagedown_stale_rows` | rows | Median rows of a 60-row viewport still uncolored after one 2 ms fill, over 20 pseudo-random jumps on a freshly opened 300 KB Rust file. |
 | `pagedown_stale_rows_max` | rows | The worst of those 20 jumps: rows the first frame after a PageDown leaves in plain text. |
 | `pagedown_frames_to_fresh` | frames | Successive 2 ms fills the worst of those 20 jumps needs before no visible row is stale. |
+| `textdiff_300kb_50_blocks` | ns | `paneflow_textdiff::compare_lines_inner` with word highlighting over 300 KB of synthetic Rust against a copy with 50 rewritten 10-line blocks. Its `p95` is the 25 ms target of EP-012. |
+| `textdiff_5k_lines_one_word_each` | ns | The same call over 5 000 edited lines of eight words, each with one word changed and separated from the next by an identical line, so the line pass yields 5 000 one-line blocks and the word pass runs once per edited line. Target: 150 ms. |
+| `textdiff_5k_lines_all_different` | ns | The same call over 5 000 dense lines of sixteen words split into four all-different blocks by identical separator lines. Each block exceeds the 20 000-chunk fine comparison threshold: the first three trip the bad-lines guard and the fourth is skipped without a word pass. Target: 50 ms. |
 
 The corpus is `src-app/src/app/diff_dock/code/bench_corpus.rs`, seeded with
 `EDITOR_CORPUS_SEED`. It is generated, never read from the repository's own
@@ -92,7 +95,11 @@ sources, so a run is byte-identical everywhere: synthetic Rust sized to 295 KB,
 2 MB (both under the 2 MB highlight cap, the larger by 48 bytes), and 3.7 MB
 (about 110 000 lines, past it); a
 single-line minified JSON document of exactly 10 000 characters; and Markdown
-carrying both inline and fenced code so the injection pass has work to do.
+carrying both inline and fenced code so the injection pass has work to do. The
+`textdiff_*` metrics add three seeded pairs from the same file: 300 KB of Rust
+with 50 rewritten 10-line blocks, 5 000 eight-word lines with one word changed
+per line and an identical separator line between them, and 5 000 sixteen-word
+lines in four all-different blocks.
 
 ### The PageDown stale-row probe
 

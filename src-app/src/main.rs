@@ -636,7 +636,8 @@ struct DiffDockState {
     pub(crate) generation: u64,
     pub(crate) scroll: gpui::ScrollHandle,
     pub(crate) diff_options_menu_open: bool,
-    pub(crate) diff_layout_submenu_open: bool,
+    pub(crate) diff_options_submenu: Option<crate::app::diff_dock::DiffOptionsSubmenu>,
+    pub(crate) diff_options: crate::diff::DiffOptions,
     pub(crate) diff_new_tab_menu_open: bool,
     pub(crate) picker: bool,
     pub(crate) picked: bool,
@@ -650,6 +651,7 @@ struct DiffDockState {
     pub(crate) resize: Option<(f32, f32, f32)>,
     pub(crate) h_scroll_drag: Option<crate::app::diff_dock::DiffDockHScrollDrag>,
     pub(crate) h_offsets: std::rc::Rc<Vec<f32>>,
+    pub(crate) hover: Option<crate::app::diff_dock::DiffHover>,
 }
 
 struct PaneFlowApp {

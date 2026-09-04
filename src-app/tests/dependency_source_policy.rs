@@ -97,3 +97,84 @@ fn paneflow_links_the_native_ghostty_engine_unconditionally() {
         "the Ghostty engine must be linked with the native feature"
     );
 }
+
+#[test]
+fn embedded_helpers_never_link_the_textdiff_crate() {
+    let manifest_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../Cargo.toml");
+    let output = Command::new(env!("CARGO"))
+        .args(["metadata", "--format-version", "1", "--manifest-path"])
+        .arg(&manifest_path)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to inspect Cargo metadata: {error}"));
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("cargo metadata returned invalid JSON: {error}"));
+
+    let names: std::collections::HashMap<&str, &str> = metadata["packages"]
+        .as_array()
+        .map(|packages| {
+            packages
+                .iter()
+                .filter_map(|package| Some((package["id"].as_str()?, package["name"].as_str()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let edges: std::collections::HashMap<&str, Vec<&str>> = metadata["resolve"]["nodes"]
+        .as_array()
+        .map(|nodes| {
+            nodes
+                .iter()
+                .filter_map(|node| {
+                    let id = node["id"].as_str()?;
+                    let deps = node["deps"]
+                        .as_array()?
+                        .iter()
+                        .filter_map(|dep| dep["pkg"].as_str())
+                        .collect();
+                    Some((id, deps))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        names.values().any(|name| *name == "paneflow-textdiff"),
+        "the workspace no longer resolves paneflow-textdiff"
+    );
+
+    let reaches_textdiff = |root: &str| {
+        let root_id = names
+            .iter()
+            .find(|(_, name)| **name == root)
+            .map(|(id, _)| *id)
+            .unwrap_or_else(|| panic!("cargo metadata omitted {root}"));
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = vec![root_id];
+        while let Some(id) = stack.pop() {
+            if !seen.insert(id) {
+                continue;
+            }
+            if names.get(id) == Some(&"paneflow-textdiff") {
+                return true;
+            }
+            if let Some(deps) = edges.get(id) {
+                stack.extend(deps.iter().copied());
+            }
+        }
+        false
+    };
+
+    for helper in ["paneflow-shim", "paneflow-ai-hook", "paneflow-mcp"] {
+        assert!(
+            !reaches_textdiff(helper),
+            "{helper} must not depend on paneflow-textdiff, transitively or otherwise"
+        );
+    }
+    assert!(
+        reaches_textdiff("paneflow-app"),
+        "paneflow-app is expected to link paneflow-textdiff"
+    );
+}
