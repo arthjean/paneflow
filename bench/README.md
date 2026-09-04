@@ -125,6 +125,40 @@ probe outright with the same unavailable result.
 design, which is the defect it measures. It runs last, after the timed
 scenarios, so it never inflates them.
 
+## Scroll frame scenario
+
+The editor suite runs without a window, so it cannot say what one wheel notch
+costs when terminals share the frame. That number comes from a separate
+ignored test, `layout::render::tests::editor_scroll_frame_by_pane_count`:
+
+```bash
+cargo test -p paneflow-app --release -- --ignored layout::render
+```
+
+It opens the 300 KB Rust corpus in a `CodeView` docked to the right of the pane
+grid, fills every terminal pane with `deterministic_streams()` and lets them go
+idle, places the caret at the top and scrolls away from it, then dispatches 120
+`ScrollWheelEvent` notches of `Lines(3)` spaced 8 ms apart. It repeats that for
+0, 2 and 6 terminal panes and prints one JSON line carrying
+`scroll_frame_p50_us_panes_N` and `scroll_frame_p95_us_panes_N` for each N,
+computed from GPUI's `dirty_to_draw_duration` over at least 100 frames per
+configuration. `render_content_lock_samples_panes_N` counts one terminal
+snapshot per pane per traced frame, which is the witness that every terminal is
+repainted by a scroll that only moved the editor. A configuration that cannot
+build its panes is reported with `scroll_frame_available_panes_N: false` and the
+others still run.
+
+**The measurement is relative, not absolute.** `TestAppContext` installs
+`NoopTextSystem`, so no platform shaping is included: the numbers compare
+configurations against each other and never bound the real cost of a frame.
+The absolute cost is read from a release profile of the running application.
+
+`terminal_share_p50_panes_6` and `terminal_share_p95_panes_6` are the fraction
+of a six-pane scroll frame that disappears at zero panes. **US-029 hosts the
+terminal panes behind `ViewElement::cached` only if that share reaches 0.30.**
+Below it, caching the panes is not worth its complexity and the story is
+canceled with the measured value recorded in the PRD changelog.
+
 ## Running
 
 ```bash
