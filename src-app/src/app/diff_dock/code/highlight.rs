@@ -20,6 +20,7 @@ use super::document::{CodeDocument, CodeEdit};
 
 pub(crate) const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 pub(crate) const HIGHLIGHT_FRAME_BUDGET: Duration = Duration::from_millis(2);
+pub(crate) const MAX_QUERY_ROWS: usize = 128;
 
 pub(crate) type LineRuns = Vec<(Range<usize>, Hsla)>;
 
@@ -43,6 +44,7 @@ struct GrammarPass {
     parser: Parser,
     tree: Option<Tree>,
     colors: Vec<Option<Hsla>>,
+    cursor: QueryCursor,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -68,10 +70,17 @@ pub(crate) struct DeferredParse {
     cancel: Arc<AtomicBool>,
 }
 
+#[derive(Default)]
+struct ParsedPass {
+    tree: Option<Tree>,
+    changed: Option<Vec<Range<usize>>>,
+}
+
 pub(crate) struct ParsedTrees {
     generation: u64,
     len_bytes: usize,
-    trees: Vec<Option<Tree>>,
+    passes: Vec<ParsedPass>,
+    parse_cost: Duration,
     cancelled: bool,
 }
 
@@ -96,29 +105,45 @@ impl DeferredParse {
             cancel,
         } = self;
         let len_bytes = rope.len_bytes();
-        let trees = passes
-            .into_iter()
-            .map(|(grammar, old)| {
-                if cancel.load(Ordering::Relaxed) {
-                    return None;
-                }
-                let mut parser = Parser::new();
-                if parser.set_language(&grammar.language).is_err() {
-                    return None;
-                }
-                parse_rope(
-                    &mut parser,
-                    &rope,
-                    old.as_ref(),
-                    None,
-                    Some(cancel.as_ref()),
-                )
-            })
-            .collect();
+        let mut parsed = Vec::with_capacity(passes.len());
+        let mut parse_cost = Duration::ZERO;
+        for (grammar, old) in passes {
+            if cancel.load(Ordering::Relaxed) {
+                parsed.push(ParsedPass::default());
+                continue;
+            }
+            let mut parser = Parser::new();
+            if parser.set_language(&grammar.language).is_err() {
+                parsed.push(ParsedPass::default());
+                continue;
+            }
+            let started = Instant::now();
+            let Some(tree) = parse_rope(
+                &mut parser,
+                &rope,
+                old.as_ref(),
+                None,
+                Some(cancel.as_ref()),
+            ) else {
+                parsed.push(ParsedPass::default());
+                continue;
+            };
+            let changed = old.as_ref().map(|old| {
+                old.changed_ranges(&tree)
+                    .map(|range| range.start_byte..range.end_byte)
+                    .collect()
+            });
+            parse_cost += started.elapsed();
+            parsed.push(ParsedPass {
+                tree: Some(tree),
+                changed,
+            });
+        }
         ParsedTrees {
             generation,
             len_bytes,
-            trees,
+            passes: parsed,
+            parse_cost,
             cancelled: cancel.load(Ordering::Relaxed),
         }
     }
@@ -131,6 +156,7 @@ pub(crate) struct CodeHighlighter {
     row_states: Vec<RowState>,
     enabled: bool,
     generation: u64,
+    last_parse_cost: Duration,
     deferred_cancel: Option<Arc<AtomicBool>>,
 }
 
@@ -158,27 +184,33 @@ impl CodeHighlighter {
                     parser,
                     tree,
                     colors: capture_colors(grammar, &syntax),
+                    cursor: QueryCursor::new(),
                 })
             })
             .collect::<Vec<_>>();
         let enabled = !passes.is_empty();
+        let tracked_lines = if enabled { doc.line_count() } else { 0 };
 
         Self {
             syntax,
             passes,
-            rows: vec![Vec::new(); doc.line_count()],
-            row_states: vec![
-                if enabled {
-                    RowState::Stale
-                } else {
-                    RowState::Fresh
-                };
-                doc.line_count()
-            ],
+            rows: vec![Vec::new(); tracked_lines],
+            row_states: vec![RowState::Stale; tracked_lines],
             enabled,
             generation: 0,
+            last_parse_cost: Duration::ZERO,
             deferred_cancel: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn last_parse_cost(&self) -> Duration {
+        self.last_parse_cost
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_parse_cost(&mut self, cost: Duration) {
+        self.last_parse_cost = cost;
     }
 
     #[allow(dead_code)]
@@ -230,13 +262,12 @@ impl CodeHighlighter {
         edit: &CodeEdit,
         budget: Duration,
     ) -> HighlightOutcome {
+        if !self.enabled {
+            return HighlightOutcome::Synced;
+        }
         self.cancel_deferred();
         self.generation = self.generation.wrapping_add(1);
         self.interpolate(doc, edit);
-        if !self.enabled {
-            self.row_states.fill(RowState::Fresh);
-            return HighlightOutcome::Synced;
-        }
 
         let input = InputEdit {
             start_byte: edit.start_byte,
@@ -252,34 +283,40 @@ impl CodeHighlighter {
             }
         }
 
-        let deadline = Instant::now() + budget;
         let mut dirty = edit.start_byte..edit.new_end_byte.max(edit.start_byte);
-        let mut deferred = false;
-        for pass in &mut self.passes {
-            let old = pass.tree.clone();
-            match parse_rope(
-                &mut pass.parser,
-                doc.text(),
-                old.as_ref(),
-                Some(deadline),
-                None,
-            ) {
-                Some(new_tree) => {
-                    if let Some(old) = old.as_ref() {
-                        for range in old.changed_ranges(&new_tree) {
-                            dirty.start = dirty.start.min(range.start_byte);
-                            dirty.end = dirty.end.max(range.end_byte);
+        let mut deferred = self.last_parse_cost >= budget;
+        if !deferred {
+            let deadline = Instant::now() + budget;
+            let mut parse_cost = Duration::ZERO;
+            for pass in &mut self.passes {
+                let old = pass.tree.clone();
+                let started = Instant::now();
+                match parse_rope(
+                    &mut pass.parser,
+                    doc.text(),
+                    old.as_ref(),
+                    Some(deadline),
+                    None,
+                ) {
+                    Some(new_tree) => {
+                        if let Some(old) = old.as_ref() {
+                            for range in old.changed_ranges(&new_tree) {
+                                dirty.start = dirty.start.min(range.start_byte);
+                                dirty.end = dirty.end.max(range.end_byte);
+                            }
+                        } else {
+                            dirty = 0..doc.len_bytes();
                         }
-                    } else {
-                        dirty = 0..doc.len_bytes();
+                        parse_cost += started.elapsed();
+                        pass.tree = Some(new_tree);
                     }
-                    pass.tree = Some(new_tree);
-                }
-                None => {
-                    pass.parser.reset();
-                    deferred = true;
+                    None => {
+                        pass.parser.reset();
+                        deferred = true;
+                    }
                 }
             }
+            self.last_parse_cost = if deferred { budget } else { parse_cost };
         }
 
         let rows = self.dirty_rows(doc, &dirty);
@@ -310,16 +347,32 @@ impl CodeHighlighter {
         {
             return false;
         }
-        if parsed.trees.len() != self.passes.len() {
+        if parsed.passes.len() != self.passes.len() {
             return false;
         }
-        for (pass, tree) in self.passes.iter_mut().zip(parsed.trees) {
-            if tree.is_some() {
-                pass.tree = tree;
+        let parse_cost = parsed.parse_cost;
+        let mut changed = Vec::new();
+        let mut without_old_tree = false;
+        for (pass, parsed) in self.passes.iter_mut().zip(parsed.passes) {
+            let Some(new_tree) = parsed.tree else {
+                continue;
+            };
+            match parsed.changed {
+                Some(ranges) => changed.extend(ranges),
+                None => without_old_tree = true,
             }
+            pass.tree = Some(new_tree);
         }
         self.deferred_cancel = None;
-        self.mark_stale(0..doc.line_count());
+        self.last_parse_cost = parse_cost;
+        if without_old_tree {
+            self.mark_stale(0..doc.line_count());
+        } else {
+            for range in changed {
+                let rows = self.dirty_rows(doc, &range);
+                self.mark_stale(rows);
+            }
+        }
         true
     }
 
@@ -346,6 +399,9 @@ impl CodeHighlighter {
     }
 
     pub(crate) fn requery_rows(&mut self, doc: &CodeDocument, rows: Range<usize>) {
+        if !self.enabled {
+            return;
+        }
         let lines = doc.line_count();
         if self.rows.len() != lines {
             self.rows.resize(lines, Vec::new());
@@ -373,28 +429,28 @@ impl CodeHighlighter {
         }
 
         for (pass_index, pass) in self.passes.iter_mut().enumerate() {
-            let Some(tree) = pass.tree.as_ref() else {
+            let GrammarPass {
+                grammar,
+                tree,
+                colors,
+                cursor,
+                ..
+            } = pass;
+            let Some(tree) = tree.as_ref() else {
                 continue;
             };
             let Ok(pass_index) = u16::try_from(pass_index) else {
                 continue;
             };
-            let mut cursor = QueryCursor::new();
+            let grammar: &'static Grammar = grammar;
             cursor.set_byte_range(start_byte..end_byte);
-            let mut caps =
-                cursor.captures(&pass.grammar.query, tree.root_node(), RopeText(doc.text()));
+            let mut caps = cursor.captures(&grammar.query, tree.root_node(), RopeText(doc.text()));
             while let Some((mat, idx)) = caps.next() {
                 let cap = mat.captures[*idx];
                 let Ok(capture) = u16::try_from(cap.index) else {
                     continue;
                 };
-                if pass
-                    .colors
-                    .get(capture as usize)
-                    .copied()
-                    .flatten()
-                    .is_none()
-                {
+                if colors.get(capture as usize).copied().flatten().is_none() {
                     continue;
                 }
                 bucket_capture(
@@ -424,24 +480,37 @@ impl CodeHighlighter {
         rows: Range<usize>,
         budget: Duration,
     ) -> StaleFill {
+        if !self.enabled {
+            return StaleFill::default();
+        }
         let lines = doc.line_count();
         let rows = rows.start.min(lines)..rows.end.min(lines);
         let deadline = Instant::now() + budget;
-        for row in rows.clone() {
+        let mut queried = false;
+        let mut row = rows.start;
+        'fill: while row < rows.end {
             if self.row_states.get(row) != Some(&RowState::Stale) {
+                row += 1;
                 continue;
             }
-            self.requery_rows(doc, row..row + 1);
-            if Instant::now() >= deadline {
-                break;
+            let span_start = row;
+            while row < rows.end && self.row_states.get(row) == Some(&RowState::Stale) {
+                row += 1;
+            }
+            let mut slice_start = span_start;
+            while slice_start < row {
+                if queried && Instant::now() >= deadline {
+                    break 'fill;
+                }
+                let slice_end = (slice_start + MAX_QUERY_ROWS).min(row);
+                self.requery_rows(doc, slice_start..slice_end);
+                queried = true;
+                slice_start = slice_end;
             }
         }
-        let mut stale_rows = 0usize;
-        for row in rows {
-            if self.row_states.get(row) == Some(&RowState::Stale) {
-                stale_rows += 1;
-            }
-        }
+        let stale_rows = rows
+            .filter(|row| self.row_states.get(*row) == Some(&RowState::Stale))
+            .count();
         StaleFill { stale_rows }
     }
 
@@ -491,6 +560,18 @@ impl CodeHighlighter {
 
     fn has_stale_rows(&self) -> bool {
         self.row_states.contains(&RowState::Stale)
+    }
+
+    pub(crate) fn is_row_stale(&self, row: usize) -> bool {
+        self.row_states.get(row) == Some(&RowState::Stale)
+    }
+
+    pub(crate) fn stale_rows_in(&self, rows: Range<usize>) -> usize {
+        rows.filter(|row| self.is_row_stale(*row)).count()
+    }
+
+    fn per_row_capacity(&self) -> (usize, usize) {
+        (self.rows.capacity(), self.row_states.capacity())
     }
 }
 
@@ -694,6 +775,10 @@ mod tests {
         CodeDocument::new(PathBuf::from(format!("/tmp/{name}")), text)
     }
 
+    fn rows_of_code(rows: usize) -> String {
+        (0..rows).map(|row| format!("fn f{row}() {{}}\n")).collect()
+    }
+
     fn corpus() -> Vec<(&'static str, &'static str)> {
         vec![
             (
@@ -888,7 +973,10 @@ mod tests {
         assert!(h.runs(2).is_empty());
 
         assert!(h.apply_parsed(&d, deferred.run()));
-        assert!(h.all_rows_stale());
+        assert!(
+            h.has_stale_rows(),
+            "the applied tree must leave the edited rows to requery"
+        );
         fill_all(&mut h, &d);
         let after = d.to_disk_string();
         let expected = expected_rows(&after, d.ext(), d.line_count());
@@ -957,36 +1045,211 @@ mod tests {
     }
 
     #[test]
-    fn unfinished_visible_rows_are_left_stale_for_the_next_frame() {
-        let d = doc(
-            "progressive.rs",
-            "fn one() {}\nfn two() {}\nfn three() {}\n",
-        );
+    fn a_contiguous_stale_span_within_the_cap_is_filled_by_a_single_query() {
+        let text = rows_of_code(60);
+        let d = doc("span.rs", &text);
         let mut h = CodeHighlighter::new(&d, syntax());
-        assert_eq!(h.fill_stale_rows(&d, 0..3, Duration::ZERO).stale_rows, 2);
-        assert!(!h.runs(0).is_empty());
-        assert!(h.runs(1).is_empty());
+
+        assert!(!h.fill_stale_rows(&d, 0..60, Duration::ZERO).any_stale());
+        for row in 0..60 {
+            assert!(!h.is_row_stale(row), "row {row} stayed stale");
+            assert!(!h.runs(row).is_empty(), "row {row} kept no runs");
+        }
+    }
+
+    #[test]
+    fn a_starved_fill_stops_between_slices_and_leaves_whole_rows_stale() {
+        let text = rows_of_code(300);
+        let d = doc("sliced.rs", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+
+        let first = h.fill_stale_rows(&d, 0..300, Duration::ZERO);
+        assert_eq!(first.stale_rows, 300 - MAX_QUERY_ROWS);
+        assert!(!h.runs(MAX_QUERY_ROWS - 1).is_empty());
+        assert!(h.is_row_stale(MAX_QUERY_ROWS));
+        assert!(h.runs(MAX_QUERY_ROWS).is_empty());
+
+        let second = h.fill_stale_rows(&d, 0..300, Duration::ZERO);
+        assert_eq!(second.stale_rows, 300 - 2 * MAX_QUERY_ROWS);
+
+        let third = h.fill_stale_rows(&d, 0..300, Duration::ZERO);
+        assert_eq!(third.stale_rows, 0);
+    }
+
+    #[test]
+    fn a_starved_fill_leaves_a_later_span_entirely_stale() {
+        let text = rows_of_code(100);
+        let d = doc("spans.rs", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        h.requery_rows(&d, 0..d.line_count());
+        h.mark_stale(0..5);
+        h.mark_stale(50..60);
+
+        let fill = h.fill_stale_rows(&d, 0..100, Duration::ZERO);
+        assert_eq!(fill.stale_rows, 10);
+        assert_eq!(h.stale_rows_in(0..5), 0);
+        assert_eq!(h.stale_rows_in(50..60), 10);
+    }
+
+    #[test]
+    fn a_reused_cursor_matches_a_first_query_on_the_same_range() {
+        let text = rows_of_code(200);
+        let d = doc("cursor.rs", &text);
+        let mut reused = CodeHighlighter::new(&d, syntax());
+        reused.requery_rows(&d, 0..40);
+        reused.requery_rows(&d, 120..160);
+
+        let mut fresh = CodeHighlighter::new(&d, syntax());
+        fresh.requery_rows(&d, 120..160);
+
+        for row in 120..160 {
+            assert_eq!(reused.runs(row), fresh.runs(row), "row {row}");
+        }
+    }
+
+    #[test]
+    fn a_row_over_the_capture_cap_does_not_break_its_span() {
+        let pairs = (0..MAX_CAPTURES_PER_ROW)
+            .map(|index| format!("\"k{index}\": {index}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let text = format!("{{\n  \"row\": {{{pairs}}},\n  \"tail\": 1\n}}\n");
+        let d = doc("capped.json", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(h.is_enabled());
+
+        h.requery_rows(&d, 0..d.line_count());
+        assert_eq!(h.stale_rows_in(0..d.line_count()), 0);
         assert!(
-            !h.fill_stale_rows(&d, 0..3, Duration::from_secs(1))
-                .any_stale()
+            !h.runs(2).is_empty(),
+            "the row after the capped one lost its runs"
         );
-        assert!(!h.runs(1).is_empty());
-        assert!(!h.runs(2).is_empty());
     }
 
     #[test]
     fn a_viewport_past_the_end_of_the_document_is_clamped_and_counts_only_real_rows() {
-        let d = doc("clamped.rs", "fn one() {}\nfn two() {}\nfn three() {}\n");
+        let text = rows_of_code(300);
+        let d = doc("clamped.rs", &text);
         let mut h = CodeHighlighter::new(&d, syntax());
-        assert_eq!(d.line_count(), 4);
+        assert_eq!(d.line_count(), 301);
 
         let starved = h.fill_stale_rows(&d, 0..10_000, Duration::ZERO);
         assert!(starved.any_stale());
-        assert_eq!(starved.stale_rows, d.line_count() - 1);
+        assert_eq!(starved.stale_rows, d.line_count() - MAX_QUERY_ROWS);
 
         let filled = h.fill_stale_rows(&d, 0..10_000, Duration::from_secs(1));
         assert!(!filled.any_stale());
         assert_eq!(filled.stale_rows, 0);
+    }
+
+    #[test]
+    fn a_deferred_parse_only_marks_its_changed_ranges_stale() {
+        let text = rows_of_code(10_000);
+        let mut d = doc("deferred.rs", &text);
+        assert!(d.len_bytes() <= MAX_HIGHLIGHT_BYTES);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        h.requery_rows(&d, 0..200);
+        let before = h.runs(100);
+        assert!(!before.is_empty());
+
+        let offset = d.line_to_byte(5_000);
+        let edit = d.insert(offset, "x").expect("insert");
+        let HighlightOutcome::Deferred(parse) = h.edit_with_budget(&d, &edit, Duration::ZERO)
+        else {
+            panic!("a zero budget must defer the parse");
+        };
+        let parsed = parse.run();
+        assert!(h.apply_parsed(&d, parsed));
+
+        assert!(!h.is_row_stale(100), "an untouched row must stay fresh");
+        assert_eq!(h.runs(100), before);
+        assert!(h.is_row_stale(5_000), "the edited row must be stale");
+        assert_eq!(
+            h.stale_rows_in(0..200),
+            0,
+            "a distant edit must not invalidate the top of the file"
+        );
+    }
+
+    #[test]
+    fn a_parse_known_to_exceed_the_budget_is_deferred_without_a_new_attempt() {
+        let mut d = doc("known.rs", "fn main() { let value = 1; }\n");
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert_eq!(h.last_parse_cost(), Duration::ZERO);
+        h.set_last_parse_cost(Duration::from_secs(1));
+
+        let edit = d.insert(0, "x").expect("insert");
+        let HighlightOutcome::Deferred(parse) =
+            h.edit_with_budget(&d, &edit, HIGHLIGHT_FRAME_BUDGET)
+        else {
+            panic!("a parse measured past the budget must not be retried on the render thread");
+        };
+        assert!(h.apply_parsed(&d, parse.run()));
+        assert!(
+            h.last_parse_cost() < HIGHLIGHT_FRAME_BUDGET,
+            "a completed parse must replace the estimate that caused the skip"
+        );
+
+        let edit = d.insert(0, "y").expect("insert");
+        assert!(
+            matches!(
+                h.edit_with_budget(&d, &edit, HIGHLIGHT_FRAME_BUDGET),
+                HighlightOutcome::Synced
+            ),
+            "a parse that fits the budget must bring the synchronous path back"
+        );
+    }
+
+    #[test]
+    fn a_blown_sync_budget_is_remembered_as_the_budget_it_blew() {
+        let text = rows_of_code(4_000);
+        let mut d = doc("blown.rs", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let budget = Duration::from_micros(50);
+
+        let edit = d.insert(d.line_to_byte(2_000), "x").expect("insert");
+        let HighlightOutcome::Deferred(parse) = h.edit_with_budget(&d, &edit, budget) else {
+            panic!("a 50 us budget must not cover a 4 000 row reparse");
+        };
+        assert_eq!(h.last_parse_cost(), budget);
+
+        assert!(h.apply_parsed(&d, parse.run()));
+        assert!(
+            h.last_parse_cost() > Duration::ZERO,
+            "the background parse must publish what the reparse really costs"
+        );
+    }
+
+    #[test]
+    fn a_deferred_parse_holds_parity_on_every_grammar() {
+        for (name, text) in corpus() {
+            let mut d = doc(name, text);
+            let h = &mut CodeHighlighter::new(&d, syntax());
+            fill_all(h, &d);
+            let at = d.line_to_byte(1);
+            let edit = d.insert(at, "\n ").expect("insert");
+            let HighlightOutcome::Deferred(deferred) =
+                h.edit_with_budget(&d, &edit, Duration::ZERO)
+            else {
+                panic!("{name} did not defer on a zero budget");
+            };
+            assert!(
+                h.apply_parsed(&d, deferred.run()),
+                "{name} rejected its own deferred parse"
+            );
+
+            let after = d.to_disk_string();
+            fill_all(h, &d);
+            let expected = expected_rows(&after, d.ext(), d.line_count());
+            for (row, want) in expected.iter().enumerate() {
+                assert_eq!(
+                    h.runs(row),
+                    want.as_slice(),
+                    "{name} row {row} diverges after a deferred parse: {:?}",
+                    d.line_string(row)
+                );
+            }
+        }
     }
 
     #[test]
@@ -999,15 +1262,21 @@ mod tests {
         let mut h = CodeHighlighter::new(&d, syntax());
         assert!(!h.is_enabled());
         assert!(h.runs(0).is_empty());
+        assert_eq!(h.per_row_capacity(), (0, 0));
 
         let edit = d.insert(0, "// still editable\n").expect("insert");
         assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
         assert!(!h.has_stale_rows());
+        assert_eq!(h.per_row_capacity(), (0, 0));
+        h.requery_rows(&d, 0..d.line_count());
+        assert_eq!(h.per_row_capacity(), (0, 0));
         assert!(
             !h.fill_stale_rows(&d, 0..d.line_count(), Duration::ZERO)
                 .any_stale()
         );
+        assert_eq!(h.per_row_capacity(), (0, 0));
         assert!(h.runs(0).is_empty());
+        assert!(h.runs(d.line_count() - 1).is_empty());
         assert_eq!(d.line_string(0).as_deref(), Some("// still editable"));
     }
 
@@ -1016,8 +1285,10 @@ mod tests {
         let mut d = doc("notes.unknownext", "anything at all\nsecond line\n");
         let mut h = CodeHighlighter::new(&d, syntax());
         assert!(!h.is_enabled());
+        assert_eq!(h.per_row_capacity(), (0, 0));
         let edit = d.insert(0, "x").expect("insert");
         assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
+        assert_eq!(h.per_row_capacity(), (0, 0));
         assert!(h.runs(0).is_empty());
         assert!(highlight_lines("anything at all\n", "unknownext", &syntax())[0].is_empty());
     }

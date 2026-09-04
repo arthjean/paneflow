@@ -32,6 +32,8 @@ const RESOLVE_RUNS_CAPTURES: usize = 3_750;
 const RELOADS: usize = 200;
 const SHAPE_ROW_CHARS: usize = 100;
 
+const FILL_WINDOWS_CAP: usize = 120;
+
 const PAGEDOWN_JUMPS: usize = 20;
 const PAGEDOWN_FRAME_LIMIT: usize = 64;
 
@@ -65,6 +67,10 @@ fn light() -> DiffSyntax {
 
 fn document(name: &str, text: &str) -> CodeDocument {
     CodeDocument::new(PathBuf::from(name), text)
+}
+
+fn fill_windows(doc: &CodeDocument) -> usize {
+    (doc.line_count() / VIEWPORT_ROWS).clamp(1, FILL_WINDOWS_CAP)
 }
 
 fn stride(index: usize, span: usize) -> usize {
@@ -166,6 +172,58 @@ fn viewport_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     ));
 }
 
+fn fill_stale_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let windows = fill_windows(&doc);
+    let mut index = 0usize;
+    metrics.push(measure_segments(
+        "fill_60_stale_rows",
+        "one budgeted fill of a never-queried 60-row viewport on 300 KB of Rust: the contiguous stale span is merged into a single ranged query instead of 60 one-row queries",
+        0,
+        windows,
+        |timer| {
+            let first = index * VIEWPORT_ROWS;
+            index += 1;
+            timer.time(|| {
+                highlighter.fill_stale_rows(
+                    &doc,
+                    first..first + VIEWPORT_ROWS,
+                    HIGHLIGHT_FRAME_BUDGET,
+                )
+            });
+        },
+    ));
+    std::hint::black_box((doc, highlighter));
+}
+
+fn plain_keystroke_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let mut doc = document("bench-3-7mb.rs", &corpora.large_rust);
+    let before = live_bytes();
+    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let retained = (live_bytes() - before).max(0) as f64;
+    metrics.push(Metric::count(
+        "plain_highlighter_retained_bytes",
+        "bytes",
+        retained,
+        "live allocated bytes the highlighter of the 3.7 MB file holds past the highlight cap: no per-row runs and no per-row states",
+    ));
+    let mut index = 0usize;
+    metrics.push(measure_segments(
+        "keystroke_3_7mb_plain",
+        "render-thread work of one inserted character at a pseudo-random row of the 3.7 MB file, past the highlight cap: the rope splice and nothing else, with no interpolation and no per-row table",
+        5,
+        200,
+        |timer| {
+            index += 1;
+            let row = stride(index, doc.line_count());
+            let offset = doc.line_to_byte(row);
+            apply_ui_edit(&mut doc, &mut highlighter, offset..offset, "x", timer);
+        },
+    ));
+    std::hint::black_box((doc, highlighter));
+}
+
 struct PageDownProbe {
     stale_median: usize,
     stale_max: usize,
@@ -220,7 +278,7 @@ fn pagedown_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         "pagedown_frames_to_fresh",
         "frames",
         probe.frames_to_fresh as f64,
-        "successive 2 ms fills the worst of those 20 jumps needs before no visible row is stale; today only an outside event schedules those frames",
+        "successive 2 ms fills the worst of those 20 jumps needs before no visible row is stale; a starved fill now schedules the next one through request_animation_frame",
     ));
     std::hint::black_box((doc, highlighter));
 }
@@ -543,7 +601,9 @@ fn editor_pipeline_benchmark() {
     open_scenarios(&mut metrics, &corpora);
     markdown_scenario(&mut metrics, &corpora);
     keystroke_scenario(&mut metrics, &corpora);
+    plain_keystroke_scenario(&mut metrics, &corpora);
     viewport_scenario(&mut metrics, &corpora);
+    fill_stale_scenario(&mut metrics, &corpora);
     pagedown_scenario(&mut metrics, &corpora);
     unclosed_comment_scenario(&mut metrics, &corpora);
     deferred_parse_burst_scenario(&mut metrics, &corpora);
@@ -644,26 +704,44 @@ mod tests {
     }
 
     #[test]
-    fn the_pagedown_probe_reports_the_rows_a_starved_fill_leaves_behind() {
+    fn the_pagedown_probe_leaves_no_stale_row_even_without_a_budget() {
         let rust = rust_source(64_000);
         let doc = document("probe.rs", &rust);
         let mut highlighter = CodeHighlighter::new(&doc, dark());
         assert!(highlighter.is_enabled(), "the probe needs a colored file");
 
         let starved = pagedown_probe(&doc, &mut highlighter, Duration::ZERO);
-        assert!(
-            starved.stale_max > 0,
-            "a zero-budget fill must leave visible rows stale"
+        assert_eq!(
+            starved.stale_max, 0,
+            "a 60-row viewport is one ranged query, so even a zero budget colors it whole"
         );
-        assert!(
-            starved.frames_to_fresh > 1,
-            "a zero-budget fill must need more than one frame"
-        );
+        assert_eq!(starved.frames_to_fresh, 1);
 
         let mut fresh = CodeHighlighter::new(&doc, dark());
         let generous = pagedown_probe(&doc, &mut fresh, Duration::from_secs(1));
         assert_eq!(generous.stale_max, 0);
         assert_eq!(generous.frames_to_fresh, 1);
+    }
+
+    #[test]
+    fn the_fill_scenario_walks_disjoint_never_queried_viewports() {
+        let rust = rust_source(64_000);
+        let doc = document("probe.rs", &rust);
+        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        let windows = fill_windows(&doc);
+        assert!(windows > 1, "the corpus must hold several viewports");
+
+        for index in 0..windows {
+            let first = index * VIEWPORT_ROWS;
+            let rows = first..first + VIEWPORT_ROWS;
+            assert_eq!(
+                highlighter.stale_rows_in(rows.clone()),
+                VIEWPORT_ROWS,
+                "viewport {index} was already queried"
+            );
+            let fill = highlighter.fill_stale_rows(&doc, rows, HIGHLIGHT_FRAME_BUDGET);
+            assert_eq!(fill.stale_rows, 0, "viewport {index} stayed stale");
+        }
     }
 
     #[test]

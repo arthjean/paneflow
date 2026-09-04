@@ -68,6 +68,9 @@ platform shaper.
 | `open_markdown_injected` | ns | A 64 KB Markdown file opened, the only corpus that runs a second grammar pass through the inline injection. |
 | `keystroke_to_runs` | ns | Render-thread work of one inserted character at a pseudo-random row of 300 KB of Rust. Its `p95` column is the `keystroke_to_runs_p95` target of the PRD. Deferred parses run outside the timer; the `apply_parsed` requery they trigger is inside it. |
 | `viewport_query_60_rows` | ns | The highlight query for one 60-row viewport, the work a viewport-bounded requery would do per frame. |
+| `fill_60_stale_rows` | ns | One budgeted `fill_stale_rows` over a never-queried 60-row viewport, walking disjoint viewports of the 300 KB corpus. Since US-019 a contiguous stale span is one ranged query, so this metric must stay close to `viewport_query_60_rows`. |
+| `keystroke_3_7mb_plain` | ns | Render-thread work of one inserted character in the 3.7 MB file, past the highlight cap: the rope splice alone, with no interpolation and no per-row table. |
+| `plain_highlighter_retained_bytes` | bytes | Live allocated bytes the highlighter of that 3.7 MB file holds. A file past the cap keeps no per-row runs and no per-row states. |
 | `unclosed_comment_close_ui` | ns | Render-thread work of closing an unterminated block comment at the top of the file, which re-tokenizes the whole document. |
 | `resolve_runs_3750` | ns | `resolve_runs` over 3 750 captures taken from a 10 000-character minified JSON line, the shape the diff view shares. |
 | `byte_to_utf16_eof` | ns | One byte offset converted to a UTF-16 offset at the end of a 3.7 MB document, two to four times per keystroke through `EntityInputHandler`. |
@@ -95,9 +98,11 @@ turn the 2 ms highlight budget into a number. Each of the 20 jumps moves a
 `CodeHighlighter::fill_stale_rows` with `HIGHLIGHT_FRAME_BUDGET`, records the
 rows the call left stale, then keeps calling until none is. Rows left stale are
 rows the user reads in plain text; frames-to-fresh is how many frames the
-editor needs before the viewport is fully colored, and until US-018 nothing
-schedules those frames on its own. A file past the 300 KB highlight cap reports
-0 stale rows in 1 frame and spends no budget at all.
+editor needs before the viewport is fully colored. Since US-018 a starved fill
+schedules those frames itself through `Window::request_animation_frame`, and
+since US-019 a 60-row viewport is a single ranged query, so the probe reports 0
+stale rows in 1 frame even at a zero budget. A file past the 300 KB highlight
+cap reports the same and spends no budget at all.
 
 ### The shaping probe and the US-013 threshold
 

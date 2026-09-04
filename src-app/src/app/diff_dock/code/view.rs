@@ -206,6 +206,7 @@ pub(crate) struct CodeView {
     disk: DiskState,
     save_error: Option<String>,
     saving: bool,
+    highlight_budget: Duration,
     _watcher: Option<RecommendedWatcher>,
     _watch_bridge: Option<WatchBridge>,
 }
@@ -242,6 +243,7 @@ impl CodeView {
             disk: DiskState::default(),
             save_error: None,
             saving: false,
+            highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             _watcher: None,
             _watch_bridge: None,
         };
@@ -292,6 +294,7 @@ impl CodeView {
             disk: DiskState::default(),
             save_error: None,
             saving: false,
+            highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             _watcher: None,
             _watch_bridge: None,
         }
@@ -308,6 +311,15 @@ impl CodeView {
         }
         let content_top = f32::from(-self.scroll.offset().y).max(0.0);
         visible_rows(content_top, viewport_h, line_count)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stale_visible_rows(&self) -> usize {
+        let rows = self.visible_row_range();
+        self.state
+            .highlighter()
+            .map(|highlighter| highlighter.stale_rows_in(rows))
+            .unwrap_or(0)
     }
 
     fn observe_blink(&mut self, cx: &mut Context<Self>) {
@@ -606,7 +618,7 @@ impl CodeView {
         }
     }
 
-    fn fill_visible_highlights(&mut self, cx: &mut Context<Self>) {
+    fn fill_visible_highlights(&mut self, window: &mut Window) {
         let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
             return;
         };
@@ -617,12 +629,11 @@ impl CodeView {
         } else {
             0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
         };
+        let budget = self.highlight_budget;
         if let Some((doc, highlighter)) = self.state.editable()
-            && highlighter
-                .fill_stale_rows(doc, rows, HIGHLIGHT_FRAME_BUDGET)
-                .any_stale()
+            && highlighter.fill_stale_rows(doc, rows, budget).any_stale()
         {
-            cx.notify();
+            window.request_animation_frame();
         }
     }
 
@@ -1953,7 +1964,7 @@ impl Render for CodeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_focus_observers(window, cx);
         self.sync_theme();
-        self.fill_visible_highlights(cx);
+        self.fill_visible_highlights(window);
         let ui = crate::theme::ui_colors();
 
         let Some(doc) = self.state.document() else {
@@ -2082,7 +2093,7 @@ impl Render for CodeView {
 mod tests {
     use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point};
 
-    use super::super::highlight::CodeHighlighter;
+    use super::super::highlight::{CodeHighlighter, MAX_QUERY_ROWS};
     use super::super::load::{LoadedCode, build_document};
     use super::*;
 
@@ -2090,7 +2101,24 @@ mod tests {
         cx: &'a mut TestAppContext,
         text: &str,
     ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
-        let path = PathBuf::from("/nonexistent/paneflow-code.rs");
+        view_with_budget(cx, text, HIGHLIGHT_FRAME_BUDGET)
+    }
+
+    fn view_with_budget<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+        budget: Duration,
+    ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        view_named(cx, "/nonexistent/paneflow-code.rs", text, budget)
+    }
+
+    fn view_named<'a>(
+        cx: &'a mut TestAppContext,
+        name: &str,
+        text: &str,
+        highlight_budget: Duration,
+    ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        let path = PathBuf::from(name);
         let state = if text.is_empty() {
             CodeLoadState::Loading
         } else {
@@ -2136,9 +2164,96 @@ mod tests {
             disk: DiskState::default(),
             save_error: None,
             saving: false,
+            highlight_budget,
             _watcher: None,
             _watch_bridge: None,
         })
+    }
+
+    fn rows_of_code(rows: usize) -> String {
+        (0..rows).map(|row| format!("fn f{row}() {{}}\n")).collect()
+    }
+
+    #[gpui::test]
+    fn a_starved_fill_schedules_the_next_frame_itself(cx: &mut TestAppContext) {
+        let text = rows_of_code(500);
+        let (view, cx) = view_with_budget(cx, &text, Duration::ZERO);
+        cx.simulate_resize(size(px(800.), px(6_000.)));
+        cx.run_until_parked();
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        let visible = view.read_with(cx, |view, _| view.visible_row_range());
+        assert!(
+            visible.len() > MAX_QUERY_ROWS,
+            "the probe needs a viewport taller than one query slice, got {visible:?}"
+        );
+
+        let mut stale = view.read_with(cx, |view, _| view.stale_visible_rows());
+        assert!(stale > 0, "a zero budget must leave visible rows stale");
+
+        let mut frames = 0usize;
+        while stale > 0 {
+            assert_eq!(
+                cx.update(|window, cx| window.simulate_next_frame(cx)),
+                1,
+                "a starved fill must schedule its own follow-up frame"
+            );
+            cx.run_until_parked();
+            let left = view.read_with(cx, |view, _| view.stale_visible_rows());
+            assert!(
+                left < stale,
+                "a follow-up frame must colour more rows, {stale} -> {left}"
+            );
+            stale = left;
+            frames += 1;
+            assert!(frames < 8, "the progressive fill must converge");
+        }
+
+        assert_eq!(
+            cx.update(|window, cx| window.simulate_next_frame(cx)),
+            0,
+            "a fresh viewport must not schedule another frame"
+        );
+    }
+
+    #[gpui::test]
+    fn a_fresh_viewport_schedules_no_frame(cx: &mut TestAppContext) {
+        let text = rows_of_code(40);
+        let (view, cx) = view(cx, &text);
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.stale_visible_rows()), 0);
+        assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
+    }
+
+    #[gpui::test]
+    fn a_loading_document_never_asks_for_a_frame(cx: &mut TestAppContext) {
+        let (view, cx) = view_with_budget(cx, "", Duration::ZERO);
+        cx.run_until_parked();
+
+        let scheduled = cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            view.update(cx, |view, _cx| view.fill_visible_highlights(window));
+            window.simulate_next_frame(cx)
+        });
+        assert_eq!(
+            scheduled, 0,
+            "while the document loads only the spinner may drive frames"
+        );
+    }
+
+    #[gpui::test]
+    fn a_file_past_the_highlight_cap_schedules_no_frame(cx: &mut TestAppContext) {
+        let mut text = String::with_capacity(crate::diff::MAX_HIGHLIGHT_BYTES + 64);
+        while text.len() <= crate::diff::MAX_HIGHLIGHT_BYTES {
+            text.push_str("pub fn f() -> i32 { 1 }\n");
+        }
+        let (view, cx) = view_named(cx, "/nonexistent/huge.rs", &text, Duration::ZERO);
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.stale_visible_rows()), 0);
+        assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
     }
 
     #[gpui::test]
@@ -2460,6 +2575,7 @@ mod tests {
                     disk: DiskState::default(),
                     save_error: None,
                     saving: false,
+                    highlight_budget: HIGHLIGHT_FRAME_BUDGET,
                     _watcher: None,
                     _watch_bridge: None,
                 };
@@ -2605,6 +2721,7 @@ mod tests {
             disk: DiskState::default(),
             save_error: None,
             saving: false,
+            highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             _watcher: None,
             _watch_bridge: None,
         });
