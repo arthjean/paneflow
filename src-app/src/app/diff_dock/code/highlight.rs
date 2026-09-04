@@ -3,6 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+use gpui::AppContext;
 use gpui::{AsyncApp, Context, Hsla, WeakEntity};
 use ropey::Rope;
 use streaming_iterator::StreamingIterator;
@@ -12,13 +14,14 @@ use tree_sitter::{
 };
 
 use crate::diff::{
-    DiffSyntax, Grammar, MAX_CAPTURES_PER_ROW, MAX_HIGHLIGHT_BYTES, grammar_for_ext,
+    DiffSyntax, Grammar, MAX_CAPTURES_PER_ROW, grammar_for_ext, highlight_cap, is_markdown,
     markdown_inline_grammar, resolve_runs,
 };
 
 use super::document::{CodeDocument, CodeEdit};
 
 pub(crate) const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
+pub(crate) const INITIAL_PARSE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const HIGHLIGHT_FRAME_BUDGET: Duration = Duration::from_millis(2);
 pub(crate) const MAX_QUERY_ROWS: usize = 128;
 
@@ -71,6 +74,7 @@ pub(crate) struct DeferredParse {
     rope: Rope,
     passes: Vec<(&'static Grammar, Option<Tree>)>,
     cancel: Arc<AtomicBool>,
+    timeout: Option<Duration>,
 }
 
 #[derive(Default)]
@@ -82,6 +86,7 @@ struct ParsedPass {
 pub(crate) struct ParsedTrees {
     generation: u64,
     len_bytes: usize,
+    timed_out: bool,
     passes: Vec<ParsedPass>,
     parse_cost: Duration,
     cancelled: bool,
@@ -100,18 +105,27 @@ impl DeferredParse {
         self.generation
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_timeout_for_test(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
     pub(crate) fn run(self) -> ParsedTrees {
         let DeferredParse {
             generation,
             rope,
             passes,
             cancel,
+            timeout,
         } = self;
+        let deadline = timeout.map(|timeout| Instant::now() + timeout);
         let len_bytes = rope.len_bytes();
         let mut parsed = Vec::with_capacity(passes.len());
         let mut parse_cost = Duration::ZERO;
+        let mut timed_out = false;
         for (grammar, old) in passes {
-            if cancel.load(Ordering::Relaxed) {
+            if timed_out || cancel.load(Ordering::Relaxed) {
                 parsed.push(ParsedPass::default());
                 continue;
             }
@@ -125,9 +139,10 @@ impl DeferredParse {
                 &mut parser,
                 &rope,
                 old.as_ref(),
-                None,
+                deadline,
                 Some(cancel.as_ref()),
             ) else {
+                timed_out = deadline.is_some_and(|deadline| Instant::now() >= deadline);
                 parsed.push(ParsedPass::default());
                 continue;
             };
@@ -145,6 +160,7 @@ impl DeferredParse {
         ParsedTrees {
             generation,
             len_bytes,
+            timed_out,
             passes: parsed,
             parse_cost,
             cancelled: cancel.load(Ordering::Relaxed),
@@ -158,6 +174,7 @@ pub(crate) struct CodeHighlighter {
     rows: Vec<IndexedLineRuns>,
     row_states: Vec<RowState>,
     enabled: bool,
+    too_complex: bool,
     generation: u64,
     last_parse_cost: Duration,
     deferred_cancel: Option<Arc<AtomicBool>>,
@@ -166,11 +183,11 @@ pub(crate) struct CodeHighlighter {
 impl CodeHighlighter {
     pub(crate) fn new(doc: &CodeDocument, syntax: DiffSyntax) -> Self {
         let mut passes = Vec::new();
-        if doc.len_bytes() <= MAX_HIGHLIGHT_BYTES
+        if doc.len_bytes() <= highlight_cap(doc.ext())
             && let Some(grammar) = grammar_for_ext(doc.ext())
         {
             passes.push(grammar);
-            if matches!(doc.ext(), "md" | "markdown" | "mdx")
+            if is_markdown(doc.ext())
                 && let Some(inline) = markdown_inline_grammar()
             {
                 passes.push(inline);
@@ -181,11 +198,10 @@ impl CodeHighlighter {
             .filter_map(|grammar| {
                 let mut parser = Parser::new();
                 parser.set_language(&grammar.language).ok()?;
-                let tree = parse_rope(&mut parser, doc.text(), None, None, None);
                 Some(GrammarPass {
                     grammar,
                     parser,
-                    tree,
+                    tree: None,
                     colors: capture_colors(grammar, &syntax),
                     cursor: QueryCursor::new(),
                 })
@@ -200,10 +216,38 @@ impl CodeHighlighter {
             rows: vec![Vec::new(); tracked_lines],
             row_states: vec![RowState::Stale; tracked_lines],
             enabled,
+            too_complex: false,
             generation: 0,
             last_parse_cost: Duration::ZERO,
             deferred_cancel: None,
         }
+    }
+
+    pub(crate) fn initial_parse(&mut self, doc: &CodeDocument) -> Option<DeferredParse> {
+        if !self.enabled || self.has_tree() {
+            return None;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.deferred_cancel = Some(cancel.clone());
+        Some(DeferredParse {
+            generation: self.generation,
+            rope: doc.text().clone(),
+            passes: self
+                .passes
+                .iter()
+                .map(|pass| (pass.grammar, None))
+                .collect(),
+            cancel,
+            timeout: Some(INITIAL_PARSE_TIMEOUT),
+        })
+    }
+
+    pub(crate) fn has_tree(&self) -> bool {
+        self.passes.iter().any(|pass| pass.tree.is_some())
+    }
+
+    pub(crate) fn is_too_complex(&self) -> bool {
+        self.too_complex
     }
 
     #[cfg(test)]
@@ -362,6 +406,7 @@ impl CodeHighlighter {
                     .map(|p| (p.grammar, p.tree.clone()))
                     .collect(),
                 cancel,
+                timeout: None,
             }));
         }
 
@@ -378,6 +423,20 @@ impl CodeHighlighter {
         if parsed.passes.len() != self.passes.len() {
             return false;
         }
+        if parsed.timed_out {
+            log::warn!(
+                "coloring gave up on {}: its parse ran past {:?}",
+                doc.path().display(),
+                INITIAL_PARSE_TIMEOUT
+            );
+            self.deferred_cancel = None;
+            self.enabled = false;
+            self.too_complex = true;
+            self.passes = Vec::new();
+            self.rows = Vec::new();
+            self.row_states = Vec::new();
+            return true;
+        }
         let parse_cost = parsed.parse_cost;
         let mut changed = Vec::new();
         let mut without_old_tree = false;
@@ -392,7 +451,9 @@ impl CodeHighlighter {
             pass.tree = Some(new_tree);
         }
         self.deferred_cancel = None;
-        self.last_parse_cost = parse_cost;
+        if !without_old_tree {
+            self.last_parse_cost = parse_cost;
+        }
         if without_old_tree {
             self.mark_stale(0..doc.line_count());
         } else {
@@ -508,6 +569,9 @@ impl CodeHighlighter {
         if self.row_states.len() != lines {
             self.row_states.resize(lines, RowState::Stale);
         }
+        if !self.has_tree() {
+            return;
+        }
         let rows = rows.start.min(lines)..rows.end.min(lines);
         if rows.is_empty() {
             return;
@@ -579,7 +643,7 @@ impl CodeHighlighter {
         rows: Range<usize>,
         budget: Duration,
     ) -> StaleFill {
-        if !self.enabled {
+        if !self.enabled || !self.has_tree() {
             return StaleFill::default();
         }
         let lines = doc.line_count();
@@ -635,6 +699,14 @@ impl Drop for CodeHighlighter {
 
 #[cfg(test)]
 impl CodeHighlighter {
+    pub(crate) fn parse_initial_blocking(&mut self, doc: &CodeDocument) -> bool {
+        let Some(parse) = self.initial_parse(doc) else {
+            return false;
+        };
+        let parsed = parse.run();
+        self.apply_parsed(doc, parsed)
+    }
+
     fn root_child_ids(&self) -> Vec<usize> {
         self.passes
             .first()
@@ -645,10 +717,6 @@ impl CodeHighlighter {
                 root.children(&mut cursor).map(|n| n.id()).collect()
             })
             .unwrap_or_default()
-    }
-
-    pub(crate) fn has_tree(&self) -> bool {
-        self.passes.iter().any(|pass| pass.tree.is_some())
     }
 
     fn all_rows_stale(&self) -> bool {
@@ -840,7 +908,10 @@ where
     F: FnOnce(&mut V, ParsedTrees, &mut Context<V>) + 'static,
 {
     cx.spawn(async move |this: WeakEntity<V>, cx: &mut AsyncApp| {
+        #[cfg(not(test))]
         let parsed = smol::unblock(move || deferred.run()).await;
+        #[cfg(test)]
+        let parsed = cx.background_spawn(async move { deferred.run() }).await;
         cx.update(|cx| {
             let _ = this.update(cx, |view: &mut V, cx: &mut Context<V>| {
                 apply(view, parsed, cx);
@@ -855,7 +926,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::diff::highlight_lines;
+    use crate::diff::{MAX_HIGHLIGHT_BYTES, MAX_MARKDOWN_HIGHLIGHT_BYTES, highlight_lines};
     use crate::theme::paneflow_dark;
 
     fn syntax() -> DiffSyntax {
@@ -864,6 +935,12 @@ mod tests {
 
     fn doc(name: &str, text: &str) -> CodeDocument {
         CodeDocument::new(PathBuf::from(format!("/tmp/{name}")), text)
+    }
+
+    fn parsed(doc: &CodeDocument) -> CodeHighlighter {
+        let mut highlighter = CodeHighlighter::new(doc, syntax());
+        highlighter.parse_initial_blocking(doc);
+        highlighter
     }
 
     fn rows_of_code(rows: usize) -> String {
@@ -956,7 +1033,7 @@ mod tests {
 
     fn assert_parity(name: &str, text: &str) {
         let d = doc(name, text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         assert!(h.is_enabled(), "{name} resolved no grammar");
         assert!(h.all_rows_stale(), "{name} queried during construction");
         fill_all(&mut h, &d);
@@ -982,7 +1059,7 @@ mod tests {
     fn parity_holds_after_an_incremental_edit_on_every_grammar() {
         for (name, text) in corpus() {
             let mut d = doc(name, text);
-            let h = &mut CodeHighlighter::new(&d, syntax());
+            let h = &mut parsed(&d);
             fill_all(h, &d);
             let at = d.line_to_byte(1);
             let edit = d.insert(at, "\n ").expect("insert");
@@ -1015,7 +1092,7 @@ mod tests {
             ));
         }
         let mut d = doc("big.rs", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         let before = h.root_child_ids();
         assert!(before.len() >= 400);
 
@@ -1029,7 +1106,7 @@ mod tests {
         let after = h.root_child_ids();
         assert_eq!(after.len(), before.len());
         let reused = before.iter().zip(&after).filter(|(a, b)| a == b).count();
-        let fresh = CodeHighlighter::new(&d, syntax()).root_child_ids();
+        let fresh = parsed(&d).root_child_ids();
         let coincidental = after.iter().zip(&fresh).filter(|(a, b)| a == b).count();
         assert!(
             reused * 10 >= before.len() * 9,
@@ -1048,7 +1125,7 @@ mod tests {
     fn a_blown_budget_defers_the_parse_until_visible_rows_are_refilled() {
         let text = "fn main() {\n    let s = \"hello\";\n    println!(\"{s}\");\n}\n";
         let mut d = doc("deferred.rs", text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
         let colored_before = h.runs(1).to_vec();
         assert!(!colored_before.is_empty());
@@ -1080,7 +1157,7 @@ mod tests {
     fn a_deferred_parse_from_a_superseded_generation_is_dropped() {
         let text = "fn main() {\n    let s = \"hello\";\n}\n";
         let mut d = doc("stale.rs", text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
 
         let first = d.insert(0, "//x\n").expect("insert");
@@ -1103,7 +1180,7 @@ mod tests {
     #[test]
     fn only_the_latest_deferred_parse_survives_an_edit_burst() {
         let mut d = doc("burst.rs", "fn main() { let value = 1; }\n");
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         let first_edit = d.insert(0, "x").expect("first insert");
         let HighlightOutcome::Deferred(first) = h.edit_with_budget(&d, &first_edit, Duration::ZERO)
         else {
@@ -1125,7 +1202,7 @@ mod tests {
     #[test]
     fn dropping_the_highlighter_cancels_its_deferred_parse() {
         let mut d = doc("drop.rs", "fn main() {}\n");
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         let edit = d.insert(0, "x").expect("insert");
         let HighlightOutcome::Deferred(parse) = h.edit_with_budget(&d, &edit, Duration::ZERO)
         else {
@@ -1136,10 +1213,72 @@ mod tests {
     }
 
     #[test]
+    fn dropping_the_highlighter_cancels_its_initial_parse() {
+        let d = doc("closed.rs", "fn main() {}\n");
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let parse = h.initial_parse(&d).expect("the initial parse is deferred");
+        drop(h);
+        let parsed = parse.run();
+        assert!(parsed.was_cancelled());
+    }
+
+    #[test]
+    fn a_keystroke_before_the_first_tree_cancels_it_and_reparses_from_nothing() {
+        let mut d = doc("typed.rs", &rows_of_code(400));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let initial = h.initial_parse(&d).expect("the initial parse is deferred");
+
+        let edit = d.insert(0, "//\n").expect("insert");
+        let HighlightOutcome::Deferred(after_edit) = h.edit_with_budget(&d, &edit, Duration::ZERO)
+        else {
+            panic!("a treeless reparse must defer");
+        };
+        assert_eq!(h.generation(), 1, "the keystroke advanced the generation");
+        assert!(
+            initial.run().was_cancelled(),
+            "the initial parse was cancelled by the keystroke"
+        );
+        assert_eq!(
+            after_edit.generation(),
+            1,
+            "the replacement parse carries the new generation"
+        );
+
+        assert!(h.apply_parsed(&d, after_edit.run()));
+        assert!(h.has_tree(), "the replacement parse installed the tree");
+        assert!(h.all_rows_stale(), "a first tree leaves every row stale");
+        fill_all(&mut h, &d);
+        let expected = expected_rows(&d.to_disk_string(), d.ext(), d.line_count());
+        for (row, want) in expected.iter().enumerate() {
+            assert_eq!(h.runs(row), want.as_slice(), "row {row} diverges");
+        }
+    }
+
+    #[test]
+    fn an_initial_parse_past_its_timeout_gives_up_and_greys_the_file() {
+        let d = doc("slow.rs", &rows_of_code(4_000));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        let parse = h
+            .initial_parse(&d)
+            .expect("the initial parse is deferred")
+            .with_timeout_for_test(Duration::ZERO);
+
+        let parsed = parse.run();
+        assert!(!parsed.was_cancelled(), "a timeout is not a cancellation");
+        assert!(h.apply_parsed(&d, parsed), "the timeout is applied");
+
+        assert!(h.is_too_complex(), "the tab reports the give-up");
+        assert!(!h.is_enabled(), "the file stays grey");
+        assert!(!h.has_tree());
+        assert_eq!(h.per_row_capacity(), (0, 0), "no per-row storage is kept");
+        assert!(h.runs(0).is_empty());
+    }
+
+    #[test]
     fn a_contiguous_stale_span_within_the_cap_is_filled_by_a_single_query() {
         let text = rows_of_code(60);
         let d = doc("span.rs", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
 
         assert!(!h.fill_stale_rows(&d, 0..60, Duration::ZERO).any_stale());
         for row in 0..60 {
@@ -1152,7 +1291,7 @@ mod tests {
     fn a_starved_fill_stops_between_slices_and_leaves_whole_rows_stale() {
         let text = rows_of_code(300);
         let d = doc("sliced.rs", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
 
         let first = h.fill_stale_rows(&d, 0..300, Duration::ZERO);
         assert_eq!(first.stale_rows, 300 - MAX_QUERY_ROWS);
@@ -1171,7 +1310,7 @@ mod tests {
     fn a_starved_fill_leaves_a_later_span_entirely_stale() {
         let text = rows_of_code(100);
         let d = doc("spans.rs", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         h.requery_rows(&d, 0..d.line_count());
         h.mark_stale(0..5);
         h.mark_stale(50..60);
@@ -1186,11 +1325,11 @@ mod tests {
     fn a_reused_cursor_matches_a_first_query_on_the_same_range() {
         let text = rows_of_code(200);
         let d = doc("cursor.rs", &text);
-        let mut reused = CodeHighlighter::new(&d, syntax());
+        let mut reused = parsed(&d);
         reused.requery_rows(&d, 0..40);
         reused.requery_rows(&d, 120..160);
 
-        let mut fresh = CodeHighlighter::new(&d, syntax());
+        let mut fresh = parsed(&d);
         fresh.requery_rows(&d, 120..160);
 
         for row in 120..160 {
@@ -1206,7 +1345,7 @@ mod tests {
             .join(", ");
         let text = format!("{{\n  \"row\": {{{pairs}}},\n  \"tail\": 1\n}}\n");
         let d = doc("capped.json", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         assert!(h.is_enabled());
 
         h.requery_rows(&d, 0..d.line_count());
@@ -1221,7 +1360,7 @@ mod tests {
     fn a_viewport_past_the_end_of_the_document_is_clamped_and_counts_only_real_rows() {
         let text = rows_of_code(300);
         let d = doc("clamped.rs", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         assert_eq!(d.line_count(), 301);
 
         let starved = h.fill_stale_rows(&d, 0..10_000, Duration::ZERO);
@@ -1238,7 +1377,7 @@ mod tests {
         let text = rows_of_code(10_000);
         let mut d = doc("deferred.rs", &text);
         assert!(d.len_bytes() <= MAX_HIGHLIGHT_BYTES);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         h.requery_rows(&d, 0..200);
         let before = h.runs(100);
         assert!(!before.is_empty());
@@ -1265,7 +1404,7 @@ mod tests {
     #[test]
     fn a_parse_known_to_exceed_the_budget_is_deferred_without_a_new_attempt() {
         let mut d = doc("known.rs", "fn main() { let value = 1; }\n");
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         assert_eq!(h.last_parse_cost(), Duration::ZERO);
         h.set_last_parse_cost(Duration::from_secs(1));
 
@@ -1295,7 +1434,7 @@ mod tests {
     fn a_blown_sync_budget_is_remembered_as_the_budget_it_blew() {
         let text = rows_of_code(4_000);
         let mut d = doc("blown.rs", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         let budget = Duration::from_micros(50);
 
         let edit = d.insert(d.line_to_byte(2_000), "x").expect("insert");
@@ -1315,7 +1454,7 @@ mod tests {
     fn a_deferred_parse_holds_parity_on_every_grammar() {
         for (name, text) in corpus() {
             let mut d = doc(name, text);
-            let h = &mut CodeHighlighter::new(&d, syntax());
+            let h = &mut parsed(&d);
             fill_all(h, &d);
             let at = d.line_to_byte(1);
             let edit = d.insert(at, "\n ").expect("insert");
@@ -1344,13 +1483,40 @@ mod tests {
     }
 
     #[test]
+    fn a_markdown_file_past_its_own_cap_stays_editable_and_plain() {
+        let mut text = String::with_capacity(MAX_MARKDOWN_HIGHLIGHT_BYTES + 64);
+        while text.len() <= MAX_MARKDOWN_HIGHLIGHT_BYTES {
+            text.push_str("# Heading with `code`, *emphasis* and [a link](https://paneflow.dev)\n");
+        }
+        assert!(
+            text.len() < MAX_HIGHLIGHT_BYTES,
+            "the markdown cap must be the lower of the two, or this test proves nothing"
+        );
+
+        let d = doc("huge.md", &text);
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(
+            !h.is_enabled(),
+            "markdown past its two-pass cap is left plain"
+        );
+        assert!(h.initial_parse(&d).is_none(), "and asks for no parse");
+        assert_eq!(h.per_row_capacity(), (0, 0));
+
+        let small = doc("small.md", "# Title\n\nSome `code` here.\n");
+        let mut colored = parsed(&small);
+        assert!(colored.is_enabled(), "markdown under the cap still colors");
+        fill_all(&mut colored, &small);
+        assert!(!colored.runs(0).is_empty());
+    }
+
+    #[test]
     fn a_file_past_the_highlight_cap_stays_editable_and_plain() {
         let mut text = String::with_capacity(MAX_HIGHLIGHT_BYTES + 64);
         while text.len() <= MAX_HIGHLIGHT_BYTES {
             text.push_str("pub fn f() -> i32 { 1 }\n");
         }
         let mut d = doc("huge.rs", &text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         assert!(!h.is_enabled());
         assert!(h.runs(0).is_empty());
         assert_eq!(h.per_row_capacity(), (0, 0));
@@ -1374,7 +1540,7 @@ mod tests {
     #[test]
     fn an_unknown_extension_stays_editable_and_plain() {
         let mut d = doc("notes.unknownext", "anything at all\nsecond line\n");
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         assert!(!h.is_enabled());
         assert_eq!(h.per_row_capacity(), (0, 0));
         let edit = d.insert(0, "x").expect("insert");
@@ -1388,7 +1554,7 @@ mod tests {
     fn deleting_a_row_keeps_the_row_map_aligned_with_the_document() {
         let text = "fn a() {}\nfn b() {}\nfn c() {}\n";
         let mut d = doc("del.rs", text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
 
         let start = d.line_to_byte(1);
@@ -1412,7 +1578,7 @@ mod tests {
     fn a_theme_change_recolors_without_touching_the_trees() {
         let text = "fn main() { let s = \"x\"; }\n";
         let d = doc("theme.rs", text);
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
         let before = h.root_child_ids();
         let colors_before: Vec<_> = h.runs(0).iter().map(|(_, c)| *c).collect();
@@ -1438,7 +1604,7 @@ mod tests {
     #[test]
     fn an_edit_marks_changed_rows_stale_without_querying_them() {
         let mut d = doc("stale.rs", "fn one() {}\nfn two() {}\n");
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
         let edit = d.insert(3, "x").expect("insert");
         assert!(matches!(
@@ -1455,18 +1621,37 @@ mod tests {
     }
 
     #[test]
-    fn opening_builds_trees_but_leaves_every_row_stale() {
+    fn opening_defers_its_first_parse_and_leaves_every_row_stale() {
         let d = doc("lazy.rs", "fn main() {}\n");
-        let h = CodeHighlighter::new(&d, syntax());
-        assert!(h.has_tree());
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert!(h.is_enabled(), "the grammar resolved");
+        assert!(!h.has_tree(), "the initial parse did not run inside new");
         assert!(h.all_rows_stale());
         assert!(h.runs(0).is_empty());
+        assert_eq!(
+            h.fill_stale_rows(&d, 0..d.line_count(), Duration::from_secs(1)),
+            StaleFill::default(),
+            "a treeless fill asks for no follow-up frame"
+        );
+
+        let parse = h.initial_parse(&d).expect("the initial parse is deferred");
+        assert_eq!(parse.generation(), 0, "the initial parse is generation 0");
+        assert!(h.apply_parsed(&d, parse.run()));
+
+        assert!(h.has_tree(), "the deferred parse installed the tree");
+        assert!(h.all_rows_stale());
+        fill_all(&mut h, &d);
+        assert!(!h.runs(0).is_empty(), "and the rows color from it");
+        assert!(
+            h.initial_parse(&d).is_none(),
+            "a parsed highlighter asks for no second initial parse"
+        );
     }
 
     #[test]
     fn a_batch_of_hunks_advances_one_generation_and_defers_one_parse() {
         let mut d = doc("batch.rs", &rows_of_code(400));
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
         let before = h.generation();
 
@@ -1499,7 +1684,7 @@ mod tests {
     #[test]
     fn edit_batch_refuses_hunks_that_do_not_descend() {
         let mut d = doc("batch.rs", &rows_of_code(40));
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
         let generation = h.generation();
         let low = d.insert(d.line_to_byte(5), "// a\n").expect("insert");
@@ -1523,7 +1708,7 @@ mod tests {
     #[test]
     fn edit_batch_refuses_hunks_that_share_a_row() {
         let mut d = doc("batch.rs", &rows_of_code(40));
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
         let generation = h.generation();
         let second = d.insert(d.line_to_byte(10), "// b\n").expect("insert");
@@ -1544,7 +1729,7 @@ mod tests {
     #[test]
     fn a_batch_leaves_the_rows_between_its_hunks_alone() {
         let mut d = doc("batch.rs", &rows_of_code(200));
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
         let quiet = h.runs(100).to_vec();
         assert!(!quiet.is_empty(), "the untouched row starts colored");
@@ -1572,7 +1757,7 @@ mod tests {
     #[test]
     fn a_batch_cancels_the_deferred_parse_it_finds_in_flight() {
         let mut d = doc("batch.rs", &rows_of_code(120));
-        let mut h = CodeHighlighter::new(&d, syntax());
+        let mut h = parsed(&d);
         fill_all(&mut h, &d);
 
         let first = d.insert(d.line_to_byte(10), "// a\n").expect("insert");

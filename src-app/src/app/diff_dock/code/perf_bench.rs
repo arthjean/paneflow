@@ -10,10 +10,13 @@ use gpui::{
 };
 
 use crate::bench_harness::{
-    Metric, SegmentTimer, live_bytes, measure, measure_segments, process_cpu_time, publish,
-    refuse_debug_profile,
+    Metric, SegmentTimer, count_tree_sitter_allocations, live_bytes, measure, measure_segments,
+    process_cpu_time, publish, refuse_debug_profile, tree_sitter_live_bytes,
 };
-use crate::diff::{DiffSyntax, resolve_runs};
+use crate::diff::{
+    DiffSyntax, MAX_HIGHLIGHT_BYTES, MAX_MARKDOWN_HIGHLIGHT_BYTES, grammar_for_ext, is_markdown,
+    markdown_inline_grammar, resolve_runs,
+};
 
 use super::bench_corpus::{
     EDITOR_CORPUS_SEED, HIGHLIGHTED_RUST_BYTES, LARGE_RUST_BYTES, MINIFIED_JSON_CHARS,
@@ -72,6 +75,12 @@ fn document(name: &str, text: &str) -> CodeDocument {
     CodeDocument::new(PathBuf::from(name), text)
 }
 
+fn parsed(doc: &CodeDocument, syntax: DiffSyntax) -> CodeHighlighter {
+    let mut highlighter = CodeHighlighter::new(doc, syntax);
+    highlighter.parse_initial_blocking(doc);
+    highlighter
+}
+
 fn fill_windows(doc: &CodeDocument) -> usize {
     (doc.line_count() / VIEWPORT_ROWS).clamp(1, FILL_WINDOWS_CAP)
 }
@@ -107,7 +116,7 @@ fn apply_ui_edit(
 fn open_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     metrics.push(measure(
         "open_300kb_highlighted",
-        "a 300 KB Rust file opened: rope build, longest-line measure, tree-sitter parse and an explicit query of the first 60-row viewport",
+        "a 300 KB Rust file opened: rope build, longest-line measure and an explicit query of the first 60-row viewport; since US-030 the initial parse is deferred, so this is the work between the read and the first visible text",
         1,
         10,
         || {
@@ -122,8 +131,44 @@ fn open_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         },
     ));
     metrics.push(measure(
+        "open_to_first_tree_300kb",
+        "the same 300 KB Rust file from the read to apply_parsed: the deferred initial parse plus the first 60-row viewport query it makes possible, all of it off the render thread except the apply",
+        1,
+        10,
+        || {
+            let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+            let mut highlighter = CodeHighlighter::new(&doc, dark());
+            let parse = highlighter
+                .initial_parse(&doc)
+                .expect("the 300 KB corpus defers an initial parse");
+            highlighter.apply_parsed(&doc, parse.run());
+            highlighter.fill_stale_rows(
+                &doc,
+                0..VIEWPORT_ROWS.min(doc.line_count()),
+                Duration::from_millis(2),
+            );
+            std::hint::black_box((doc, highlighter));
+        },
+    ));
+    metrics.push(measure(
+        "open_2mb_to_text",
+        "a 2 MB Rust file from the read to visible text: rope build, longest-line measure and the first 60-row viewport query while the initial parse is still in flight; US-030 budgets this under 50 ms",
+        1,
+        10,
+        || {
+            let doc = document("bench-2mb.rs", &corpora.reload_rust);
+            let mut highlighter = CodeHighlighter::new(&doc, dark());
+            highlighter.fill_stale_rows(
+                &doc,
+                0..VIEWPORT_ROWS.min(doc.line_count()),
+                Duration::from_millis(2),
+            );
+            std::hint::black_box((doc, highlighter));
+        },
+    ));
+    metrics.push(measure(
         "open_3_7mb",
-        "a 3.7 MB Rust file opened: rope build plus the longest-line measure, past the 300 KB highlight cap",
+        "a 3.7 MB Rust file opened: rope build plus the longest-line measure, past the 2 MB highlight cap",
         1,
         5,
         || {
@@ -136,7 +181,7 @@ fn open_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
 
 fn keystroke_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let mut doc = document("bench-300kb.rs", &corpora.highlighted_rust);
-    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut highlighter = parsed(&doc, dark());
     let mut index = 0usize;
     metrics.push(measure_segments(
         "keystroke_to_runs",
@@ -158,7 +203,7 @@ fn keystroke_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
 
 fn viewport_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
-    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut highlighter = parsed(&doc, dark());
     let span = doc.line_count().saturating_sub(VIEWPORT_ROWS).max(1);
     let mut index = 0usize;
     metrics.push(measure(
@@ -176,7 +221,7 @@ fn viewport_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
 
 fn fill_stale_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
-    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut highlighter = parsed(&doc, dark());
     let windows = fill_windows(&doc);
     let mut index = 0usize;
     metrics.push(measure_segments(
@@ -262,7 +307,7 @@ fn pagedown_probe(
 
 fn pagedown_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
-    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut highlighter = parsed(&doc, dark());
     let probe = pagedown_probe(&doc, &mut highlighter, HIGHLIGHT_FRAME_BUDGET);
     metrics.push(Metric::count(
         "pagedown_stale_rows",
@@ -294,7 +339,7 @@ fn unclosed_comment_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         10,
         |timer| {
             let mut doc = document("bench-300kb.rs", &text);
-            let mut highlighter = CodeHighlighter::new(&doc, dark());
+            let mut highlighter = parsed(&doc, dark());
             apply_ui_edit(&mut doc, &mut highlighter, 2..2, "*/", timer);
             timer.time(|| {
                 highlighter.fill_stale_rows(
@@ -310,7 +355,7 @@ fn unclosed_comment_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
 
 fn deferred_parse_burst_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let mut doc = document("bench-300kb.rs", &corpora.highlighted_rust);
-    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut highlighter = parsed(&doc, dark());
     let mut parses = Vec::with_capacity(50);
     let burst_started = Instant::now();
     let cpu_before = process_cpu_time();
@@ -414,7 +459,7 @@ fn document_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
 
 fn theme_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
-    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut highlighter = parsed(&doc, dark());
     let mut index = 0usize;
     metrics.push(measure(
         "theme_switch",
@@ -697,7 +742,7 @@ fn reload_hunk_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let mut round = 0usize;
     metrics.push(measure_segments(
         "reload_10_hunks_100k_lines_ui",
-        "render-thread work of an external reload of the 115 500-line 3.7 MB file: 10 descending hunks spliced under one batched highlighter call, then the first viewport fill; the corpus sits past the 300 KB coloring cap, so both of those return at once and the number is the splice and history cost alone; the off-thread diff is excluded",
+        "render-thread work of an external reload of the 115 500-line 3.7 MB file: 10 descending hunks spliced under one batched highlighter call, then the first viewport fill; the corpus sits past the 2 MB coloring cap, so both of those return at once and the number is the splice and history cost alone; the off-thread diff is excluded",
         1,
         20,
         |timer| {
@@ -716,7 +761,11 @@ fn reload_hunk_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
 fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let before = live_bytes();
     let mut doc = document("bench-2mb.rs", &corpora.reload_rust);
-    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut highlighter = parsed(&doc, dark());
+    assert!(
+        highlighter.has_tree(),
+        "the 2 MB corpus must sit under the highlight cap for this metric to mean what it claims"
+    );
     let mut history = UndoHistory::default();
     for round in 0..RELOADS {
         let mut text = String::with_capacity(corpora.reload_rust.len() + 64);
@@ -730,9 +779,131 @@ fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         "reload_200_retained_bytes",
         "bytes",
         retained,
-        "live allocated bytes a tab still holds after 200 external reloads of a 2 MB file: document, highlighter and undo history",
+        "live allocated bytes a colored 2 MB tab still holds after 200 external reloads: document, per-row runs and undo history; the tree-sitter trees allocate through the C allocator and are counted by the tree memory probe instead",
     ));
     std::hint::black_box((doc, highlighter, history));
+}
+
+const TREE_BUDGET_BYTES: i64 = 128 * 1024 * 1024;
+
+fn parse_grammars(ext: &str) -> Vec<&'static crate::diff::Grammar> {
+    let mut grammars = Vec::new();
+    if let Some(grammar) = grammar_for_ext(ext) {
+        grammars.push(grammar);
+    }
+    if is_markdown(ext)
+        && let Some(inline) = markdown_inline_grammar()
+    {
+        grammars.push(inline);
+    }
+    grammars
+}
+
+fn tree_bytes_of(ext: &str, source: &str) -> (i64, i64) {
+    let grammars = parse_grammars(ext);
+    let before = tree_sitter_live_bytes();
+    let trees = grammars
+        .into_iter()
+        .filter_map(|grammar| {
+            let mut parser = tree_sitter::Parser::new();
+            parser.set_language(&grammar.language).ok()?;
+            parser.parse(source, None)
+        })
+        .collect::<Vec<_>>();
+    let held = tree_sitter_live_bytes() - before;
+    drop(trees);
+    (held, tree_sitter_live_bytes() - before)
+}
+
+#[test]
+#[ignore = "tree memory probe: cargo test --release -p paneflow-app --bin paneflow app::diff_dock::code::perf_bench::tree_memory_probe -- --ignored --exact --nocapture --test-threads=1"]
+fn tree_memory_probe() {
+    count_tree_sitter_allocations();
+    let cases = [
+        ("rust_300kb", "rs", rust_source(HIGHLIGHTED_RUST_BYTES)),
+        ("rust_2mb", "rs", rust_source(RELOAD_RUST_BYTES)),
+        ("rust_3_7mb", "rs", rust_source(LARGE_RUST_BYTES)),
+        ("markdown_64kb", "md", markdown_source(64_000)),
+        ("markdown_2mb", "md", markdown_source(RELOAD_RUST_BYTES)),
+        (
+            "json_295kb",
+            "json",
+            minified_json_line(HIGHLIGHTED_RUST_BYTES),
+        ),
+        ("json_2mb", "json", minified_json_line(RELOAD_RUST_BYTES)),
+    ];
+
+    for (name, ext, source) in cases {
+        let (held, leaked) = tree_bytes_of(ext, &source);
+        let ratio = held as f64 / source.len() as f64;
+        println!(
+            "PANEFLOW_BENCH_NOTE tree_bytes {name}: {} source bytes hold {held} tree bytes, {ratio:.2} per source byte, so the {} MiB budget allows a cap of {} bytes",
+            source.len(),
+            TREE_BUDGET_BYTES / (1024 * 1024),
+            (TREE_BUDGET_BYTES as f64 / ratio) as u64
+        );
+        assert!(
+            held > 0,
+            "{name} produced no tree: the counter is not installed or the grammar is missing"
+        );
+        assert!(
+            leaked.abs() < held / 8,
+            "{name} kept {leaked} bytes after its trees were dropped"
+        );
+    }
+
+    let source = rust_source(HIGHLIGHTED_RUST_BYTES);
+    let mut doc = document("probe-300kb.rs", &source);
+    let before = tree_sitter_live_bytes();
+    let mut highlighter = parsed(&doc, dark());
+    let one_tree = tree_sitter_live_bytes() - before;
+    let edit = doc
+        .insert(doc.line_to_byte(10), "//\n")
+        .expect("the probe edit lands");
+    let HighlightOutcome::Deferred(parse) =
+        highlighter.edit_with_budget(&doc, &edit, Duration::ZERO)
+    else {
+        panic!("a zero budget must defer the reparse");
+    };
+    let trees = parse.run();
+    let both_trees = tree_sitter_live_bytes() - before;
+    assert!(
+        both_trees > one_tree,
+        "the deferred parse must hold a second tree while it is in flight: {one_tree} -> {both_trees}"
+    );
+    assert!(highlighter.apply_parsed(&doc, trees));
+    let after_apply = tree_sitter_live_bytes() - before;
+    println!(
+        "PANEFLOW_BENCH_NOTE tree_bytes one_tree={one_tree} both_trees={both_trees} after_apply={after_apply}"
+    );
+    assert!(
+        after_apply < one_tree * 3 / 2,
+        "apply_parsed must drop the superseded tree: {both_trees} in flight, {after_apply} kept, {one_tree} for one tree"
+    );
+    drop(highlighter);
+    drop(doc);
+
+    for (label, ext, cap) in [
+        ("rs", "rs", MAX_HIGHLIGHT_BYTES),
+        ("md", "md", MAX_MARKDOWN_HIGHLIGHT_BYTES),
+        ("json", "json", MAX_HIGHLIGHT_BYTES),
+    ] {
+        let source = match ext {
+            "md" => markdown_source(cap),
+            "json" => minified_json_line(cap),
+            _ => rust_source(cap),
+        };
+        let (held, _) = tree_bytes_of(ext, &source);
+        println!(
+            "PANEFLOW_BENCH_NOTE tree_bytes at_cap_{label}: {} source bytes hold {held} tree bytes ({:.1} MiB)",
+            source.len(),
+            held as f64 / (1024.0 * 1024.0)
+        );
+        assert!(
+            held < TREE_BUDGET_BYTES,
+            "a {label} file at the {cap}-byte cap holds {held} tree bytes, past the {TREE_BUDGET_BYTES}-byte budget"
+        );
+    }
 }
 
 #[test]
@@ -785,7 +956,7 @@ mod tests {
     fn every_corpus_reaches_the_path_the_bench_claims() {
         let rust = rust_source(8_192);
         let doc = document("probe.rs", &rust);
-        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        let mut highlighter = parsed(&doc, dark());
         assert!(highlighter.is_enabled(), "the rust corpus must highlight");
         highlighter.requery_rows(&doc, 0..doc.line_count());
         assert!(
@@ -795,15 +966,19 @@ mod tests {
 
         let markdown = markdown_source(8_192);
         let doc = document("probe.md", &markdown);
-        let highlighter = CodeHighlighter::new(&doc, dark());
+        let highlighter = parsed(&doc, dark());
         assert!(
             highlighter.is_enabled(),
             "the markdown corpus must highlight"
         );
+        assert!(
+            highlighter.has_tree(),
+            "the markdown corpus must reach both of its grammar passes"
+        );
 
         let json = minified_json_line(2_048);
         let doc = document("probe.json", &json);
-        let highlighter = CodeHighlighter::new(&doc, dark());
+        let highlighter = parsed(&doc, dark());
         assert!(highlighter.is_enabled(), "the json corpus must highlight");
         assert_eq!(
             doc.line_count(),
@@ -835,7 +1010,7 @@ mod tests {
     fn a_viewport_requery_colors_the_rows_it_covers() {
         let rust = rust_source(32_768);
         let doc = document("probe.rs", &rust);
-        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        let mut highlighter = parsed(&doc, dark());
         let rows = 0..VIEWPORT_ROWS.min(doc.line_count());
         highlighter.requery_rows(&doc, rows.clone());
         assert!(
@@ -848,7 +1023,7 @@ mod tests {
     fn a_ui_edit_keeps_the_document_and_the_runs_in_step() {
         let rust = rust_source(16_384);
         let mut doc = document("probe.rs", &rust);
-        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        let mut highlighter = parsed(&doc, dark());
         highlighter.requery_rows(&doc, 0..VIEWPORT_ROWS.min(doc.line_count()));
         let before = doc.len_bytes();
         let mut timer = SegmentTimer::default();
@@ -873,7 +1048,7 @@ mod tests {
     fn the_pagedown_probe_leaves_no_stale_row_even_without_a_budget() {
         let rust = rust_source(64_000);
         let doc = document("probe.rs", &rust);
-        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        let mut highlighter = parsed(&doc, dark());
         assert!(highlighter.is_enabled(), "the probe needs a colored file");
 
         let starved = pagedown_probe(&doc, &mut highlighter, Duration::ZERO);
@@ -883,7 +1058,7 @@ mod tests {
         );
         assert_eq!(starved.frames_to_fresh, 1);
 
-        let mut fresh = CodeHighlighter::new(&doc, dark());
+        let mut fresh = parsed(&doc, dark());
         let generous = pagedown_probe(&doc, &mut fresh, Duration::from_secs(1));
         assert_eq!(generous.stale_max, 0);
         assert_eq!(generous.frames_to_fresh, 1);

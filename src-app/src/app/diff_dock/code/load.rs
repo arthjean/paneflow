@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::{ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use gpui::AppContext;
 use gpui::{AsyncApp, Context, WeakEntity};
 
 use super::document::{CodeDocument, ReadOnlyReason};
@@ -188,7 +190,12 @@ pub(crate) fn spawn_code_load<V, F>(
     F: FnOnce(&mut V, u64, CodeOpen, &mut Context<V>) + 'static,
 {
     cx.spawn(async move |this: WeakEntity<V>, cx: &mut AsyncApp| {
+        #[cfg(not(test))]
         let outcome = smol::unblock(move || open_blocking(&path, syntax)).await;
+        #[cfg(test)]
+        let outcome = cx
+            .background_spawn(async move { open_blocking(&path, syntax) })
+            .await;
         cx.update(|cx| {
             let _ = this.update(cx, |view: &mut V, cx: &mut Context<V>| {
                 apply(view, generation, outcome, cx);
@@ -515,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn opening_a_file_parses_it_in_the_same_blocking_pass_as_the_read() {
+    fn opening_a_file_leaves_its_first_parse_to_the_deferred_pass() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write(
             &dir,
@@ -523,17 +530,26 @@ mod tests {
             b"fn main() {\n\tlet x = 1;\n\tlet y = 2;\n}\n",
         );
 
-        let opened = open_blocking(&path, syntax()).expect("open");
+        let mut opened = open_blocking(&path, syntax()).expect("open");
 
         assert_eq!(opened.document.line_count(), 5);
         assert!(opened.highlighter.is_enabled());
         assert_eq!(opened.indent, IndentUnit::Tab);
         assert_eq!(opened.stamp, FileStamp::read(&path));
         assert!(
-            opened.highlighter.has_tree(),
-            "the initial parse ran inside open_blocking, not later on the render thread"
+            !opened.highlighter.has_tree(),
+            "open_blocking returns the text before any parse has run"
         );
         assert!(opened.highlighter.runs(0).is_empty());
+
+        assert!(
+            opened.highlighter.parse_initial_blocking(&opened.document),
+            "the deferred initial parse applies to the highlighter it came from"
+        );
+        assert!(
+            opened.highlighter.has_tree(),
+            "and the tree arrives with it"
+        );
     }
 
     #[test]

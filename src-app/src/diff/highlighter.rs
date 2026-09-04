@@ -8,9 +8,23 @@ use tree_sitter::{Language, Parser, Query, QueryCursor};
 
 use super::syntax::DiffSyntax;
 
-pub(crate) const MAX_HIGHLIGHT_BYTES: usize = 300_000;
+pub(crate) const MAX_HIGHLIGHT_BYTES: usize = 2_000_000;
+
+pub(crate) const MAX_MARKDOWN_HIGHLIGHT_BYTES: usize = 1_000_000;
 
 pub(crate) const MAX_CAPTURES_PER_ROW: usize = 4_096;
+
+pub(crate) fn is_markdown(ext: &str) -> bool {
+    matches!(ext, "md" | "markdown" | "mdx")
+}
+
+pub(crate) fn highlight_cap(ext: &str) -> usize {
+    if is_markdown(ext) {
+        MAX_MARKDOWN_HIGHLIGHT_BYTES
+    } else {
+        MAX_HIGHLIGHT_BYTES
+    }
+}
 
 pub(crate) struct Grammar {
     pub(crate) language: Language,
@@ -131,7 +145,7 @@ pub fn highlight_lines(
     ext: &str,
     syntax: &DiffSyntax,
 ) -> Vec<Vec<(Range<usize>, Hsla)>> {
-    if text.len() > MAX_HIGHLIGHT_BYTES {
+    if text.len() > highlight_cap(ext) {
         return text.lines().map(|_| Vec::new()).collect();
     }
 
@@ -149,7 +163,7 @@ pub fn highlight_lines(
     };
     apply_grammar(grammar, text, syntax, &line_ranges, &mut out);
 
-    if matches!(ext, "md" | "markdown" | "mdx")
+    if is_markdown(ext)
         && let Some(inline) = markdown_inline_grammar()
     {
         apply_grammar(inline, text, syntax, &line_ranges, &mut out);
@@ -302,6 +316,34 @@ mod tests {
         for w in lines[0].windows(2) {
             assert!(w[0].0.end <= w[1].0.start);
         }
+    }
+
+    #[test]
+    fn the_diff_view_caps_markdown_at_its_own_two_pass_budget() {
+        let syn = DiffSyntax::from_theme(&paneflow_dark());
+        let mut text = String::with_capacity(MAX_MARKDOWN_HIGHLIGHT_BYTES + 128);
+        while text.len() <= MAX_MARKDOWN_HIGHLIGHT_BYTES {
+            text.push_str("# Heading with `code`, *emphasis* and [a link](https://paneflow.dev)\n");
+        }
+        assert!(
+            text.len() < MAX_HIGHLIGHT_BYTES,
+            "the markdown cap must be the lower of the two, or this test proves nothing"
+        );
+
+        let lines = highlight_lines(&text, "md", &syn);
+        assert_eq!(lines.len(), text.lines().count(), "one run-list per line");
+        assert!(
+            lines.iter().all(Vec::is_empty),
+            "a markdown side past its own cap must not build two trees for the diff view"
+        );
+
+        let under = "# Title\n\nSome `code` here.\n";
+        assert!(
+            highlight_lines(under, "md", &syn)
+                .iter()
+                .any(|runs| !runs.is_empty()),
+            "markdown under the cap still colors"
+        );
     }
 
     #[test]

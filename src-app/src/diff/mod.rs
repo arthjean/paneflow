@@ -25,12 +25,12 @@ pub use view::{
 pub(crate) use element::{DiffBody, DiffElement};
 pub(crate) use git::FileDiff;
 pub(crate) use git::compute_head_diff;
-#[cfg(test)]
-pub(crate) use highlighter::highlight_lines;
 pub(crate) use highlighter::{
-    Grammar, MAX_CAPTURES_PER_ROW, MAX_HIGHLIGHT_BYTES, grammar_for_ext, markdown_inline_grammar,
-    resolve_runs,
+    Grammar, MAX_CAPTURES_PER_ROW, grammar_for_ext, highlight_cap, is_markdown,
+    markdown_inline_grammar, resolve_runs,
 };
+#[cfg(test)]
+pub(crate) use highlighter::{MAX_HIGHLIGHT_BYTES, MAX_MARKDOWN_HIGHLIGHT_BYTES, highlight_lines};
 pub(crate) use hit_test::row_at_offset;
 pub(crate) use hscroll::{
     H_SCROLLBAR_TRACK_HEIGHT, HScrollbarSegment, file_at_row, h_offset_index, h_offset_len,

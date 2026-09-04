@@ -63,6 +63,7 @@ const READ_ONLY_FLASH: Duration = Duration::from_millis(600);
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 const RELOAD_DIFF_ATTEMPTS: usize = 2;
 const INITIAL_HIGHLIGHT_ROWS: usize = 60;
+const TOO_COMPLEX_BANNER: &str = "This file is too complex to color.";
 
 actions!(
     paneflow_code_editor,
@@ -327,10 +328,11 @@ impl CodeView {
     #[cfg(test)]
     pub(crate) fn ready_for_test(path: PathBuf, text: &str, cx: &mut Context<Self>) -> Self {
         let document = super::load::build_document(path.clone(), text, false);
-        let highlighter = CodeHighlighter::new(
+        let mut highlighter = CodeHighlighter::new(
             &document,
             DiffSyntax::from_theme(&crate::theme::active_theme()),
         );
+        highlighter.parse_initial_blocking(&document);
         Self {
             element_id: format!("code-view:{}", path.display()).into(),
             path,
@@ -546,6 +548,7 @@ impl CodeView {
                         view.indent = loaded.indent;
                         view.stamp = loaded.stamp;
                         view.state = CodeLoadState::Ready(Box::new(loaded));
+                        view.start_initial_parse(cx);
                     }
                     Err(err) => {
                         view.state = CodeLoadState::Failed(err);
@@ -555,6 +558,22 @@ impl CodeView {
                 cx.notify();
             },
         );
+    }
+
+    fn start_initial_parse(&mut self, cx: &mut Context<Self>) {
+        let Some((doc, hl)) = self.state.editable() else {
+            return;
+        };
+        let Some(parse) = hl.initial_parse(doc) else {
+            return;
+        };
+        spawn_deferred_parse(parse, cx, |view: &mut Self, parsed, cx| {
+            if let Some((doc, hl)) = view.state.editable()
+                && hl.apply_parsed(doc, parsed)
+            {
+                cx.notify();
+            }
+        });
     }
 
     pub(crate) fn path(&self) -> &Path {
@@ -1862,6 +1881,19 @@ impl CodeView {
                     .into_any_element(),
             );
         }
+        if self
+            .state
+            .highlighter()
+            .is_some_and(CodeHighlighter::is_too_complex)
+        {
+            out.push(
+                row()
+                    .bg(ui.overlay)
+                    .text_color(ui.muted)
+                    .child(TOO_COMPLEX_BANNER)
+                    .into_any_element(),
+            );
+        }
         out
     }
 }
@@ -2273,10 +2305,11 @@ mod tests {
             CodeLoadState::Loading
         } else {
             let document = build_document(path.clone(), text, false);
-            let highlighter = CodeHighlighter::new(
+            let mut highlighter = CodeHighlighter::new(
                 &document,
                 DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
             );
+            highlighter.parse_initial_blocking(&document);
             CodeLoadState::Ready(Box::new(LoadedCode {
                 document,
                 highlighter,
@@ -3077,10 +3110,11 @@ mod tests {
         text: &str,
     ) -> impl FnOnce(&mut Context<CodeView>) -> CodeView + use<> {
         let document = build_document(path.clone(), text, false);
-        let highlighter = CodeHighlighter::new(
+        let mut highlighter = CodeHighlighter::new(
             &document,
             DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
         );
+        highlighter.parse_initial_blocking(&document);
         let stamp = FileStamp::read(&path);
         let state = CodeLoadState::Ready(Box::new(LoadedCode {
             document,
@@ -3214,13 +3248,104 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn opening_a_file_shows_its_text_first_and_colors_it_when_the_tree_lands(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "fn main() {\n    let value = 1;\n}\n").expect("seed");
+        let opened = super::super::load::open_blocking(
+            &path,
+            DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
+        )
+        .expect("open");
+        assert!(
+            !opened.highlighter.has_tree(),
+            "the blocking read hands the text over before any parse"
+        );
+        drop(opened);
+
+        let spawn_path = path.clone();
+        let (view, cx) = cx.add_window_view(move |_window, cx| CodeView::new(spawn_path, cx));
+        cx.executor().allow_parking();
+        for _ in 0..300 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| {
+                view.state
+                    .highlighter()
+                    .is_some_and(CodeHighlighter::has_tree)
+            }) {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(10)).await;
+        }
+
+        view.update(cx, |view, _cx| {
+            let (doc, highlighter) = view.state.editable().expect("the file loaded");
+            assert_eq!(doc.line_count(), 4, "the text is there");
+            assert!(
+                highlighter.has_tree(),
+                "the deferred initial parse landed and installed the tree"
+            );
+            assert!(
+                !highlighter.is_too_complex(),
+                "a three-line file is not too complex to color"
+            );
+            highlighter.requery_rows(doc, 0..doc.line_count());
+            assert!(
+                (0..doc.line_count()).any(|row| !highlighter.runs(row).is_empty()),
+                "and the rows color from it"
+            );
+            let bridge = view._watch_bridge.take();
+            if let Some(bridge) = bridge {
+                *bridge.lock().expect("bridge lock") = None;
+            }
+            view._watcher = None;
+        });
+    }
+
+    #[gpui::test]
+    fn an_initial_parse_that_gives_up_greys_the_file_and_raises_its_banner(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = view(cx, "fn main() {\n    let value = 1;\n}\n");
+        let ui = crate::theme::ui_colors();
+
+        let before = view.update(cx, |view, cx| view.banners(ui, cx).len());
+
+        view.update(cx, |view, _cx| {
+            let (doc, highlighter) = view.state.editable().expect("ready");
+            let mut fresh =
+                CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+            let expired = fresh
+                .initial_parse(doc)
+                .expect("a fresh highlighter defers its first parse")
+                .with_timeout_for_test(Duration::ZERO);
+            assert!(
+                highlighter.apply_parsed(doc, expired.run()),
+                "the expired parse is applied to the live highlighter"
+            );
+            assert!(highlighter.is_too_complex(), "the tab gave up on coloring");
+            assert!(!highlighter.is_enabled(), "and the file stays grey");
+        });
+
+        let after = view.update(cx, |view, cx| view.banners(ui, cx).len());
+        assert_eq!(
+            after,
+            before + 1,
+            "giving up on the parse raises one banner under the file name"
+        );
+    }
+
+    #[gpui::test]
     fn a_keystroke_on_a_read_only_document_is_refused_visibly(cx: &mut TestAppContext) {
         let path = PathBuf::from("/nonexistent/paneflow-code.rs");
         let document = build_document(path.clone(), "locked\n", true);
-        let highlighter = CodeHighlighter::new(
+        let mut highlighter = CodeHighlighter::new(
             &document,
             DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
         );
+        highlighter.parse_initial_blocking(&document);
         let state = CodeLoadState::Ready(Box::new(LoadedCode {
             document,
             highlighter,
@@ -3329,6 +3454,7 @@ mod tests {
             live.requery_rows(doc, 0..doc.line_count());
             let mut oracle =
                 CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+            oracle.parse_initial_blocking(doc);
             oracle.requery_rows(doc, 0..doc.line_count());
             assert!(live.is_enabled(), "the grammar is loaded");
             assert!(
