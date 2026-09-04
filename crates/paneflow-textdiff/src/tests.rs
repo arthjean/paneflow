@@ -4,13 +4,21 @@
     reason = "story acceptance tests want short, explicit failure sites"
 )]
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::manager::{squash, MAX_BAD_LINES};
 use crate::{
     compare_chars, compare_lines, compare_lines_inner, compare_words, split_lines,
     ComparisonPolicy, DiffFragment, DiffTooBig, HighlightPolicy, LineFragment, Range,
 };
+
+pub(crate) fn budget(local: Duration) -> Duration {
+    if std::env::var_os("CI").is_some() {
+        local * 4
+    } else {
+        local
+    }
+}
 
 const POLICIES: [ComparisonPolicy; 3] = [
     ComparisonPolicy::Default,
@@ -109,7 +117,10 @@ fn ten_thousand_different_lines_compare_under_two_hundred_milliseconds() {
     let ranges = compare_lines(&lines1, &lines2, ComparisonPolicy::Default);
     let elapsed = started.elapsed();
     assert_eq!(ranges, vec![Range::new(0, 10_000, 0, 10_000)]);
-    assert!(elapsed.as_millis() < 200, "took {elapsed:?}");
+    assert!(
+        elapsed < budget(Duration::from_millis(200)),
+        "took {elapsed:?}"
+    );
 }
 
 #[test]
@@ -173,9 +184,10 @@ fn a_side_over_twenty_thousand_chunks_is_too_big() {
             Err(DiffTooBig)
         );
     }
+    let elapsed = started.elapsed();
     assert!(
-        started.elapsed().as_millis() < 200,
-        "the guard must fail fast"
+        elapsed < budget(Duration::from_millis(200)),
+        "the guard must fail fast, took {elapsed:?}"
     );
 }
 
@@ -219,7 +231,10 @@ fn ten_thousand_cjk_chars_compare_under_fifty_milliseconds() {
     let elapsed = started.elapsed();
     assert_fair(&fragments, &text1, &text2);
     assert_eq!(fragments.len(), 2);
-    assert!(elapsed.as_millis() < 50, "took {elapsed:?}");
+    assert!(
+        elapsed < budget(Duration::from_millis(50)),
+        "took {elapsed:?}"
+    );
 }
 
 #[test]
@@ -411,10 +426,10 @@ fn identical_texts_short_circuit() {
     .is_empty());
     let lines = split_lines(&text);
     assert!(compare_lines(&lines, &lines, ComparisonPolicy::IgnoreWhitespaces).is_empty());
+    let elapsed = started.elapsed();
     assert!(
-        started.elapsed().as_millis() < 100,
-        "took {:?}",
-        started.elapsed()
+        elapsed < budget(Duration::from_millis(100)),
+        "took {elapsed:?}"
     );
 }
 

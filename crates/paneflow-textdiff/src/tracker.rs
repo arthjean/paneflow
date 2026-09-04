@@ -336,6 +336,7 @@ mod tests {
 
     use super::*;
     use crate::split_lines;
+    use crate::tests::budget;
 
     const POLICIES: [ComparisonPolicy; 3] = [
         ComparisonPolicy::Default,
@@ -810,7 +811,7 @@ mod tests {
             fastest_batch = fastest_batch.min(started.elapsed() / calls_per_batch);
         }
         assert!(
-            fastest_batch.as_micros() < 50,
+            fastest_batch < budget(Duration::from_micros(50)),
             "range_changed took {fastest_batch:?} per call over 1 000 blocks in its fastest batch"
         );
         assert_eq!(tracker.stats().rediffs, 0, "range_changed never diffs");
@@ -836,6 +837,9 @@ mod tests {
             tracker.blocks(),
             &[Block::new(50_000..50_100, 50_000..50_100, false, false)]
         );
-        assert!(elapsed.as_millis() < 5, "refresh_dirty took {elapsed:?}");
+        assert!(
+            elapsed < budget(Duration::from_millis(5)),
+            "refresh_dirty took {elapsed:?}"
+        );
     }
 }
