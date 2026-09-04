@@ -181,9 +181,17 @@ does not. That table is the artifact to share.
 
 `--set-baseline` (or `-SetBaseline` on Windows) copies the fresh result over
 the suite's baseline. The committed terminal baseline is the state of the
-pipeline before the September 2026 performance work; the committed editor
-baseline is the state of the editor before it, so later runs show the
-cumulative change.
+pipeline before the September 2026 performance work.
+
+`scripts/bench-editor` refuses `--set-baseline` when the run reports a
+`cpu_share` below 0.90: a contended run inflates every timing it would freeze,
+and every later comparison against it would read as a false improvement. Close
+the competing workload and run again.
+
+**A change that moves a metric updates the baseline in the same pull request.**
+A baseline older than the code it is compared against turns every table into
+fiction: the editor baseline recorded before EP-002 to EP-005 reports 69 ms of
+work per keystroke against a HEAD that measures 2.5 ms.
 
 Both suites refuse to run under the debug profile, which would measure the
 compiler rather than the code, and exit non-zero with an explicit message. Set
