@@ -23,13 +23,16 @@ use super::cursor::CodeSelection;
 use super::document::CodeDocument;
 use super::edit::{EditGroup, UndoHistory, disk_splices, splice};
 use super::element::{CODE_FONT_SIZE, line_content_hash};
-use super::highlight::{CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome};
+use super::highlight::{
+    CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
+};
 
 const VIEWPORT_ROWS: usize = 60;
 
 const RESOLVE_RUNS_CAPTURES: usize = 3_750;
 
 const RELOADS: usize = 200;
+const RELOAD_HUNKS: usize = 10;
 const SHAPE_ROW_CHARS: usize = 100;
 
 const FILL_WINDOWS_CAP: usize = 120;
@@ -90,11 +93,10 @@ fn apply_ui_edit(
     let Some(applied) = timer.time(|| splice(doc, range, text)) else {
         return;
     };
+    let change = applied.edit;
     let mut deferred = None;
-    for change in &applied.edits {
-        if let HighlightOutcome::Deferred(parse) = timer.time(|| highlighter.edit(doc, change)) {
-            deferred = Some(parse);
-        }
+    if let HighlightOutcome::Deferred(parse) = timer.time(|| highlighter.edit(doc, &change)) {
+        deferred = Some(parse);
     }
     if let Some(parse) = deferred {
         let parsed = parse.run();
@@ -609,6 +611,108 @@ fn shape_scenarios(metrics: &mut Vec<Metric>) {
     drop(platform);
 }
 
+fn rewrite_hunks(source: &str) -> String {
+    let line_starts = std::iter::once(0)
+        .chain(source.match_indices('\n').map(|(index, _)| index + 1))
+        .collect::<Vec<_>>();
+    let mut out = String::with_capacity(source.len() + 512);
+    let mut cursor = 0usize;
+    for hunk in 1..=RELOAD_HUNKS {
+        let row = hunk * line_starts.len() / (RELOAD_HUNKS + 1);
+        let Some(&start) = line_starts.get(row) else {
+            break;
+        };
+        let end = line_starts.get(row + 1).copied().unwrap_or(source.len());
+        out.push_str(&source[cursor..start]);
+        out.push_str(&format!("const AGENT_HUNK_{hunk}: usize = {hunk};\n"));
+        cursor = end;
+    }
+    out.push_str(&source[cursor..]);
+    out
+}
+
+fn apply_reload(
+    doc: &mut CodeDocument,
+    highlighter: &mut CodeHighlighter,
+    history: &mut UndoHistory,
+    ops: &[(Range<usize>, String)],
+) {
+    let mut records = Vec::with_capacity(ops.len());
+    let mut edits = Vec::with_capacity(ops.len());
+    for (range, inserted) in ops {
+        let Some(applied) = splice(doc, range.clone(), inserted) else {
+            continue;
+        };
+        edits.push(applied.edit);
+        records.push(applied.record);
+    }
+    let deferred = highlighter.edit_batch(doc, &edits, SYNC_PARSE_BUDGET);
+    history.push(
+        records,
+        CodeSelection::at(0),
+        CodeSelection::at(0),
+        EditGroup::Atomic,
+        Instant::now(),
+    );
+    highlighter.fill_stale_rows(
+        doc,
+        0..VIEWPORT_ROWS.min(doc.line_count()),
+        HIGHLIGHT_FRAME_BUDGET,
+    );
+    std::hint::black_box(deferred.is_ok());
+}
+
+fn reload_hunk_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let rewritten = rewrite_hunks(&corpora.large_rust);
+    let original = document("bench-3-7mb.rs", &corpora.large_rust);
+    metrics.push(measure(
+        "disk_splices_100k_lines",
+        "the disk-to-document diff of 10 hunks over the 115 500 lines of the 3.7 MB corpus: the work the reload task does off the render thread, excluded from reload_10_hunks_100k_lines_ui",
+        1,
+        10,
+        || {
+            std::hint::black_box(disk_splices(original.text(), &rewritten));
+        },
+    ));
+
+    assert!(
+        (100_000..130_000).contains(&original.line_count()),
+        "the reload corpus must hold the six figures its metrics claim, got {}",
+        original.line_count()
+    );
+    let to_rewritten = disk_splices(original.text(), &rewritten);
+    assert_eq!(
+        to_rewritten.len(),
+        RELOAD_HUNKS,
+        "the reload corpus must land one splice per hunk"
+    );
+    let rewritten_doc = document("bench-3-7mb.rs", &rewritten);
+    let to_original = disk_splices(rewritten_doc.text(), &corpora.large_rust);
+    drop(rewritten_doc);
+    drop(original);
+
+    let mut doc = document("bench-3-7mb.rs", &corpora.large_rust);
+    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let mut history = UndoHistory::default();
+    let mut round = 0usize;
+    metrics.push(measure_segments(
+        "reload_10_hunks_100k_lines_ui",
+        "render-thread work of an external reload of the 115 500-line 3.7 MB file: 10 descending hunks spliced under one batched highlighter call, then the first viewport fill; the corpus sits past the 300 KB coloring cap, so both of those return at once and the number is the splice and history cost alone; the off-thread diff is excluded",
+        1,
+        20,
+        |timer| {
+            let ops = if round.is_multiple_of(2) {
+                &to_rewritten
+            } else {
+                &to_original
+            };
+            round += 1;
+            timer.time(|| apply_reload(&mut doc, &mut highlighter, &mut history, ops));
+        },
+    ));
+    std::hint::black_box((doc, highlighter, history));
+}
+
 fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     let before = live_bytes();
     let mut doc = document("bench-2mb.rs", &corpora.reload_rust);
@@ -618,28 +722,8 @@ fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
         let mut text = String::with_capacity(corpora.reload_rust.len() + 64);
         text.push_str(&corpora.reload_rust);
         text.push_str(&format!("const AGENT_ROUND_{round}: usize = {round};\n"));
-        let current = doc.text().to_string();
-        let ops = disk_splices(&current, &text);
-        let mut records = Vec::with_capacity(ops.len());
-        for (range, inserted) in ops {
-            let Some(applied) = splice(&mut doc, range, &inserted) else {
-                continue;
-            };
-            for change in &applied.edits {
-                if let HighlightOutcome::Deferred(parse) = highlighter.edit(&doc, change) {
-                    let parsed = parse.run();
-                    highlighter.apply_parsed(&doc, parsed);
-                }
-            }
-            records.push(applied.record);
-        }
-        history.push(
-            records,
-            CodeSelection::at(0),
-            CodeSelection::at(0),
-            EditGroup::Atomic,
-            Instant::now(),
-        );
+        let ops = disk_splices(doc.text(), &text);
+        apply_reload(&mut doc, &mut highlighter, &mut history, &ops);
     }
     let retained = (live_bytes() - before).max(0) as f64;
     metrics.push(Metric::count(
@@ -672,6 +756,7 @@ fn editor_pipeline_benchmark() {
     resolve_runs_scenario(&mut metrics, &corpora);
     document_scenarios(&mut metrics, &corpora);
     theme_scenario(&mut metrics, &corpora);
+    reload_hunk_scenarios(&mut metrics, &corpora);
     let cpu_share = (process_cpu_time() - cpu_before).as_secs_f64()
         / timed_started.elapsed().as_secs_f64().max(f64::EPSILON);
     println!("PANEFLOW_BENCH_NOTE cpu share over the timed scenarios: {cpu_share:.2}");
@@ -725,6 +810,25 @@ mod tests {
             2,
             "the json corpus is one line plus its terminator"
         );
+    }
+
+    #[test]
+    fn the_reload_plan_descends_by_whole_rows_one_hunk_at_a_time() {
+        let source = rust_source(200_000);
+        let doc = document("probe.rs", &source);
+        let rewritten = rewrite_hunks(&source);
+        let ops = disk_splices(doc.text(), &rewritten);
+        assert_eq!(
+            ops.len(),
+            RELOAD_HUNKS,
+            "the rewrite must produce one hunk per replaced line"
+        );
+        for pair in ops.windows(2) {
+            assert!(
+                doc.byte_to_line(pair[1].0.end) < doc.byte_to_line(pair[0].0.start),
+                "the reload plan must descend by whole rows so it batches"
+            );
+        }
     }
 
     #[test]

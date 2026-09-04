@@ -16,6 +16,7 @@ use gpui::{
     UTF16Selection, WeakEntity, Window, actions, div, px, size,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use ropey::Rope;
 
 type WatchBridge = Arc<Mutex<Option<mpsc::UnboundedSender<notify::Result<notify::Event>>>>>;
 type WatchEvents = mpsc::UnboundedReceiver<notify::Result<notify::Event>>;
@@ -28,7 +29,8 @@ use super::element::{
     GutterMemo, autoscroll_step, reveal_h_offset, reveal_rows, visible_rows_at,
 };
 use super::highlight::{
-    CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, spawn_deferred_parse,
+    CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
+    spawn_deferred_parse,
 };
 use super::load::{CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
 use super::save::{self, FileStamp};
@@ -37,6 +39,11 @@ use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
 use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState, ScrollableHandle};
 
 pub(crate) const CODE_KEY_CONTEXT: &str = "CodeEditor";
+
+fn ops_descend_by_row(doc: &CodeDocument, ops: &[(Range<usize>, String)]) -> bool {
+    ops.windows(2)
+        .all(|pair| doc.byte_to_line(pair[1].0.end) < doc.byte_to_line(pair[0].0.start))
+}
 
 fn wheel_pixels(delta: &ScrollDelta, char_w: f32) -> Point<f32> {
     match delta {
@@ -54,6 +61,7 @@ const DRAG_SCROLL_COLUMNS: f32 = 3.0;
 const READ_ONLY_FLASH: Duration = Duration::from_millis(600);
 
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
+const RELOAD_DIFF_ATTEMPTS: usize = 2;
 const INITIAL_HIGHLIGHT_ROWS: usize = 60;
 
 actions!(
@@ -181,6 +189,63 @@ enum DiskState {
     InSync,
     Conflict,
     Deleted,
+}
+
+struct DiskDiff {
+    rope: Rope,
+    revision: u64,
+}
+
+impl DiskDiff {
+    fn of(doc: &CodeDocument) -> Self {
+        Self {
+            rope: doc.text().clone(),
+            revision: doc.revision(),
+        }
+    }
+}
+
+async fn reload_from_disk(
+    this: &WeakEntity<CodeView>,
+    cx: &mut AsyncApp,
+    stamp: Option<FileStamp>,
+    text: Option<String>,
+    force: bool,
+) -> bool {
+    let present = text.is_some();
+    let begun = cx.update(|cx| {
+        this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
+            view.begin_disk_reload(stamp, present, force, cx)
+        })
+    });
+    let Ok(begun) = begun else {
+        return false;
+    };
+    let (Some(mut diff), Some(text)) = (begun, text) else {
+        return true;
+    };
+    let text = Arc::new(text);
+    for attempt in 0..RELOAD_DIFF_ATTEMPTS {
+        let DiskDiff { rope, revision } = diff;
+        let incoming = Arc::clone(&text);
+        let splices = cx
+            .background_spawn(async move { edit::disk_splices(&rope, &incoming) })
+            .await;
+        let retry = attempt + 1 < RELOAD_DIFF_ATTEMPTS;
+        let finished = cx.update(|cx| {
+            this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
+                view.finish_disk_reload(revision, splices, retry, force, cx)
+            })
+        });
+        let Ok(next) = finished else {
+            return false;
+        };
+        match next {
+            Some(again) => diff = again,
+            None => return true,
+        }
+    }
+    true
 }
 
 pub(crate) struct CodeView {
@@ -1098,19 +1163,30 @@ impl CodeView {
         }
         let before = self.selection;
         let now = Instant::now();
+        let batched = self
+            .state
+            .document()
+            .is_some_and(|doc| ops_descend_by_row(doc, ops));
         let mut records = Vec::with_capacity(ops.len());
+        let mut edits = Vec::with_capacity(ops.len());
         let mut deferred: Option<DeferredParse> = None;
         if let Some((doc, hl)) = self.state.editable() {
             for (range, text) in ops {
                 let Some(applied) = edit::splice(doc, range.clone(), text) else {
                     continue;
                 };
-                for change in &applied.edits {
-                    if let HighlightOutcome::Deferred(parse) = hl.edit(doc, change) {
-                        deferred = Some(parse);
-                    }
+                if batched {
+                    edits.push(applied.edit);
+                } else if let HighlightOutcome::Deferred(parse) = hl.edit(doc, &applied.edit) {
+                    deferred = Some(parse);
                 }
                 records.push(applied.record);
+            }
+            if batched
+                && let Ok(HighlightOutcome::Deferred(parse)) =
+                    hl.edit_batch(doc, &edits, SYNC_PARSE_BUDGET)
+            {
+                deferred = Some(parse);
             }
         }
         if records.is_empty() {
@@ -1539,12 +1615,7 @@ impl CodeView {
                         )
                     })
                     .await;
-                let updated = cx.update(|cx| {
-                    this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                        view.disk_changed(stamp, text, cx);
-                    })
-                });
-                if updated.is_err() {
+                if !reload_from_disk(&this, cx, stamp, text, false).await {
                     break;
                 }
             }
@@ -1552,54 +1623,80 @@ impl CodeView {
         .detach();
     }
 
-    fn disk_changed(
+    fn begin_disk_reload(
         &mut self,
         stamp: Option<FileStamp>,
-        text: Option<String>,
+        present: bool,
+        force: bool,
         cx: &mut Context<Self>,
-    ) {
-        match (stamp, text) {
-            (None, _) | (_, None) => {
-                if self.disk != DiskState::Deleted {
-                    self.disk = DiskState::Deleted;
-                    cx.notify();
-                }
+    ) -> Option<DiskDiff> {
+        let Some(stamp) = stamp.filter(|_| present) else {
+            if self.disk != DiskState::Deleted {
+                self.disk = DiskState::Deleted;
+                cx.notify();
             }
-            (Some(stamp), Some(text)) => {
-                if self.stamp == Some(stamp) && self.disk == DiskState::InSync {
-                    return;
-                }
-                self.stamp = Some(stamp);
-                if self.is_dirty() {
-                    self.disk = DiskState::Conflict;
-                    cx.notify();
-                    return;
-                }
-                self.disk = DiskState::InSync;
-                self.adopt_disk_text(&text, cx);
-                self.saved_mark = self.history.mark();
+            return None;
+        };
+        if !force {
+            if self.stamp == Some(stamp) && self.disk == DiskState::InSync {
+                return None;
             }
+            self.stamp = Some(stamp);
+            if self.is_dirty() {
+                self.disk = DiskState::Conflict;
+                cx.notify();
+                return None;
+            }
+        } else {
+            self.stamp = Some(stamp);
         }
+        self.disk = DiskState::InSync;
+        self.state.document().map(DiskDiff::of)
     }
 
-    fn adopt_disk_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        let Some(doc) = self.state.document() else {
-            return;
-        };
-        let current = doc.text().to_string();
-        let ops = edit::disk_splices(&current, text);
+    fn finish_disk_reload(
+        &mut self,
+        revision: u64,
+        splices: Vec<(Range<usize>, String)>,
+        retry: bool,
+        force: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<DiskDiff> {
+        let doc = self.state.document()?;
+        if doc.revision() != revision {
+            if retry {
+                return Some(DiskDiff::of(doc));
+            }
+            self.disk = DiskState::Conflict;
+            cx.notify();
+            return None;
+        }
+        if !force && self.is_dirty() {
+            self.disk = DiskState::Conflict;
+            cx.notify();
+            return None;
+        }
+        self.apply_disk_splices(&splices, cx);
+        self.saved_mark = self.history.mark();
+        None
+    }
+
+    fn apply_disk_splices(&mut self, ops: &[(Range<usize>, String)], cx: &mut Context<Self>) {
         if ops.is_empty() {
             return;
         }
+        let Some(doc) = self.state.document() else {
+            return;
+        };
         let scroll_rows = self.scroll.rows();
-        let after = edit::shift_selection_for_splices(self.selection, &ops);
+        let after = edit::shift_selection_for_splices(self.selection, ops);
         let reason = doc.read_only_reason();
         if reason.is_some()
             && let Some(doc) = self.state.document_mut()
         {
             doc.set_read_only(None);
         }
-        let replaced = self.splice_all(&ops, after, EditGroup::Atomic, cx);
+        let replaced = self.splice_all(ops, after, EditGroup::Atomic, cx);
         if let Some(reason) = reason
             && let Some(doc) = self.state.document_mut()
         {
@@ -1643,19 +1740,7 @@ impl CodeView {
                     )
                 })
                 .await;
-            cx.update(|cx| {
-                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                    let Some(text) = text else {
-                        view.disk = DiskState::Deleted;
-                        cx.notify();
-                        return;
-                    };
-                    view.stamp = stamp;
-                    view.disk = DiskState::InSync;
-                    view.adopt_disk_text(&text, cx);
-                    view.saved_mark = view.history.mark();
-                });
-            });
+            reload_from_disk(&this, cx, stamp, text, true).await;
         })
         .detach();
     }
@@ -2125,6 +2210,32 @@ impl Render for CodeView {
             .children(banners)
             .child(host)
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+impl CodeView {
+    fn disk_changed(
+        &mut self,
+        stamp: Option<FileStamp>,
+        text: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let present = text.is_some();
+        let text = text.unwrap_or_default();
+        let Some(diff) = self.begin_disk_reload(stamp, present, false, cx) else {
+            return;
+        };
+        let splices = edit::disk_splices(&diff.rope, &text);
+        self.finish_disk_reload(diff.revision, splices, false, false, cx);
+    }
+
+    fn adopt_disk_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let splices = edit::disk_splices(doc.text(), text);
+        self.apply_disk_splices(&splices, cx);
     }
 }
 
@@ -2950,6 +3061,21 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join(name);
         std::fs::write(&path, text).expect("seed");
+        let seeded = seeded_view(path, text);
+        let (view, cx) = cx.add_window_view(move |_window, cx| {
+            let mut view = seeded(cx);
+            if watch {
+                view.start_watcher(cx);
+            }
+            view
+        });
+        (dir, view, cx)
+    }
+
+    fn seeded_view(
+        path: PathBuf,
+        text: &str,
+    ) -> impl FnOnce(&mut Context<CodeView>) -> CodeView + use<> {
         let document = build_document(path.clone(), text, false);
         let highlighter = CodeHighlighter::new(
             &document,
@@ -2962,50 +3088,40 @@ mod tests {
             indent: IndentUnit::Spaces(4),
             stamp,
         }));
-        let (view, cx) = {
-            let path = path.clone();
-            cx.add_window_view(move |_window, cx| {
-                let mut view = CodeView {
-                    element_id: "code-view:test".into(),
-                    path,
-                    state,
-                    slot: CodeLoadSlot::new(),
-                    focus: cx.focus_handle(),
-                    scroll: CodeScroll::new(),
-                    v_drag: None,
-                    h_offset: 0.0,
-                    selection: CodeSelection::default(),
-                    goal_column: 0,
-                    text_drag: None,
-                    click_chain: None,
-                    last_motion: Instant::now(),
-                    blink_visible: true,
-                    focused: false,
-                    focus_observers_installed: false,
-                    theme_generation: 0,
-                    geometry: Rc::new(Cell::new(CodeGeometry::default())),
-                    gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
-                    hits: Rc::new(RefCell::new(CodeHitMap::default())),
-                    history: edit::UndoHistory::default(),
-                    saved_mark: edit::HistoryMark::default(),
-                    indent: IndentUnit::Spaces(4),
-                    marked: None,
-                    read_only_flash: None,
-                    stamp,
-                    disk: DiskState::default(),
-                    save_error: None,
-                    saving: false,
-                    highlight_budget: HIGHLIGHT_FRAME_BUDGET,
-                    _watcher: None,
-                    _watch_bridge: None,
-                };
-                if watch {
-                    view.start_watcher(cx);
-                }
-                view
-            })
-        };
-        (dir, view, cx)
+        move |cx: &mut Context<CodeView>| CodeView {
+            element_id: "code-view:test".into(),
+            path,
+            state,
+            slot: CodeLoadSlot::new(),
+            focus: cx.focus_handle(),
+            scroll: CodeScroll::new(),
+            v_drag: None,
+            h_offset: 0.0,
+            selection: CodeSelection::default(),
+            goal_column: 0,
+            text_drag: None,
+            click_chain: None,
+            last_motion: Instant::now(),
+            blink_visible: true,
+            focused: false,
+            focus_observers_installed: false,
+            theme_generation: 0,
+            geometry: Rc::new(Cell::new(CodeGeometry::default())),
+            gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
+            hits: Rc::new(RefCell::new(CodeHitMap::default())),
+            history: edit::UndoHistory::default(),
+            saved_mark: edit::HistoryMark::default(),
+            indent: IndentUnit::Spaces(4),
+            marked: None,
+            read_only_flash: None,
+            stamp,
+            disk: DiskState::default(),
+            save_error: None,
+            saving: false,
+            highlight_budget: HIGHLIGHT_FRAME_BUDGET,
+            _watcher: None,
+            _watch_bridge: None,
+        }
     }
 
     fn text_of(view: &CodeView) -> String {
@@ -3407,6 +3523,170 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn an_external_write_reloads_through_the_watcher(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", true);
+        let path = dir.path().join("main.rs");
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        std::fs::write(&path, "one\nAGENT\ntwo\n").expect("agent write");
+        for _ in 0..300 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| text_of(view) == "one\nAGENT\ntwo\n") {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(10)).await;
+        }
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(
+                text_of(view),
+                "one\nAGENT\ntwo\n",
+                "the watched write reached the document through the background diff"
+            );
+            assert!(!view.is_dirty(), "a silent reload is the new saved state");
+            assert_eq!(view.disk, DiskState::InSync);
+            let bridge = view._watch_bridge.take().expect("bridged watcher");
+            *bridge.lock().expect("bridge lock") = None;
+            view._watcher = None;
+        });
+    }
+
+    #[gpui::test]
+    fn a_reload_that_races_an_edit_recomputes_once_then_conflicts(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update_in(cx, |view, window, cx| {
+            let diff = view
+                .begin_disk_reload(stamp, true, false, cx)
+                .expect("a clean document starts a diff");
+            let splices = edit::disk_splices(&diff.rope, "ONE!\nTWO!\n");
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "x", window, cx);
+
+            let again = view
+                .finish_disk_reload(diff.revision, splices, true, false, cx)
+                .expect("a stale revision buys exactly one recomputation");
+            assert_eq!(
+                text_of(view),
+                "xone\ntwo\n",
+                "splices computed against an older revision are refused"
+            );
+            assert!(!view.has_conflict(), "the first miss is not a conflict yet");
+
+            let splices = edit::disk_splices(&again.rope, "ONE!\nTWO!\n");
+            view.replace_text_in_range(None, "y", window, cx);
+            assert!(
+                view.finish_disk_reload(again.revision, splices, false, false, cx)
+                    .is_none(),
+                "the second stale delivery gives up"
+            );
+            assert!(
+                view.has_conflict(),
+                "a document that keeps moving is left to the user"
+            );
+            assert_eq!(text_of(view), "xyone\ntwo\n", "the user edits survived");
+        });
+    }
+
+    #[gpui::test]
+    fn a_reload_that_settles_on_a_dirty_document_keeps_the_user_text(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update_in(cx, |view, window, cx| {
+            let diff = view
+                .begin_disk_reload(stamp, true, false, cx)
+                .expect("a clean document starts a diff");
+            let splices = edit::disk_splices(&diff.rope, "ONE!\nTWO!\n");
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "x", window, cx);
+
+            let again = view
+                .finish_disk_reload(diff.revision, splices, true, false, cx)
+                .expect("a stale revision buys exactly one recomputation");
+            let splices = edit::disk_splices(&again.rope, "ONE!\nTWO!\n");
+            assert!(
+                view.finish_disk_reload(again.revision, splices, false, false, cx)
+                    .is_none(),
+                "the recomputed diff reaches a document that stopped moving"
+            );
+            assert_eq!(
+                text_of(view),
+                "xone\ntwo\n",
+                "a document the user touched during the diff is never overwritten"
+            );
+            assert!(view.is_dirty(), "the unsaved edit is still unsaved");
+            assert!(
+                view.has_conflict(),
+                "the user resolves it like any other conflict"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_forced_reload_still_overwrites_the_document_the_user_edited(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "x", window, cx);
+            assert!(view.is_dirty(), "the fixture starts dirty");
+
+            let diff = view
+                .begin_disk_reload(stamp, true, true, cx)
+                .expect("a forced reload ignores the dirty mark");
+            let splices = edit::disk_splices(&diff.rope, "ONE!\nTWO!\n");
+            assert!(
+                view.finish_disk_reload(diff.revision, splices, false, true, cx)
+                    .is_none()
+            );
+            assert_eq!(
+                text_of(view),
+                "ONE!\nTWO!\n",
+                "discarding my changes is what the user asked for"
+            );
+            assert!(!view.is_dirty(), "and the reload is the new saved state");
+            assert!(!view.has_conflict());
+        });
+    }
+
+    #[gpui::test]
+    async fn a_reload_whose_tab_closed_ends_without_a_panic(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "one\ntwo\n").expect("seed");
+        let stamp = FileStamp::read(&path);
+        let seeded = seeded_view(path, "one\n");
+        let weak = cx.update(|cx| {
+            let view = cx.new(seeded);
+            let weak = view.downgrade();
+            drop(view);
+            weak
+        });
+        cx.run_until_parked();
+        assert!(weak.upgrade().is_none(), "the tab is gone");
+
+        let carried = cx
+            .spawn(|mut cx| async move {
+                reload_from_disk(&weak, &mut cx, stamp, Some("one\ntwo\n".to_string()), false).await
+            })
+            .await;
+        assert!(
+            !carried,
+            "a reload delivered to a closed tab stops its loop instead of panicking"
+        );
+    }
+
+    #[gpui::test]
     fn an_external_write_reloads_a_clean_document(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
         let path = dir.path().join("main.rs");
@@ -3433,6 +3713,37 @@ mod tests {
                 text_of(view),
                 "one\ntwo\n",
                 "Ctrl+Z recovers what was replaced"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_multi_hunk_reload_reaches_the_highlighter_as_one_batch(cx: &mut TestAppContext) {
+        let original = (0..40)
+            .map(|row| format!("fn f{row:03}() {{}}\n"))
+            .collect::<String>();
+        let mut lines = original.lines().map(str::to_string).collect::<Vec<_>>();
+        lines[5] = "fn agent_a() {}".to_string();
+        lines[25] = "fn agent_b() {}".to_string();
+        let incoming = lines.join("\n") + "\n";
+        let (dir, view, cx) = file_view(cx, &original, false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, &incoming).expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        let before = view.update(cx, |view, _cx| {
+            let highlighter = view.highlighter().expect("highlighter");
+            assert!(highlighter.is_enabled(), "the fixture must be colored");
+            highlighter.generation()
+        });
+
+        view.update(cx, |view, cx| {
+            view.disk_changed(stamp, Some(incoming.clone()), cx);
+            assert_eq!(text_of(view), incoming, "both hunks landed");
+            assert_eq!(
+                view.highlighter().expect("highlighter").generation(),
+                before + 1,
+                "two hunks reach the highlighter as a single batched edit"
             );
         });
     }

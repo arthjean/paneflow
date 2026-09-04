@@ -63,6 +63,9 @@ pub(crate) enum HighlightOutcome {
     Deferred(DeferredParse),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UnorderedBatch;
+
 pub(crate) struct DeferredParse {
     generation: u64,
     rope: Rope,
@@ -266,28 +269,44 @@ impl CodeHighlighter {
         edit: &CodeEdit,
         budget: Duration,
     ) -> HighlightOutcome {
-        if !self.enabled {
-            return HighlightOutcome::Synced;
+        self.edit_batch(doc, std::slice::from_ref(edit), budget)
+            .unwrap_or(HighlightOutcome::Synced)
+    }
+
+    pub(crate) fn edit_batch(
+        &mut self,
+        doc: &CodeDocument,
+        edits: &[CodeEdit],
+        budget: Duration,
+    ) -> Result<HighlightOutcome, UnorderedBatch> {
+        if !descends_without_overlap(edits) {
+            return Err(UnorderedBatch);
+        }
+        if !self.enabled || edits.is_empty() {
+            return Ok(HighlightOutcome::Synced);
         }
         self.cancel_deferred();
         self.generation = self.generation.wrapping_add(1);
-        self.interpolate(doc, edit);
+        self.interpolate(doc, edits);
 
-        let input = InputEdit {
-            start_byte: edit.start_byte,
-            old_end_byte: edit.old_end_byte,
-            new_end_byte: edit.new_end_byte,
-            start_position: point(edit.start_point.row, edit.start_point.column),
-            old_end_position: point(edit.old_end_point.row, edit.old_end_point.column),
-            new_end_position: point(edit.new_end_point.row, edit.new_end_point.column),
-        };
-        for pass in &mut self.passes {
-            if let Some(tree) = pass.tree.as_mut() {
-                tree.edit(&input);
+        for edit in edits {
+            let input = InputEdit {
+                start_byte: edit.start_byte,
+                old_end_byte: edit.old_end_byte,
+                new_end_byte: edit.new_end_byte,
+                start_position: point(edit.start_point.row, edit.start_point.column),
+                old_end_position: point(edit.old_end_point.row, edit.old_end_point.column),
+                new_end_position: point(edit.new_end_point.row, edit.new_end_point.column),
+            };
+            for pass in &mut self.passes {
+                if let Some(tree) = pass.tree.as_mut() {
+                    tree.edit(&input);
+                }
             }
         }
 
-        let mut dirty = edit.start_byte..edit.new_end_byte.max(edit.start_byte);
+        let mut changed: Vec<Range<usize>> = Vec::new();
+        let mut without_old_tree = false;
         let mut deferred = self.last_parse_cost >= budget;
         if !deferred {
             let deadline = Instant::now() + budget;
@@ -303,13 +322,12 @@ impl CodeHighlighter {
                     None,
                 ) {
                     Some(new_tree) => {
-                        if let Some(old) = old.as_ref() {
-                            for range in old.changed_ranges(&new_tree) {
-                                dirty.start = dirty.start.min(range.start_byte);
-                                dirty.end = dirty.end.max(range.end_byte);
-                            }
-                        } else {
-                            dirty = 0..doc.len_bytes();
+                        match old.as_ref() {
+                            Some(old) => changed.extend(
+                                old.changed_ranges(&new_tree)
+                                    .map(|range| range.start_byte..range.end_byte),
+                            ),
+                            None => without_old_tree = true,
                         }
                         parse_cost += started.elapsed();
                         pass.tree = Some(new_tree);
@@ -323,13 +341,19 @@ impl CodeHighlighter {
             self.last_parse_cost = if deferred { budget } else { parse_cost };
         }
 
-        let rows = self.dirty_rows(doc, &dirty);
-        self.mark_stale(rows);
+        if without_old_tree {
+            self.mark_stale(0..doc.line_count());
+        } else {
+            for range in &changed {
+                let rows = self.dirty_rows(doc, range);
+                self.mark_stale(rows);
+            }
+        }
 
         if deferred {
             let cancel = Arc::new(AtomicBool::new(false));
             self.deferred_cancel = Some(cancel.clone());
-            return HighlightOutcome::Deferred(DeferredParse {
+            return Ok(HighlightOutcome::Deferred(DeferredParse {
                 generation: self.generation,
                 rope: doc.text().clone(),
                 passes: self
@@ -338,10 +362,10 @@ impl CodeHighlighter {
                     .map(|p| (p.grammar, p.tree.clone()))
                     .collect(),
                 cancel,
-            });
+            }));
         }
 
-        HighlightOutcome::Synced
+        Ok(HighlightOutcome::Synced)
     }
 
     pub(crate) fn apply_parsed(&mut self, doc: &CodeDocument, parsed: ParsedTrees) -> bool {
@@ -380,19 +404,90 @@ impl CodeHighlighter {
         true
     }
 
-    fn interpolate(&mut self, doc: &CodeDocument, edit: &CodeEdit) {
-        let start_row = edit.start_point.row;
-        let old_end_row = edit.old_end_point.row;
-        let new_end_row = edit.new_end_point.row;
-        interpolate_rows(&mut self.rows, doc.line_count(), edit);
-        if start_row >= self.row_states.len() {
-            self.row_states.resize(doc.line_count(), RowState::Stale);
-            return;
+    fn interpolate(&mut self, doc: &CodeDocument, edits: &[CodeEdit]) {
+        match edits {
+            [edit] => self.interpolate_in_place(doc, edit),
+            _ => self.interpolate_batch(doc, edits),
         }
+    }
+
+    fn interpolate_in_place(&mut self, doc: &CodeDocument, edit: &CodeEdit) {
+        let line_count = doc.line_count();
+        let start_row = edit.start_point.row;
+        let old_end_row = edit.old_end_point.row.max(start_row);
+        let new_end_row = edit.new_end_point.row.max(start_row);
+        let prefix = head_runs(self.rows.get(start_row), edit.start_point.column);
+        let suffix = tail_runs(
+            self.rows.get(old_end_row),
+            edit.old_end_point.column,
+            edit.new_end_point.column,
+        );
+        let mut replacement = Vec::with_capacity(new_end_row - start_row + 1);
+        if new_end_row == start_row {
+            let mut merged = prefix;
+            merged.extend(suffix);
+            replacement.push(merged);
+        } else {
+            replacement.push(prefix);
+            replacement.resize(new_end_row - start_row, Vec::new());
+            replacement.push(suffix);
+        }
+        let removed_end = (old_end_row + 1).min(self.rows.len());
+        self.rows
+            .splice(start_row.min(removed_end)..removed_end, replacement);
+        self.rows.resize(line_count, Vec::new());
+
+        let stale = vec![RowState::Stale; new_end_row - start_row + 1];
         let removed_end = (old_end_row + 1).min(self.row_states.len());
-        let replacement = vec![RowState::Stale; new_end_row - start_row + 1];
-        self.row_states.splice(start_row..removed_end, replacement);
-        self.row_states.resize(doc.line_count(), RowState::Stale);
+        self.row_states
+            .splice(start_row.min(removed_end)..removed_end, stale);
+        self.row_states.resize(line_count, RowState::Stale);
+    }
+
+    fn interpolate_batch(&mut self, doc: &CodeDocument, edits: &[CodeEdit]) {
+        let line_count = doc.line_count();
+        let mut old_rows = std::mem::take(&mut self.rows);
+        let old_states = std::mem::take(&mut self.row_states);
+        let mut rows = Vec::with_capacity(line_count);
+        let mut states = Vec::with_capacity(line_count);
+        let mut cursor = 0usize;
+        for edit in edits.iter().rev() {
+            let start_row = edit.start_point.row;
+            let old_end_row = edit.old_end_point.row.max(start_row);
+            let new_end_row = edit.new_end_point.row.max(start_row);
+            while cursor < start_row {
+                rows.push(taken_row(&mut old_rows, cursor));
+                states.push(old_states.get(cursor).copied().unwrap_or(RowState::Stale));
+                cursor += 1;
+            }
+            let prefix = head_runs(old_rows.get(start_row), edit.start_point.column);
+            let suffix = tail_runs(
+                old_rows.get(old_end_row),
+                edit.old_end_point.column,
+                edit.new_end_point.column,
+            );
+            if new_end_row == start_row {
+                let mut merged = prefix;
+                merged.extend(suffix);
+                rows.push(merged);
+                states.push(RowState::Stale);
+            } else {
+                rows.push(prefix);
+                rows.resize(rows.len() + new_end_row - start_row - 1, Vec::new());
+                rows.push(suffix);
+                states.resize(states.len() + new_end_row - start_row + 1, RowState::Stale);
+            }
+            cursor = old_end_row + 1;
+        }
+        while cursor < old_rows.len() {
+            rows.push(taken_row(&mut old_rows, cursor));
+            states.push(old_states.get(cursor).copied().unwrap_or(RowState::Stale));
+            cursor += 1;
+        }
+        rows.resize(line_count, Vec::new());
+        states.resize(line_count, RowState::Stale);
+        self.rows = rows;
+        self.row_states = states;
     }
 
     fn dirty_rows(&self, doc: &CodeDocument, bytes: &Range<usize>) -> Range<usize> {
@@ -588,62 +683,54 @@ fn capture_colors(grammar: &Grammar, syntax: &DiffSyntax) -> Vec<Option<Hsla>> {
         .collect()
 }
 
-fn interpolate_rows(rows: &mut Vec<IndexedLineRuns>, line_count: usize, edit: &CodeEdit) {
-    let start_row = edit.start_point.row;
-    let old_end_row = edit.old_end_point.row;
-    let new_end_row = edit.new_end_point.row;
-    if start_row >= rows.len() {
-        rows.resize(line_count, Vec::new());
-        return;
-    }
+fn descends_without_overlap(edits: &[CodeEdit]) -> bool {
+    edits.windows(2).all(|pair| {
+        pair[1].old_end_point.row < pair[0].start_point.row
+            && pair[1].old_end_byte <= pair[0].start_byte
+    })
+}
 
-    let start_col = edit.start_point.column;
-    let old_end_col = edit.old_end_point.column;
-    let new_end_col = edit.new_end_point.column;
-    let prefix = rows[start_row]
-        .iter()
+fn taken_row(rows: &mut [IndexedLineRuns], row: usize) -> IndexedLineRuns {
+    rows.get_mut(row).map(std::mem::take).unwrap_or_default()
+}
+
+fn head_runs(runs: Option<&IndexedLineRuns>, start_col: usize) -> IndexedLineRuns {
+    let Some(runs) = runs else {
+        return IndexedLineRuns::new();
+    };
+    runs.iter()
         .filter_map(|&(start, end, capture)| {
             let start = start as usize;
             let end = (end as usize).min(start_col);
             (start < start_col && start < end).then_some((start as u32, end as u32, capture))
         })
-        .collect::<IndexedLineRuns>();
-    let suffix = rows
-        .get(old_end_row)
-        .map(|runs| {
-            runs.iter()
-                .filter_map(|&(start, end, capture)| {
-                    let start = start as usize;
-                    let end = end as usize;
-                    if end <= old_end_col {
-                        return None;
-                    }
-                    let shifted_start = start.max(old_end_col) - old_end_col + new_end_col;
-                    let shifted_end = end - old_end_col + new_end_col;
-                    Some((
-                        u32::try_from(shifted_start).ok()?,
-                        u32::try_from(shifted_end).ok()?,
-                        capture,
-                    ))
-                })
-                .collect::<IndexedLineRuns>()
+        .collect()
+}
+
+fn tail_runs(
+    runs: Option<&IndexedLineRuns>,
+    old_end_col: usize,
+    new_end_col: usize,
+) -> IndexedLineRuns {
+    let Some(runs) = runs else {
+        return IndexedLineRuns::new();
+    };
+    runs.iter()
+        .filter_map(|&(start, end, capture)| {
+            let start = start as usize;
+            let end = end as usize;
+            if end <= old_end_col {
+                return None;
+            }
+            let shifted_start = start.max(old_end_col) - old_end_col + new_end_col;
+            let shifted_end = end - old_end_col + new_end_col;
+            Some((
+                u32::try_from(shifted_start).ok()?,
+                u32::try_from(shifted_end).ok()?,
+                capture,
+            ))
         })
-        .unwrap_or_default();
-
-    let mut replacement = Vec::with_capacity(new_end_row - start_row + 1);
-    if new_end_row == start_row {
-        let mut merged = prefix;
-        merged.extend(suffix);
-        replacement.push(merged);
-    } else {
-        replacement.push(prefix);
-        replacement.resize(new_end_row - start_row, Vec::new());
-        replacement.push(suffix);
-    }
-
-    let removed_end = (old_end_row + 1).min(rows.len());
-    rows.splice(start_row..removed_end, replacement);
-    rows.resize(line_count, Vec::new());
+        .collect()
 }
 
 fn bucket_capture(
@@ -1374,5 +1461,146 @@ mod tests {
         assert!(h.has_tree());
         assert!(h.all_rows_stale());
         assert!(h.runs(0).is_empty());
+    }
+
+    #[test]
+    fn a_batch_of_hunks_advances_one_generation_and_defers_one_parse() {
+        let mut d = doc("batch.rs", &rows_of_code(400));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        fill_all(&mut h, &d);
+        let before = h.generation();
+
+        let mut edits = Vec::with_capacity(10);
+        for hunk in (0..10).rev() {
+            let at = d.line_to_byte(hunk * 30 + 5);
+            edits.push(d.insert(at, "// agent\n").expect("insert"));
+        }
+
+        let HighlightOutcome::Deferred(deferred) = h
+            .edit_batch(&d, &edits, Duration::ZERO)
+            .expect("descending hunks are a valid batch")
+        else {
+            panic!("a zero budget must defer");
+        };
+        assert_eq!(
+            h.generation(),
+            before + 1,
+            "ten hunks are one batch, so one generation"
+        );
+        assert_eq!(deferred.generation(), h.generation());
+        assert!(h.apply_parsed(&d, deferred.run()));
+        fill_all(&mut h, &d);
+        let expected = expected_rows(&d.to_disk_string(), d.ext(), d.line_count());
+        for (row, want) in expected.iter().enumerate() {
+            assert_eq!(h.runs(row), want.as_slice(), "row {row} after a batch");
+        }
+    }
+
+    #[test]
+    fn edit_batch_refuses_hunks_that_do_not_descend() {
+        let mut d = doc("batch.rs", &rows_of_code(40));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        fill_all(&mut h, &d);
+        let generation = h.generation();
+        let low = d.insert(d.line_to_byte(5), "// a\n").expect("insert");
+        let high = d.insert(d.line_to_byte(20), "// b\n").expect("insert");
+        let snapshot: Vec<_> = (0..d.line_count()).map(|r| h.runs(r)).collect();
+
+        assert!(
+            h.edit_batch(&d, &[low, high], Duration::from_secs(1))
+                .is_err(),
+            "an ascending batch is refused"
+        );
+        assert_eq!(
+            h.generation(),
+            generation,
+            "a refused batch changes nothing"
+        );
+        let after: Vec<_> = (0..d.line_count()).map(|r| h.runs(r)).collect();
+        assert_eq!(snapshot, after);
+    }
+
+    #[test]
+    fn edit_batch_refuses_hunks_that_share_a_row() {
+        let mut d = doc("batch.rs", &rows_of_code(40));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        fill_all(&mut h, &d);
+        let generation = h.generation();
+        let second = d.insert(d.line_to_byte(10), "// b\n").expect("insert");
+        let first = d.insert(d.line_to_byte(10), "// a\n").expect("insert");
+
+        assert!(
+            h.edit_batch(&d, &[second, first], Duration::from_secs(1))
+                .is_err(),
+            "two hunks on one row overlap and are refused"
+        );
+        assert_eq!(
+            h.generation(),
+            generation,
+            "a refused batch changes nothing"
+        );
+    }
+
+    #[test]
+    fn a_batch_leaves_the_rows_between_its_hunks_alone() {
+        let mut d = doc("batch.rs", &rows_of_code(200));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        fill_all(&mut h, &d);
+        let quiet = h.runs(100).to_vec();
+        assert!(!quiet.is_empty(), "the untouched row starts colored");
+
+        let high = d.insert(d.line_to_byte(150), "// b\n").expect("insert");
+        let low = d.insert(d.line_to_byte(50), "// a\n").expect("insert");
+        assert!(h.edit_batch(&d, &[high, low], Duration::ZERO).is_ok());
+
+        assert!(h.is_row_stale(50), "the lower hunk is stale");
+        assert!(
+            h.is_row_stale(151),
+            "the upper hunk is stale after the shift"
+        );
+        assert!(
+            !h.is_row_stale(101),
+            "a row between two hunks keeps its color through one interpolation"
+        );
+        assert_eq!(
+            h.runs(101),
+            quiet.as_slice(),
+            "and it kept the runs it already had"
+        );
+    }
+
+    #[test]
+    fn a_batch_cancels_the_deferred_parse_it_finds_in_flight() {
+        let mut d = doc("batch.rs", &rows_of_code(120));
+        let mut h = CodeHighlighter::new(&d, syntax());
+        fill_all(&mut h, &d);
+
+        let first = d.insert(d.line_to_byte(10), "// a\n").expect("insert");
+        let HighlightOutcome::Deferred(in_flight) = h.edit_with_budget(&d, &first, Duration::ZERO)
+        else {
+            panic!("a zero budget must defer");
+        };
+
+        let high = d.insert(d.line_to_byte(90), "// c\n").expect("insert");
+        let low = d.insert(d.line_to_byte(30), "// b\n").expect("insert");
+        let HighlightOutcome::Deferred(batched) = h
+            .edit_batch(&d, &[high, low], Duration::ZERO)
+            .expect("descending hunks are a valid batch")
+        else {
+            panic!("a zero budget must defer");
+        };
+
+        let parsed = in_flight.run();
+        assert!(
+            parsed.cancelled,
+            "the batch cancelled the parse it found in flight"
+        );
+        assert!(!h.apply_parsed(&d, parsed));
+        assert_eq!(
+            batched.generation(),
+            h.generation(),
+            "the batch left exactly one live deferred parse"
+        );
+        assert!(h.apply_parsed(&d, batched.run()));
     }
 }
