@@ -675,6 +675,98 @@ mod tests {
         progress: Rc<Cell<f32>>,
     }
 
+    struct SquircleHoverHarness {
+        renders: Rc<Cell<usize>>,
+        sibling: gpui::Entity<HoverSibling>,
+    }
+
+    struct HoverSibling {
+        renders: Rc<Cell<usize>>,
+    }
+
+    impl Render for HoverSibling {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div().size_full()
+        }
+    }
+
+    impl Render for SquircleHoverHarness {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            _cx: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            self.renders.set(self.renders.get() + 1);
+            div()
+                .flex()
+                .flex_col()
+                .size_full()
+                .children((0_usize..2).map(|ix| {
+                    squircle_skin(
+                        div().id(("files-hover-row", ix)),
+                        SharedString::from(format!("files-hover-group-{ix}")),
+                        ROW_RADIUS,
+                        None,
+                        Some(gpui::white()),
+                    )
+                    .w(px(100.))
+                    .h(px(28.))
+                    .flex_none()
+                }))
+                .child(
+                    self.sibling
+                        .clone()
+                        .cached(StyleRefinement::default().w(px(100.)).h(px(20.))),
+                )
+        }
+    }
+
+    #[gpui::test]
+    fn squircle_skin_hover_repaints_on_pointer_transitions(cx: &mut TestAppContext) {
+        let renders = Rc::new(Cell::new(0));
+        let renders_for_view = renders.clone();
+        let sibling_renders = Rc::new(Cell::new(0));
+        let sibling_renders_for_view = sibling_renders.clone();
+        let (_view, cx) = cx.add_window_view(move |_, cx| SquircleHoverHarness {
+            renders: renders_for_view,
+            sibling: cx.new(|_| HoverSibling {
+                renders: sibling_renders_for_view,
+            }),
+        });
+        cx.simulate_resize(size(px(200.), px(100.)));
+        cx.update(|window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_mouse_move(point(px(150.), px(80.)), cx);
+        });
+
+        for (position, should_repaint) in [
+            (point(px(25.), px(14.)), true),
+            (point(px(30.), px(14.)), false),
+            (point(px(25.), px(42.)), true),
+            (point(px(30.), px(42.)), false),
+            (point(px(150.), px(80.)), true),
+        ] {
+            let before = renders.get();
+            let sibling_before = sibling_renders.get();
+            cx.update(|window, cx| window.simulate_mouse_move(position, cx));
+            assert_eq!(
+                renders.get() - before,
+                usize::from(should_repaint),
+                "row hover must repaint on entry and exit without waiting for another UI event; position: {position:?}"
+            );
+            assert_eq!(
+                sibling_renders.get(),
+                sibling_before,
+                "row hover must not invalidate a cached sibling"
+            );
+        }
+    }
+
     impl Render for HoverHarness {
         fn render(
             &mut self,

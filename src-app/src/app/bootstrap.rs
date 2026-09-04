@@ -295,109 +295,6 @@ impl PaneFlowApp {
         .detach();
 
         cx.spawn(
-            async |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
-                let debounce = std::time::Duration::from_millis(100);
-                let ceiling = std::time::Duration::from_millis(500);
-                const FILES_EVENT_DRAIN_MAX_PER_TICK: usize = 512;
-                let mut first_pending: Option<std::time::Instant> = None;
-                let mut last_event = std::time::Instant::now();
-                let mut pending_dirs = std::collections::HashSet::<std::path::PathBuf>::new();
-                let mut need_rescan = false;
-
-                loop {
-                    smol::Timer::after(std::time::Duration::from_millis(50)).await;
-
-                    let drained = cx.update(|cx| {
-                        this.update(cx, |app: &mut Self, _cx: &mut Context<Self>| {
-                            let mut dirs = Vec::new();
-                            let mut rescan = false;
-                            let mut watcher_failed = false;
-                            let mut drained_events = 0usize;
-                            if let Some(rx) = &app.files_event_rx {
-                                for _ in 0..FILES_EVENT_DRAIN_MAX_PER_TICK {
-                                    match rx.try_recv() {
-                                        Ok(Ok(ev)) => {
-                                            drained_events += 1;
-                                            if ev.need_rescan() {
-                                                rescan = true;
-                                            }
-                                            for p in &ev.paths {
-                                                if let Some(parent) = p.parent() {
-                                                    dirs.push(parent.to_path_buf());
-                                                }
-                                            }
-                                        }
-                                        Ok(Err(err)) => {
-                                            drained_events += 1;
-                                            log::warn!(
-                                                "files watcher error: {err}; falling back to on-expand reads"
-                                            );
-                                            rescan = true;
-                                            watcher_failed = true;
-                                            break;
-                                        }
-                                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                                        Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                                            log::warn!(
-                                                "files watcher disconnected; falling back to on-expand reads"
-                                            );
-                                            watcher_failed = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                                if drained_events == FILES_EVENT_DRAIN_MAX_PER_TICK {
-                                    tracing::debug!(
-                                        target: "paneflow_app::files_sidebar",
-                                        "files watcher drain capped at {FILES_EVENT_DRAIN_MAX_PER_TICK} events for this tick"
-                                    );
-                                }
-                            }
-                            if watcher_failed {
-                                app.files_watcher = None;
-                                app.files_event_rx = None;
-                            }
-                            (dirs, rescan)
-                        })
-                    });
-
-                    let (dirs, rescan) = match drained {
-                        Ok(d) => d,
-                        Err(_) => break,
-                    };
-
-                    if !dirs.is_empty() || rescan {
-                        if first_pending.is_none() {
-                            first_pending = Some(std::time::Instant::now());
-                        }
-                        last_event = std::time::Instant::now();
-                        pending_dirs.extend(dirs);
-                        need_rescan |= rescan;
-                    }
-
-                    let should_fire = first_pending.is_some_and(|start| {
-                        last_event.elapsed() >= debounce || start.elapsed() >= ceiling
-                    });
-                    if should_fire {
-                        first_pending = None;
-                        let affected: Vec<std::path::PathBuf> =
-                            std::mem::take(&mut pending_dirs).into_iter().collect();
-                        let rescan = std::mem::replace(&mut need_rescan, false);
-                        let applied = cx.update(|cx| {
-                            this.update(cx, |app: &mut Self, cx: &mut Context<Self>| {
-                                app.refresh_files_dirs(affected, rescan, cx);
-                            })
-                        });
-                        if applied.is_err() {
-                            break;
-                        }
-                    }
-                }
-            },
-        )
-        .detach();
-
-        cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let _config_watcher = running_config_watcher;
                 loop {
@@ -587,13 +484,9 @@ impl PaneFlowApp {
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search threads", cx));
         cx.observe(&agents_filter_input, |_, _, cx| cx.notify())
             .detach();
-        let files_filter_input =
-            cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Filter files", cx));
-        cx.observe(&files_filter_input, |app: &mut PaneFlowApp, _, cx| {
-            app.files_selected = 0;
-            cx.notify();
-        })
-        .detach();
+        let files_sidebar = cx.new(crate::app::files_sidebar::FilesSidebar::new);
+        cx.subscribe(&files_sidebar, Self::handle_files_event)
+            .detach();
         let settings_search_input =
             cx.new(|cx| crate::widgets::text_input::TextInput::new("", "Search settings…", cx));
         cx.observe(&settings_search_input, |_, _, cx| cx.notify())
@@ -726,14 +619,9 @@ impl PaneFlowApp {
             },
             files_sidebar_open: false,
             files_sidebar_animation: None,
-            files_tree: crate::app::files_tree::FilesTreeState::default(),
-            files_tree_scroll: gpui::ScrollHandle::new(),
-            files_selected: 0,
-            files_filter_input,
-            files_focus: cx.focus_handle(),
-            files_surface_id: None,
-            files_watcher: None,
-            files_event_rx: None,
+            files_sidebar,
+            files_sidebar_root: None,
+            files_sidebar_workspace: None,
             files_menu_open: None,
             toast: None,
             toast_queue: std::collections::VecDeque::new(),
