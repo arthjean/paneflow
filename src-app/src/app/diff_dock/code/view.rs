@@ -12,12 +12,13 @@ use gpui::{
     Anchor, AnyElement, App, AppContext, AsyncApp, Bounds, ClickEvent, ClipboardItem, Context,
     CursorStyle, EntityInputHandler, FocusHandle, Focusable, FontWeight, Hsla, InteractiveElement,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, Pixels, Point, Render, ScrollHandle, ScrollWheelEvent, SharedString,
+    ParentElement, Pixels, Point, Render, ScrollDelta, ScrollWheelEvent, SharedString,
     StatefulInteractiveElement, Styled, StyledText, UTF16Selection, WeakEntity, Window, actions,
     anchored, deferred, div, point, px, size,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use paneflow_textdiff::{Block, BlockKind, BlockTracker, ComparisonPolicy, split_lines};
+use ropey::Rope;
 
 type WatchBridge = Arc<Mutex<Option<mpsc::UnboundedSender<notify::Result<notify::Event>>>>>;
 type WatchEvents = mpsc::UnboundedReceiver<notify::Result<notify::Event>>;
@@ -25,14 +26,15 @@ type WatchEvents = mpsc::UnboundedReceiver<notify::Result<notify::Event>>;
 use super::base::{Base, spawn_base_load};
 use super::cursor::{self, CodeSelection};
 use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
-use super::edit::{self, DocChange, EditGroup, IndentUnit};
+use super::edit::{self, EditGroup, IndentUnit, TrackerWindow};
 use super::element::{
     CODE_FONT_SIZE, CODE_ROW_HEIGHT, CodeCaret, CodeColors, CodeElement, CodeGeometry, CodeHitMap,
-    GutterMemo, autoscroll_step, code_font, reveal_h_offset, reveal_offset, syntax_text_runs,
-    visible_rows,
+    CodeScroll, GutterMemo, autoscroll_step, code_font, reveal_h_offset, reveal_rows,
+    syntax_text_runs, visible_rows_at,
 };
 use super::highlight::{
-    CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, spawn_deferred_parse,
+    CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, SYNC_PARSE_BUDGET,
+    spawn_deferred_parse,
 };
 use super::load::{CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
 use super::markers::MARKER_COLUMN_W;
@@ -40,9 +42,21 @@ use super::save::{self, FileStamp};
 use crate::diff::{DiffSyntax, highlight_lines, palette};
 use crate::settings::components::menu_surface;
 use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
-use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState};
+use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState, ScrollableHandle};
 
 pub(crate) const CODE_KEY_CONTEXT: &str = "CodeEditor";
+
+fn ops_descend_by_row(doc: &CodeDocument, ops: &[(Range<usize>, String)]) -> bool {
+    ops.windows(2)
+        .all(|pair| doc.byte_to_line(pair[1].0.end) < doc.byte_to_line(pair[0].0.start))
+}
+
+fn wheel_pixels(delta: &ScrollDelta, char_w: f32) -> Point<f32> {
+    match delta {
+        ScrollDelta::Pixels(pixels) => Point::new(f32::from(pixels.x), f32::from(pixels.y)),
+        ScrollDelta::Lines(lines) => Point::new(lines.x * char_w, lines.y * CODE_ROW_HEIGHT),
+    }
+}
 
 const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 const MULTI_CLICK_RADIUS: f32 = 2.0;
@@ -53,7 +67,9 @@ const DRAG_SCROLL_COLUMNS: f32 = 3.0;
 const READ_ONLY_FLASH: Duration = Duration::from_millis(600);
 
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
+const RELOAD_DIFF_ATTEMPTS: usize = 2;
 const INITIAL_HIGHLIGHT_ROWS: usize = 60;
+const TOO_COMPLEX_BANNER: &str = "This file is too complex to color.";
 
 pub(crate) const TRACKER_DEBOUNCE: Duration = Duration::from_millis(150);
 const TRACKER_POLICY: ComparisonPolicy = ComparisonPolicy::Default;
@@ -207,12 +223,69 @@ struct MarkerPopup {
     base_text: String,
 }
 
+struct DiskDiff {
+    rope: Rope,
+    revision: u64,
+}
+
+impl DiskDiff {
+    fn of(doc: &CodeDocument) -> Self {
+        Self {
+            rope: doc.text().clone(),
+            revision: doc.revision(),
+        }
+    }
+}
+
+async fn reload_from_disk(
+    this: &WeakEntity<CodeView>,
+    cx: &mut AsyncApp,
+    stamp: Option<FileStamp>,
+    text: Option<String>,
+    force: bool,
+) -> bool {
+    let present = text.is_some();
+    let begun = cx.update(|cx| {
+        this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
+            view.begin_disk_reload(stamp, present, force, cx)
+        })
+    });
+    let Ok(begun) = begun else {
+        return false;
+    };
+    let (Some(mut diff), Some(text)) = (begun, text) else {
+        return true;
+    };
+    let text = Arc::new(text);
+    for attempt in 0..RELOAD_DIFF_ATTEMPTS {
+        let DiskDiff { rope, revision } = diff;
+        let incoming = Arc::clone(&text);
+        let splices = cx
+            .background_spawn(async move { edit::disk_splices(&rope, &incoming) })
+            .await;
+        let retry = attempt + 1 < RELOAD_DIFF_ATTEMPTS;
+        let finished = cx.update(|cx| {
+            this.update(cx, |view: &mut CodeView, cx: &mut Context<CodeView>| {
+                view.finish_disk_reload(revision, splices, retry, force, cx)
+            })
+        });
+        let Ok(next) = finished else {
+            return false;
+        };
+        match next {
+            Some(again) => diff = again,
+            None => return true,
+        }
+    }
+    true
+}
+
 pub(crate) struct CodeView {
     path: PathBuf,
     state: CodeLoadState,
     slot: CodeLoadSlot,
     focus: FocusHandle,
-    scroll: ScrollHandle,
+    scroll: CodeScroll,
     v_drag: Option<ScrollDragState>,
     h_offset: f32,
     selection: CodeSelection,
@@ -242,6 +315,7 @@ pub(crate) struct CodeView {
     tracker_generation: u64,
     hovered_marker: Option<usize>,
     popup: Option<MarkerPopup>,
+    highlight_budget: Duration,
     _watcher: Option<RecommendedWatcher>,
     _watch_bridge: Option<WatchBridge>,
 }
@@ -266,7 +340,7 @@ impl CodeView {
             state,
             slot: CodeLoadSlot::new(),
             focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
+            scroll: CodeScroll::new(),
             v_drag: None,
             h_offset: 0.0,
             selection: CodeSelection::default(),
@@ -295,9 +369,118 @@ impl CodeView {
             tracker_generation: 0,
             hovered_marker: None,
             popup: None,
+            highlight_budget: HIGHLIGHT_FRAME_BUDGET,
             _watcher: None,
             _watch_bridge: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn ready_for_test(path: PathBuf, text: &str, cx: &mut Context<Self>) -> Self {
+        let document = super::load::build_document(path.clone(), text, false);
+        let mut highlighter = CodeHighlighter::new(
+            &document,
+            DiffSyntax::from_theme(&crate::theme::active_theme()),
+        );
+        highlighter.parse_initial_blocking(&document);
+        Self {
+            element_id: format!("code-view:{}", path.display()).into(),
+            path,
+            state: CodeLoadState::Ready(Box::new(super::load::LoadedCode {
+                document,
+                highlighter,
+                indent: IndentUnit::Spaces(4),
+                stamp: None,
+            })),
+            slot: CodeLoadSlot::new(),
+            focus: cx.focus_handle(),
+            scroll: CodeScroll::new(),
+            v_drag: None,
+            h_offset: 0.0,
+            selection: CodeSelection::default(),
+            goal_column: 0,
+            text_drag: None,
+            click_chain: None,
+            last_motion: Instant::now(),
+            blink_visible: true,
+            focused: false,
+            focus_observers_installed: false,
+            theme_generation: crate::theme::theme_generation(),
+            geometry: Rc::new(Cell::new(CodeGeometry::default())),
+            gutter_memo: Rc::new(Cell::new(GutterMemo::default())),
+            hits: Rc::new(RefCell::new(CodeHitMap::default())),
+            history: edit::UndoHistory::default(),
+            saved_mark: edit::HistoryMark::default(),
+            indent: IndentUnit::Spaces(4),
+            marked: None,
+            read_only_flash: None,
+            stamp: None,
+            disk: DiskState::default(),
+            save_error: None,
+            saving: false,
+            base: Base::None,
+            tracker: BlockTracker::inactive(),
+            tracker_generation: 0,
+            hovered_marker: None,
+            popup: None,
+            highlight_budget: HIGHLIGHT_FRAME_BUDGET,
+            _watcher: None,
+            _watch_bridge: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn visible_row_range(&self) -> Range<usize> {
+        let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
+            return 0..0;
+        };
+        visible_rows_at(
+            self.scroll.rows(),
+            self.scroll.viewport_height(),
+            line_count,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scroll_rows(&self) -> f64 {
+        self.scroll.rows()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scroll_offset_y(&self) -> f32 {
+        self.scroll.content_top()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialized_lines(&self) -> usize {
+        self.hits.borrow().materialized_lines
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialized_numbers(&self) -> usize {
+        self.hits.borrow().materialized_numbers
+    }
+
+    #[cfg(test)]
+    pub(crate) fn row_width(&self, row: usize) -> Option<f32> {
+        let hits = self.hits.borrow();
+        let index = row.checked_sub(hits.first_row)?;
+        Some(f32::from(hits.lines.get(index)?.as_ref()?.width()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn row_top(&self, row: usize) -> f32 {
+        let hits = self.hits.borrow();
+        hits.top_y + row.saturating_sub(hits.first_row) as f32 * CODE_ROW_HEIGHT
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stale_visible_rows(&self) -> usize {
+        let rows = self.visible_row_range();
+        self.state
+            .highlighter()
+            .map(|highlighter| highlighter.stale_rows_in(rows))
+            .unwrap_or(0)
     }
 
     fn observe_blink(&mut self, cx: &mut Context<Self>) {
@@ -349,11 +532,11 @@ impl CodeView {
         let Some(doc) = self.state.document() else {
             return false;
         };
-        let viewport_h = f32::from(self.scroll.bounds().size.height);
+        let viewport_h = self.scroll.viewport_height();
         if viewport_h <= 0.0 {
             return false;
         }
-        let content_top = f32::from(-self.scroll.offset().y).max(0.0);
+        let content_top = self.scroll.content_top();
         let row = doc.byte_to_line(self.selection.cursor());
         Self::row_intersects_viewport(row, content_top, viewport_h)
     }
@@ -387,7 +570,7 @@ impl CodeView {
         self.gutter_memo.set(GutterMemo::default());
         self.geometry.set(CodeGeometry::default());
         *self.hits.borrow_mut() = CodeHitMap::default();
-        self.scroll.set_offset(Point::new(px(0.), px(0.)));
+        self.scroll.reset_rows();
         self.history.clear();
         self.saved_mark = edit::HistoryMark::default();
         self.marked = None;
@@ -425,6 +608,7 @@ impl CodeView {
                         view.indent = loaded.indent;
                         view.stamp = loaded.stamp;
                         view.state = CodeLoadState::Ready(Box::new(loaded));
+                        view.start_initial_parse(cx);
                         view.start_base_load(cx);
                     }
                     Err(err) => {
@@ -435,6 +619,22 @@ impl CodeView {
                 cx.notify();
             },
         );
+    }
+
+    fn start_initial_parse(&mut self, cx: &mut Context<Self>) {
+        let Some((doc, hl)) = self.state.editable() else {
+            return;
+        };
+        let Some(parse) = hl.initial_parse(doc) else {
+            return;
+        };
+        spawn_deferred_parse(parse, cx, |view: &mut Self, parsed, cx| {
+            if let Some((doc, hl)) = view.state.editable()
+                && hl.apply_parsed(doc, parsed)
+            {
+                cx.notify();
+            }
+        });
     }
 
     pub(crate) fn path(&self) -> &Path {
@@ -561,13 +761,18 @@ impl CodeView {
     }
 
     fn page_rows(&self) -> usize {
-        cursor::page_rows(f32::from(self.scroll.bounds().size.height), CODE_ROW_HEIGHT)
+        cursor::page_rows(self.scroll.viewport_height(), CODE_ROW_HEIGHT)
+    }
+
+    fn sync_scroll_line_count(&self) {
+        if let Some(doc) = self.state.document() {
+            self.scroll.set_line_count(doc.line_count());
+        }
     }
 
     pub(crate) fn reveal_cursor(&mut self) {
-        let viewport_h = f32::from(self.scroll.bounds().size.height);
+        let viewport_h = self.scroll.viewport_height();
         let geometry = self.geometry.get();
-        let current = f32::from(self.scroll.offset().y);
         let h_offset = self.h_offset;
         let Some(doc) = self.state.document() else {
             return;
@@ -575,12 +780,10 @@ impl CodeView {
         let offset = self.selection.cursor();
         let row = doc.byte_to_line(offset);
         let column = cursor::goal_column(doc, offset);
-        let content_h = doc.line_count() as f32 * CODE_ROW_HEIGHT;
+        self.scroll.set_line_count(doc.line_count());
 
-        let target = reveal_offset(row, viewport_h, content_h, current);
-        if (target - current).abs() > f32::EPSILON {
-            self.scroll.set_offset(Point::new(px(0.), px(target)));
-        }
+        let target = reveal_rows(row, viewport_h, self.scroll.max_rows(), self.scroll.rows());
+        self.scroll.set_rows(target);
         let caret_x = column as f32 * geometry.char_w;
         self.h_offset = reveal_h_offset(
             caret_x,
@@ -602,37 +805,41 @@ impl CodeView {
         }
     }
 
-    fn fill_visible_highlights(&mut self, cx: &mut Context<Self>) {
+    fn fill_visible_highlights(&mut self, window: &mut Window) {
         let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
             return;
         };
-        let viewport_h = f32::from(self.scroll.bounds().size.height);
-        let content_top = f32::from(-self.scroll.offset().y).max(0.0);
+        let viewport_h = self.scroll.viewport_height();
         let rows = if viewport_h > 0.0 {
-            visible_rows(content_top, viewport_h, line_count)
+            visible_rows_at(self.scroll.rows(), viewport_h, line_count)
         } else {
             0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
         };
+        let budget = self.highlight_budget;
         if let Some((doc, highlighter)) = self.state.editable()
-            && highlighter.fill_stale_rows(doc, rows, HIGHLIGHT_FRAME_BUDGET)
+            && highlighter.fill_stale_rows(doc, rows, budget).any_stale()
         {
-            cx.notify();
+            window.request_animation_frame();
         }
     }
 
-    fn apply_wheel(&mut self, ev: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let dx = f32::from(ev.delta.pixel_delta(window.line_height()).x);
-        if dx == 0.0 {
-            return;
-        }
+    fn apply_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let bounds = self.scroll.bounds();
         if !bounds.contains(&ev.position) {
             return;
         }
-        let max = self.geometry.get().max_h_offset;
-        let next = (self.h_offset - dx).clamp(0.0, max);
-        if next != self.h_offset {
-            self.h_offset = next;
+        let geometry = self.geometry.get();
+        let delta = wheel_pixels(&ev.delta, geometry.char_w);
+        self.sync_scroll_line_count();
+        let mut moved = self.scroll.scroll_by_pixels(-delta.y);
+        if delta.x != 0.0 {
+            let next = (self.h_offset - delta.x).clamp(0.0, geometry.max_h_offset);
+            if next != self.h_offset {
+                self.h_offset = next;
+                moved = true;
+            }
+        }
+        if moved {
             cx.notify();
         }
     }
@@ -803,13 +1010,8 @@ impl CodeView {
             DRAG_SCROLL_ROWS * CODE_ROW_HEIGHT,
         );
         if dy != 0.0 {
-            let max = f32::from(self.scroll.max_offset().y);
-            let current = -f32::from(self.scroll.offset().y);
-            let next = (current + dy).clamp(0.0, max);
-            if next != current {
-                self.scroll.set_offset(Point::new(px(0.), px(-next)));
-                moved = true;
-            }
+            self.sync_scroll_line_count();
+            moved = self.scroll.scroll_by_pixels(dy);
         }
 
         let dx = autoscroll_step(
@@ -1041,7 +1243,12 @@ impl CodeView {
         }
         let before = self.selection;
         let now = Instant::now();
+        let batched = self
+            .state
+            .document()
+            .is_some_and(|doc| ops_descend_by_row(doc, ops));
         let mut records = Vec::with_capacity(ops.len());
+        let mut edits = Vec::with_capacity(ops.len());
         let mut deferred: Option<DeferredParse> = None;
         let mut changes = Vec::with_capacity(ops.len() * 2);
         if let Some((doc, hl)) = self.state.editable() {
@@ -1049,13 +1256,19 @@ impl CodeView {
                 let Some(applied) = edit::splice(doc, range.clone(), text) else {
                     continue;
                 };
-                for change in &applied.edits {
-                    if let HighlightOutcome::Deferred(parse) = hl.edit(doc, &change.edit) {
-                        deferred = Some(parse);
-                    }
+                if batched {
+                    edits.push(applied.edit);
+                } else if let HighlightOutcome::Deferred(parse) = hl.edit(doc, &applied.edit) {
+                    deferred = Some(parse);
                 }
-                changes.extend(applied.edits);
+                changes.extend(applied.windows);
                 records.push(applied.record);
+            }
+            if batched
+                && let Ok(HighlightOutcome::Deferred(parse)) =
+                    hl.edit_batch(doc, &edits, SYNC_PARSE_BUDGET)
+            {
+                deferred = Some(parse);
             }
         }
         if records.is_empty() {
@@ -1333,7 +1546,7 @@ impl CodeView {
                         deferred = Some(parse);
                     }
                 }
-                changes = step.edits;
+                changes = step.edits.iter().map(|change| change.window).collect();
                 restored = Some(step.selection);
             }
         }
@@ -1488,12 +1701,7 @@ impl CodeView {
                         )
                     })
                     .await;
-                let updated = cx.update(|cx| {
-                    this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                        view.disk_changed(stamp, text, cx);
-                    })
-                });
-                if updated.is_err() {
+                if !reload_from_disk(&this, cx, stamp, text, false).await {
                     break;
                 }
             }
@@ -1501,54 +1709,80 @@ impl CodeView {
         .detach();
     }
 
-    fn disk_changed(
+    fn begin_disk_reload(
         &mut self,
         stamp: Option<FileStamp>,
-        text: Option<String>,
+        present: bool,
+        force: bool,
         cx: &mut Context<Self>,
-    ) {
-        match (stamp, text) {
-            (None, _) | (_, None) => {
-                if self.disk != DiskState::Deleted {
-                    self.disk = DiskState::Deleted;
-                    cx.notify();
-                }
+    ) -> Option<DiskDiff> {
+        let Some(stamp) = stamp.filter(|_| present) else {
+            if self.disk != DiskState::Deleted {
+                self.disk = DiskState::Deleted;
+                cx.notify();
             }
-            (Some(stamp), Some(text)) => {
-                if self.stamp == Some(stamp) && self.disk == DiskState::InSync {
-                    return;
-                }
-                self.stamp = Some(stamp);
-                if self.is_dirty() {
-                    self.disk = DiskState::Conflict;
-                    cx.notify();
-                    return;
-                }
-                self.disk = DiskState::InSync;
-                self.adopt_disk_text(&text, cx);
-                self.saved_mark = self.history.mark();
+            return None;
+        };
+        if !force {
+            if self.stamp == Some(stamp) && self.disk == DiskState::InSync {
+                return None;
             }
+            self.stamp = Some(stamp);
+            if self.is_dirty() {
+                self.disk = DiskState::Conflict;
+                cx.notify();
+                return None;
+            }
+        } else {
+            self.stamp = Some(stamp);
         }
+        self.disk = DiskState::InSync;
+        self.state.document().map(DiskDiff::of)
     }
 
-    fn adopt_disk_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        let Some(doc) = self.state.document() else {
-            return;
-        };
-        let current = doc.text().to_string();
-        let ops = edit::disk_splices(&current, text);
+    fn finish_disk_reload(
+        &mut self,
+        revision: u64,
+        splices: Vec<(Range<usize>, String)>,
+        retry: bool,
+        force: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<DiskDiff> {
+        let doc = self.state.document()?;
+        if doc.revision() != revision {
+            if retry {
+                return Some(DiskDiff::of(doc));
+            }
+            self.disk = DiskState::Conflict;
+            cx.notify();
+            return None;
+        }
+        if !force && self.is_dirty() {
+            self.disk = DiskState::Conflict;
+            cx.notify();
+            return None;
+        }
+        self.apply_disk_splices(&splices, cx);
+        self.saved_mark = self.history.mark();
+        None
+    }
+
+    fn apply_disk_splices(&mut self, ops: &[(Range<usize>, String)], cx: &mut Context<Self>) {
         if ops.is_empty() {
             return;
         }
-        let scroll = self.scroll.offset();
-        let after = edit::shift_selection_for_splices(self.selection, &ops);
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let scroll_rows = self.scroll.rows();
+        let after = edit::shift_selection_for_splices(self.selection, ops);
         let reason = doc.read_only_reason();
         if reason.is_some()
             && let Some(doc) = self.state.document_mut()
         {
             doc.set_read_only(None);
         }
-        let replaced = self.splice_all(&ops, after, EditGroup::Atomic, cx);
+        let replaced = self.splice_all(ops, after, EditGroup::Atomic, cx);
         if let Some(reason) = reason
             && let Some(doc) = self.state.document_mut()
         {
@@ -1557,7 +1791,8 @@ impl CodeView {
         if !replaced {
             return;
         }
-        self.scroll.set_offset(scroll);
+        self.sync_scroll_line_count();
+        self.scroll.set_rows(scroll_rows);
         self.popup = None;
         self.reset_tracker(cx);
         cx.notify();
@@ -1593,19 +1828,7 @@ impl CodeView {
                     )
                 })
                 .await;
-            cx.update(|cx| {
-                let _ = this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                    let Some(text) = text else {
-                        view.disk = DiskState::Deleted;
-                        cx.notify();
-                        return;
-                    };
-                    view.stamp = stamp;
-                    view.disk = DiskState::InSync;
-                    view.adopt_disk_text(&text, cx);
-                    view.saved_mark = view.history.mark();
-                });
-            });
+            reload_from_disk(&this, cx, stamp, text, true).await;
         })
         .detach();
     }
@@ -1732,6 +1955,19 @@ impl CodeView {
                     .bg(ui.vc_deleted.opacity(0.16))
                     .text_color(ui.text)
                     .child(format!("{message} Your edits are still here."))
+                    .into_any_element(),
+            );
+        }
+        if self
+            .state
+            .highlighter()
+            .is_some_and(CodeHighlighter::is_too_complex)
+        {
+            out.push(
+                row()
+                    .bg(ui.overlay)
+                    .text_color(ui.muted)
+                    .child(TOO_COMPLEX_BANNER)
                     .into_any_element(),
             );
         }
@@ -1958,12 +2194,11 @@ impl CodeView {
         }
     }
 
-    fn note_changes(&mut self, changes: &[DocChange], cx: &mut Context<Self>) {
+    fn note_changes(&mut self, changes: &[TrackerWindow], cx: &mut Context<Self>) {
         if !self.tracker.is_active() {
             return;
         }
-        for change in changes {
-            let window = change.window;
+        for window in changes {
             self.tracker
                 .range_changed(window.start_line, window.before_len, window.after_len);
         }
@@ -2449,7 +2684,7 @@ impl Render for CodeView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.ensure_focus_observers(window, cx);
         self.sync_theme();
-        self.fill_visible_highlights(cx);
+        self.fill_visible_highlights(window);
         let ui = crate::theme::ui_colors();
 
         let Some(doc) = self.state.document() else {
@@ -2463,7 +2698,7 @@ impl Render for CodeView {
             };
         };
 
-        let line_count = doc.line_count();
+        self.scroll.set_line_count(doc.line_count());
         let banners = self.banners(ui, cx);
         let popup = self.render_marker_popup(ui, window, cx);
         let theme = crate::theme::active_theme();
@@ -2489,19 +2724,18 @@ impl Render for CodeView {
                 visible: self.blink_visible,
                 marked: self.marked.clone().unwrap_or(0..0),
             },
-            line_count,
             self.geometry.clone(),
             self.gutter_memo.clone(),
             self.hits.clone(),
         );
 
-        let mut host = div()
+        let host = div()
             .id(self.element_id.clone())
             .flex_1()
             .min_h_0()
             .w_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
+            .overflow_hidden()
+            .line_height(px(CODE_ROW_HEIGHT))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
@@ -2513,11 +2747,10 @@ impl Render for CodeView {
                     }
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
-                this.apply_wheel(ev, window, cx);
+            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _window, cx| {
+                this.apply_wheel(ev, cx);
             }))
             .child(element);
-        host.style().restrict_scroll_to_axis = Some(true);
 
         div()
             .id("code-view-body")
@@ -2585,10 +2818,36 @@ impl Render for CodeView {
 }
 
 #[cfg(test)]
-mod tests {
-    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point};
+impl CodeView {
+    fn disk_changed(
+        &mut self,
+        stamp: Option<FileStamp>,
+        text: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let present = text.is_some();
+        let text = text.unwrap_or_default();
+        let Some(diff) = self.begin_disk_reload(stamp, present, false, cx) else {
+            return;
+        };
+        let splices = edit::disk_splices(&diff.rope, &text);
+        self.finish_disk_reload(diff.revision, splices, false, false, cx);
+    }
 
-    use super::super::highlight::CodeHighlighter;
+    fn adopt_disk_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        let Some(doc) = self.state.document() else {
+            return;
+        };
+        let splices = edit::disk_splices(doc.text(), text);
+        self.apply_disk_splices(&splices, cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::{Entity, Modifiers, TestAppContext, TouchPhase, VisualTestContext, point};
+
+    use super::super::highlight::{CodeHighlighter, MAX_QUERY_ROWS};
     use super::super::load::{LoadedCode, build_document};
     use super::*;
 
@@ -2596,15 +2855,33 @@ mod tests {
         cx: &'a mut TestAppContext,
         text: &str,
     ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
-        let path = PathBuf::from("/nonexistent/paneflow-code.rs");
+        view_with_budget(cx, text, HIGHLIGHT_FRAME_BUDGET)
+    }
+
+    fn view_with_budget<'a>(
+        cx: &'a mut TestAppContext,
+        text: &str,
+        budget: Duration,
+    ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        view_named(cx, "/nonexistent/paneflow-code.rs", text, budget)
+    }
+
+    fn view_named<'a>(
+        cx: &'a mut TestAppContext,
+        name: &str,
+        text: &str,
+        highlight_budget: Duration,
+    ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        let path = PathBuf::from(name);
         let state = if text.is_empty() {
             CodeLoadState::Loading
         } else {
             let document = build_document(path.clone(), text, false);
-            let highlighter = CodeHighlighter::new(
+            let mut highlighter = CodeHighlighter::new(
                 &document,
                 DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
             );
+            highlighter.parse_initial_blocking(&document);
             CodeLoadState::Ready(Box::new(LoadedCode {
                 document,
                 highlighter,
@@ -2612,7 +2889,11 @@ mod tests {
                 stamp: None,
             }))
         };
-        cx.add_window_view(move |_window, cx| CodeView::with_state(path, state, None, cx))
+        cx.add_window_view(move |_window, cx| {
+            let mut view = CodeView::with_state(path, state, None, cx);
+            view.highlight_budget = highlight_budget;
+            view
+        })
     }
 
     fn tracked_view<'a>(
@@ -2646,6 +2927,473 @@ mod tests {
             .iter()
             .map(|block| (block.kind(), block.lines.clone(), block.base_lines.clone()))
             .collect()
+    }
+
+    fn rows_of_code(rows: usize) -> String {
+        (0..rows).map(|row| format!("fn f{row}() {{}}\n")).collect()
+    }
+
+    const VIEWPORT: Point<Pixels> = Point {
+        x: px(800.),
+        y: px(360.),
+    };
+
+    fn scrolled<'a>(
+        cx: &'a mut TestAppContext,
+        name: &str,
+        text: &str,
+    ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        let (view, cx) = view_named(cx, name, text, HIGHLIGHT_FRAME_BUDGET);
+        cx.simulate_resize(size(VIEWPORT.x, VIEWPORT.y));
+        cx.run_until_parked();
+        let centre = point(VIEWPORT.x / 2., VIEWPORT.y / 2.);
+        cx.simulate_mouse_move(centre, None, Modifiers::default());
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    fn wheel(delta: ScrollDelta) -> ScrollWheelEvent {
+        ScrollWheelEvent {
+            position: point(VIEWPORT.x / 2., VIEWPORT.y / 2.),
+            delta,
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        }
+    }
+
+    fn notification_counter(
+        view: &Entity<CodeView>,
+        cx: &mut VisualTestContext,
+    ) -> (Rc<Cell<usize>>, gpui::Subscription) {
+        let count = Rc::new(Cell::new(0usize));
+        let seen = count.clone();
+        let subscription =
+            cx.update(|_, cx| cx.observe(view, move |_, _| seen.set(seen.get() + 1)));
+        (count, subscription)
+    }
+
+    #[gpui::test]
+    fn a_wheel_notch_scrolls_three_rows(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/wheel.rs", &rows_of_code(500));
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(0.0, -3.0))));
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.scroll_offset_y()),
+            3.0 * CODE_ROW_HEIGHT,
+            "a notch must move exactly three rows"
+        );
+        assert_eq!(view.read_with(cx, |view, _| view.scroll_rows()), 3.0);
+    }
+
+    #[gpui::test]
+    fn a_trackpad_delta_scrolls_its_exact_pixels(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/trackpad.rs", &rows_of_code(500));
+
+        cx.simulate_event(wheel(ScrollDelta::Pixels(point(px(0.), px(-7.5)))));
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.scroll_offset_y()), 7.5);
+    }
+
+    #[gpui::test]
+    fn a_horizontal_notch_moves_whole_columns(cx: &mut TestAppContext) {
+        let mut text = "x".repeat(400);
+        text.push('\n');
+        text.push_str(&rows_of_code(200));
+        let (view, cx) = scrolled(cx, "/nonexistent/wide.rs", &text);
+
+        let char_w = view.read_with(cx, |view, _| view.geometry.get().char_w);
+        assert!(char_w > 0.0, "the test text system must measure a column");
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(-1.0, 0.0))));
+        cx.run_until_parked();
+
+        let (h_offset, rows) = view.read_with(cx, |view, _| (view.h_offset, view.scroll_rows()));
+        assert_eq!(h_offset, char_w, "one notch is one column, not one line");
+        assert_eq!(rows, 0.0, "a horizontal notch must not scroll vertically");
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(-2.0, 0.0))));
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |view, _| view.h_offset), 3.0 * char_w);
+    }
+
+    #[gpui::test]
+    fn a_document_shorter_than_the_viewport_absorbs_the_notch(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/short.rs", &rows_of_code(3));
+        let (notifications, _subscription) = notification_counter(&view, cx);
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(0.0, -3.0))));
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.scroll_offset_y()), 0.0);
+        assert_eq!(
+            notifications.get(),
+            0,
+            "an absorbed notch must not repaint the editor"
+        );
+    }
+
+    #[gpui::test]
+    fn notches_in_one_frame_coalesce_into_a_single_notification(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/coalesce.rs", &rows_of_code(500));
+        let (notifications, _subscription) = notification_counter(&view, cx);
+
+        cx.update(|window, cx| {
+            for _ in 0..3 {
+                window.dispatch_event(
+                    gpui::PlatformInput::ScrollWheel(wheel(ScrollDelta::Lines(point(0.0, -3.0)))),
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.scroll_rows()),
+            9.0,
+            "the three deltas must all land"
+        );
+        assert_eq!(
+            notifications.get(),
+            1,
+            "three notches inside one frame are one repaint"
+        );
+    }
+
+    #[gpui::test]
+    fn the_last_row_of_a_huge_file_lands_on_the_viewport_floor(cx: &mut TestAppContext) {
+        let line_count = 300_000usize;
+        let text = rows_of_code(line_count);
+        let (view, cx) = scrolled(cx, "/nonexistent/huge.rs", &text);
+
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(view.scroll.max_rows());
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let (last, first, floor) = view.read_with(cx, |view, _| {
+            let last = view.document().expect("a loaded document").line_count() - 1;
+            (
+                last,
+                view.row_top(last),
+                f32::from(view.scroll.bounds().bottom()),
+            )
+        });
+        assert!(last >= line_count, "{last} must reach past {line_count}");
+        assert!(
+            (first + CODE_ROW_HEIGHT - floor).abs() < 1.0,
+            "the last row must sit on the viewport floor, got {first} for a floor at {floor}"
+        );
+
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.row_top(last)),
+            first,
+            "two identical frames must place the last row identically"
+        );
+
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(view.scroll.rows() - 1.0);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.row_top(last)),
+            first + CODE_ROW_HEIGHT,
+            "one scrolled row must move the last row by exactly one row height"
+        );
+    }
+
+    #[gpui::test]
+    fn the_scrollbar_drives_the_owned_position(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/bar.rs", &rows_of_code(2_000));
+
+        let thumb_h = view.update(cx, |view, cx| {
+            let metrics = scrollbar::metrics(&view.scroll).expect("an overflowing document");
+            let bar_x = view.scroll.bounds().right() - px(3.);
+            let below_thumb = view.scroll.bounds().origin.y + px(metrics.thumb_h + 40.0);
+            assert!(view.on_scrollbar_down(
+                &MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(bar_x, below_thumb),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                },
+                cx,
+            ));
+            metrics.thumb_h
+        });
+        let after_click = view.read_with(cx, |view, _| view.scroll_rows());
+        assert!(after_click > 0.0, "a track click must move the position");
+
+        view.update(cx, |view, cx| {
+            let metrics = scrollbar::metrics(&view.scroll).expect("an overflowing document");
+            let bar_x = view.scroll.bounds().right() - px(3.);
+            let thumb_y = view.scroll.bounds().origin.y + px(metrics.thumb_top + thumb_h / 2.0);
+            view.on_scrollbar_down(
+                &MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(bar_x, thumb_y),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                },
+                cx,
+            );
+            view.on_scrollbar_move(
+                &MouseMoveEvent {
+                    position: point(bar_x, thumb_y + px(60.)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                },
+                cx,
+            );
+        });
+        let after_drag = view.read_with(cx, |view, _| view.scroll_rows());
+        assert!(
+            after_drag > after_click,
+            "dragging the thumb down must advance the position, {after_click} -> {after_drag}"
+        );
+    }
+
+    #[gpui::test]
+    fn an_external_reload_that_drops_lines_rebinds_the_position(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/reload.rs", &rows_of_code(500));
+
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(view.scroll.max_rows());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |view, _| view.scroll_rows()) > 400.0);
+
+        view.update(cx, |view, cx| {
+            view.adopt_disk_text(&rows_of_code(25), cx);
+        });
+        cx.run_until_parked();
+
+        let (rows, max_rows, viewport_h) = view.read_with(cx, |view, _| {
+            (
+                view.scroll_rows(),
+                view.scroll.max_rows(),
+                view.scroll.viewport_height(),
+            )
+        });
+        let line_count = view.read_with(cx, |view, _| {
+            view.document().expect("a loaded document").line_count()
+        });
+        assert_eq!(
+            max_rows,
+            line_count as f64 - f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT)
+        );
+        assert_eq!(rows, max_rows, "the position must stop at the new end");
+    }
+
+    fn frame(view: &Entity<CodeView>, cx: &mut VisualTestContext) {
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+    }
+
+    fn scroll_to(view: &Entity<CodeView>, cx: &mut VisualTestContext, rows: f64) {
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(rows);
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_warm_frame_shapes_nothing_it_already_shaped(cx: &mut TestAppContext) {
+        let text: String = (0..400)
+            .map(|row| format!("row {row} of plain text\n"))
+            .collect();
+        let (view, cx) = scrolled(cx, "/nonexistent/warm.txt", &text);
+
+        frame(&view, cx);
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_lines()),
+            0,
+            "a warm frame must not build a single line string"
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_numbers()),
+            0,
+            "a warm frame must not build a single number string"
+        );
+
+        scroll_to(&view, cx, 200.0);
+        frame(&view, cx);
+        scroll_to(&view, cx, 0.0);
+        assert!(
+            view.read_with(cx, |view, _| view.materialized_lines()) > 0,
+            "rows the layout cache dropped must be shaped again"
+        );
+    }
+
+    #[gpui::test]
+    fn an_edit_only_reshapes_the_row_it_touched(cx: &mut TestAppContext) {
+        let rows = 100;
+        let text: String = (0..rows)
+            .map(|row| format!("row {row} of plain text\n"))
+            .collect();
+        let (view, cx) = scrolled(cx, "/nonexistent/edit.txt", &text);
+
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |view, _| view.materialized_lines()), 0);
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection { anchor: 0, head: 0 };
+            view.replace_text_in_range(None, "z", window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_lines()),
+            1,
+            "only the edited row may miss the layout cache"
+        );
+    }
+
+    #[gpui::test]
+    fn identical_rows_share_one_shaped_line(cx: &mut TestAppContext) {
+        let text: String = (0..400)
+            .map(|row| {
+                if row % 2 == 0 {
+                    "same line\n"
+                } else {
+                    "other line\n"
+                }
+            })
+            .collect();
+        let (view, cx) = scrolled(cx, "/nonexistent/twins.txt", &text);
+
+        let (even, odd, twin) = view.read_with(cx, |view, _| {
+            (view.row_width(0), view.row_width(1), view.row_width(2))
+        });
+        assert_eq!(even, twin, "identical rows must carry identical layouts");
+        assert_ne!(even, odd, "the probe needs two measurably different texts");
+
+        frame(&view, cx);
+        scroll_to(&view, cx, 200.0);
+
+        let visible = view.read_with(cx, |view, _| view.visible_row_range().len());
+        assert!(visible > 4, "the probe needs more rows than distinct texts");
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_lines()),
+            0,
+            "{visible} rows of already shaped texts must all hit at their new indices"
+        );
+    }
+
+    #[gpui::test]
+    fn the_ime_reads_the_caret_from_the_painted_rows(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/ime.rs", "let alpha = 1;\nlet beta = 2;\n");
+
+        let (caret, index) = view.update_in(cx, |view, window, cx| {
+            let element_bounds = view.scroll.bounds();
+            let caret = view
+                .bounds_for_range(4..9, element_bounds, window, cx)
+                .expect("a laid out row");
+            let index = view
+                .character_index_for_point(caret.origin, window, cx)
+                .expect("a laid out row");
+            (caret, index)
+        });
+        assert_eq!(index, 4, "the IME round trips the caret it was given");
+        assert_eq!(f32::from(caret.size.height), CODE_ROW_HEIGHT);
+        assert_eq!(
+            f32::from(caret.origin.y),
+            view.read_with(cx, |view, _| view.row_top(0)),
+            "the IME caret sits on the painted row"
+        );
+    }
+
+    #[gpui::test]
+    fn a_starved_fill_schedules_the_next_frame_itself(cx: &mut TestAppContext) {
+        let text = rows_of_code(500);
+        let (view, cx) = view_with_budget(cx, &text, Duration::ZERO);
+        cx.simulate_resize(size(px(800.), px(6_000.)));
+        cx.run_until_parked();
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+
+        let visible = view.read_with(cx, |view, _| view.visible_row_range());
+        assert!(
+            visible.len() > MAX_QUERY_ROWS,
+            "the probe needs a viewport taller than one query slice, got {visible:?}"
+        );
+
+        let mut stale = view.read_with(cx, |view, _| view.stale_visible_rows());
+        assert!(stale > 0, "a zero budget must leave visible rows stale");
+
+        let mut frames = 0usize;
+        while stale > 0 {
+            assert_eq!(
+                cx.update(|window, cx| window.simulate_next_frame(cx)),
+                1,
+                "a starved fill must schedule its own follow-up frame"
+            );
+            cx.run_until_parked();
+            let left = view.read_with(cx, |view, _| view.stale_visible_rows());
+            assert!(
+                left < stale,
+                "a follow-up frame must colour more rows, {stale} -> {left}"
+            );
+            stale = left;
+            frames += 1;
+            assert!(frames < 8, "the progressive fill must converge");
+        }
+
+        assert_eq!(
+            cx.update(|window, cx| window.simulate_next_frame(cx)),
+            0,
+            "a fresh viewport must not schedule another frame"
+        );
+    }
+
+    #[gpui::test]
+    fn a_fresh_viewport_schedules_no_frame(cx: &mut TestAppContext) {
+        let text = rows_of_code(40);
+        let (view, cx) = view(cx, &text);
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.stale_visible_rows()), 0);
+        assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
+    }
+
+    #[gpui::test]
+    fn a_loading_document_never_asks_for_a_frame(cx: &mut TestAppContext) {
+        let (view, cx) = view_with_budget(cx, "", Duration::ZERO);
+        cx.run_until_parked();
+
+        let scheduled = cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            view.update(cx, |view, _cx| view.fill_visible_highlights(window));
+            window.simulate_next_frame(cx)
+        });
+        assert_eq!(
+            scheduled, 0,
+            "while the document loads only the spinner may drive frames"
+        );
+    }
+
+    #[gpui::test]
+    fn a_file_past_the_highlight_cap_schedules_no_frame(cx: &mut TestAppContext) {
+        let mut text = String::with_capacity(crate::diff::MAX_HIGHLIGHT_BYTES + 64);
+        while text.len() <= crate::diff::MAX_HIGHLIGHT_BYTES {
+            text.push_str("pub fn f() -> i32 { 1 }\n");
+        }
+        let (view, cx) = view_named(cx, "/nonexistent/huge.rs", &text, Duration::ZERO);
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.stale_visible_rows()), 0);
+        assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
     }
 
     #[gpui::test]
@@ -2922,11 +3670,27 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join(name);
         std::fs::write(&path, text).expect("seed");
+        let seeded = seeded_view(path, text);
+        let (view, cx) = cx.add_window_view(move |_window, cx| {
+            let mut view = seeded(cx);
+            if watch {
+                view.start_watcher(cx);
+            }
+            view
+        });
+        (dir, view, cx)
+    }
+
+    fn seeded_view(
+        path: PathBuf,
+        text: &str,
+    ) -> impl FnOnce(&mut Context<CodeView>) -> CodeView + use<> {
         let document = build_document(path.clone(), text, false);
-        let highlighter = CodeHighlighter::new(
+        let mut highlighter = CodeHighlighter::new(
             &document,
             DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
         );
+        highlighter.parse_initial_blocking(&document);
         let stamp = FileStamp::read(&path);
         let state = CodeLoadState::Ready(Box::new(LoadedCode {
             document,
@@ -2934,17 +3698,7 @@ mod tests {
             indent: IndentUnit::Spaces(4),
             stamp,
         }));
-        let (view, cx) = {
-            let path = path.clone();
-            cx.add_window_view(move |_window, cx| {
-                let mut view = CodeView::with_state(path, state, stamp, cx);
-                if watch {
-                    view.start_watcher(cx);
-                }
-                view
-            })
-        };
-        (dir, view, cx)
+        move |cx: &mut Context<CodeView>| CodeView::with_state(path, state, stamp, cx)
     }
 
     fn text_of(view: &CodeView) -> String {
@@ -3037,13 +3791,104 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn opening_a_file_shows_its_text_first_and_colors_it_when_the_tree_lands(
+        cx: &mut TestAppContext,
+    ) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "fn main() {\n    let value = 1;\n}\n").expect("seed");
+        let opened = super::super::load::open_blocking(
+            &path,
+            DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
+        )
+        .expect("open");
+        assert!(
+            !opened.highlighter.has_tree(),
+            "the blocking read hands the text over before any parse"
+        );
+        drop(opened);
+
+        let spawn_path = path.clone();
+        let (view, cx) = cx.add_window_view(move |_window, cx| CodeView::new(spawn_path, cx));
+        cx.executor().allow_parking();
+        for _ in 0..300 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| {
+                view.state
+                    .highlighter()
+                    .is_some_and(CodeHighlighter::has_tree)
+            }) {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(10)).await;
+        }
+
+        view.update(cx, |view, _cx| {
+            let (doc, highlighter) = view.state.editable().expect("the file loaded");
+            assert_eq!(doc.line_count(), 4, "the text is there");
+            assert!(
+                highlighter.has_tree(),
+                "the deferred initial parse landed and installed the tree"
+            );
+            assert!(
+                !highlighter.is_too_complex(),
+                "a three-line file is not too complex to color"
+            );
+            highlighter.requery_rows(doc, 0..doc.line_count());
+            assert!(
+                (0..doc.line_count()).any(|row| !highlighter.runs(row).is_empty()),
+                "and the rows color from it"
+            );
+            let bridge = view._watch_bridge.take();
+            if let Some(bridge) = bridge {
+                *bridge.lock().expect("bridge lock") = None;
+            }
+            view._watcher = None;
+        });
+    }
+
+    #[gpui::test]
+    fn an_initial_parse_that_gives_up_greys_the_file_and_raises_its_banner(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = view(cx, "fn main() {\n    let value = 1;\n}\n");
+        let ui = crate::theme::ui_colors();
+
+        let before = view.update(cx, |view, cx| view.banners(ui, cx).len());
+
+        view.update(cx, |view, _cx| {
+            let (doc, highlighter) = view.state.editable().expect("ready");
+            let mut fresh =
+                CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+            let expired = fresh
+                .initial_parse(doc)
+                .expect("a fresh highlighter defers its first parse")
+                .with_timeout_for_test(Duration::ZERO);
+            assert!(
+                highlighter.apply_parsed(doc, expired.run()),
+                "the expired parse is applied to the live highlighter"
+            );
+            assert!(highlighter.is_too_complex(), "the tab gave up on coloring");
+            assert!(!highlighter.is_enabled(), "and the file stays grey");
+        });
+
+        let after = view.update(cx, |view, cx| view.banners(ui, cx).len());
+        assert_eq!(
+            after,
+            before + 1,
+            "giving up on the parse raises one banner under the file name"
+        );
+    }
+
+    #[gpui::test]
     fn a_keystroke_on_a_read_only_document_is_refused_visibly(cx: &mut TestAppContext) {
         let path = PathBuf::from("/nonexistent/paneflow-code.rs");
         let document = build_document(path.clone(), "locked\n", true);
-        let highlighter = CodeHighlighter::new(
+        let mut highlighter = CodeHighlighter::new(
             &document,
             DiffSyntax::from_theme(&crate::theme::paneflow_dark()),
         );
+        highlighter.parse_initial_blocking(&document);
         let state = CodeLoadState::Ready(Box::new(LoadedCode {
             document,
             highlighter,
@@ -3120,6 +3965,7 @@ mod tests {
             live.requery_rows(doc, 0..doc.line_count());
             let mut oracle =
                 CodeHighlighter::new(doc, DiffSyntax::from_theme(&crate::theme::paneflow_dark()));
+            oracle.parse_initial_blocking(doc);
             oracle.requery_rows(doc, 0..doc.line_count());
             assert!(live.is_enabled(), "the grammar is loaded");
             assert!(
@@ -3314,6 +4160,170 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn an_external_write_reloads_through_the_watcher(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", true);
+        let path = dir.path().join("main.rs");
+        cx.executor().allow_parking();
+        cx.run_until_parked();
+
+        std::fs::write(&path, "one\nAGENT\ntwo\n").expect("agent write");
+        for _ in 0..300 {
+            cx.run_until_parked();
+            if view.update(cx, |view, _cx| text_of(view) == "one\nAGENT\ntwo\n") {
+                break;
+            }
+            smol::Timer::after(Duration::from_millis(10)).await;
+        }
+
+        view.update(cx, |view, _cx| {
+            assert_eq!(
+                text_of(view),
+                "one\nAGENT\ntwo\n",
+                "the watched write reached the document through the background diff"
+            );
+            assert!(!view.is_dirty(), "a silent reload is the new saved state");
+            assert_eq!(view.disk, DiskState::InSync);
+            let bridge = view._watch_bridge.take().expect("bridged watcher");
+            *bridge.lock().expect("bridge lock") = None;
+            view._watcher = None;
+        });
+    }
+
+    #[gpui::test]
+    fn a_reload_that_races_an_edit_recomputes_once_then_conflicts(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update_in(cx, |view, window, cx| {
+            let diff = view
+                .begin_disk_reload(stamp, true, false, cx)
+                .expect("a clean document starts a diff");
+            let splices = edit::disk_splices(&diff.rope, "ONE!\nTWO!\n");
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "x", window, cx);
+
+            let again = view
+                .finish_disk_reload(diff.revision, splices, true, false, cx)
+                .expect("a stale revision buys exactly one recomputation");
+            assert_eq!(
+                text_of(view),
+                "xone\ntwo\n",
+                "splices computed against an older revision are refused"
+            );
+            assert!(!view.has_conflict(), "the first miss is not a conflict yet");
+
+            let splices = edit::disk_splices(&again.rope, "ONE!\nTWO!\n");
+            view.replace_text_in_range(None, "y", window, cx);
+            assert!(
+                view.finish_disk_reload(again.revision, splices, false, false, cx)
+                    .is_none(),
+                "the second stale delivery gives up"
+            );
+            assert!(
+                view.has_conflict(),
+                "a document that keeps moving is left to the user"
+            );
+            assert_eq!(text_of(view), "xyone\ntwo\n", "the user edits survived");
+        });
+    }
+
+    #[gpui::test]
+    fn a_reload_that_settles_on_a_dirty_document_keeps_the_user_text(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update_in(cx, |view, window, cx| {
+            let diff = view
+                .begin_disk_reload(stamp, true, false, cx)
+                .expect("a clean document starts a diff");
+            let splices = edit::disk_splices(&diff.rope, "ONE!\nTWO!\n");
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "x", window, cx);
+
+            let again = view
+                .finish_disk_reload(diff.revision, splices, true, false, cx)
+                .expect("a stale revision buys exactly one recomputation");
+            let splices = edit::disk_splices(&again.rope, "ONE!\nTWO!\n");
+            assert!(
+                view.finish_disk_reload(again.revision, splices, false, false, cx)
+                    .is_none(),
+                "the recomputed diff reaches a document that stopped moving"
+            );
+            assert_eq!(
+                text_of(view),
+                "xone\ntwo\n",
+                "a document the user touched during the diff is never overwritten"
+            );
+            assert!(view.is_dirty(), "the unsaved edit is still unsaved");
+            assert!(
+                view.has_conflict(),
+                "the user resolves it like any other conflict"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_forced_reload_still_overwrites_the_document_the_user_edited(cx: &mut TestAppContext) {
+        let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "ONE!\nTWO!\n").expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection::at(0);
+            view.replace_text_in_range(None, "x", window, cx);
+            assert!(view.is_dirty(), "the fixture starts dirty");
+
+            let diff = view
+                .begin_disk_reload(stamp, true, true, cx)
+                .expect("a forced reload ignores the dirty mark");
+            let splices = edit::disk_splices(&diff.rope, "ONE!\nTWO!\n");
+            assert!(
+                view.finish_disk_reload(diff.revision, splices, false, true, cx)
+                    .is_none()
+            );
+            assert_eq!(
+                text_of(view),
+                "ONE!\nTWO!\n",
+                "discarding my changes is what the user asked for"
+            );
+            assert!(!view.is_dirty(), "and the reload is the new saved state");
+            assert!(!view.has_conflict());
+        });
+    }
+
+    #[gpui::test]
+    async fn a_reload_whose_tab_closed_ends_without_a_panic(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, "one\ntwo\n").expect("seed");
+        let stamp = FileStamp::read(&path);
+        let seeded = seeded_view(path, "one\n");
+        let weak = cx.update(|cx| {
+            let view = cx.new(seeded);
+            let weak = view.downgrade();
+            drop(view);
+            weak
+        });
+        cx.run_until_parked();
+        assert!(weak.upgrade().is_none(), "the tab is gone");
+
+        let carried = cx
+            .spawn(|mut cx| async move {
+                reload_from_disk(&weak, &mut cx, stamp, Some("one\ntwo\n".to_string()), false).await
+            })
+            .await;
+        assert!(
+            !carried,
+            "a reload delivered to a closed tab stops its loop instead of panicking"
+        );
+    }
+
+    #[gpui::test]
     fn an_external_write_reloads_a_clean_document(cx: &mut TestAppContext) {
         let (dir, view, cx) = file_view(cx, "one\ntwo\n", false);
         let path = dir.path().join("main.rs");
@@ -3340,6 +4350,37 @@ mod tests {
                 text_of(view),
                 "one\ntwo\n",
                 "Ctrl+Z recovers what was replaced"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn a_multi_hunk_reload_reaches_the_highlighter_as_one_batch(cx: &mut TestAppContext) {
+        let original = (0..40)
+            .map(|row| format!("fn f{row:03}() {{}}\n"))
+            .collect::<String>();
+        let mut lines = original.lines().map(str::to_string).collect::<Vec<_>>();
+        lines[5] = "fn agent_a() {}".to_string();
+        lines[25] = "fn agent_b() {}".to_string();
+        let incoming = lines.join("\n") + "\n";
+        let (dir, view, cx) = file_view(cx, &original, false);
+        let path = dir.path().join("main.rs");
+        std::fs::write(&path, &incoming).expect("agent write");
+        let stamp = FileStamp::read(&path);
+
+        let before = view.update(cx, |view, _cx| {
+            let highlighter = view.highlighter().expect("highlighter");
+            assert!(highlighter.is_enabled(), "the fixture must be colored");
+            highlighter.generation()
+        });
+
+        view.update(cx, |view, cx| {
+            view.disk_changed(stamp, Some(incoming.clone()), cx);
+            assert_eq!(text_of(view), incoming, "both hunks landed");
+            assert_eq!(
+                view.highlighter().expect("highlighter").generation(),
+                before + 1,
+                "two hunks reach the highlighter as a single batched edit"
             );
         });
     }

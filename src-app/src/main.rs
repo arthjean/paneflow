@@ -197,6 +197,7 @@ pub(crate) struct PaneContextMenu {
 
 #[derive(Clone)]
 pub(crate) struct FilesContextMenu {
+    pub(crate) root: std::path::PathBuf,
     pub(crate) path: std::path::PathBuf,
     pub(crate) position: Point<Pixels>,
 }
@@ -725,14 +726,9 @@ struct PaneFlowApp {
     agent_sessions: AgentSessionsState,
     files_sidebar_open: bool,
     files_sidebar_animation: Option<SidebarWidthAnimation>,
-    files_tree: app::files_tree::FilesTreeState,
-    files_tree_scroll: gpui::ScrollHandle,
-    files_selected: usize,
-    pub(crate) files_filter_input: gpui::Entity<crate::widgets::text_input::TextInput>,
-    files_focus: FocusHandle,
-    files_surface_id: Option<u64>,
-    files_watcher: Option<notify::RecommendedWatcher>,
-    files_event_rx: Option<std::sync::mpsc::Receiver<notify::Result<notify::Event>>>,
+    files_sidebar: Entity<app::files_sidebar::FilesSidebar>,
+    files_sidebar_root: Option<std::path::PathBuf>,
+    files_sidebar_workspace: Option<u64>,
     files_menu_open: Option<FilesContextMenu>,
     toast: Option<Toast>,
     toast_queue: std::collections::VecDeque<Toast>,
@@ -964,7 +960,7 @@ impl Render for PaneFlowApp {
         if files_sidebar_host_visible {
             self.sync_files_sidebar_session(cx);
         }
-        let animated_files_sidebar_width = self.rendered_files_sidebar_width(window);
+        let animated_files_sidebar_width = self.rendered_files_sidebar_width(window, cx);
         let files_sidebar_width = if files_sidebar_host_visible {
             animated_files_sidebar_width
         } else {

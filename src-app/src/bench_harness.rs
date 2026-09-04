@@ -1,4 +1,6 @@
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::ffi::c_void;
+use std::sync::Once;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -51,6 +53,94 @@ pub(crate) fn allocation_counters() -> (u64, u64) {
 
 pub(crate) fn live_bytes() -> i64 {
     LIVE_BYTES.load(Ordering::Relaxed)
+}
+
+const TREE_SITTER_HEADER: usize = 16;
+
+static TREE_SITTER_LIVE_BYTES: AtomicI64 = AtomicI64::new(0);
+
+fn tree_sitter_layout(size: usize) -> Option<Layout> {
+    Layout::from_size_align(size.checked_add(TREE_SITTER_HEADER)?, TREE_SITTER_HEADER).ok()
+}
+
+unsafe fn tree_sitter_hand_out(block: *mut u8, size: usize) -> *mut c_void {
+    if block.is_null() {
+        return std::ptr::null_mut();
+    }
+    unsafe {
+        block.cast::<usize>().write(size);
+        TREE_SITTER_LIVE_BYTES.fetch_add(size as i64, Ordering::Relaxed);
+        block.add(TREE_SITTER_HEADER).cast()
+    }
+}
+
+unsafe extern "C" fn tree_sitter_malloc(size: usize) -> *mut c_void {
+    let Some(layout) = tree_sitter_layout(size) else {
+        return std::ptr::null_mut();
+    };
+    unsafe { tree_sitter_hand_out(System.alloc(layout), size) }
+}
+
+unsafe extern "C" fn tree_sitter_calloc(count: usize, size: usize) -> *mut c_void {
+    let Some(total) = count.checked_mul(size) else {
+        return std::ptr::null_mut();
+    };
+    let Some(layout) = tree_sitter_layout(total) else {
+        return std::ptr::null_mut();
+    };
+    unsafe { tree_sitter_hand_out(System.alloc_zeroed(layout), total) }
+}
+
+unsafe extern "C" fn tree_sitter_realloc(ptr: *mut c_void, size: usize) -> *mut c_void {
+    if ptr.is_null() {
+        return unsafe { tree_sitter_malloc(size) };
+    }
+    unsafe {
+        let block = ptr.cast::<u8>().sub(TREE_SITTER_HEADER);
+        let held = block.cast::<usize>().read();
+        let (Some(layout), Some(next_layout)) =
+            (tree_sitter_layout(held), tree_sitter_layout(size))
+        else {
+            return std::ptr::null_mut();
+        };
+        let next = System.realloc(block, layout, next_layout.size());
+        if next.is_null() {
+            return std::ptr::null_mut();
+        }
+        TREE_SITTER_LIVE_BYTES.fetch_sub(held as i64, Ordering::Relaxed);
+        tree_sitter_hand_out(next, size)
+    }
+}
+
+unsafe extern "C" fn tree_sitter_free(ptr: *mut c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    unsafe {
+        let block = ptr.cast::<u8>().sub(TREE_SITTER_HEADER);
+        let held = block.cast::<usize>().read();
+        let Some(layout) = tree_sitter_layout(held) else {
+            return;
+        };
+        TREE_SITTER_LIVE_BYTES.fetch_sub(held as i64, Ordering::Relaxed);
+        System.dealloc(block, layout);
+    }
+}
+
+pub(crate) fn count_tree_sitter_allocations() {
+    static INSTALLED: Once = Once::new();
+    INSTALLED.call_once(|| unsafe {
+        tree_sitter::set_allocator(
+            Some(tree_sitter_malloc),
+            Some(tree_sitter_calloc),
+            Some(tree_sitter_realloc),
+            Some(tree_sitter_free),
+        );
+    });
+}
+
+pub(crate) fn tree_sitter_live_bytes() -> i64 {
+    TREE_SITTER_LIVE_BYTES.load(Ordering::Relaxed)
 }
 
 #[derive(Clone, Copy)]

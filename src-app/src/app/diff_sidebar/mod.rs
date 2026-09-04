@@ -2,7 +2,6 @@ use crate::PaneFlowApp;
 use crate::app::diff_view_actions::DIFF_SIDEBAR_WIDTH;
 use crate::diff::{FileEntry, FileListState, aggregate_file_lists};
 use crate::theme::UiColors;
-use crate::ui_primitives::AnimatedHoverExt;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyDownEvent,
     ParentElement, SharedString, Styled, Window, div, prelude::*, px,
@@ -367,7 +366,7 @@ impl PaneFlowApp {
             .flex_row()
             .items_center()
             .gap(px(5.))
-            .animated_hover_bg(hover_background.opacity(0.0), hover_background)
+            .hover(|s| s.bg(hover_background))
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if !this.diff_mode.diff_collapsed_dirs.remove(&key) {
                     this.diff_mode.diff_collapsed_dirs.insert(key.clone());
@@ -452,7 +451,7 @@ impl PaneFlowApp {
             .items_center()
             .gap(px(5.))
             .bg(resting_background)
-            .animated_hover_bg(resting_background, hover_background)
+            .hover(|s| s.bg(hover_background))
             .on_click(cx.listener(move |this, _: &ClickEvent, _w, cx| {
                 if !this.diff_mode.diff_collapsed_branches.remove(&key_owned) {
                     this.diff_mode

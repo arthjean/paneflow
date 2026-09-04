@@ -228,6 +228,11 @@ impl TerminalView {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
+    pub(crate) fn apply_backend_wakeup(&mut self, cx: &mut Context<Self>) {
+        self.terminal.process_backend_wakeup();
+        self.process_dirty_terminal(cx);
+    }
+
     fn process_dirty_terminal(&mut self, cx: &mut Context<Self>) {
         if !self.terminal.dirty {
             return;
@@ -454,8 +459,7 @@ impl TerminalView {
                         immediate_ghostty_wakeup_burst_active = true;
                         let result = cx.update(|cx| {
                             this.update(cx, |view: &mut Self, cx: &mut Context<Self>| {
-                                view.terminal.process_backend_wakeup();
-                                view.process_dirty_terminal(cx);
+                                view.apply_backend_wakeup(cx);
                             })
                         });
                         if result.is_err() {
@@ -593,6 +597,20 @@ impl TerminalView {
         } else {
             log::warn!(
                 "BlinkPhaseGlobal not installed - cursor will not blink for this TerminalView"
+            );
+        }
+
+        if let Some(signal) = crate::theme::theme_signal(cx) {
+            cx.observe(
+                &signal,
+                |_view: &mut Self, _signal, cx: &mut Context<Self>| {
+                    cx.notify();
+                },
+            )
+            .detach();
+        } else {
+            log::warn!(
+                "ThemeSignalGlobal not installed - this TerminalView will not repaint on a theme change"
             );
         }
 
@@ -1435,6 +1453,8 @@ fn resolve_cursor_visible(
 
 #[cfg(test)]
 mod tests {
+    use gpui::Entity;
+
     use super::*;
 
     #[test]
@@ -1560,6 +1580,391 @@ mod tests {
                 "Expected empty or whitespace-only scrollback, got: {text}"
             );
         }
+    }
+
+    const HOST_WINDOW_W: f32 = 800.0;
+    const HOST_WINDOW_H: f32 = 600.0;
+
+    struct TerminalHost {
+        terminal: Option<Entity<TerminalView>>,
+    }
+
+    impl Render for TerminalHost {
+        fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+            let mut root = div().size_full();
+            if let Some(terminal) = self.terminal.clone() {
+                root = root.child(terminal);
+            }
+            root
+        }
+    }
+
+    struct NotifyProbe {
+        hits: std::rc::Rc<std::cell::Cell<usize>>,
+        _subscription: gpui::Subscription,
+    }
+
+    impl NotifyProbe {
+        fn hits(&self) -> usize {
+            self.hits.get()
+        }
+
+        fn reset(&self) {
+            self.hits.set(0);
+        }
+    }
+
+    fn install_blink_phase(
+        cx: &mut gpui::TestAppContext,
+    ) -> Entity<crate::terminal::blink::BlinkPhase> {
+        cx.update(|cx| {
+            let phase = cx.new(|_| crate::terminal::blink::BlinkPhase::default());
+            cx.set_global(crate::terminal::blink::BlinkPhaseGlobal(phase.clone()));
+            phase
+        })
+    }
+
+    fn hosted_terminal(
+        cx: &mut gpui::TestAppContext,
+    ) -> (
+        Entity<TerminalView>,
+        Entity<TerminalHost>,
+        &mut gpui::VisualTestContext,
+    ) {
+        let captured = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let sink = captured.clone();
+        let (host, cx) = cx.add_window_view(move |_window, cx| {
+            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+            *sink.borrow_mut() = Some(terminal.clone());
+            TerminalHost {
+                terminal: Some(terminal),
+            }
+        });
+        cx.update(|window, _cx| window.activate_window());
+        cx.simulate_resize(gpui::size(gpui::px(HOST_WINDOW_W), gpui::px(HOST_WINDOW_H)));
+        cx.run_until_parked();
+        let terminal = captured
+            .borrow()
+            .clone()
+            .expect("the host must build its terminal view");
+        (terminal, host, cx)
+    }
+
+    fn watch_notifications(
+        view: &Entity<TerminalView>,
+        cx: &mut gpui::VisualTestContext,
+    ) -> NotifyProbe {
+        let hits = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let sink = hits.clone();
+        let subscription = cx.update(|_window, cx| {
+            cx.observe(view, move |_view, _cx| {
+                sink.set(sink.get() + 1);
+            })
+        });
+        NotifyProbe {
+            hits,
+            _subscription: subscription,
+        }
+    }
+
+    fn focus_terminal(view: &Entity<TerminalView>, cx: &mut gpui::VisualTestContext) {
+        let handle = view.read_with(cx, |view, _| view.focus_handle.clone());
+        cx.update(|window, cx| handle.focus(window, cx));
+        cx.run_until_parked();
+    }
+
+    fn link_modifiers() -> gpui::Modifiers {
+        #[cfg(target_os = "macos")]
+        {
+            gpui::Modifiers {
+                platform: true,
+                ..Default::default()
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            gpui::Modifiers {
+                control: true,
+                ..Default::default()
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn pty_output_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        terminal.update(cx, |view, cx| {
+            view.terminal.write_output(b"paneflow output\n");
+            view.apply_backend_wakeup(cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            probe.hits() > 0,
+            "pty output: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn a_kitty_image_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        terminal.update(cx, |view, cx| {
+            view.terminal
+                .write_output(b"\x1b_Gf=24,s=1,v=1,a=T;AAAA\x1b\\");
+            view.apply_backend_wakeup(cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            probe.hits() > 0,
+            "kitty image: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn a_resize_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        terminal.update(cx, |view, cx| {
+            view.terminal
+                .notify_window_size(TerminalWindowSize::new(120, 40, 8, 16));
+            view.apply_backend_wakeup(cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            probe.hits() > 0,
+            "resize: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn the_process_exit_banner_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        terminal.update(cx, |view, cx| {
+            view.terminal.exited = Some(0);
+            view.apply_backend_wakeup(cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            probe.hits() > 0,
+            "process exit banner: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn a_mouse_selection_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        cx.simulate_mouse_down(
+            gpui::point(gpui::px(120.0), gpui::px(120.0)),
+            MouseButton::Left,
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+
+        assert!(
+            terminal.read_with(cx, |view, _| view.selecting),
+            "mouse selection: the press must arm a selection"
+        );
+        assert!(
+            probe.hits() > 0,
+            "mouse selection: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn a_hovered_link_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        cx.simulate_mouse_move(
+            gpui::point(gpui::px(120.0), gpui::px(120.0)),
+            None,
+            gpui::Modifiers::default(),
+        );
+        cx.run_until_parked();
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        cx.simulate_modifiers_change(link_modifiers());
+        cx.run_until_parked();
+
+        assert!(
+            terminal.read_with(cx, |view, _| view.link_modifier_held),
+            "hovered link: the open-link modifier must be recorded"
+        );
+        assert!(
+            probe.hits() > 0,
+            "hovered link: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn search_highlighting_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        terminal.update(cx, |view, _cx| {
+            view.search_active = true;
+            view.search_query = "paneflow".into();
+            view.search_matches = vec![
+                crate::search::SearchMatch {
+                    start: Point::new(0, 0),
+                    end: Point::new(0, 7),
+                },
+                crate::search::SearchMatch {
+                    start: Point::new(1, 0),
+                    end: Point::new(1, 7),
+                },
+            ];
+            view.search_current = 0;
+        });
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        terminal.update(cx, |view, cx| view.search_next(cx));
+        cx.run_until_parked();
+
+        assert_eq!(
+            terminal.read_with(cx, |view, _| view.search_current),
+            1,
+            "search highlighting: the active match must advance"
+        );
+        assert!(
+            probe.hits() > 0,
+            "search highlighting: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn a_caret_phase_change_notifies_the_focused_terminal_view(cx: &mut gpui::TestAppContext) {
+        let phase = install_blink_phase(cx);
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        focus_terminal(&terminal, cx);
+        terminal.update(cx, |view, _cx| {
+            view.cursor_blink_mode = paneflow_config::schema::CursorBlinkConfig::On;
+            view.cursor_visible = true;
+        });
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        cx.update(|_window, cx| {
+            phase.update(cx, |phase, cx| {
+                phase.visible = false;
+                cx.notify();
+            })
+        });
+        cx.run_until_parked();
+
+        assert!(
+            !terminal.read_with(cx, |view, _| view.cursor_visible),
+            "caret phase: the focused view must follow the blink phase"
+        );
+        assert!(
+            probe.hits() > 0,
+            "caret phase: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn a_theme_change_notifies_the_terminal_view(cx: &mut gpui::TestAppContext) {
+        cx.update(crate::theme::install_theme_signal);
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        cx.update(|_window, cx| {
+            crate::theme::invalidate_theme_cache();
+            crate::theme::publish_theme_generation(cx);
+        });
+        cx.run_until_parked();
+
+        assert!(
+            probe.hits() > 0,
+            "theme change: the terminal view must notify itself"
+        );
+    }
+
+    #[gpui::test]
+    fn an_idle_unfocused_terminal_stays_silent_across_sixty_frames(cx: &mut gpui::TestAppContext) {
+        let phase = install_blink_phase(cx);
+        let (terminal, _host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        for frame in 0..60 {
+            cx.update(|_window, cx| {
+                phase.update(cx, |phase, cx| {
+                    phase.visible = frame % 2 == 0;
+                    cx.notify();
+                })
+            });
+            cx.run_until_parked();
+        }
+
+        assert!(
+            !terminal.read_with(cx, |view, _| view.was_focused),
+            "idle terminal: the view must stay unfocused"
+        );
+        assert_eq!(
+            probe.hits(),
+            0,
+            "idle terminal: an unfocused terminal without output or hover must not notify"
+        );
+    }
+
+    #[gpui::test]
+    fn a_closed_pane_stops_notifying_after_its_exit_banner(cx: &mut gpui::TestAppContext) {
+        let (terminal, host, cx) = hosted_terminal(cx);
+        let probe = watch_notifications(&terminal, cx);
+        probe.reset();
+
+        terminal.update(cx, |view, cx| {
+            view.terminal.exited = Some(0);
+            view.apply_backend_wakeup(cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            probe.hits() > 0,
+            "closed pane: the exit banner must notify before the pane closes"
+        );
+
+        let weak = terminal.downgrade();
+        drop(terminal);
+        host.update(cx, |host, cx| {
+            host.terminal = None;
+            cx.notify();
+        });
+        cx.run_until_parked();
+        probe.reset();
+
+        let outcome = cx.update(|_window, cx| {
+            weak.update(cx, |view, cx| {
+                view.apply_backend_wakeup(cx);
+            })
+        });
+
+        assert!(
+            outcome.is_err(),
+            "closed pane: the released view must not be updatable"
+        );
+        assert_eq!(
+            probe.hits(),
+            0,
+            "closed pane: a released terminal view must not notify"
+        );
     }
 
     #[test]

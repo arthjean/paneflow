@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use imara_diff::InternedInput;
 use imara_diff::sources::lines;
 use imara_diff::{Algorithm, Diff};
+use ropey::Rope;
 
 use super::cursor::CodeSelection;
 use super::document::{CodeDocument, CodeEdit, normalize_newlines};
@@ -93,7 +94,8 @@ fn newline_after(doc: &CodeDocument, offset: usize) -> bool {
 }
 
 pub(crate) struct Splice {
-    pub(crate) edits: Vec<DocChange>,
+    pub(crate) edit: CodeEdit,
+    pub(crate) windows: Vec<TrackerWindow>,
     pub(crate) record: AppliedEdit,
 }
 
@@ -108,9 +110,13 @@ pub(crate) fn splice(doc: &mut CodeDocument, range: Range<usize>, text: &str) ->
     if removed.is_empty() && inserted.is_empty() {
         return None;
     }
-    let edits = raw_splice(doc, start..end, &removed, &inserted);
+    let changes = raw_splice(doc, start..end, &removed, &inserted);
+    let windows = changes.iter().map(|change| change.window).collect();
+    let mut edits = changes.into_iter().map(|change| change.edit);
+    let edit = replacement_edit(edits.next(), edits.next())?;
     Some(Splice {
-        edits,
+        edit,
+        windows,
         record: AppliedEdit {
             start,
             removed,
@@ -119,50 +125,62 @@ pub(crate) fn splice(doc: &mut CodeDocument, range: Range<usize>, text: &str) ->
     })
 }
 
-pub(crate) fn disk_splices(current: &str, incoming: &str) -> Vec<(Range<usize>, String)> {
-    let incoming = normalize_newlines(incoming);
-    if current == incoming {
-        return Vec::new();
+fn replacement_edit(removal: Option<CodeEdit>, insertion: Option<CodeEdit>) -> Option<CodeEdit> {
+    match (removal, insertion) {
+        (Some(removal), Some(insertion)) => Some(CodeEdit {
+            start_byte: removal.start_byte,
+            old_end_byte: removal.old_end_byte,
+            new_end_byte: insertion.new_end_byte,
+            start_point: removal.start_point,
+            old_end_point: removal.old_end_point,
+            new_end_point: insertion.new_end_point,
+        }),
+        (Some(edit), None) | (None, Some(edit)) => Some(edit),
+        (None, None) => None,
     }
+}
 
-    let current_lines: Vec<&str> = lines(current).collect();
+pub(crate) fn disk_splices(current: &Rope, incoming: &str) -> Vec<(Range<usize>, String)> {
+    let incoming = normalize_newlines(incoming);
     let incoming_lines: Vec<&str> = lines(&incoming).collect();
+    let current_lines = terminated_line_count(current);
+
     let mut prefix = 0usize;
-    while prefix < current_lines.len()
+    while prefix < current_lines
         && prefix < incoming_lines.len()
-        && current_lines[prefix] == incoming_lines[prefix]
+        && current.line(prefix) == incoming_lines[prefix]
     {
         prefix += 1;
     }
 
     let mut suffix = 0usize;
-    while suffix < current_lines.len().saturating_sub(prefix)
+    while suffix < current_lines.saturating_sub(prefix)
         && suffix < incoming_lines.len().saturating_sub(prefix)
-        && current_lines[current_lines.len() - suffix - 1]
+        && current.line(current_lines - suffix - 1)
             == incoming_lines[incoming_lines.len() - suffix - 1]
     {
         suffix += 1;
     }
 
-    let current_start = current_lines[..prefix]
-        .iter()
-        .map(|line| line.len())
-        .sum::<usize>();
+    let current_start = current.line_to_byte(prefix);
+    let current_end = current.line_to_byte(current_lines - suffix);
     let incoming_start = incoming_lines[..prefix]
         .iter()
         .map(|line| line.len())
         .sum::<usize>();
-    let current_end = current.len()
-        - current_lines[current_lines.len().saturating_sub(suffix)..]
-            .iter()
-            .map(|line| line.len())
-            .sum::<usize>();
     let incoming_end = incoming.len()
-        - incoming_lines[incoming_lines.len().saturating_sub(suffix)..]
+        - incoming_lines[incoming_lines.len() - suffix..]
             .iter()
             .map(|line| line.len())
             .sum::<usize>();
-    let current_middle = &current[current_start..current_end];
+    if current_start == current_end && incoming_start == incoming_end {
+        return Vec::new();
+    }
+    let current_middle = current
+        .byte_slice(current_start..current_end)
+        .chunks()
+        .collect::<String>();
+    let current_middle = current_middle.as_str();
     let incoming_middle = &incoming[incoming_start..incoming_end];
     let current_offsets = line_offsets(current_middle);
     let incoming_offsets = line_offsets(incoming_middle);
@@ -192,6 +210,14 @@ pub(crate) fn shift_selection_for_splices(
     CodeSelection {
         anchor: shift_offset_for_splices(selection.anchor, splices_descending),
         head: shift_offset_for_splices(selection.head, splices_descending),
+    }
+}
+
+fn terminated_line_count(text: &Rope) -> usize {
+    let lines = text.len_lines();
+    match lines.checked_sub(1) {
+        Some(last) if text.line(last).len_bytes() == 0 => last,
+        _ => lines,
     }
 }
 
@@ -616,12 +642,7 @@ mod tests {
     }
 
     fn windows(doc: &mut CodeDocument, range: Range<usize>, text: &str) -> Vec<TrackerWindow> {
-        splice(doc, range, text)
-            .expect("splice applies")
-            .edits
-            .iter()
-            .map(|change| change.window)
-            .collect()
+        splice(doc, range, text).expect("splice applies").windows
     }
 
     fn window(start_line: u32, before_len: u32, after_len: u32) -> TrackerWindow {
@@ -784,7 +805,7 @@ mod tests {
     fn disk_splices_apply_disjoint_line_hunks_in_one_plan() {
         let current = "keep\none\nmiddle\ntwo\ntail\n";
         let incoming = "keep\nONE!\nmiddle\nTWO!\ntail\n";
-        let ops = disk_splices(current, incoming);
+        let ops = disk_splices(&Rope::from_str(current), incoming);
         assert_eq!(ops.len(), 2, "one operation per disjoint hunk");
         assert!(ops[0].0.start > ops[1].0.start, "offsets descend");
 
@@ -797,8 +818,9 @@ mod tests {
 
     #[test]
     fn disk_splices_normalize_crlf_and_skip_identical_text() {
-        assert!(disk_splices("one\ntwo\n", "one\r\ntwo\r\n").is_empty());
-        let ops = disk_splices("one\ntwo\n", "one\r\nTWO\r\n");
+        let current = Rope::from_str("one\ntwo\n");
+        assert!(disk_splices(&current, "one\r\ntwo\r\n").is_empty());
+        let ops = disk_splices(&current, "one\r\nTWO\r\n");
         assert_eq!(ops, vec![(4..8, "TWO\n".to_string())]);
     }
 
@@ -817,7 +839,7 @@ mod tests {
             *line = format!("changed {row:04}\n");
         }
         let incoming = incoming_lines.concat();
-        let ops = disk_splices(&current, &incoming);
+        let ops = disk_splices(&Rope::from_str(&current), &incoming);
         assert_eq!(ops.len(), 1);
         let changed = &current[ops[0].0.clone()];
         assert_eq!(lines(changed).count(), 10);

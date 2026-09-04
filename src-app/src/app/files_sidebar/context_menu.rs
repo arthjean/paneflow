@@ -21,7 +21,7 @@ impl PaneFlowApp {
             clamped_context_menu_position(menu.position, menu_width, menu_height, window);
 
         let abs_path = menu.path.clone();
-        let rel_root = self.files_tree.root.clone();
+        let rel_root = menu.root.clone();
         let rel_path = menu.path.clone();
 
         let context_menu = div()

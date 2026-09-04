@@ -10,7 +10,9 @@ bench/results/editor-<stamp>-<sha>.json, then prints a Markdown table between
 the PANEFLOW_BENCH_TABLE_BEGIN and PANEFLOW_BENCH_TABLE_END markers.
 
 Options:
-  --set-baseline  Copy the fresh result over bench/editor-baseline.json.
+  --set-baseline  Copy the fresh result over bench/editor-baseline.json. Refused
+                  when the run reports a cpu_share below 0.90, because a
+                  contended run inflates every timing it would freeze.
   --help          Print this message and exit.
 
 Environment:
@@ -74,6 +76,15 @@ if [ ! -f "$out" ]; then
 fi
 echo "result: $out"
 if [ "$mode" = "set-baseline" ]; then
+  cpu_share=$(sed -n 's/^[[:space:]]*"cpu_share":[[:space:]]*\([0-9.eE+-]*\).*/\1/p' "$out" | head -n 1)
+  if [ -z "$cpu_share" ]; then
+    echo "the result carries no cpu_share, refusing to record a baseline from it: $out" >&2
+    exit 1
+  fi
+  if awk "BEGIN { exit !($cpu_share < 0.9) }"; then
+    echo "cpu_share $cpu_share is below 0.90: this run got less than 90% of a core, so its timings are inflated and every later comparison against them would read as a false improvement. Close the competing workload and run again." >&2
+    exit 1
+  fi
   cp "$out" bench/editor-baseline.json
   echo "baseline: bench/editor-baseline.json now points at $sha"
 fi

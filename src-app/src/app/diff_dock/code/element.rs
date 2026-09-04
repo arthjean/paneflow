@@ -1,4 +1,6 @@
 use std::cell::{Cell, RefCell};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hasher;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -6,18 +8,21 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, CursorStyle, Element, ElementId,
     ElementInputHandler, Entity, Focusable, Font, FontFeatures, FontStyle, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    Length, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle,
-    Window, fill, point, px, quad, relative, size,
+    Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle, Window,
+    fill, point, px, quad, relative, size,
 };
 use paneflow_textdiff::BlockKind;
+use ropey::RopeSlice;
 
 use super::cursor;
 use super::document::CodeDocument;
+use super::highlight::LineRuns;
 use super::markers::{
     MARKER_BAR_RADIUS, MARKER_BAR_W, MARKER_COLUMN_W, MARKER_HOVER_GROW, marker_rects,
 };
 use super::view::CodeView;
 use crate::diff::{ROW_HEIGHT, RowPalette};
+use crate::widgets::scrollbar::ScrollableHandle;
 
 pub(crate) const CODE_ROW_HEIGHT: f32 = ROW_HEIGHT;
 pub(crate) const CODE_FONT_SIZE: f32 = 12.0;
@@ -40,15 +45,27 @@ const REVEAL_MARGIN_ROWS: f32 = 2.0;
 
 const OVERDRAW_ROWS: usize = 1;
 
-pub(crate) fn visible_rows(content_top: f32, viewport_h: f32, line_count: usize) -> Range<usize> {
+pub(crate) fn visible_rows_at(
+    scroll_rows: f64,
+    viewport_h: f32,
+    line_count: usize,
+) -> Range<usize> {
     if line_count == 0 || viewport_h <= 0.0 {
         return 0..0;
     }
-    let top = content_top.max(0.0);
-    let first = ((top / CODE_ROW_HEIGHT) as usize).saturating_sub(OVERDRAW_ROWS);
-    let bottom = top + viewport_h;
-    let last = (bottom / CODE_ROW_HEIGHT) as usize + 1 + OVERDRAW_ROWS;
+    let top = scroll_rows.max(0.0);
+    let first = (top as usize).saturating_sub(OVERDRAW_ROWS);
+    let bottom = top + f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT);
+    let last = bottom as usize + 1 + OVERDRAW_ROWS;
     first.min(line_count)..last.min(line_count)
+}
+
+pub(crate) fn device_round(y: f64, scale_factor: f32) -> f32 {
+    if scale_factor.is_nan() || scale_factor <= 0.0 {
+        return y as f32;
+    }
+    let scale = f64::from(scale_factor);
+    ((y * scale).round() / scale) as f32
 }
 
 pub(crate) fn digit_count(n: usize) -> usize {
@@ -139,22 +156,23 @@ pub(crate) fn h_thumb(offset: f32, max_offset: f32, track_w: f32) -> Option<(f32
     Some((progress * (track_w - thumb_w), thumb_w))
 }
 
-pub(crate) fn reveal_offset(row: usize, viewport_h: f32, content_h: f32, offset_y: f32) -> f32 {
+pub(crate) fn reveal_rows(row: usize, viewport_h: f32, max_rows: f64, current: f64) -> f64 {
     if viewport_h <= 0.0 {
-        return offset_y;
+        return current;
     }
-    let max_off = (content_h - viewport_h).max(0.0);
-    let margin = (REVEAL_MARGIN_ROWS * CODE_ROW_HEIGHT).min((viewport_h - CODE_ROW_HEIGHT) / 2.0);
-    let margin = margin.max(0.0);
-    let row_top = row as f32 * CODE_ROW_HEIGHT;
-    let row_bottom = row_top + CODE_ROW_HEIGHT;
-    let mut top = -offset_y;
+    let visible = f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT);
+    let margin = f64::from(REVEAL_MARGIN_ROWS)
+        .min((visible - 1.0) / 2.0)
+        .max(0.0);
+    let row_top = row as f64;
+    let row_bottom = row_top + 1.0;
+    let mut top = current;
     if row_top - margin < top {
         top = row_top - margin;
-    } else if row_bottom + margin > top + viewport_h {
-        top = row_bottom + margin - viewport_h;
+    } else if row_bottom + margin > top + visible {
+        top = row_bottom + margin - visible;
     }
-    -top.clamp(0.0, max_off)
+    top.clamp(0.0, max_rows)
 }
 
 pub(crate) fn reveal_h_offset(
@@ -193,6 +211,122 @@ pub(crate) fn cursor_line_wash(base: Hsla, focused: bool) -> Hsla {
         base
     } else {
         base.opacity(UNFOCUSED_WASH_FACTOR)
+    }
+}
+
+pub(crate) fn line_content_hash(line: RopeSlice<'_>) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    for chunk in line.chunks() {
+        hasher.write(chunk.as_bytes());
+    }
+    hasher.finish()
+}
+
+pub(crate) fn line_number_hash(number: usize, color: Hsla) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hasher.write_usize(number);
+    for channel in [color.h, color.s, color.l, color.a] {
+        hasher.write_u32(channel.to_bits());
+    }
+    hasher.finish()
+}
+
+#[derive(Default)]
+struct CodeScrollState {
+    rows: Cell<f64>,
+    viewport: Cell<Bounds<Pixels>>,
+    line_count: Cell<usize>,
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct CodeScroll(Rc<CodeScrollState>);
+
+impl CodeScroll {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn rows(&self) -> f64 {
+        self.0.rows.get()
+    }
+
+    pub(crate) fn bounds(&self) -> Bounds<Pixels> {
+        self.0.viewport.get()
+    }
+
+    pub(crate) fn viewport_height(&self) -> f32 {
+        f32::from(self.0.viewport.get().size.height)
+    }
+
+    pub(crate) fn visible_rows(&self) -> f64 {
+        let viewport_h = self.viewport_height();
+        if viewport_h <= 0.0 {
+            return 0.0;
+        }
+        f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT)
+    }
+
+    pub(crate) fn max_rows(&self) -> f64 {
+        if self.viewport_height() <= 0.0 {
+            return 0.0;
+        }
+        (self.0.line_count.get() as f64 - self.visible_rows()).max(0.0)
+    }
+
+    pub(crate) fn content_top(&self) -> f32 {
+        (self.rows() * f64::from(CODE_ROW_HEIGHT)) as f32
+    }
+
+    pub(crate) fn set_rows(&self, rows: f64) -> bool {
+        if self.viewport_height() <= 0.0 {
+            return false;
+        }
+        let next = if rows.is_finite() { rows } else { 0.0 };
+        let next = next.clamp(0.0, self.max_rows());
+        if next == self.0.rows.get() {
+            return false;
+        }
+        self.0.rows.set(next);
+        true
+    }
+
+    pub(crate) fn reset_rows(&self) {
+        self.0.rows.set(0.0);
+    }
+
+    pub(crate) fn scroll_by_pixels(&self, dy: f32) -> bool {
+        self.set_rows(self.rows() + f64::from(dy) / f64::from(CODE_ROW_HEIGHT))
+    }
+
+    pub(crate) fn set_line_count(&self, line_count: usize) {
+        self.0.line_count.set(line_count);
+        self.set_rows(self.rows());
+    }
+
+    pub(crate) fn set_metrics(&self, viewport: Bounds<Pixels>, line_count: usize) {
+        self.0.viewport.set(viewport);
+        self.set_line_count(line_count);
+    }
+}
+
+impl ScrollableHandle for CodeScroll {
+    fn viewport(&self) -> Bounds<Pixels> {
+        self.bounds()
+    }
+
+    fn max_offset(&self) -> Point<Pixels> {
+        point(
+            px(0.),
+            px((self.max_rows() * f64::from(CODE_ROW_HEIGHT)) as f32),
+        )
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        point(px(0.), px(-self.content_top()))
+    }
+
+    fn set_offset(&self, offset: Point<Pixels>) {
+        self.set_rows(f64::from(-f32::from(offset.y)) / f64::from(CODE_ROW_HEIGHT));
     }
 }
 
@@ -275,6 +409,8 @@ pub(crate) struct CodeHitMap {
     pub(crate) text_x: f32,
     pub(crate) marker_x: f32,
     pub(crate) markers: Vec<MarkerHit>,
+    pub(crate) materialized_lines: usize,
+    pub(crate) materialized_numbers: usize,
     pub(crate) lines: Vec<Option<ShapedLine>>,
 }
 
@@ -333,20 +469,24 @@ pub(crate) struct CodePrepaint {
     marker_pointer: bool,
 }
 
+const RUN_SCRATCH_CAPACITY: usize = 64;
+
 pub(crate) struct CodeElement {
     view: Entity<CodeView>,
     palette: RowPalette,
     colors: CodeColors,
-    scroll: gpui::ScrollHandle,
+    scroll: CodeScroll,
     h_offset: f32,
     caret: CodeCaret,
-    line_count: usize,
     geometry: Rc<Cell<CodeGeometry>>,
     gutter_memo: Rc<Cell<GutterMemo>>,
     hits: Rc<RefCell<CodeHitMap>>,
     font: Font,
     font_size: Pixels,
     line_height: Pixels,
+    runs: Vec<TextRun>,
+    restyled: Vec<TextRun>,
+    syntax: LineRuns,
 }
 
 impl CodeElement {
@@ -355,10 +495,9 @@ impl CodeElement {
         view: Entity<CodeView>,
         palette: RowPalette,
         colors: CodeColors,
-        scroll: gpui::ScrollHandle,
+        scroll: CodeScroll,
         h_offset: f32,
         caret: CodeCaret,
-        line_count: usize,
         geometry: Rc<Cell<CodeGeometry>>,
         gutter_memo: Rc<Cell<GutterMemo>>,
         hits: Rc<RefCell<CodeHitMap>>,
@@ -370,36 +509,68 @@ impl CodeElement {
             scroll,
             h_offset,
             caret,
-            line_count,
             geometry,
             gutter_memo,
             hits,
             font: code_font(),
             font_size: px(CODE_FONT_SIZE),
             line_height: px(CODE_ROW_HEIGHT),
+            runs: Vec::with_capacity(RUN_SCRATCH_CAPACITY),
+            restyled: Vec::with_capacity(RUN_SCRATCH_CAPACITY),
+            syntax: LineRuns::with_capacity(RUN_SCRATCH_CAPACITY),
         }
     }
 
-    fn text_runs(
-        &self,
-        text: &str,
+    fn fill_text_runs(
+        font: &Font,
+        out: &mut Vec<TextRun>,
+        len: usize,
         syntax: &[(Range<usize>, Hsla)],
         default: Hsla,
-    ) -> Vec<TextRun> {
-        syntax_text_runs(text, syntax, &self.font, default)
+    ) {
+        out.clear();
+        let run = |len: usize, color: Hsla| TextRun {
+            len,
+            font: font.clone(),
+            color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        if syntax.is_empty() {
+            out.push(run(len, default));
+            return;
+        }
+        let mut ix = 0usize;
+        for (r, color) in syntax {
+            let start = r.start.min(len);
+            let end = r.end.min(len);
+            if start < ix || start >= end {
+                continue;
+            }
+            if start > ix {
+                out.push(run(start - ix, default));
+            }
+            out.push(run(end - start, *color));
+            ix = end;
+        }
+        if ix < len {
+            out.push(run(len - ix, default));
+        }
     }
 
-    fn restyle(
-        runs: Vec<TextRun>,
+    fn restyle_in_place(
+        runs: &mut Vec<TextRun>,
+        scratch: &mut Vec<TextRun>,
         span: &Range<usize>,
         mut style: impl FnMut(&mut TextRun),
-    ) -> Vec<TextRun> {
+    ) {
         if span.start >= span.end {
-            return runs;
+            return;
         }
-        let mut out = Vec::with_capacity(runs.len() + 2);
+        scratch.clear();
         let mut ix = 0usize;
-        for run in runs {
+        for run in runs.iter() {
             let end = ix + run.len;
             for (from, to, inside) in [
                 (ix, end.min(span.start), false),
@@ -414,11 +585,11 @@ impl CodeElement {
                 if inside {
                     style(&mut piece);
                 }
-                out.push(piece);
+                scratch.push(piece);
             }
             ix = end;
         }
-        out
+        std::mem::swap(runs, scratch);
     }
 
     fn shape_plain(&self, window: &mut Window, text: SharedString, color: Hsla) -> ShapedLine {
@@ -475,7 +646,7 @@ impl Element for CodeElement {
     ) -> (LayoutId, ()) {
         let mut style = Style::default();
         style.size.width = relative(1.).into();
-        style.size.height = Length::Definite(px(self.line_count as f32 * CODE_ROW_HEIGHT).into());
+        style.size.height = relative(1.).into();
         (window.request_layout(style, [], cx), ())
     }
 
@@ -492,10 +663,11 @@ impl Element for CodeElement {
         let doc = view.document()?;
         let line_count = doc.line_count();
 
-        let mask = window.content_mask();
-        let viewport_h = f32::from(mask.bounds.size.height);
-        let content_top = f32::from(mask.bounds.origin.y - bounds.origin.y).max(0.0);
-        let rows = visible_rows(content_top, viewport_h, line_count);
+        self.scroll.set_metrics(bounds, line_count);
+        let scroll_rows = self.scroll.rows();
+        let scale_factor = window.scale_factor();
+        let viewport_h = f32::from(bounds.size.height);
+        let rows = visible_rows_at(scroll_rows, viewport_h, line_count);
 
         let memo = self.resolve_gutter(window, digit_count(line_count));
         let gutter_w = memo.gutter_w;
@@ -510,6 +682,14 @@ impl Element for CodeElement {
             max_h_offset: h_max,
         });
 
+        let origin_y = f64::from(f32::from(bounds.origin.y));
+        let row_y = |row: usize| -> Pixels {
+            px(device_round(
+                origin_y + (row as f64 - scroll_rows) * f64::from(CODE_ROW_HEIGHT),
+                scale_factor,
+            ))
+        };
+
         let visible = rows.len();
         let mut quads = Vec::with_capacity(visible + 2);
         let mut glyphs = Vec::with_capacity(visible * 2);
@@ -519,15 +699,12 @@ impl Element for CodeElement {
         let gutter_px = px(gutter_w);
         let text_x = left + gutter_px + px(CODE_PAD_L);
         let text_clip = Bounds::new(
-            point(left + gutter_px, mask.bounds.origin.y),
-            size(
-                px(element_w - gutter_w).max(px(0.)),
-                mask.bounds.size.height,
-            ),
+            point(left + gutter_px, bounds.origin.y),
+            size(px(element_w - gutter_w).max(px(0.)), bounds.size.height),
         );
 
         if visible > 0 {
-            let top = bounds.origin.y + px(rows.start as f32 * CODE_ROW_HEIGHT);
+            let top = row_y(rows.start);
             let span_h = px(visible as f32 * CODE_ROW_HEIGHT);
             quads.push(Quad {
                 bounds: Bounds::new(point(left, top), size(bounds.size.width, span_h)),
@@ -546,7 +723,7 @@ impl Element for CodeElement {
         let sel = self.caret.selection.clone();
         let marked = self.caret.marked.clone();
         if sel.start >= sel.end && rows.contains(&cursor_row) {
-            let y = bounds.origin.y + px(cursor_row as f32 * CODE_ROW_HEIGHT);
+            let y = row_y(cursor_row);
             quads.push(Quad {
                 bounds: Bounds::new(point(left, y), size(bounds.size.width, px(CODE_ROW_HEIGHT))),
                 color: cursor_line_wash(self.palette.cursor_line_bg, self.caret.focused),
@@ -557,10 +734,12 @@ impl Element for CodeElement {
         let column_x = left + px(MARKER_INSET_L);
         let mut hits = CodeHitMap {
             first_row: rows.start,
-            top_y: f32::from(bounds.origin.y) + rows.start as f32 * CODE_ROW_HEIGHT,
+            top_y: f32::from(row_y(rows.start)),
             text_x: f32::from(text_x) - h_offset,
             marker_x: f32::from(column_x),
             markers: Vec::new(),
+            materialized_lines: 0,
+            materialized_numbers: 0,
             lines: Vec::with_capacity(visible),
         };
 
@@ -606,11 +785,8 @@ impl Element for CodeElement {
         }
         let marker_hitbox = window.insert_hitbox(
             Bounds::new(
-                point(left, mask.bounds.origin.y),
-                size(
-                    px(MARKER_INSET_L + MARKER_COLUMN_W),
-                    mask.bounds.size.height,
-                ),
+                point(left, bounds.origin.y),
+                size(px(MARKER_INSET_L + MARKER_COLUMN_W), bounds.size.height),
             ),
             HitboxBehavior::Normal,
         );
@@ -618,15 +794,39 @@ impl Element for CodeElement {
 
         let hl = view.highlighter();
         for row in rows.clone() {
-            let y = bounds.origin.y + px(row as f32 * CODE_ROW_HEIGHT);
+            let y = row_y(row);
 
-            let number: SharedString = (row + 1).to_string().into();
             let num_color = if row == cursor_row {
                 self.palette.text
             } else {
                 self.palette.muted
             };
-            let num_line = self.shape_plain(window, number, num_color);
+            let number = row + 1;
+            let digits = digit_count(number);
+            self.runs.clear();
+            self.runs.push(TextRun {
+                len: digits,
+                font: self.font.clone(),
+                color: num_color,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            });
+            let mut number_materialized = false;
+            let num_line = window.text_system().shape_line_by_hash(
+                line_number_hash(number, num_color),
+                digits,
+                self.font_size,
+                &self.runs,
+                None,
+                || {
+                    number_materialized = true;
+                    number.to_string().into()
+                },
+            );
+            if number_materialized {
+                hits.materialized_numbers += 1;
+            }
             let num_x = (left + gutter_px - px(NUM_GAP) - num_line.width()).max(left);
             glyphs.push(CodeGlyph {
                 origin: point(num_x, y),
@@ -640,36 +840,54 @@ impl Element for CodeElement {
             let row_sel = row_selection(&sel, &range);
             let origin = point(text_x - px(h_offset), y);
 
-            let text = doc.line_string(row).unwrap_or_default();
-            let line = if text.is_empty() {
-                None
-            } else {
-                let text: SharedString = text.into();
-                let syntax = hl.map(|hl| hl.runs(row)).unwrap_or_default();
-                let runs = self.text_runs(&text, &syntax, self.palette.text);
-                let runs = match &row_sel {
-                    Some((local, _)) => {
-                        let fg = self.colors.selection_fg;
-                        Self::restyle(runs, local, |run| run.color = fg)
+            let len = range.end - range.start;
+            let line = match doc.line(row).filter(|_| len > 0) {
+                None => None,
+                Some(slice) => {
+                    self.syntax.clear();
+                    if let Some(hl) = hl {
+                        hl.runs_into(row, &mut self.syntax);
                     }
-                    None => runs,
-                };
-                let runs = match row_selection(&marked, &range) {
-                    Some((local, _)) => {
+                    Self::fill_text_runs(
+                        &self.font,
+                        &mut self.runs,
+                        len,
+                        &self.syntax,
+                        self.palette.text,
+                    );
+                    if let Some((local, _)) = &row_sel {
+                        let fg = self.colors.selection_fg;
+                        Self::restyle_in_place(&mut self.runs, &mut self.restyled, local, |run| {
+                            run.color = fg
+                        });
+                    }
+                    if let Some((local, _)) = row_selection(&marked, &range) {
                         let underline = UnderlineStyle {
                             color: Some(self.colors.cursor),
                             thickness: px(1.0),
                             wavy: false,
                         };
-                        Self::restyle(runs, &local, |run| run.underline = Some(underline))
+                        Self::restyle_in_place(&mut self.runs, &mut self.restyled, &local, |run| {
+                            run.underline = Some(underline)
+                        });
                     }
-                    None => runs,
-                };
-                Some(
-                    window
-                        .text_system()
-                        .shape_line(text, self.font_size, &runs, None),
-                )
+                    let mut materialized = false;
+                    let shaped = window.text_system().shape_line_by_hash(
+                        line_content_hash(slice),
+                        len,
+                        self.font_size,
+                        &self.runs,
+                        None,
+                        || {
+                            materialized = true;
+                            slice.to_string().into()
+                        },
+                    );
+                    if materialized {
+                        hits.materialized_lines += 1;
+                    }
+                    Some(shaped)
+                }
             };
 
             if let Some((local, wraps)) = row_sel {
@@ -727,10 +945,10 @@ impl Element for CodeElement {
 
         let corners = Corners::all(px(3.));
         if let Some(m) = crate::widgets::scrollbar::metrics(&self.scroll) {
-            let x = mask.bounds.right() - px(V_SCROLLBAR_INSET + V_SCROLLBAR_W);
+            let x = bounds.right() - px(V_SCROLLBAR_INSET + V_SCROLLBAR_W);
             scrollbars.push(RoundedQuad {
                 bounds: Bounds::new(
-                    point(x, mask.bounds.origin.y + px(m.thumb_top)),
+                    point(x, bounds.origin.y + px(m.thumb_top)),
                     size(px(V_SCROLLBAR_W), px(m.thumb_h)),
                 ),
                 corners,
@@ -739,7 +957,7 @@ impl Element for CodeElement {
         }
 
         if let Some((thumb_x, thumb_w)) = h_thumb(h_offset, h_max, text_viewport_w) {
-            let y = mask.bounds.bottom() - px(H_SCROLLBAR_INSET + H_SCROLLBAR_H);
+            let y = bounds.bottom() - px(H_SCROLLBAR_INSET + H_SCROLLBAR_H);
             scrollbars.push(RoundedQuad {
                 bounds: Bounds::new(
                     point(text_x + px(thumb_x), y),
@@ -852,6 +1070,14 @@ mod tests {
 
     fn bound_for(viewport_h: f32) -> usize {
         (viewport_h / CODE_ROW_HEIGHT) as usize + 1 + 2 * OVERDRAW_ROWS
+    }
+
+    fn visible_rows(content_top: f32, viewport_h: f32, line_count: usize) -> Range<usize> {
+        visible_rows_at(
+            f64::from(content_top.max(0.0)) / f64::from(CODE_ROW_HEIGHT),
+            viewport_h,
+            line_count,
+        )
     }
 
     #[test]
@@ -1004,51 +1230,230 @@ mod tests {
         assert!((x_end + w_end - 600.0).abs() < 0.001);
     }
 
+    fn max_rows_for(viewport_h: f32, line_count: usize) -> f64 {
+        (line_count as f64 - f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT)).max(0.0)
+    }
+
     #[test]
     fn reveal_keeps_the_cursor_visible_with_a_two_line_margin() {
         let viewport_h = 360.0;
-        let content_h = 1_000.0 * CODE_ROW_HEIGHT;
-        let margin = REVEAL_MARGIN_ROWS * CODE_ROW_HEIGHT;
+        let visible = f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT);
+        let max_rows = max_rows_for(viewport_h, 1_000);
+        let margin = f64::from(REVEAL_MARGIN_ROWS);
 
-        assert_eq!(reveal_offset(10, viewport_h, content_h, 0.0), 0.0);
+        assert_eq!(reveal_rows(10, viewport_h, max_rows, 0.0), 0.0);
 
-        let off = reveal_offset(40, viewport_h, content_h, 0.0);
-        let top = -off;
-        let row_bottom = 41.0 * CODE_ROW_HEIGHT;
-        assert!(row_bottom + margin <= top + viewport_h + 0.001);
-        assert!(row_bottom <= top + viewport_h);
+        let top = reveal_rows(40, viewport_h, max_rows, 0.0);
+        assert!(41.0 + margin <= top + visible + 0.001);
+        assert!(41.0 <= top + visible);
 
-        let off = reveal_offset(5, viewport_h, content_h, -600.0);
-        let top = -off;
-        assert!(5.0 * CODE_ROW_HEIGHT - margin >= top - 0.001);
-        assert!(5.0 * CODE_ROW_HEIGHT >= top);
+        let top = reveal_rows(5, viewport_h, max_rows, 600.0 / f64::from(CODE_ROW_HEIGHT));
+        assert!(5.0 - margin >= top - 0.001);
+        assert!(5.0 >= top);
     }
 
     #[test]
     fn reveal_is_clamped_to_the_document() {
         let viewport_h = 360.0;
-        let line_count = 1_000.0;
-        let content_h = line_count * CODE_ROW_HEIGHT;
-        let max_off = content_h - viewport_h;
+        let max_rows = max_rows_for(viewport_h, 1_000);
 
-        let first = reveal_offset(0, viewport_h, content_h, -500.0);
-        assert_eq!(first, 0.0);
+        assert_eq!(reveal_rows(0, viewport_h, max_rows, 500.0), 0.0);
 
-        let last = reveal_offset(999, viewport_h, content_h, 0.0);
-        assert!(last >= -max_off, "{last} overscrolled past {max_off}");
-        assert!(last <= 0.0);
+        let last = reveal_rows(999, viewport_h, max_rows, 0.0);
+        assert!(last <= max_rows, "{last} overscrolled past {max_rows}");
+        assert!(last >= 0.0);
 
-        assert_eq!(reveal_offset(3, viewport_h, 90.0, 0.0), 0.0);
+        assert_eq!(reveal_rows(3, viewport_h, 0.0, 0.0), 0.0);
     }
 
     #[test]
     fn reveal_margin_degrades_on_a_tiny_viewport() {
         let viewport_h = 2.0 * CODE_ROW_HEIGHT;
-        let content_h = 100.0 * CODE_ROW_HEIGHT;
-        let off = reveal_offset(50, viewport_h, content_h, 0.0);
-        let top = -off;
-        assert!(50.0 * CODE_ROW_HEIGHT >= top - 0.001);
-        assert!(51.0 * CODE_ROW_HEIGHT <= top + viewport_h + 0.001);
+        let max_rows = max_rows_for(viewport_h, 100);
+        let top = reveal_rows(50, viewport_h, max_rows, 0.0);
+        assert!(50.0 >= top - 0.001);
+        assert!(51.0 <= top + 2.0 + 0.001);
+    }
+
+    fn scroll_for(viewport_h: f32, line_count: usize) -> CodeScroll {
+        let scroll = CodeScroll::new();
+        scroll.set_metrics(
+            Bounds::new(point(px(0.), px(0.)), size(px(800.), px(viewport_h))),
+            line_count,
+        );
+        scroll
+    }
+
+    #[test]
+    fn a_scroll_position_stops_at_the_last_screenful() {
+        let scroll = scroll_for(360.0, 1_000);
+        assert_eq!(scroll.max_rows(), 1_000.0 - 20.0);
+        assert!(scroll.set_rows(5_000.0));
+        assert_eq!(scroll.rows(), 980.0);
+        assert!(scroll.set_rows(-5.0));
+        assert_eq!(scroll.rows(), 0.0);
+    }
+
+    #[test]
+    fn a_document_shorter_than_the_viewport_never_scrolls() {
+        let scroll = scroll_for(360.0, 3);
+        assert_eq!(scroll.max_rows(), 0.0);
+        assert!(!scroll.scroll_by_pixels(3.0 * CODE_ROW_HEIGHT));
+        assert_eq!(scroll.rows(), 0.0);
+    }
+
+    #[test]
+    fn a_collapsed_viewport_neither_scrolls_nor_divides_by_zero() {
+        let scroll = scroll_for(0.0, 300_000);
+        assert_eq!(scroll.visible_rows(), 0.0);
+        assert_eq!(scroll.max_rows(), 0.0);
+        assert!(!scroll.scroll_by_pixels(3.0 * CODE_ROW_HEIGHT));
+        assert_eq!(scroll.rows(), 0.0);
+        assert_eq!(scroll.content_top(), 0.0);
+    }
+
+    #[test]
+    fn a_frame_laid_out_at_zero_height_keeps_the_position_it_had() {
+        let scroll = scroll_for(360.0, 300_000);
+        assert!(scroll.set_rows(5_000.0));
+
+        scroll.set_metrics(
+            Bounds::new(point(px(0.), px(0.)), size(px(800.), px(0.))),
+            300_000,
+        );
+        assert_eq!(scroll.rows(), 5_000.0, "a collapsed frame must not rewind");
+
+        scroll.set_metrics(
+            Bounds::new(point(px(0.), px(0.)), size(px(800.), px(360.))),
+            300_000,
+        );
+        assert_eq!(scroll.rows(), 5_000.0);
+
+        scroll.reset_rows();
+        assert_eq!(scroll.rows(), 0.0);
+    }
+
+    #[test]
+    fn losing_lines_above_the_viewport_rebinds_the_position_to_the_document() {
+        let scroll = scroll_for(360.0, 1_000);
+        assert!(scroll.set_rows(980.0));
+        scroll.set_line_count(40);
+        assert_eq!(scroll.rows(), 20.0);
+        scroll.set_line_count(10);
+        assert_eq!(scroll.rows(), 0.0);
+    }
+
+    #[test]
+    fn the_scrollbar_reads_the_position_through_the_scrollable_handle() {
+        let scroll = scroll_for(360.0, 1_000);
+        assert!(scroll.set_rows(100.0));
+        assert_eq!(
+            ScrollableHandle::offset(&scroll),
+            point(px(0.), px(-100.0 * CODE_ROW_HEIGHT))
+        );
+        assert_eq!(
+            ScrollableHandle::max_offset(&scroll),
+            point(px(0.), px(980.0 * CODE_ROW_HEIGHT))
+        );
+        ScrollableHandle::set_offset(&scroll, point(px(0.), px(-42.0 * CODE_ROW_HEIGHT)));
+        assert_eq!(scroll.rows(), 42.0);
+        let metrics = crate::widgets::scrollbar::metrics(&scroll).expect("an overflowing document");
+        assert!(metrics.thumb_top > 0.0);
+    }
+
+    #[test]
+    fn a_pixel_delta_scrolls_a_fractional_row_without_rounding() {
+        let scroll = scroll_for(360.0, 1_000);
+        assert!(scroll.scroll_by_pixels(7.5));
+        assert_eq!(scroll.content_top(), 7.5);
+    }
+
+    #[test]
+    fn a_row_position_is_stable_across_two_identical_frames_of_a_huge_file() {
+        let line_count = 300_000usize;
+        let viewport_h = 720.0f32;
+        let scroll_rows = line_count as f64 - f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT);
+        let origin_y = 137.0f64;
+        let row = line_count - 1;
+
+        let position = |scroll: f64| {
+            device_round(
+                origin_y + (row as f64 - scroll) * f64::from(CODE_ROW_HEIGHT),
+                2.0,
+            )
+        };
+
+        assert_eq!(position(scroll_rows), position(scroll_rows));
+        let rows = visible_rows_at(scroll_rows, viewport_h, line_count);
+        assert!(rows.contains(&row), "{rows:?} must reach the last row");
+        assert!(
+            (position(scroll_rows) - position(scroll_rows + 1.0) - CODE_ROW_HEIGHT).abs() < 0.001,
+            "one scrolled row must move the last row by exactly one row height"
+        );
+    }
+
+    #[test]
+    fn device_rounding_lands_on_whole_device_pixels() {
+        assert_eq!(device_round(10.3, 2.0), 10.5);
+        assert_eq!(device_round(10.3, 1.0), 10.0);
+        assert_eq!(device_round(10.3, 0.0), 10.3);
+        assert_eq!(device_round(-0.2, 2.0), 0.0);
+    }
+
+    #[test]
+    fn identical_lines_at_different_rows_share_a_content_hash() {
+        let rope = ropey::Rope::from_str("let a = 1;\nlet b = 2;\nlet a = 1;\n");
+        let first = line_content_hash(rope.byte_slice(0..10));
+        let third = line_content_hash(rope.byte_slice(22..32));
+        let second = line_content_hash(rope.byte_slice(11..21));
+        assert_eq!(first, third, "same content must reuse one layout");
+        assert_ne!(first, second, "different content must not collide here");
+    }
+
+    #[test]
+    fn no_corpus_line_collides_with_a_different_text() {
+        use super::super::bench_corpus::{LARGE_RUST_BYTES, rust_source};
+        use std::collections::HashMap;
+
+        let rope = ropey::Rope::from_str(&rust_source(LARGE_RUST_BYTES));
+        let mut seen: HashMap<(u64, usize), String> = HashMap::new();
+        let mut hashed = 0usize;
+        for row in 0..rope.len_lines() {
+            let start = rope.line_to_byte(row);
+            let mut end = if row + 1 < rope.len_lines() {
+                rope.line_to_byte(row + 1)
+            } else {
+                rope.len_bytes()
+            };
+            while end > start && matches!(rope.byte(end - 1), b'\n' | b'\r') {
+                end -= 1;
+            }
+            if end == start {
+                continue;
+            }
+            let slice = rope.byte_slice(start..end);
+            let key = (line_content_hash(slice), end - start);
+            let text = slice.to_string();
+            if let Some(previous) = seen.insert(key, text.clone()) {
+                assert_eq!(previous, text, "row {row} shares a key with another text");
+            }
+            hashed += 1;
+        }
+        assert!(hashed >= 10_000, "{hashed} rows is too small a corpus");
+    }
+
+    #[test]
+    fn a_split_rope_line_hashes_like_a_contiguous_one() {
+        let mut rope = ropey::Rope::from_str("");
+        for chunk in ["abcdef", "ghijkl", "mnopqr"] {
+            let at = rope.len_bytes();
+            rope.insert(rope.byte_to_char(at), chunk);
+        }
+        let contiguous = ropey::Rope::from_str("abcdefghijklmnopqr");
+        assert_eq!(
+            line_content_hash(rope.byte_slice(..)),
+            line_content_hash(contiguous.byte_slice(..))
+        );
     }
 
     #[test]
@@ -1168,6 +1573,8 @@ mod tests {
             first_row: 1,
             top_y: 100.0,
             text_x: 40.0,
+            materialized_lines: 0,
+            materialized_numbers: 0,
             lines: vec![None],
             ..CodeHitMap::default()
         };

@@ -1,6 +1,6 @@
 pub(crate) mod base;
 #[cfg(test)]
-mod bench_corpus;
+pub(crate) mod bench_corpus;
 pub(crate) mod cursor;
 pub(crate) mod document;
 pub(crate) mod edit;
