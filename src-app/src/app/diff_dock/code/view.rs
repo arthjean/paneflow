@@ -558,7 +558,9 @@ impl CodeView {
             0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
         };
         if let Some((doc, highlighter)) = self.state.editable()
-            && highlighter.fill_stale_rows(doc, rows, HIGHLIGHT_FRAME_BUDGET)
+            && highlighter
+                .fill_stale_rows(doc, rows, HIGHLIGHT_FRAME_BUDGET)
+                .any_stale()
         {
             cx.notify();
         }

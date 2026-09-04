@@ -76,6 +76,9 @@ platform shaper.
 | `shape_cold_60_rows` | ns | Sixty never-seen ASCII rows of 100 characters shaped with the editor monospace font, the cold-cache cost of one scrolled viewport. |
 | `shape_warm_60_rows` | ns | The same sixty rows shaped again, the warm-cache cost the line-layout cache serves on a second frame. |
 | `reload_200_retained_bytes` | bytes | Live allocated bytes a tab still holds after 200 external reloads of a 2 MB file: document, highlighter, and undo history. |
+| `pagedown_stale_rows` | rows | Median rows of a 60-row viewport still uncolored after one 2 ms fill, over 20 pseudo-random jumps on a freshly opened 300 KB Rust file. |
+| `pagedown_stale_rows_max` | rows | The worst of those 20 jumps: rows the first frame after a PageDown leaves in plain text. |
+| `pagedown_frames_to_fresh` | frames | Successive 2 ms fills the worst of those 20 jumps needs before no visible row is stale. |
 
 The corpus is `src-app/src/app/diff_dock/code/bench_corpus.rs`, seeded with
 `EDITOR_CORPUS_SEED`. It is generated, never read from the repository's own
@@ -83,6 +86,18 @@ sources, so a run is byte-identical everywhere: synthetic Rust sized to 295 KB
 (under the 300 KB highlight cap), 2 MB, and 3.7 MB (about 110 000 lines); a
 single-line minified JSON document of exactly 10 000 characters; and Markdown
 carrying both inline and fenced code so the injection pass has work to do.
+
+### The PageDown stale-row probe
+
+`pagedown_stale_rows`, `pagedown_stale_rows_max` and `pagedown_frames_to_fresh`
+turn the 2 ms highlight budget into a number. Each of the 20 jumps moves a
+60-row viewport to a pseudo-random row of the 300 KB Rust corpus, calls
+`CodeHighlighter::fill_stale_rows` with `HIGHLIGHT_FRAME_BUDGET`, records the
+rows the call left stale, then keeps calling until none is. Rows left stale are
+rows the user reads in plain text; frames-to-fresh is how many frames the
+editor needs before the viewport is fully colored, and until US-018 nothing
+schedules those frames on its own. A file past the 300 KB highlight cap reports
+0 stale rows in 1 frame and spends no budget at all.
 
 ### The shaping probe and the US-013 threshold
 

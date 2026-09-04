@@ -45,6 +45,17 @@ struct GrammarPass {
     colors: Vec<Option<Hsla>>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct StaleFill {
+    pub(crate) stale_rows: usize,
+}
+
+impl StaleFill {
+    pub(crate) fn any_stale(self) -> bool {
+        self.stale_rows > 0
+    }
+}
+
 pub(crate) enum HighlightOutcome {
     Synced,
     Deferred(DeferredParse),
@@ -412,8 +423,9 @@ impl CodeHighlighter {
         doc: &CodeDocument,
         rows: Range<usize>,
         budget: Duration,
-    ) -> bool {
-        let rows = rows.start.min(doc.line_count())..rows.end.min(doc.line_count());
+    ) -> StaleFill {
+        let lines = doc.line_count();
+        let rows = rows.start.min(lines)..rows.end.min(lines);
         let deadline = Instant::now() + budget;
         for row in rows.clone() {
             if self.row_states.get(row) != Some(&RowState::Stale) {
@@ -424,8 +436,13 @@ impl CodeHighlighter {
                 break;
             }
         }
-        rows.into_iter()
-            .any(|row| self.row_states.get(row) == Some(&RowState::Stale))
+        let mut stale_rows = 0usize;
+        for row in rows {
+            if self.row_states.get(row) == Some(&RowState::Stale) {
+                stale_rows += 1;
+            }
+        }
+        StaleFill { stale_rows }
     }
 
     fn mark_stale(&mut self, rows: Range<usize>) {
@@ -946,12 +963,30 @@ mod tests {
             "fn one() {}\nfn two() {}\nfn three() {}\n",
         );
         let mut h = CodeHighlighter::new(&d, syntax());
-        assert!(h.fill_stale_rows(&d, 0..3, Duration::ZERO));
+        assert_eq!(h.fill_stale_rows(&d, 0..3, Duration::ZERO).stale_rows, 2);
         assert!(!h.runs(0).is_empty());
         assert!(h.runs(1).is_empty());
-        assert!(!h.fill_stale_rows(&d, 0..3, Duration::from_secs(1)));
+        assert!(
+            !h.fill_stale_rows(&d, 0..3, Duration::from_secs(1))
+                .any_stale()
+        );
         assert!(!h.runs(1).is_empty());
         assert!(!h.runs(2).is_empty());
+    }
+
+    #[test]
+    fn a_viewport_past_the_end_of_the_document_is_clamped_and_counts_only_real_rows() {
+        let d = doc("clamped.rs", "fn one() {}\nfn two() {}\nfn three() {}\n");
+        let mut h = CodeHighlighter::new(&d, syntax());
+        assert_eq!(d.line_count(), 4);
+
+        let starved = h.fill_stale_rows(&d, 0..10_000, Duration::ZERO);
+        assert!(starved.any_stale());
+        assert_eq!(starved.stale_rows, d.line_count() - 1);
+
+        let filled = h.fill_stale_rows(&d, 0..10_000, Duration::from_secs(1));
+        assert!(!filled.any_stale());
+        assert_eq!(filled.stale_rows, 0);
     }
 
     #[test]
@@ -968,7 +1003,10 @@ mod tests {
         let edit = d.insert(0, "// still editable\n").expect("insert");
         assert!(matches!(h.edit(&d, &edit), HighlightOutcome::Synced));
         assert!(!h.has_stale_rows());
-        assert!(!h.fill_stale_rows(&d, 0..d.line_count(), Duration::ZERO));
+        assert!(
+            !h.fill_stale_rows(&d, 0..d.line_count(), Duration::ZERO)
+                .any_stale()
+        );
         assert!(h.runs(0).is_empty());
         assert_eq!(d.line_string(0).as_deref(), Some("// still editable"));
     }
@@ -1047,7 +1085,10 @@ mod tests {
         ));
         assert!(h.runs(0).is_empty());
         assert!(!h.runs(1).is_empty());
-        assert!(!h.fill_stale_rows(&d, 0..1, Duration::from_secs(1)));
+        assert!(
+            !h.fill_stale_rows(&d, 0..1, Duration::from_secs(1))
+                .any_stale()
+        );
         assert!(!h.runs(0).is_empty());
     }
 

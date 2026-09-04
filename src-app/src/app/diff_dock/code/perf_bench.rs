@@ -23,7 +23,7 @@ use super::cursor::CodeSelection;
 use super::document::CodeDocument;
 use super::edit::{EditGroup, UndoHistory, disk_splices, splice};
 use super::element::CODE_FONT_SIZE;
-use super::highlight::{CodeHighlighter, HighlightOutcome};
+use super::highlight::{CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome};
 
 const VIEWPORT_ROWS: usize = 60;
 
@@ -31,6 +31,9 @@ const RESOLVE_RUNS_CAPTURES: usize = 3_750;
 
 const RELOADS: usize = 200;
 const SHAPE_ROW_CHARS: usize = 100;
+
+const PAGEDOWN_JUMPS: usize = 20;
+const PAGEDOWN_FRAME_LIMIT: usize = 64;
 
 struct Corpora {
     highlighted_rust: String,
@@ -161,6 +164,65 @@ fn viewport_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
             highlighter.requery_rows(&doc, first..first + VIEWPORT_ROWS);
         },
     ));
+}
+
+struct PageDownProbe {
+    stale_median: usize,
+    stale_max: usize,
+    frames_to_fresh: usize,
+}
+
+fn pagedown_probe(
+    doc: &CodeDocument,
+    highlighter: &mut CodeHighlighter,
+    budget: Duration,
+) -> PageDownProbe {
+    let span = doc.line_count().saturating_sub(VIEWPORT_ROWS).max(1);
+    let mut stale = Vec::with_capacity(PAGEDOWN_JUMPS);
+    let mut frames_to_fresh = 0usize;
+    for jump in 0..PAGEDOWN_JUMPS {
+        let first = stride(jump + 1, span);
+        let rows = first..first + VIEWPORT_ROWS;
+        let mut fill = highlighter.fill_stale_rows(doc, rows.clone(), budget);
+        stale.push(fill.stale_rows);
+        let mut frames = 1usize;
+        while fill.any_stale() && frames < PAGEDOWN_FRAME_LIMIT {
+            fill = highlighter.fill_stale_rows(doc, rows.clone(), budget);
+            frames += 1;
+        }
+        frames_to_fresh = frames_to_fresh.max(frames);
+    }
+    stale.sort_unstable();
+    PageDownProbe {
+        stale_median: stale.get(stale.len() / 2).copied().unwrap_or(0),
+        stale_max: stale.last().copied().unwrap_or(0),
+        frames_to_fresh,
+    }
+}
+
+fn pagedown_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let doc = document("bench-300kb.rs", &corpora.highlighted_rust);
+    let mut highlighter = CodeHighlighter::new(&doc, dark());
+    let probe = pagedown_probe(&doc, &mut highlighter, HIGHLIGHT_FRAME_BUDGET);
+    metrics.push(Metric::count(
+        "pagedown_stale_rows",
+        "rows",
+        probe.stale_median as f64,
+        "median rows of a 60-row viewport still uncolored after one 2 ms fill, over 20 pseudo-random jumps on a freshly opened 300 KB Rust file",
+    ));
+    metrics.push(Metric::count(
+        "pagedown_stale_rows_max",
+        "rows",
+        probe.stale_max as f64,
+        "worst jump of the same 20: rows the first frame after a PageDown leaves in plain text",
+    ));
+    metrics.push(Metric::count(
+        "pagedown_frames_to_fresh",
+        "frames",
+        probe.frames_to_fresh as f64,
+        "successive 2 ms fills the worst of those 20 jumps needs before no visible row is stale; today only an outside event schedules those frames",
+    ));
+    std::hint::black_box((doc, highlighter));
 }
 
 fn unclosed_comment_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
@@ -482,6 +544,7 @@ fn editor_pipeline_benchmark() {
     markdown_scenario(&mut metrics, &corpora);
     keystroke_scenario(&mut metrics, &corpora);
     viewport_scenario(&mut metrics, &corpora);
+    pagedown_scenario(&mut metrics, &corpora);
     unclosed_comment_scenario(&mut metrics, &corpora);
     deferred_parse_burst_scenario(&mut metrics, &corpora);
     resolve_runs_scenario(&mut metrics, &corpora);
@@ -578,6 +641,42 @@ mod tests {
             highlighter.runs(doc.line_count()).is_empty(),
             "a row past the end must resolve to no runs"
         );
+    }
+
+    #[test]
+    fn the_pagedown_probe_reports_the_rows_a_starved_fill_leaves_behind() {
+        let rust = rust_source(64_000);
+        let doc = document("probe.rs", &rust);
+        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        assert!(highlighter.is_enabled(), "the probe needs a colored file");
+
+        let starved = pagedown_probe(&doc, &mut highlighter, Duration::ZERO);
+        assert!(
+            starved.stale_max > 0,
+            "a zero-budget fill must leave visible rows stale"
+        );
+        assert!(
+            starved.frames_to_fresh > 1,
+            "a zero-budget fill must need more than one frame"
+        );
+
+        let mut fresh = CodeHighlighter::new(&doc, dark());
+        let generous = pagedown_probe(&doc, &mut fresh, Duration::from_secs(1));
+        assert_eq!(generous.stale_max, 0);
+        assert_eq!(generous.frames_to_fresh, 1);
+    }
+
+    #[test]
+    fn the_pagedown_probe_spends_no_budget_past_the_highlight_cap() {
+        let rust = rust_source(crate::diff::MAX_HIGHLIGHT_BYTES + 4_096);
+        let doc = document("probe.rs", &rust);
+        let mut highlighter = CodeHighlighter::new(&doc, dark());
+        assert!(!highlighter.is_enabled(), "the file must be past the cap");
+
+        let probe = pagedown_probe(&doc, &mut highlighter, Duration::ZERO);
+        assert_eq!(probe.stale_median, 0);
+        assert_eq!(probe.stale_max, 0);
+        assert_eq!(probe.frames_to_fresh, 1);
     }
 
     #[test]
