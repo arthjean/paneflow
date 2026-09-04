@@ -223,26 +223,30 @@ impl CodeHighlighter {
         self.generation
     }
 
-    pub(crate) fn runs(&self, row: usize) -> LineRuns {
+    pub(crate) fn runs_into(&self, row: usize, out: &mut LineRuns) {
+        out.clear();
         if self.row_states.get(row) != Some(&RowState::Fresh) {
-            return Vec::new();
+            return;
         }
-        self.rows
-            .get(row)
-            .map(|runs| {
-                runs.iter()
-                    .filter_map(|&(start, end, indexed)| {
-                        let pass = self.passes.get(indexed.pass as usize)?;
-                        let color = pass
-                            .colors
-                            .get(indexed.capture as usize)
-                            .copied()
-                            .flatten()?;
-                        Some((start as usize..end as usize, color))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default()
+        let Some(runs) = self.rows.get(row) else {
+            return;
+        };
+        for &(start, end, indexed) in runs.iter() {
+            let Some(pass) = self.passes.get(indexed.pass as usize) else {
+                continue;
+            };
+            let Some(color) = pass.colors.get(indexed.capture as usize).copied().flatten() else {
+                continue;
+            };
+            out.push((start as usize..end as usize, color));
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn runs(&self, row: usize) -> LineRuns {
+        let mut out = LineRuns::new();
+        self.runs_into(row, &mut out);
+        out
     }
 
     pub(crate) fn set_syntax(&mut self, _doc: &CodeDocument, syntax: DiffSyntax) {

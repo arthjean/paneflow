@@ -22,7 +22,7 @@ use super::bench_corpus::{
 use super::cursor::CodeSelection;
 use super::document::CodeDocument;
 use super::edit::{EditGroup, UndoHistory, disk_splices, splice};
-use super::element::CODE_FONT_SIZE;
+use super::element::{CODE_FONT_SIZE, line_content_hash};
 use super::highlight::{CodeHighlighter, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome};
 
 const VIEWPORT_ROWS: usize = 60;
@@ -495,11 +495,59 @@ fn shape_rows(text_system: &WindowTextSystem, font: &Font, rows: &[SharedString]
     width
 }
 
+fn ascii_document(salt: usize) -> CodeDocument {
+    let mut text = String::with_capacity(VIEWPORT_ROWS * (SHAPE_ROW_CHARS + 1));
+    for row in 0..VIEWPORT_ROWS {
+        text.push_str(&ascii_row(salt, row));
+        text.push('\n');
+    }
+    document("prepaint.txt", &text)
+}
+
+fn prepaint_rows(
+    text_system: &WindowTextSystem,
+    font: &Font,
+    doc: &CodeDocument,
+    runs: &mut Vec<TextRun>,
+) -> f32 {
+    let mut width = 0.0f32;
+    for row in 0..VIEWPORT_ROWS {
+        let Some(range) = doc.line_byte_range(row) else {
+            continue;
+        };
+        let Some(slice) = doc.line(row) else {
+            continue;
+        };
+        let len = range.end - range.start;
+        runs.clear();
+        runs.push(TextRun {
+            len,
+            font: font.clone(),
+            color: hsla(0.0, 0.0, 0.9, 1.0),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        });
+        let shaped = text_system.shape_line_by_hash(
+            line_content_hash(slice),
+            len,
+            px(CODE_FONT_SIZE),
+            runs,
+            None,
+            || slice.to_string().into(),
+        );
+        width += f32::from(shaped.width());
+    }
+    width
+}
+
 fn skip_shape(metrics: &mut Vec<Metric>, reason: &'static str) {
     println!("PANEFLOW_BENCH_SKIP shape_cold_60_rows: {reason}");
     println!("PANEFLOW_BENCH_SKIP shape_warm_60_rows: {reason}");
+    println!("PANEFLOW_BENCH_SKIP prepaint_60_rows_warm: {reason}");
     metrics.push(Metric::unavailable("shape_cold_60_rows", "ns", reason));
     metrics.push(Metric::unavailable("shape_warm_60_rows", "ns", reason));
+    metrics.push(Metric::unavailable("prepaint_60_rows_warm", "ns", reason));
 }
 
 fn shape_scenarios(metrics: &mut Vec<Metric>) {
@@ -542,6 +590,20 @@ fn shape_scenarios(metrics: &mut Vec<Metric>) {
         20,
         |timer| {
             timer.time(|| std::hint::black_box(shape_rows(&text_system, &font, &warm)));
+        },
+    ));
+    let warm_doc = ascii_document(0);
+    let mut runs = Vec::with_capacity(64);
+    prepaint_rows(&text_system, &font, &warm_doc, &mut runs);
+    metrics.push(measure_segments(
+        "prepaint_60_rows_warm",
+        "the same 60 rows re-shaped the way the editor prepaint does it, by content hash with a reused run buffer: the warm-cache cost of one scrolled viewport",
+        1,
+        20,
+        |timer| {
+            timer.time(|| {
+                std::hint::black_box(prepaint_rows(&text_system, &font, &warm_doc, &mut runs))
+            });
         },
     ));
     drop(platform);
@@ -768,10 +830,25 @@ mod tests {
             assert!(metrics.iter().all(|metric| !metric.available));
             return;
         };
-        let width = shape_rows(&text_system, &editor_font(), &ascii_rows(0));
+        let font = editor_font();
+        let width = shape_rows(&text_system, &font, &ascii_rows(0));
         assert!(
             width.is_finite() && width >= 0.0,
             "a shaped viewport must report a finite width, got {width}"
+        );
+
+        let doc = ascii_document(0);
+        let mut runs = Vec::with_capacity(64);
+        let cold = prepaint_rows(&text_system, &font, &doc, &mut runs);
+        let warm = prepaint_rows(&text_system, &font, &doc, &mut runs);
+        assert_eq!(
+            cold, warm,
+            "the by-hash path must return the same layout it cached"
+        );
+        assert_eq!(
+            runs.len(),
+            1,
+            "the prepaint probe must reuse one run buffer across every row"
         );
         drop(platform);
     }

@@ -12,7 +12,7 @@ use gpui::{
     AnyElement, App, AppContext, AsyncApp, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle,
     EntityInputHandler, FocusHandle, Focusable, InteractiveElement, IntoElement, KeyBinding,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point,
-    Render, ScrollHandle, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled,
+    Render, ScrollDelta, ScrollWheelEvent, SharedString, StatefulInteractiveElement, Styled,
     UTF16Selection, WeakEntity, Window, actions, div, px, size,
 };
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -24,8 +24,8 @@ use super::cursor::{self, CodeSelection};
 use super::document::{CodeDocument, ReadOnlyReason, normalize_newlines};
 use super::edit::{self, EditGroup, IndentUnit};
 use super::element::{
-    CODE_ROW_HEIGHT, CodeCaret, CodeColors, CodeElement, CodeGeometry, CodeHitMap, GutterMemo,
-    autoscroll_step, reveal_h_offset, reveal_offset, visible_rows,
+    CODE_ROW_HEIGHT, CodeCaret, CodeColors, CodeElement, CodeGeometry, CodeHitMap, CodeScroll,
+    GutterMemo, autoscroll_step, reveal_h_offset, reveal_rows, visible_rows_at,
 };
 use super::highlight::{
     CodeHighlighter, DeferredParse, HIGHLIGHT_FRAME_BUDGET, HighlightOutcome, spawn_deferred_parse,
@@ -34,9 +34,16 @@ use super::load::{CodeLoadSlot, CodeLoadState, CodeOpen, spawn_code_load};
 use super::save::{self, FileStamp};
 use crate::diff::{DiffSyntax, palette};
 use crate::terminal::blink::{BlinkPhaseGlobal, CURSOR_BLINK_INTERVAL};
-use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState};
+use crate::widgets::scrollbar::{self, SCROLLBAR_GUTTER, ScrollDragState, ScrollableHandle};
 
 pub(crate) const CODE_KEY_CONTEXT: &str = "CodeEditor";
+
+fn wheel_pixels(delta: &ScrollDelta, char_w: f32) -> Point<f32> {
+    match delta {
+        ScrollDelta::Pixels(pixels) => Point::new(f32::from(pixels.x), f32::from(pixels.y)),
+        ScrollDelta::Lines(lines) => Point::new(lines.x * char_w, lines.y * CODE_ROW_HEIGHT),
+    }
+}
 
 const MULTI_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 const MULTI_CLICK_RADIUS: f32 = 2.0;
@@ -181,7 +188,7 @@ pub(crate) struct CodeView {
     state: CodeLoadState,
     slot: CodeLoadSlot,
     focus: FocusHandle,
-    scroll: ScrollHandle,
+    scroll: CodeScroll,
     v_drag: Option<ScrollDragState>,
     h_offset: f32,
     selection: CodeSelection,
@@ -219,7 +226,7 @@ impl CodeView {
             state: CodeLoadState::Loading,
             slot: CodeLoadSlot::new(),
             focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
+            scroll: CodeScroll::new(),
             v_drag: None,
             h_offset: 0.0,
             selection: CodeSelection::default(),
@@ -270,7 +277,7 @@ impl CodeView {
             })),
             slot: CodeLoadSlot::new(),
             focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
+            scroll: CodeScroll::new(),
             v_drag: None,
             h_offset: 0.0,
             selection: CodeSelection::default(),
@@ -305,12 +312,44 @@ impl CodeView {
         let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
             return 0..0;
         };
-        let viewport_h = f32::from(self.scroll.bounds().size.height);
-        if viewport_h <= 0.0 {
-            return 0..0;
-        }
-        let content_top = f32::from(-self.scroll.offset().y).max(0.0);
-        visible_rows(content_top, viewport_h, line_count)
+        visible_rows_at(
+            self.scroll.rows(),
+            self.scroll.viewport_height(),
+            line_count,
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scroll_rows(&self) -> f64 {
+        self.scroll.rows()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn scroll_offset_y(&self) -> f32 {
+        self.scroll.content_top()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialized_lines(&self) -> usize {
+        self.hits.borrow().materialized_lines
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialized_numbers(&self) -> usize {
+        self.hits.borrow().materialized_numbers
+    }
+
+    #[cfg(test)]
+    pub(crate) fn row_width(&self, row: usize) -> Option<f32> {
+        let hits = self.hits.borrow();
+        let index = row.checked_sub(hits.first_row)?;
+        Some(f32::from(hits.lines.get(index)?.as_ref()?.width()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn row_top(&self, row: usize) -> f32 {
+        let hits = self.hits.borrow();
+        hits.top_y + row.saturating_sub(hits.first_row) as f32 * CODE_ROW_HEIGHT
     }
 
     #[cfg(test)]
@@ -371,11 +410,11 @@ impl CodeView {
         let Some(doc) = self.state.document() else {
             return false;
         };
-        let viewport_h = f32::from(self.scroll.bounds().size.height);
+        let viewport_h = self.scroll.viewport_height();
         if viewport_h <= 0.0 {
             return false;
         }
-        let content_top = f32::from(-self.scroll.offset().y).max(0.0);
+        let content_top = self.scroll.content_top();
         let row = doc.byte_to_line(self.selection.cursor());
         Self::row_intersects_viewport(row, content_top, viewport_h)
     }
@@ -409,7 +448,7 @@ impl CodeView {
         self.gutter_memo.set(GutterMemo::default());
         self.geometry.set(CodeGeometry::default());
         *self.hits.borrow_mut() = CodeHitMap::default();
-        self.scroll.set_offset(Point::new(px(0.), px(0.)));
+        self.scroll.reset_rows();
         self.history.clear();
         self.saved_mark = edit::HistoryMark::default();
         self.marked = None;
@@ -577,13 +616,18 @@ impl CodeView {
     }
 
     fn page_rows(&self) -> usize {
-        cursor::page_rows(f32::from(self.scroll.bounds().size.height), CODE_ROW_HEIGHT)
+        cursor::page_rows(self.scroll.viewport_height(), CODE_ROW_HEIGHT)
+    }
+
+    fn sync_scroll_line_count(&self) {
+        if let Some(doc) = self.state.document() {
+            self.scroll.set_line_count(doc.line_count());
+        }
     }
 
     pub(crate) fn reveal_cursor(&mut self) {
-        let viewport_h = f32::from(self.scroll.bounds().size.height);
+        let viewport_h = self.scroll.viewport_height();
         let geometry = self.geometry.get();
-        let current = f32::from(self.scroll.offset().y);
         let h_offset = self.h_offset;
         let Some(doc) = self.state.document() else {
             return;
@@ -591,12 +635,10 @@ impl CodeView {
         let offset = self.selection.cursor();
         let row = doc.byte_to_line(offset);
         let column = cursor::goal_column(doc, offset);
-        let content_h = doc.line_count() as f32 * CODE_ROW_HEIGHT;
+        self.scroll.set_line_count(doc.line_count());
 
-        let target = reveal_offset(row, viewport_h, content_h, current);
-        if (target - current).abs() > f32::EPSILON {
-            self.scroll.set_offset(Point::new(px(0.), px(target)));
-        }
+        let target = reveal_rows(row, viewport_h, self.scroll.max_rows(), self.scroll.rows());
+        self.scroll.set_rows(target);
         let caret_x = column as f32 * geometry.char_w;
         self.h_offset = reveal_h_offset(
             caret_x,
@@ -622,10 +664,9 @@ impl CodeView {
         let Some(line_count) = self.state.document().map(CodeDocument::line_count) else {
             return;
         };
-        let viewport_h = f32::from(self.scroll.bounds().size.height);
-        let content_top = f32::from(-self.scroll.offset().y).max(0.0);
+        let viewport_h = self.scroll.viewport_height();
         let rows = if viewport_h > 0.0 {
-            visible_rows(content_top, viewport_h, line_count)
+            visible_rows_at(self.scroll.rows(), viewport_h, line_count)
         } else {
             0..INITIAL_HIGHLIGHT_ROWS.min(line_count)
         };
@@ -637,19 +678,23 @@ impl CodeView {
         }
     }
 
-    fn apply_wheel(&mut self, ev: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let dx = f32::from(ev.delta.pixel_delta(window.line_height()).x);
-        if dx == 0.0 {
-            return;
-        }
+    fn apply_wheel(&mut self, ev: &ScrollWheelEvent, cx: &mut Context<Self>) {
         let bounds = self.scroll.bounds();
         if !bounds.contains(&ev.position) {
             return;
         }
-        let max = self.geometry.get().max_h_offset;
-        let next = (self.h_offset - dx).clamp(0.0, max);
-        if next != self.h_offset {
-            self.h_offset = next;
+        let geometry = self.geometry.get();
+        let delta = wheel_pixels(&ev.delta, geometry.char_w);
+        self.sync_scroll_line_count();
+        let mut moved = self.scroll.scroll_by_pixels(-delta.y);
+        if delta.x != 0.0 {
+            let next = (self.h_offset - delta.x).clamp(0.0, geometry.max_h_offset);
+            if next != self.h_offset {
+                self.h_offset = next;
+                moved = true;
+            }
+        }
+        if moved {
             cx.notify();
         }
     }
@@ -820,13 +865,8 @@ impl CodeView {
             DRAG_SCROLL_ROWS * CODE_ROW_HEIGHT,
         );
         if dy != 0.0 {
-            let max = f32::from(self.scroll.max_offset().y);
-            let current = -f32::from(self.scroll.offset().y);
-            let next = (current + dy).clamp(0.0, max);
-            if next != current {
-                self.scroll.set_offset(Point::new(px(0.), px(-next)));
-                moved = true;
-            }
+            self.sync_scroll_line_count();
+            moved = self.scroll.scroll_by_pixels(dy);
         }
 
         let dx = autoscroll_step(
@@ -1551,7 +1591,7 @@ impl CodeView {
         if ops.is_empty() {
             return;
         }
-        let scroll = self.scroll.offset();
+        let scroll_rows = self.scroll.rows();
         let after = edit::shift_selection_for_splices(self.selection, &ops);
         let reason = doc.read_only_reason();
         if reason.is_some()
@@ -1568,7 +1608,8 @@ impl CodeView {
         if !replaced {
             return;
         }
-        self.scroll.set_offset(scroll);
+        self.sync_scroll_line_count();
+        self.scroll.set_rows(scroll_rows);
         cx.notify();
     }
 
@@ -1978,7 +2019,7 @@ impl Render for CodeView {
             };
         };
 
-        let line_count = doc.line_count();
+        self.scroll.set_line_count(doc.line_count());
         let banners = self.banners(ui, cx);
         let theme = crate::theme::active_theme();
         let focused = self.focus.is_focused(window);
@@ -2000,19 +2041,18 @@ impl Render for CodeView {
                 visible: self.blink_visible,
                 marked: self.marked.clone().unwrap_or(0..0),
             },
-            line_count,
             self.geometry.clone(),
             self.gutter_memo.clone(),
             self.hits.clone(),
         );
 
-        let mut host = div()
+        let host = div()
             .id(self.element_id.clone())
             .flex_1()
             .min_h_0()
             .w_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll)
+            .overflow_hidden()
+            .line_height(px(CODE_ROW_HEIGHT))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
@@ -2021,11 +2061,10 @@ impl Render for CodeView {
                     }
                 }),
             )
-            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
-                this.apply_wheel(ev, window, cx);
+            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _window, cx| {
+                this.apply_wheel(ev, cx);
             }))
             .child(element);
-        host.style().restrict_scroll_to_axis = Some(true);
 
         div()
             .id("code-view-body")
@@ -2091,7 +2130,7 @@ impl Render for CodeView {
 
 #[cfg(test)]
 mod tests {
-    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext, point};
+    use gpui::{Entity, Modifiers, TestAppContext, TouchPhase, VisualTestContext, point};
 
     use super::super::highlight::{CodeHighlighter, MAX_QUERY_ROWS};
     use super::super::load::{LoadedCode, build_document};
@@ -2140,7 +2179,7 @@ mod tests {
             state,
             slot: CodeLoadSlot::new(),
             focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
+            scroll: CodeScroll::new(),
             v_drag: None,
             h_offset: 0.0,
             selection: CodeSelection::default(),
@@ -2172,6 +2211,387 @@ mod tests {
 
     fn rows_of_code(rows: usize) -> String {
         (0..rows).map(|row| format!("fn f{row}() {{}}\n")).collect()
+    }
+
+    const VIEWPORT: Point<Pixels> = Point {
+        x: px(800.),
+        y: px(360.),
+    };
+
+    fn scrolled<'a>(
+        cx: &'a mut TestAppContext,
+        name: &str,
+        text: &str,
+    ) -> (Entity<CodeView>, &'a mut VisualTestContext) {
+        let (view, cx) = view_named(cx, name, text, HIGHLIGHT_FRAME_BUDGET);
+        cx.simulate_resize(size(VIEWPORT.x, VIEWPORT.y));
+        cx.run_until_parked();
+        let centre = point(VIEWPORT.x / 2., VIEWPORT.y / 2.);
+        cx.simulate_mouse_move(centre, None, Modifiers::default());
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    fn wheel(delta: ScrollDelta) -> ScrollWheelEvent {
+        ScrollWheelEvent {
+            position: point(VIEWPORT.x / 2., VIEWPORT.y / 2.),
+            delta,
+            modifiers: Modifiers::default(),
+            touch_phase: TouchPhase::Moved,
+        }
+    }
+
+    fn notification_counter(
+        view: &Entity<CodeView>,
+        cx: &mut VisualTestContext,
+    ) -> (Rc<Cell<usize>>, gpui::Subscription) {
+        let count = Rc::new(Cell::new(0usize));
+        let seen = count.clone();
+        let subscription =
+            cx.update(|_, cx| cx.observe(view, move |_, _| seen.set(seen.get() + 1)));
+        (count, subscription)
+    }
+
+    #[gpui::test]
+    fn a_wheel_notch_scrolls_three_rows(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/wheel.rs", &rows_of_code(500));
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(0.0, -3.0))));
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.scroll_offset_y()),
+            3.0 * CODE_ROW_HEIGHT,
+            "a notch must move exactly three rows"
+        );
+        assert_eq!(view.read_with(cx, |view, _| view.scroll_rows()), 3.0);
+    }
+
+    #[gpui::test]
+    fn a_trackpad_delta_scrolls_its_exact_pixels(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/trackpad.rs", &rows_of_code(500));
+
+        cx.simulate_event(wheel(ScrollDelta::Pixels(point(px(0.), px(-7.5)))));
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.scroll_offset_y()), 7.5);
+    }
+
+    #[gpui::test]
+    fn a_horizontal_notch_moves_whole_columns(cx: &mut TestAppContext) {
+        let mut text = "x".repeat(400);
+        text.push('\n');
+        text.push_str(&rows_of_code(200));
+        let (view, cx) = scrolled(cx, "/nonexistent/wide.rs", &text);
+
+        let char_w = view.read_with(cx, |view, _| view.geometry.get().char_w);
+        assert!(char_w > 0.0, "the test text system must measure a column");
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(-1.0, 0.0))));
+        cx.run_until_parked();
+
+        let (h_offset, rows) = view.read_with(cx, |view, _| (view.h_offset, view.scroll_rows()));
+        assert_eq!(h_offset, char_w, "one notch is one column, not one line");
+        assert_eq!(rows, 0.0, "a horizontal notch must not scroll vertically");
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(-2.0, 0.0))));
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |view, _| view.h_offset), 3.0 * char_w);
+    }
+
+    #[gpui::test]
+    fn a_document_shorter_than_the_viewport_absorbs_the_notch(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/short.rs", &rows_of_code(3));
+        let (notifications, _subscription) = notification_counter(&view, cx);
+
+        cx.simulate_event(wheel(ScrollDelta::Lines(point(0.0, -3.0))));
+        cx.run_until_parked();
+
+        assert_eq!(view.read_with(cx, |view, _| view.scroll_offset_y()), 0.0);
+        assert_eq!(
+            notifications.get(),
+            0,
+            "an absorbed notch must not repaint the editor"
+        );
+    }
+
+    #[gpui::test]
+    fn notches_in_one_frame_coalesce_into_a_single_notification(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/coalesce.rs", &rows_of_code(500));
+        let (notifications, _subscription) = notification_counter(&view, cx);
+
+        cx.update(|window, cx| {
+            for _ in 0..3 {
+                window.dispatch_event(
+                    gpui::PlatformInput::ScrollWheel(wheel(ScrollDelta::Lines(point(0.0, -3.0)))),
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.scroll_rows()),
+            9.0,
+            "the three deltas must all land"
+        );
+        assert_eq!(
+            notifications.get(),
+            1,
+            "three notches inside one frame are one repaint"
+        );
+    }
+
+    #[gpui::test]
+    fn the_last_row_of_a_huge_file_lands_on_the_viewport_floor(cx: &mut TestAppContext) {
+        let line_count = 300_000usize;
+        let text = rows_of_code(line_count);
+        let (view, cx) = scrolled(cx, "/nonexistent/huge.rs", &text);
+
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(view.scroll.max_rows());
+            cx.notify();
+        });
+        cx.run_until_parked();
+
+        let (last, first, floor) = view.read_with(cx, |view, _| {
+            let last = view.document().expect("a loaded document").line_count() - 1;
+            (
+                last,
+                view.row_top(last),
+                f32::from(view.scroll.bounds().bottom()),
+            )
+        });
+        assert!(last >= line_count, "{last} must reach past {line_count}");
+        assert!(
+            (first + CODE_ROW_HEIGHT - floor).abs() < 1.0,
+            "the last row must sit on the viewport floor, got {first} for a floor at {floor}"
+        );
+
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.row_top(last)),
+            first,
+            "two identical frames must place the last row identically"
+        );
+
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(view.scroll.rows() - 1.0);
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, _| view.row_top(last)),
+            first + CODE_ROW_HEIGHT,
+            "one scrolled row must move the last row by exactly one row height"
+        );
+    }
+
+    #[gpui::test]
+    fn the_scrollbar_drives_the_owned_position(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/bar.rs", &rows_of_code(2_000));
+
+        let thumb_h = view.update(cx, |view, cx| {
+            let metrics = scrollbar::metrics(&view.scroll).expect("an overflowing document");
+            let bar_x = view.scroll.bounds().right() - px(3.);
+            let below_thumb = view.scroll.bounds().origin.y + px(metrics.thumb_h + 40.0);
+            assert!(view.on_scrollbar_down(
+                &MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(bar_x, below_thumb),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                },
+                cx,
+            ));
+            metrics.thumb_h
+        });
+        let after_click = view.read_with(cx, |view, _| view.scroll_rows());
+        assert!(after_click > 0.0, "a track click must move the position");
+
+        view.update(cx, |view, cx| {
+            let metrics = scrollbar::metrics(&view.scroll).expect("an overflowing document");
+            let bar_x = view.scroll.bounds().right() - px(3.);
+            let thumb_y = view.scroll.bounds().origin.y + px(metrics.thumb_top + thumb_h / 2.0);
+            view.on_scrollbar_down(
+                &MouseDownEvent {
+                    button: MouseButton::Left,
+                    position: point(bar_x, thumb_y),
+                    modifiers: Modifiers::default(),
+                    click_count: 1,
+                    first_mouse: false,
+                },
+                cx,
+            );
+            view.on_scrollbar_move(
+                &MouseMoveEvent {
+                    position: point(bar_x, thumb_y + px(60.)),
+                    pressed_button: Some(MouseButton::Left),
+                    modifiers: Modifiers::default(),
+                },
+                cx,
+            );
+        });
+        let after_drag = view.read_with(cx, |view, _| view.scroll_rows());
+        assert!(
+            after_drag > after_click,
+            "dragging the thumb down must advance the position, {after_click} -> {after_drag}"
+        );
+    }
+
+    #[gpui::test]
+    fn an_external_reload_that_drops_lines_rebinds_the_position(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/reload.rs", &rows_of_code(500));
+
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(view.scroll.max_rows());
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(view.read_with(cx, |view, _| view.scroll_rows()) > 400.0);
+
+        view.update(cx, |view, cx| {
+            view.adopt_disk_text(&rows_of_code(25), cx);
+        });
+        cx.run_until_parked();
+
+        let (rows, max_rows, viewport_h) = view.read_with(cx, |view, _| {
+            (
+                view.scroll_rows(),
+                view.scroll.max_rows(),
+                view.scroll.viewport_height(),
+            )
+        });
+        let line_count = view.read_with(cx, |view, _| {
+            view.document().expect("a loaded document").line_count()
+        });
+        assert_eq!(
+            max_rows,
+            line_count as f64 - f64::from(viewport_h) / f64::from(CODE_ROW_HEIGHT)
+        );
+        assert_eq!(rows, max_rows, "the position must stop at the new end");
+    }
+
+    fn frame(view: &Entity<CodeView>, cx: &mut VisualTestContext) {
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+    }
+
+    fn scroll_to(view: &Entity<CodeView>, cx: &mut VisualTestContext, rows: f64) {
+        view.update(cx, |view, cx| {
+            view.scroll.set_rows(rows);
+            cx.notify();
+        });
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn a_warm_frame_shapes_nothing_it_already_shaped(cx: &mut TestAppContext) {
+        let text: String = (0..400)
+            .map(|row| format!("row {row} of plain text\n"))
+            .collect();
+        let (view, cx) = scrolled(cx, "/nonexistent/warm.txt", &text);
+
+        frame(&view, cx);
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_lines()),
+            0,
+            "a warm frame must not build a single line string"
+        );
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_numbers()),
+            0,
+            "a warm frame must not build a single number string"
+        );
+
+        scroll_to(&view, cx, 200.0);
+        frame(&view, cx);
+        scroll_to(&view, cx, 0.0);
+        assert!(
+            view.read_with(cx, |view, _| view.materialized_lines()) > 0,
+            "rows the layout cache dropped must be shaped again"
+        );
+    }
+
+    #[gpui::test]
+    fn an_edit_only_reshapes_the_row_it_touched(cx: &mut TestAppContext) {
+        let rows = 100;
+        let text: String = (0..rows)
+            .map(|row| format!("row {row} of plain text\n"))
+            .collect();
+        let (view, cx) = scrolled(cx, "/nonexistent/edit.txt", &text);
+
+        view.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |view, _| view.materialized_lines()), 0);
+
+        view.update_in(cx, |view, window, cx| {
+            view.selection = CodeSelection { anchor: 0, head: 0 };
+            view.replace_text_in_range(None, "z", window, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_lines()),
+            1,
+            "only the edited row may miss the layout cache"
+        );
+    }
+
+    #[gpui::test]
+    fn identical_rows_share_one_shaped_line(cx: &mut TestAppContext) {
+        let text: String = (0..400)
+            .map(|row| {
+                if row % 2 == 0 {
+                    "same line\n"
+                } else {
+                    "other line\n"
+                }
+            })
+            .collect();
+        let (view, cx) = scrolled(cx, "/nonexistent/twins.txt", &text);
+
+        let (even, odd, twin) = view.read_with(cx, |view, _| {
+            (view.row_width(0), view.row_width(1), view.row_width(2))
+        });
+        assert_eq!(even, twin, "identical rows must carry identical layouts");
+        assert_ne!(even, odd, "the probe needs two measurably different texts");
+
+        frame(&view, cx);
+        scroll_to(&view, cx, 200.0);
+
+        let visible = view.read_with(cx, |view, _| view.visible_row_range().len());
+        assert!(visible > 4, "the probe needs more rows than distinct texts");
+        assert_eq!(
+            view.read_with(cx, |view, _| view.materialized_lines()),
+            0,
+            "{visible} rows of already shaped texts must all hit at their new indices"
+        );
+    }
+
+    #[gpui::test]
+    fn the_ime_reads_the_caret_from_the_painted_rows(cx: &mut TestAppContext) {
+        let (view, cx) = scrolled(cx, "/nonexistent/ime.rs", "let alpha = 1;\nlet beta = 2;\n");
+
+        let (caret, index) = view.update_in(cx, |view, window, cx| {
+            let element_bounds = view.scroll.bounds();
+            let caret = view
+                .bounds_for_range(4..9, element_bounds, window, cx)
+                .expect("a laid out row");
+            let index = view
+                .character_index_for_point(caret.origin, window, cx)
+                .expect("a laid out row");
+            (caret, index)
+        });
+        assert_eq!(index, 4, "the IME round trips the caret it was given");
+        assert_eq!(f32::from(caret.size.height), CODE_ROW_HEIGHT);
+        assert_eq!(
+            f32::from(caret.origin.y),
+            view.read_with(cx, |view, _| view.row_top(0)),
+            "the IME caret sits on the painted row"
+        );
     }
 
     #[gpui::test]
@@ -2551,7 +2971,7 @@ mod tests {
                     state,
                     slot: CodeLoadSlot::new(),
                     focus: cx.focus_handle(),
-                    scroll: ScrollHandle::new(),
+                    scroll: CodeScroll::new(),
                     v_drag: None,
                     h_offset: 0.0,
                     selection: CodeSelection::default(),
@@ -2697,7 +3117,7 @@ mod tests {
             state,
             slot: CodeLoadSlot::new(),
             focus: cx.focus_handle(),
-            scroll: ScrollHandle::new(),
+            scroll: CodeScroll::new(),
             v_drag: None,
             h_offset: 0.0,
             selection: CodeSelection::default(),
