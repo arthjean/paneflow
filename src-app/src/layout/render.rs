@@ -277,8 +277,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use gpui::{
-        AppContext, Entity, Modifiers, Render, ScrollDelta, ScrollWheelEvent, TestAppContext,
-        TouchPhase, point,
+        AppContext, Entity, Focusable, Modifiers, Render, ScrollDelta, ScrollWheelEvent,
+        TestAppContext, TouchPhase, point,
         profiler::{self, FrameEvent, FrameTimingCollector},
         px, size,
     };
@@ -529,10 +529,19 @@ mod tests {
             !target_frames.is_empty(),
             "frame tracing must capture target-window dirty-to-draw timings"
         );
-        assert_eq!(
+        assert!(
+            render_content_lock.len() >= streams.len() * terminals.len(),
+            "every burst must snapshot every active terminal at least once, got {} for {} bursts over {} panes",
             render_content_lock.len(),
-            target_window_draws * terminals.len(),
-            "each traced target-window draw must paint every active terminal exactly once"
+            streams.len(),
+            terminals.len()
+        );
+        assert!(
+            render_content_lock.len() < target_window_draws * terminals.len(),
+            "EP-010 caches idle panes, so a draw without a mutation must snapshot none: {} snapshots for {} draws over {} panes",
+            render_content_lock.len(),
+            target_window_draws,
+            terminals.len()
         );
 
         burst_to_park.sort_unstable();
@@ -763,6 +772,170 @@ mod tests {
         }
     }
 
+    const CACHE_PROBE_NOTCHES: usize = 12;
+    const CACHE_PROBE_ROWS: usize = 400;
+
+    fn cached_pane_harness(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<TerminalView>,
+        Entity<CodeView>,
+        &mut gpui::VisualTestContext,
+    ) {
+        let source = (0..CACHE_PROBE_ROWS)
+            .map(|row| format!("fn row_{row}() -> usize {{ {row} }}\n"))
+            .collect::<String>();
+        let terminal_for_test = Rc::new(std::cell::RefCell::new(None));
+        let code_for_test = Rc::new(std::cell::RefCell::new(None));
+        let terminal_for_window = terminal_for_test.clone();
+        let code_for_window = code_for_test.clone();
+        let (_view, cx) = cx.add_window_view(move |_window, cx| {
+            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+            *terminal_for_window.borrow_mut() = Some(terminal.clone());
+            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+            let code =
+                cx.new(|cx| CodeView::ready_for_test(PathBuf::from("cached-pane.rs"), &source, cx));
+            *code_for_window.borrow_mut() = Some(code.clone());
+            ScrollHarness {
+                panes: Some(LayoutTree::Leaf(pane)),
+                code,
+            }
+        });
+        cx.executor().allow_parking();
+        cx.update(|window, _cx| window.activate_window());
+        cx.simulate_resize(size(px(SCROLL_WINDOW_W), px(SCROLL_WINDOW_H)));
+        cx.run_until_parked();
+
+        let terminal = terminal_for_test
+            .borrow()
+            .clone()
+            .expect("the harness must build its terminal view");
+        let code = code_for_test
+            .borrow()
+            .clone()
+            .expect("the harness must build its code view");
+        (terminal, code, cx)
+    }
+
+    #[gpui::test]
+    fn a_cached_terminal_pane_is_not_snapshotted_while_the_editor_scrolls(cx: &mut TestAppContext) {
+        let (terminal, code, cx) = cached_pane_harness(cx);
+        code.update(cx, |view, cx| view.set_cursor_row(0, cx));
+        cx.run_until_parked();
+
+        let wheel_at = point(
+            px(SCROLL_WINDOW_W - EDITOR_DOCK_WIDTH_PX / 2.0),
+            px(SCROLL_WINDOW_H / 2.0),
+        );
+        cx.simulate_mouse_move(wheel_at, None, Modifiers::default());
+        cx.run_until_parked();
+
+        start_render_content_timing_probe();
+        for _ in 0..CACHE_PROBE_NOTCHES {
+            cx.simulate_event(ScrollWheelEvent {
+                position: wheel_at,
+                delta: ScrollDelta::Lines(point(0.0, -SCROLL_LINES_PER_NOTCH)),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            });
+            cx.run_until_parked();
+        }
+        let scroll_snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            code.read_with(cx, |view, _| view.visible_row_range().start) > 0,
+            "the wheel must scroll the editor past its first row"
+        );
+        assert_eq!(
+            scroll_snapshots, 0,
+            "an idle cached terminal pane must not snapshot its grid while the editor scrolls"
+        );
+
+        start_render_content_timing_probe();
+        terminal.update(cx, |view, cx| {
+            view.terminal.write_output(b"agent output\n");
+            view.apply_backend_wakeup(cx);
+        });
+        cx.run_until_parked();
+        let mutation_snapshots = take_render_content_lock_durations().len();
+
+        assert_eq!(
+            mutation_snapshots, 1,
+            "a notified terminal must snapshot its grid exactly once on the next frame"
+        );
+
+        start_render_content_timing_probe();
+        cx.simulate_resize(size(px(SCROLL_WINDOW_W - 160.0), px(SCROLL_WINDOW_H)));
+        cx.run_until_parked();
+        let resize_snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            resize_snapshots >= 1,
+            "a resize must invalidate the cached bounds and redraw the terminal pane"
+        );
+    }
+
+    #[gpui::test]
+    fn focus_gained_repaints_the_cached_terminal_pane(cx: &mut TestAppContext) {
+        let (terminal, _code, cx) = cached_pane_harness(cx);
+        let handle = terminal.read_with(cx, |view, cx| view.focus_handle(cx));
+
+        start_render_content_timing_probe();
+        cx.update(|window, cx| handle.focus(window, cx));
+        cx.run_until_parked();
+        let snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            cx.update(|window, _cx| handle.is_focused(window)),
+            "focus gained: the terminal must hold the window focus"
+        );
+        assert!(
+            snapshots >= 1,
+            "focus gained: the cached terminal pane must repaint on the next frame"
+        );
+    }
+
+    #[gpui::test]
+    fn focus_lost_repaints_the_cached_terminal_pane(cx: &mut TestAppContext) {
+        let (terminal, _code, cx) = cached_pane_harness(cx);
+        let handle = terminal.read_with(cx, |view, cx| view.focus_handle(cx));
+        cx.update(|window, cx| handle.focus(window, cx));
+        cx.run_until_parked();
+
+        start_render_content_timing_probe();
+        cx.update(|window, _cx| window.blur());
+        cx.run_until_parked();
+        let snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            !cx.update(|window, _cx| handle.is_focused(window)),
+            "focus lost: the terminal must release the window focus"
+        );
+        assert!(
+            snapshots >= 1,
+            "focus lost: the cached terminal pane must repaint on the next frame"
+        );
+    }
+
+    #[gpui::test]
+    fn a_theme_change_repaints_the_cached_terminal_pane(cx: &mut TestAppContext) {
+        cx.update(crate::theme::install_theme_signal);
+        let (_terminal, _code, cx) = cached_pane_harness(cx);
+
+        start_render_content_timing_probe();
+        cx.update(|_window, cx| {
+            crate::theme::invalidate_theme_cache();
+            crate::theme::publish_theme_generation(cx);
+        });
+        cx.run_until_parked();
+        let snapshots = take_render_content_lock_durations().len();
+
+        assert_eq!(
+            snapshots, 1,
+            "theme change: the cached terminal pane must repaint exactly once on the next frame"
+        );
+    }
+
     #[gpui::test]
     #[ignore = "EP-006 measurement: editor scroll frame by terminal pane count"]
     #[allow(
@@ -871,6 +1044,16 @@ mod tests {
                 format!("terminal_share_p95_panes_{panes}"),
                 serde_json::json!(share(configuration.p95_us(), reference.p95_us())),
             );
+            let ratio = |busy: u128, idle: u128| {
+                if idle == 0 {
+                    return 0.0;
+                }
+                busy as f64 / idle as f64
+            };
+            document.insert(
+                format!("scroll_frame_p95_ratio_panes_{panes}"),
+                serde_json::json!(ratio(configuration.p95_us(), reference.p95_us())),
+            );
         }
         println!("{}", serde_json::Value::Object(document));
 
@@ -889,9 +1072,8 @@ mod tests {
                 configuration.frames.len()
             );
             assert_eq!(
-                configuration.lock_samples,
-                configuration.draws * configuration.panes,
-                "{} panes: every traced draw must snapshot each terminal exactly once",
+                configuration.lock_samples, 0,
+                "{} panes: EP-010 caches every idle terminal, so a scroll frame must snapshot none",
                 configuration.panes
             );
             assert!(

@@ -157,11 +157,13 @@ idle, places the caret at the top and scrolls away from it, then dispatches 120
 0, 2 and 6 terminal panes and prints one JSON line carrying
 `scroll_frame_p50_us_panes_N` and `scroll_frame_p95_us_panes_N` for each N,
 computed from GPUI's `dirty_to_draw_duration` over at least 100 frames per
-configuration. `render_content_lock_samples_panes_N` counts one terminal
-snapshot per pane per traced frame, which is the witness that every terminal is
-repainted by a scroll that only moved the editor. A configuration that cannot
-build its panes is reported with `scroll_frame_available_panes_N: false` and the
-others still run.
+configuration. `render_content_lock_samples_panes_N` counts the terminal grid
+snapshots taken across those frames. Before EP-010 it read one snapshot per pane
+per frame, the witness that a scroll which only moved the editor still repainted
+every terminal. EP-010 hosts each `TerminalView` in a `ViewElement::cached`, so
+an idle pane now takes none and the measurement asserts zero. A configuration
+that cannot build its panes is reported with
+`scroll_frame_available_panes_N: false` and the others still run.
 
 **The measurement is relative, not absolute.** `TestAppContext` installs
 `NoopTextSystem`, so no platform shaping is included: the numbers compare
@@ -172,7 +174,19 @@ The absolute cost is read from a release profile of the running application.
 of a six-pane scroll frame that disappears at zero panes. **US-029 hosts the
 terminal panes behind `ViewElement::cached` only if that share reaches 0.30.**
 Below it, caching the panes is not worth its complexity and the story is
-canceled with the measured value recorded in the PRD changelog.
+canceled with the measured value recorded in the PRD changelog. The EP-006 run
+measured 0.68 in p50 and 0.63 in p95, well past the threshold, so US-029
+shipped.
+
+`scroll_frame_p95_ratio_panes_N` is that configuration's p95 divided by the
+zero-pane p95. It is a tracked measurement with no threshold attached. EP-010
+dropped the 1.5 target it used to carry: a control run of the same tree with and
+without `.cached` on the `TerminalView` moved the six-pane p95 from 1432 to
+1426 us while the grid snapshots went from 720 to 0, so this harness cannot see
+what the cache saves. Its `NoopTextSystem` excludes the shaping the cache skips
+and keeps the scene replay and the `Pane` chrome, which carry the rest. The p95
+ratio read 2.7 before EP-010 and reads 3.1 to 3.7 after it, the editor frame
+having grown cheaper while the per-pane cost held.
 
 ## Running
 
