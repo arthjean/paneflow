@@ -271,16 +271,21 @@ impl LayoutTree {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::path::PathBuf;
     use std::rc::Rc;
-    use std::time::Instant;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::time::{Duration, Instant};
 
     use gpui::{
-        AppContext, Entity, Render, TestAppContext,
+        AppContext, Entity, Focusable, Modifiers, Render, ScrollDelta, ScrollWheelEvent,
+        TestAppContext, TouchPhase, point,
         profiler::{self, FrameEvent, FrameTimingCollector},
         px, size,
     };
 
     use super::super::tree::LayoutChild;
+    use crate::app::diff_dock::code::bench_corpus::{HIGHLIGHTED_RUST_BYTES, rust_source};
+    use crate::app::diff_dock::code::view::CodeView;
     use crate::bench_harness::{cpu_model, percentile_us, process_cpu_time, resident_set_bytes};
     use crate::pane::Pane;
     use crate::terminal::bench_corpus::{CORPUS_SEED, deterministic_streams};
@@ -291,6 +296,14 @@ mod tests {
     use super::*;
 
     const TOLERANCE: f32 = 2.0;
+
+    static PROCESS_WIDE_MEASUREMENT: Mutex<()> = Mutex::new(());
+
+    fn only_measurement_in_the_process() -> MutexGuard<'static, ()> {
+        PROCESS_WIDE_MEASUREMENT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 
     struct FrameTraceGuard {
         enabled_by_test: bool,
@@ -427,6 +440,7 @@ mod tests {
     fn eight_pane_gpui_input_to_paint_performance_gate(cx: &mut TestAppContext) {
         const INPUT_TO_FRAME_P95_LIMIT_US: u128 = 16_700;
 
+        let _exclusive = only_measurement_in_the_process();
         assert!(
             !cfg!(debug_assertions),
             "run this baseline with cargo test --release"
@@ -515,10 +529,19 @@ mod tests {
             !target_frames.is_empty(),
             "frame tracing must capture target-window dirty-to-draw timings"
         );
-        assert_eq!(
+        assert!(
+            render_content_lock.len() >= streams.len() * terminals.len(),
+            "every burst must snapshot every active terminal at least once, got {} for {} bursts over {} panes",
             render_content_lock.len(),
-            target_window_draws * terminals.len(),
-            "each traced target-window draw must paint every active terminal exactly once"
+            streams.len(),
+            terminals.len()
+        );
+        assert!(
+            render_content_lock.len() < target_window_draws * terminals.len(),
+            "EP-010 caches idle panes, so a draw without a mutation must snapshot none: {} snapshots for {} draws over {} panes",
+            render_content_lock.len(),
+            target_window_draws,
+            terminals.len()
         );
 
         burst_to_park.sort_unstable();
@@ -546,6 +569,526 @@ mod tests {
         assert!(
             input_to_frame_p95_us <= INPUT_TO_FRAME_P95_LIMIT_US,
             "eight-pane GPUI dirty-to-draw frame p95 {input_to_frame_p95_us} us exceeds {INPUT_TO_FRAME_P95_LIMIT_US} us"
+        );
+    }
+
+    const SCROLL_NOTCHES: usize = 120;
+    const SCROLL_LINES_PER_NOTCH: f32 = 3.0;
+    const SCROLL_INTERVAL: Duration = Duration::from_millis(8);
+    const SCROLL_PANE_COUNTS: [usize; 3] = [0, 2, 6];
+    const SCROLL_MIN_SAMPLES: usize = 100;
+    const SCROLL_WINDOW_W: f32 = 1600.0;
+    const SCROLL_WINDOW_H: f32 = 1000.0;
+    const EDITOR_DOCK_WIDTH_PX: f32 = 720.0;
+
+    struct ScrollHarness {
+        panes: Option<LayoutTree>,
+        code: Entity<CodeView>,
+    }
+
+    impl Render for ScrollHarness {
+        fn render(
+            &mut self,
+            window: &mut gpui::Window,
+            cx: &mut gpui::Context<Self>,
+        ) -> impl gpui::IntoElement {
+            let panes = self
+                .panes
+                .as_ref()
+                .map(|tree| tree.render_with_preview(window, cx, None, None));
+            div()
+                .flex()
+                .flex_row()
+                .size_full()
+                .child(div().flex_1().min_w_0().h_full().children(panes))
+                .child(
+                    div()
+                        .flex_none()
+                        .w(px(EDITOR_DOCK_WIDTH_PX))
+                        .h_full()
+                        .flex()
+                        .flex_col()
+                        .child(self.code.clone()),
+                )
+        }
+    }
+
+    struct ScrollConfiguration {
+        panes: usize,
+        available: bool,
+        frames: Vec<Duration>,
+        draws: usize,
+        lock_samples: usize,
+        first_visible_row: usize,
+        caret_row: usize,
+    }
+
+    impl ScrollConfiguration {
+        fn unavailable(panes: usize) -> Self {
+            Self {
+                panes,
+                available: false,
+                frames: Vec::new(),
+                draws: 0,
+                lock_samples: 0,
+                first_visible_row: 0,
+                caret_row: 0,
+            }
+        }
+
+        fn p50_us(&self) -> u128 {
+            percentile_us(&self.frames, 50)
+        }
+
+        fn p95_us(&self) -> u128 {
+            percentile_us(&self.frames, 95)
+        }
+    }
+
+    fn scroll_grid_shape(panes: usize) -> (usize, usize) {
+        match panes {
+            0 => (0, 0),
+            n if n <= 3 => (1, n),
+            n => (2, n.div_ceil(2)),
+        }
+    }
+
+    fn scroll_frame_configuration(
+        cx: &mut TestAppContext,
+        panes: usize,
+        source: &str,
+    ) -> ScrollConfiguration {
+        let (rows, columns) = scroll_grid_shape(panes);
+        let terminals_for_test = Rc::new(std::cell::RefCell::new(Vec::with_capacity(panes)));
+        let code_for_test = Rc::new(std::cell::RefCell::new(None));
+        let terminals_for_window = terminals_for_test.clone();
+        let code_for_window = code_for_test.clone();
+        let text = source.to_owned();
+        let (_view, cx) = cx.add_window_view(move |_window, cx| {
+            let tree = (rows > 0).then(|| {
+                let grid = (0..rows)
+                    .map(|_| {
+                        let column = (0..columns)
+                            .map(|_| {
+                                let terminal =
+                                    cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+                                terminals_for_window.borrow_mut().push(terminal.clone());
+                                LayoutTree::Leaf(cx.new(|cx| Pane::new(terminal, 1, cx)))
+                            })
+                            .collect();
+                        equal_container(SplitDirection::Vertical, column)
+                    })
+                    .collect();
+                equal_container(SplitDirection::Horizontal, grid)
+            });
+            let code =
+                cx.new(|cx| CodeView::ready_for_test(PathBuf::from("bench-scroll.rs"), &text, cx));
+            *code_for_window.borrow_mut() = Some(code.clone());
+            ScrollHarness { panes: tree, code }
+        });
+        cx.executor().allow_parking();
+        cx.simulate_resize(size(px(SCROLL_WINDOW_W), px(SCROLL_WINDOW_H)));
+        cx.run_until_parked();
+
+        let terminals = terminals_for_test.borrow().clone();
+        if terminals.len() != panes {
+            return ScrollConfiguration::unavailable(panes);
+        }
+        let code = code_for_test
+            .borrow()
+            .clone()
+            .expect("the scroll harness must build its code view");
+        for stream in deterministic_streams() {
+            for terminal in &terminals {
+                terminal.update(cx, |view, cx| {
+                    view.terminal.write_output(&stream);
+                    cx.notify();
+                });
+            }
+        }
+        cx.run_until_parked();
+        code.update(cx, |view, cx| view.set_cursor_row(0, cx));
+        cx.run_until_parked();
+        if code.read_with(cx, |view, _| view.visible_row_range().is_empty()) {
+            return ScrollConfiguration::unavailable(panes);
+        }
+
+        let wheel_at = point(
+            px(SCROLL_WINDOW_W - EDITOR_DOCK_WIDTH_PX / 2.0),
+            px(SCROLL_WINDOW_H / 2.0),
+        );
+        cx.simulate_mouse_move(wheel_at, None, Modifiers::default());
+        cx.run_until_parked();
+
+        let target_window_id = cx.update(|window, _| window.window_handle().window_id());
+        start_render_content_timing_probe();
+        let frame_trace = FrameTraceGuard::enable();
+        let mut frame_collector = FrameTimingCollector::new();
+        for notch in 0..SCROLL_NOTCHES {
+            cx.simulate_event(ScrollWheelEvent {
+                position: wheel_at,
+                delta: ScrollDelta::Lines(point(0.0, -SCROLL_LINES_PER_NOTCH)),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            });
+            if notch + 1 < SCROLL_NOTCHES {
+                std::thread::sleep(SCROLL_INTERVAL);
+            }
+        }
+        let events = frame_collector.collect_unseen();
+        drop(frame_trace);
+        let lock_samples = take_render_content_lock_durations().len();
+
+        let draws = events
+            .iter()
+            .filter(|event| match event {
+                FrameEvent::Draw(timing) => timing.window_id == target_window_id,
+                FrameEvent::Present(_) => false,
+            })
+            .count();
+        let mut frames = events
+            .into_iter()
+            .filter_map(|event| match event {
+                FrameEvent::Draw(timing) => Some(timing),
+                FrameEvent::Present(_) => None,
+            })
+            .filter(|timing| timing.window_id == target_window_id)
+            .filter_map(|timing| timing.dirty_to_draw_duration())
+            .collect::<Vec<_>>();
+        frames.sort_unstable();
+
+        let (first_visible_row, caret_row) = code.read_with(cx, |view, _| {
+            (view.visible_row_range().start, view.cursor_row())
+        });
+
+        ScrollConfiguration {
+            panes,
+            available: true,
+            frames,
+            draws,
+            lock_samples,
+            first_visible_row,
+            caret_row,
+        }
+    }
+
+    const CACHE_PROBE_NOTCHES: usize = 12;
+    const CACHE_PROBE_ROWS: usize = 400;
+
+    fn cached_pane_harness(
+        cx: &mut TestAppContext,
+    ) -> (
+        Entity<TerminalView>,
+        Entity<CodeView>,
+        &mut gpui::VisualTestContext,
+    ) {
+        let source = (0..CACHE_PROBE_ROWS)
+            .map(|row| format!("fn row_{row}() -> usize {{ {row} }}\n"))
+            .collect::<String>();
+        let terminal_for_test = Rc::new(std::cell::RefCell::new(None));
+        let code_for_test = Rc::new(std::cell::RefCell::new(None));
+        let terminal_for_window = terminal_for_test.clone();
+        let code_for_window = code_for_test.clone();
+        let (_view, cx) = cx.add_window_view(move |_window, cx| {
+            let terminal = cx.new(|cx| TerminalView::display_only_for_test(1, cx));
+            *terminal_for_window.borrow_mut() = Some(terminal.clone());
+            let pane = cx.new(|cx| Pane::new(terminal, 1, cx));
+            let code =
+                cx.new(|cx| CodeView::ready_for_test(PathBuf::from("cached-pane.rs"), &source, cx));
+            *code_for_window.borrow_mut() = Some(code.clone());
+            ScrollHarness {
+                panes: Some(LayoutTree::Leaf(pane)),
+                code,
+            }
+        });
+        cx.executor().allow_parking();
+        cx.update(|window, _cx| window.activate_window());
+        cx.simulate_resize(size(px(SCROLL_WINDOW_W), px(SCROLL_WINDOW_H)));
+        cx.run_until_parked();
+
+        let terminal = terminal_for_test
+            .borrow()
+            .clone()
+            .expect("the harness must build its terminal view");
+        let code = code_for_test
+            .borrow()
+            .clone()
+            .expect("the harness must build its code view");
+        (terminal, code, cx)
+    }
+
+    #[gpui::test]
+    fn a_cached_terminal_pane_is_not_snapshotted_while_the_editor_scrolls(cx: &mut TestAppContext) {
+        let (terminal, code, cx) = cached_pane_harness(cx);
+        code.update(cx, |view, cx| view.set_cursor_row(0, cx));
+        cx.run_until_parked();
+
+        let wheel_at = point(
+            px(SCROLL_WINDOW_W - EDITOR_DOCK_WIDTH_PX / 2.0),
+            px(SCROLL_WINDOW_H / 2.0),
+        );
+        cx.simulate_mouse_move(wheel_at, None, Modifiers::default());
+        cx.run_until_parked();
+
+        start_render_content_timing_probe();
+        for _ in 0..CACHE_PROBE_NOTCHES {
+            cx.simulate_event(ScrollWheelEvent {
+                position: wheel_at,
+                delta: ScrollDelta::Lines(point(0.0, -SCROLL_LINES_PER_NOTCH)),
+                modifiers: Modifiers::default(),
+                touch_phase: TouchPhase::Moved,
+            });
+            cx.run_until_parked();
+        }
+        let scroll_snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            code.read_with(cx, |view, _| view.visible_row_range().start) > 0,
+            "the wheel must scroll the editor past its first row"
+        );
+        assert_eq!(
+            scroll_snapshots, 0,
+            "an idle cached terminal pane must not snapshot its grid while the editor scrolls"
+        );
+
+        start_render_content_timing_probe();
+        terminal.update(cx, |view, cx| {
+            view.terminal.write_output(b"agent output\n");
+            view.apply_backend_wakeup(cx);
+        });
+        cx.run_until_parked();
+        let mutation_snapshots = take_render_content_lock_durations().len();
+
+        assert_eq!(
+            mutation_snapshots, 1,
+            "a notified terminal must snapshot its grid exactly once on the next frame"
+        );
+
+        start_render_content_timing_probe();
+        cx.simulate_resize(size(px(SCROLL_WINDOW_W - 160.0), px(SCROLL_WINDOW_H)));
+        cx.run_until_parked();
+        let resize_snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            resize_snapshots >= 1,
+            "a resize must invalidate the cached bounds and redraw the terminal pane"
+        );
+    }
+
+    #[gpui::test]
+    fn focus_gained_repaints_the_cached_terminal_pane(cx: &mut TestAppContext) {
+        let (terminal, _code, cx) = cached_pane_harness(cx);
+        let handle = terminal.read_with(cx, |view, cx| view.focus_handle(cx));
+
+        start_render_content_timing_probe();
+        cx.update(|window, cx| handle.focus(window, cx));
+        cx.run_until_parked();
+        let snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            cx.update(|window, _cx| handle.is_focused(window)),
+            "focus gained: the terminal must hold the window focus"
+        );
+        assert!(
+            snapshots >= 1,
+            "focus gained: the cached terminal pane must repaint on the next frame"
+        );
+    }
+
+    #[gpui::test]
+    fn focus_lost_repaints_the_cached_terminal_pane(cx: &mut TestAppContext) {
+        let (terminal, _code, cx) = cached_pane_harness(cx);
+        let handle = terminal.read_with(cx, |view, cx| view.focus_handle(cx));
+        cx.update(|window, cx| handle.focus(window, cx));
+        cx.run_until_parked();
+
+        start_render_content_timing_probe();
+        cx.update(|window, _cx| window.blur());
+        cx.run_until_parked();
+        let snapshots = take_render_content_lock_durations().len();
+
+        assert!(
+            !cx.update(|window, _cx| handle.is_focused(window)),
+            "focus lost: the terminal must release the window focus"
+        );
+        assert!(
+            snapshots >= 1,
+            "focus lost: the cached terminal pane must repaint on the next frame"
+        );
+    }
+
+    #[gpui::test]
+    fn a_theme_change_repaints_the_cached_terminal_pane(cx: &mut TestAppContext) {
+        cx.update(crate::theme::install_theme_signal);
+        let (_terminal, _code, cx) = cached_pane_harness(cx);
+
+        start_render_content_timing_probe();
+        cx.update(|_window, cx| {
+            crate::theme::invalidate_theme_cache();
+            crate::theme::publish_theme_generation(cx);
+        });
+        cx.run_until_parked();
+        let snapshots = take_render_content_lock_durations().len();
+
+        assert_eq!(
+            snapshots, 1,
+            "theme change: the cached terminal pane must repaint exactly once on the next frame"
+        );
+    }
+
+    #[gpui::test]
+    #[ignore = "EP-006 measurement: editor scroll frame by terminal pane count"]
+    #[allow(
+        clippy::assertions_on_constants,
+        reason = "the ignored measurement must reject accidental debug-profile execution"
+    )]
+    fn editor_scroll_frame_by_pane_count(cx: &mut TestAppContext) {
+        let _exclusive = only_measurement_in_the_process();
+        assert!(
+            !cfg!(debug_assertions),
+            "run this measurement with cargo test --release"
+        );
+
+        let source = rust_source(HIGHLIGHTED_RUST_BYTES);
+        let mut document = serde_json::Map::new();
+        document.insert(
+            "seed".into(),
+            serde_json::json!(format!("0x{CORPUS_SEED:016x}")),
+        );
+        document.insert("scenario".into(), serde_json::json!("editor_scroll"));
+        document.insert("file_bytes".into(), serde_json::json!(source.len()));
+        document.insert("notches".into(), serde_json::json!(SCROLL_NOTCHES));
+        document.insert(
+            "notch_lines".into(),
+            serde_json::json!(SCROLL_LINES_PER_NOTCH),
+        );
+        document.insert(
+            "notch_interval_ms".into(),
+            serde_json::json!(SCROLL_INTERVAL.as_millis()),
+        );
+        document.insert("profile".into(), serde_json::json!("release"));
+        document.insert("hardware".into(), serde_json::json!(cpu_model()));
+        document.insert(
+            "platform".into(),
+            serde_json::json!(format!(
+                "{}-{}",
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            )),
+        );
+        document.insert(
+            "measurement_boundary".into(),
+            serde_json::json!(
+                "per-target-window GPUI frame from first dirty invalidation through draw completion, one wheel notch per frame"
+            ),
+        );
+        document.insert(
+            "text_system_scope".into(),
+            serde_json::json!(
+                "TestAppContext installs NoopTextSystem, so shaping is excluded: these times compare configurations and never bound the absolute frame cost"
+            ),
+        );
+
+        let mut measured = Vec::with_capacity(SCROLL_PANE_COUNTS.len());
+        for panes in SCROLL_PANE_COUNTS {
+            let configuration = scroll_frame_configuration(cx, panes, &source);
+            document.insert(
+                format!("scroll_frame_available_panes_{panes}"),
+                serde_json::json!(configuration.available),
+            );
+            document.insert(
+                format!("scroll_frame_samples_panes_{panes}"),
+                serde_json::json!(configuration.frames.len()),
+            );
+            document.insert(
+                format!("scroll_frame_p50_us_panes_{panes}"),
+                serde_json::json!(configuration.p50_us()),
+            );
+            document.insert(
+                format!("scroll_frame_p95_us_panes_{panes}"),
+                serde_json::json!(configuration.p95_us()),
+            );
+            document.insert(
+                format!("target_window_draws_panes_{panes}"),
+                serde_json::json!(configuration.draws),
+            );
+            document.insert(
+                format!("render_content_lock_samples_panes_{panes}"),
+                serde_json::json!(configuration.lock_samples),
+            );
+            measured.push(configuration);
+        }
+
+        let reference = measured
+            .iter()
+            .find(|configuration| configuration.panes == 0 && configuration.available);
+        for configuration in &measured {
+            let Some(reference) = reference else {
+                break;
+            };
+            if !configuration.available || configuration.panes == 0 {
+                continue;
+            }
+            let panes = configuration.panes;
+            let share = |busy: u128, idle: u128| {
+                if busy == 0 {
+                    return 0.0;
+                }
+                busy.saturating_sub(idle) as f64 / busy as f64
+            };
+            document.insert(
+                format!("terminal_share_p50_panes_{panes}"),
+                serde_json::json!(share(configuration.p50_us(), reference.p50_us())),
+            );
+            document.insert(
+                format!("terminal_share_p95_panes_{panes}"),
+                serde_json::json!(share(configuration.p95_us(), reference.p95_us())),
+            );
+            let ratio = |busy: u128, idle: u128| {
+                if idle == 0 {
+                    return 0.0;
+                }
+                busy as f64 / idle as f64
+            };
+            document.insert(
+                format!("scroll_frame_p95_ratio_panes_{panes}"),
+                serde_json::json!(ratio(configuration.p95_us(), reference.p95_us())),
+            );
+        }
+        println!("{}", serde_json::Value::Object(document));
+
+        for configuration in &measured {
+            if !configuration.available {
+                println!(
+                    "PANEFLOW_BENCH_SKIP scroll_frame_panes_{}: the configuration could not build its panes",
+                    configuration.panes
+                );
+                continue;
+            }
+            assert!(
+                configuration.frames.len() >= SCROLL_MIN_SAMPLES,
+                "{} panes: {} traced scroll frames, at least {SCROLL_MIN_SAMPLES} are needed",
+                configuration.panes,
+                configuration.frames.len()
+            );
+            assert_eq!(
+                configuration.lock_samples, 0,
+                "{} panes: EP-010 caches every idle terminal, so a scroll frame must snapshot none",
+                configuration.panes
+            );
+            assert!(
+                configuration.first_visible_row > configuration.caret_row,
+                "{} panes: the wheel must scroll the editor past its caret, first visible row {} caret row {}",
+                configuration.panes,
+                configuration.first_visible_row,
+                configuration.caret_row
+            );
+        }
+        assert!(
+            measured
+                .iter()
+                .any(|configuration| configuration.panes == 0 && configuration.available),
+            "the zero-pane configuration is the reference and must run"
         );
     }
 

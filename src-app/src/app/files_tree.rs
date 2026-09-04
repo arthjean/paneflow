@@ -25,7 +25,7 @@ pub(crate) struct VisibleRowRef<'a> {
     pub expanded: bool,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct FilesTreeState {
     pub root: PathBuf,
     pub expanded: HashSet<PathBuf>,
@@ -45,25 +45,6 @@ impl FilesTreeState {
 
     pub(crate) fn root_listing_ready(&self) -> bool {
         self.children.contains_key(&self.root)
-    }
-
-    pub(crate) fn hydrated(root: PathBuf, persisted: &[PathBuf]) -> Self {
-        let mut expanded = HashSet::new();
-        expanded.insert(root.clone());
-        for p in persisted {
-            if *p != root && p.starts_with(&root) && p.is_dir() {
-                expanded.insert(p.clone());
-            }
-        }
-        let mut children = HashMap::new();
-        for dir in &expanded {
-            children.insert(dir.clone(), read_dir_sorted(&root, dir));
-        }
-        Self {
-            root,
-            expanded,
-            children,
-        }
     }
 }
 
@@ -183,9 +164,14 @@ pub(crate) fn flatten_visible(
     expanded: &HashSet<PathBuf>,
     children: &HashMap<PathBuf, Vec<FileNode>>,
 ) -> Vec<VisibleRow> {
-    let mut out = Vec::new();
-    push_children(root, 0, expanded, children, &mut out);
-    out
+    flatten_visible_refs(root, expanded, children)
+        .into_iter()
+        .map(|row| VisibleRow {
+            node: row.node.clone(),
+            depth: row.depth,
+            expanded: row.expanded,
+        })
+        .collect()
 }
 
 pub(crate) fn workspace_relative_path(root: &Path, path: &Path) -> String {
@@ -193,21 +179,6 @@ pub(crate) fn workspace_relative_path(root: &Path, path: &Path) -> String {
         Ok(rel) => rel.to_string_lossy().into_owned(),
         Err(_) => path.to_string_lossy().into_owned(),
     }
-}
-
-pub(crate) fn coalesce_by_prefix(dirs: Vec<PathBuf>) -> Vec<PathBuf> {
-    let mut dirs = dirs;
-    dirs.sort();
-    dirs.dedup();
-
-    let mut out: Vec<PathBuf> = Vec::new();
-    for dir in dirs {
-        if out.last().is_some_and(|parent| dir.starts_with(parent)) {
-            continue;
-        }
-        out.push(dir);
-    }
-    out
 }
 
 pub(crate) fn flatten_visible_refs<'a>(
@@ -218,14 +189,6 @@ pub(crate) fn flatten_visible_refs<'a>(
     let mut out = Vec::new();
     push_children_refs(root, 0, expanded, children, &mut out);
     out
-}
-
-pub(crate) fn visible_len(
-    root: &Path,
-    expanded: &HashSet<PathBuf>,
-    children: &HashMap<PathBuf, Vec<FileNode>>,
-) -> usize {
-    count_children(root, expanded, children)
 }
 
 fn push_children_refs<'a>(
@@ -247,50 +210,6 @@ fn push_children_refs<'a>(
         });
         if is_expanded {
             push_children_refs(&node.path, depth + 1, expanded, children, out);
-        }
-    }
-}
-
-fn count_children(
-    dir: &Path,
-    expanded: &HashSet<PathBuf>,
-    children: &HashMap<PathBuf, Vec<FileNode>>,
-) -> usize {
-    let Some(listing) = children.get(dir) else {
-        return 0;
-    };
-    listing
-        .iter()
-        .map(|node| {
-            1 + if node.is_dir && expanded.contains(&node.path) {
-                count_children(&node.path, expanded, children)
-            } else {
-                0
-            }
-        })
-        .sum()
-}
-
-#[cfg(test)]
-fn push_children(
-    dir: &Path,
-    depth: usize,
-    expanded: &HashSet<PathBuf>,
-    children: &HashMap<PathBuf, Vec<FileNode>>,
-    out: &mut Vec<VisibleRow>,
-) {
-    let Some(listing) = children.get(dir) else {
-        return;
-    };
-    for node in listing {
-        let is_expanded = node.is_dir && expanded.contains(&node.path);
-        out.push(VisibleRow {
-            node: node.clone(),
-            depth,
-            expanded: is_expanded,
-        });
-        if is_expanded {
-            push_children(&node.path, depth + 1, expanded, children, out);
         }
     }
 }
@@ -322,11 +241,10 @@ mod tests {
     #[test]
     fn root_shell_marks_root_listing_not_ready() {
         let root = PathBuf::from("/r");
-        let shell = FilesTreeState::root_shell(root.clone());
+        let mut shell = FilesTreeState::root_shell(root.clone());
         assert!(!shell.root_listing_ready());
-
-        let hydrated = FilesTreeState::hydrated(root, &[]);
-        assert!(hydrated.root_listing_ready());
+        shell.children.insert(root, Vec::new());
+        assert!(shell.root_listing_ready());
     }
 
     #[test]
@@ -393,29 +311,6 @@ mod tests {
     }
 
     #[test]
-    fn coalesce_parent_drops_children() {
-        let out = coalesce_by_prefix(vec![
-            PathBuf::from("/r"),
-            PathBuf::from("/r/src"),
-            PathBuf::from("/r/src/inner"),
-        ]);
-        assert_eq!(out, vec![PathBuf::from("/r")]);
-    }
-
-    #[test]
-    fn coalesce_preserves_siblings() {
-        let mut out = coalesce_by_prefix(vec![PathBuf::from("/r/a"), PathBuf::from("/r/b")]);
-        out.sort();
-        assert_eq!(out, vec![PathBuf::from("/r/a"), PathBuf::from("/r/b")]);
-    }
-
-    #[test]
-    fn coalesce_dedups() {
-        let out = coalesce_by_prefix(vec![PathBuf::from("/r/a"), PathBuf::from("/r/a")]);
-        assert_eq!(out, vec![PathBuf::from("/r/a")]);
-    }
-
-    #[test]
     fn relative_path_nested() {
         assert_eq!(
             workspace_relative_path(Path::new("/r"), Path::new("/r/a/b.md")),
@@ -440,43 +335,11 @@ mod tests {
     }
 
     #[test]
-    fn coalesce_does_not_treat_name_prefix_as_ancestor() {
-        let mut out = coalesce_by_prefix(vec![PathBuf::from("/r/src"), PathBuf::from("/r/src2")]);
-        out.sort();
-        assert_eq!(out, vec![PathBuf::from("/r/src"), PathBuf::from("/r/src2")]);
-    }
-
-    #[test]
     fn flatten_missing_root_listing_is_empty() {
         let root = PathBuf::from("/r");
         let children = HashMap::new();
         let expanded = HashSet::new();
         assert!(flatten_visible(&root, &expanded, &children).is_empty());
-    }
-
-    #[test]
-    fn hydrated_restores_existing_dirs_and_drops_stale_dirs() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let root = tmp.path().to_path_buf();
-        let src = root.join("src");
-        let stale = root.join("stale");
-        std::fs::create_dir(&src).expect("src dir");
-        std::fs::write(src.join("lib.rs"), "").expect("src file");
-
-        let tree = FilesTreeState::hydrated(root.clone(), &[src.clone(), stale.clone()]);
-
-        assert!(tree.expanded.contains(&root));
-        assert!(tree.expanded.contains(&src));
-        assert!(!tree.expanded.contains(&stale));
-        assert!(tree.children.contains_key(&root));
-        assert!(tree.children.contains_key(&src));
-        assert!(
-            tree.children
-                .get(&src)
-                .expect("src listing")
-                .iter()
-                .any(|node| node.path == src.join("lib.rs"))
-        );
     }
 
     #[test]

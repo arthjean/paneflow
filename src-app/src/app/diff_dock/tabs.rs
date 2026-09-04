@@ -157,7 +157,7 @@ impl PaneFlowApp {
             self.toggle_files_sidebar(cx);
         }
         if self.files_sidebar_open {
-            self.files_focus.focus(window, cx);
+            self.focus_files_sidebar(window, cx);
         }
     }
 

@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use imara_diff::intern::InternedInput;
 use imara_diff::sources::lines_with_terminator;
 use imara_diff::{Algorithm, Sink};
+use ropey::Rope;
 
 use super::cursor::CodeSelection;
 use super::document::{CodeDocument, CodeEdit, normalize_newlines};
@@ -40,7 +41,7 @@ impl AppliedEdit {
 }
 
 pub(crate) struct Splice {
-    pub(crate) edits: Vec<CodeEdit>,
+    pub(crate) edit: CodeEdit,
     pub(crate) record: AppliedEdit,
 }
 
@@ -55,25 +56,34 @@ pub(crate) fn splice(doc: &mut CodeDocument, range: Range<usize>, text: &str) ->
     if removed.is_empty() && inserted.is_empty() {
         return None;
     }
-    let mut edits = Vec::with_capacity(2);
-    if end > start
-        && let Some(edit) = doc.remove(start..end)
-    {
-        edits.push(edit);
-    }
-    if !inserted.is_empty()
-        && let Some(edit) = doc.insert(start, &inserted)
-    {
-        edits.push(edit);
-    }
+    let removal = (end > start).then(|| doc.remove(start..end)).flatten();
+    let insertion = (!inserted.is_empty())
+        .then(|| doc.insert(start, &inserted))
+        .flatten();
+    let edit = replacement_edit(removal, insertion)?;
     Some(Splice {
-        edits,
+        edit,
         record: AppliedEdit {
             start,
             removed,
             inserted,
         },
     })
+}
+
+fn replacement_edit(removal: Option<CodeEdit>, insertion: Option<CodeEdit>) -> Option<CodeEdit> {
+    match (removal, insertion) {
+        (Some(removal), Some(insertion)) => Some(CodeEdit {
+            start_byte: removal.start_byte,
+            old_end_byte: removal.old_end_byte,
+            new_end_byte: insertion.new_end_byte,
+            start_point: removal.start_point,
+            old_end_point: removal.old_end_point,
+            new_end_point: insertion.new_end_point,
+        }),
+        (Some(edit), None) | (None, Some(edit)) => Some(edit),
+        (None, None) => None,
+    }
 }
 
 #[derive(Default)]
@@ -93,50 +103,47 @@ impl Sink for DiskHunkCollector {
     }
 }
 
-pub(crate) fn disk_splices(current: &str, incoming: &str) -> Vec<(Range<usize>, String)> {
+pub(crate) fn disk_splices(current: &Rope, incoming: &str) -> Vec<(Range<usize>, String)> {
     let incoming = normalize_newlines(incoming);
-    if current == incoming {
-        return Vec::new();
-    }
-
-    let current_lines: Vec<&str> = lines_with_terminator(current).collect();
     let incoming_lines: Vec<&str> = lines_with_terminator(&incoming).collect();
+    let current_lines = terminated_line_count(current);
+
     let mut prefix = 0usize;
-    while prefix < current_lines.len()
+    while prefix < current_lines
         && prefix < incoming_lines.len()
-        && current_lines[prefix] == incoming_lines[prefix]
+        && current.line(prefix) == incoming_lines[prefix]
     {
         prefix += 1;
     }
 
     let mut suffix = 0usize;
-    while suffix < current_lines.len().saturating_sub(prefix)
+    while suffix < current_lines.saturating_sub(prefix)
         && suffix < incoming_lines.len().saturating_sub(prefix)
-        && current_lines[current_lines.len() - suffix - 1]
+        && current.line(current_lines - suffix - 1)
             == incoming_lines[incoming_lines.len() - suffix - 1]
     {
         suffix += 1;
     }
 
-    let current_start = current_lines[..prefix]
-        .iter()
-        .map(|line| line.len())
-        .sum::<usize>();
+    let current_start = current.line_to_byte(prefix);
+    let current_end = current.line_to_byte(current_lines - suffix);
     let incoming_start = incoming_lines[..prefix]
         .iter()
         .map(|line| line.len())
         .sum::<usize>();
-    let current_end = current.len()
-        - current_lines[current_lines.len().saturating_sub(suffix)..]
-            .iter()
-            .map(|line| line.len())
-            .sum::<usize>();
     let incoming_end = incoming.len()
-        - incoming_lines[incoming_lines.len().saturating_sub(suffix)..]
+        - incoming_lines[incoming_lines.len() - suffix..]
             .iter()
             .map(|line| line.len())
             .sum::<usize>();
-    let current_middle = &current[current_start..current_end];
+    if current_start == current_end && incoming_start == incoming_end {
+        return Vec::new();
+    }
+    let current_middle = current
+        .byte_slice(current_start..current_end)
+        .chunks()
+        .collect::<String>();
+    let current_middle = current_middle.as_str();
     let incoming_middle = &incoming[incoming_start..incoming_end];
     let current_offsets = line_offsets(current_middle);
     let incoming_offsets = line_offsets(incoming_middle);
@@ -167,6 +174,14 @@ pub(crate) fn shift_selection_for_splices(
     CodeSelection {
         anchor: shift_offset_for_splices(selection.anchor, splices_descending),
         head: shift_offset_for_splices(selection.head, splices_descending),
+    }
+}
+
+fn terminated_line_count(text: &Rope) -> usize {
+    let lines = text.len_lines();
+    match lines.checked_sub(1) {
+        Some(last) if text.line(last).len_bytes() == 0 => last,
+        _ => lines,
     }
 }
 
@@ -670,7 +685,7 @@ mod tests {
     fn disk_splices_apply_disjoint_line_hunks_in_one_plan() {
         let current = "keep\none\nmiddle\ntwo\ntail\n";
         let incoming = "keep\nONE!\nmiddle\nTWO!\ntail\n";
-        let ops = disk_splices(current, incoming);
+        let ops = disk_splices(&Rope::from_str(current), incoming);
         assert_eq!(ops.len(), 2, "one operation per disjoint hunk");
         assert!(ops[0].0.start > ops[1].0.start, "offsets descend");
 
@@ -683,8 +698,9 @@ mod tests {
 
     #[test]
     fn disk_splices_normalize_crlf_and_skip_identical_text() {
-        assert!(disk_splices("one\ntwo\n", "one\r\ntwo\r\n").is_empty());
-        let ops = disk_splices("one\ntwo\n", "one\r\nTWO\r\n");
+        let current = Rope::from_str("one\ntwo\n");
+        assert!(disk_splices(&current, "one\r\ntwo\r\n").is_empty());
+        let ops = disk_splices(&current, "one\r\nTWO\r\n");
         assert_eq!(ops, vec![(4..8, "TWO\n".to_string())]);
     }
 
@@ -705,7 +721,7 @@ mod tests {
             *line = format!("changed {row:04}\n");
         }
         let incoming = incoming_lines.concat();
-        let ops = disk_splices(&current, &incoming);
+        let ops = disk_splices(&Rope::from_str(&current), &incoming);
         assert_eq!(ops.len(), 1);
         let changed = &current[ops[0].0.clone()];
         assert_eq!(lines_with_terminator(changed).count(), 10);

@@ -126,6 +126,10 @@ impl CodeDocument {
         self.text.len_bytes()
     }
 
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub(crate) fn line_count(&self) -> usize {
         self.text.len_lines()
     }

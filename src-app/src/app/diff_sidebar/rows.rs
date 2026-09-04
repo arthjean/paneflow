@@ -1,7 +1,6 @@
 use crate::PaneFlowApp;
 use crate::diff::{FileChange, FileEntry};
 use crate::theme::UiColors;
-use crate::ui_primitives::AnimatedHoverExt;
 use gpui::{
     AnyElement, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, ParentElement,
     SharedString, Styled, div, prelude::*, px,
@@ -67,7 +66,7 @@ impl PaneFlowApp {
             .items_center()
             .gap(px(8.))
             .bg(resting_background)
-            .animated_hover_bg(resting_background, row_background)
+            .hover(|s| s.bg(row_background))
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                 this.diff_mode.diff_selected_file = Some(path.clone());
                 match this.diff_mode.diff_scope {

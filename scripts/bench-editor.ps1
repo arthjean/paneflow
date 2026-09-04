@@ -17,7 +17,9 @@ allows a debug-profile run that the suite otherwise refuses, and
 PANEFLOW_BENCH_SKIP_SHAPE skips the platform shaping probe.
 
 .PARAMETER SetBaseline
-Copy the fresh result over bench/editor-baseline.json.
+Copy the fresh result over bench/editor-baseline.json. Refused when the run
+reports a cpu_share below 0.90, because a contended run inflates every timing
+it would freeze.
 
 .PARAMETER Help
 Print this help and exit.
@@ -73,6 +75,15 @@ if (-not (Test-Path $out)) {
 }
 Write-Host "result: $out"
 if ($SetBaseline) {
+    $cpuShare = (Get-Content $out -Raw | ConvertFrom-Json).cpu_share
+    if ($null -eq $cpuShare) {
+        Write-Error "the result carries no cpu_share, refusing to record a baseline from it: $out"
+        exit 1
+    }
+    if ($cpuShare -lt 0.9) {
+        Write-Error "cpu_share $cpuShare is below 0.90: this run got less than 90% of a core, so its timings are inflated and every later comparison against them would read as a false improvement. Close the competing workload and run again."
+        exit 1
+    }
     Copy-Item $out "bench/editor-baseline.json" -Force
     Write-Host "baseline: bench/editor-baseline.json now points at $sha"
 }

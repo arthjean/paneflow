@@ -1,19 +1,21 @@
 mod context_menu;
 mod filter;
+mod integration;
 mod keyboard;
+mod list;
+mod panel;
+mod projection;
 mod row;
 mod view;
 mod watch;
+mod worker;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use gpui::{
-    AnyElement, Context, InteractiveElement, IntoElement, ParentElement, Pixels, Styled, Window,
-    div, px,
-};
+use gpui::{Context, Focusable, Pixels, Window, px};
 
-use crate::app::files_tree::{self, FilesTreeState};
 use crate::{PaneFlowApp, ToggleFilesSidebar};
+pub(crate) use panel::{FilesEvent, FilesSidebar};
 
 pub(crate) const FILES_SIDEBAR_WIDTH: f32 = 300.;
 pub(super) const SIDEBAR_WIDTH: Pixels = px(FILES_SIDEBAR_WIDTH);
@@ -38,19 +40,17 @@ impl PaneFlowApp {
         if !self.files_sidebar_host_visible() {
             return;
         }
-        if !self.files_sidebar_open {
-            self.files_surface_id = self
-                .workspaces
-                .get(self.active_idx)
-                .and_then(|ws| ws.active_tab().root.as_ref())
-                .and_then(|root| root.focused_pane(window, cx))
-                .and_then(|pane| pane.read(cx).active_terminal_opt())
-                .map(|terminal| terminal.entity_id().as_u64());
-        }
         self.toggle_files_sidebar(cx);
         if self.files_sidebar_open {
-            self.files_focus.focus(window, cx);
+            self.focus_files_sidebar(window, cx);
         }
+    }
+
+    pub(crate) fn focus_files_sidebar(&self, window: &mut Window, cx: &mut Context<Self>) {
+        self.files_sidebar
+            .read(cx)
+            .focus_handle(cx)
+            .focus(window, cx);
     }
 
     pub(crate) fn toggle_files_sidebar(&mut self, cx: &mut Context<Self>) {
@@ -63,27 +63,29 @@ impl PaneFlowApp {
         };
         let root = PathBuf::from(&ws.cwd);
         let persisted = ws.files_expanded.clone();
-
+        self.files_sidebar_workspace = Some(ws.id);
         if self.agent_sessions.sessions_sidebar_open
             || self.agent_sessions.sessions_sidebar_animation.is_some()
         {
             self.close_sessions_sidebar_immediate(cx);
         }
         self.dismiss_transient_surfaces();
-
         self.set_files_sidebar_open(true, cx);
-        self.files_tree_scroll = gpui::ScrollHandle::new();
-        self.files_selected = 0;
-        self.files_filter_input
-            .update(cx, |input, cx| input.clear(cx));
-        self.spawn_files_hydration(root, persisted, cx);
+        self.files_sidebar_root = Some(root.clone());
+        self.files_sidebar
+            .update(cx, |panel, cx| panel.open(root, persisted, cx));
     }
 
     pub(crate) fn close_files_sidebar(&mut self, cx: &mut Context<Self>) {
-        self.files_watcher = None;
-        self.files_event_rx = None;
+        self.files_sidebar.update(cx, |panel, _| panel.deactivate());
         self.files_menu_open = None;
+        self.files_sidebar_root = None;
+        self.files_sidebar_workspace = None;
         self.set_files_sidebar_open(false, cx);
+        if self.files_sidebar_animation.is_none() {
+            self.files_sidebar
+                .update(cx, |panel, cx| panel.release_snapshot(cx));
+        }
     }
 
     fn files_sidebar_width_at(&self, now: std::time::Instant) -> f32 {
@@ -96,13 +98,18 @@ impl PaneFlowApp {
         }
     }
 
-    pub(crate) fn rendered_files_sidebar_width(&mut self, window: &mut Window) -> f32 {
+    pub(crate) fn rendered_files_sidebar_width(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> f32 {
         let now = std::time::Instant::now();
         if let Some(animation) = self.files_sidebar_animation {
             if animation.is_finished(now) {
                 self.files_sidebar_animation = None;
                 if !self.files_sidebar_open {
-                    self.clear_files_sidebar_state();
+                    self.files_sidebar
+                        .update(cx, |panel, cx| panel.release_snapshot(cx));
                 }
                 animation.to_width
             } else {
@@ -124,7 +131,6 @@ impl PaneFlowApp {
             ws.active_tab_mut().files_sidebar_open = open;
         }
         let to_width = if open { FILES_SIDEBAR_WIDTH } else { 0. };
-
         self.files_sidebar_animation =
             if (from_width - to_width).abs() > crate::PRIMARY_SIDEBAR_MIN_ANIMATION_DELTA {
                 Some(crate::SidebarWidthAnimation {
@@ -135,20 +141,7 @@ impl PaneFlowApp {
             } else {
                 None
             };
-
-        if !open && self.files_sidebar_animation.is_none() {
-            self.clear_files_sidebar_state();
-        }
         cx.notify();
-    }
-
-    fn clear_files_sidebar_state(&mut self) {
-        self.files_tree = FilesTreeState::default();
-        self.files_watcher = None;
-        self.files_event_rx = None;
-        self.files_menu_open = None;
-        self.files_surface_id = None;
-        self.files_selected = 0;
     }
 
     pub(crate) fn sync_files_sidebar_session(&mut self, cx: &mut Context<Self>) {
@@ -163,86 +156,26 @@ impl PaneFlowApp {
             }
             return;
         }
-        self.reroot_files_tree(cx);
-    }
-
-    fn reroot_files_tree(&mut self, cx: &mut Context<Self>) {
         if !self.files_sidebar_open {
             return;
         }
         let Some(ws) = self.workspaces.get(self.active_idx) else {
             return;
         };
-        if self.files_tree.root == *Path::new(&ws.cwd) {
+        let root = PathBuf::from(&ws.cwd);
+        if self.files_sidebar_root.as_ref() == Some(&root)
+            && self.files_sidebar_workspace == Some(ws.id)
+        {
             return;
         }
-        let root = PathBuf::from(&ws.cwd);
         let persisted = ws.files_expanded.clone();
-        self.spawn_files_hydration(root, persisted, cx);
-    }
-
-    fn toggle_dir(&mut self, path: &Path, cx: &mut Context<Self>) {
-        if self.files_tree.expanded.contains(path) {
-            self.files_tree.expanded.remove(path);
-            self.unwatch_files_dir(path);
-        } else {
-            self.files_tree.expanded.insert(path.to_path_buf());
-            self.watch_files_dir(path);
-            let stale =
-                self.files_watcher.is_none() || !self.files_tree.children.contains_key(path);
-            if stale {
-                let listing = files_tree::read_dir_sorted(&self.files_tree.root, path);
-                self.files_tree.children.insert(path.to_path_buf(), listing);
-            }
-        }
-        self.sync_files_expansion();
-        self.clamp_files_selection();
-        self.save_session(cx);
-        cx.notify();
-    }
-
-    pub(crate) fn open_file_in_diff_dock(
-        &mut self,
-        path: PathBuf,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.settings_section.is_some() {
-            self.close_settings(cx);
-        }
-        self.enter_cli_mode(window, cx);
-        if !self.diff_dock.open {
-            let cwd = self.files_tree.root.to_string_lossy().into_owned();
-            self.open_diff_dock_panel(cwd, cx);
-        }
-        self.diff_dock.picker = false;
-        self.diff_dock.picked = true;
-        self.open_diff_file_tab(path, window, cx);
-    }
-
-    pub(crate) fn render_files_sidebar(
-        &self,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let ui = crate::theme::ui_colors();
-        let theme = crate::theme::active_theme();
-        div()
-            .id("files-sidebar")
-            .flex()
-            .flex_col()
-            .w(SIDEBAR_WIDTH)
-            .flex_shrink_0()
-            .h_full()
-            .track_focus(&self.files_focus)
-            .on_key_down(cx.listener(Self::handle_files_sidebar_key_down))
-            .bg(crate::app::constants::cockpit_chrome_background(
-                theme.title_bar_background,
-                window.is_window_active(),
-                self.cached_config.cockpit_chrome_material_enabled(),
-            ))
-            .child(self.files_sidebar_header(ui, cx))
-            .child(self.files_sidebar_body(ui, cx))
-            .into_any_element()
+        self.files_sidebar_workspace = Some(ws.id);
+        self.files_sidebar_root = Some(root.clone());
+        self.files_menu_open = None;
+        self.files_sidebar
+            .update(cx, |panel, cx| panel.open(root, persisted, cx));
     }
 }
+
+#[cfg(test)]
+mod tests;

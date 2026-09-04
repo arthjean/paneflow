@@ -1197,6 +1197,8 @@ impl PaneFlowApp {
         {
             cx.notify();
         }
+
+        crate::theme::publish_theme_generation(cx);
     }
 
     fn reconcile_telemetry_consent(

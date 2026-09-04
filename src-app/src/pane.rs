@@ -6,8 +6,8 @@ use std::time::Duration;
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ClickEvent, Context, DragMoveEvent, Entity,
     EventEmitter, FocusHandle, Focusable, Hsla, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, Pixels, Point, Render, SharedString, Size, Styled, Window, deferred, div,
-    ease_out_quint, img, prelude::*, px, rgb, svg,
+    MouseDownEvent, Pixels, Point, Render, SharedString, Size, StyleRefinement, Styled, Window,
+    deferred, div, ease_out_quint, img, prelude::*, px, rgb, svg,
 };
 
 use crate::ui_primitives::squircle::{squircle_border, squircle_fill};
@@ -1235,11 +1235,15 @@ impl Focusable for Pane {
     }
 }
 
+fn cached_surface_style() -> StyleRefinement {
+    StyleRefinement::default().size_full()
+}
+
 impl Render for Pane {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let terminal_selected = matches!(self.surface, PaneSurface::Terminal(_));
         let body = match &self.surface {
-            PaneSurface::Terminal(t) => t.clone().into_any_element(),
+            PaneSurface::Terminal(t) => t.clone().cached(cached_surface_style()).into_any_element(),
             PaneSurface::Markdown(m) => m.clone().into_any_element(),
             PaneSurface::Diff(d) => d.clone().into_any_element(),
         };
