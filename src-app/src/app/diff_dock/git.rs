@@ -1,7 +1,9 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
+use super::code::save::FileStamp;
 use crate::diff::{
-    DiffSyntax, DisplayRow, FileDiff, FileRowCache, RowKind, SplitRow,
+    DiffOptions, DiffSyntax, DisplayRow, FileDiff, FileRowCache, RowKind, SplitRow,
     build_display_rows_with_caches, build_file_row_caches, build_split_rows_with_caches,
     compute_head_diff,
 };
@@ -20,17 +22,37 @@ pub(super) struct DiffDockBuilt {
     pub(super) row_caches: Vec<FileRowCache>,
     pub(super) theme_generation: u64,
     pub(super) fingerprint: u64,
+    pub(super) options: DiffOptions,
+    pub(super) toplevel: Option<PathBuf>,
+    pub(super) head_sha: Option<String>,
+    pub(super) stamps: HashMap<String, FileStamp>,
+}
+
+fn file_stamps(toplevel: &Path, files: &[FileDiff]) -> HashMap<String, FileStamp> {
+    files
+        .iter()
+        .filter(|file| file.change == crate::diff::FileChange::Modified && !file.is_binary)
+        .filter_map(|file| {
+            FileStamp::read(&toplevel.join(&file.path)).map(|stamp| (file.path.clone(), stamp))
+        })
+        .collect()
 }
 
 pub(super) fn build_diff_dock(
     cwd: &str,
     theme: crate::theme::TerminalTheme,
     theme_generation: u64,
+    options: DiffOptions,
 ) -> Result<DiffDockBuilt, String> {
-    let diff = compute_head_diff(Path::new(cwd));
+    let diff = compute_head_diff(Path::new(cwd), options);
     if let Some(e) = diff.error {
         return Err(e);
     }
+    let stamps = diff
+        .toplevel
+        .as_deref()
+        .map(|toplevel| file_stamps(toplevel, &diff.files))
+        .unwrap_or_default();
     let syntax = DiffSyntax::from_theme(&theme);
     let row_caches = build_file_row_caches(&diff.files, Some(&syntax));
     let (unified, _) = build_display_rows_with_caches(&diff.files, &row_caches);
@@ -88,6 +110,10 @@ pub(super) fn build_diff_dock(
         row_caches,
         theme_generation,
         fingerprint,
+        options,
+        toplevel: diff.toplevel,
+        head_sha: diff.head_sha,
+        stamps,
     })
 }
 

@@ -400,10 +400,7 @@ pub(super) fn render_diff_files_toolbar(
     ui: crate::theme::UiColors,
     cx: &mut Context<PaneFlowApp>,
 ) -> AnyElement {
-    let loaded = chrome
-        .data
-        .as_ref()
-        .filter(|d| !d.loading && d.error.is_none());
+    let loaded = chrome.data.as_ref().filter(|d| d.has_rows());
     let diff = ui.diff_colors();
 
     let mut row = div()
@@ -468,6 +465,38 @@ pub(super) fn render_pending_file_body(ui: crate::theme::UiColors) -> AnyElement
         false,
     )
     .into_any_element()
+}
+
+pub(super) fn render_diff_error_banner(error: &str, ui: crate::theme::UiColors) -> AnyElement {
+    div()
+        .flex_none()
+        .w_full()
+        .min_h(px(28.))
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(6.))
+        .px(px(10.))
+        .py(px(4.))
+        .border_b_1()
+        .border_color(ui.border)
+        .bg(with_alpha(ui.vc_deleted, 0.08))
+        .child(
+            svg()
+                .size(px(14.))
+                .flex_none()
+                .path("icons/triangle-alert.svg")
+                .text_color(ui.vc_deleted),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_size(px(12.))
+                .text_color(ui.text)
+                .child(SharedString::from(error.to_string())),
+        )
+        .into_any_element()
 }
 
 pub(super) fn diff_panel_centered(

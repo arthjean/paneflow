@@ -71,7 +71,7 @@ impl PaneFlowApp {
         self.diff_dock.picked = false;
         self.diff_dock.diff_tab_close_armed = None;
         self.diff_dock.diff_options_menu_open = false;
-        self.diff_dock.diff_layout_submenu_open = false;
+        self.diff_dock.diff_options_submenu = None;
         self.diff_dock.diff_new_tab_menu_open = false;
         self.diff_dock.diff_branch_menu = None;
 
@@ -163,6 +163,8 @@ impl PaneFlowApp {
                     } else {
                         this.end_diff_dock_resize(cx);
                     }
+                } else {
+                    this.update_diff_dock_hover(event.position, cx);
                 }
             }))
             .on_mouse_up(

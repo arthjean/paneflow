@@ -14,10 +14,16 @@ use crate::bench_harness::{
     refuse_debug_profile,
 };
 use crate::diff::{DiffSyntax, resolve_runs};
+use paneflow_textdiff::{ComparisonPolicy, HighlightPolicy, compare_lines_inner};
 
 use super::bench_corpus::{
     EDITOR_CORPUS_SEED, HIGHLIGHTED_RUST_BYTES, LARGE_RUST_BYTES, MINIFIED_JSON_CHARS,
-    RELOAD_RUST_BYTES, json_token_ranges, markdown_source, minified_json_line, rust_source,
+    RELOAD_RUST_BYTES, TEXTDIFF_DENSE_AFTER_SALT, TEXTDIFF_DENSE_BEFORE_SALT,
+    TEXTDIFF_DENSE_BLOCKS, TEXTDIFF_DENSE_WORDS_PER_LINE, TEXTDIFF_EDITED_BLOCK_LINES,
+    TEXTDIFF_EDITED_BLOCKS, TEXTDIFF_RUST_BYTES, TEXTDIFF_WORD_LINES, TEXTDIFF_WORD_SALT,
+    TEXTDIFF_WORDS_PER_LINE, change_one_word_per_line, dense_word_blocks, edit_line_blocks,
+    interleave_separators, json_token_ranges, markdown_source, minified_json_line, rust_source,
+    word_lines,
 };
 use super::cursor::CodeSelection;
 use super::document::CodeDocument;
@@ -38,6 +44,51 @@ struct Corpora {
     reload_rust: String,
     minified_json: String,
     markdown: String,
+    textdiff: TextdiffCorpora,
+}
+
+struct TextdiffCorpora {
+    rust: String,
+    rust_edited: String,
+    word_lines: String,
+    word_lines_edited: String,
+    dense_before: String,
+    dense_after: String,
+}
+
+impl TextdiffCorpora {
+    fn build() -> Self {
+        let rust = rust_source(TEXTDIFF_RUST_BYTES);
+        let rust_edited =
+            edit_line_blocks(&rust, TEXTDIFF_EDITED_BLOCKS, TEXTDIFF_EDITED_BLOCK_LINES);
+        let edited_lines = word_lines(
+            TEXTDIFF_WORD_LINES,
+            TEXTDIFF_WORDS_PER_LINE,
+            TEXTDIFF_WORD_SALT,
+        );
+        let word_lines = interleave_separators(&edited_lines);
+        let word_lines_edited = interleave_separators(&change_one_word_per_line(&edited_lines));
+        let dense_before = dense_word_blocks(
+            TEXTDIFF_WORD_LINES,
+            TEXTDIFF_DENSE_WORDS_PER_LINE,
+            TEXTDIFF_DENSE_BLOCKS,
+            TEXTDIFF_DENSE_BEFORE_SALT,
+        );
+        let dense_after = dense_word_blocks(
+            TEXTDIFF_WORD_LINES,
+            TEXTDIFF_DENSE_WORDS_PER_LINE,
+            TEXTDIFF_DENSE_BLOCKS,
+            TEXTDIFF_DENSE_AFTER_SALT,
+        );
+        Self {
+            rust,
+            rust_edited,
+            word_lines,
+            word_lines_edited,
+            dense_before,
+            dense_after,
+        }
+    }
 }
 
 impl Corpora {
@@ -48,6 +99,7 @@ impl Corpora {
             reload_rust: rust_source(RELOAD_RUST_BYTES),
             minified_json: minified_json_line(MINIFIED_JSON_CHARS),
             markdown: markdown_source(64_000),
+            textdiff: TextdiffCorpora::build(),
         }
     }
 }
@@ -83,7 +135,9 @@ fn apply_ui_edit(
     };
     let mut deferred = None;
     for change in &applied.edits {
-        if let HighlightOutcome::Deferred(parse) = timer.time(|| highlighter.edit(doc, change)) {
+        if let HighlightOutcome::Deferred(parse) =
+            timer.time(|| highlighter.edit(doc, &change.edit))
+        {
             deferred = Some(parse);
         }
     }
@@ -444,7 +498,7 @@ fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
                 continue;
             };
             for change in &applied.edits {
-                if let HighlightOutcome::Deferred(parse) = highlighter.edit(&doc, change) {
+                if let HighlightOutcome::Deferred(parse) = highlighter.edit(&doc, &change.edit) {
                     let parsed = parse.run();
                     highlighter.apply_parsed(&doc, parsed);
                 }
@@ -469,6 +523,52 @@ fn reload_scenario(metrics: &mut Vec<Metric>, corpora: &Corpora) {
     std::hint::black_box((doc, highlighter, history));
 }
 
+fn textdiff_scenarios(metrics: &mut Vec<Metric>, corpora: &Corpora) {
+    let corpora = &corpora.textdiff;
+    metrics.push(measure(
+        "textdiff_300kb_50_blocks",
+        "compare_lines_inner with word highlighting over 300 KB of Rust against a copy with 50 rewritten 10-line blocks",
+        2,
+        20,
+        || {
+            std::hint::black_box(compare_lines_inner(
+                &corpora.rust,
+                &corpora.rust_edited,
+                ComparisonPolicy::Default,
+                HighlightPolicy::Words,
+            ));
+        },
+    ));
+    metrics.push(measure(
+        "textdiff_5k_lines_one_word_each",
+        "compare_lines_inner with word highlighting over 5 000 edited lines, each with one word changed and separated from the next by an identical line, so the word pass runs once per edited line",
+        2,
+        10,
+        || {
+            std::hint::black_box(compare_lines_inner(
+                &corpora.word_lines,
+                &corpora.word_lines_edited,
+                ComparisonPolicy::Default,
+                HighlightPolicy::Words,
+            ));
+        },
+    ));
+    metrics.push(measure(
+        "textdiff_5k_lines_all_different",
+        "compare_lines_inner over 5 000 all-different dense lines in four blocks: the first three blocks exceed the fine comparison threshold and trip the bad-lines guard",
+        2,
+        20,
+        || {
+            std::hint::black_box(compare_lines_inner(
+                &corpora.dense_before,
+                &corpora.dense_after,
+                ComparisonPolicy::Default,
+                HighlightPolicy::Words,
+            ));
+        },
+    ));
+}
+
 #[test]
 #[ignore = "editor performance benchmark: run through scripts/bench-editor"]
 fn editor_pipeline_benchmark() {
@@ -487,6 +587,7 @@ fn editor_pipeline_benchmark() {
     resolve_runs_scenario(&mut metrics, &corpora);
     document_scenarios(&mut metrics, &corpora);
     theme_scenario(&mut metrics, &corpora);
+    textdiff_scenarios(&mut metrics, &corpora);
     let cpu_share = (process_cpu_time() - cpu_before).as_secs_f64()
         / timed_started.elapsed().as_secs_f64().max(f64::EPSILON);
     println!("PANEFLOW_BENCH_NOTE cpu share over the timed scenarios: {cpu_share:.2}");
@@ -539,6 +640,53 @@ mod tests {
             doc.line_count(),
             2,
             "the json corpus is one line plus its terminator"
+        );
+    }
+
+    #[test]
+    fn the_textdiff_corpora_reach_the_paths_the_bench_claims() {
+        let corpora = TextdiffCorpora::build();
+        let fragments = compare_lines_inner(
+            &corpora.rust,
+            &corpora.rust_edited,
+            ComparisonPolicy::Default,
+            HighlightPolicy::Words,
+        );
+        assert_eq!(fragments.len(), TEXTDIFF_EDITED_BLOCKS);
+        assert!(
+            fragments.iter().all(|fragment| fragment.inner.is_some()),
+            "every rewritten block gets word highlighting"
+        );
+
+        let fragments = compare_lines_inner(
+            &corpora.word_lines,
+            &corpora.word_lines_edited,
+            ComparisonPolicy::Default,
+            HighlightPolicy::Words,
+        );
+        assert_eq!(
+            fragments.len(),
+            TEXTDIFF_WORD_LINES,
+            "one block per edited line"
+        );
+        assert!(
+            fragments.iter().all(|fragment| fragment
+                .inner
+                .as_ref()
+                .is_some_and(|inner| inner.len() == 1)),
+            "one inner fragment per edited line"
+        );
+
+        let fragments = compare_lines_inner(
+            &corpora.dense_before,
+            &corpora.dense_after,
+            ComparisonPolicy::Default,
+            HighlightPolicy::Words,
+        );
+        assert_eq!(fragments.len(), TEXTDIFF_DENSE_BLOCKS);
+        assert!(
+            fragments.iter().all(|fragment| fragment.inner.is_none()),
+            "three too-big blocks trip the guard and the fourth is skipped"
         );
     }
 

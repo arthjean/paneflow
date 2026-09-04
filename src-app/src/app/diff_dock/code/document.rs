@@ -130,6 +130,10 @@ impl CodeDocument {
         self.text.len_lines()
     }
 
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub(crate) fn read_only_reason(&self) -> Option<ReadOnlyReason> {
         self.read_only
     }

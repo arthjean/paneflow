@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::engine::{DiffHunk, compute_hunks};
+use super::engine::{DiffHunk, DiffOptions, compute_hunk_report};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Worktree {
@@ -50,6 +50,8 @@ impl FileDiff {
 pub struct WorktreeDiff {
     pub files: Vec<FileDiff>,
     pub error: Option<String>,
+    pub toplevel: Option<PathBuf>,
+    pub head_sha: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -312,17 +314,48 @@ pub fn list_base_ref_candidates(worktree_dir: &Path) -> Vec<String> {
     names
 }
 
-fn worktree_toplevel(dir: &Path) -> PathBuf {
+pub(crate) fn worktree_toplevel(dir: &Path) -> PathBuf {
+    try_worktree_toplevel(dir)
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| dir.to_path_buf())
+}
+
+pub(crate) fn try_worktree_toplevel(dir: &Path) -> Result<Option<PathBuf>, String> {
     match run_git(dir, &["rev-parse", "--show-toplevel"]) {
         Ok(out) => {
             let s = String::from_utf8_lossy(&out).trim().to_string();
-            if s.is_empty() {
-                dir.to_path_buf()
-            } else {
-                PathBuf::from(s)
-            }
+            Ok((!s.is_empty()).then(|| PathBuf::from(s)))
         }
-        Err(_) => dir.to_path_buf(),
+        Err(err) if err.contains("not a git repository") => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+pub(crate) fn head_sha(worktree_dir: &Path) -> Option<String> {
+    run_git(worktree_dir, &["rev-parse", "--verify", "HEAD"])
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+        .filter(|sha| !sha.is_empty())
+}
+
+pub(crate) enum HeadFile {
+    Content(Vec<u8>),
+    Missing,
+}
+
+pub(crate) fn show_head_file(worktree_dir: &Path, rel_path: &str) -> Result<HeadFile, String> {
+    let spec = format!("HEAD:{rel_path}");
+    match run_git(worktree_dir, &["show", &spec]) {
+        Ok(bytes) => Ok(HeadFile::Content(bytes)),
+        Err(show_err) => match base_path_exists(worktree_dir, "HEAD", rel_path) {
+            Ok(false) => Ok(HeadFile::Missing),
+            Ok(true) => Err(show_err),
+            Err(exists_err) if exists_err.contains("Needed a single revision") => {
+                Ok(HeadFile::Missing)
+            }
+            Err(exists_err) => Err(format!("{show_err}; {exists_err}")),
+        },
     }
 }
 
@@ -365,7 +398,7 @@ fn normalize_git_text(text: String) -> String {
     }
 }
 
-fn classify(bytes: Vec<u8>) -> (String, bool) {
+pub(crate) fn classify(bytes: Vec<u8>) -> (String, bool) {
     if bytes.contains(&0) {
         return (String::new(), true);
     }
@@ -530,7 +563,7 @@ fn parse_numstat_count(raw: &[u8]) -> u32 {
         .unwrap_or(0)
 }
 
-const MAX_FILE_BYTES: u64 = 512 * 1024;
+pub(crate) const MAX_FILE_BYTES: u64 = 512 * 1024;
 
 const MAX_FILE_COUNT: usize = 200;
 
@@ -584,12 +617,13 @@ pub fn compute_worktree_diff(worktree_dir: &Path, base_ref: &str) -> WorktreeDif
             return WorktreeDiff {
                 files: Vec::new(),
                 error: Some(e),
+                ..Default::default()
             };
         }
     };
     log::debug!("git: merge_base={merge_base}");
 
-    compute_diff_against(worktree_dir, &merge_base)
+    compute_diff_against(worktree_dir, &merge_base, DiffOptions::default())
 }
 
 pub fn compute_worktree_file_stats(
@@ -606,18 +640,22 @@ pub fn compute_worktree_file_stats(
 
 const EMPTY_TREE_SHA: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-pub fn compute_head_diff(worktree_dir: &Path) -> WorktreeDiff {
+pub fn compute_head_diff(worktree_dir: &Path, options: DiffOptions) -> WorktreeDiff {
     let toplevel = worktree_toplevel(worktree_dir);
     let worktree_dir = toplevel.as_path();
     log::debug!("git: compute_head_diff dir={}", worktree_dir.display());
-    let base = match run_git(worktree_dir, &["rev-parse", "--verify", "HEAD"]) {
-        Ok(out) => String::from_utf8_lossy(&out).trim().to_string(),
-        Err(_) => EMPTY_TREE_SHA.to_string(),
-    };
-    compute_diff_against(worktree_dir, &base)
+    let head = run_git(worktree_dir, &["rev-parse", "--verify", "HEAD"])
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out).trim().to_string())
+        .filter(|sha| !sha.is_empty());
+    let base = head.clone().unwrap_or_else(|| EMPTY_TREE_SHA.to_string());
+    let mut diff = compute_diff_against(worktree_dir, &base, options);
+    diff.toplevel = Some(toplevel);
+    diff.head_sha = head;
+    diff
 }
 
-fn compute_diff_against(worktree_dir: &Path, base: &str) -> WorktreeDiff {
+fn compute_diff_against(worktree_dir: &Path, base: &str, options: DiffOptions) -> WorktreeDiff {
     let name_status = match run_git(
         worktree_dir,
         &["diff", "--name-status", "-M", "-z", "--no-color", base],
@@ -628,6 +666,7 @@ fn compute_diff_against(worktree_dir: &Path, base: &str) -> WorktreeDiff {
             return WorktreeDiff {
                 files: Vec::new(),
                 error: Some(e),
+                ..Default::default()
             };
         }
     };
@@ -653,7 +692,7 @@ fn compute_diff_against(worktree_dir: &Path, base: &str) -> WorktreeDiff {
             break;
         }
         if is_skipped_name(&path) || is_too_large(worktree_dir, &path) {
-            log::debug!("git: skip (lockfile/large) {path}");
+            log::warn!("diff: {path}: skipped (lockfile or too large), no inline change runs");
             files.push(stub_file(path, change));
             continue;
         }
@@ -677,9 +716,17 @@ fn compute_diff_against(worktree_dir: &Path, base: &str) -> WorktreeDiff {
         }
         let is_binary = base_bin || new_bin;
         let hunks = if is_binary {
+            log::warn!("diff: {path}: binary content, no inline change runs");
             Vec::new()
         } else {
-            compute_hunks(&base_text, &new_text)
+            let report = compute_hunk_report(&base_text, &new_text, options);
+            if report.too_big_blocks > 0 {
+                log::warn!(
+                    "diff: {path}: {} block(s) too big for word diff, line hunks only",
+                    report.too_big_blocks
+                );
+            }
+            report.hunks
         };
         files.push(FileDiff {
             path,
@@ -699,7 +746,11 @@ fn compute_diff_against(worktree_dir: &Path, base: &str) -> WorktreeDiff {
         ));
     }
 
-    WorktreeDiff { files, error: None }
+    WorktreeDiff {
+        files,
+        error: None,
+        ..Default::default()
+    }
 }
 
 fn compute_file_stats_against(worktree_dir: &Path, base: &str) -> HashMap<String, FileDiffStat> {
@@ -957,25 +1008,13 @@ mod tests {
 
     #[test]
     fn line_counts_sums_hunks() {
-        use super::super::engine::DiffHunkStatus;
         let fd = FileDiff {
             path: "x".into(),
             change: FileChange::Modified,
             old_path: None,
             base_text: String::new(),
             new_text: String::new(),
-            hunks: vec![
-                DiffHunk {
-                    base_row_range: 0..1,
-                    new_row_range: 0..2,
-                    status: DiffHunkStatus::Modified,
-                },
-                DiffHunk {
-                    base_row_range: 5..5,
-                    new_row_range: 9..12,
-                    status: DiffHunkStatus::Added,
-                },
-            ],
+            hunks: vec![DiffHunk::plain(0..1, 0..2), DiffHunk::plain(5..5, 9..12)],
             is_binary: false,
         };
         assert_eq!(fd.line_counts(), (5, 1));

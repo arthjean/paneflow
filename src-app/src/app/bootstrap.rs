@@ -816,7 +816,8 @@ impl PaneFlowApp {
                 generation: 0,
                 scroll: gpui::ScrollHandle::new(),
                 diff_options_menu_open: false,
-                diff_layout_submenu_open: false,
+                diff_options_submenu: None,
+                diff_options: crate::diff::DiffOptions::default(),
                 diff_new_tab_menu_open: false,
                 picker: false,
                 picked: false,
@@ -830,6 +831,7 @@ impl PaneFlowApp {
                 resize: None,
                 h_scroll_drag: None,
                 h_offsets: std::rc::Rc::new(Vec::new()),
+                hover: None,
             },
             sidebar_order_cache: std::cell::RefCell::new(Default::default()),
         };

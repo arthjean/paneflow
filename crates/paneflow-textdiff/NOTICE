@@ -1,0 +1,18 @@
+paneflow-textdiff
+Copyright (C) 2026 Arthur Jean
+
+This crate is distributed under the GNU General Public License, version 3 or
+later, like the rest of Paneflow. See the LICENSE file at the repository root.
+
+Portions derived from the IntelliJ Platform, Copyright JetBrains s.r.o. and
+contributors, Apache License 2.0.
+
+The comparison pipeline (line matching with unimportant-line correction, chunk
+boundary optimization, two-step whitespace correction, word tokenization, line
+fragment splitting, punctuation matching and whitespace correctors), the
+Unicode script tables, and the fixtures under src/oracle/ are ports of the
+`com.intellij.diff.comparison` package of the IntelliJ Platform
+(platform/util/diff, platform/diff-impl) at commit 54f3cb1af482.
+
+The Apache License 2.0 text is available at
+https://www.apache.org/licenses/LICENSE-2.0

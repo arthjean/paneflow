@@ -10,6 +10,28 @@ pub(crate) const RELOAD_RUST_BYTES: usize = 2_000_000;
 
 pub(crate) const MINIFIED_JSON_CHARS: usize = 10_000;
 
+pub(crate) const TEXTDIFF_RUST_BYTES: usize = 300_000;
+
+pub(crate) const TEXTDIFF_EDITED_BLOCKS: usize = 50;
+
+pub(crate) const TEXTDIFF_EDITED_BLOCK_LINES: usize = 10;
+
+pub(crate) const TEXTDIFF_WORD_LINES: usize = 5_000;
+
+pub(crate) const TEXTDIFF_WORDS_PER_LINE: usize = 8;
+
+pub(crate) const TEXTDIFF_DENSE_WORDS_PER_LINE: usize = 16;
+
+pub(crate) const TEXTDIFF_DENSE_BLOCKS: usize = 4;
+
+pub(crate) const TEXTDIFF_SEPARATOR: &str = "fn separator() {}";
+
+pub(crate) const TEXTDIFF_WORD_SALT: u64 = 0x1000;
+
+pub(crate) const TEXTDIFF_DENSE_BEFORE_SALT: u64 = 0x2000;
+
+pub(crate) const TEXTDIFF_DENSE_AFTER_SALT: u64 = 0x3000;
+
 struct Lcg(u64);
 
 impl Lcg {
@@ -177,6 +199,111 @@ pub(crate) fn rust_source(target_bytes: usize) -> String {
     truncate_at_line(out, target_bytes)
 }
 
+pub(crate) fn edit_line_blocks(text: &str, blocks: usize, lines_per_block: usize) -> String {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let stride = lines
+        .len()
+        .checked_div(blocks)
+        .unwrap_or(0)
+        .max(lines_per_block);
+    let mut out = String::with_capacity(text.len() + blocks * lines_per_block * 16);
+    for (row, line) in lines.iter().enumerate() {
+        if row > 0 {
+            out.push('\n');
+        }
+        let block = row / stride;
+        let offset = row % stride;
+        if block < blocks && offset < lines_per_block {
+            out.push_str(&format!("    let edited_{row} = {row};"));
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+fn word(rng: &mut Lcg) -> String {
+    format!("{}{}", NAMES[rng.pick(NAMES.len())], rng.pick(1_000))
+}
+
+pub(crate) fn word_lines(lines: usize, words_per_line: usize, salt: u64) -> String {
+    let mut rng = Lcg::new(EDITOR_CORPUS_SEED ^ salt);
+    let mut out = String::with_capacity(lines * words_per_line * 10);
+    for _ in 0..lines {
+        for index in 0..words_per_line {
+            if index > 0 {
+                out.push(' ');
+            }
+            out.push_str(&word(&mut rng));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+pub(crate) fn change_one_word_per_line(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 64);
+    for (row, line) in text.split('\n').enumerate() {
+        if row > 0 {
+            out.push('\n');
+        }
+        let words: Vec<&str> = line.split(' ').collect();
+        if line.is_empty() {
+            continue;
+        }
+        let target = row % words.len();
+        for (index, word) in words.iter().enumerate() {
+            if index > 0 {
+                out.push(' ');
+            }
+            if index == target {
+                out.push_str("edited");
+            } else {
+                out.push_str(word);
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn interleave_separators(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 2);
+    for line in text.lines() {
+        out.push_str(line);
+        out.push('\n');
+        out.push_str(TEXTDIFF_SEPARATOR);
+        out.push('\n');
+    }
+    out
+}
+
+pub(crate) fn dense_word_blocks(
+    lines: usize,
+    words_per_line: usize,
+    blocks: usize,
+    salt: u64,
+) -> String {
+    let mut rng = Lcg::new(EDITOR_CORPUS_SEED ^ salt);
+    let block_lines = lines.checked_div(blocks).unwrap_or(lines);
+    let mut out = String::with_capacity(lines * words_per_line * 10);
+    for block in 0..blocks {
+        if block > 0 {
+            out.push_str(TEXTDIFF_SEPARATOR);
+            out.push('\n');
+        }
+        for _ in 0..block_lines {
+            for index in 0..words_per_line {
+                if index > 0 {
+                    out.push(' ');
+                }
+                out.push_str(&word(&mut rng));
+            }
+            out.push('\n');
+        }
+    }
+    out
+}
+
 pub(crate) fn markdown_source(target_bytes: usize) -> String {
     let mut rng = Lcg::new(EDITOR_CORPUS_SEED ^ 0x00ff);
     let mut out = String::with_capacity(target_bytes + 4_096);
@@ -279,6 +406,82 @@ mod tests {
         assert_eq!(json, minified_json_line(MINIFIED_JSON_CHARS));
         assert_eq!(json.lines().count(), 1, "the json corpus is a single line");
         assert_eq!(json.trim_end().len(), MINIFIED_JSON_CHARS);
+    }
+
+    #[test]
+    fn the_textdiff_corpora_have_the_shape_the_bench_claims() {
+        let base = rust_source(TEXTDIFF_RUST_BYTES);
+        let edited = edit_line_blocks(&base, TEXTDIFF_EDITED_BLOCKS, TEXTDIFF_EDITED_BLOCK_LINES);
+        let changed_lines = base
+            .split('\n')
+            .zip(edited.split('\n'))
+            .filter(|(before, after)| before != after)
+            .count();
+        assert_eq!(
+            changed_lines,
+            TEXTDIFF_EDITED_BLOCKS * TEXTDIFF_EDITED_BLOCK_LINES,
+            "every edited block rewrites exactly its lines"
+        );
+        assert_eq!(base.split('\n').count(), edited.split('\n').count());
+
+        let words = word_lines(
+            TEXTDIFF_WORD_LINES,
+            TEXTDIFF_WORDS_PER_LINE,
+            TEXTDIFF_WORD_SALT,
+        );
+        let one_word = change_one_word_per_line(&words);
+        assert_eq!(words.split('\n').count(), TEXTDIFF_WORD_LINES + 1);
+        for (before, after) in words.lines().zip(one_word.lines()) {
+            let differing = before
+                .split(' ')
+                .zip(after.split(' '))
+                .filter(|(left, right)| left != right)
+                .count();
+            assert_eq!(differing, 1, "exactly one word per line changes");
+        }
+        let interleaved = interleave_separators(&words);
+        assert_eq!(interleaved.lines().count(), TEXTDIFF_WORD_LINES * 2);
+        assert!(
+            interleaved
+                .lines()
+                .skip(1)
+                .step_by(2)
+                .all(|line| line == TEXTDIFF_SEPARATOR),
+            "every other line is the separator"
+        );
+
+        let dense = dense_word_blocks(
+            TEXTDIFF_WORD_LINES,
+            TEXTDIFF_DENSE_WORDS_PER_LINE,
+            TEXTDIFF_DENSE_BLOCKS,
+            TEXTDIFF_DENSE_BEFORE_SALT,
+        );
+        let separators = dense
+            .lines()
+            .filter(|line| *line == TEXTDIFF_SEPARATOR)
+            .count();
+        assert_eq!(separators, TEXTDIFF_DENSE_BLOCKS - 1);
+        let block_chunks =
+            (TEXTDIFF_WORD_LINES / TEXTDIFF_DENSE_BLOCKS) * (TEXTDIFF_DENSE_WORDS_PER_LINE + 1);
+        assert!(
+            block_chunks > 20_000,
+            "each dense block must exceed the fine comparison threshold, got {block_chunks}"
+        );
+        let other = dense_word_blocks(
+            TEXTDIFF_WORD_LINES,
+            TEXTDIFF_DENSE_WORDS_PER_LINE,
+            TEXTDIFF_DENSE_BLOCKS,
+            TEXTDIFF_DENSE_AFTER_SALT,
+        );
+        let equal_lines = dense
+            .lines()
+            .zip(other.lines())
+            .filter(|(before, after)| before == after)
+            .count();
+        assert_eq!(
+            equal_lines, separators,
+            "only the separators stay identical"
+        );
     }
 
     #[test]

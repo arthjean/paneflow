@@ -3,9 +3,9 @@ use std::collections::VecDeque;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 
-use imara_diff::intern::InternedInput;
-use imara_diff::sources::lines_with_terminator;
-use imara_diff::{Algorithm, Sink};
+use imara_diff::InternedInput;
+use imara_diff::sources::lines;
+use imara_diff::{Algorithm, Diff};
 
 use super::cursor::CodeSelection;
 use super::document::{CodeDocument, CodeEdit, normalize_newlines};
@@ -39,8 +39,61 @@ impl AppliedEdit {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TrackerWindow {
+    pub(crate) start_line: u32,
+    pub(crate) before_len: u32,
+    pub(crate) after_len: u32,
+}
+
+pub(crate) struct DocChange {
+    pub(crate) edit: CodeEdit,
+    pub(crate) window: TrackerWindow,
+}
+
+pub(crate) fn tracker_window(doc: &CodeDocument, edit: &CodeEdit, fragment: &str) -> TrackerWindow {
+    let line1 = edit.start_point.row;
+    let old_len = edit.old_end_byte - edit.start_byte;
+    let new_len = edit.new_end_byte - edit.start_byte;
+    let line2 = if old_len == 0 {
+        line1 + 1
+    } else {
+        edit.old_end_point.row + 1
+    };
+    let new_line2 = if new_len == 0 {
+        line1 + 1
+    } else {
+        edit.new_end_point.row + 1
+    };
+    let mut start_line = line1;
+    let mut before_len = line2 - line1;
+    let mut after_len = new_line2 - line1;
+    let whole_lines = (old_len == 0) != (new_len == 0);
+    if whole_lines && fragment.ends_with('\n') && newline_before(doc, edit.start_byte) {
+        before_len = before_len.saturating_sub(1);
+        after_len = after_len.saturating_sub(1);
+    } else if whole_lines && fragment.starts_with('\n') && newline_after(doc, edit.new_end_byte) {
+        start_line += 1;
+        before_len = before_len.saturating_sub(1);
+        after_len = after_len.saturating_sub(1);
+    }
+    TrackerWindow {
+        start_line: start_line as u32,
+        before_len: before_len as u32,
+        after_len: after_len as u32,
+    }
+}
+
+fn newline_before(doc: &CodeDocument, offset: usize) -> bool {
+    offset == 0 || doc.text().byte(offset - 1) == b'\n'
+}
+
+fn newline_after(doc: &CodeDocument, offset: usize) -> bool {
+    offset >= doc.len_bytes() || doc.text().byte(offset) == b'\n'
+}
+
 pub(crate) struct Splice {
-    pub(crate) edits: Vec<CodeEdit>,
+    pub(crate) edits: Vec<DocChange>,
     pub(crate) record: AppliedEdit,
 }
 
@@ -55,17 +108,7 @@ pub(crate) fn splice(doc: &mut CodeDocument, range: Range<usize>, text: &str) ->
     if removed.is_empty() && inserted.is_empty() {
         return None;
     }
-    let mut edits = Vec::with_capacity(2);
-    if end > start
-        && let Some(edit) = doc.remove(start..end)
-    {
-        edits.push(edit);
-    }
-    if !inserted.is_empty()
-        && let Some(edit) = doc.insert(start, &inserted)
-    {
-        edits.push(edit);
-    }
+    let edits = raw_splice(doc, start..end, &removed, &inserted);
     Some(Splice {
         edits,
         record: AppliedEdit {
@@ -76,31 +119,14 @@ pub(crate) fn splice(doc: &mut CodeDocument, range: Range<usize>, text: &str) ->
     })
 }
 
-#[derive(Default)]
-struct DiskHunkCollector {
-    hunks: Vec<(Range<u32>, Range<u32>)>,
-}
-
-impl Sink for DiskHunkCollector {
-    type Out = Vec<(Range<u32>, Range<u32>)>;
-
-    fn process_change(&mut self, before: Range<u32>, after: Range<u32>) {
-        self.hunks.push((before, after));
-    }
-
-    fn finish(self) -> Self::Out {
-        self.hunks
-    }
-}
-
 pub(crate) fn disk_splices(current: &str, incoming: &str) -> Vec<(Range<usize>, String)> {
     let incoming = normalize_newlines(incoming);
     if current == incoming {
         return Vec::new();
     }
 
-    let current_lines: Vec<&str> = lines_with_terminator(current).collect();
-    let incoming_lines: Vec<&str> = lines_with_terminator(&incoming).collect();
+    let current_lines: Vec<&str> = lines(current).collect();
+    let incoming_lines: Vec<&str> = lines(&incoming).collect();
     let mut prefix = 0usize;
     while prefix < current_lines.len()
         && prefix < incoming_lines.len()
@@ -140,13 +166,12 @@ pub(crate) fn disk_splices(current: &str, incoming: &str) -> Vec<(Range<usize>, 
     let incoming_middle = &incoming[incoming_start..incoming_end];
     let current_offsets = line_offsets(current_middle);
     let incoming_offsets = line_offsets(incoming_middle);
-    let input = InternedInput::new(
-        lines_with_terminator(current_middle),
-        lines_with_terminator(incoming_middle),
-    );
-    let hunks = imara_diff::diff(Algorithm::Histogram, &input, DiskHunkCollector::default());
-    let mut splices = Vec::with_capacity(hunks.len());
-    for (before, after) in hunks {
+    let input = InternedInput::new(current_middle, incoming_middle);
+    let diff = Diff::compute(Algorithm::Histogram, &input);
+    let mut splices = Vec::new();
+    for hunk in diff.hunks() {
+        let before = hunk.before;
+        let after = hunk.after;
         let before_start = current_start + current_offsets[before.start as usize];
         let before_end = current_start + current_offsets[before.end as usize];
         let after_start = incoming_offsets[after.start as usize];
@@ -174,7 +199,7 @@ fn line_offsets(text: &str) -> Vec<usize> {
     let mut offsets = Vec::new();
     offsets.push(0);
     let mut total = 0usize;
-    for line in lines_with_terminator(text) {
+    for line in lines(text) {
         total += line.len();
         offsets.push(total);
     }
@@ -203,25 +228,42 @@ fn shift_offset_for_splices(offset: usize, splices_descending: &[(Range<usize>, 
     (offset as isize + delta).max(0) as usize
 }
 
-fn apply_forward(doc: &mut CodeDocument, record: &AppliedEdit) -> Vec<CodeEdit> {
-    raw_splice(doc, record.removed_range(), &record.inserted)
+fn apply_forward(doc: &mut CodeDocument, record: &AppliedEdit) -> Vec<DocChange> {
+    raw_splice(
+        doc,
+        record.removed_range(),
+        &record.removed,
+        &record.inserted,
+    )
 }
 
-fn apply_reverse(doc: &mut CodeDocument, record: &AppliedEdit) -> Vec<CodeEdit> {
-    raw_splice(doc, record.inserted_range(), &record.removed)
+fn apply_reverse(doc: &mut CodeDocument, record: &AppliedEdit) -> Vec<DocChange> {
+    raw_splice(
+        doc,
+        record.inserted_range(),
+        &record.inserted,
+        &record.removed,
+    )
 }
 
-fn raw_splice(doc: &mut CodeDocument, range: Range<usize>, text: &str) -> Vec<CodeEdit> {
+fn raw_splice(
+    doc: &mut CodeDocument,
+    range: Range<usize>,
+    removed: &str,
+    inserted: &str,
+) -> Vec<DocChange> {
     let mut edits = Vec::with_capacity(2);
     if range.end > range.start
         && let Some(edit) = doc.remove(range.clone())
     {
-        edits.push(edit);
+        let window = tracker_window(doc, &edit, removed);
+        edits.push(DocChange { edit, window });
     }
-    if !text.is_empty()
-        && let Some(edit) = doc.insert(range.start, text)
+    if !inserted.is_empty()
+        && let Some(edit) = doc.insert(range.start, inserted)
     {
-        edits.push(edit);
+        let window = tracker_window(doc, &edit, inserted);
+        edits.push(DocChange { edit, window });
     }
     edits
 }
@@ -256,7 +298,7 @@ impl Transaction {
 }
 
 pub(crate) struct HistoryStep {
-    pub(crate) edits: Vec<CodeEdit>,
+    pub(crate) edits: Vec<DocChange>,
     pub(crate) selection: CodeSelection,
 }
 
@@ -573,6 +615,78 @@ mod tests {
         assert_eq!(d.text().to_string(), "hello there");
     }
 
+    fn windows(doc: &mut CodeDocument, range: Range<usize>, text: &str) -> Vec<TrackerWindow> {
+        splice(doc, range, text)
+            .expect("splice applies")
+            .edits
+            .iter()
+            .map(|change| change.window)
+            .collect()
+    }
+
+    fn window(start_line: u32, before_len: u32, after_len: u32) -> TrackerWindow {
+        TrackerWindow {
+            start_line,
+            before_len,
+            after_len,
+        }
+    }
+
+    #[test]
+    fn a_keystroke_inside_a_line_touches_that_line_only() {
+        let mut d = doc("one\ntwo\nthree\n");
+        assert_eq!(windows(&mut d, 5..5, "X"), vec![window(1, 1, 1)]);
+        assert_eq!(windows(&mut d, 5..6, ""), vec![window(1, 1, 1)]);
+        assert_eq!(
+            windows(&mut d, 4..7, "TWO"),
+            vec![window(1, 1, 1), window(1, 1, 1)]
+        );
+    }
+
+    #[test]
+    fn whole_line_insertions_and_deletions_do_not_touch_their_neighbors() {
+        let mut d = doc("one\ntwo\nthree\n");
+        assert_eq!(
+            windows(&mut d, 4..4, "inserted\n"),
+            vec![window(1, 0, 1)],
+            "a line pasted at a line start is a pure insertion before `two`"
+        );
+        assert_eq!(
+            windows(&mut d, 4..13, ""),
+            vec![window(1, 1, 0)],
+            "removing `inserted\\n` is a pure deletion"
+        );
+        assert_eq!(
+            windows(&mut d, 3..3, "\nappended"),
+            vec![window(1, 0, 1)],
+            "a newline then text at a line end inserts after `one`"
+        );
+        assert_eq!(d.line_string(1).as_deref(), Some("appended"));
+        assert_eq!(
+            windows(&mut d, 3..12, ""),
+            vec![window(1, 1, 0)],
+            "removing `\\nappended` deletes the line after `one`"
+        );
+        assert_eq!(d.to_disk_string(), "one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn a_multi_line_replacement_spans_every_touched_line() {
+        let mut d = doc("a\nb\nc\nd\n");
+        assert_eq!(
+            windows(&mut d, 2..5, "X\nY\nZ"),
+            vec![window(1, 2, 1), window(1, 1, 3)]
+        );
+        assert_eq!(d.to_disk_string(), "a\nX\nY\nZ\nd\n");
+        let mut d = doc("a\nb\n");
+        assert_eq!(
+            windows(&mut d, 0..4, ""),
+            vec![window(0, 2, 0)],
+            "deleting every terminated line leaves the empty last line untouched"
+        );
+        assert_eq!(d.line_count(), 1);
+    }
+
     #[test]
     fn a_read_only_document_refuses_a_splice() {
         let mut d = doc("locked");
@@ -693,9 +807,7 @@ mod tests {
         let current = (0..9_000)
             .map(|row| format!("line {row:04}\n"))
             .collect::<String>();
-        let mut incoming_lines = lines_with_terminator(&current)
-            .map(str::to_string)
-            .collect::<Vec<_>>();
+        let mut incoming_lines = lines(&current).map(str::to_string).collect::<Vec<_>>();
         for (row, line) in incoming_lines
             .iter_mut()
             .enumerate()
@@ -708,7 +820,7 @@ mod tests {
         let ops = disk_splices(&current, &incoming);
         assert_eq!(ops.len(), 1);
         let changed = &current[ops[0].0.clone()];
-        assert_eq!(lines_with_terminator(changed).count(), 10);
+        assert_eq!(lines(changed).count(), 10);
 
         let caret = current.find("line 8000").expect("caret line") + 5;
         let shifted = shift_selection_for_splices(CodeSelection::at(caret), &ops);

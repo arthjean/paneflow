@@ -143,9 +143,12 @@ pulldown-cmark = { version = "0.10", default-features = false }
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 ureq.workspace = true
 # Multi-worktree diff engine (prd-multi-worktree-diff-2026-Q3.md, EP-002).
-# Histogram line-diff lifted from Zed's `buffer_diff::compute_hunks`; pinned to
-# the same 0.1.8 Zed uses so the ported algorithm matches the reference API.
-imara-diff = "0.1.8"
+# Histogram line-diff lifted from Zed's `buffer_diff::compute_hunks`, on the
+# same imara-diff 0.2 line as the IntelliJ comparison pipeline in
+# `paneflow-textdiff` (prd-diff-dock-intellij.md, EP-012), so `cargo tree`
+# resolves a single version.
+imara-diff = { version = "0.2", default-features = false }
+paneflow-textdiff.workspace = true
 
 # Diff syntax highlighting (prd-diff-syntax-highlight-2026-Q3.md). Tree-sitter,
 # the same engine Zed uses - fast enough (ms-scale parse) that we highlight at

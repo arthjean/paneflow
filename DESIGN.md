@@ -215,6 +215,7 @@ inside `theme/builtin.rs`.
 | `tool_card_header_bg` | Reserved; no surface consumes it today | `#2e2e2e` | `#f1f1f1` |
 | `vc_added`, `vc_modified`, `vc_deleted`, `vc_conflict` | Diffstat, status letters, change bars, attention border | `#57d992`, `#ffd166`, `#ff6f6a`, `#ffa657` | `#40a02b`, `#df8e1d`, `#d20f39`, `#fe640b` |
 | `vc_*_background` | Row washes in the diff | added, deleted, modified at 0.12 | at 0.16 |
+| `vc_word_added`, `vc_word_deleted` | Word washes inside a changed diff row | `vc_added`, `vc_deleted` at 0.40 | at 0.40 |
 | `group_1` to `group_8` | Broadcast group stripe and picker | blue, green, yellow, red, violet, teal, orange, periwinkle | Catppuccin Latte hues |
 | `agent_claude`, `agent_codex` | Identity dots and status glyphs | `#ffa657`, `#7eb6ff` | `#e89271`, `#5b6cff` |
 | `agent_error`, `agent_stalled` | Failed and stalled agent states | `#ff6f6a`, `#a0a0a0` | `#d20f39`, `#808080` |
@@ -315,9 +316,9 @@ controls at 10 px or below, where the superellipse is invisible.
 | Filter field | padding 10 by 6, gap 6, 13 px search icon, 16 px clear button with a 10 px glyph |
 | Toast | inset 18, padding 12 / 14 by 11, minimum width 220, action buttons 26 tall |
 | Scrollbar | width 6, gutter 10, minimum thumb 24, inset 2 |
-| Diff | row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360 |
+| Diff | row 18, file header 32, fold row 32, sticky header 24, gutter 36, change bar 4, split divider 3, column header 30, minimum split column 360, revert chip 56 by 16 inset 10 |
 | Review terminal panel | 520 default, 120 to 1000 |
-| Code editor | 12 px mono, caret 2, scrollbar 6, minimum thumb 28 |
+| Code editor | 12 px mono, caret 2, scrollbar 6, minimum thumb 28; git marker column 6 left of the numbers, bar 4 radius 2 inset 1, deleted dot 8, hover grows 3 to the left |
 
 ### 4.6 Typography
 
@@ -469,6 +470,42 @@ a `Review` button that opens an agent under the diff with a staged prompt the
 user must send. Change bars are 4 px, dashed for deletions; file headers are
 32 px rows that collapse to a 24 px sticky header while scrolling, with the
 file-type icon on the left and the diffstat right-aligned.
+
+Changed rows paint in two tones. The line wash is `vc_added_background` or
+`vc_deleted_background`, 0.12 in dark and 0.16 in light, and the words that
+differ inside a modified block sit on `vc_word_added` or `vc_word_deleted` at
+0.40, painted between the line wash and the text at the x positions of the
+shaped line, so tabs and CJK glyphs align with the rectangle. A run that
+scrolls past the cell edge is clipped to the cell. A block whose two sides
+differ only by whitespace is muted: the line wash drops to 0.08, no word
+rectangle is painted, and the 4 px change bar sits at 0.5 alpha. Highlight
+`None` keeps the change bar and gutter tint and drops every wash. Both
+`Highlight` and `Whitespace` live in the dock Options menu next to Layout, are
+session-scoped like Split and Unified, and rebuild the rows off the render
+thread; the previous rows stay on screen until the swap, and a failed rebuild
+keeps them under an error banner. The Review view receives the default
+rendering, `Words` and `Default`, without a menu.
+
+A file tab in the dock carries git markers in a 6 px column left of the line
+numbers, computed against `HEAD` off the render thread and kept current by a
+block tracker that shifts blocks on every keystroke and re-diffs only the
+touched blocks after a 150 ms pause. Added and modified blocks paint a 4 px bar
+with radius 2 and a 1 px inset in `vc_added` or `vc_modified`; a deleted block
+is an 8 px dot in `vc_deleted` centered on the boundary, pulled down to the
+first row when the deletion sits at the top. Hovering a marker widens it 3 px
+to the left and shows the pointer; clicking opens a `menu_surface` popup
+anchored to the block's row, 280 to 520 px wide within the editor, flipping
+above the row when there is no room below. The popup names the block
+(`Modified lines 12-15`, `Deleted 3 lines after 20`, `Added 4 lines`), shows
+the base text of a modified or deleted block in the code font with syntax runs
+on the `vc_deleted_background` wash (12 rows visible, scrollable, 200 lines
+shown with an `and N more lines` foot), and offers `Copy` and `Revert`; an
+added block offers `Revert` alone. Escape, a click outside, or an agent write
+closes it. In the Changes tab, hovering a block of a modified file shows a
+`Revert` chip on the block's first row, 56 by 16 on the sidebar hover tint,
+inset 10 from the right edge; the click writes the base lines back through the
+atomic save path and refreshes the dock, and refuses with the error banner when
+the file has unsaved changes in a dock tab or changed on disk since the build.
 
 ### 5.5 Settings
 

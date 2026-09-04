@@ -3,14 +3,19 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, Corners, Element, ElementId, ElementInputHandler,
-    Entity, Focusable, Font, FontFeatures, FontStyle, FontWeight, GlobalElementId, Hsla,
-    InspectorElementId, IntoElement, LayoutId, Length, Pixels, Point, ShapedLine, SharedString,
-    Style, TextAlign, TextRun, UnderlineStyle, Window, fill, point, px, quad, relative, size,
+    App, BorderStyle, Bounds, ContentMask, Corners, CursorStyle, Element, ElementId,
+    ElementInputHandler, Entity, Focusable, Font, FontFeatures, FontStyle, FontWeight,
+    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
+    Length, Pixels, Point, ShapedLine, SharedString, Style, TextAlign, TextRun, UnderlineStyle,
+    Window, fill, point, px, quad, relative, size,
 };
+use paneflow_textdiff::BlockKind;
 
 use super::cursor;
 use super::document::CodeDocument;
+use super::markers::{
+    MARKER_BAR_RADIUS, MARKER_BAR_W, MARKER_COLUMN_W, MARKER_HOVER_GROW, marker_rects,
+};
 use super::view::CodeView;
 use crate::diff::{ROW_HEIGHT, RowPalette};
 
@@ -19,6 +24,7 @@ pub(crate) const CODE_FONT_SIZE: f32 = 12.0;
 const NUM_GAP: f32 = 6.0;
 const GUTTER_PAD_L: f32 = 8.0;
 const GUTTER_MIN_W: f32 = 36.0;
+const MARKER_INSET_L: f32 = 2.0;
 const CODE_PAD_L: f32 = 6.0;
 const CODE_PAD_R: f32 = 8.0;
 const H_SCROLL_MARGIN: f32 = 12.0;
@@ -56,7 +62,60 @@ pub(crate) fn digit_count(n: usize) -> usize {
 }
 
 pub(crate) fn gutter_width(digits: usize, digit_w: f32) -> f32 {
-    (GUTTER_PAD_L + digits as f32 * digit_w + NUM_GAP).max(GUTTER_MIN_W)
+    (GUTTER_PAD_L + MARKER_COLUMN_W + digits as f32 * digit_w + NUM_GAP)
+        .max(GUTTER_MIN_W + MARKER_COLUMN_W)
+}
+
+pub(crate) fn code_font() -> Font {
+    thread_local! {
+        static MONO_FAMILY: SharedString =
+            crate::terminal::element::resolve_font_family(None).into();
+    }
+    Font {
+        family: MONO_FAMILY.with(|f| f.clone()),
+        features: FontFeatures::disable_ligatures(),
+        fallbacks: None,
+        weight: FontWeight::NORMAL,
+        style: FontStyle::Normal,
+    }
+}
+
+pub(crate) fn syntax_text_runs(
+    text: &str,
+    syntax: &[(Range<usize>, Hsla)],
+    font: &Font,
+    default: Hsla,
+) -> Vec<TextRun> {
+    let run = |len: usize, color: Hsla| TextRun {
+        len,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    if syntax.is_empty() {
+        return vec![run(text.len(), default)];
+    }
+    let len = text.len();
+    let mut runs = Vec::new();
+    let mut ix = 0usize;
+    for (r, color) in syntax {
+        let start = r.start.min(len);
+        let end = r.end.min(len);
+        if start < ix || start >= end {
+            continue;
+        }
+        if start > ix {
+            runs.push(run(start - ix, default));
+        }
+        runs.push(run(end - start, *color));
+        ix = end;
+    }
+    if ix < len {
+        runs.push(run(len - ix, default));
+    }
+    runs
 }
 
 pub(crate) fn text_viewport_width(element_w: f32, gutter_w: f32) -> f32 {
@@ -188,6 +247,16 @@ pub(crate) struct CodeColors {
     pub(crate) cursor: Hsla,
     pub(crate) selection: Hsla,
     pub(crate) selection_fg: Hsla,
+    pub(crate) marker_added: Hsla,
+    pub(crate) marker_modified: Hsla,
+    pub(crate) marker_deleted: Hsla,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct MarkerHit {
+    pub(crate) index: usize,
+    pub(crate) y0: f32,
+    pub(crate) y1: f32,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -204,12 +273,33 @@ pub(crate) struct CodeHitMap {
     pub(crate) first_row: usize,
     pub(crate) top_y: f32,
     pub(crate) text_x: f32,
+    pub(crate) marker_x: f32,
+    pub(crate) markers: Vec<MarkerHit>,
     pub(crate) lines: Vec<Option<ShapedLine>>,
 }
 
 impl CodeHitMap {
     fn row_at(&self, y: f32) -> isize {
         self.first_row as isize + ((y - self.top_y) / CODE_ROW_HEIGHT).floor() as isize
+    }
+
+    pub(crate) fn row_top(&self, row: usize) -> f32 {
+        self.top_y + (row as f32 - self.first_row as f32) * CODE_ROW_HEIGHT
+    }
+
+    pub(crate) fn marker_at(&self, position: Point<Pixels>) -> Option<usize> {
+        let x = f32::from(position.x);
+        let y = f32::from(position.y);
+        if self.markers.is_empty()
+            || x < self.marker_x - MARKER_HOVER_GROW
+            || x > self.marker_x + MARKER_COLUMN_W
+        {
+            return None;
+        }
+        self.markers
+            .iter()
+            .find(|hit| y >= hit.y0 && y < hit.y1)
+            .map(|hit| hit.index)
     }
 
     pub(crate) fn offset_at(&self, doc: &CodeDocument, position: Point<Pixels>) -> usize {
@@ -236,8 +326,11 @@ impl CodeHitMap {
 
 pub(crate) struct CodePrepaint {
     quads: Vec<Quad>,
+    markers: Vec<RoundedQuad>,
     glyphs: Vec<CodeGlyph>,
     scrollbars: Vec<RoundedQuad>,
+    marker_hitbox: Hitbox,
+    marker_pointer: bool,
 }
 
 pub(crate) struct CodeElement {
@@ -270,11 +363,6 @@ impl CodeElement {
         gutter_memo: Rc<Cell<GutterMemo>>,
         hits: Rc<RefCell<CodeHitMap>>,
     ) -> Self {
-        thread_local! {
-            static MONO_FAMILY: SharedString =
-                crate::terminal::element::resolve_font_family(None).into();
-        }
-        let family = MONO_FAMILY.with(|f| f.clone());
         Self {
             view,
             palette,
@@ -286,13 +374,7 @@ impl CodeElement {
             geometry,
             gutter_memo,
             hits,
-            font: Font {
-                family,
-                features: FontFeatures::disable_ligatures(),
-                fallbacks: None,
-                weight: FontWeight::NORMAL,
-                style: FontStyle::Normal,
-            },
+            font: code_font(),
             font_size: px(CODE_FONT_SIZE),
             line_height: px(CODE_ROW_HEIGHT),
         }
@@ -304,36 +386,7 @@ impl CodeElement {
         syntax: &[(Range<usize>, Hsla)],
         default: Hsla,
     ) -> Vec<TextRun> {
-        let run = |len: usize, color: Hsla| TextRun {
-            len,
-            font: self.font.clone(),
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        };
-        if syntax.is_empty() {
-            return vec![run(text.len(), default)];
-        }
-        let len = text.len();
-        let mut runs = Vec::new();
-        let mut ix = 0usize;
-        for (r, color) in syntax {
-            let start = r.start.min(len);
-            let end = r.end.min(len);
-            if start < ix || start >= end {
-                continue;
-            }
-            if start > ix {
-                runs.push(run(start - ix, default));
-            }
-            runs.push(run(end - start, *color));
-            ix = end;
-        }
-        if ix < len {
-            runs.push(run(len - ix, default));
-        }
-        runs
+        syntax_text_runs(text, syntax, &self.font, default)
     }
 
     fn restyle(
@@ -501,12 +554,67 @@ impl Element for CodeElement {
             });
         }
 
+        let column_x = left + px(MARKER_INSET_L);
         let mut hits = CodeHitMap {
             first_row: rows.start,
             top_y: f32::from(bounds.origin.y) + rows.start as f32 * CODE_ROW_HEIGHT,
             text_x: f32::from(text_x) - h_offset,
+            marker_x: f32::from(column_x),
+            markers: Vec::new(),
             lines: Vec::with_capacity(visible),
         };
+
+        let mut markers = Vec::new();
+        let blocks = view.marker_blocks();
+        let hovered = view.hovered_marker();
+        if visible > 0 && !blocks.is_empty() {
+            let window_top = hits.top_y;
+            for rect in marker_rects(
+                blocks,
+                rows.start,
+                CODE_ROW_HEIGHT,
+                visible as f32 * CODE_ROW_HEIGHT,
+            ) {
+                let hover = hovered == Some(rect.index);
+                let (color, x, w) = match rect.kind {
+                    BlockKind::Added => {
+                        (self.colors.marker_added, column_x + px(1.0), MARKER_BAR_W)
+                    }
+                    BlockKind::Modified => (
+                        self.colors.marker_modified,
+                        column_x + px(1.0),
+                        MARKER_BAR_W,
+                    ),
+                    BlockKind::Deleted => (self.colors.marker_deleted, column_x, MARKER_COLUMN_W),
+                };
+                let (x, w) = if hover {
+                    (x - px(MARKER_HOVER_GROW), w + MARKER_HOVER_GROW)
+                } else {
+                    (x, w)
+                };
+                markers.push(RoundedQuad {
+                    bounds: Bounds::new(point(x, px(window_top + rect.y)), size(px(w), px(rect.h))),
+                    corners: Corners::all(px(MARKER_BAR_RADIUS)),
+                    color,
+                });
+                hits.markers.push(MarkerHit {
+                    index: rect.index,
+                    y0: window_top + rect.hit_y,
+                    y1: window_top + rect.hit_y + rect.hit_h,
+                });
+            }
+        }
+        let marker_hitbox = window.insert_hitbox(
+            Bounds::new(
+                point(left, mask.bounds.origin.y),
+                size(
+                    px(MARKER_INSET_L + MARKER_COLUMN_W),
+                    mask.bounds.size.height,
+                ),
+            ),
+            HitboxBehavior::Normal,
+        );
+        let marker_pointer = hovered.is_some();
 
         let hl = view.highlighter();
         for row in rows.clone() {
@@ -644,8 +752,11 @@ impl Element for CodeElement {
 
         Some(CodePrepaint {
             quads,
+            markers,
             glyphs,
             scrollbars,
+            marker_hitbox,
+            marker_pointer,
         })
     }
 
@@ -679,6 +790,19 @@ impl Element for CodeElement {
                     }
                     None => window.paint_quad(fill(q.bounds, q.color)),
                 }
+            }
+            for q in &layout.markers {
+                window.paint_quad(quad(
+                    q.bounds,
+                    q.corners,
+                    q.color,
+                    px(0.),
+                    q.color,
+                    BorderStyle::Solid,
+                ));
+            }
+            if layout.marker_pointer {
+                window.set_cursor_style(CursorStyle::PointingHand, &layout.marker_hitbox);
             }
             for g in layout.glyphs {
                 if let Some(clip) = g.clip {
@@ -807,9 +931,49 @@ mod tests {
     }
 
     #[test]
-    fn gutter_never_goes_below_its_floor() {
-        assert_eq!(gutter_width(1, 1.0), GUTTER_MIN_W);
-        assert!(gutter_width(6, 7.5) > GUTTER_MIN_W);
+    fn gutter_never_goes_below_its_floor_and_always_reserves_the_marker_column() {
+        assert_eq!(gutter_width(1, 1.0), GUTTER_MIN_W + MARKER_COLUMN_W);
+        assert!(gutter_width(6, 7.5) > GUTTER_MIN_W + MARKER_COLUMN_W);
+        assert_eq!(
+            gutter_width(4, 7.0) - (GUTTER_PAD_L + 4.0 * 7.0 + NUM_GAP),
+            MARKER_COLUMN_W,
+            "the six pixel column sits left of the numbers whether or not a base is loaded"
+        );
+    }
+
+    #[test]
+    fn marker_hits_extend_three_pixels_left_and_stop_at_the_numbers() {
+        let map = CodeHitMap {
+            marker_x: 10.0,
+            markers: vec![
+                MarkerHit {
+                    index: 0,
+                    y0: 100.0,
+                    y1: 136.0,
+                },
+                MarkerHit {
+                    index: 3,
+                    y0: 200.0,
+                    y1: 220.0,
+                },
+            ],
+            ..CodeHitMap::default()
+        };
+        assert_eq!(map.marker_at(point(px(12.), px(110.))), Some(0));
+        assert_eq!(
+            map.marker_at(point(px(7.), px(135.))),
+            Some(0),
+            "grown to the left"
+        );
+        assert_eq!(map.marker_at(point(px(6.), px(110.))), None);
+        assert_eq!(
+            map.marker_at(point(px(17.), px(110.))),
+            None,
+            "past the column"
+        );
+        assert_eq!(map.marker_at(point(px(12.), px(136.))), None);
+        assert_eq!(map.marker_at(point(px(12.), px(205.))), Some(3));
+        assert_eq!(CodeHitMap::default().marker_at(point(px(0.), px(0.))), None);
     }
 
     #[test]
@@ -1005,6 +1169,7 @@ mod tests {
             top_y: 100.0,
             text_x: 40.0,
             lines: vec![None],
+            ..CodeHitMap::default()
         };
 
         let below = map.offset_at(&doc, point(px(500.), px(10_000.)));

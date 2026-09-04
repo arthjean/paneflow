@@ -76,13 +76,20 @@ platform shaper.
 | `shape_cold_60_rows` | ns | Sixty never-seen ASCII rows of 100 characters shaped with the editor monospace font, the cold-cache cost of one scrolled viewport. |
 | `shape_warm_60_rows` | ns | The same sixty rows shaped again, the warm-cache cost the line-layout cache serves on a second frame. |
 | `reload_200_retained_bytes` | bytes | Live allocated bytes a tab still holds after 200 external reloads of a 2 MB file: document, highlighter, and undo history. |
+| `textdiff_300kb_50_blocks` | ns | `paneflow_textdiff::compare_lines_inner` with word highlighting over 300 KB of synthetic Rust against a copy with 50 rewritten 10-line blocks. Its `p95` is the 25 ms target of EP-012. |
+| `textdiff_5k_lines_one_word_each` | ns | The same call over 5 000 edited lines of eight words, each with one word changed and separated from the next by an identical line, so the line pass yields 5 000 one-line blocks and the word pass runs once per edited line. Target: 150 ms. |
+| `textdiff_5k_lines_all_different` | ns | The same call over 5 000 dense lines of sixteen words split into four all-different blocks by identical separator lines. Each block exceeds the 20 000-chunk fine comparison threshold: the first three trip the bad-lines guard and the fourth is skipped without a word pass. Target: 50 ms. |
 
 The corpus is `src-app/src/app/diff_dock/code/bench_corpus.rs`, seeded with
 `EDITOR_CORPUS_SEED`. It is generated, never read from the repository's own
 sources, so a run is byte-identical everywhere: synthetic Rust sized to 295 KB
 (under the 300 KB highlight cap), 2 MB, and 3.7 MB (about 110 000 lines); a
 single-line minified JSON document of exactly 10 000 characters; and Markdown
-carrying both inline and fenced code so the injection pass has work to do.
+carrying both inline and fenced code so the injection pass has work to do. The
+`textdiff_*` metrics add three seeded pairs from the same file: 300 KB of Rust
+with 50 rewritten 10-line blocks, 5 000 eight-word lines with one word changed
+per line and an identical separator line between them, and 5 000 sixteen-word
+lines in four all-different blocks.
 
 ### The shaping probe and the US-013 threshold
 

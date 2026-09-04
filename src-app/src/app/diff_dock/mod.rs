@@ -5,13 +5,14 @@ mod model;
 mod new_tab_menu;
 mod options_menu;
 mod render;
+mod revert;
 mod surface_picker;
 mod tabs;
 
 pub(crate) use branch::DiffBranchMenuState;
 pub(crate) use model::{
     DIFF_DOCK_PANEL_MIN_WIDTH, DIFF_DOCK_PANEL_WIDTH, DiffDockData, DiffDockHScrollDrag,
-    DiffDockTab,
+    DiffDockTab, DiffHover, DiffOptionsSubmenu,
 };
 
 use gpui::{
@@ -24,14 +25,14 @@ use self::branch::render_diff_branch_chip;
 use self::git::build_diff_dock;
 use self::model::{DIFF_DOCK_PANEL_MAX_WIDTH, DiffChrome};
 use self::render::{
-    diff_file_header_path, diff_panel_centered, render_diff_file_header, render_diff_files_toolbar,
-    render_diff_resize_handle, render_diff_tab_strip,
+    diff_file_header_path, diff_panel_centered, render_diff_error_banner, render_diff_file_header,
+    render_diff_files_toolbar, render_diff_resize_handle, render_diff_tab_strip,
 };
 use self::surface_picker::{render_diff_picker_header, render_diff_surface_picker};
 use crate::PaneFlowApp;
 use crate::diff::{
-    DiffBody, DiffElement, H_SCROLLBAR_TRACK_HEIGHT, HScrollbarSegment, RowKind, SplitRow,
-    discard_expanded_folds_for_path, file_at_row, h_offset_index, h_offset_len,
+    DiffBody, DiffElement, DiffOptions, H_SCROLLBAR_TRACK_HEIGHT, HScrollbarSegment, RowKind,
+    SplitRow, discard_expanded_folds_for_path, file_at_row, h_offset_index, h_offset_len,
     h_scrollbar_click_offset, h_scrollbar_segments, palette, row_at_offset, set_file_side_offset,
     split_right_side_at_x,
 };
@@ -47,6 +48,7 @@ impl PaneFlowApp {
                 && !data.loading
                 && data.error.is_none()
                 && data.has_mode(split)
+                && data.options == self.diff_dock.diff_options
                 && data.theme_generation == crate::theme::theme_generation()
         });
         self.diff_dock.open = true;
@@ -94,12 +96,42 @@ impl PaneFlowApp {
             cx.notify();
             return;
         }
-        let mut loading = DiffDockData::loading(cwd.clone());
-        loading.fingerprint = previous_fingerprint;
-        self.diff_dock.data = Some(loading);
+        match self
+            .diff_dock
+            .data
+            .as_mut()
+            .filter(|data| data.cwd == cwd && data.has_rows())
+        {
+            Some(data) => {
+                data.loading = true;
+                data.error = None;
+            }
+            None => {
+                let mut loading = DiffDockData::loading(cwd.clone());
+                loading.fingerprint = previous_fingerprint;
+                self.diff_dock.data = Some(loading);
+            }
+        }
         cx.notify();
 
         self.spawn_diff_dock_build(cwd, generation, cx);
+    }
+
+    pub(crate) fn set_diff_dock_options(&mut self, options: DiffOptions, cx: &mut Context<Self>) {
+        if self.diff_dock.diff_options == options {
+            return;
+        }
+        self.diff_dock.diff_options = options;
+        let cwd = self
+            .diff_dock
+            .data
+            .as_ref()
+            .map(|data| data.cwd.clone())
+            .filter(|cwd| !cwd.trim().is_empty());
+        match cwd {
+            Some(cwd) => self.refresh_diff_dock(cwd, cx),
+            None => cx.notify(),
+        }
     }
 
     fn clear_diff_dock_snapshot_state(&mut self) {
@@ -107,6 +139,15 @@ impl PaneFlowApp {
         self.diff_dock.expanded_folds.clear();
         self.diff_dock.scroll = ScrollHandle::new();
         self.diff_dock.h_offsets = std::rc::Rc::new(Vec::new());
+        self.diff_dock.hover = None;
+    }
+
+    fn reload_file_tab_bases(&mut self, cx: &mut Context<Self>) {
+        for tab in self.diff_dock.diff_tabs.clone() {
+            if let DiffDockTab::File(view) = tab {
+                view.update(cx, |view, cx| view.reload_base(cx));
+            }
+        }
     }
 
     pub(crate) fn refresh_diff_dock_if_open_for_cwd(
@@ -129,11 +170,12 @@ impl PaneFlowApp {
     fn spawn_diff_dock_build(&mut self, cwd: String, generation: u64, cx: &mut Context<Self>) {
         let theme = crate::theme::active_theme();
         let theme_generation = crate::theme::theme_generation();
+        let options = self.diff_dock.diff_options;
         cx.spawn(
             async move |this: gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
                 let result = smol::unblock({
                     let cwd = cwd.clone();
-                    move || build_diff_dock(&cwd, theme, theme_generation)
+                    move || build_diff_dock(&cwd, theme, theme_generation, options)
                 })
                 .await;
                 let _ = cx.update(|cx| {
@@ -157,6 +199,12 @@ impl PaneFlowApp {
                                     deletions: built.removed as usize,
                                 };
                                 app.apply_git_stats_for_cwd(&cwd, stats);
+                                let head_changed = app
+                                    .diff_dock
+                                    .data
+                                    .as_ref()
+                                    .filter(|data| data.has_rows())
+                                    .is_some_and(|data| data.head_sha != built.head_sha);
                                 let reset_snapshot_state =
                                     app.diff_dock.data.as_ref().is_some_and(|data| {
                                         data.fingerprint != 0
@@ -180,9 +228,22 @@ impl PaneFlowApp {
                                 if let Some(data) = app.diff_dock.data.as_mut() {
                                     data.apply_built(built, &collapsed, &expanded);
                                 }
+                                app.diff_dock.hover = None;
+                                if head_changed {
+                                    app.reload_file_tab_bases(cx);
+                                }
                             }
                             Err(err) => {
-                                app.diff_dock.data = Some(DiffDockData::message(cwd.clone(), err));
+                                match app.diff_dock.data.as_mut().filter(|data| data.has_rows()) {
+                                    Some(data) => {
+                                        data.loading = false;
+                                        data.error = Some(err);
+                                    }
+                                    None => {
+                                        app.diff_dock.data =
+                                            Some(DiffDockData::message(cwd.clone(), err));
+                                    }
+                                }
                             }
                         }
                         cx.notify();
@@ -247,6 +308,7 @@ impl PaneFlowApp {
         }
         self.diff_dock.split = split;
         self.diff_dock.h_scroll_drag = None;
+        self.diff_dock.hover = None;
         cx.notify();
     }
 
@@ -387,8 +449,9 @@ impl PaneFlowApp {
             data,
             cwd: cwd.to_string(),
             split: self.diff_dock.split,
+            options: self.diff_dock.diff_options,
             options_open: self.diff_dock.diff_options_menu_open,
-            layout_submenu_open: self.diff_dock.diff_layout_submenu_open,
+            options_submenu: self.diff_dock.diff_options_submenu,
             collapsed: &self.diff_dock.collapsed,
         };
         render_diff_files_toolbar(&chrome, chip, ui, cx)
@@ -407,17 +470,19 @@ impl PaneFlowApp {
                 ui,
             );
         };
-        if data.loading {
+        let split = self.diff_dock.split;
+        let has_rows = data.has_mode(split);
+        if data.loading && !has_rows {
             return diff_panel_centered("icons/loader-circle.svg", "Loading changes…", ui);
         }
-        if let Some(error) = &data.error {
-            return diff_panel_centered("icons/triangle-alert.svg", error, ui);
-        }
-        if data.file_count == 0 {
+        let banner = match &data.error {
+            Some(error) if has_rows => Some(render_diff_error_banner(error, ui)),
+            Some(error) => return diff_panel_centered("icons/triangle-alert.svg", error, ui),
+            None => None,
+        };
+        if data.file_count == 0 && banner.is_none() {
             return diff_panel_centered("icons/check.svg", "No uncommitted changes.", ui);
         }
-
-        let split = self.diff_dock.split;
 
         let file_count = if split {
             data.disp_split_spans.len()
@@ -453,6 +518,12 @@ impl PaneFlowApp {
         };
         let pal = palette(ui);
         let scroll = self.diff_dock.scroll.clone();
+        let chip_row = self
+            .diff_dock
+            .hover
+            .as_ref()
+            .filter(|hover| hover.split == split)
+            .map(|hover| hover.chip_row);
 
         let mut element = div()
             .id("diff-dock-scroll")
@@ -476,7 +547,7 @@ impl PaneFlowApp {
             .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, window, cx| {
                 this.apply_diff_dock_wheel(ev, window, cx);
             }))
-            .child(DiffElement::new(body, pal));
+            .child(DiffElement::new(body, pal).with_revert_chip(chip_row));
         element.style().restrict_scroll_to_axis = Some(true);
 
         div()
@@ -486,6 +557,7 @@ impl PaneFlowApp {
             .w_full()
             .flex()
             .flex_col()
+            .children(banner)
             .child(element)
             .into_any_element()
     }
@@ -722,7 +794,9 @@ impl PaneFlowApp {
 
     fn handle_diff_dock_body_click(&mut self, ev: &ClickEvent, cx: &mut Context<Self>) {
         let split = self.diff_dock.split;
-        if self.handle_diff_dock_h_scrollbar_click(ev.position(), split, cx) {
+        if self.handle_diff_dock_h_scrollbar_click(ev.position(), split, cx)
+            || self.handle_diff_dock_revert_click(ev.position(), cx)
+        {
             return;
         }
 
