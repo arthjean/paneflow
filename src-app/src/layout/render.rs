@@ -273,6 +273,7 @@ mod tests {
     use std::cell::Cell;
     use std::path::PathBuf;
     use std::rc::Rc;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
     use std::time::{Duration, Instant};
 
     use gpui::{
@@ -295,6 +296,14 @@ mod tests {
     use super::*;
 
     const TOLERANCE: f32 = 2.0;
+
+    static PROCESS_WIDE_MEASUREMENT: Mutex<()> = Mutex::new(());
+
+    fn only_measurement_in_the_process() -> MutexGuard<'static, ()> {
+        PROCESS_WIDE_MEASUREMENT
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
 
     struct FrameTraceGuard {
         enabled_by_test: bool,
@@ -431,6 +440,7 @@ mod tests {
     fn eight_pane_gpui_input_to_paint_performance_gate(cx: &mut TestAppContext) {
         const INPUT_TO_FRAME_P95_LIMIT_US: u128 = 16_700;
 
+        let _exclusive = only_measurement_in_the_process();
         assert!(
             !cfg!(debug_assertions),
             "run this baseline with cargo test --release"
@@ -760,6 +770,7 @@ mod tests {
         reason = "the ignored measurement must reject accidental debug-profile execution"
     )]
     fn editor_scroll_frame_by_pane_count(cx: &mut TestAppContext) {
+        let _exclusive = only_measurement_in_the_process();
         assert!(
             !cfg!(debug_assertions),
             "run this measurement with cargo test --release"
