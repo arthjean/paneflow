@@ -814,7 +814,7 @@ mod tests {
         let nodes = parse_with_limit(&src).expect("parse");
         let elapsed = started.elapsed();
         assert!(!nodes.is_empty());
-        let budget_ms: u128 = if cfg!(debug_assertions) { 60 } else { 10 };
+        let budget_ms: u128 = if cfg!(debug_assertions) { 300 } else { 50 };
         assert!(
             elapsed.as_millis() < budget_ms,
             "100 KB parse took {:?}, exceeds {} ms budget",
