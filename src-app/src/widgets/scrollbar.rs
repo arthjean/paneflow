@@ -1,3 +1,5 @@
+pub(crate) mod geometry;
+
 use gpui::{
     AnyElement, App, Bounds, ElementId, InteractiveElement, IntoElement, ListState, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, ScrollHandle, Styled, Window, div, px,

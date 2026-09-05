@@ -650,6 +650,7 @@ struct DiffDockState {
     pub(crate) width: f32,
     pub(crate) resize: Option<(f32, f32, f32)>,
     pub(crate) h_scroll_drag: Option<crate::app::diff_dock::DiffDockHScrollDrag>,
+    pub(crate) vertical_scrollbar: crate::widgets::editor_scrollbar::EditorScrollbar,
     pub(crate) h_offsets: std::rc::Rc<Vec<f32>>,
     pub(crate) hover: Option<crate::app::diff_dock::DiffHover>,
 }

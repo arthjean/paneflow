@@ -543,7 +543,10 @@ Escape, an outside click, or a second click on the trigger dismisses it.
 Editor scrollbars follow Zed's 15 px tracks, square thumbs with a 25 px
 minimum, and a 1 px left border on the vertical track and thumb. Both axes
 support centered track clicks and dragging. Git change markers occupy the
-vertical track. The minimap uses the bundled `.ZedMono` alias at 2 px, Black,
+vertical track. Changes keeps the same vertical track permanently enabled,
+with centered clicks and dragging, without editor controls or a minimap.
+The track occupies its own gutter so it never covers diff content.
+The minimap uses the bundled `.ZedMono` alias at 2 px, Black,
 with a 1.618 line height. Its width is capped at 15% of the text area and 80
 miniature columns, and it hides below 20 columns. Its viewport thumb has an
 open left border; clicking centers the editor and dragging follows document

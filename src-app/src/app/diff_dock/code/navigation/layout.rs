@@ -2,8 +2,9 @@ use gpui::{Bounds, Pixels, Point, point, px, size};
 
 use super::super::element::{CODE_ROW_HEIGHT, CodeScroll};
 
-pub(crate) const SCROLLBAR_SIZE: f32 = 15.0;
-pub(crate) const MIN_THUMB: f32 = 25.0;
+pub(crate) use crate::widgets::scrollbar::geometry::{
+    MIN_THUMB, SCROLLBAR_SIZE, Track, scrollbar_track,
+};
 pub(crate) const MINIMAP_FONT_SIZE: f32 = 2.0;
 pub(crate) const MINIMAP_LINE_HEIGHT: f32 = MINIMAP_FONT_SIZE * 1.618;
 
@@ -12,12 +13,6 @@ pub(crate) enum NavigationPart {
     Vertical,
     Horizontal,
     Minimap,
-}
-
-#[derive(Clone, Copy, Default)]
-pub(crate) struct Track {
-    pub(crate) bounds: Bounds<Pixels>,
-    pub(crate) thumb: Option<Bounds<Pixels>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -49,40 +44,6 @@ impl NavigationLayout {
                 .is_some_and(|track| track.bounds.contains(&position))
         })
     }
-}
-
-pub(crate) fn scrollbar_track(
-    bounds: Bounds<Pixels>,
-    visible: f64,
-    total: f64,
-    offset: f64,
-    horizontal: bool,
-) -> Track {
-    let length = f32::from(if horizontal {
-        bounds.size.width
-    } else {
-        bounds.size.height
-    });
-    let thumb = if length > 0.0 && total > visible && visible > 0.0 {
-        let thumb_length = (length * (visible / total) as f32)
-            .max(MIN_THUMB)
-            .min(length);
-        let start = ((offset / (total - visible)).clamp(0.0, 1.0) as f32) * (length - thumb_length);
-        Some(if horizontal {
-            Bounds::new(
-                point(bounds.origin.x + px(start), bounds.origin.y),
-                size(px(thumb_length), bounds.size.height),
-            )
-        } else {
-            Bounds::new(
-                point(bounds.origin.x, bounds.origin.y + px(start)),
-                size(bounds.size.width, px(thumb_length)),
-            )
-        })
-    } else {
-        None
-    };
-    Track { bounds, thumb }
 }
 
 pub(crate) fn minimap_width(text_width: f32, char_width: f32, enabled: bool) -> f32 {

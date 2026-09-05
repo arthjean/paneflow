@@ -587,6 +587,7 @@ impl PaneFlowApp {
 
         let mut element = div()
             .id("diff-dock-scroll")
+            .min_w_0()
             .flex_1()
             .min_h_0()
             .w_full()
@@ -618,7 +619,14 @@ impl PaneFlowApp {
             .flex()
             .flex_col()
             .children(banner)
-            .child(element)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .child(element)
+                    .child(self.diff_dock.vertical_scrollbar.render(&scroll, cx)),
+            )
             .into_any_element()
     }
 

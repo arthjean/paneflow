@@ -719,6 +719,7 @@ impl PaneFlowApp {
                 width: crate::app::diff_dock::DIFF_DOCK_PANEL_WIDTH,
                 resize: None,
                 h_scroll_drag: None,
+                vertical_scrollbar: Default::default(),
                 h_offsets: std::rc::Rc::new(Vec::new()),
                 hover: None,
             },
