@@ -150,6 +150,7 @@ allow-registry   = ["https://github.com/rust-lang/crates.io-index"]
 # target, and they are listed here so a future bump that starts compiling them
 # still lands on a reviewed repository.
 allow-git = [
+    "https://github.com/tree-sitter/tree-sitter-cpp",
     "https://github.com/proptest-rs/proptest",
     "https://github.com/smol-rs/async-task.git",
     "https://github.com/zed-industries/async-process.git",

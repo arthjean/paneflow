@@ -1,0 +1,94 @@
+repository = "https://github.com/zed-industries/zed"
+commit = "ee3b5558c581429633937e458fad8d109f29e9ee"
+license = "GPL-3.0-or-later"
+license_evidence = "crates/languages/Cargo.toml; LICENSE-GPL; crates/grammars/Cargo.toml has no license field"
+
+[[queries]]
+name = "rust"
+source = "crates/grammars/src/rust/highlights.scm"
+sha256 = "69ac36e6e391a6d1e2923775fc93a37389cc8e9d7bcdbbe6808f172610f41e7d"
+deviations = []
+
+[[queries]]
+name = "json"
+source = "crates/grammars/src/json/highlights.scm"
+sha256 = "abc45defd437b647af5abdee8e56f7950ad1bfc2eca13ca435168fa730148a30"
+deviations = []
+
+[[queries]]
+name = "jsonc"
+source = "crates/grammars/src/jsonc/highlights.scm"
+sha256 = "abc45defd437b647af5abdee8e56f7950ad1bfc2eca13ca435168fa730148a30"
+deviations = []
+
+[[queries]]
+name = "bash"
+source = "crates/grammars/src/bash/highlights.scm"
+sha256 = "c7a76b9f8a3b78be6d5e69918a51c9abedfa1c114ee80c5bf17c13c45c9fc208"
+deviations = []
+
+[[queries]]
+name = "python"
+source = "crates/grammars/src/python/highlights.scm"
+sha256 = "a778e4095d65d11e2e830e0b0cd4228949b8ec95634adf46b565dca391f09ee9"
+deviations = []
+
+[[queries]]
+name = "typescript"
+source = "crates/grammars/src/typescript/highlights.scm"
+sha256 = "fc24c7ed012bdf4d392a2ef37cb5e882621fd4e186ad8821625e73f8b1dcfd8c"
+deviations = []
+
+[[queries]]
+name = "tsx"
+source = "crates/grammars/src/tsx/highlights.scm"
+sha256 = "64f861fd1aadd4e4aa89279320dc22ac447038a6633232d2ca80af36cc9b3dff"
+deviations = []
+
+[[queries]]
+name = "javascript"
+source = "crates/grammars/src/javascript/highlights.scm"
+sha256 = "523dec8164e6d80190231665f5872d2f13d2d9ebdf196b7843e591c87c5506fb"
+deviations = ["Uses the TSX grammar instead of tree-sitter-javascript"]
+
+[[queries]]
+name = "markdown"
+source = "crates/grammars/src/markdown/highlights.scm"
+sha256 = "3bdbc8cc2ae50b540d470ba016b2a17654e8503c49a114757a0ea41ae24d4dfb"
+deviations = []
+
+[[queries]]
+name = "markdown-inline"
+source = "crates/grammars/src/markdown-inline/highlights.scm"
+sha256 = "573c2f6b25ecfc99caa9ef5af4f82f363165384d29d81e8809c24658c4a61737"
+deviations = []
+
+[[queries]]
+name = "go"
+source = "crates/grammars/src/go/highlights.scm"
+sha256 = "22cb41065d02f8be34b027aab053cdfdccecf51c3e4446073d203910443b6549"
+deviations = []
+
+[[queries]]
+name = "yaml"
+source = "crates/grammars/src/yaml/highlights.scm"
+sha256 = "e33fb16f368af5f963385a39e0b29ee9327ada7d1aa25da5b51cc752bf969d50"
+deviations = []
+
+[[queries]]
+name = "css"
+source = "crates/grammars/src/css/highlights.scm"
+sha256 = "83732a53e0882c1124a063fa12870fd030c51a16b169db2ca3657d657d664a2e"
+deviations = []
+
+[[queries]]
+name = "c"
+source = "crates/grammars/src/c/highlights.scm"
+sha256 = "5b4d45b87c5003305830b4503051ce2a0353a243c60535fd4629a68f54465d95"
+deviations = []
+
+[[queries]]
+name = "cpp"
+source = "crates/grammars/src/cpp/highlights.scm"
+sha256 = "ca6d083485941e628e76705e3967c5214785272e0ce6abae94cd942bf340582d"
+deviations = []

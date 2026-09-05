@@ -8,6 +8,8 @@ mod highlighter;
 mod hit_test;
 mod hscroll;
 mod multi_view;
+#[cfg(test)]
+pub(crate) mod parity_tests;
 mod review_terminal;
 mod rows;
 mod scope;

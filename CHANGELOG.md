@@ -34,6 +34,25 @@ notes are available on the [GitHub Releases](https://github.com/arthjean/paneflo
 
 ### Changed
 
+- The code editor and diff view use Zed's highlighting queries for Rust,
+  JSON/JSONC, shell, Python, TypeScript/TSX/JavaScript, Markdown, Go, YAML,
+  CSS, C and C++. Calls, parameters, fields, macros and attributes receive
+  the query's specific classes. Variables and namespaces use editor text,
+  punctuation is neutral, and constructors use the function color in all
+  eight palettes. Rust `use` paths and `mod` names stay neutral.
+- Overlapping syntax captures follow Zed's last-active-capture rule. The
+  complete [stock priority audit](src-app/src/diff/fixtures/stock-priority-audit.txt)
+  records every conflicting node and changed byte range on the regression
+  corpus. Retained stock queries now classify TOML keys as properties,
+  Java classes and methods by their specific roles, and Ruby parameters
+  and possible implicit method calls by their later query patterns; HTML
+  has no priority changes on the corpus. The
+  [audit notes](src-app/src/diff/fixtures/README.md) explain these decisions.
+- Vendored queries have a pinned source manifest, hashes and cross-platform
+  sync checks. C++ uses Zed's grammar revision, including module syntax;
+  JavaScript keeps the existing TSX parser. Markdown fenced-code injections
+  and font styles are unchanged.
+
 - The terminal grid is now measured on the font, the way Ghostty measures
   it: the cell is the font's widest advance by its own line height, each
   rounded to whole device pixels, and the baseline lands on a pixel row.

@@ -948,72 +948,7 @@ mod tests {
     }
 
     fn corpus() -> Vec<(&'static str, &'static str)> {
-        vec![
-            (
-                "sample.rs",
-                "use std::fmt;\n\n/// Doc.\npub fn add(a: i32, b: i32) -> i32 {\n    let s = \"text\";\n    a + b // sum\n}\n",
-            ),
-            (
-                "sample.json",
-                "{\n  \"name\": \"paneflow\",\n  \"count\": 3,\n  \"ok\": true,\n  \"tags\": [\"a\", \"b\"]\n}\n",
-            ),
-            (
-                "sample.sh",
-                "#!/usr/bin/env bash\nset -euo pipefail\nname=\"world\"\nif [ -n \"$name\" ]; then\n  echo \"hello $name\"\nfi\n",
-            ),
-            (
-                "sample.py",
-                "import os\n\n\nclass Greeter:\n    \"\"\"Docstring.\"\"\"\n\n    def greet(self, name: str) -> str:\n        return f\"hi {name}\"  # comment\n",
-            ),
-            (
-                "sample.ts",
-                "import { readFile } from 'fs';\n\nexport interface User { id: number; name: string }\n\nexport const greet = (u: User): string => `hi ${u.name}`;\n",
-            ),
-            (
-                "sample.tsx",
-                "import React from 'react';\n\nexport function App({ title }: { title: string }) {\n  return <div className=\"app\">{title}</div>;\n}\n",
-            ),
-            (
-                "sample.toml",
-                "[package]\nname = \"paneflow\"\nversion = \"0.1.0\"\n\n[dependencies]\nropey = { version = \"1.6\", features = [\"simd\"] }\n",
-            ),
-            (
-                "sample.md",
-                "# Title\n\nSome **bold** and `code` text.\n\n- item one\n- item two\n\n```rust\nfn main() {}\n```\n",
-            ),
-            (
-                "sample.go",
-                "package main\n\nimport \"fmt\"\n\n// Main entry.\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n",
-            ),
-            (
-                "sample.yaml",
-                "name: build\non:\n  push:\n    branches: [main]\njobs:\n  test:\n    runs-on: ubuntu-latest\n",
-            ),
-            (
-                "sample.css",
-                ".panel {\n  display: flex;\n  color: #181825; /* dark */\n  padding: 4px 8px;\n}\n",
-            ),
-            (
-                "sample.html",
-                "<!doctype html>\n<html>\n  <body>\n    <p class=\"lead\">hello</p>\n  </body>\n</html>\n",
-            ),
-            (
-                "sample.c",
-                "#include <stdio.h>\n\nint main(void) {\n    /* comment */\n    printf(\"hi\\n\");\n    return 0;\n}\n",
-            ),
-            (
-                "sample.cpp",
-                "#include <string>\n\nnamespace app {\nstd::string greet(const std::string &n) { return \"hi \" + n; }\n}\n",
-            ),
-            (
-                "sample.java",
-                "package app;\n\npublic class Main {\n    public static void main(String[] args) {\n        System.out.println(\"hi\");\n    }\n}\n",
-            ),
-            (
-                "sample.rb",
-                "# frozen_string_literal: true\n\nclass Greeter\n  def greet(name)\n    \"hi #{name}\"\n  end\nend\n",
-            ),
-        ]
+        crate::diff::parity_tests::CORPUS.to_vec()
     }
 
     fn expected_rows(text: &str, ext: &str, lines: usize) -> Vec<LineRuns> {

@@ -3,3 +3,7 @@ native/libghostty/prebuilt/*/include/ghostty/vt.h -whitespace
 
 # Git patches are applied verbatim on Linux and Windows runners.
 *.patch text eol=lf
+src-app/src/diff/queries/** text eol=lf
+src-app/src/diff/fixtures/*.scm text eol=lf
+scripts/sync-zed-queries.sh text eol=lf
+scripts/sync-zed-queries.ps1 text eol=lf

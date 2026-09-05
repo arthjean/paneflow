@@ -79,7 +79,7 @@ impl SyntaxPalette {
             function: h(0xa868e8),
             r#type: h(0xf89850),
             r#enum: h(0xf0a060),
-            constructor: h(0xf8a858),
+            constructor: h(0xa868e8),
             string: h(0x40c878),
             string_escape: h(0x70c8f0),
             string_special: h(0xf87878),
@@ -88,15 +88,15 @@ impl SyntaxPalette {
             constant: h(0xf8d878),
             constant_builtin: h(0x70c8f0),
             property: h(0xf0a060),
-            variable: h(0xf89850),
+            variable: h(0xdddddd),
             variable_builtin: h(0xf8a858),
             operator: h(0x70c8f0),
-            punctuation: h(0xd8d0d0),
+            punctuation: h(0xdddddd),
             punctuation_special: h(0xf87878),
             attribute: h(0x78d0f8),
             tag: h(0xf87070),
             label: h(0xf0c8b8),
-            namespace: h(0xa868e8),
+            namespace: h(0xdddddd),
             title: h(0xff8080),
             text_literal: h(0x48d080),
             link_uri: h(0x70c8f0),
@@ -123,15 +123,15 @@ impl SyntaxPalette {
             constant: h(0xdf8e1d),
             constant_builtin: h(0x209fb5),
             property: h(0xd20f39),
-            variable: h(0x4c4f69),
+            variable: h(0x262626),
             variable_builtin: h(0xfe640b),
             operator: h(0x04a5e5),
-            punctuation: h(0x5c5f77),
+            punctuation: h(0x262626),
             punctuation_special: h(0xe64553),
             attribute: h(0x1e66f5),
             tag: h(0xd20f39),
             label: h(0xdc8a78),
-            namespace: h(0x7287fd),
+            namespace: h(0x262626),
             title: h(0xd20f39),
             text_literal: h(0x40a02b),
             link_uri: h(0x04a5e5),
@@ -149,7 +149,7 @@ impl SyntaxPalette {
             function: h(0x7dd3fc),
             r#type: h(0x60a5fa),
             r#enum: h(0x93c5fd),
-            constructor: h(0xa5b4fc),
+            constructor: h(0x7dd3fc),
             string: h(0x86efac),
             string_escape: h(0x67e8f9),
             string_special: h(0xf0abfc),
@@ -158,15 +158,15 @@ impl SyntaxPalette {
             constant: h(0xf5d90a),
             constant_builtin: h(0x38bdf8),
             property: h(0xfca5a5),
-            variable: h(0xe5e5e5),
+            variable: h(0xededed),
             variable_builtin: h(0xfcd34d),
             operator: h(0x94a3b8),
-            punctuation: h(0xa3a3a3),
+            punctuation: h(0xededed),
             punctuation_special: h(0xf87171),
             attribute: h(0x7dd3fc),
             tag: h(0xfb7185),
             label: h(0xd4d4d4),
-            namespace: h(0xc4b5fd),
+            namespace: h(0xededed),
             title: h(0xffffff),
             text_literal: h(0x86efac),
             link_uri: h(0x7dd3fc),
@@ -184,7 +184,7 @@ impl SyntaxPalette {
             function: h(0xddd5c8),
             r#type: h(0xb9b9ae),
             r#enum: h(0xb8a1c8),
-            constructor: h(0xd3b49a),
+            constructor: h(0xddd5c8),
             string: h(0x9ab38a),
             string_escape: h(0x95b8b2),
             string_special: h(0xd9905f),
@@ -193,15 +193,15 @@ impl SyntaxPalette {
             constant: h(0xc3c2b7),
             constant_builtin: h(0x8fa4b8),
             property: h(0xd3a082),
-            variable: h(0xd7d0c6),
+            variable: h(0xe3dacc),
             variable_builtin: h(0xd5b976),
             operator: h(0x93938b),
-            punctuation: h(0xa5a49c),
+            punctuation: h(0xe3dacc),
             punctuation_special: h(0xd97757),
             attribute: h(0xb9b9ae),
             tag: h(0xe68a6d),
             label: h(0xc3c2b7),
-            namespace: h(0xb8a1c8),
+            namespace: h(0xe3dacc),
             title: h(0xc3c2b7),
             text_literal: h(0x9ab38a),
             link_uri: h(0x8fa4b8),
@@ -219,7 +219,7 @@ impl SyntaxPalette {
             function: h(0xe8e8e8),
             r#type: h(0x7dd3fc),
             r#enum: h(0x8fb7ff),
-            constructor: h(0xb8e0f0),
+            constructor: h(0xe8e8e8),
             string: h(0x57d992),
             string_escape: h(0x8bdcff),
             string_special: h(0xc79bff),
@@ -228,15 +228,15 @@ impl SyntaxPalette {
             constant: h(0xd8d8d8),
             constant_builtin: h(0xa0d0f0),
             property: h(0xb8e0f0),
-            variable: h(0xf5f5f5),
+            variable: h(0xf0f0f0),
             variable_builtin: h(0xffd166),
             operator: h(0x989898),
-            punctuation: h(0xb0b0b0),
+            punctuation: h(0xf0f0f0),
             punctuation_special: h(0xff8580),
             attribute: h(0x7dd3fc),
             tag: h(0xff8580),
             label: h(0xd0d0d0),
-            namespace: h(0xc79bff),
+            namespace: h(0xf0f0f0),
             title: h(0xffffff),
             text_literal: h(0x57d992),
             link_uri: h(0xa0d0f0),
@@ -254,7 +254,7 @@ impl SyntaxPalette {
             function: h(0x0068d6),
             r#type: h(0x067f6f),
             r#enum: h(0x0a6e64),
-            constructor: h(0x4338ca),
+            constructor: h(0x0068d6),
             string: h(0x0f7b0f),
             string_escape: h(0x0e7490),
             string_special: h(0xa21caf),
@@ -263,15 +263,15 @@ impl SyntaxPalette {
             constant: h(0x854d0e),
             constant_builtin: h(0x0369a1),
             property: h(0xbe123c),
-            variable: h(0x27272a),
+            variable: h(0x171717),
             variable_builtin: h(0x92400e),
             operator: h(0x475569),
-            punctuation: h(0x64748b),
+            punctuation: h(0x171717),
             punctuation_special: h(0xcd2b31),
             attribute: h(0x0068d6),
             tag: h(0xcd2b31),
             label: h(0x3f3f46),
-            namespace: h(0x7820bc),
+            namespace: h(0x171717),
             title: h(0x000000),
             text_literal: h(0x0f7b0f),
             link_uri: h(0x0068d6),
@@ -289,7 +289,7 @@ impl SyntaxPalette {
             function: h(0x4a6fa5),
             r#type: h(0x2f7d72),
             r#enum: h(0x7a5ea8),
-            constructor: h(0xa2643a),
+            constructor: h(0x4a6fa5),
             string: h(0x4f7a3f),
             string_escape: h(0x2b7f8f),
             string_special: h(0xb0562e),
@@ -298,15 +298,15 @@ impl SyntaxPalette {
             constant: h(0x6b5f3d),
             constant_builtin: h(0x3f6b8a),
             property: h(0xa14d5a),
-            variable: h(0x4a4636),
+            variable: h(0x3d3929),
             variable_builtin: h(0x8a6b2a),
             operator: h(0x6f6a58),
-            punctuation: h(0x807b68),
+            punctuation: h(0x3d3929),
             punctuation_special: h(0xc2552f),
             attribute: h(0x2f7d72),
             tag: h(0xb4442a),
             label: h(0x6b6552),
-            namespace: h(0x7a5ea8),
+            namespace: h(0x3d3929),
             title: h(0x8a4a2a),
             text_literal: h(0x4f7a3f),
             link_uri: h(0x2b6f9a),
@@ -324,7 +324,7 @@ impl SyntaxPalette {
             function: h(0x795e26),
             r#type: h(0x267f99),
             r#enum: h(0x2b91af),
-            constructor: h(0x3b8ea5),
+            constructor: h(0x795e26),
             string: h(0xa31515),
             string_escape: h(0xd16969),
             string_special: h(0x811f3f),
@@ -333,15 +333,15 @@ impl SyntaxPalette {
             constant: h(0x0070c1),
             constant_builtin: h(0x0451a5),
             property: h(0x0b5394),
-            variable: h(0x001080),
+            variable: h(0x1e1e1e),
             variable_builtin: h(0x0070c1),
             operator: h(0x393a34),
-            punctuation: h(0x5a5a5a),
+            punctuation: h(0x1e1e1e),
             punctuation_special: h(0xaf00db),
             attribute: h(0xe50000),
             tag: h(0x800000),
             label: h(0x3d3d3d),
-            namespace: h(0x4b69c6),
+            namespace: h(0x1e1e1e),
             title: h(0x800000),
             text_literal: h(0xa31515),
             link_uri: h(0x0f6fc5),
@@ -847,7 +847,7 @@ mod tests {
     }
 
     #[test]
-    fn bundled_themes_populate_at_least_18_distinct_syntax_hues() {
+    fn bundled_themes_keep_core_syntax_roles_distinguishable() {
         for (label, theme) in [
             ("Paneflow Dark", paneflow_dark()),
             ("Paneflow Light", paneflow_light()),
@@ -858,16 +858,20 @@ mod tests {
             ("Cursor Dark", cursor_dark()),
             ("Cursor Light", cursor_light()),
         ] {
-            let distinct = distinct_count(&theme.syntax.all_slots());
-            assert!(
-                distinct >= 18,
-                "{label}: syntax palette has only {distinct} distinct hues (< 18)"
+            let p = theme.syntax;
+            let core = [
+                p.comment, p.function, p.string, p.r#type, p.number, p.operator,
+            ];
+            assert_eq!(
+                distinct_count(&core),
+                core.len(),
+                "{label}: core syntax roles overlap"
             );
         }
     }
 
     #[test]
-    fn no_syntax_slot_equals_default_or_foreground() {
+    fn only_deliberately_neutral_syntax_slots_equal_editor_text() {
         let default = Hsla::default();
         for (label, theme) in [
             ("Paneflow Dark", paneflow_dark()),
@@ -881,27 +885,26 @@ mod tests {
         ] {
             for (i, slot) in theme.syntax.all_slots().iter().enumerate() {
                 assert_ne!(*slot, default, "{label}: syntax slot #{i} left at default");
-                assert_ne!(
-                    *slot, theme.foreground,
-                    "{label}: syntax slot #{i} equals foreground"
-                );
+                let text = ui_colors_with(&theme).text;
+                if matches!(i, 15 | 18 | 23) {
+                    assert_eq!(*slot, text, "{label}: neutral syntax slot #{i} is colored");
+                } else {
+                    assert_ne!(*slot, text, "{label}: syntax slot #{i} equals editor text");
+                }
             }
         }
     }
 
     #[test]
-    fn light_theme_comment_and_punctuation_perceptibly_off_foreground() {
+    fn light_theme_comments_are_muted_and_punctuation_uses_editor_text() {
         let theme = paneflow_light();
-        for (slot_label, slot) in [
-            ("comment", theme.syntax.comment),
-            ("punctuation", theme.syntax.punctuation),
-        ] {
-            let lc = apca_contrast(slot, theme.foreground).abs();
-            assert!(
-                lc > 5.0,
-                "Latte: {slot_label} too close to foreground (APCA Lc {lc:.1})"
-            );
-        }
+        let text = ui_colors_with(&theme).text;
+        let lc = apca_contrast(theme.syntax.comment, text).abs();
+        assert!(
+            lc > 5.0,
+            "Latte: comment too close to editor text (APCA Lc {lc:.1})"
+        );
+        assert_eq!(theme.syntax.punctuation, text);
     }
 
     #[test]

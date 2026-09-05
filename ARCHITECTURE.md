@@ -74,6 +74,38 @@ own crate and never links GPUI.
   "not responding" window, so the codebase treats the main thread as
   render-only.
 
+## Editor and diff syntax highlighting
+
+The editor's `CodeHighlighter` and the diff view's `highlight_lines` share
+`diff/highlighter.rs`: grammar selection and capture resolution use one path.
+Fifteen Zed highlighting queries are compiled with `include_str!` from
+`diff/queries/`. TOML, HTML, Java and Ruby keep their grammar's stock queries.
+JavaScript uses the JavaScript query on the existing TSX grammar. Markdown
+runs block and inline passes; fenced code does not inject another language.
+
+Captures are ordered by byte start, preserving query order at equal starts.
+Each styled capture goes onto a stack. The last active capture paints until
+its end or the next capture, including when it is wider than an earlier one.
+Captures without a palette role do not enter the stack. Each row still caps
+input at 4,096 captures. Theme changes rebuild color tables without querying
+or reparsing the retained trees. Variables and namespaces use the editor's
+text color; constructors share the function role.
+
+`diff/queries/MANIFEST.toml` records the upstream commit, source paths, SHA-256
+hashes, license evidence and the JavaScript grammar deviation. `NOTICE`
+attributes Zed Industries. Git preserves LF bytes for these imports.
+
+Set `ZED_DIR` to a local Zed checkout, then run
+`scripts/sync-zed-queries.sh --check` on Linux/macOS, or
+`scripts/sync-zed-queries.ps1 -Check` in PowerShell 7 on Windows. Check mode
+compares every query and the manifest byte for byte with the pinned Git
+objects, checks the provenance notice and lists any drift. Omit the check
+option to restore those bytes, including the notice's revision.
+To resync, pass `--commit <revision>` or `-Commit <revision>`, then review the
+upstream license evidence, compile the queries, run the parity tests and the
+editor benchmark. Both scripts resolve revisions to an immutable full SHA.
+No source checkout files or runtime configuration are read by the app.
+
 ## Files tree
 
 The right Files rail has its own `FilesSidebar` GPUI entity, mounted with

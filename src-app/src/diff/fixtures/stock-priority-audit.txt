@@ -1,0 +1,86 @@
+STOCK json 4..10 "\"name\"": string.special.key -> string
+STOCK json 26..33 "\"count\"": string.special.key -> string
+STOCK json 40..44 "\"ok\"": string.special.key -> string
+STOCK json 54..60 "\"tags\"": string.special.key -> string
+STOCK json: 4 conflicts
+BYTES json 4..10 "\"name\"": Some("string.special.key") -> Some("string")
+BYTES json 26..33 "\"count\"": Some("string.special.key") -> Some("string")
+BYTES json 40..44 "\"ok\"": Some("string.special.key") -> Some("string")
+BYTES json 54..60 "\"tags\"": Some("string.special.key") -> Some("string")
+STOCK sh: 0 conflicts
+STOCK py 18..25 "Greeter": variable -> constructor
+STOCK py 57..62 "greet": variable -> function
+STOCK py 75..78 "str": variable -> type
+STOCK py 83..86 "str": variable -> type
+STOCK py: 4 conflicts
+BYTES py 18..25 "Greeter": Some("variable") -> Some("constructor")
+BYTES py 57..62 "greet": Some("variable") -> Some("function")
+BYTES py 75..78 "str": Some("variable") -> Some("type")
+BYTES py 83..86 "str": Some("variable") -> Some("type")
+STOCK ts: 0 conflicts
+STOCK tsx: 0 conflicts
+STOCK toml: 0 conflicts
+BYTES toml 10..14 "name": Some("type") -> Some("property")
+BYTES toml 28..35 "version": Some("type") -> Some("property")
+BYTES toml 62..67 "ropey": Some("type") -> Some("property")
+BYTES toml 72..79 "version": Some("type") -> Some("property")
+BYTES toml 89..97 "features": Some("type") -> Some("property")
+STOCK md: 0 conflicts
+STOCK go 48..52 "main": function -> variable
+STOCK go 62..69 "Println": function.method -> property
+STOCK go: 2 conflicts
+BYTES go 48..52 "main": Some("function") -> Some("variable")
+BYTES go 62..69 "Println": Some("function.method") -> Some("property")
+STOCK yaml 0..5 "count": string -> property
+STOCK yaml 9..16 "enabled": string -> property
+STOCK yaml 23..30 "missing": string -> property
+STOCK yaml 48..52 "name": string -> property
+STOCK yaml 60..62 "on": string -> property
+STOCK yaml 66..70 "push": string -> property
+STOCK yaml 76..84 "branches": string -> property
+STOCK yaml 93..97 "jobs": string -> property
+STOCK yaml 101..105 "test": string -> property
+STOCK yaml 111..118 "runs-on": string -> property
+STOCK yaml: 10 conflicts
+BYTES yaml 0..5 "count": Some("string") -> Some("property")
+BYTES yaml 9..16 "enabled": Some("string") -> Some("property")
+BYTES yaml 23..30 "missing": Some("string") -> Some("property")
+BYTES yaml 48..52 "name": Some("string") -> Some("property")
+BYTES yaml 60..62 "on": Some("string") -> Some("property")
+BYTES yaml 66..70 "push": Some("string") -> Some("property")
+BYTES yaml 76..84 "branches": Some("string") -> Some("property")
+BYTES yaml 93..97 "jobs": Some("string") -> Some("property")
+BYTES yaml 101..105 "test": Some("string") -> Some("property")
+BYTES yaml 111..118 "runs-on": Some("string") -> Some("property")
+STOCK css: 0 conflicts
+STOCK html: 0 conflicts
+STOCK c 24..28 "main": variable -> function
+STOCK c 59..65 "printf": variable -> function
+STOCK c: 2 conflicts
+BYTES c 24..28 "main": Some("variable") -> Some("function")
+BYTES c 59..65 "printf": Some("variable") -> Some("function")
+STOCK cpp 160..161 "T": variable -> constant
+STOCK cpp 194..197 "get": property -> function
+STOCK cpp 233..238 "greet": variable -> function
+STOCK cpp: 3 conflicts
+BYTES cpp 160..161 "T": Some("variable") -> Some("constant")
+BYTES cpp 194..197 "get": Some("property") -> Some("function")
+BYTES cpp 233..238 "greet": Some("variable") -> Some("function")
+STOCK java 27..31 "Main": variable -> type
+STOCK java 57..61 "main": variable -> function.method
+STOCK java 87..93 "System": variable -> type
+STOCK java 98..105 "println": variable -> function.method
+STOCK java: 4 conflicts
+BYTES java 27..31 "Main": Some("variable") -> Some("type")
+BYTES java 57..61 "main": Some("variable") -> Some("function.method")
+BYTES java 87..93 "System": Some("variable") -> Some("type")
+BYTES java 98..105 "println": Some("variable") -> Some("function.method")
+STOCK rb 51..56 "greet": variable -> function.method
+STOCK rb 57..61 "name": variable -> variable.parameter
+STOCK rb 73..77 "name": variable -> function.method
+STOCK rb 77..78 "}": punctuation.special -> punctuation.bracket
+STOCK rb: 4 conflicts
+BYTES rb 51..56 "greet": Some("variable") -> Some("function.method")
+BYTES rb 57..61 "name": Some("variable") -> Some("variable.parameter")
+BYTES rb 73..77 "name": Some("variable") -> Some("function.method")
+BYTES rb 77..78 "}": Some("punctuation.special") -> Some("punctuation.bracket")

@@ -176,7 +176,7 @@ tree-sitter-yaml = "0.7"  # US-003: P1
 tree-sitter-css = "0.25"  # US-003: P1
 tree-sitter-html = "0.23" # US-003: P1
 tree-sitter-c = "0.24"    # US-005: P2
-tree-sitter-cpp = "0.23"  # US-005: P2
+tree-sitter-cpp = { git = "https://github.com/tree-sitter/tree-sitter-cpp", rev = "5cb9b693cfd7bfacab1d9ff4acac1a4150700609" }
 tree-sitter-java = "0.23" # US-005: P2
 tree-sitter-ruby = "0.23" # US-005: P2
 # QueryCursor::captures returns a StreamingIterator (tree-sitter >= 0.25), not

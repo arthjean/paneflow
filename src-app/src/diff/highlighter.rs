@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::ops::Range;
 use std::sync::OnceLock;
 
@@ -48,32 +47,42 @@ pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
         "rs" => grammar!(
             RUST,
             tree_sitter_rust::LANGUAGE,
-            tree_sitter_rust::HIGHLIGHTS_QUERY
+            include_str!("queries/rust/highlights.scm")
         ),
-        "json" | "jsonc" => grammar!(
+        "json" => grammar!(
             JSON,
             tree_sitter_json::LANGUAGE,
-            tree_sitter_json::HIGHLIGHTS_QUERY
+            include_str!("queries/json/highlights.scm")
+        ),
+        "jsonc" => grammar!(
+            JSONC,
+            tree_sitter_json::LANGUAGE,
+            include_str!("queries/jsonc/highlights.scm")
         ),
         "sh" | "bash" | "zsh" => grammar!(
             BASH,
             tree_sitter_bash::LANGUAGE,
-            tree_sitter_bash::HIGHLIGHT_QUERY
+            include_str!("queries/bash/highlights.scm")
         ),
         "py" | "pyi" => grammar!(
             PY,
             tree_sitter_python::LANGUAGE,
-            tree_sitter_python::HIGHLIGHTS_QUERY
+            include_str!("queries/python/highlights.scm")
         ),
         "ts" | "mts" | "cts" => grammar!(
             TS,
             tree_sitter_typescript::LANGUAGE_TYPESCRIPT,
-            tree_sitter_typescript::HIGHLIGHTS_QUERY
+            include_str!("queries/typescript/highlights.scm")
         ),
-        "tsx" | "jsx" | "js" | "mjs" | "cjs" => grammar!(
+        "tsx" => grammar!(
             TSX,
             tree_sitter_typescript::LANGUAGE_TSX,
-            tree_sitter_typescript::HIGHLIGHTS_QUERY
+            include_str!("queries/tsx/highlights.scm")
+        ),
+        "jsx" | "js" | "mjs" | "cjs" => grammar!(
+            JS,
+            tree_sitter_typescript::LANGUAGE_TSX,
+            include_str!("queries/javascript/highlights.scm")
         ),
         "toml" => grammar!(
             TOML,
@@ -83,37 +92,37 @@ pub(crate) fn grammar_for_ext(ext: &str) -> Option<&'static Grammar> {
         "md" | "markdown" | "mdx" => grammar!(
             MD,
             tree_sitter_md::LANGUAGE,
-            tree_sitter_md::HIGHLIGHT_QUERY_BLOCK
+            include_str!("queries/markdown/highlights.scm")
         ),
         "go" => grammar!(
             GO,
             tree_sitter_go::LANGUAGE,
-            tree_sitter_go::HIGHLIGHTS_QUERY
+            include_str!("queries/go/highlights.scm")
         ),
         "yaml" | "yml" => grammar!(
             YAML,
             tree_sitter_yaml::LANGUAGE,
-            tree_sitter_yaml::HIGHLIGHTS_QUERY
+            include_str!("queries/yaml/highlights.scm")
         ),
         "css" => grammar!(
             CSS,
             tree_sitter_css::LANGUAGE,
-            tree_sitter_css::HIGHLIGHTS_QUERY
+            include_str!("queries/css/highlights.scm")
         ),
         "html" | "htm" => grammar!(
             HTML,
             tree_sitter_html::LANGUAGE,
             tree_sitter_html::HIGHLIGHTS_QUERY
         ),
-        "c" | "h" => grammar!(C, tree_sitter_c::LANGUAGE, tree_sitter_c::HIGHLIGHT_QUERY),
+        "c" | "h" => grammar!(
+            C,
+            tree_sitter_c::LANGUAGE,
+            include_str!("queries/c/highlights.scm")
+        ),
         "cpp" | "cc" | "cxx" | "hpp" | "hh" | "hxx" => grammar!(
             CPP,
             tree_sitter_cpp::LANGUAGE,
-            &format!(
-                "{}\n{}",
-                tree_sitter_c::HIGHLIGHT_QUERY,
-                tree_sitter_cpp::HIGHLIGHT_QUERY
-            )
+            include_str!("queries/cpp/highlights.scm")
         ),
         "java" => grammar!(
             JAVA,
@@ -134,7 +143,11 @@ pub(crate) fn markdown_inline_grammar() -> Option<&'static Grammar> {
     MD_INLINE
         .get_or_init(|| {
             let language: Language = tree_sitter_md::INLINE_LANGUAGE.into();
-            let query = Query::new(&language, tree_sitter_md::HIGHLIGHT_QUERY_INLINE).ok()?;
+            let query = Query::new(
+                &language,
+                include_str!("queries/markdown-inline/highlights.scm"),
+            )
+            .ok()?;
             Some(Grammar { language, query })
         })
         .as_ref()
@@ -235,66 +248,46 @@ fn bucket_capture(
 }
 
 pub(crate) fn resolve_runs<T: Copy>(runs: &mut Vec<(Range<usize>, T)>) {
-    let mut candidates: Vec<_> = runs
+    let mut captures: Vec<_> = runs
         .drain(..)
         .take(MAX_CAPTURES_PER_ROW)
-        .enumerate()
-        .filter(|(_, (range, _))| range.start < range.end)
-        .map(|(order, (range, color))| (range, color, order))
+        .filter(|(range, _)| range.start < range.end)
         .collect();
-    candidates.sort_by(|a, b| {
-        let a_len = a.0.end.saturating_sub(a.0.start);
-        let b_len = b.0.end.saturating_sub(b.0.start);
-        a_len
-            .cmp(&b_len)
-            .then(a.0.start.cmp(&b.0.start))
-            .then(a.0.end.cmp(&b.0.end))
-            .then(a.2.cmp(&b.2))
-    });
-
-    let mut events = Vec::with_capacity(candidates.len() * 2);
-    for (candidate, (range, _, _)) in candidates.iter().enumerate() {
-        events.push((range.start, true, candidate));
-        events.push((range.end, false, candidate));
-    }
-    events.sort_unstable_by_key(|event| event.0);
-
-    let mut active = BTreeSet::new();
-    let mut resolved: Vec<(Range<usize>, T, usize)> = Vec::with_capacity(candidates.len());
-    let mut event = 0usize;
-    while event < events.len() {
-        let start = events[event].0;
-        while event < events.len() && events[event].0 == start {
-            let (_, begins, candidate) = events[event];
-            if begins {
-                active.insert(candidate);
-            } else {
-                active.remove(&candidate);
-            }
-            event += 1;
-        }
-        let Some(end) = events.get(event).map(|next| next.0) else {
-            break;
-        };
-        let Some(&candidate) = active.first() else {
-            continue;
-        };
-        if start == end {
-            continue;
-        }
-        if let Some((last, _, last_candidate)) = resolved.last_mut()
-            && *last_candidate == candidate
-            && last.end == start
+    captures.sort_by_key(|(range, _)| range.start);
+    let mut stack: Vec<usize> = Vec::with_capacity(captures.len());
+    let mut next = 0;
+    let mut offset = captures.first().map_or(0, |(range, _)| range.start);
+    let mut last_capture = None;
+    while next < captures.len() || !stack.is_empty() {
+        while stack
+            .last()
+            .is_some_and(|&index| captures[index].0.end <= offset)
         {
-            last.end = end;
-            continue;
+            stack.pop();
         }
-        resolved.push((start..end, candidates[candidate].1, candidate));
+        while next < captures.len() && captures[next].0.start <= offset {
+            stack.push(next);
+            next += 1;
+        }
+        let next_start = captures
+            .get(next)
+            .map_or(usize::MAX, |(range, _)| range.start);
+        if let Some(&index) = stack.last() {
+            let end = captures[index].0.end.min(next_start);
+            if last_capture == Some(index)
+                && let Some((range, _)) = runs.last_mut()
+            {
+                range.end = end;
+            } else {
+                runs.push((offset..end, captures[index].1));
+            }
+            last_capture = Some(index);
+            offset = end;
+        } else {
+            offset = next_start;
+            last_capture = None;
+        }
     }
-    *runs = resolved
-        .into_iter()
-        .map(|(range, color, _)| (range, color))
-        .collect();
 }
 
 #[cfg(test)]
@@ -457,95 +450,11 @@ mod tests {
         assert_eq!(runs[3].1, palette.link_text);
     }
 
-    fn resolve_runs_legacy(runs: &mut Vec<(Range<usize>, Hsla)>) {
-        let mut candidates: Vec<_> = runs
-            .drain(..)
-            .enumerate()
-            .map(|(order, (range, color))| (range, color, order))
-            .collect();
-        candidates.sort_by(|a, b| {
-            let a_len = a.0.end.saturating_sub(a.0.start);
-            let b_len = b.0.end.saturating_sub(b.0.start);
-            a_len
-                .cmp(&b_len)
-                .then(a.0.start.cmp(&b.0.start))
-                .then(a.0.end.cmp(&b.0.end))
-                .then(a.2.cmp(&b.2))
-        });
-
-        let mut kept = Vec::with_capacity(candidates.len());
-        let mut covered: Vec<Range<usize>> = Vec::with_capacity(candidates.len());
-        for (range, color, _) in candidates {
-            if range.start >= range.end {
-                continue;
-            }
-            let mut fragments = vec![range];
-            for cover in &covered {
-                let mut next = Vec::new();
-                for fragment in fragments {
-                    if cover.end <= fragment.start || cover.start >= fragment.end {
-                        next.push(fragment);
-                        continue;
-                    }
-                    if fragment.start < cover.start {
-                        next.push(fragment.start..cover.start);
-                    }
-                    if cover.end < fragment.end {
-                        next.push(cover.end..fragment.end);
-                    }
-                }
-                fragments = next;
-                if fragments.is_empty() {
-                    break;
-                }
-            }
-            for fragment in fragments {
-                covered.push(fragment.clone());
-                kept.push((fragment, color));
-            }
-            covered.sort_by(|a, b| a.start.cmp(&b.start).then(a.end.cmp(&b.end)));
-        }
-        kept.sort_by(|a, b| a.0.start.cmp(&b.0.start).then(a.0.end.cmp(&b.0.end)));
-        *runs = kept;
-    }
-
     #[test]
-    fn resolve_runs_matches_the_previous_semantics_on_ten_thousand_inputs() {
-        let palette = paneflow_dark().syntax;
-        let colors = [
-            palette.text_literal,
-            palette.emphasis_strong,
-            palette.link_text,
-            palette.keyword,
-        ];
-        let mut state = 0x9e37_79b9_7f4a_7c15u64;
-        let mut next = || {
-            state ^= state << 7;
-            state ^= state >> 9;
-            state ^= state << 8;
-            state
-        };
-
-        for case in 0..10_000 {
-            let count = (next() as usize % 24) + 1;
-            let mut input = Vec::with_capacity(count);
-            for index in 0..count {
-                let start = next() as usize % 80;
-                let mode = next() % 8;
-                let end = match mode {
-                    0 => start,
-                    1 => start.saturating_sub((next() as usize % 8) + 1),
-                    2 => start + 1,
-                    _ => next() as usize % 80,
-                };
-                input.push((start..end, colors[index % colors.len()]));
-            }
-            let mut expected = input.clone();
-            let mut actual = input;
-            resolve_runs_legacy(&mut expected);
-            resolve_runs(&mut actual);
-            assert_eq!(actual, expected, "case {case}");
-        }
+    fn resolve_runs_uses_capture_order_even_when_the_last_capture_is_wider() {
+        let mut runs = vec![(0..3, 1), (0..8, 2), (2..5, 3), (2..5, 4)];
+        resolve_runs(&mut runs);
+        assert_eq!(runs, vec![(0..2, 2), (2..5, 4), (5..8, 2)]);
     }
 
     #[test]
